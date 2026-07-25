@@ -574,6 +574,12 @@ async def delete_user_subscription(
     if not subscription:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'User has no subscription')
 
+    # Подписка деактивируется — СБП-автопродление Platega обязано быть отменено,
+    # иначе следующий push-коллбек продлит и заново включит её, а банк продолжит списывать.
+    from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
     await deactivate_subscription(db, subscription)
 
     # Деактивируем пользователя в RemnaWave, если есть UUID

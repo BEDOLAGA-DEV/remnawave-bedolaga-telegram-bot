@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import User
+from app.database.models import TransactionType, User
 from app.services.subscription_auto_purchase_service import auto_purchase_saved_cart_after_topup
 from app.services.subscription_purchase_service import (
     PurchaseDevicesConfig,
@@ -33,6 +33,13 @@ def _grant_cart_topup_intent(monkeypatch):
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.user_cart_service.clear_topup_intent',
         AsyncMock(),
+    )
+    # Race guard (cart_sub_id path) also probes recent transactions when
+    # updated_at is fresh; empty list means no SUBSCRIPTION_PAYMENT confirmation,
+    # so traffic-only updated_at bumps do not block the tests.
+    monkeypatch.setattr(
+        'app.database.crud.transaction.get_user_transactions',
+        AsyncMock(return_value=[]),
     )
 
 
@@ -394,6 +401,198 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     bot.send_message.assert_awaited()
     service_mock.update_remnawave_user.assert_awaited()
     create_transaction_mock.assert_awaited()
+
+
+def _prepare_extend_race_guard_scenario(monkeypatch, *, recent_transactions: list):
+    """Общий сетап продления с свежим updated_at для тестов race-guard."""
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'SALES_MODE', 'classic')
+
+    subscription = MagicMock()
+    subscription.id = 82
+    subscription.is_trial = False
+    subscription.status = 'active'
+    subscription.end_date = datetime.now(UTC) + timedelta(days=5)
+    subscription.updated_at = datetime.now(UTC) - timedelta(seconds=10)  # свежий updated_at
+    subscription.tariff_id = None
+    subscription.device_limit = 1
+    subscription.traffic_limit_gb = 100
+    subscription.connected_squads = ['squad-a']
+
+    user = MagicMock(spec=User)
+    user.id = 820
+    user.telegram_id = 820820
+    user.balance_kopeks = 200_000
+    user.language = 'ru'
+    user.subscription = subscription
+    user.get_primary_promo_group = MagicMock(return_value=None)
+    user.promo_offer_discount_percent = 0
+    user.promo_offer_discount_source = None
+    user.promo_offer_discount_expires_at = None
+
+    cart_data = {
+        'cart_mode': 'extend',
+        'subscription_id': subscription.id,
+        'period_days': 90,
+        'total_price': 50_000,
+        'description': 'Продление подписки на 90 дней',
+    }
+
+    # Переопределяем autouse-фикстуру: нужны конкретные транзакции, не []
+    monkeypatch.setattr(
+        'app.database.crud.transaction.get_user_transactions',
+        AsyncMock(return_value=recent_transactions),
+    )
+
+    subtract_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.subtract_user_balance',
+        subtract_mock,
+    )
+
+    async def extend_stub(db, current_subscription, days, **kwargs):
+        current_subscription.end_date = current_subscription.end_date + timedelta(days=days)
+        return current_subscription
+
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.extend_subscription',
+        extend_stub,
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.create_transaction',
+        AsyncMock(return_value=MagicMock()),
+    )
+
+    service_mock = MagicMock()
+    service_mock.update_remnawave_user = AsyncMock()
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.SubscriptionService',
+        lambda: service_mock,
+    )
+
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_user_cart',
+        AsyncMock(return_value=cart_data),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_subscription_cart',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_global_cart_only',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_user_cart',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.clear_subscription_checkout_draft',
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.get_texts',
+        lambda lang: DummyTexts(),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.format_period_description',
+        lambda days, lang: f'{days} дней',
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.format_local_datetime',
+        lambda dt, fmt: dt.strftime(fmt) if dt else '',
+    )
+
+    admin_service_mock = MagicMock()
+    admin_service_mock.send_subscription_extension_notification = AsyncMock()
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.AdminNotificationService',
+        lambda bot: admin_service_mock,
+    )
+
+    async def fake_with_admin(handler):
+        await handler(admin_service_mock)
+
+    monkeypatch.setattr(
+        'app.services.subscription_renewal_service.with_admin_notification_service',
+        fake_with_admin,
+    )
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_user_id',
+        AsyncMock(return_value=subscription),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_id_for_user',
+        AsyncMock(return_value=subscription),
+    )
+    monkeypatch.setattr(
+        'app.database.crud.user.lock_user_for_pricing',
+        AsyncMock(return_value=user),
+    )
+
+    fresh_pricing = MagicMock()
+    fresh_pricing.final_total = 50_000
+    fresh_pricing.original_total = 50_000
+    monkeypatch.setattr(
+        'app.services.pricing_engine.pricing_engine.calculate_renewal_price',
+        AsyncMock(return_value=fresh_pricing),
+    )
+    monkeypatch.setattr(
+        'app.utils.promo_offer.get_user_active_promo_discount_percent',
+        lambda _user: 0,
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.user_cart_service.get_all_subscription_carts',
+        AsyncMock(return_value=[]),
+    )
+
+    return user, subscription, subtract_mock
+
+
+async def test_race_guard_fresh_updated_at_without_subscription_payment_allows_purchase(monkeypatch):
+    """Свежий updated_at без SUBSCRIPTION_PAYMENT (только deposit) не блокирует автопокупку."""
+    deposit = MagicMock()
+    deposit.type = TransactionType.DEPOSIT.value
+    deposit.created_at = datetime.now(UTC) - timedelta(seconds=5)
+
+    user, _subscription, subtract_mock = _prepare_extend_race_guard_scenario(
+        monkeypatch,
+        recent_transactions=[deposit],
+    )
+
+    result = await auto_purchase_saved_cart_after_topup(
+        AsyncMock(spec=AsyncSession),
+        user,
+        bot=AsyncMock(),
+    )
+
+    assert result is True
+    subtract_mock.assert_awaited()
+
+
+async def test_race_guard_fresh_updated_at_with_subscription_payment_skips_purchase(monkeypatch):
+    """Свежий updated_at + свежий SUBSCRIPTION_PAYMENT → пропуск автопокупки (защита от двойного списания)."""
+    deposit = MagicMock()
+    deposit.type = TransactionType.DEPOSIT.value
+    deposit.created_at = datetime.now(UTC) - timedelta(seconds=2)
+
+    payment = MagicMock()
+    payment.type = TransactionType.SUBSCRIPTION_PAYMENT.value
+    payment.created_at = datetime.now(UTC) - timedelta(seconds=15)
+
+    user, _subscription, subtract_mock = _prepare_extend_race_guard_scenario(
+        monkeypatch,
+        recent_transactions=[deposit, payment],
+    )
+
+    result = await auto_purchase_saved_cart_after_topup(
+        AsyncMock(spec=AsyncSession),
+        user,
+        bot=AsyncMock(),
+    )
+
+    assert result is False
+    subtract_mock.assert_not_awaited()
 
 
 async def test_auto_purchase_trial_preserved_on_insufficient_balance(monkeypatch):

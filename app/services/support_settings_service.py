@@ -37,6 +37,31 @@ class SupportSettingsService:
             logger.error('Failed to load support settings', error=e)
             cls._data = {}
         cls._loaded = True
+        cls._sync_settings()
+
+    @classmethod
+    def _sync_settings(cls) -> None:
+        """Отзеркалить сохранённые значения в ``settings``.
+
+        Часть кода читает режим поддержки не через сервис, а напрямую из
+        ``settings`` — в первую очередь веб-кабинет
+        (``cabinet/routes/tickets.py``, ``cabinet/routes/info.py``).
+        ``set_system_mode`` обновлял ``settings`` в памяти, а ``_load`` при
+        старте — нет: после рестарта бот брал режим из JSON, а кабинет —
+        значение из ``.env``. Режим ``contact``, выставленный из админки бота,
+        переживал рестарт только для бота, и тикеты в кабинете снова
+        открывались.
+
+        JSON здесь — источник истины: он пишется только явным действием
+        админа, ``.env`` задаёт лишь начальное значение.
+        """
+        mode = cls._data.get('system_mode')
+        if isinstance(mode, str):
+            mode_clean = mode.strip().lower()
+            if mode_clean in {'tickets', 'contact', 'both'}:
+                settings.SUPPORT_SYSTEM_MODE = mode_clean
+        if 'menu_enabled' in cls._data:
+            settings.SUPPORT_MENU_ENABLED = bool(cls._data['menu_enabled'])
 
     @classmethod
     def _save(cls) -> bool:
@@ -62,7 +87,7 @@ class SupportSettingsService:
             return False
         cls._load()
         cls._data['system_mode'] = mode_clean
-        settings.SUPPORT_SYSTEM_MODE = mode_clean
+        cls._sync_settings()
         return cls._save()
 
     # Main menu visibility
@@ -77,6 +102,7 @@ class SupportSettingsService:
     def set_support_menu_enabled(cls, enabled: bool) -> bool:
         cls._load()
         cls._data['menu_enabled'] = bool(enabled)
+        cls._sync_settings()
         return cls._save()
 
     # Contact vs tickets helpers
@@ -145,7 +171,7 @@ class SupportSettingsService:
         cls._load()
         if 'ticket_sla_enabled' in cls._data:
             return bool(cls._data['ticket_sla_enabled'])
-        return bool(getattr(settings, 'SUPPORT_TICKET_SLA_ENABLED', True))
+        return bool(getattr(settings, 'SUPPORT_TICKET_SLA_ENABLED', False))
 
     @classmethod
     def set_sla_enabled(cls, enabled: bool) -> bool:
@@ -159,7 +185,7 @@ class SupportSettingsService:
         minutes = cls._data.get('ticket_sla_minutes')
         if isinstance(minutes, int) and minutes > 0:
             return minutes
-        return int(getattr(settings, 'SUPPORT_TICKET_SLA_MINUTES', 5))
+        return int(getattr(settings, 'SUPPORT_TICKET_SLA_MINUTES', 60))
 
     @classmethod
     def set_sla_minutes(cls, minutes: int) -> bool:

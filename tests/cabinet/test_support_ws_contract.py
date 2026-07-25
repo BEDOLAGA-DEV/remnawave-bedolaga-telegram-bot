@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import types
@@ -31,6 +32,18 @@ def _context(user_id: int = 10) -> support_ws.WsUserContext:
 def _session() -> support_ws.SupportWsSession:
     websocket = types.SimpleNamespace()
     return support_ws.SupportWsSession(websocket=websocket, context=_context())
+
+
+@pytest.fixture(autouse=True)
+def _support_guards_open(monkeypatch):
+    """Контрактные тесты не про бан в поддержке и не про режим — открываем оба.
+
+    Подменяются источники, а не сами guard'ы: режим берётся из данных сервиса,
+    глобальная блокировка — из CRUD, так что реальная логика исполняется.
+    """
+    monkeypatch.setattr(support_ws.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
+    monkeypatch.setattr(support_ws.SupportSettingsService, '_loaded', True)
+    monkeypatch.setattr(support_ws.SupportSettingsService, '_data', {'system_mode': 'both'})
 
 
 class _FakeDb:
@@ -173,6 +186,71 @@ async def test_owner_ticket_reply_respects_reply_block(monkeypatch) -> None:
 
     assert db.added == []
     assert session.idempotency == {}
+
+
+@pytest.mark.asyncio
+async def test_owner_ws_reply_rejected_for_globally_blocked_user(monkeypatch) -> None:
+    """REGRESSION: бан в поддержке обходился через веб-сокет.
+
+    REST-роут проверяет глобальную блокировку (_ensure_not_blocked), а WS смотрел
+    только per-ticket флаг — забаненный менял клиента и продолжал писать.
+    """
+    session = _session()
+    ticket = _ticket(user_id=session.context.user_id)
+    db = _FakeDb()
+
+    async def fake_get_visible_ticket(_db, _context, _ticket_id):
+        return ticket
+
+    monkeypatch.setattr(support_ws, '_get_visible_ticket', fake_get_visible_ticket)
+    monkeypatch.setattr(
+        support_ws.TicketCRUD,
+        'is_user_globally_blocked',
+        AsyncMock(return_value=datetime.max.replace(tzinfo=UTC)),
+    )
+
+    with pytest.raises(PermissionError):
+        await support_ws._handle_ticket_reply(
+            db,
+            session,
+            {
+                'ticketId': str(ticket.id),
+                'body': 'ban bypass',
+                'attachmentMediaIds': [],
+                'idempotencyKey': 'reply-blocked-1',
+            },
+        )
+
+    assert db.added == []
+    assert session.idempotency == {}
+
+
+@pytest.mark.asyncio
+async def test_owner_ws_reply_rejected_when_tickets_disabled(monkeypatch) -> None:
+    """REGRESSION: при SUPPORT_SYSTEM_MODE=contact сокет продолжал принимать ответы."""
+    session = _session()
+    ticket = _ticket(user_id=session.context.user_id)
+    db = _FakeDb()
+
+    async def fake_get_visible_ticket(_db, _context, _ticket_id):
+        return ticket
+
+    monkeypatch.setattr(support_ws, '_get_visible_ticket', fake_get_visible_ticket)
+    monkeypatch.setattr(support_ws.SupportSettingsService, '_data', {'system_mode': 'contact'})
+
+    with pytest.raises(PermissionError):
+        await support_ws._handle_ticket_reply(
+            db,
+            session,
+            {
+                'ticketId': str(ticket.id),
+                'body': 'tickets are off',
+                'attachmentMediaIds': [],
+                'idempotencyKey': 'reply-disabled-1',
+            },
+        )
+
+    assert db.added == []
 
 
 @pytest.mark.asyncio
@@ -601,3 +679,239 @@ async def test_ws_owner_reply_sets_open_status_and_resets_sla(monkeypatch) -> No
 
     assert ticket.status == 'open'
     assert ticket.last_sla_reminder_at is None
+
+
+# ---------------------------------------------------------------------------
+# Support ticket event bridge (event_emitter -> support socket)
+# ---------------------------------------------------------------------------
+
+
+def _message(**overrides):
+    base = {
+        'id': 501,
+        'ticket_id': 3,
+        'user_id': 10,
+        'is_from_admin': False,
+        'message_text': 'hello',
+        'media_items': None,
+        'media_file_id': None,
+        'media_type': None,
+        'media_caption': None,
+        'created_at': datetime(2026, 7, 9, 0, 2, tzinfo=UTC),
+    }
+    base.update(overrides)
+    return types.SimpleNamespace(**base)
+
+
+class _SessionCtx:
+    """Minimal async context manager standing in for AsyncSessionLocal()."""
+
+    async def __aenter__(self):
+        return _FakeDb()
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+def test_pick_message_prefers_id_then_last():
+    m1 = _message(id=1, created_at=datetime(2026, 7, 9, 0, 0, tzinfo=UTC))
+    m2 = _message(id=2, created_at=datetime(2026, 7, 9, 0, 5, tzinfo=UTC))
+    ticket = _ticket(messages=[m1, m2])
+    assert support_ws._pick_message(ticket, 1) is m1
+    assert support_ws._pick_message(ticket, None) is m2
+    assert support_ws._pick_message(ticket, 999) is m2
+    assert support_ws._pick_message(_ticket(messages=[]), None) is None
+
+
+@pytest.mark.asyncio
+async def test_bridge_message_added_broadcasts_contract_message_created(monkeypatch):
+    captured = {}
+
+    async def fake_broadcast(_db, ticket, event):
+        captured['ticket'] = ticket
+        captured['event'] = event
+
+    monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+
+    msg = _message(id=501, ticket_id=3, user_id=10, is_from_admin=False, message_text='hi')
+    ticket = _ticket(id=3, messages=[msg])
+
+    async def fake_load(_db, _ticket_id):
+        return ticket
+
+    monkeypatch.setattr(support_ws, '_load_ticket_for_event', fake_load)
+
+    await support_ws._bridge_message_added({'ticket_id': 3, 'message_id': 501})
+
+    event = captured['event']
+    assert event['event'] == 'message.created'
+    assert event['payload']['ticketId'] == '3'
+    assert event['payload']['message']['id'] == '501'
+    assert event['payload']['message']['body'] == 'hi'
+    assert 'ticketSnapshot' in event['payload']
+    assert captured['ticket'] is ticket
+
+
+@pytest.mark.asyncio
+async def test_bridge_message_added_noops_when_ticket_missing(monkeypatch):
+    called = False
+
+    async def fake_broadcast(_db, _ticket, _event):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+
+    async def fake_load(_db, _ticket_id):
+        return None
+
+    monkeypatch.setattr(support_ws, '_load_ticket_for_event', fake_load)
+
+    await support_ws._bridge_message_added({'ticket_id': 999})
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_bridge_ticket_created_broadcasts_opening_message(monkeypatch):
+    captured = {}
+
+    async def fake_broadcast(_db, _ticket, event):
+        captured['event'] = event
+
+    monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+
+    opening = _message(id=700, ticket_id=8, message_text='first!')
+    ticket = _ticket(id=8, messages=[opening])
+
+    async def fake_load(_db, _ticket_id):
+        return ticket
+
+    monkeypatch.setattr(support_ws, '_load_ticket_for_event', fake_load)
+
+    await support_ws._bridge_ticket_created({'ticket_id': 8})
+
+    assert captured['event']['event'] == 'message.created'
+    assert captured['event']['payload']['message']['id'] == '700'
+
+
+@pytest.mark.asyncio
+async def test_bridge_status_changed_broadcasts_status_updated(monkeypatch):
+    captured = {}
+
+    async def fake_broadcast(_db, _ticket, event):
+        captured['event'] = event
+
+    monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+
+    ticket = _ticket(id=8, status='closed')
+
+    async def fake_load(_db, _ticket_id):
+        return ticket
+
+    monkeypatch.setattr(support_ws, '_load_ticket_for_event', fake_load)
+
+    await support_ws._bridge_status_changed({'ticket_id': 8, 'old_status': 'open', 'new_status': 'closed'})
+
+    event = captured['event']
+    assert event['event'] == 'ticket.status.updated'
+    assert event['payload']['status'] == 'closed'
+    assert event['payload']['ticketId'] == '8'
+    assert 'ticketSnapshot' in event['payload']
+
+
+def test_register_support_ticket_event_bridge_is_idempotent(monkeypatch):
+    from app.services.event_emitter import event_emitter
+
+    registered = []
+    monkeypatch.setattr(event_emitter, 'on', lambda event_type, callback: registered.append(event_type))
+    monkeypatch.setattr(support_ws, '_bridge_registered', False)
+
+    support_ws.register_support_ticket_event_bridge()
+    support_ws.register_support_ticket_event_bridge()  # second call must be a no-op
+
+    assert registered == ['ticket.message_added', 'ticket.created', 'ticket.status_changed']
+
+
+def test_bridge_only_emits_whitelisted_event_names():
+    # The bridge must never introduce a support-v1 event the apps don't recognize.
+    allowed = {
+        'connection.ready',
+        'auth.expiring',
+        'ticket.status.updated',
+        'ticket.priority.updated',
+        'message.created',
+    }
+    assert {'message.created', 'ticket.status.updated'} <= allowed
+
+
+@pytest.mark.asyncio
+async def test_bridge_consumes_cabinet_emit_payload(monkeypatch):
+    # The cabinet/mini-app reply routes emit this exact payload shape; the bridge
+    # must consume it and produce a contract-valid message.created event.
+    captured = {}
+
+    async def fake_broadcast(_db, _ticket, event):
+        captured['event'] = event
+
+    monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+
+    msg = _message(id=501, ticket_id=3, message_text='from cabinet')
+    ticket = _ticket(id=3, messages=[msg])
+
+    async def fake_load(_db, _ticket_id):
+        return ticket
+
+    monkeypatch.setattr(support_ws, '_load_ticket_for_event', fake_load)
+
+    cabinet_payload = {
+        'ticket_id': 3,
+        'message_id': 501,
+        'user_id': 10,
+        'is_from_admin': False,
+        'message_text': 'from cabinet',
+        'has_media': False,
+        'status': 'open',
+    }
+    await support_ws._bridge_message_added(cabinet_payload)
+
+    assert captured['event']['event'] == 'message.created'
+    assert captured['event']['payload']['message']['id'] == '501'
+
+
+@pytest.mark.asyncio
+async def test_bridge_listener_is_nonblocking_and_isolates_failures():
+    # The event_emitter listener must return immediately (never block the emitting request)
+    # and a failing bridge handler must never raise into the emitter. The scheduled task is
+    # tracked then drained.
+    support_ws._bridge_tasks.clear()
+
+    async def boom(_payload):
+        raise RuntimeError('bridge failed')
+
+    # Sync scheduling returns immediately and tracks exactly one task.
+    support_ws._schedule_bridge(boom, {'payload': {'ticket_id': 1}})
+    assert len(support_ws._bridge_tasks) == 1
+
+    # Draining swallows the handler error (gather does not raise) and the done-callback
+    # removes the task from the tracking set.
+    await asyncio.gather(*support_ws._bridge_tasks)
+    await asyncio.sleep(0)
+    assert len(support_ws._bridge_tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_schedule_bridge_coerces_non_dict_payload_to_empty():
+    support_ws._bridge_tasks.clear()
+    seen = {}
+
+    async def capture(payload):
+        seen['payload'] = payload
+
+    support_ws._schedule_bridge(capture, {'payload': None})
+    await asyncio.gather(*support_ws._bridge_tasks)
+    assert seen['payload'] == {}

@@ -124,6 +124,7 @@ class NalogoQueueService:
         telegram_user_id: int | None,
         receipt_uuid: str,
         amount: float,
+        user_email: str | None = None,
     ) -> None:
         """Отправляет пользователю ссылку на чек из отложенной очереди и дублирует в админ-топик."""
         if not self._bot or not self._nalogo_service:
@@ -138,6 +139,7 @@ class NalogoQueueService:
             amount_kopeks=int(round(amount * 100)),
             telegram_user_id=telegram_user_id,
             context_label='Источник: отложенная очередь NaloGO',
+            user_email=user_email,
         )
 
     async def _process_queue_loop(self) -> None:
@@ -197,6 +199,7 @@ class NalogoQueueService:
                 # Восстанавливаем описание из сохранённых данных
                 telegram_user_id = receipt_data.get('telegram_user_id')
                 amount_kopeks = receipt_data.get('amount_kopeks')
+                user_email = receipt_data.get('user_email')
 
                 # Извлекаем время оплаты из очереди (чтобы чек был с правильным временем)
                 operation_time = None
@@ -257,6 +260,7 @@ class NalogoQueueService:
                             telegram_user_id=telegram_user_id,
                             receipt_uuid=receipt_uuid,
                             amount=amount,
+                            user_email=user_email,
                         )
                 else:
                     # Вернуть в очередь с увеличенным счетчиком попыток

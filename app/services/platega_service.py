@@ -16,6 +16,19 @@ from app.config import settings
 logger = structlog.get_logger(__name__)
 
 
+class PlategaApiError(RuntimeError):
+    """Platega ответила HTTP-ошибкой с телом (не транспортный сбой).
+
+    Наследует RuntimeError, чтобы существующие ``except RuntimeError``
+    у вызывающих продолжали работать; ``str(error)`` несёт человекочитаемую
+    причину провайдера для actionable-ответа UI/админу.
+    """
+
+    def __init__(self, http_status: int, message: str) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+
+
 class PlategaService:
     """Обертка над Platega API с базовой повторной отправкой запросов."""
 
@@ -96,6 +109,107 @@ class PlategaService:
         endpoint = f'/transaction/{transaction_id}'
         return await self._request('GET', endpoint)
 
+    async def create_subscription(
+        self,
+        *,
+        amount: float,
+        currency: str,
+        interval: int,
+        description: str | None = None,
+    ) -> dict[str, Any] | None:
+        body: dict[str, Any] = {
+            'paymentMethod': 6,
+            'paymentDetails': {
+                'amount': self._format_amount(amount),
+                'currency': currency,
+                'interval': interval,
+            },
+        }
+
+        if description:
+            body['description'] = self._sanitize_description(description, self._description_max_length)
+
+        # Тот же выбор версии эндпоинта, что и в create_payment (см. #2934):
+        # v1 POST /transaction/process, v2 POST /v2/transaction/process.
+        endpoint = '/v2/transaction/process' if self.api_version == 'v2' else '/transaction/process'
+        data, http_status = await self._request('POST', endpoint, json_data=body, return_status=True)
+
+        if http_status is not None and http_status >= 400:
+            # Пробрасываем причину провайдера наверх: голое None превращалось в
+            # безликий 409 в кабинете, а реальная причина жила только в логах.
+            raise PlategaApiError(http_status, self._describe_subscription_error(data))
+
+        return data
+
+    @staticmethod
+    def _describe_subscription_error(data: Any) -> str:
+        """Человекочитаемая причина отказа Platega на создании подписки."""
+        detail = ''
+        payment_method_rejected = False
+        if isinstance(data, dict):
+            items = data.get('data')
+            if isinstance(items, list):
+                parts = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    parts.append(f'{item.get("key")}: {item.get("message")}')
+                    if item.get('key') == 'paymentMethod':
+                        payment_method_rejected = True
+                detail = '; '.join(parts)
+            detail = detail or str(data.get('message') or '')
+
+        message = f'Platega отклонила создание подписки ({detail or "без деталей"})'
+        if payment_method_rejected:
+            # VAL_0001 с key=paymentMethod на методе 6: формат запроса совпадает
+            # с документацией — так Platega отвечает, когда метод Subscription
+            # не включён для мерчанта (ср. карточные каскады в #2934).
+            message += '. Похоже, метод Subscription не включён для вашего мерчанта — запросите включение рекуррентных платежей в поддержке Platega'
+        return message
+
+    async def get_subscription(self, subscription_id: str) -> dict[str, Any] | None:
+        # Как и статусный GET транзакции, эндпоинт подписки не версионируется.
+        endpoint = f'/subscription/{subscription_id}'
+        return await self._request('GET', endpoint)
+
+    async def get_subscription_status(self, subscription_id: str) -> tuple[dict[str, Any] | None, int | None]:
+        """GET подписки с HTTP-статусом: (payload, status).
+
+        Нужен reconciler'у, чтобы отличать «подписки нет у провайдера»
+        (HTTP 404 → можно хоронить локальную запись) от «Platega недоступна»
+        (status=None → решение откладывается до следующего цикла).
+        """
+        endpoint = f'/subscription/{subscription_id}'
+        return await self._request('GET', endpoint, return_status=True)
+
+    async def list_subscriptions(
+        self,
+        *,
+        status: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        page: int | None = None,
+        size: int | None = None,
+    ) -> dict[str, Any] | None:
+        params: dict[str, Any] = {}
+        if status is not None:
+            params['status'] = status
+        if date_from is not None:
+            params['from'] = date_from
+        if date_to is not None:
+            params['to'] = date_to
+        if page is not None:
+            params['page'] = page
+        if size is not None:
+            params['size'] = size
+
+        return await self._request('GET', '/subscription', params=params)
+
+    async def cancel_subscription(self, subscription_id: str) -> dict[str, Any] | None:
+        # Неверсионированный эндпоинт, аналогично get_subscription/get_transaction.
+        endpoint = f'/subscription/{subscription_id}/cancel'
+        return await self._request('POST', endpoint)
+
     async def _request(
         self,
         method: str,
@@ -103,10 +217,23 @@ class PlategaService:
         *,
         json_data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
+        return_status: bool = False,
+    ) -> Any:
+        """HTTP-запрос к Platega.
+
+        По умолчанию возвращает payload или None (любой сбой). С
+        ``return_status=True`` — кортеж ``(payload, http_status | None)``:
+        status=None означает транспортный сбой (таймаут/сеть/неконфигурация),
+        а не ответ провайдера — вызывающий может отличить «404: объекта нет»
+        от «Platega недоступна».
+        """
+
+        def _result(data: dict[str, Any] | None, status: int | None) -> Any:
+            return (data, status) if return_status else data
+
         if not self.is_configured:
             logger.error('Platega service is not configured')
-            return None
+            return _result(None, None)
 
         url = f'{self.base_url}{endpoint}'
         headers = {
@@ -138,9 +265,11 @@ class PlategaService:
                         if response.status in self._retryable_statuses and attempt < self._max_retries:
                             await asyncio.sleep(self._retry_delay * attempt)
                             continue
-                        return None
+                        # В status-режиме отдаём и тело ошибки — вызывающий
+                        # может показать причину провайдера (VAL_* детали).
+                        return _result(data if return_status else None, response.status)
 
-                    return data
+                    return _result(data, response.status)
             except asyncio.CancelledError:
                 logger.debug('Platega request cancelled', method=method, endpoint=endpoint)
                 raise
@@ -165,7 +294,7 @@ class PlategaService:
                 )
             except Exception as error:  # pragma: no cover - safety
                 logger.exception('Unexpected Platega error', error=error)
-                return None
+                return _result(None, None)
 
             if attempt < self._max_retries:
                 await asyncio.sleep(self._retry_delay * attempt)
@@ -179,7 +308,7 @@ class PlategaService:
                 last_error=last_error,
             )
 
-        return None
+        return _result(None, None)
 
     @staticmethod
     async def _deserialize_response(
@@ -219,6 +348,12 @@ class PlategaService:
                 return trimmed_bytes.decode('utf-8')
             except UnicodeDecodeError:
                 trimmed_bytes = trimmed_bytes[:-1]
+
+    @staticmethod
+    def _format_amount(amount: float) -> int | float:
+        """Platega ждёт целое число для суммы без копеек и float — иначе (SBP-подписки)."""
+
+        return int(amount) if amount == int(amount) else round(amount, 2)
 
     @classmethod
     def _normalize_api_version(cls, raw: str | None) -> str:

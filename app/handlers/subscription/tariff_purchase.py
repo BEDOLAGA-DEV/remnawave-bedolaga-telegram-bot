@@ -23,7 +23,7 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import Tariff, Transaction, TransactionType, User
-from app.localization.texts import get_texts
+from app.localization.texts import Texts, get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
@@ -322,17 +322,28 @@ def get_tariff_confirm_keyboard(
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру подтверждения покупки тарифа."""
     texts = get_texts(language)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=texts.t('TARIFF_PURCHASE_CONFIRM_BUTTON', '✅ Подтвердить покупку'),
+                callback_data=f'tariff_confirm:{tariff_id}:{period}',
+            )
+        ],
+    ]
+    # Альтернатива оплате с баланса: оформление через СБП-автопродление
+    # Platega (первое списание = подтверждение привязки в банке, дальше —
+    # автосписания по каденсу тарифа).
+    if settings.is_platega_recurrent_enabled():
+        buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('TARIFF_PURCHASE_CONFIRM_BUTTON', '✅ Подтвердить покупку'),
-                    callback_data=f'tariff_confirm:{tariff_id}:{period}',
+                    text=texts.t('SBP_PURCHASE_BUTTON', '⚡ Оформить с автооплатой СБП'),
+                    callback_data=f'tariff_sbp:{tariff_id}',
                 )
-            ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')],
-        ]
-    )
+            ]
+        )
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_tariff_insufficient_balance_keyboard(
@@ -387,17 +398,25 @@ def get_daily_tariff_confirm_keyboard(
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру подтверждения покупки суточного тарифа."""
     texts = get_texts(language)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=texts.t('TARIFF_PURCHASE_CONFIRM_BUTTON', '✅ Подтвердить покупку'),
+                callback_data=f'daily_tariff_confirm:{tariff_id}',
+            )
+        ],
+    ]
+    if settings.is_platega_recurrent_enabled():
+        buttons.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('TARIFF_PURCHASE_CONFIRM_BUTTON', '✅ Подтвердить покупку'),
-                    callback_data=f'daily_tariff_confirm:{tariff_id}',
+                    text=texts.t('SBP_PURCHASE_BUTTON', '⚡ Оформить с автооплатой СБП'),
+                    callback_data=f'tariff_sbp:{tariff_id}',
                 )
-            ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')],
-        ]
-    )
+            ]
+        )
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_daily_tariff_insufficient_balance_keyboard(
@@ -610,7 +629,9 @@ async def format_custom_tariff_preview(
     else:
         text += texts.t('TARIFF_PURCHASE_TRAFFIC_LINE', '📊 Трафик: {traffic}\n').format(traffic=traffic_display)
 
-    text += texts.t('TARIFF_PURCHASE_DEVICES_LINE', '📱 Устройств: {devices}\n').format(devices=tariff.device_limit)
+    text += texts.t('TARIFF_PURCHASE_DEVICES_LINE', '📱 Устройств: {devices}\n').format(
+        devices=Texts.format_device_limit(tariff.device_limit)
+    )
 
     if has_discount:
         text += texts.t('TARIFF_PURCHASE_DISCOUNT_LINE', '\n🎁 <b>Скидка: {percent}%</b>\n').format(
@@ -5235,6 +5256,68 @@ async def return_to_saved_tariff_cart(
     await callback.answer(texts.t('TARIFF_PURCHASE_CART_RESTORED', '✅ Корзина восстановлена!'))
 
 
+async def purchase_tariff_with_sbp(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    """Оформление подписки на тариф через СБП-автопродление Platega.
+
+    Кнопка на экране подтверждения покупки — альтернатива оплате с баланса.
+    Первое списание = подтверждение привязки в банке; для нового тарифа
+    создаётся EXPIRED-заготовка, которую активирует первый чардж (см.
+    ``purchase_tariff_with_sbp_recurring``). Выбранный период игнорируется:
+    списания идут по каденс-правилу тарифа.
+    """
+    texts = get_texts(db_user.language)
+    tariff_id = int(callback.data.split(':')[1])
+
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff or not tariff.is_active:
+        await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+        return
+
+    from app.services.payment.platega import purchase_tariff_with_sbp_recurring
+
+    try:
+        result = await purchase_tariff_with_sbp_recurring(db, user=db_user, tariff=tariff)
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except RuntimeError:
+        await callback.answer(
+            texts.t(
+                'SBP_RECURRING_ENABLE_ERROR', '❌ Не удалось подключить автопродление через СБП. Попробуйте позже.'
+            ),
+            show_alert=True,
+        )
+        return
+
+    redirect_url = result.get('redirect_url')
+    text = texts.t(
+        'SBP_RECURRING_ENABLE_SUCCESS',
+        '⚡ <b>Автопродление через СБП</b>\n\nПодтвердите подключение в банковском приложении по кнопке ниже.\nПосле подтверждения автопродление станет активным.',
+    )
+    text += '\n\n' + texts.t(
+        'SBP_PURCHASE_PENDING_NOTE',
+        'ℹ️ Подписка активируется после подтверждения и первого списания.',
+    )
+
+    buttons = []
+    if redirect_url:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('SBP_RECURRING_CONFIRM_BUTTON', '🏦 Подтвердить в банке'), url=redirect_url
+                )
+            ]
+        )
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')])
+
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
+
+
 def register_tariff_purchase_handlers(dp: Dispatcher):
     """Регистрирует обработчики покупки по тарифам."""
     # Список тарифов (для режима tariffs)
@@ -5249,6 +5332,9 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
 
     # Подтверждение покупки
     dp.callback_query.register(confirm_tariff_purchase, F.data.startswith('tariff_confirm:'))
+
+    # Оформление через СБП-автопродление Platega (альтернатива балансу)
+    dp.callback_query.register(purchase_tariff_with_sbp, F.data.startswith('tariff_sbp:'))
 
     # Подтверждение покупки суточного тарифа
     dp.callback_query.register(confirm_daily_tariff_purchase, F.data.startswith('daily_tariff_confirm:'))

@@ -125,7 +125,9 @@ def test_unified_app_apple_iap_only_mounts_only_apple_cabinet_routes(
         enable_telegram_webhook=False,
     )
 
-    registered_paths = {getattr(route, 'path', None) for route in app.routes}
+    # Starlette 1.x: include_router ленивый, вложенные пути не попадают в
+    # app.routes — резолвим фактическую таблицу через OpenAPI-схему.
+    registered_paths = set(app.openapi().get('paths', {}))
 
     assert '/cabinet/apple-iap/account-token' in registered_paths
     assert '/cabinet/apple-purchase' in registered_paths

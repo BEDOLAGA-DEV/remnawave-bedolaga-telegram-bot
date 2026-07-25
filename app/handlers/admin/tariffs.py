@@ -22,7 +22,7 @@ from app.database.crud.tariff import (
     update_tariff,
 )
 from app.database.models import Tariff, User
-from app.localization.texts import get_texts
+from app.localization.texts import Texts, get_texts
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
@@ -329,7 +329,7 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
 
 <b>Параметры:</b>
 • Трафик: {traffic}
-• Устройств: {tariff.device_limit}
+• Устройств: {Texts.format_device_limit(tariff.device_limit)}
 • Макс. устройств: {max_devices_display}
 • Цена за доп. устройство: {device_price_display}
 • Триал: {trial_status}

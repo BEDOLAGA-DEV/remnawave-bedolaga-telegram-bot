@@ -3,17 +3,35 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import PaymentMethod, TransactionType
+from app.database.models import PaymentMethod, Subscription, TransactionType
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
+
+
+def _parse_next_charge(raw: Any) -> datetime | None:
+    """Парсит ``NextChargeAt`` коллбека Platega в aware datetime.
+
+    Значение приходит с суффиксом ``Z`` (UTC), который ``datetime.fromisoformat``
+    понимает только после замены на ``+00:00``. Отсутствие поля или невалидный
+    формат не фатальны — следующее списание останется без даты до следующего
+    коллбека.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 class PlategaPaymentMixin:
@@ -130,6 +148,506 @@ class PlategaPaymentMixin:
             'correlation_id': correlation_id,
             'payload': payload_token,
         }
+
+    async def create_platega_sbp_subscription(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        subscription: Any,
+        tariff: Any,
+    ) -> dict[str, Any]:
+        """Создаёт рекуррентную СБП-подписку Platega, привязанную к тарифу подписки.
+
+        Каденс списания выбирается по той же иерархии периодов, что и
+        balance-autopay (см. ``monitoring_service._process_autopayments``):
+        выбор пользователя → глобальный дефолт → самый короткий период тарифа
+        → жёсткий fallback 30 дней. Сумма — базовая цена тарифа за период
+        списания (``get_purchasable_price_for_period``), а не
+        ``calculate_renewal_price`` — мы намеренно не замораживаем временные
+        промо-скидки в повторяющемся списании.
+
+        После создания подписки выключает ``subscription.autopay_enabled``:
+        Platega-рекуррент и баланс-автосписание — взаимоисключающие движки
+        продления одной подписки.
+        """
+        # Ленивый импорт: monitoring_service импортирует платёжный слой,
+        # прямой импорт на уровне модуля создал бы циклическую зависимость.
+        from app.database.crud import platega_subscription as sub_crud
+        from app.services.monitoring_service import resolve_autopay_period_candidate
+        from app.services.platega_recurrent import resolve_platega_interval
+
+        existing = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription.id)
+        if existing:
+            # Идемпотентный повтор обязан ТОЖЕ восстановить взаимоисключение:
+            # если balance-autopay успели включить обратно (например, пока фича
+            # была выключена), оба движка продления остались бы взведёнными.
+            if getattr(subscription, 'autopay_enabled', False):
+                subscription.autopay_enabled = False
+                await db.commit()
+            return {
+                'local_id': existing.id,
+                'platega_subscription_id': existing.platega_subscription_id,
+                'redirect_url': existing.redirect_url,
+                'status': existing.status,
+            }
+
+        period_days = (
+            resolve_autopay_period_candidate(getattr(subscription, 'autopay_period_days', None), tariff)
+            or resolve_autopay_period_candidate(getattr(settings, 'DEFAULT_AUTOPAY_PERIOD_DAYS', 0), tariff)
+            or (tariff.get_shortest_period() if tariff else None)
+            or 30
+        )
+        is_daily = bool(getattr(tariff, 'is_daily', False))
+        interval, charge_days = resolve_platega_interval(period_days, is_daily)
+
+        amount_kopeks = tariff.get_purchasable_price_for_period(charge_days)
+        # Нулевая цена отклоняется наравне с отсутствующей: подписка Platega на
+        # 0 ₽ бессмысленна и вела бы к пустым регулярным «списаниям».
+        if not amount_kopeks:
+            raise ValueError(f'Тариф не имеет цены за период {charge_days} дней — СБП-автопродление недоступно')
+
+        response = await self.platega_service.create_subscription(
+            amount=amount_kopeks / 100,
+            currency=settings.PLATEGA_CURRENCY,
+            interval=interval,
+            description=getattr(tariff, 'name', None) or 'Подписка',
+        )
+
+        platega_id = (response or {}).get('transactionId')
+        if not platega_id:
+            raise RuntimeError('Platega не вернула transactionId при создании подписки')
+        redirect_url = (response or {}).get('redirect')
+
+        try:
+            record = await sub_crud.create_platega_subscription(
+                db,
+                user_id=user_id,
+                subscription_id=subscription.id,
+                tariff_id=getattr(tariff, 'id', None),
+                interval=interval,
+                charge_days=charge_days,
+                amount_kopeks=amount_kopeks,
+                redirect_url=redirect_url,
+                platega_subscription_id=platega_id,
+            )
+        except IntegrityError:
+            # Гонка конкурентного enable: оба запроса прошли идемпотентную
+            # проверку выше, победитель вставился первым, нас отбил partial
+            # unique uq_platega_subscriptions_alive. Наша remote-подписка уже
+            # создана и осталась бы сиротой — отменяем best-effort и
+            # возвращаем запись победителя.
+            await db.rollback()
+            try:
+                await self.platega_service.cancel_subscription(platega_id)
+            except Exception as orphan_error:  # pragma: no cover - best-effort
+                logger.warning(
+                    'Не удалось отменить осиротевшую Platega-подписку после гонки enable',
+                    platega_subscription_id=platega_id,
+                    error=str(orphan_error),
+                )
+            winner = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription.id)
+            if winner is None:  # pragma: no cover - победитель успел отмениться
+                raise RuntimeError('Platega-подписка не создана: конкурентная гонка enable') from None
+            logger.info(
+                'Гонка конкурентного enable СБП: возвращаю запись победителя',
+                subscription_id=subscription.id,
+                winner_local_id=winner.id,
+                orphan_platega_id=platega_id,
+            )
+            return {
+                'local_id': winner.id,
+                'platega_subscription_id': winner.platega_subscription_id,
+                'redirect_url': winner.redirect_url,
+                'status': winner.status,
+            }
+
+        # Взаимоисключение: у подписки может быть только один движок продления.
+        subscription.autopay_enabled = False
+        await db.commit()
+
+        return {
+            'local_id': record.id,
+            'platega_subscription_id': platega_id,
+            'redirect_url': redirect_url,
+            'status': (response or {}).get('status', 'PENDING'),
+        }
+
+    async def cancel_platega_sbp_subscription(
+        self,
+        db: AsyncSession,
+        *,
+        local_id: int,
+        commit: bool = True,
+    ) -> bool:
+        """Отменяет одну СБП-подписку Platega по локальному id записи.
+
+        Идемпотентна: уже отменённая запись возвращает ``True`` без обращения
+        к Platega API. Сама отмена на стороне Platega — best-effort: сетевая
+        ошибка логируется, но не мешает пометить запись ``CANCELLED``
+        локально — иначе временная недоступность Platega блокировала бы
+        отмену навсегда, а повторная отмена уже отменённой Platega-подписки
+        безопасна (идемпотентна на их стороне), так что рассинхрон не страшен.
+        """
+        from app.database.crud import platega_subscription as sub_crud
+
+        record = await sub_crud.get_platega_subscription_by_id(db, local_id)
+        if not record:
+            return False
+
+        if record.status == 'CANCELLED':
+            return True
+
+        if record.platega_subscription_id:
+            try:
+                result = await self.platega_service.cancel_subscription(record.platega_subscription_id)
+                if result is None:
+                    # _request сам глотает HTTP-ошибки и возвращает None — сюда
+                    # попадает КАЖДЫЙ реальный сбой провайдера. Локально запись
+                    # всё равно станет CANCELLED, а reconciler повторит удалённую
+                    # отмену (свип CANCELLED-записей), чтобы Platega не продолжила
+                    # списывать по «отменённой» у нас подписке.
+                    logger.warning(
+                        'Отмена Platega-подписки не подтверждена провайдером — reconciler повторит',
+                        platega_subscription_id=record.platega_subscription_id,
+                    )
+            except Exception as error:  # pragma: no cover - network errors
+                logger.warning(
+                    'Не удалось отменить Platega-подписку на стороне провайдера',
+                    platega_subscription_id=record.platega_subscription_id,
+                    error=str(error),
+                )
+
+        record.status = 'CANCELLED'
+        if commit:
+            await db.commit()
+        else:
+            # commit=False — вызывающий держит собственную транзакцию (например,
+            # мерж аккаунтов с flush-секвенированием): CANCELLED войдёт в неё и
+            # закоммитится/откатится вместе с остальным. При откате remote уже
+            # отменён — reconciler добьёт локальный статус по remote-состоянию.
+            await db.flush()
+        return True
+
+    async def cancel_platega_recurring_for_subscription(
+        self,
+        db: AsyncSession,
+        subscription_id: int,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """Best-effort отмена активной СБП-подписки Platega, привязанной к
+        ``subscription_id``.
+
+        Вызывается из путей удаления/замены подписки (Task 11) — никогда не
+        должна бросать исключение и блокировать удаление сбоем Platega.
+        """
+        from app.database.crud import platega_subscription as sub_crud
+
+        try:
+            record = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription_id)
+            if not record:
+                return
+            await self.cancel_platega_sbp_subscription(db, local_id=record.id, commit=commit)
+        except Exception as error:  # pragma: no cover - best-effort cleanup
+            logger.warning(
+                'Не удалось отменить СБП-автопродление Platega по подписке',
+                subscription_id=subscription_id,
+                error=str(error),
+            )
+
+    async def process_platega_subscription_callback(
+        self,
+        db: AsyncSession,
+        payload: dict[str, Any],
+    ) -> None:
+        """Обрабатывает коллбек Platega по рекуррентной СБП-подписке.
+
+        Один и тот же PascalCase-пейлоад Platega шлёт и на списание (charge), и
+        на смену статуса самой подписки — маршрутизация обоих коллбеков сюда
+        сделана в Task 9. Баланс пользователя НЕ трогается: продление —
+        прямой вызов ``Subscription.extend_subscription``, а не начисление
+        суммы платежа на баланс (в отличие от balance-autopay).
+
+        Идемпотентность успешных списаний — по паре
+        ``(platega_subscription_id, charge Id)`` через сохранённый
+        ``last_charge_external_id``: повторная доставка того же коллбека
+        (ретрай Platega) не должна продлевать подписку дважды.
+        """
+        from app.database.crud import platega_subscription as sub_crud
+        from app.services import platega_recurrent as pr
+
+        status = payload.get('Status')
+        platega_id = payload.get('SubscriptionId')
+        charge_id = payload.get('Id')
+
+        if not platega_id:
+            logger.warning('Platega subscription callback без SubscriptionId', status=status)
+            return
+
+        found = await sub_crud.get_platega_subscription_by_platega_id(db, platega_id)
+        if not found:
+            logger.warning(
+                'Platega subscription callback: подписка не найдена',
+                platega_subscription_id=platega_id,
+                status=status,
+            )
+            return
+
+        # Блокируем строку перед изменением статуса/счётчиков — конкурентные
+        # коллбеки (ретрай Platega) не должны продлевать/учитывать дважды.
+        record = await sub_crud.get_platega_subscription_by_id_for_update(db, found.id)
+        if not record:
+            logger.warning(
+                'Platega subscription callback: запись исчезла после блокировки',
+                platega_subscription_id=platega_id,
+                status=status,
+            )
+            return
+
+        if status == pr.SUB_ACTIVATED:
+            record.status = 'ACTIVE'
+            await db.commit()
+            await self._notify_sbp_recurring(db, record, 'activated')
+            return
+
+        if status in pr.CHARGE_SUCCESS:
+            if not charge_id:
+                # CONFIRMED без Id доверять нельзя: без id идемпотентность ниже
+                # не сработает, и каждый повтор такого коллбека продлевал бы
+                # подписку заново. Поэтому не продлеваем, а просто выходим.
+                logger.warning(
+                    'Platega subscription callback: CONFIRMED без charge Id',
+                    platega_subscription_id=platega_id,
+                )
+                return
+
+            if record.last_charge_external_id == charge_id:
+                logger.info(
+                    'Platega subscription callback: списание уже обработано',
+                    platega_subscription_id=platega_id,
+                    charge_id=charge_id,
+                )
+                return
+
+            # Полноисторийная идемпотентность: last_charge_external_id хранит
+            # только ПОСЛЕДНИЙ charge Id, поэтому поздний ределивери старого
+            # списания (N после N+1) прошёл бы мимо быстрой проверки выше и
+            # продлил бы подписку второй раз. Каждый обработанный чардж уже
+            # записан в transactions.external_id — сверяемся с ним.
+            from sqlalchemy import select as sa_select
+
+            from app.database.models import Transaction
+
+            duplicate_tx = (
+                await db.execute(
+                    sa_select(Transaction.id).where(
+                        Transaction.external_id == charge_id,
+                        Transaction.payment_method == PaymentMethod.PLATEGA.value,
+                    )
+                )
+            ).scalar_one_or_none()
+            if duplicate_tx is not None:
+                logger.info(
+                    'Platega subscription callback: поздний ределивери старого списания',
+                    platega_subscription_id=platega_id,
+                    charge_id=charge_id,
+                )
+                return
+
+            from app.database.crud.transaction import create_transaction
+
+            subscription = await db.get(Subscription, record.subscription_id)
+            if subscription is None:
+                # Не отмечаем charge_id/счётчики — реального продления не было,
+                # репортить успех нельзя. Практически недостижимо (CASCADE FK на
+                # subscription_id сносит и саму запись record), но на случай гонки
+                # молча притворяться успехом хуже, чем залогировать и выйти.
+                logger.error(
+                    'Platega subscription callback: Subscription не найдена для продления',
+                    subscription_id=record.subscription_id,
+                    platega_subscription_id=platega_id,
+                )
+                return
+
+            subscription.extend_subscription(record.charge_days)
+
+            # Списание по локально ОТМЕНЁННОЙ записи = удалённая отмена не
+            # прошла (сбой Platega в момент cancel). Деньги взяты — продлеваем
+            # честно, но запись НЕ воскрешаем в ACTIVE (иначе отмена юзера
+            # молча стирается и цикл продолжается вечно) и тут же повторяем
+            # удалённую отмену.
+            was_cancelled = record.status == 'CANCELLED'
+
+            record.last_charge_external_id = charge_id
+            if not was_cancelled:
+                record.status = 'ACTIVE'
+            record.last_charge_at = datetime.now(UTC)
+            record.charges_success += 1
+            record.next_charge_at = _parse_next_charge(payload.get('NextChargeAt'))
+
+            tx = await create_transaction(
+                db,
+                user_id=record.user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=record.amount_kopeks,
+                description='СБП-автопродление Platega',
+                payment_method=PaymentMethod.PLATEGA,
+                external_id=charge_id,
+                commit=False,
+            )
+
+            await db.commit()
+
+            # Emit deferred side-effects after the atomic commit — mirrors
+            # _finalize_platega_payment's DEPOSIT flow. Fires transaction.created,
+            # promo-group auto-assignment and referral-contest tracking; never
+            # raises (swallows its own exceptions), so no extra guarding needed.
+            from app.database.crud.transaction import emit_transaction_side_effects
+
+            await emit_transaction_side_effects(
+                db,
+                tx,
+                amount_kopeks=record.amount_kopeks,
+                user_id=record.user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                payment_method=PaymentMethod.PLATEGA,
+                external_id=charge_id,
+                description='СБП-автопродление Platega',
+            )
+
+            if was_cancelled:
+                logger.error(
+                    'Platega списала по отменённой СБП-подписке — повторяю удалённую отмену',
+                    platega_subscription_id=platega_id,
+                    charge_id=charge_id,
+                )
+                if record.platega_subscription_id:
+                    try:
+                        await self.platega_service.cancel_subscription(record.platega_subscription_id)
+                    except Exception as recancel_error:  # pragma: no cover - best-effort
+                        logger.warning(
+                            'Повторная отмена Platega-подписки не удалась',
+                            platega_subscription_id=record.platega_subscription_id,
+                            error=str(recancel_error),
+                        )
+
+            await self._notify_sbp_recurring(db, record, 'confirmed')
+
+            # Синк панели RemnaWave — лучшее-усилие, намеренно ПОСЛЕДНИЙ шаг
+            # ветки: продление уже закоммичено в БД, так же поступает
+            # balance-autopay (см. monitoring_service._process_autopayments,
+            # комментарий "Синк панели — лучшее-усилие"). Без этого шага панель
+            # продолжает отдавать пользователю СТАРЫЙ end_date — бот говорит
+            # "продлено", а VPN всё равно обрывается по старой дате истечения.
+            # Порядок важен: при сбое update_remnawave_user делает db.rollback()
+            # изнутри, который экспайрит ВСЕ атрибуты объектов сессии (включая
+            # PK) — если синк стоит раньше emit_transaction_side_effects/notify,
+            # их чтения record.amount_kopeks/record.user_id падают
+            # MissingGreenlet вместо тихого best-effort. Поэтому синк — последним,
+            # а id для лога берём заранее, до вызова, чтобы сам except не упал.
+            subscription_id_for_log = subscription.id
+            try:
+                from app.services.subscription_service import SubscriptionService
+
+                await SubscriptionService().update_remnawave_user(
+                    db,
+                    subscription,
+                    reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+                    reset_reason='СБП-автопродление',
+                )
+            except Exception as sync_error:  # best-effort: продление уже в БД, не откатываем
+                logger.warning(
+                    'Синк панели после СБП-автопродления не удался',
+                    error=str(sync_error),
+                    subscription_id=subscription_id_for_log,
+                )
+            return
+
+        if status in pr.CHARGE_FAILED:
+            record.status = 'PAST_DUE'
+            record.charges_failed += 1
+            await db.commit()
+            await self._notify_sbp_recurring(db, record, 'failed')
+            return
+
+        if status == pr.SUB_PAST_DUE:
+            record.status = 'PAST_DUE'
+            await db.commit()
+            await self._notify_sbp_recurring(db, record, 'past_due')
+            return
+
+        if status == pr.SUB_CANCELLED:
+            record.status = 'CANCELLED'
+            await db.commit()
+            await self._notify_sbp_recurring(db, record, 'cancelled')
+            return
+
+        if status == pr.SUB_FAILED:
+            record.status = 'FAILED'
+            await db.commit()
+            await self._notify_sbp_recurring(db, record, 'failed')
+            return
+
+        logger.warning(
+            'Platega subscription callback: неизвестный статус',
+            status=status,
+            platega_subscription_id=platega_id,
+        )
+
+    async def _notify_sbp_recurring(
+        self,
+        db: AsyncSession,
+        record: Any,
+        kind: str,
+    ) -> None:
+        """Best-effort уведомление пользователя о событии СБП-автопродления.
+
+        Никогда не бросает исключение наружу — коллбек Platega должен
+        завершиться 200 OK независимо от того, доставилось ли сообщение в
+        Telegram.
+        """
+        try:
+            from app.cabinet.routes.websocket import cabinet_ws_manager
+
+            await cabinet_ws_manager.send_to_user(
+                record.user_id,
+                {
+                    'type': f'sbp_recurring.{kind}',
+                    'status': record.status,
+                    'amount_kopeks': record.amount_kopeks,
+                    'amount_rubles': record.amount_kopeks / 100,
+                    'next_charge_at': record.next_charge_at.isoformat() if record.next_charge_at else None,
+                    'subscription_id': record.subscription_id,
+                },
+            )
+        except Exception as ws_error:  # pragma: no cover — best-effort
+            logger.warning('Не удалось отправить WS-событие СБП-автопродления', error=str(ws_error), kind=kind)
+
+        bot = getattr(self, 'bot', None)
+        if not bot:
+            return
+        try:
+            from app.database.models import User
+            from app.localization.texts import get_texts
+
+            user = await db.get(User, record.user_id)
+            if not user or not user.telegram_id:
+                return
+
+            texts = get_texts(user.language)
+            messages = {
+                'confirmed': texts.t('SBP_RECURRING_NOTIFY_CONFIRMED', '✅ Подписка продлена автосписанием через СБП.'),
+                'failed': texts.t('SBP_RECURRING_NOTIFY_FAILED', '⚠️ Не удалось списать оплату по СБП-автопродлению.'),
+                'past_due': texts.t('SBP_RECURRING_NOTIFY_PAST_DUE', '⚠️ СБП-автопродление просрочено.'),
+                'cancelled': texts.t('SBP_RECURRING_NOTIFY_CANCELLED', 'ℹ️ СБП-автопродление отменено.'),
+                'activated': texts.t('SBP_RECURRING_NOTIFY_ACTIVATED', '✅ СБП-автопродление активировано.'),
+            }
+            text = messages.get(kind)
+            if text:
+                await bot.send_message(chat_id=user.telegram_id, text=text)
+        except Exception as error:  # pragma: no cover - best-effort notify
+            logger.warning('Не удалось отправить уведомление о СБП-автопродлении', error=str(error), kind=kind)
 
     async def process_platega_webhook(
         self,
@@ -529,3 +1047,195 @@ class PlategaPaymentMixin:
         )
 
         return payment
+
+
+class _PlategaSbpAgent(PlategaPaymentMixin):
+    """Минимальный носитель ``PlategaPaymentMixin`` для модульных точек входа
+    СБП-автопродления Platega: несёт только ``platega_service``, в отличие от
+    полного ``PaymentService`` с ещё 23 провайдерами, которые для СБП-автопродления
+    не нужны. Обслуживает и создание (``enable_platega_sbp_recurring``), и отмену/
+    отзыв подписки (Task 11, ``cancel_platega_recurring_for_subscription_safe``) —
+    несёт весь ``PlategaPaymentMixin``, а не только его часть."""
+
+    def __init__(self) -> None:
+        self.platega_service = PlategaService()
+
+
+async def enable_platega_sbp_recurring(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    subscription: Any,
+    tariff: Any,
+) -> dict[str, Any]:
+    """Создать СБП-автопродление. Возвращает {local_id, platega_subscription_id, redirect_url, status}.
+
+    НЕ best-effort: пробрасывает ValueError (нет цены за период) / RuntimeError
+    (Platega не отдала transactionId), чтобы UI показал ошибку. Гейт на фичу.
+    """
+    if not settings.is_platega_recurrent_enabled():
+        raise RuntimeError('Platega recurrent is disabled')
+    return await _PlategaSbpAgent().create_platega_sbp_subscription(
+        db, user_id=user_id, subscription=subscription, tariff=tariff
+    )
+
+
+async def purchase_tariff_with_sbp_recurring(
+    db: AsyncSession,
+    *,
+    user: Any,
+    tariff: Any,
+) -> dict[str, Any]:
+    """Оформление подписки на тариф с оплатой через СБП-автопродление Platega.
+
+    Первое списание Platega = подтверждение привязки в банке, поэтому «купить
+    с автооплатой» — это привязка + первый чардж, который продлит/оживит
+    подписку по каденс-правилу (месячный тариф — помесячно, 90 дней —
+    помесячно по цене месяца, суточный — по дням).
+
+    Флоу по состоянию подписки юзера на этот тариф:
+    - непройденной подписки нет → создаётся EXPIRED-заготовка
+      (``create_sbp_pending_subscription``): доступа нет, панели нет; первый
+      CONFIRMED продлит и активирует, синк панели создаст panel-юзера;
+    - есть непройденная (active/expired, не триал) → привязка на неё;
+    - триал (живой или истёкший) → отказ ValueError: конверсию триала в
+      платную делает только balance-покупка (revive/convert), а активация
+      второй строки того же тарифа при живом триале упёрлась бы в partial
+      unique index прямо в чардж-коллбеке — деньги взяты, продление упало;
+    - в single-sub режиме подписка другого тарифа → отказ ValueError:
+      чарджи привязки продлевали бы подписку ЧУЖОГО тарифа по цене
+      выбранного (смену тарифа делает balance-покупка).
+
+    Возвращает результат enable + ``subscription_id``. Пробрасывает
+    ValueError/RuntimeError — UI показывает сообщение.
+    """
+    if not settings.is_platega_recurrent_enabled():
+        raise RuntimeError('Platega recurrent is disabled')
+
+    from app.database.crud.subscription import (
+        create_sbp_pending_subscription,
+        get_subscription_by_user_and_tariff,
+        get_subscription_by_user_id,
+    )
+
+    if settings.is_multi_tariff_enabled():
+        subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
+    else:
+        subscription = await get_subscription_by_user_id(db, user.id)
+        if subscription is not None and subscription.tariff_id != tariff.id:
+            raise ValueError('СБП-оформление недоступно при подписке другого тарифа — оплатите с баланса')
+
+    if subscription is not None:
+        if getattr(subscription, 'is_trial', False):
+            raise ValueError('СБП-оформление недоступно для триальной подписки — оплатите с баланса')
+        # DISABLED чардж не оживит (extend_subscription активирует только
+        # EXPIRED/LIMITED) — деньги списались бы без выдачи доступа. PENDING —
+        # чужой незавершённый платёжный флоу (миниапп-ордер), не влезаем.
+        if subscription.status in ('disabled', 'pending'):
+            raise ValueError('СБП-оформление недоступно для этой подписки — оплатите с баланса')
+
+    if subscription is None:
+        subscription = await create_sbp_pending_subscription(db, user.id, tariff)
+
+    result = await enable_platega_sbp_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
+    return {**result, 'subscription_id': subscription.id}
+
+
+async def replay_missed_platega_charges(
+    db: AsyncSession,
+    record: Any,
+    remote: dict[str, Any] | None,
+) -> int:
+    """Доначисляет списания, чьи CONFIRMED-коллбеки потерялись.
+
+    Remote ``chargeMetrics.chargesSuccess`` > локального счётчика = юзер
+    заплатил, а продление не применилось (коллбек не дошёл) — доступ истёк бы
+    несмотря на успешное списание. Каждое пропущенное списание проигрывается
+    через штатный ``process_platega_subscription_callback`` с синтетическим
+    charge Id ``{platega_id}:replay:{ordinal}`` — вся идемпотентность
+    (полноисторийная сверка по transactions.external_id), продление, панель и
+    уведомления переиспользуются 1:1.
+
+    Гард 2 часа от remote lastChargeAt: запоздавший НАСТОЯЩИЙ коллбек имеет
+    другой Id и прошёл бы мимо дедупа — даём ему окно доехать. Худший случай
+    гонки после окна — двойное ПРОДЛЕНИЕ (подарок дней юзеру), не двойное
+    списание. Возвращает число доначисленных списаний.
+    """
+    metrics = (remote or {}).get('chargeMetrics') or {}
+    try:
+        remote_success = int(metrics.get('chargesSuccess') or 0)
+    except (TypeError, ValueError):
+        return 0
+    local_success = int(record.charges_success or 0)
+    missed = remote_success - local_success
+    if missed <= 0 or not record.platega_subscription_id:
+        return 0
+
+    last_charge_at = _parse_next_charge(metrics.get('lastChargeAt') or (remote or {}).get('lastChargeAt'))
+    if last_charge_at is None or (datetime.now(UTC) - last_charge_at) < timedelta(hours=2):
+        return 0
+
+    next_charge_raw = metrics.get('nextChargeAt') or (remote or {}).get('nextChargeAt')
+
+    # Снапшот ДО реплеев: best-effort панель-синк внутри коллбека может сделать
+    # rollback, который экспайрит атрибуты record — повторное чтение ORM-полей
+    # после первого реплея упало бы MissingGreenlet.
+    platega_id = record.platega_subscription_id
+
+    agent = _PlategaSbpAgent()
+    replayed = 0
+    # Кап на проход — защита от бесконечного цикла при рассинхроне счётчиков;
+    # остаток доначислит следующий цикл мониторинга.
+    for ordinal in range(local_success + 1, local_success + 1 + min(missed, 12)):
+        payload = {
+            'Status': 'CONFIRMED',
+            'Id': f'{platega_id}:replay:{ordinal}',
+            'SubscriptionId': platega_id,
+            'NextChargeAt': next_charge_raw,
+        }
+        await agent.process_platega_subscription_callback(db, payload)
+        replayed += 1
+
+    if replayed:
+        logger.warning(
+            'Platega: доначислены пропущенные списания (коллбеки не дошли)',
+            platega_subscription_id=platega_id,
+            replayed=replayed,
+            remote_charges_success=remote_success,
+        )
+    return replayed
+
+
+async def cancel_platega_recurring_for_subscription_safe(
+    db: AsyncSession,
+    subscription_id: int,
+    *,
+    commit: bool = True,
+) -> None:
+    """Точка входа для путей удаления/отзыва подписки: отменяет активную
+    СБП-автоподписку Platega, привязанную к ``subscription_id``.
+
+    Best-effort и никогда не бросает исключение — вызывающий код (удаление
+    подписки администратором, пользователем из кабинета и т.д.) не должен
+    блокироваться недоступностью Platega.
+
+    НЕ гейтится флагом рекуррента НАМЕРЕННО: отмена — операция безопасности,
+    а не фича. Выключение PLATEGA_RECURRENT_ENABLED при живых привязках не
+    останавливает списания Platega — коллбеки продолжают приходить; если бы
+    отмена гейтилась, юзер с выключенной фичей не мог бы остановить списания
+    ни с одной поверхности (двойной биллинг при повторном включении autopay).
+    Быстрый выход при выключенном Platega целиком не нужен: без активной
+    записи в БД функция завершается одним дешёвым SELECT.
+
+    ``commit=False`` — для вызова внутри чужой транзакции (мерж аккаунтов):
+    локальный CANCELLED уходит flush'ем и коммитится вместе с транзакцией
+    вызывающего.
+    """
+    try:
+        await _PlategaSbpAgent().cancel_platega_recurring_for_subscription(db, subscription_id, commit=commit)
+    except Exception as error:  # pragma: no cover - defensive; mixin already best-effort
+        logger.warning(
+            'Не удалось отменить СБП-автопродление при удалении подписки',
+            error=str(error),
+            subscription_id=subscription_id,
+        )

@@ -1,5 +1,71 @@
 # Changelog
 
+## [3.66.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.65.1...v3.66.0) (2026-07-24)
+
+
+### New Features
+
+* **grace:** упростить квоту трафика и правила доступности ([2e40235](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2e40235e60677550ca975904c381414d2ae8a4d0))
+* **nalogo:** доставка чека на почту, когда Telegram недоступен ([3c047ed](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3c047edb0b884f6bf5ade8e9bb3bc9c1af382609))
+* **platega:** CRUD рекуррентных подписок ([9cf2aa3](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9cf2aa3a546e639369077dfb30ab65bbcb2e5c89))
+* **platega:** WS-события sbp_recurring.* для кабинета ([f34431a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f34431a46b00dc2fc1169f9ede4a43aee6405ac9))
+* **platega:** админка кабинета — статус и отмена СБП-автооплаты ([135771e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/135771e02e05761b72961a97d7364e72b6706177))
+* **platega:** бот-флоу автопродления через СБП ([a69d233](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a69d233886874883b25b89f6d3230db41a3b61f4))
+* **platega:** ветка подписочных коллбеков в /platega-webhook ([9d13c4e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9d13c4ec5069e5571212ad967028d8ccaf29e998))
+* **platega:** гейт PLATEGA_RECURRENT_ENABLED ([23ba645](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/23ba6455fd43c69075fa8540b0f86f0358c7ac3b))
+* **platega:** кабинетные эндпоинты СБП-автопродления (юзер) ([19862a2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/19862a298e6233587de9351abf862f3040dfae6e))
+* **platega:** методы подписок в PlategaService (create/get/list/cancel) ([27c8fac](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/27c8fac35a5e2edf88db0723520cc2323cd0118d))
+* **platega:** модель platega_subscriptions + миграция ([5c9580a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5c9580a8e0b2ce06199419bae93b648a182a7187))
+* **platega:** обработчик коллбеков подписки (продление, идемпотентность, статусы) ([5a33a9e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5a33a9e703137240aa3fc75173840bc861420ad8))
+* **platega:** отмена СБП-автооплаты при удалении/отзыве подписки ([2593424](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2593424901a1653a7ea264eff43475bfea6e9694))
+* **platega:** отмена СБП-подписки + best-effort хелпер по подписке ([4763cbe](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4763cbe1da6e8d41a15f4880ff36efa436246219))
+* **platega:** реконсилятор СБП-подписок в monitoring-цикле ([1cf5212](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1cf5212e085b0267179b3663366e4eab7f9761f0))
+* **platega:** СБП-оформление подписки — альтернатива оплате с баланса ([43d81c8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/43d81c86c3d2afe7695af18ad72d072e13229393))
+* **platega:** создание СБП-подписки + выключение balance-autopay ([e701cad](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e701cad459a1a3204a5546d829c3b5accb0d1b8f))
+* **platega:** чистая логика каденса рекуррентных СБП-подписок ([8200847](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8200847d86de32989df5490a4581a1fffd7c8029))
+* **remnawave:** транслитерация кириллицы в username пользователя ([35383c2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/35383c206aa0d2bb8e86c3745a96ed8f80666e4a)), closes [#1659](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/1659)
+* **support-ws:** bridge core + message.created from ticket.message_added ([e54e1e3](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e54e1e3009fa33d7b4a8b54a7fbcc23831b34009))
+* **support-ws:** bridge ticket.created and ticket.status_changed mappings ([2ff76f3](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2ff76f35970a766cdc5d6cb497455410874917d8))
+* **support-ws:** emit ticket events from cabinet/mini-app routes for bridge ([d65d9fb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d65d9fb059d0f59e2812e43f28ca04988d138a68))
+* **support-ws:** register event bridge at app startup ([8d80230](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8d80230a8db50e9b3f668c172696e3ad7e462c04))
+
+
+### Bug Fixes
+
+* **admin:** device_limit = 0 в админке тоже показывать безлимитом ([8e1b2cc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8e1b2cc9af70f3475466d6e8ed4a8c846b2ebdfb))
+* auto-purchase silently skipped after top-up due to updated_at race guard ([ad3e9cf](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ad3e9cf5353e58df5d29e2fc9e34b278fc06f8b7))
+* **ci:** lowercase-референс образа для Trivy-скана ([795c7be](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/795c7be735e6aaa61d2689d97c815346a090ae7b))
+* **nalogo:** доставлять чек покупателю после ручной пересылки из админки ([fa25d70](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fa25d701a2227829f7d5ac087af77a68a31d145b))
+* **nalogo:** дочитывать печатную форму чека до конца ([7dcd18e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7dcd18ec8a27a855b644ea1eab7d0b9989204f57))
+* **nalogo:** чек по подарочной покупке — адресат покупатель, а не одаряемый ([3a0a157](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3a0a157f35029c8c2e57b013147c74f33339059b))
+* **platega:** actionable-ошибка при отказе создания СБП-подписки ([0864a95](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0864a95ec65f90cdcf60d2af9ff2265b3be51e0d))
+* **platega:** side-effects после СБП-списания + защита от пустого charge Id и пропавшей подписки ([ee295c6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ee295c6a8dcd648f5c64b1aaea61fed238eee0d5))
+* **platega:** аудит-фиксы СБП-автопродления — money-safety и полнота отмен ([ccc2049](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ccc2049c7d15dda6779ce6f74a6b807459275a72))
+* **platega:** гонка конкурентного enable (D5) и outage-vs-404 в reconciler (D4) ([8243d39](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8243d3924e034e04ba83b61086a7e10a7ca02bdf))
+* **platega:** идемпотентность создания СБП-подписки (не плодить дубли и двойные списания) ([132ef4e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/132ef4e19f0ba1f24fd4958e88d2a9ceb65945e0))
+* **platega:** санитайзить description подписки под 64-байтный лимит Platega ([f7a6f5b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f7a6f5b624856bed742373ea123648c58e9e2642))
+* **platega:** СБП-автопродление доступно для суточных тарифов + гард на триал ([9fe42e7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9fe42e795c93cb26f75ca95e919adf983ac760c8))
+* **platega:** синк панели после списания + обратное взаимоисключение + отмена на пропущенных путях удаления ([57ad9b7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/57ad9b746e53d82c8641b7c0ee47eaa210993c21))
+* **platega:** три P2 из ревью релизного PR [#3111](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3111) ([64feac0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/64feac0aa8e5da90da38797a4d834fbcb350c2e2))
+* **rich-menu:** дать включить rich-меню без логотипа ([add7327](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/add7327d479202e8c12a232eeb7fd4b28157da25))
+* **rich-menu:** премиум-эмодзи из текстов меню уходили клиенту сырым тегом ([1feab43](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1feab432bc4da949ecbf15e7729320990272af30))
+* **settings:** отображать DEVICES_SELECTION_DISABLED_AMOUNT как число, а не цену ([0f1968e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0f1968ec658148f0920bfaa253ea3c59c9f6df1f)), closes [#1658](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/1658)
+* **subscription:** device_limit = 0 — это безлимит, а не ноль устройств ([51688fc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/51688fc4573569dae2fe9855da93eeebb6d1188a))
+* **support:** дефолты SLA в коде развести с .env.example не в пользу спама ([38110e5](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/38110e50fee3a8d57f42c66a72f238582e5a2a28))
+* **support:** отдавать внешний URL поддержки в конфиге кабинета ([b270349](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b27034969f11d6bf41e4e8a81da351fabcb965f4))
+* **support:** проверять бан поддержки и режим тикетов в веб-сокете ([f3acc69](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f3acc69a8fcae3efdbd5a18153a05a75473a4136))
+* **support:** синхронизировать persisted-режим поддержки в settings при старте ([2184e58](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2184e58da48831c914ac68806baa13008d3f0a85))
+* **tickets:** передавать db в новые event_emitter-эмиссии кабинета ([8eaef7f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8eaef7f1ffbddc7947d591a87aaeaa643b3f9cfa))
+* **tickets:** проверять блокировку поддержки и лимит тикетов в кабинете ([2887ef7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2887ef70cadbe85b15e974429ac0e5d283c80515))
+* **tickets:** режим поддержки в кабинете читать у сервиса, а не из settings ([bd93d7e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/bd93d7e8ba7e3908fc73684c5782ef9d633fd065))
+
+
+### Documentation
+
+* **platega:** отмена автооплаты, хук при удалении подписки, админка кабинета ([47f5252](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/47f5252ffcc188557907dfd8c0c20529c3f06ad6))
+* **platega:** план реализации бэкенда+бота рекуррентных СБП (Plan A) ([7a8bd2e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7a8bd2ee1358f65e4f140f88194d6d02dfd77c83))
+* **platega:** спека рекуррентных СБП-платежей Platega ([9f876aa](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9f876aa2836c15358995c31d092a86edd90e4467))
+
 ## [3.65.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.65.0...v3.65.1) (2026-07-19)
 
 

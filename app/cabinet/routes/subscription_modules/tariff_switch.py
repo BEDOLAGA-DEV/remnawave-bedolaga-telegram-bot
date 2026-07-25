@@ -449,6 +449,14 @@ async def switch_tariff(
     # Reset device limit to new tariff base (extra purchased devices are not carried over)
     from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
+    # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила бы
+    # списывать сумму СТАРОГО тарифа со старым каденсом. Отменяем привязку до
+    # мутаций — юзер переподключит СБП-автопродление под новый тариф (нужна
+    # новая банковская авторизация, молча пересоздать нельзя).
+    from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
     # Re-load subscription to avoid MissingGreenlet from expired lazy relationship
     # (subtract_user_balance re-selects User with populate_existing=True which expires relationships)
     await db.refresh(subscription)

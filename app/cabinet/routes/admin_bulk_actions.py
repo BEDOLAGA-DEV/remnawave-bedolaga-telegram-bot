@@ -541,6 +541,29 @@ async def _do_delete_subscription(
             subscriptions=blocked_subscriptions,
         )
 
+    # Best-effort: stop Platega SBP autopay before the row disappears — the
+    # platega_subscriptions record CASCADE-deletes with it, so cancelling
+    # after the delete would find nothing to cancel on Platega's side.
+    # NOTE: this commits its own transaction internally, which releases the
+    # grace-guard's Postgres advisory lock acquired just above. It therefore
+    # runs BEFORE any irreversible panel/DB step, and the guard is
+    # re-acquired immediately below — closing that window before anything
+    # that can't be undone happens.
+    from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+    await cancel_platega_recurring_for_subscription_safe(db, sub.id)
+
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (sub.id,))
+    except GraceAccessDeletionBlocked:
+        return BulkUserResult(
+            user_id=blocked_user_id,
+            success=False,
+            message=f'Skipped: {tariff_name} has open grace access; drain/restore it first',
+            username=blocked_username,
+            subscriptions=blocked_subscriptions,
+        )
+
     # Deactivate in RemnaWave panel first
     _sub_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_uuid', None)
     if _sub_uuid:

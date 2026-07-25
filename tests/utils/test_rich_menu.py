@@ -82,8 +82,122 @@ def _patch_content_sources(monkeypatch, *, promo=None, test_access=None, random_
     monkeypatch.setattr(rich_menu, 'get_random_active_message', fake_random)
 
 
+class PremiumEmojiTexts(DummyTexts):
+    """Оператор украсил тексты меню премиум-эмодзи через <tg-emoji>."""
+
+    EMOJI_ID = '6032921981795322802'
+
+    @classmethod
+    def _emoji(cls, char: str) -> str:
+        return f'<tg-emoji emoji-id="{cls.EMOJI_ID}">{char}</tg-emoji>'
+
+    def t(self, key, default=None):
+        decorated = {
+            'MAIN_MENU_RICH_SUBSCRIPTION_HEADING': f'{self._emoji("📱")} Подписка',
+            # многострочный шаблон со .format-плейсхолдерами — как в реальных текстах
+            'SUB_STATUS_ACTIVE_LONG': f'{self._emoji("💎")} Активна\n📅 до {{end_date}} ({{days}} дн.)',
+            'MAIN_MENU_RICH_DEVICES': f'{self._emoji("📱")} Устройства: {{devices}}',
+            'MAIN_MENU_RICH_BALANCE': f'{self._emoji("💰")} Баланс: {{balance}}',
+            'MAIN_MENU_ACTION_PROMPT': f'{self._emoji("👇")} Выберите действие:',
+        }
+        return decorated.get(key, default)
+
+
+class HostileTexts(DummyTexts):
+    """Тексты из админки — доверенный, но не безграничный источник разметки."""
+
+    def t(self, key, default=None):
+        if key == 'MAIN_MENU_ACTION_PROMPT':
+            return (
+                '<script>alert(1)</script>'
+                '<tg-emoji emoji-id="1" onload="steal()">💥</tg-emoji>'
+                '<a href="javascript:alert(1)">клик</a>'
+            )
+        return default
+
+
 def test_rich_flag_default_is_enabled():
     assert Settings.model_fields['MAIN_MENU_RICH_ENABLED'].default is True
+
+
+async def test_builder_keeps_premium_emoji_from_operator_texts(monkeypatch):
+    """Премиум-эмодзи из текстов меню должны доезжать тегом, а не текстом.
+
+    Регресс: rich-рендер гнал шаблоны через html.escape(), и клиент видел сырое
+    «<tg-emoji emoji-id="…">» вместо эмодзи — хотя rich-сообщения этот тег
+    поддерживают, и в классическом меню он работал.
+    """
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+    user = _make_user(_make_subscription(datetime.now(UTC)))
+
+    html_out = await rich_menu.build_main_menu_rich_html(user, PremiumEmojiTexts(), AsyncMock())
+
+    assert '&lt;tg-emoji' not in html_out, 'тег премиум-эмодзи ушёл клиенту экранированным'
+    # заголовок, статус, устройства, баланс, футер
+    assert html_out.count(f'<tg-emoji emoji-id="{PremiumEmojiTexts.EMOJI_ID}">') == 5
+    for fragment in ('Подписка', 'Активна', 'Устройства:', 'Баланс:', 'Выберите действие:'):
+        assert fragment in html_out
+    # плейсхолдеры шаблонов по-прежнему подставляются
+    assert '{balance}' not in html_out
+    assert '{devices}' not in html_out
+    # ...а данные пользователя остаются экранированными
+    assert 'Егор &lt;script&gt;' in html_out
+    assert '<script>' not in html_out
+
+
+async def test_builder_strips_disallowed_markup_from_operator_texts(monkeypatch):
+    """Из текстов пропускаем только подмножество sanitize_html, а не любой HTML."""
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+    user = _make_user(_make_subscription(datetime.now(UTC)))
+
+    html_out = await rich_menu.build_main_menu_rich_html(user, HostileTexts(), AsyncMock())
+
+    assert '<script>' not in html_out
+    assert '&lt;script&gt;' in html_out
+    assert 'onload' not in html_out
+    assert 'javascript:' not in html_out
+    # разрешённый тег остаётся — но без постороннего атрибута
+    assert '<tg-emoji emoji-id="1">💥</tg-emoji>' in html_out
+
+
+async def test_unlimited_devices_shown_as_infinity_not_hidden(monkeypatch):
+    """device_limit = 0 (HWID выключен) — безлимит, а не «нет устройств».
+
+    Регресс: строка про устройства пряталась целиком (`if device_limit:`),
+    поэтому у юзера с выключенным HWID её просто не было в меню.
+    """
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+    subscription = _make_subscription(datetime.now(UTC))
+    subscription.device_limit = 0
+
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
+
+    assert 'Устройства: ∞' in html_out
+    assert 'Устройства: 0' not in html_out
+
+
+async def test_unlimited_devices_in_multi_tariff_table(monkeypatch):
+    """То же для строки расхода в таблице мультитарифа."""
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    subscription = _make_subscription(datetime.now(UTC))
+    subscription.device_limit = 0
+
+    async def fake_get_all(db, user_id):
+        return [subscription]
+
+    monkeypatch.setattr(rich_menu, 'get_all_subscriptions_by_user_id', fake_get_all)
+
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(subscription), DummyTexts(), AsyncMock())
+
+    assert '📱 ∞' in html_out
+    assert '📱 0' not in html_out
 
 
 async def test_builder_single_subscription_structure(monkeypatch):
@@ -731,6 +845,92 @@ async def test_logo_fetch_failure_degrades_and_resends(monkeypatch):
     assert '<img' in calls[0]
     assert '<img' not in calls[1]
     assert rich_menu.is_rich_menu_enabled() is True
+
+
+@pytest.mark.parametrize('value', ['none', 'off', 'no', 'false', 'disabled', '-', 'NONE', ' None '])
+async def test_logo_can_be_disabled_explicitly(monkeypatch, tmp_path, value):
+    """Rich-меню должно работать вообще без логотипа.
+
+    Пустая строка занята под авто-режим, поэтому при существующем LOGO_FILE
+    шапку было не убрать: получаешь либо дефолтный логотип, либо ждёшь свой.
+    """
+    logo = tmp_path / 'logo.png'
+    logo.write_bytes(b'png')
+    monkeypatch.setattr(settings, 'WEBHOOK_URL', 'https://bot.example.com/webhook', raising=False)
+    monkeypatch.setattr(settings, 'LOGO_FILE', str(logo), raising=False)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_LOGO_URL', value, raising=False)
+
+    assert rich_menu._resolve_rich_logo_url() == ''
+
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(None), DummyTexts(), AsyncMock())
+
+    assert '<img' not in html_out
+    assert html_out.startswith('<h4>')  # меню собралось, просто без шапки
+
+
+async def test_non_http_logo_value_disables_logo_instead_of_breaking_menu(monkeypatch, tmp_path):
+    """«Подставлю не-картинку, чтобы не грузилась» не должно ронять rich в классику."""
+    logo = tmp_path / 'logo.png'
+    logo.write_bytes(b'png')
+    monkeypatch.setattr(settings, 'WEBHOOK_URL', 'https://bot.example.com/webhook', raising=False)
+    monkeypatch.setattr(settings, 'LOGO_FILE', str(logo), raising=False)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_LOGO_URL', 'ftp://example.com/x', raising=False)
+
+    assert rich_menu._resolve_rich_logo_url() == ''
+    # к Telegram за такой картинкой даже не ходим — флаг недоступности не взводится
+    assert rich_menu._logo_unavailable is False
+
+
+async def test_unknown_send_error_retries_without_logo(monkeypatch):
+    """Незнакомая ошибка при наличии логотипа — повтор без него, а не уход в классику.
+
+    Список медиа-маркеров заведомо неполон (у rich-сообщений свои коды), и
+    раньше любой неопознанный отказ означал «бот выглядит не-рич».
+    """
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_LOGO_URL', 'https://example.com/page.html', raising=False)
+
+    bot = AsyncMock()
+    calls: list[str] = []
+
+    def _reject_logo(**kwargs):
+        calls.append(kwargs['rich_message'].html)
+        if '<img' in kwargs['rich_message'].html:
+            # текст, которого нет в _MEDIA_FETCH_ERROR_MARKERS
+            raise TelegramBadRequest(method=None, message='Bad Request: RICH_MESSAGE_MEDIA_INVALID')
+        return AsyncMock()()
+
+    bot.send_rich_message.side_effect = _reject_logo
+
+    sent = await rich_menu.try_send_rich_main_menu(
+        bot, 1, _make_user(None), DummyTexts(), AsyncMock(), _make_keyboard()
+    )
+
+    assert sent is True, 'меню ушло в классику вместо повтора без логотипа'
+    assert len(calls) == 2
+    assert '<img' in calls[0]
+    assert '<img' not in calls[1]
+    assert rich_menu.is_rich_menu_enabled() is True
+
+
+async def test_unknown_send_error_without_logo_falls_back_to_classic(monkeypatch):
+    """Без логотипа повторять нечем — незнакомая ошибка честно уходит в классику."""
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_LOGO_URL', 'none', raising=False)
+
+    bot = AsyncMock()
+    bot.send_rich_message.side_effect = TelegramBadRequest(method=None, message='Bad Request: something else')
+
+    sent = await rich_menu.try_send_rich_main_menu(
+        bot, 1, _make_user(None), DummyTexts(), AsyncMock(), _make_keyboard()
+    )
+
+    assert sent is False
+    assert bot.send_rich_message.await_count == 1
 
 
 async def test_connect_link_for_active_subscription_in_table(monkeypatch):

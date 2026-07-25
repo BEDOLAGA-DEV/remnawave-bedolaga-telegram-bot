@@ -18,11 +18,8 @@ from app.cabinet.routes.admin_users import _activity_sources, get_user_activity
 NOW = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
 
 
-def test_activity_route_registered() -> None:
-    from app.cabinet.routes import router
-
-    paths = {route.path: getattr(route, 'methods', set()) for route in router.routes}
-    assert 'GET' in paths.get('/cabinet/admin/users/{user_id}/activity', set())
+def test_activity_route_registered(registered_paths) -> None:
+    assert 'GET' in registered_paths.get('/cabinet/admin/users/{user_id}/activity', set())
 
 
 def test_activity_sources_shape() -> None:

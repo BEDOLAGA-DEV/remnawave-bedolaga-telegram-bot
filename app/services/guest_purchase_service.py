@@ -246,13 +246,17 @@ async def _create_nalogo_receipt_for_purchase(
         # Не передаём telegram_user_id в описание чека — privacy (VPN-сервис)
         receipt_name = settings.get_balance_payment_description(purchase.amount_kopeks)
 
+        # Адресат чека — покупатель, а не одаряемый (см. _get_receipt_contact)
+        receipt_telegram_id, receipt_email = _get_receipt_contact(purchase, user)
+
         receipt_uuid = await nalogo_service.create_receipt(
             name=receipt_name,
             amount=amount_rubles,
             quantity=1,
             payment_id=purchase.payment_id,
-            telegram_user_id=user.telegram_id,
+            telegram_user_id=receipt_telegram_id,
             amount_kopeks=purchase.amount_kopeks,
+            user_email=receipt_email,
         )
 
         if receipt_uuid:
@@ -278,7 +282,7 @@ async def _create_nalogo_receipt_for_purchase(
                     receipt_uuid=receipt_uuid,
                 )
 
-            # Отправляем чек покупателю (если есть telegram_id) и дублируем в админ-топик
+            # Отправляем чек покупателю (Telegram или почта) и дублируем в админ-топик
             try:
                 from app.bot_factory import create_bot
                 from app.services.nalogo_service import send_nalogo_receipt_notifications
@@ -289,8 +293,9 @@ async def _create_nalogo_receipt_for_purchase(
                         nalogo_service=nalogo_service,
                         receipt_uuid=receipt_uuid,
                         amount_kopeks=purchase.amount_kopeks,
-                        telegram_user_id=user.telegram_id,
+                        telegram_user_id=receipt_telegram_id,
                         context_label=f'Источник: гостевая покупка с лендинга (purchase_id={purchase.id})',
+                        user_email=receipt_email,
                     )
             except Exception as notify_error:
                 logger.warning(
@@ -883,6 +888,31 @@ def _get_recipient_contact(purchase: GuestPurchase) -> tuple[str, str]:
     if purchase.is_gift and purchase.gift_recipient_type and purchase.gift_recipient_value:
         return purchase.gift_recipient_type, purchase.gift_recipient_value
     return purchase.contact_type, purchase.contact_value
+
+
+def _get_receipt_contact(purchase: GuestPurchase, user: User) -> tuple[int | None, str | None]:
+    """Return (telegram_id, email) для адресата чека НПД — это ПОКУПАТЕЛЬ.
+
+    Для обычных покупок покупатель и получатель — одно лицо, и user подходит.
+    Для подарочных user — это одаряемый (см. _get_recipient_contact), а чек
+    остаётся финансовым документом дарителя: слать чек получателю нельзя —
+    он раскрывает третьему лицу уплаченную сумму (в подарочном письме
+    GUEST_GIFT_RECEIVED суммы нет), а до самого покупателя чек по 422-ФЗ всё
+    равно обязан дойти.
+    """
+    if not purchase.is_gift:
+        return user.telegram_id, user.email
+
+    buyer = purchase.buyer
+    if buyer is not None:
+        return buyer.telegram_id, buyer.email
+
+    # Гостевой подарок с лендинга: аккаунта покупателя нет, но его собственный
+    # контакт лежит в contact_type/contact_value самой покупки. Telegram-контакт
+    # там — username, отправить чек по нему нельзя, остаётся только почта.
+    if purchase.contact_type == 'email':
+        return None, purchase.contact_value
+    return None, None
 
 
 async def _send_telegram_gift_notification(

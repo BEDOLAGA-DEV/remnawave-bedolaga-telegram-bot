@@ -45,10 +45,12 @@ from app.database.crud.subscription import get_all_subscriptions_by_user_id
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user_message import get_random_active_message
 from app.database.models import User
+from app.localization.texts import Texts
 from app.utils.miniapp_buttons import build_miniapp_startapp_url
 from app.utils.promo_offer import build_promo_offer_hint, build_test_access_hint
 from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
 from app.utils.timezone import format_local_datetime
+from app.utils.validators import sanitize_html
 
 
 logger = structlog.get_logger(__name__)
@@ -67,6 +69,15 @@ _effect_unavailable = False
 # Telegram не смог скачать логотип по URL (нет публичного доступа, битый файл) —
 # дальше собираем меню без логотипа, не роняя rich-рендер в классику.
 _logo_unavailable = False
+
+# Про кривой MAIN_MENU_RICH_LOGO_URL предупреждаем один раз: резолвер зовётся
+# на каждый рендер меню, а значение статичное.
+_logo_url_warned = False
+
+# MAIN_MENU_RICH_LOGO_URL с таким значением означает «шапка без логотипа».
+# Пустая строка занята под авто-режим (свой LOGO_FILE), поэтому нужен явный
+# способ выключить картинку, не выключая rich-меню целиком.
+_LOGO_DISABLED_VALUES = frozenset({'-', 'disabled', 'false', 'no', 'none', 'off'})
 
 # Маркеры ошибок загрузки медиа по URL со стороны Telegram.
 _MEDIA_FETCH_ERROR_MARKERS = (
@@ -95,24 +106,49 @@ def is_rich_menu_enabled() -> bool:
 
 def _reset_rich_menu_availability() -> None:
     """Сбрасывает флаги недоступности (используется в тестах)."""
-    global _rich_unavailable, _effect_unavailable, _logo_unavailable
+    global _rich_unavailable, _effect_unavailable, _logo_unavailable, _logo_url_warned
     _rich_unavailable = False
     _effect_unavailable = False
     _logo_unavailable = False
+    _logo_url_warned = False
+
+
+def _warn_bad_logo_url_once(value: str) -> None:
+    global _logo_url_warned
+    if _logo_url_warned:
+        return
+    _logo_url_warned = True
+    logger.warning(
+        'MAIN_MENU_RICH_LOGO_URL не похож на http(s)-ссылку — rich-меню отправляется без логотипа. '
+        'Чтобы убрать логотип намеренно, укажите none',
+        value=value[:100],
+    )
 
 
 def _resolve_rich_logo_url() -> str:
     """Публичный URL логотипа для шапки rich-меню ('' — без логотипа).
 
-    Явный MAIN_MENU_RICH_LOGO_URL приоритетнее. Иначе, если задан WEBHOOK_URL
-    (публичный origin нашего FastAPI) и файл LOGO_FILE существует, логотип
-    отдаётся собственным эндпоинтом /cabinet/branding/bot-logo.
+    Явный MAIN_MENU_RICH_LOGO_URL приоритетнее. Значение из _LOGO_DISABLED_VALUES
+    (none/off/no/false/disabled/-) выключает логотип совсем: пустая строка занята
+    под авто-режим, поэтому при существующем LOGO_FILE шапку иначе было не убрать,
+    а «подставлю ссылку не на картинку» роняло весь rich в классику. Значение,
+    не похожее на http(s)-ссылку, трактуем так же — скачать его Telegram всё
+    равно не сможет, а меню важнее логотипа.
+
+    Иначе, если задан WEBHOOK_URL (публичный origin нашего FastAPI) и файл
+    LOGO_FILE существует, логотип отдаётся собственным эндпоинтом
+    /cabinet/branding/bot-logo.
     """
     if _logo_unavailable:
         return ''
 
     explicit = (settings.MAIN_MENU_RICH_LOGO_URL or '').strip()
     if explicit:
+        if explicit.lower() in _LOGO_DISABLED_VALUES:
+            return ''
+        if not explicit.lower().startswith(('http://', 'https://')):
+            _warn_bad_logo_url_once(explicit)
+            return ''
         return explicit
 
     webhook_url = (settings.WEBHOOK_URL or '').strip()
@@ -127,6 +163,25 @@ def _resolve_rich_logo_url() -> str:
 def _is_media_fetch_error(error: Exception) -> bool:
     text = str(error).lower()
     return any(marker in text for marker in _MEDIA_FETCH_ERROR_MARKERS)
+
+
+def _retry_without_logo(error: Exception) -> bool:
+    """True — логотип был в меню, выключаем его и повторяем отправку.
+
+    Картинку по URL качает сам Telegram, и это самая частая причина отказа.
+    Известные маркеры ловим по тексту, но у rich-сообщений коды ошибок свои и
+    список заведомо неполон: раньше при незнакомой ошибке меню целиком уезжало
+    в классику («рич не включается»), хотя достаточно было убрать картинку.
+    Повтор ровно один — _mark_logo_unavailable_once взводит флаг до рестарта.
+    """
+    if not _resolve_rich_logo_url():
+        return False
+    if not _is_media_fetch_error(error):
+        logger.warning(
+            'Rich-меню отклонено незнакомой ошибкой — повторяем без логотипа',
+            error=str(error)[:200],
+        )
+    return _mark_logo_unavailable_once(error)
 
 
 def _mark_logo_unavailable_once(error: Exception) -> bool:
@@ -214,6 +269,25 @@ def _sanitize_rich_inline(value: str) -> str:
     return _IMG_TAG_RE.sub('', value)
 
 
+def _rich_text(value: str) -> str:
+    """Готовит редактируемый из админки ТЕКСТ ШАБЛОНА к вставке в rich-HTML.
+
+    Тексты меню правятся оператором и могут нести разметку из ALLOWED_HTML_TAGS —
+    прежде всего `<tg-emoji emoji-id=...>` с премиум-эмодзи. Глухой html.escape()
+    выводил такие теги сырыми прямо в сообщение (у клиента видно
+    «<tg-emoji emoji-id="…">» текстом), хотя rich-сообщения их поддерживают.
+    Поэтому экранируем, возвращаем разрешённое подмножество через sanitize_html
+    (он же срежет чужие теги, атрибуты и javascript:-ссылки) и приводим к rich-HTML.
+
+    ТОЛЬКО для шаблонов. Значения, подставляемые в {плейсхолдеры} — имя
+    пользователя, название тарифа, суммы, — экранируются как раньше: это данные,
+    а не разметка.
+    """
+    if not value:
+        return value
+    return _sanitize_rich_inline(sanitize_html(html.escape(value)))
+
+
 def _renew_link(subscription_id: int | None, texts) -> str:
     """Ссылка «Продлить» для истёкшей подписки — открывает раздел подписок кабинета.
 
@@ -228,7 +302,7 @@ def _renew_link(subscription_id: int | None, texts) -> str:
     url = build_miniapp_startapp_url(start_param)
     if not url:
         return ''
-    label = html.escape(texts.t('MAIN_MENU_RICH_RENEW', '🔄 Продлить'))
+    label = _rich_text(texts.t('MAIN_MENU_RICH_RENEW', '🔄 Продлить'))
     return f'<a href="{url}">{label}</a>'
 
 
@@ -259,7 +333,7 @@ def _connect_link(subscription, texts) -> str:
     url = _connect_url(subscription)
     if not url:
         return ''
-    label = html.escape(texts.t('MAIN_MENU_RICH_CONNECT', '⚡ Подключить'))
+    label = _rich_text(texts.t('MAIN_MENU_RICH_CONNECT', '⚡ Подключить'))
     return f'<a href="{html.escape(url, quote=True)}"><b>{label}</b></a>'
 
 
@@ -290,26 +364,26 @@ def _trial_offer_link(user: User, texts) -> str:
     if not url:
         return ''
 
-    label = html.escape(texts.t('MAIN_MENU_RICH_TRIAL_BUTTON', '🚀 Активировать триал'))
+    label = _rich_text(texts.t('MAIN_MENU_RICH_TRIAL_BUTTON', '🚀 Активировать триал'))
     return f'<a href="{html.escape(url, quote=True)}"><b>{label}</b></a>'
 
 
 def _build_subscriptions_table(subscriptions, texts) -> str:
     if not subscriptions:
-        return f'<p>{html.escape(texts.t("SUB_STATUS_NONE", "❌ Отсутствует"))}</p>'
+        return f'<p>{_rich_text(texts.t("SUB_STATUS_NONE", "❌ Отсутствует"))}</p>'
 
     current_time = datetime.now(UTC)
     header = (
         '<tr>'
-        f'<th>{html.escape(texts.t("MAIN_MENU_RICH_TABLE_TARIFF", "Тариф"))}</th>'
-        f'<th>{html.escape(texts.t("MAIN_MENU_RICH_TABLE_STATUS", "Статус"))}</th>'
-        f'<th>{html.escape(texts.t("MAIN_MENU_RICH_TABLE_UNTIL", "Действует до"))}</th>'
+        f'<th>{_rich_text(texts.t("MAIN_MENU_RICH_TABLE_TARIFF", "Тариф"))}</th>'
+        f'<th>{_rich_text(texts.t("MAIN_MENU_RICH_TABLE_STATUS", "Статус"))}</th>'
+        f'<th>{_rich_text(texts.t("MAIN_MENU_RICH_TABLE_UNTIL", "Действует до"))}</th>'
         '</tr>'
     )
     tariff_fallback = texts.t('MAIN_MENU_RICH_TARIFF_FALLBACK', 'Подписка')
     rows = [header]
     for subscription in subscriptions:
-        tariff_name = html.escape(subscription.tariff.name if subscription.tariff else tariff_fallback)
+        tariff_name = html.escape(subscription.tariff.name) if subscription.tariff else _rich_text(tariff_fallback)
         actual_status = (subscription.actual_status or '').lower()
         status_label = _rich_status_label(texts, actual_status, bool(getattr(subscription, 'is_trial', False)))
 
@@ -318,14 +392,14 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         if end_date and end_date > current_time and actual_status in {'active', 'trial', 'limited'}:
             days_left = (end_date - current_time).days
             days_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', 'осталось {days} дн.').replace('{days}', str(days_left))
-            until_cell = f'{_tg_time(end_date, "d", end_date_text)} ({html.escape(days_text)})'
+            until_cell = f'{_tg_time(end_date, "d", end_date_text)} ({_rich_text(days_text)})'
         elif end_date:
             until_cell = _tg_time(end_date, 'd', end_date_text)
         else:
             until_cell = '—'
 
         rows.append(
-            f'<tr><td>{tariff_name}</td><td>{html.escape(status_label)}</td><td align="right">{until_cell}</td></tr>'
+            f'<tr><td>{tariff_name}</td><td>{_rich_text(status_label)}</td><td align="right">{until_cell}</td></tr>'
         )
 
         # Нижняя строка ряда: расход + «кнопки» действий. Отдельная узкая колонка
@@ -334,8 +408,9 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         if actual_status in {'active', 'trial', 'limited'}:
             usage_parts = [f'📊 {html.escape(_traffic_usage_text(subscription, texts))}']
             device_limit = getattr(subscription, 'device_limit', None)
-            if device_limit:
-                usage_parts.append(f'📱 {device_limit}')
+            if device_limit is not None:
+                # 0 — безлимит (HWID выключен), а не «нет устройств»: строку не прячем
+                usage_parts.append(f'📱 {Texts.format_device_limit(device_limit)}')
             connect_link = _connect_link(subscription, texts)
             if connect_link:
                 usage_parts.append(connect_link)
@@ -355,7 +430,7 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
 
     subscription = getattr(user, 'subscription', None)
     if not subscription:
-        return f'<p>{html.escape(texts.t("SUB_STATUS_NONE", "❌ Отсутствует"))}</p>'
+        return f'<p>{_rich_text(texts.t("SUB_STATUS_NONE", "❌ Отсутствует"))}</p>'
 
     is_daily_tariff = False
     tariff_line = ''
@@ -368,10 +443,10 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
         if tariff:
             is_daily_tariff = bool(getattr(tariff, 'is_daily', False))
             tariff_template = texts.t('MAIN_MENU_RICH_TARIFF', '📦 Тариф: {tariff}')
-            tariff_line = html.escape(tariff_template).replace('{tariff}', f'<b>{html.escape(tariff.name)}</b>')
+            tariff_line = _rich_text(tariff_template).replace('{tariff}', f'<b>{html.escape(tariff.name)}</b>')
 
     status_text = _get_subscription_status(user, texts, is_daily_tariff)
-    lines = [html.escape(line) for line in status_text.split('\n') if line.strip()]
+    lines = [_rich_text(line) for line in status_text.split('\n') if line.strip()]
     if tariff_line:
         lines.append(tariff_line)
 
@@ -386,18 +461,18 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
         days_left_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', 'осталось {days} дн.').replace(
             '{days}', str(max((end_date - current_time).days, 0))
         )
-        relative_line = html.escape(relative_template).replace('{when}', _tg_time(end_date, 'r', days_left_text))
+        relative_line = _rich_text(relative_template).replace('{when}', _tg_time(end_date, 'r', days_left_text))
         lines.append(f'<code>{_progress_bar(seconds_left, total_seconds)}</code> {relative_line}')
 
     if actual_status in {'active', 'trial', 'limited'}:
         traffic_template = texts.t('MAIN_MENU_RICH_TRAFFIC', '📊 Трафик: {traffic}')
         lines.append(
-            html.escape(traffic_template).replace('{traffic}', html.escape(_traffic_usage_text(subscription, texts)))
+            _rich_text(traffic_template).replace('{traffic}', html.escape(_traffic_usage_text(subscription, texts)))
         )
         device_limit = getattr(subscription, 'device_limit', None)
-        if device_limit:
+        if device_limit is not None:
             devices_template = texts.t('MAIN_MENU_RICH_DEVICES', '📱 Устройства: {devices}')
-            lines.append(html.escape(devices_template).replace('{devices}', str(device_limit)))
+            lines.append(_rich_text(devices_template).replace('{devices}', Texts.format_device_limit(device_limit)))
         connect_link = _connect_link(subscription, texts)
         if connect_link:
             lines.append(connect_link)
@@ -429,14 +504,14 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
         if len(subscriptions) > 1 and settings.MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE:
             # Несколько подписок раздувают меню — сворачиваем таблицу в details;
             # summary служит заголовком (h6 не дублируем), счётчик — вместо содержимого.
-            summary = f'<b>{html.escape(heading)} ({len(subscriptions)})</b>'
+            summary = f'<b>{_rich_text(heading)} ({len(subscriptions)})</b>'
             blocks.append(f'<details><summary>{summary}</summary>{subscription_block}</details>')
         else:
-            blocks.append(f'<h6>{html.escape(heading)}</h6>')
+            blocks.append(f'<h6>{_rich_text(heading)}</h6>')
             blocks.append(subscription_block)
     else:
         heading = texts.t('MAIN_MENU_RICH_SUBSCRIPTION_HEADING', '📱 Подписка')
-        blocks.append(f'<h6>{html.escape(heading)}</h6>')
+        blocks.append(f'<h6>{_rich_text(heading)}</h6>')
         blocks.append(await _build_single_subscription_block(user, texts, db))
 
     trial_link = _trial_offer_link(user, texts)
@@ -445,7 +520,7 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
 
     balance_template = texts.t('MAIN_MENU_RICH_BALANCE', '💰 Баланс: {balance}')
     balance_value = f'<b>{html.escape(settings.format_price(user.balance_kopeks))}</b>'
-    blocks.append(f'<p>{html.escape(balance_template).replace("{balance}", balance_value)}</p>')
+    blocks.append(f'<p>{_rich_text(balance_template).replace("{balance}", balance_value)}</p>')
 
     hint_sections: list[str] = []
     try:
@@ -466,7 +541,7 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
         # Строки подсказок содержат только inline-теги (<code>{bar}</code>) — переносы
         # превращаем в отдельные параграфы внутри details-блока.
         inner = ''.join(f'<p>{line}</p>' for section in hint_sections for line in section.split('\n') if line.strip())
-        blocks.append(f'<details open><summary>{html.escape(summary)}</summary>{inner}</details>')
+        blocks.append(f'<details open><summary>{_rich_text(summary)}</summary>{inner}</details>')
 
     try:
         random_message = await get_random_active_message(db)
@@ -480,7 +555,7 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
 
     blocks.append('<hr/>')
     action_prompt = texts.t('MAIN_MENU_ACTION_PROMPT', 'Выберите действие:')
-    blocks.append(f'<footer>{html.escape(action_prompt)}</footer>')
+    blocks.append(f'<footer>{_rich_text(action_prompt)}</footer>')
 
     return ''.join(blocks)
 
@@ -560,7 +635,7 @@ async def try_send_rich_main_menu(
     except (TelegramNotFound, TelegramBadRequest) as error:
         if _looks_like_unsupported(error):
             _mark_rich_unavailable(error)
-        elif _is_media_fetch_error(error) and _mark_logo_unavailable_once(error):
+        elif _retry_without_logo(error):
             # Логотип не скачался — единственный повтор уже без него (флаг взведён).
             return await try_send_rich_main_menu(bot, chat_id, db_user, texts, db, keyboard)
         else:
@@ -652,7 +727,7 @@ async def try_edit_rich_main_menu(
             return True
         if _looks_like_unsupported(error):
             _mark_rich_unavailable(error)
-        elif _is_media_fetch_error(error) and _mark_logo_unavailable_once(error):
+        elif _retry_without_logo(error):
             # Логотип не скачался — единственный повтор уже без него (флаг взведён).
             return await try_edit_rich_main_menu(callback, db_user, texts, db, keyboard)
         else:

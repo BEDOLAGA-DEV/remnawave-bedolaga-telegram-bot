@@ -3066,9 +3066,13 @@ async def _process_single_cart(
         return False
 
     # Race condition guard (per-subscription): skip if THIS subscription was
-    # modified in the last 60 seconds (indicates a concurrent purchase just landed).
-    # When cart_sub_id is available we check the specific subscription's updated_at;
-    # otherwise fall back to the user-global last transaction check.
+    # modified in the last 60 seconds AND a SUBSCRIPTION_PAYMENT exists in the
+    # same window (indicates a concurrent purchase just landed).
+    # updated_at alone is insufficient: Column(onupdate=func.now()) bumps it on
+    # any row UPDATE (e.g. traffic sync when opening menu_subscription), which
+    # caused false skips after top-up. Requiring a recent payment narrows the
+    # condition so traffic-only bumps no longer block auto-purchase.
+    # When cart_sub_id is unavailable, fall back to the legacy user-global check.
     if cart_mode in ('extend', 'tariff_purchase', 'daily_tariff_purchase'):
         try:
             if cart_sub_id:
@@ -3080,13 +3084,29 @@ async def _process_single_cart(
                     and target_sub.updated_at
                     and (datetime.now(UTC) - target_sub.updated_at) < timedelta(seconds=60)
                 ):
-                    logger.info(
-                        'Автопокупка: пропускаем -- подписка обновлена секунд назад',
-                        format_user_id=_format_user_id(user),
-                        subscription_id=cart_sub_id,
-                        total_seconds=(datetime.now(UTC) - target_sub.updated_at).total_seconds(),
+                    # Confirm a real subscription payment (not just traffic sync).
+                    # limit>1: the top-up webhook may have just inserted a deposit
+                    # as the newest row.
+                    recent_transactions = await get_user_transactions(db, user.id, limit=10)
+                    recent_payment = next(
+                        (
+                            tx
+                            for tx in recent_transactions
+                            if tx.type == TransactionType.SUBSCRIPTION_PAYMENT.value
+                            and tx.created_at
+                            and (datetime.now(UTC) - tx.created_at) < timedelta(seconds=60)
+                        ),
+                        None,
                     )
-                    return False
+                    if recent_payment:
+                        logger.info(
+                            'Автопокупка: пропускаем -- подписка обновлена и есть SUBSCRIPTION_PAYMENT секунд назад',
+                            format_user_id=_format_user_id(user),
+                            subscription_id=cart_sub_id,
+                            updated_at_seconds=(datetime.now(UTC) - target_sub.updated_at).total_seconds(),
+                            payment_seconds=(datetime.now(UTC) - recent_payment.created_at).total_seconds(),
+                        )
+                        return False
             else:
                 recent_transactions = await get_user_transactions(db, user.id, limit=1)
                 if recent_transactions:

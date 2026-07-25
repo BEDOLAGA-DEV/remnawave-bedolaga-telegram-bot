@@ -103,6 +103,7 @@ class SupportConfigResponse(BaseModel):
     support_type: str  # "tickets", "profile", "url", "both"
     support_url: str | None = None
     support_username: str | None = None
+    contact_is_telegram: bool = False
 
 
 class InfoVisibilityResponse(BaseModel):
@@ -351,19 +352,31 @@ async def update_user_language(
 @router.get('/support-config', response_model=SupportConfigResponse)
 async def get_support_config():
     """Get support/tickets configuration for cabinet."""
-    # Use SUPPORT_SYSTEM_MODE setting (configurable from admin panel)
-    support_mode = settings.get_support_system_mode()  # returns: tickets, contact, or both
+    # Режим берём через сервис: он владеет persisted-значением (data/support_settings.json)
+    # и синхронизирует его в settings. Чтение settings напрямую отдало бы значение
+    # из .env, если сервис в этом процессе ещё ни разу не загружался.
+    from app.services.support_settings_service import SupportSettingsService
+
+    support_mode = SupportSettingsService.get_system_mode()  # returns: tickets, contact, or both
+
+    # SUPPORT_USERNAME принимает и @username, и произвольный URL (см.
+    # Settings.get_support_contact_url) — бот этим уже пользуется и вешает ссылку
+    # на кнопку «Связаться с поддержкой». Кабинет резолвит контакт тем же методом,
+    # чтобы внешний хелпдеск открывался одинаково в обеих поверхностях.
+    contact_url = settings.get_support_contact_url()
+    contact_is_telegram = settings.is_support_contact_telegram()
 
     # Map support mode to support type for frontend
     # - "tickets" mode -> tickets only, no contact
-    # - "contact" mode -> contact only (profile), no tickets
+    # - "contact" mode -> contact only, no tickets: "profile" для Telegram,
+    #   "url" для внешнего хелпдеска
     # - "both" mode -> tickets enabled, contact available as fallback
     if support_mode == 'tickets':
         tickets_enabled = True
         support_type = 'tickets'
     elif support_mode == 'contact':
         tickets_enabled = False
-        support_type = 'profile'
+        support_type = 'profile' if contact_is_telegram else 'url'
     else:  # both
         tickets_enabled = True
         support_type = 'both'
@@ -371,8 +384,11 @@ async def get_support_config():
     return SupportConfigResponse(
         tickets_enabled=tickets_enabled,
         support_type=support_type,
-        support_url=None,  # Cabinet doesn't use custom URLs
-        support_username=settings.SUPPORT_USERNAME,  # Always return for fallback
+        support_url=contact_url,
+        # Нормализованный вид (@user либо URL) — сырое значение могло бы прийти
+        # без схемы и клиент склеил бы из него битую t.me-ссылку.
+        support_username=settings.get_support_contact_display() or None,
+        contact_is_telegram=contact_is_telegram,
     )
 
 

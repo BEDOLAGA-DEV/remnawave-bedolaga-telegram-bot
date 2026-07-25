@@ -505,7 +505,7 @@ class GraceAccessRuntime:
         if self._mode is GraceAccessMode.OBSERVE:
             async with AsyncSessionLocal() as db:
                 billing = await SQLAlchemyGraceBillingGateway(db).get_subscription(subscription_id)
-            eligible = bool(billing and billing_is_eligible(billing, reason))
+            eligible = bool(billing and billing_is_eligible(billing, reason, _build_policy()))
             logger.info(
                 'Grace candidate observed',
                 subscription_id=subscription_id,
@@ -680,11 +680,18 @@ class GraceAccessRuntime:
         now = datetime.now(UTC)
         cutoff = now - timedelta(minutes=settings.GRACE_ACCESS_CANDIDATE_LOOKBACK_MINUTES)
         batch_size = settings.GRACE_ACCESS_RECONCILE_BATCH_SIZE
+        policy = _build_policy()
 
         expired_recently = and_(
             Subscription.end_date >= cutoff,
             Subscription.end_date <= now,
-            Subscription.status.in_((SubscriptionStatus.ACTIVE.value, SubscriptionStatus.EXPIRED.value)),
+            Subscription.status.in_(
+                (
+                    SubscriptionStatus.ACTIVE.value,
+                    SubscriptionStatus.TRIAL.value,
+                    SubscriptionStatus.EXPIRED.value,
+                )
+            ),
         )
         marked_candidate = and_(
             Subscription.grace_candidate_at >= cutoff,
@@ -698,7 +705,6 @@ class GraceAccessRuntime:
                 .options(selectinload(Subscription.user), selectinload(Subscription.tariff))
                 .where(
                     User.status == DatabaseUserStatus.ACTIVE.value,
-                    Subscription.is_trial.is_(False),
                     or_(expired_recently, marked_candidate),
                 )
                 .order_by(Subscription.updated_at.asc(), Subscription.id.asc())
@@ -743,7 +749,7 @@ class GraceAccessRuntime:
                     else GraceReason.EXPIRED
                 )
                 billing = _subscription_to_billing(subscription)
-                if not billing.remnawave_uuid or not billing_is_eligible(billing, reason):
+                if not billing.remnawave_uuid or not billing_is_eligible(billing, reason, policy):
                     continue
                 if subscription.id in open_subscription_ids:
                     continue
@@ -1330,17 +1336,17 @@ def _build_policy() -> GraceAccessPolicy:
         duration=timedelta(hours=settings.GRACE_ACCESS_DURATION_HOURS),
         expired_squad_uuid=settings.GRACE_ACCESS_EXPIRED_SQUAD_UUID.strip(),
         limited_squad_uuid=settings.GRACE_ACCESS_LIMITED_SQUAD_UUID.strip(),
-        expired_traffic_bytes=settings.GRACE_ACCESS_EXPIRED_TRAFFIC_GB * gib,
-        limited_traffic_bytes=settings.GRACE_ACCESS_LIMITED_TRAFFIC_GB * gib,
+        traffic_bytes=settings.GRACE_ACCESS_TRAFFIC_GB * gib,
+        trial_enabled=settings.GRACE_ACCESS_TRIAL_ENABLED,
+        daily_enabled=settings.GRACE_ACCESS_DAILY_ENABLED,
+        free_enabled=settings.GRACE_ACCESS_FREE_ENABLED,
         reconcile_batch_size=settings.GRACE_ACCESS_RECONCILE_BATCH_SIZE,
     )
 
 
 def _validate_active_configuration() -> None:
-    if settings.GRACE_ACCESS_EXPIRED_TRAFFIC_GB < 1:
-        raise ValueError('GRACE_ACCESS_EXPIRED_TRAFFIC_GB must be at least 1 when GRACE_ACCESS_MODE=true')
-    if settings.GRACE_ACCESS_LIMITED_TRAFFIC_GB < 1:
-        raise ValueError('GRACE_ACCESS_LIMITED_TRAFFIC_GB must be at least 1 when GRACE_ACCESS_MODE=true')
+    if settings.GRACE_ACCESS_TRAFFIC_GB < 1:
+        raise ValueError('GRACE_ACCESS_TRAFFIC_GB must be at least 1 when GRACE_ACCESS_MODE=true')
     for label, raw_uuid in (
         ('GRACE_ACCESS_EXPIRED_SQUAD_UUID', settings.GRACE_ACCESS_EXPIRED_SQUAD_UUID),
         ('GRACE_ACCESS_LIMITED_SQUAD_UUID', settings.GRACE_ACCESS_LIMITED_SQUAD_UUID),

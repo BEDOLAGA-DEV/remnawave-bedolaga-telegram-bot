@@ -17,6 +17,7 @@ from .subscription_modules import (
     autopay_router,
     daily_router,
     devices_router,
+    platega_recurrent_router,
     purchase_router,
     renewal_router,
     revoke_router,
@@ -52,3 +53,4 @@ router.include_router(autopay_router)
 router.include_router(daily_router)
 router.include_router(tariff_switch_router)
 router.include_router(revoke_router)
+router.include_router(platega_recurrent_router)

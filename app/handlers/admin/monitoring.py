@@ -1175,7 +1175,8 @@ async def nalogo_retry_callback(callback: CallbackQuery):
 
         await callback.answer('🔄 Отправляю чек...', show_alert=False)
 
-        receipt_uuid = await nalogo_service.retry_pending_receipt(payment_id)
+        # bot обязателен: без него чек уйдёт в ФНС, но покупатель его не получит
+        receipt_uuid = await nalogo_service.retry_pending_receipt(payment_id, bot=callback.bot)
 
         if receipt_uuid:
             await callback.answer(f'✅ Чек создан: {receipt_uuid}', show_alert=True)

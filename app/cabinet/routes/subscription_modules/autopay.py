@@ -72,6 +72,16 @@ async def update_autopay(
 
     await db.commit()
 
+    if request.enabled:
+        # Обратное взаимоисключение: включение баланс-автоплатежа должно
+        # отменить активную СБП-автоподписку Platega у той же подписки —
+        # иначе оба движка продления начнут списывать параллельно (двойное
+        # списание). Прямое взаимоисключение (СБП -> выключение
+        # balance-autopay) уже реализовано в create_platega_sbp_subscription.
+        from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+        await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
     return {
         'message': 'Autopay settings updated',
         'autopay_enabled': subscription.autopay_enabled,

@@ -130,6 +130,7 @@ async def test_update_subscription_autopay_sentinel_does_not_touch_period_when_o
     """Legacy callers (autopay.py:154, autopay.py:188, miniapp.py:3733) invoke with positional
     args only. They MUST not touch autopay_period_days — the sentinel default protects them."""
     subscription = SimpleNamespace(
+        id=1,
         user_id=42,
         autopay_enabled=False,
         autopay_days_before=3,
@@ -152,6 +153,7 @@ async def test_update_subscription_autopay_explicit_none_clears_period():
     """When the user clicks "По умолчанию" in the period picker, the handler passes
     period_days=None — explicit clear, distinct from the sentinel default."""
     subscription = SimpleNamespace(
+        id=1,
         user_id=42,
         autopay_enabled=True,
         autopay_days_before=3,
@@ -169,6 +171,7 @@ async def test_update_subscription_autopay_explicit_none_clears_period():
 
 async def test_update_subscription_autopay_explicit_int_sets_period():
     subscription = SimpleNamespace(
+        id=1,
         user_id=42,
         autopay_enabled=True,
         autopay_days_before=3,
@@ -182,6 +185,61 @@ async def test_update_subscription_autopay_explicit_int_sets_period():
     await update_subscription_autopay(db, subscription, enabled=True, period_days=180)
 
     assert subscription.autopay_period_days == 180
+
+
+async def test_update_subscription_autopay_enable_cancels_sbp_recurring(monkeypatch):
+    """Взаимоисключение движков продления ЦЕНТРАЛИЗОВАНО в CRUD: включение
+    balance-autopay через ЛЮБУЮ поверхность (бот, миниапп, админ-тогл) должно
+    отменять активное СБП-автопродление Platega — иначе оба движка списывают
+    параллельно (двойное списание за цикл).
+    """
+    subscription = SimpleNamespace(
+        id=77,
+        user_id=42,
+        autopay_enabled=False,
+        autopay_days_before=3,
+        autopay_period_days=None,
+        updated_at=None,
+    )
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    mock_cancel = AsyncMock()
+    monkeypatch.setattr(
+        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe',
+        mock_cancel,
+    )
+
+    await update_subscription_autopay(db, subscription, enabled=True)
+
+    mock_cancel.assert_awaited_once_with(db, 77)
+
+
+async def test_update_subscription_autopay_disable_does_not_touch_sbp(monkeypatch):
+    """Выключение balance-autopay НЕ должно трогать СБП-автопродление —
+    взаимоисключение работает только на включении."""
+    subscription = SimpleNamespace(
+        id=77,
+        user_id=42,
+        autopay_enabled=True,
+        autopay_days_before=3,
+        autopay_period_days=None,
+        updated_at=None,
+    )
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+
+    mock_cancel = AsyncMock()
+    monkeypatch.setattr(
+        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe',
+        mock_cancel,
+    )
+
+    await update_subscription_autopay(db, subscription, enabled=False)
+
+    mock_cancel.assert_not_awaited()
 
 
 def test_autopay_period_unset_sentinel_is_module_private():

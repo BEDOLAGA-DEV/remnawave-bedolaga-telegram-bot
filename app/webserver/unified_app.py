@@ -172,6 +172,14 @@ def create_unified_app(
     app.state.dispatcher = dispatcher
     app.state.payment_service = payment_service
 
+    # Republish global ticket events onto the mobile support socket so live
+    # updates reach the admin apps for ALL origins (Telegram, Web API, cabinet,
+    # mini-app), not just support-socket self-echo.
+    if settings.is_cabinet_enabled():
+        from app.cabinet.routes.support_ws import register_support_ticket_event_bridge
+
+        register_support_ticket_event_bridge()
+
     payments_router = payments.create_payment_router(bot, payment_service)
     if payments_router:
         app.include_router(payments_router)

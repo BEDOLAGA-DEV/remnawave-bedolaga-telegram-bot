@@ -70,6 +70,14 @@ async def _run_dedupe() -> dict[str, int]:
             for dup in rest:
                 if dup.status not in _REMOVABLE_STATUSES:
                     continue  # never remove a live subscription
+                # Даже expired-дубль может нести живую СБП-привязку Platega
+                # (например PAST_DUE) — отменяем до CASCADE-удаления записи.
+                # commit=False: CANCELLED уходит flush'ем и коммитится вместе с
+                # удалениями одним финальным commit ниже (семантика сервиса —
+                # один атомарный коммит на весь проход).
+                from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+                await cancel_platega_recurring_for_subscription_safe(db, dup.id, commit=False)
                 await db.delete(dup)
                 removed_db += 1
 

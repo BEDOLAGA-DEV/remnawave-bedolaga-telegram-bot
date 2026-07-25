@@ -44,14 +44,8 @@ def _fake_upload(data: bytes):
     return SimpleNamespace(read=AsyncMock(return_value=data), close=AsyncMock())
 
 
-def test_admin_overpay_certificate_routes_registered():
-    from app.cabinet.routes import router
-
-    methods = set()
-    for route in router.routes:
-        if route.path == '/cabinet/admin/overpay/certificate':
-            methods |= route.methods
-    assert methods == {'GET', 'POST', 'DELETE'}
+def test_admin_overpay_certificate_routes_registered(registered_paths):
+    assert registered_paths.get('/cabinet/admin/overpay/certificate') == {'GET', 'POST', 'DELETE'}
 
 
 @pytest.mark.asyncio

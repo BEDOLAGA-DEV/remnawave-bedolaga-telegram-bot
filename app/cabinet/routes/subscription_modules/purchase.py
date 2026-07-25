@@ -412,6 +412,9 @@ async def get_purchase_options(
                 # Направления смены тарифа
                 'tariff_switch_upgrade_enabled': settings.TARIFF_SWITCH_UPGRADE_ENABLED,
                 'tariff_switch_downgrade_enabled': settings.TARIFF_SWITCH_DOWNGRADE_ENABLED,
+                # СБП-оформление (Platega recurrent): фронт показывает кнопку
+                # «Оформить с автооплатой СБП» рядом с покупкой с баланса.
+                'platega_recurrent_enabled': settings.is_platega_recurrent_enabled(),
             }
 
         # Classic mode - return periods

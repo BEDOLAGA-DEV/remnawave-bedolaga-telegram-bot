@@ -70,6 +70,11 @@ class UserSubscriptionInfo(BaseModel):
     purchased_traffic_gb: int = 0
     traffic_purchases: list[TrafficPurchaseItem] = []
 
+    # Platega SBP auto-renewal (admin view only — populated by the async
+    # builder; the sync builder leaves both at their None default).
+    sbp_recurring_status: str | None = None
+    sbp_recurring_id: int | None = None
+
 
 class UserPromoGroupInfo(BaseModel):
     """User promo group info."""

@@ -218,6 +218,19 @@ class Texts:
             return f'{gb / 1024:.1f} ТБ'
         return f'{gb:.0f} ГБ'
 
+    @staticmethod
+    def format_device_limit(limit: int | None) -> str:
+        """Format a device limit for display. 0/None означает «без ограничения».
+
+        При выключенном HWID RemnaWave отдаёт device_limit = 0, и
+        resolve_hwid_device_limit сам трактует <= 0 как «лимит в панель не
+        слать». Показывать это пользователю нулём нельзя: «Устройства: 3 / 0»
+        читается как «устройств не осталось», хотя ограничения нет вовсе.
+        """
+        if not limit or limit <= 0:
+            return '∞'
+        return str(limit)
+
 
 def get_texts(language: str = DEFAULT_LANGUAGE) -> Texts:
     return Texts(language)
