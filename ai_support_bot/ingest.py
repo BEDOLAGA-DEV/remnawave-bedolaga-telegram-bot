@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 
+from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db.database import AsyncSessionLocal, init_db
 from ai_support_bot.app.services.rag_service import rag_service
 
@@ -24,7 +25,7 @@ async def main() -> None:
     print(" Декодирование JSON...")
     parsed_data = json.loads(raw_bytes.decode("utf-8"))
 
-    print(" Инициализация базы данных...")
+    print(f" Инициализация базы данных ({settings.effective_database_url})...")
     await init_db()
 
     print(" Обработка и генерация эмбеддингов ИИ (RAG)...")
