@@ -22,6 +22,7 @@ def _base_defaults() -> dict[str, Any]:
         'MIN_SCORE': str(settings.MIN_SCORE),
         'CONTEXT_MESSAGES': str(settings.CONTEXT_MESSAGES),
         'HISTORY_LIMIT': str(settings.HISTORY_LIMIT),
+        'DAILY_MESSAGE_LIMIT': str(settings.DAILY_MESSAGE_LIMIT),
         'VISION_ENABLED': '1' if settings.VISION_ENABLED else '0',
         'INCLUDE_REMNAWAVE_DATA': '1' if settings.INCLUDE_REMNAWAVE_DATA else '0',
     }

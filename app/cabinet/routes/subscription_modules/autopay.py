@@ -9,6 +9,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.models import User
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
@@ -39,25 +40,18 @@ async def update_autopay(
         )
 
     if request.enabled:
-        # Classic subscriptions cannot use autopay when tariff mode is enabled
-        from app.config import settings
-
         if settings.is_tariffs_mode() and not subscription.tariff_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Autopay is not available for classic subscriptions. Please purchase a tariff.',
             )
 
-        # Триальные подписки — пробник, автопродление не имеет смысла
-        # NULL-safe: is_trial can be None in legacy rows — treat as trial
         if subscription.is_trial is not False:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Autopay is not available for trial subscriptions',
             )
 
-        # Суточные подписки имеют свой механизм продления (DailySubscriptionService),
-        # глобальный autopay для них запрещён
         await db.refresh(subscription, ['tariff'])
         if subscription.tariff and getattr(subscription.tariff, 'is_daily', False):
             raise HTTPException(

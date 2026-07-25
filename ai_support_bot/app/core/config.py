@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     CHUNK_MAX_CHARS: int = 1200
     CONTEXT_MESSAGES: int = 8
     HISTORY_LIMIT: int = 100
+    DAILY_MESSAGE_LIMIT: int = 0  # 0 = без лимита; лимит сообщений пользователя в сутки
     RESPONSE_CACHE_TTL: int = 900
 
     DATABASE_URL: str = 'sqlite+aiosqlite:///./data/ai_support.db'

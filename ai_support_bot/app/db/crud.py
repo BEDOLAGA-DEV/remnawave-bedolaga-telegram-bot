@@ -181,6 +181,19 @@ async def count_messages(db: AsyncSession, telegram_id: int | None = None) -> in
     return int(result.scalar() or 0)
 
 
+async def count_user_messages_today(db: AsyncSession, telegram_id: int) -> int:
+    """Count user-role messages for telegram_id since start of the current UTC day."""
+    day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    result = await db.execute(
+        select(func.count(Message.id)).where(
+            Message.telegram_id == telegram_id,
+            Message.role == 'user',
+            Message.created_at >= day_start,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
 async def list_conversations_summary(db: AsyncSession, limit: int = 50, offset: int = 0) -> list[dict]:
     result = await db.execute(
         select(Conversation)

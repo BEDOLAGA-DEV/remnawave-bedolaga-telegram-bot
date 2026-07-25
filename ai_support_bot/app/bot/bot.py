@@ -1,23 +1,22 @@
+import asyncio
 import base64
 import io
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import structlog
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.types import Message
 
 from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db import crud
 from ai_support_bot.app.db.database import AsyncSessionLocal
 from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.agent import support_agent
 from ai_support_bot.app.services.openai_client import OpenAIError
-
-
-import asyncio
-from contextlib import asynccontextmanager
-
-from aiogram.enums import ChatAction
 
 logger = structlog.get_logger(__name__)
 
@@ -25,6 +24,9 @@ _WELCOME = (
     '🤖 <b>ИИ-поддержка</b>\n\n'
     'Опишите ваш вопрос или пришлите скриншот проблемы — я постараюсь помочь '
 )
+
+# (telegram_id, YYYY-MM-DD) — уже отправили пользователю ответ про лимит сегодня
+_limit_user_notified: set[tuple[int, str]] = set()
 
 
 @asynccontextmanager
@@ -66,6 +68,64 @@ async def cmd_start(message: Message) -> None:
     await message.answer(_WELCOME)
 
 
+def _user_label(message: Message) -> tuple[str, str]:
+    user_name = message.from_user.full_name or 'Пользователь'
+    username_str = f' (@{message.from_user.username})' if message.from_user.username else ''
+    return user_name, username_str
+
+
+async def _notify_admins(bot: Bot, text: str) -> None:
+    for admin_id in settings.admin_ids:
+        try:
+            await bot.send_message(admin_id, text, parse_mode='HTML')
+        except Exception as err:
+            logger.warning('Failed to notify admin', admin_id=admin_id, error=str(err))
+
+
+async def _handle_daily_limit(
+    message: Message,
+    telegram_id: int,
+    question: str,
+    used_today: int,
+    limit: int,
+) -> None:
+    """Save the message, notify admins, and (once per day) tell the user about the limit."""
+    bot = message.bot
+    day_key = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    notify_key = (telegram_id, day_key)
+
+    async with AsyncSessionLocal() as db:
+        conversation = await crud.get_or_create_conversation(db, telegram_id)
+        await crud.add_message(
+            db,
+            conversation_id=conversation.id,
+            telegram_id=telegram_id,
+            role='user',
+            content=question or '[изображение]',
+            has_media=bool(message.photo),
+            media_type='photo' if message.photo else None,
+        )
+        await db.commit()
+
+    user_name, username_str = _user_label(message)
+    notify_text = (
+        '🚫 <b>Дневной лимит ИИ-поддержки исчерпан</b>\n\n'
+        f'<b>Пользователь:</b> <a href="tg://user?id={telegram_id}">{user_name}</a>{username_str} '
+        f'(ID: <code>{telegram_id}</code>)\n'
+        f'<b>Сообщений сегодня:</b> {used_today + 1} / {limit}\n'
+        f'<b>Вопрос:</b> {question or "[изображение]"}'
+    )
+    await _notify_admins(bot, notify_text)
+    logger.info('Daily AI support limit reached', telegram_id=telegram_id, used=used_today, limit=limit)
+
+    if notify_key not in _limit_user_notified:
+        _limit_user_notified.add(notify_key)
+        await message.answer(
+            '⏳ Дневной лимит обращений к ИИ-поддержке исчерпан. '
+            'Ваш вопрос передан операторам — они ответят вручную.'
+        )
+
+
 async def handle_message(message: Message) -> None:
     bot = message.bot
     telegram_id = message.from_user.id
@@ -79,6 +139,15 @@ async def handle_message(message: Message) -> None:
     if not question and not image_url:
         await message.answer('Пожалуйста, опишите вопрос текстом или пришлите скриншот.')
         return
+
+    await settings_store.load()
+    daily_limit = settings_store.get_int('DAILY_MESSAGE_LIMIT')
+    if daily_limit > 0:
+        async with AsyncSessionLocal() as db:
+            used_today = await crud.count_user_messages_today(db, telegram_id)
+        if used_today >= daily_limit:
+            await _handle_daily_limit(message, telegram_id, question, used_today, daily_limit)
+            return
 
     try:
         async with typing_action(bot, message.chat.id):
@@ -97,19 +166,15 @@ async def handle_message(message: Message) -> None:
 
     if result['escalate']:
         logger.info('Escalating question to admins', telegram_id=telegram_id)
-        user_name = message.from_user.full_name or 'Пользователь'
-        username_str = f" (@{message.from_user.username})" if message.from_user.username else ""
+        user_name, username_str = _user_label(message)
         notify_text = (
-            "⚠️ <b>Внимание: Обращение требует внимания оператора!</b>\n\n"
-            f"<b>Пользователь:</b> <a href='tg://user?id={telegram_id}'>{user_name}</a>{username_str} (ID: <code>{telegram_id}</code>)\n"
-            f"<b>Вопрос:</b> {question or '[изображение]'}\n\n"
-            f"<b>Сформированный проект ответа ИИ:</b>\n{answer}"
+            '⚠️ <b>Внимание: Обращение требует внимания оператора!</b>\n\n'
+            f'<b>Пользователь:</b> <a href="tg://user?id={telegram_id}">{user_name}</a>{username_str} '
+            f'(ID: <code>{telegram_id}</code>)\n'
+            f'<b>Вопрос:</b> {question or "[изображение]"}\n\n'
+            f'<b>Сформированный проект ответа ИИ:</b>\n{answer}'
         )
-        for admin_id in settings.admin_ids:
-            try:
-                await bot.send_message(admin_id, notify_text, parse_mode='HTML')
-            except Exception as err:
-                logger.warning('Failed to notify admin on escalation', admin_id=admin_id, error=str(err))
+        await _notify_admins(bot, notify_text)
         return
 
     try:
