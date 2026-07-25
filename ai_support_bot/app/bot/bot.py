@@ -87,7 +87,7 @@ def build_dispatcher() -> Dispatcher:
 
 
 def build_bot() -> Bot:
-    return Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
+    return Bot(token=settings.effective_bot_token, default=DefaultBotProperties(parse_mode='HTML'))
 
 
 async def run_bot() -> None:

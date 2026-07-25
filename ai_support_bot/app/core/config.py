@@ -4,7 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix='AISUP_', env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(
+        env_prefix='AISUP_',
+        env_file=('.env', 'ai_support_bot/.env'),
+        extra='ignore',
+    )
 
     BOT_TOKEN: str = ''
     ADMIN_IDS: str = ''
@@ -76,6 +80,54 @@ class Settings(BaseSettings):
             if part.isdigit():
                 result.add(int(part))
         return result
+
+    @property
+    def effective_openai_api_key(self) -> str:
+        if self.OPENAI_API_KEY and self.OPENAI_API_KEY.strip():
+            return self.OPENAI_API_KEY.strip()
+
+        import os
+        key = os.getenv('AISUP_OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY')
+        if key and key.strip():
+            return key.strip()
+
+        for env_path in ('ai_support_bot/.env', '.env'):
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith(('AISUP_OPENAI_API_KEY=', 'OPENAI_API_KEY=')):
+                                val = line.split('=', 1)[1].strip().strip('"\'')
+                                if val:
+                                    return val
+                except Exception:
+                    pass
+        return ''
+
+    @property
+    def effective_bot_token(self) -> str:
+        if self.BOT_TOKEN and self.BOT_TOKEN.strip():
+            return self.BOT_TOKEN.strip()
+
+        import os
+        tok = os.getenv('AISUP_BOT_TOKEN') or os.getenv('BOT_TOKEN')
+        if tok and tok.strip():
+            return tok.strip()
+
+        for env_path in ('ai_support_bot/.env', '.env'):
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith(('AISUP_BOT_TOKEN=', 'BOT_TOKEN=')):
+                                val = line.split('=', 1)[1].strip().strip('"\'')
+                                if val:
+                                    return val
+                except Exception:
+                    pass
+        return ''
 
     @property
     def main_db_enabled(self) -> bool:

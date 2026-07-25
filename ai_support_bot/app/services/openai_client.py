@@ -22,7 +22,8 @@ class OpenAIClient:
 
     @property
     def _headers(self) -> dict[str, str]:
-        return {'Authorization': f'Bearer {self._api_key}', 'Content-Type': 'application/json'}
+        api_key = settings.effective_openai_api_key
+        return {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
 
     async def _post(self, path: str, payload: dict[str, Any], retries: int = 2) -> dict[str, Any]:
         url = f'{self._base_url}{path}'
