@@ -179,17 +179,60 @@ async def delete_knowledge_source(
     return {'status': 'ok', 'deleted_source_id': source_id}
 
 
+class ConversationSummaryItem(BaseModel):
+    id: int
+    telegram_id: int
+    escalated: bool
+    created_at: str
+    updated_at: str
+    message_count: int
+    last_message: str
+    last_message_role: str
+    last_message_at: str
+
+
+class ConversationsResponse(BaseModel):
+    conversations: list[ConversationSummaryItem]
+    page: int
+    per_page: int
+    total: int
+    has_next: bool
+
+
+@router.get('/conversations', response_model=ConversationsResponse)
+async def get_ai_conversations(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=100),
+    _: Any = Security(require_api_token),
+) -> ConversationsResponse:
+    """Получить пагинированный список диалогов (чатов) пользователей."""
+    offset = (page - 1) * per_page
+    async with AsyncSessionLocal() as db:
+        total = await crud.count_conversations(db)
+        convs = await crud.list_conversations_summary(db, limit=per_page, offset=offset)
+
+    items = [ConversationSummaryItem(**c) for c in convs]
+    return ConversationsResponse(
+        conversations=items,
+        page=page,
+        per_page=per_page,
+        total=total,
+        has_next=page * per_page < total,
+    )
+
+
 @router.get('/history', response_model=HistoryResponse)
 async def get_ai_history(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
+    telegram_id: int | None = Query(None),
     _: Any = Security(require_api_token),
 ) -> HistoryResponse:
-    """Получить пагинированную историю сообщений ИИ-бота."""
+    """Получить пагинированную историю сообщений ИИ-бота (опционально по telegram_id)."""
     offset = (page - 1) * per_page
     async with AsyncSessionLocal() as db:
-        total = await crud.count_messages(db)
-        messages = await crud.list_recent_messages(db, limit=per_page, offset=offset)
+        total = await crud.count_messages(db, telegram_id=telegram_id)
+        messages = await crud.list_recent_messages(db, limit=per_page, offset=offset, telegram_id=telegram_id)
 
     serialized_messages = [
         MessageItemResponse(

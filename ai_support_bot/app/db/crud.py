@@ -159,13 +159,67 @@ async def mark_escalated(db: AsyncSession, conversation_id: int) -> None:
         conversation.updated_at = datetime.now(timezone.utc)
 
 
-async def list_recent_messages(db: AsyncSession, limit: int = 100, offset: int = 0) -> list[Message]:
-    result = await db.execute(
-        select(Message).order_by(Message.created_at.desc()).limit(limit).offset(offset)
-    )
-    return list(result.scalars().all())
+async def list_recent_messages(
+    db: AsyncSession, limit: int = 100, offset: int = 0, telegram_id: int | None = None
+) -> list[Message]:
+    query = select(Message)
+    if telegram_id is not None:
+        query = query.where(Message.telegram_id == telegram_id)
+    query = query.order_by(Message.created_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(query)
+    messages = list(result.scalars().all())
+    if telegram_id is not None:
+        messages.reverse()
+    return messages
 
 
-async def count_messages(db: AsyncSession) -> int:
-    result = await db.execute(select(func.count(Message.id)))
+async def count_messages(db: AsyncSession, telegram_id: int | None = None) -> int:
+    query = select(func.count(Message.id))
+    if telegram_id is not None:
+        query = query.where(Message.telegram_id == telegram_id)
+    result = await db.execute(query)
     return int(result.scalar() or 0)
+
+
+async def list_conversations_summary(db: AsyncSession, limit: int = 50, offset: int = 0) -> list[dict]:
+    result = await db.execute(
+        select(Conversation)
+        .order_by(Conversation.updated_at.desc(), Conversation.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    conversations = list(result.scalars().all())
+
+    summary = []
+    for conv in conversations:
+        msg_count_res = await db.execute(
+            select(func.count(Message.id)).where(Message.conversation_id == conv.id)
+        )
+        msg_count = int(msg_count_res.scalar() or 0)
+
+        last_msg_res = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conv.id)
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        last_msg = last_msg_res.scalar_one_or_none()
+
+        summary.append({
+            'id': conv.id,
+            'telegram_id': conv.telegram_id,
+            'escalated': conv.escalated,
+            'created_at': conv.created_at.isoformat() if conv.created_at else '',
+            'updated_at': conv.updated_at.isoformat() if conv.updated_at else '',
+            'message_count': msg_count,
+            'last_message': last_msg.content if last_msg else '',
+            'last_message_role': last_msg.role if last_msg else '',
+            'last_message_at': last_msg.created_at.isoformat() if (last_msg and last_msg.created_at) else '',
+        })
+    return summary
+
+
+async def count_conversations(db: AsyncSession) -> int:
+    result = await db.execute(select(func.count(Conversation.id)))
+    return int(result.scalar() or 0)
+
