@@ -1,0 +1,13 @@
+services:
+  ai_support_bot:
+    build: .
+    container_name: ai_support_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: 'Europe/Moscow'
+    volumes:
+      - ./data:/app/data:rw
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro

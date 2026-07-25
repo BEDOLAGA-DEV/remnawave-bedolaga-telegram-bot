@@ -11,6 +11,7 @@ from app.webapi.docs import add_redoc_endpoint
 
 from .middleware import RequestLoggingMiddleware
 from .routes import (
+    ai_support,
     backups,
     ban_notifications,
     broadcasts,
@@ -277,6 +278,11 @@ def create_web_api_app(lifespan: Any = None) -> FastAPI:
         ban_notifications.router,
         prefix='/ban-notifications',
         tags=['ban-notifications'],
+    )
+    app.include_router(
+        ai_support.router,
+        prefix='/ai-support',
+        tags=['ai-support'],
     )
 
     # Cabinet (Personal Account) routes

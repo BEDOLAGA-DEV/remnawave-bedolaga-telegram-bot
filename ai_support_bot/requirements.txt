@@ -1,0 +1,13 @@
+aiogram==3.22.0
+aiohttp==3.12.15
+SQLAlchemy==2.0.46
+aiosqlite==0.22.1
+asyncpg==0.31.0
+pydantic==2.11.9
+pydantic-settings==2.10.1
+fastapi==0.129.0
+uvicorn==0.32.1
+python-multipart==0.0.18
+jinja2==3.1.4
+itsdangerous==2.2.0
+structlog>=25.1.0,<26

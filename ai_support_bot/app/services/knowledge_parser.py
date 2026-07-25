@@ -1,0 +1,139 @@
+import hashlib
+import re
+from typing import Any
+
+
+_SUPPORT_ROLE_MARKERS = (
+    'поддержка',
+    'support',
+    'оператор',
+    'operator',
+    'admin',
+    'администратор',
+    'bot',
+    'бот',
+)
+
+_WHITESPACE_RE = re.compile(r'[ \t]+')
+_MULTI_NEWLINE_RE = re.compile(r'\n{3,}')
+
+
+def _flatten_text(value: Any) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                if item.get('type') == 'custom_emoji':
+                    continue
+                parts.append(str(item.get('text', '')))
+        return ''.join(parts)
+    if isinstance(value, dict):
+        return str(value.get('text', ''))
+    return str(value)
+
+
+def _clean(text: str) -> str:
+    text = text.replace('\r', '')
+    text = _WHITESPACE_RE.sub(' ', text)
+    text = _MULTI_NEWLINE_RE.sub('\n\n', text)
+    return text.strip()
+
+
+def _is_support(from_name: str) -> bool:
+    lowered = (from_name or '').lower()
+    return any(marker in lowered for marker in _SUPPORT_ROLE_MARKERS)
+
+
+def _extract_messages(data: dict[str, Any]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+
+    if isinstance(data.get('messages'), list):
+        messages.extend(data['messages'])
+
+    chats = data.get('chats')
+    if isinstance(chats, dict):
+        for chat in chats.get('list', []) or []:
+            if isinstance(chat, dict) and isinstance(chat.get('messages'), list):
+                messages.extend(chat['messages'])
+    elif isinstance(chats, list):
+        for chat in chats:
+            if isinstance(chat, dict) and isinstance(chat.get('messages'), list):
+                messages.extend(chat['messages'])
+
+    return messages
+
+
+def _normalize_message(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    if raw.get('type') != 'message':
+        return None
+    text = _clean(_flatten_text(raw.get('text')))
+    if not text:
+        return None
+    from_name = str(raw.get('from') or '')
+    return {'from': from_name, 'is_support': _is_support(from_name), 'text': text}
+
+
+def _build_qa_pairs(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    pairs: list[dict[str, str]] = []
+    pending_questions: list[str] = []
+    pending_answers: list[str] = []
+
+    def flush() -> None:
+        if pending_questions and pending_answers:
+            pairs.append(
+                {
+                    'question': _clean('\n'.join(pending_questions)),
+                    'answer': _clean('\n'.join(pending_answers)),
+                }
+            )
+
+    prev_is_support: bool | None = None
+    for message in messages:
+        is_support = message['is_support']
+        text = message['text']
+        if not is_support:
+            if prev_is_support:
+                flush()
+                pending_questions = []
+                pending_answers = []
+            pending_questions.append(text)
+        else:
+            pending_answers.append(text)
+        prev_is_support = is_support
+
+    flush()
+    return pairs
+
+
+def parse_knowledge_file(data: dict[str, Any]) -> tuple[list[dict[str, str]], int]:
+    raw_messages = _extract_messages(data)
+    normalized = [m for m in (_normalize_message(item) for item in raw_messages) if m]
+    pairs = _build_qa_pairs(normalized)
+    return pairs, len(normalized)
+
+
+def build_chunks(pairs: list[dict[str, str]], max_chars: int) -> list[dict[str, str]]:
+    chunks: list[dict[str, str]] = []
+    for pair in pairs:
+        question = pair['question'].strip()
+        answer = pair['answer'].strip()
+        if not question or not answer:
+            continue
+        if len(answer) > max_chars:
+            answer = answer[:max_chars].rstrip()
+        content = f'Вопрос: {question}\nОтвет: {answer}'
+        chunk_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+        chunks.append({'content': content, 'question': question, 'answer': answer, 'chunk_hash': chunk_hash})
+    return chunks
+
+
+def compute_content_hash(raw_bytes: bytes) -> str:
+    return hashlib.sha256(raw_bytes).hexdigest()
