@@ -4,6 +4,7 @@ import time
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db import crud
 from ai_support_bot.app.db.models import KnowledgeChunk
 from ai_support_bot.app.services import settings_store
@@ -65,7 +66,7 @@ class RAGService:
 
         source = await crud.create_source(db, filename=filename, content_hash=content_hash, title=title)
 
-        embedding_model = settings_store.get('EMBEDDING_MODEL')
+        embedding_model = settings_store.get('EMBEDDING_MODEL') or settings.EMBEDDING_MODEL or 'text-embedding-3-small'
         stored = 0
         for start in range(0, len(unique_chunks), _EMBED_BATCH_SIZE):
             batch = unique_chunks[start : start + _EMBED_BATCH_SIZE]
