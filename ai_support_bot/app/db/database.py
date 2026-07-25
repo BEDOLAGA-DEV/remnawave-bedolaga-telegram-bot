@@ -12,7 +12,7 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 main_engine = None
 MainSessionLocal = None
 if settings.main_db_enabled:
-    main_engine = create_async_engine(settings.MAIN_DATABASE_URL, pool_pre_ping=True)
+    main_engine = create_async_engine(settings.effective_main_database_url, pool_pre_ping=True)
     MainSessionLocal = async_sessionmaker(main_engine, class_=AsyncSession, expire_on_commit=False)
 
 
