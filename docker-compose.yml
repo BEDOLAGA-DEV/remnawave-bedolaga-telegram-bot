@@ -95,8 +95,8 @@ services:
 
   ai_support_bot:
     build:
-      context: ./ai_support_bot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ai_support_bot/Dockerfile
     container_name: ai_support_bot
     restart: unless-stopped
     env_file:
