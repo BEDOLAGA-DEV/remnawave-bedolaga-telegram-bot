@@ -85,11 +85,15 @@ class OpenAIClient:
         if not choices:
             raise OpenAIError('Empty response from model')
         usage = body.get('usage', {})
+        prompt_details = usage.get('prompt_tokens_details') or {}
+        cached_tokens = prompt_details.get('cached_tokens', 0)
+
         return {
             'content': choices[0].get('message', {}).get('content', '').strip(),
             'model': body.get('model', model),
             'tokens_prompt': usage.get('prompt_tokens'),
             'tokens_completion': usage.get('completion_tokens'),
+            'tokens_cached': cached_tokens,
         }
 
 

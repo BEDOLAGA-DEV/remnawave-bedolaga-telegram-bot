@@ -39,9 +39,29 @@ class _ResponseCache:
 _response_cache = _ResponseCache()
 
 
+import re
+
+
+def convert_markdown_to_html(text: str) -> str:
+    if not text:
+        return text
+    # Convert **text** -> <b>text</b>
+    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    # Convert __text__ -> <b>text</b>
+    text = re.sub(r'__(.*?)__', r'<b>\1</b>', text)
+    # Convert *text* -> <i>text</i> (when not inside HTML tags)
+    text = re.sub(r'(?<!<[^>]*)\*([^*]+)\*(?![^<]*>)', r'<i>\1</i>', text)
+    # Convert `code` -> <code>code</code>
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    return text
+
+
 class SupportAgent:
     def _build_system_prompt(self, knowledge: list[dict], user_context: str) -> str:
-        blocks = [settings_store.get('SYSTEM_PROMPT')]
+        blocks = [
+            settings_store.get('SYSTEM_PROMPT'),
+            'ОБЯЗАТЕЛЬНОЕ ПРАВИЛО ФОРМАТИРОВАНИЯ: Используй ТОЛЬКО HTML-теги Telegram (<b>жирный</b>, <i>курсив</i>, <code>код</code>). Категорически запрещено использовать Markdown-разметку (**звёздочки**, __подчёркивания__ или ```).'
+        ]
 
         if knowledge:
             examples = [
@@ -111,6 +131,7 @@ class SupportAgent:
             answer_text = cached_answer
             model_used = model
         else:
+            logger.info('Sending prompt to OpenAI', telegram_id=telegram_id, system_prompt=system_prompt, messages=messages)
             result = await openai_client.chat_completion(
                 messages=messages, model=model, max_tokens=max_tokens, temperature=temperature
             )
@@ -123,6 +144,7 @@ class SupportAgent:
 
         escalate = _ESCALATION_MARKER in answer_text
         answer_text = answer_text.replace(_ESCALATION_MARKER, '').strip()
+        answer_text = convert_markdown_to_html(answer_text)
 
         await crud.add_message(
             db,
