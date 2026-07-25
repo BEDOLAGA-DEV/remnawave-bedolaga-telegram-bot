@@ -49,8 +49,8 @@ def convert_markdown_to_html(text: str) -> str:
     text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
     # Convert __text__ -> <b>text</b>
     text = re.sub(r'__(.*?)__', r'<b>\1</b>', text)
-    # Convert *text* -> <i>text</i> (when not inside HTML tags)
-    text = re.sub(r'(?<!<[^>]*)\*([^*]+)\*(?![^<]*>)', r'<i>\1</i>', text)
+    # Convert *text* -> <i>text</i>
+    text = re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'<i>\1</i>', text)
     # Convert `code` -> <code>code</code>
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
     return text
