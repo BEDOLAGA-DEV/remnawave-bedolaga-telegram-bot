@@ -113,11 +113,72 @@ def _build_qa_pairs(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     return pairs
 
 
-def parse_knowledge_file(data: dict[str, Any]) -> tuple[list[dict[str, str]], int]:
-    raw_messages = _extract_messages(data)
-    normalized = [m for m in (_normalize_message(item) for item in raw_messages) if m]
-    pairs = _build_qa_pairs(normalized)
-    return pairs, len(normalized)
+def _try_parse_direct_qa(data: Any) -> list[dict[str, str]]:
+    items = []
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        for key in ('faq', 'qa_pairs', 'items', 'data', 'knowledge', 'questions'):
+            if isinstance(data.get(key), list):
+                items = data[key]
+                break
+
+    pairs: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        q = _clean(
+            _flatten_text(
+                item.get('question')
+                or item.get('q')
+                or item.get('prompt')
+                or item.get('вопрос')
+                or item.get('title')
+            )
+        )
+        a = _clean(
+            _flatten_text(
+                item.get('answer')
+                or item.get('a')
+                or item.get('response')
+                or item.get('ответ')
+                or item.get('content')
+            )
+        )
+        if q and a:
+            pairs.append({'question': q, 'answer': a})
+    return pairs
+
+
+def parse_knowledge_file(data: Any) -> tuple[list[dict[str, str]], int]:
+    # 1. Try direct Q&A pairs (array or object containing FAQ items)
+    direct_pairs = _try_parse_direct_qa(data)
+    if direct_pairs:
+        return direct_pairs, len(direct_pairs)
+
+    # 2. Telegram Export Parsing
+    if isinstance(data, dict):
+        raw_messages = _extract_messages(data)
+        normalized = [m for m in (_normalize_message(item) for item in raw_messages) if m]
+        pairs = _build_qa_pairs(normalized)
+
+        # Fallback if no support marker matched from_name: alternate between users
+        if not pairs and len(normalized) >= 2:
+            # Check if any messages were identified as support
+            has_support = any(m['is_support'] for m in normalized)
+            if not has_support:
+                # Group by sender switching
+                fallback_normalized = []
+                first_sender = normalized[0]['from']
+                for m in normalized:
+                    m_copy = dict(m)
+                    m_copy['is_support'] = m['from'] != first_sender
+                    fallback_normalized.append(m_copy)
+                pairs = _build_qa_pairs(fallback_normalized)
+
+        return pairs, len(normalized)
+
+    return [], 0
 
 
 def build_chunks(pairs: list[dict[str, str]], max_chars: int) -> list[dict[str, str]]:
