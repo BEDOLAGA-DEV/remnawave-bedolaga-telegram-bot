@@ -88,6 +88,7 @@ class SupportAgent:
     async def generate_answer(
         self, db: AsyncSession, telegram_id: int, question: str, image_url: str | None = None
     ) -> dict:
+        await settings_store.load()
         knowledge = await rag_service.retrieve(db, question) if question.strip() else []
         user_context = await build_user_context(telegram_id)
         system_prompt = self._build_system_prompt(knowledge, user_context)
