@@ -53,8 +53,8 @@ class Settings(BaseSettings):
     def effective_database_url(self) -> str:
         if self.DATABASE_URL and 'sqlite' in self.DATABASE_URL:
             import os
-            # __file__ is /app/ai_support_bot/app/core/config.py
-            # project_root should be /app
+            if os.path.exists('/app/data'):
+                return 'sqlite+aiosqlite:////app/data/ai_support.db'
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
             data_dir = os.path.join(project_root, 'data')
             os.makedirs(data_dir, exist_ok=True)
