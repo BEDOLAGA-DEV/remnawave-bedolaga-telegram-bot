@@ -6,7 +6,7 @@ from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db.models import Base
 
 
-engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
+engine = create_async_engine(settings.effective_database_url, pool_pre_ping=True)
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 main_engine = None
