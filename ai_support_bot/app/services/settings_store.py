@@ -38,9 +38,13 @@ async def load() -> None:
 
 
 def get(key: str) -> str:
-    if key in _cache:
-        return _cache[key]
-    return str(_DEFAULTS.get(key, ''))
+    global _DEFAULTS
+    if not _DEFAULTS:
+        _DEFAULTS = _base_defaults()
+    val = _cache.get(key)
+    if val is not None and val.strip():
+        return val.strip()
+    return str(_DEFAULTS.get(key, '') or '')
 
 
 def get_int(key: str) -> int:
@@ -62,17 +66,26 @@ def get_bool(key: str) -> bool:
 
 
 async def set_value(key: str, value: str) -> None:
+    cleaned = value.strip() if value else ''
     async with AsyncSessionLocal() as session:
         existing = await session.get(RuntimeSetting, key)
-        if existing:
-            existing.value = value
-        else:
-            session.add(RuntimeSetting(key=key, value=value))
+        if cleaned:
+            if existing:
+                existing.value = cleaned
+            else:
+                session.add(RuntimeSetting(key=key, value=cleaned))
+        elif existing:
+            await session.delete(existing)
         await session.commit()
-    _cache[key] = value
+    if cleaned:
+        _cache[key] = cleaned
+    else:
+        _cache.pop(key, None)
 
 
 def all_settings() -> dict[str, str]:
-    merged = {k: str(v) for k, v in _DEFAULTS.items()}
-    merged.update(_cache)
+    merged = {k: str(v) for k, v in _base_defaults().items()}
+    for k, v in _cache.items():
+        if v and v.strip():
+            merged[k] = v.strip()
     return merged

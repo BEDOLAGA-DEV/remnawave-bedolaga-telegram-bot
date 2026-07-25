@@ -82,6 +82,17 @@ async def update_ai_support_settings(
     return {'status': 'ok', 'settings': settings_store.all_settings()}
 
 
+@router.post('/settings/reset')
+async def reset_ai_support_settings(
+    _: Any = Security(require_api_token),
+) -> dict[str, Any]:
+    """Сбросить настройки ИИ-бота поддержки к значениям по умолчанию."""
+    for key in list(settings_store._cache.keys()):
+        await settings_store.set_value(key, '')
+    await settings_store.load()
+    return {'status': 'ok', 'settings': settings_store.all_settings()}
+
+
 @router.get('/knowledge', response_model=KnowledgeSummaryResponse)
 async def get_knowledge_summary(
     _: Any = Security(require_api_token),
