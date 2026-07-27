@@ -248,6 +248,56 @@ class AntilopayPaymentMixin:
             antilopay_crud = import_module('app.database.crud.antilopay')
             payment = await antilopay_crud.get_antilopay_payment_by_order_id(db, our_order_id)
 
+            if not payment and '_R' in our_order_id:
+                import re
+
+                base_order_id = re.sub(r'_R\d+$', '', our_order_id)
+                if base_order_id != our_order_id:
+                    base_payment = await antilopay_crud.get_antilopay_payment_by_order_id(db, base_order_id)
+                    if base_payment:
+                        raw_amount = payload.get('original_amount') or payload.get('amount')
+                        if raw_amount is not None:
+                            try:
+                                amount_kopeks = round(float(raw_amount) * 100)
+                            except (ValueError, TypeError):
+                                amount_kopeks = base_payment.amount_kopeks
+                        else:
+                            amount_kopeks = base_payment.amount_kopeks
+
+                        metadata = dict(getattr(base_payment, 'metadata_json', {}) or {})
+                        metadata['is_recurrent_charge'] = True
+                        metadata['parent_order_id'] = base_order_id
+
+                        try:
+                            payment = await antilopay_crud.create_antilopay_payment(
+                                db=db,
+                                user_id=base_payment.user_id,
+                                order_id=our_order_id,
+                                amount_kopeks=amount_kopeks,
+                                currency=base_payment.currency,
+                                description=f'Рекуррентное списание ({our_order_id})',
+                                payment_method=base_payment.payment_method,
+                                antilopay_payment_id=str(antilopay_payment_id) if antilopay_payment_id else None,
+                                metadata_json=metadata,
+                            )
+                            logger.info(
+                                'Antilopay: создана авто-запись для рекуррентного платежа',
+                                order_id=our_order_id,
+                                base_order_id=base_order_id,
+                                user_id=base_payment.user_id,
+                            )
+                        except Exception as create_exc:
+                            logger.warning(
+                                'Antilopay: ошибка авто-создания записи для рекуррента, получаем существующую',
+                                order_id=our_order_id,
+                                error=str(create_exc),
+                            )
+                            try:
+                                await db.rollback()
+                            except Exception:
+                                pass
+                            payment = await antilopay_crud.get_antilopay_payment_by_order_id(db, our_order_id)
+
             if not payment:
                 logger.warning(
                     'Antilopay callback: платеж не найден',
