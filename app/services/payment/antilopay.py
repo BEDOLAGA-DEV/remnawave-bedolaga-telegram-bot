@@ -596,17 +596,31 @@ class AntilopayPaymentMixin:
             except Exception as error:
                 logger.error('Ошибка отправки уведомления пользователю Antilopay', error=error)
 
-        try:
-            from app.services.payment.common import send_cart_notification_after_topup
+        is_recurrent_charge = bool(metadata.get('is_recurrent_charge') or '_R' in payment.order_id)
+        autopay_is_disabled = subscription and not getattr(subscription, 'autopay_enabled', True)
 
-            await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
-        except Exception as error:
-            logger.error(
-                'Ошибка при работе с сохраненной корзиной для пользователя',
+        if is_recurrent_charge and autopay_is_disabled:
+            logger.info(
+                'Antilopay: автосписание при выключенном автопродлении. Баланс пополнен, автопродление пропущено, отменяем рекуррент.',
                 user_id=payment.user_id,
-                error=error,
-                exc_info=True,
+                order_id=payment.order_id,
             )
+            try:
+                await self.cancel_user_antilopay_recurrents(db, payment.user_id)
+            except Exception as error:
+                logger.error('Antilopay: ошибка при отмене рекуррентов', user_id=payment.user_id, error=error)
+        else:
+            try:
+                from app.services.payment.common import send_cart_notification_after_topup
+
+                await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
+            except Exception as error:
+                logger.error(
+                    'Ошибка при работе с сохраненной корзиной для пользователя',
+                    user_id=payment.user_id,
+                    error=error,
+                    exc_info=True,
+                )
 
         metadata['balance_change'] = {
             'old_balance': old_balance,
@@ -640,6 +654,19 @@ class AntilopayPaymentMixin:
 
         try:
             from app.database.crud.antilopay_recurrent import upsert_antilopay_recurrent
+            from app.database.crud.subscription import get_subscription_by_user_id
+
+            subscription = await get_subscription_by_user_id(db, payment.user_id)
+            if subscription and not getattr(subscription, 'autopay_enabled', True):
+                logger.info(
+                    'Antilopay: не сохраняем рекуррент, т.к. автопродление отключено пользователем',
+                    user_id=payment.user_id,
+                )
+                try:
+                    await antilopay_service.cancel_recurrent_payment(recurrent_id=recurrent_id)
+                except Exception as cancel_err:
+                    logger.warning('Antilopay: не удалось отменить новый рекуррент', error=cancel_err)
+                return
 
             metadata = dict(getattr(payment, 'metadata_json', {}) or {})
             subscription_id = metadata.get('subscription_id')
@@ -688,11 +715,16 @@ class AntilopayPaymentMixin:
         cancelled = 0
         for recurrent in recurrents:
             try:
-                await antilopay_service.cancel_recurrent_payment(
-                    recurrent_id=recurrent.recurrent_id,
-                    transaction_id=recurrent.initial_payment_id,
-                )
+                if recurrent.recurrent_id:
+                    await antilopay_service.cancel_recurrent_payment(recurrent_id=recurrent.recurrent_id)
+                elif recurrent.initial_payment_id:
+                    await antilopay_service.cancel_recurrent_payment(transaction_id=recurrent.initial_payment_id)
             except Exception as error:
+                if recurrent.recurrent_id and recurrent.initial_payment_id:
+                    try:
+                        await antilopay_service.cancel_recurrent_payment(transaction_id=recurrent.initial_payment_id)
+                    except Exception as fallback_error:
+                        logger.warning('Antilopay: fallback cancellation error', error=fallback_error)
                 logger.warning(
                     'Antilopay: не удалось отменить рекуррент через API',
                     recurrent_id=recurrent.recurrent_id,
@@ -702,6 +734,7 @@ class AntilopayPaymentMixin:
             await deactivate_antilopay_recurrent(db, recurrent)
             cancelled += 1
         return cancelled
+
 
     async def check_antilopay_payment_status(
         self,

@@ -1444,6 +1444,19 @@ async def update_subscription_autopay(
 
     status = 'включен' if enabled else 'выключен'
     logger.info('💳 Автоплатеж для подписки пользователя', user_id=subscription.user_id, status=status)
+
+    if not enabled:
+        try:
+            from app.services.payment_service import payment_service
+
+            await payment_service.cancel_user_antilopay_recurrents(db, subscription.user_id)
+        except Exception as error:
+            logger.warning(
+                'Antilopay: ошибка при отмене рекуррентов при отключении autopay',
+                user_id=subscription.user_id,
+                error=error,
+            )
+
     return subscription
 
 

@@ -301,7 +301,7 @@ class AntilopayService:
         payload: dict[str, Any] = {'project_identificator': self.project_id}
         if recurrent_id:
             payload['recurrent_id'] = recurrent_id
-        if transaction_id:
+        elif transaction_id:
             payload['transaction_id'] = transaction_id
 
         json_body = json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
@@ -325,7 +325,12 @@ class AntilopayService:
                 if response.status == 200 and api_code == 0:
                     return data
 
-                error_msg = data.get('message') or data.get('error') or str(data)
+                error_msg = str(data.get('message') or data.get('error') or str(data))
+                # Если рекуррент уже не активен (api_code == 28 или соответствующее сообщение), считается уже отменённым
+                if api_code == 28 or 'not active' in error_msg.lower() or 'уже отменен' in error_msg.lower():
+                    logger.info('Antilopay: рекуррент уже не активен на стороне шлюза', recurrent_id=recurrent_id)
+                    return data
+
                 logger.error(
                     'Antilopay cancel_recurrent_payment error',
                     status_code=response.status,
