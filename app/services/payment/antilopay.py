@@ -477,7 +477,21 @@ class AntilopayPaymentMixin:
 
         transaction_external_id = payment.order_id
 
-        # Проверяем дупликат транзакции
+        is_recurrent_charge = bool(metadata.get('is_recurrent_charge') or '_R' in payment.order_id)
+        autopay_is_disabled = subscription and not getattr(subscription, 'autopay_enabled', True)
+
+        if is_recurrent_charge and not autopay_is_disabled:
+            return await self._finalize_antilopay_recurrent_as_subscription(
+                db,
+                payment=payment,
+                user=user,
+                subscription=subscription,
+                metadata=metadata,
+                transaction_external_id=transaction_external_id,
+                trigger=trigger,
+            )
+
+
         existing_transaction = None
         if transaction_external_id:
             existing_transaction = await payment_module.get_transaction_by_external_id(
@@ -635,6 +649,223 @@ class AntilopayPaymentMixin:
             'Обработан Antilopay платеж',
             order_id=payment.order_id,
             user_id=payment.user_id,
+            trigger=trigger,
+        )
+
+        return True
+
+    async def _finalize_antilopay_recurrent_as_subscription(
+        self,
+        db: AsyncSession,
+        *,
+        payment: Any,
+        user: Any,
+        subscription: Any,
+        metadata: dict,
+        transaction_external_id: str,
+        trigger: str,
+    ) -> bool:
+        """Обработка рекуррентного платежа Antilopay при включённом автопродлении.
+
+        Создаёт транзакцию SUBSCRIPTION_PAYMENT и продлевает подписку напрямую,
+        БЕЗ зачисления на баланс — чтобы не было двойного счёта в статистике.
+        (DEPOSIT + SUBSCRIPTION_PAYMENT = двойной доход в отчётах)
+        """
+        from importlib import import_module
+
+        payment_module = import_module('app.services.payment_service')
+        antilopay_crud_mod = import_module('app.database.crud.antilopay')
+
+        if transaction_external_id:
+            existing = await payment_module.get_transaction_by_external_id(
+                db,
+                transaction_external_id,
+                PaymentMethod.ANTILOPAY,
+            )
+            if existing:
+                logger.info(
+                    'Antilopay рекуррент: транзакция уже существует, пропускаем',
+                    order_id=payment.order_id,
+                    transaction_id=existing.id,
+                )
+                await antilopay_crud_mod.link_antilopay_payment_to_transaction(
+                    db, payment=payment, transaction_id=existing.id
+                )
+                return True
+
+        if not subscription:
+            logger.warning(
+                'Antilopay рекуррент: нет подписки, переходим в обычный режим (DEPOSIT)',
+                user_id=payment.user_id,
+                order_id=payment.order_id,
+            )
+            from app.database.crud.user import lock_user_for_update
+
+            display_name = settings.get_antilopay_display_name()
+            transaction = await payment_module.create_transaction(
+                db,
+                user_id=payment.user_id,
+                type=TransactionType.DEPOSIT,
+                amount_kopeks=payment.amount_kopeks,
+                description=f'Пополнение через {display_name}',
+                payment_method=PaymentMethod.ANTILOPAY,
+                external_id=transaction_external_id,
+                is_completed=True,
+                created_at=getattr(payment, 'created_at', None),
+                commit=False,
+            )
+            await antilopay_crud_mod.link_antilopay_payment_to_transaction(
+                db, payment=payment, transaction_id=transaction.id
+            )
+            user = await lock_user_for_update(db, user)
+            user.balance_kopeks += payment.amount_kopeks
+            user.updated_at = datetime.now(UTC)
+            await db.commit()
+            metadata['balance_credited'] = True
+            payment.metadata_json = metadata
+            await db.commit()
+            return True
+
+        tariff = getattr(subscription, 'tariff', None)
+        if tariff:
+            period_days = tariff.get_shortest_period() or 30
+        else:
+            period_days = 30
+
+        display_name = settings.get_antilopay_display_name()
+        description = f'Автоплатёж через {display_name} на {period_days} дней'
+
+        transaction = await payment_module.create_transaction(
+            db,
+            user_id=payment.user_id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=payment.amount_kopeks,
+            description=description,
+            payment_method=PaymentMethod.ANTILOPAY,
+            external_id=transaction_external_id,
+            is_completed=True,
+            created_at=getattr(payment, 'created_at', None),
+            commit=False,
+        )
+
+        await antilopay_crud_mod.link_antilopay_payment_to_transaction(
+            db, payment=payment, transaction_id=transaction.id
+        )
+
+        from app.database.crud.subscription import extend_subscription
+        from app.services.subscription_service import SubscriptionService
+
+        old_end_date = subscription.end_date
+        subscription_service = SubscriptionService()
+        try:
+            updated_subscription = await extend_subscription(db, subscription, period_days)
+        except Exception as error:
+            logger.error(
+                'Antilopay рекуррент: не удалось продлить подписку',
+                user_id=payment.user_id,
+                order_id=payment.order_id,
+                error=error,
+                exc_info=True,
+            )
+            await db.rollback()
+            return False
+
+        await db.commit()
+
+        try:
+            await subscription_service.update_remnawave_user(
+                db,
+                updated_subscription,
+                reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+                reset_reason='Antilopay рекуррентный автоплатёж',
+            )
+        except Exception as error:
+            logger.error(
+                'Antilopay рекуррент: не удалось обновить RemnaWave',
+                user_id=payment.user_id,
+                error=error,
+            )
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(
+                subscription_id=updated_subscription.id,
+                user_id=updated_subscription.user_id,
+                action='update',
+            )
+
+        try:
+            from app.services.referral_service import process_referral_topup
+
+            await process_referral_topup(db, user.id, payment.amount_kopeks, getattr(self, 'bot', None))
+        except Exception as error:
+            logger.error('Antilopay рекуррент: ошибка реферального начисления', error=error)
+
+        if getattr(self, 'bot', None):
+            try:
+                from app.services.admin_notification_service import AdminNotificationService
+
+                notification_service = AdminNotificationService(self.bot)
+                await notification_service.send_subscription_extension_notification(
+                    db,
+                    user,
+                    updated_subscription,
+                    transaction,
+                    period_days,
+                    old_end_date,
+                    new_end_date=updated_subscription.end_date,
+                    balance_after=user.balance_kopeks,
+                )
+            except Exception as error:
+                logger.error('Antilopay рекуррент: ошибка уведомления админов', error=error)
+
+        if getattr(self, 'bot', None) and getattr(user, 'telegram_id', None):
+            try:
+                from app.utils.pricing_utils import format_period_description
+                from app.utils.timezone import format_local_datetime
+
+                period_label = format_period_description(period_days, getattr(user, 'language', 'ru'))
+                new_end_date = updated_subscription.end_date
+                end_date_label = format_local_datetime(new_end_date, '%d.%m.%Y %H:%M')
+
+                msg = (
+                    f'✅ <b>Автоплатёж выполнен!</b>\n\n'
+                    f'💳 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
+                    f'📅 Подписка продлена на {period_label}\n'
+                    f'🗓 Действует до: {end_date_label}'
+                )
+                if settings.is_multi_tariff_enabled() and tariff:
+                    msg += f'\n📦 Тариф: «{tariff.name}»'
+
+                await self.bot.send_message(
+                    user.telegram_id,
+                    msg,
+                    parse_mode='HTML',
+                )
+            except Exception as error:
+                logger.error('Antilopay рекуррент: ошибка уведомления пользователя', error=error)
+
+        try:
+            from app.cabinet.routes.websocket import notify_user_subscription_renewed
+            from app.utils.timezone import format_email_datetime
+
+            await notify_user_subscription_renewed(
+                user_id=user.id,
+                subscription_id=subscription.id,
+                new_expires_at=format_email_datetime(updated_subscription.end_date),
+                amount_kopeks=payment.amount_kopeks,
+            )
+        except Exception as ws_error:
+            logger.warning('Antilopay рекуррент: WS уведомление не отправлено', ws_error=ws_error)
+
+        metadata['recurrent_processed'] = True
+        payment.metadata_json = metadata
+        await db.commit()
+
+        logger.info(
+            'Antilopay рекуррент: подписка продлена напрямую (SUBSCRIPTION_PAYMENT)',
+            order_id=payment.order_id,
+            user_id=payment.user_id,
+            period_days=period_days,
             trigger=trigger,
         )
 
