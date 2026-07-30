@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.coupon import (
     create_coupon_batch,
+    delete_coupon_batch,
     get_batch_coupon_tokens,
     get_batch_status_counts,
     get_coupon_batch_by_id,
@@ -68,6 +69,10 @@ def _format_batch_card(batch: CouponBatch, counts: dict[str, int]) -> str:
 
     text += f'\n📊 <b>Статусы:</b>\n✅ Активных: {active}\n🎫 Погашено: {redeemed}\n⛔ Отозвано: {revoked}\n\n'
 
+    max_per_user = getattr(batch, 'max_per_user', 0) or 0
+    if max_per_user > 0:
+        text += f'👤 На пользователя: не более {max_per_user} шт.\n'
+
     if batch.valid_until:
         text += f'⏰ Действует до: {format_datetime(batch.valid_until)}\n'
     else:
@@ -94,6 +99,11 @@ def _batch_card_keyboard(batch: CouponBatch, counts: dict[str, int]) -> types.In
                 )
             ]
         )
+    # Удаление доступно всегда (в т.ч. у отозванной/использованной партии) —
+    # это способ убрать запись совсем, отзыв лишь гасит ссылки.
+    keyboard.append(
+        [types.InlineKeyboardButton(text='🗑 Удалить партию', callback_data=f'admin_coupon_delete_{batch.id}')]
+    )
     keyboard.append([types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_coupons')])
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -321,11 +331,32 @@ async def process_coupon_batch_expiry(message: types.Message, db_user: User, sta
         return
 
     await state.update_data(coupon_expiry_days=expiry_days)
+    await message.answer(
+        '👤 Сколько купонов из партии может активировать ОДИН пользователь?\n\n'
+        '<i>0 — без ограничения. Для раздач и конкурсов ставьте 1, чтобы один '
+        'человек не забрал всю партию.</i>',
+        reply_markup=_CANCEL_KEYBOARD,
+    )
+    await state.set_state(AdminStates.creating_coupon_batch_per_user)
+
+
+@admin_required
+@error_handler
+async def process_coupon_batch_per_user(message: types.Message, db_user: User, state: FSMContext):
+    max_per_user = await _read_int(message, 0, MAX_COUPONS_PER_BATCH, '❌ Введите число от 0 (без ограничения)')
+    if max_per_user is None:
+        return
+
+    await state.update_data(coupon_max_per_user=max_per_user)
 
     data = await state.get_data()
+    expiry_days = data.get('coupon_expiry_days', 0)
     price_kopeks = data.get('coupon_price_kopeks', 0)
     price_line = f'💰 Опт: {settings.format_price(price_kopeks)}/шт\n' if price_kopeks > 0 else ''
     expiry_line = f'⏰ Срок: {expiry_days} дн.\n' if expiry_days > 0 else '⏰ Срок: бессрочно\n'
+    per_user_line = (
+        f'👤 На пользователя: {max_per_user} шт.\n' if max_per_user > 0 else '👤 На пользователя: без ограничения\n'
+    )
 
     await message.answer(
         f'🎟 <b>Подтвердите создание партии</b>\n\n'
@@ -333,7 +364,8 @@ async def process_coupon_batch_expiry(message: types.Message, db_user: User, sta
         f'📦 Тариф: {html.escape(data.get("coupon_tariff_name", ""))} — {data.get("coupon_period_days")} дн.\n'
         f'🎫 Купонов: {data.get("coupon_count")}\n'
         f'{price_line}'
-        f'{expiry_line}',
+        f'{expiry_line}'
+        f'{per_user_line}',
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [types.InlineKeyboardButton(text='✅ Создать', callback_data='admin_coupon_create_confirm')],
@@ -396,6 +428,7 @@ async def confirm_coupon_batch_creation(
             wholesale_price_kopeks=data.get('coupon_price_kopeks', 0),
             valid_until=valid_until,
             created_by=db_user.id,
+            max_per_user=data.get('coupon_max_per_user', 0),
         )
 
         logger.info(
@@ -509,6 +542,59 @@ async def confirm_revoke_coupon_batch(callback: types.CallbackQuery, db_user: Us
     await callback.answer(f'⛔ Отозвано купонов: {revoked_count}')
 
 
+@admin_required
+@error_handler
+async def ask_delete_coupon_batch(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    batch = await _load_batch(callback, db)
+    if batch is None:
+        return
+
+    counts = await get_batch_status_counts(db, batch.id)
+    redeemed = counts.get(CouponStatus.REDEEMED.value, 0)
+    total = sum(counts.values())
+
+    warning = ''
+    if redeemed:
+        warning = (
+            f'\n⚠️ Среди них {redeemed} уже погашенных: пропадёт история, кто чем воспользовался. '
+            f'Выданные подписки при этом НЕ отзываются.\n'
+        )
+
+    await callback.message.edit_text(
+        f'🗑 <b>Удаление партии #{batch.id}</b>\n\n'
+        f'«{html.escape(batch.name)}»: будет удалено {total} купонов вместе с самой партией.\n'
+        f'{warning}\n'
+        f'Если нужно просто закрыть раздачу — используйте «Отозвать»: он гасит ссылки, но сохраняет историю.\n\n'
+        f'Подтвердить удаление?',
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text='🗑 Да, удалить', callback_data=f'admin_coupon_delete_confirm_{batch.id}'
+                    )
+                ],
+                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin_coupon_manage_{batch.id}')],
+            ]
+        ),
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def confirm_delete_coupon_batch(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    batch = await _load_batch(callback, db)
+    if batch is None:
+        return
+
+    batch_id = batch.id
+    total = await delete_coupon_batch(db, batch)
+    logger.info('Админ удалил партию купонов', admin_id=db_user.id, batch_id=batch_id, deleted_coupons=total)
+
+    await callback.answer(f'🗑 Партия #{batch_id} удалена', show_alert=True)
+    await show_coupons_menu(callback, db_user, db, None)
+
+
 def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_coupons_menu, F.data == 'admin_coupons')
     dp.callback_query.register(handle_coupon_list_page, F.data.startswith('admin_coupon_list_page_'))
@@ -521,9 +607,14 @@ def register_handlers(dp: Dispatcher):
     # the shorter prefix also matches confirmation callbacks.
     dp.callback_query.register(confirm_revoke_coupon_batch, F.data.startswith('admin_coupon_revoke_confirm_'))
     dp.callback_query.register(ask_revoke_coupon_batch, F.data.startswith('admin_coupon_revoke_'))
+    # confirm-обработчик регистрируется РАНЬШЕ общего префикса: 'admin_coupon_delete_'
+    # является префиксом 'admin_coupon_delete_confirm_'.
+    dp.callback_query.register(confirm_delete_coupon_batch, F.data.startswith('admin_coupon_delete_confirm_'))
+    dp.callback_query.register(ask_delete_coupon_batch, F.data.startswith('admin_coupon_delete_'))
 
     dp.message.register(process_coupon_batch_days, AdminStates.creating_coupon_batch_days)
     dp.message.register(process_coupon_batch_count, AdminStates.creating_coupon_batch_count)
     dp.message.register(process_coupon_batch_name, AdminStates.creating_coupon_batch_name)
     dp.message.register(process_coupon_batch_price, AdminStates.creating_coupon_batch_price)
     dp.message.register(process_coupon_batch_expiry, AdminStates.creating_coupon_batch_expiry)
+    dp.message.register(process_coupon_batch_per_user, AdminStates.creating_coupon_batch_per_user)

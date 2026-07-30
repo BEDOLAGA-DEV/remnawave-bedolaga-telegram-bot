@@ -94,6 +94,7 @@ from app.services.tribute_service import TributeService
 from app.utils.currency_converter import currency_converter
 from app.utils.pricing_utils import (
     apply_percentage_discount,
+    calculate_price_per_month,
     calculate_prorated_price,
     format_period_description,
 )
@@ -4638,7 +4639,7 @@ async def _prepare_subscription_renewal_options(
         )
 
         months = max(1, period_days // 30)
-        per_month = pricing_result.final_total // months if months > 0 else pricing_result.final_total
+        per_month = calculate_price_per_month(pricing_result.final_total, period_days)
 
         label = format_period_description(
             period_days,
@@ -6105,6 +6106,20 @@ async def update_subscription_devices_endpoint(
         )
 
     # Enforce tariff max device limit
+    # По умолчанию ниже включённого в тариф опускать нельзя
+    # (ALLOW_DEVICES_BELOW_TARIFF_LIMIT=True возвращает прежний минимум 1).
+    from app.utils.subscription_utils import resolve_min_device_limit
+
+    min_device_limit = resolve_min_device_limit(tariff)
+    if new_devices < min_device_limit:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'devices_below_tariff',
+                'message': f'Нельзя уменьшить количество устройств ниже {min_device_limit} — столько включено в тариф',
+            },
+        )
+
     if tariff_max_device_limit and new_devices > tariff_max_device_limit:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -6317,7 +6332,7 @@ async def _build_tariff_model(
                 discount_percent = 0
 
             months = max(1, period_days // 30)
-            per_month = price_kopeks // months if months > 0 else price_kopeks
+            per_month = calculate_price_per_month(price_kopeks, period_days)
 
             periods.append(
                 MiniAppTariffPeriod(

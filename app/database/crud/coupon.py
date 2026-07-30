@@ -3,7 +3,7 @@
 import secrets
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import Coupon, CouponBatch, CouponStatus
@@ -24,6 +24,7 @@ async def create_coupon_batch(
     wholesale_price_kopeks: int = 0,
     valid_until: datetime | None = None,
     created_by: int | None = None,
+    max_per_user: int = 0,
 ) -> CouponBatch:
     batch = CouponBatch(
         name=name,
@@ -33,6 +34,7 @@ async def create_coupon_batch(
         wholesale_price_kopeks=wholesale_price_kopeks,
         valid_until=valid_until,
         created_by=created_by,
+        max_per_user=max(0, int(max_per_user or 0)),
     )
     db.add(batch)
     await db.flush()
@@ -110,3 +112,49 @@ async def revoke_batch_coupons(db: AsyncSession, batch: CouponBatch) -> int:
     batch.is_revoked = True
     await db.commit()
     return result.rowcount or 0
+
+
+async def count_batch_redemptions_by_user(db: AsyncSession, batch_id: int, user_id: int) -> int:
+    """Сколько купонов партии уже активировал пользователь.
+
+    Основа лимита ``CouponBatch.max_per_user``: купоны одноразовые, но их в
+    партии много, и без лимита один человек мог забрать всю раздачу.
+    """
+    result = await db.execute(
+        select(func.count())
+        .select_from(Coupon)
+        .where(
+            Coupon.batch_id == batch_id,
+            Coupon.redeemed_by == user_id,
+            Coupon.status == CouponStatus.REDEEMED.value,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def delete_coupon_batch(db: AsyncSession, batch: CouponBatch) -> int:
+    """Полностью удаляет партию вместе с купонами. Возвращает число купонов.
+
+    В отличие от отзыва (``revoke_batch_coupons``, оставляет историю), удаление
+    стирает и погашенные купоны — выданные подписки при этом не трогаются,
+    пропадает только связь «кто каким купоном воспользовался».
+
+    Купоны удаляются ЯВНО, а не через ``ondelete='CASCADE'``: каскад работает
+    на уровне БД (PostgreSQL), но в SQLite внешние ключи по умолчанию не
+    форсируются, и партия удалялась бы, оставляя купоны сиротами. Явное
+    удаление даёт одинаковое поведение на обоих бэкендах.
+    """
+    result = await db.execute(delete(Coupon).where(Coupon.batch_id == batch.id))
+    await db.delete(batch)
+    await db.commit()
+    return result.rowcount or 0
+
+
+async def delete_coupon(db: AsyncSession, coupon: Coupon) -> None:
+    """Удаляет один купон партии (например, лишний непогашенный)."""
+    await db.delete(coupon)
+    await db.commit()
+
+
+async def get_coupon_by_id(db: AsyncSession, coupon_id: int) -> Coupon | None:
+    return await db.get(Coupon, coupon_id)

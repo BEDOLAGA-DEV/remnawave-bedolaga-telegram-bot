@@ -7,14 +7,12 @@ from datetime import datetime
 from typing import Any, ClassVar
 
 import structlog
-from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, validator
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot_factory import create_bot
 from app.database.crud.discount_offer import (
     count_discount_offers,
     list_discount_offers,
@@ -28,8 +26,15 @@ from app.database.crud.promo_offer_template import (
     update_promo_offer_template,
 )
 from app.database.crud.user import get_user_by_email, get_user_by_telegram_id
-from app.database.models import DiscountOffer, PromoOfferLog, PromoOfferTemplate, User
-from app.handlers.admin.messages import get_custom_users, get_target_users
+from app.database.models import (
+    BroadcastHistory,
+    DiscountOffer,
+    PromoOfferLog,
+    PromoOfferTemplate,
+    User,
+)
+from app.handlers.admin.messages import get_custom_users, get_target_users, get_target_users_count
+from app.services.broadcast_service import BroadcastConfig, broadcast_service
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -162,8 +167,24 @@ class PromoOfferBroadcastResponse(BaseModel):
     created_offers: int
     user_ids: list[int]
     target: str | None = None
+    # Счётчики email-уведомлений, отправленных синхронно. Доставка в Telegram идёт через
+    # запись рассылки — её прогресс читается по broadcast_id.
     notifications_sent: int = 0
     notifications_failed: int = 0
+    broadcast_id: int | None = Field(
+        None,
+        description='ID записи рассылки для отслеживания прогресса доставки в Telegram',
+    )
+    telegram_recipients: int = Field(0, description='Сколько получателей ушло в Telegram-рассылку')
+
+
+class PromoOfferSegment(BaseModel):
+    key: str
+    count: int
+
+
+class PromoOfferSegmentListResponse(BaseModel):
+    segments: list[PromoOfferSegment]
 
 
 class PromoOfferLogOfferInfo(BaseModel):
@@ -294,6 +315,49 @@ async def _resolve_target_users(db: AsyncSession, target: str) -> list[User]:
     return await get_target_users(db, normalized)
 
 
+# Сегменты, доступные для рассылки промопредложений. Порядок задаёт порядок в кабинете.
+TARGET_SEGMENTS: tuple[str, ...] = (
+    'all',
+    'active',
+    'trial',
+    'trial_ending',
+    'expiring',
+    'expired',
+    'zero',
+    'autopay_failed',
+    'low_balance',
+    'inactive_30d',
+    'inactive_60d',
+    'inactive_90d',
+    'custom_today',
+    'custom_week',
+    'custom_month',
+    'custom_active_today',
+)
+
+
+# ============== Segment Endpoints ==============
+
+
+@router.get('/segments', response_model=PromoOfferSegmentListResponse)
+async def list_segments(
+    admin: User = Depends(require_permission('promo_offers:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> PromoOfferSegmentListResponse:
+    """Число пользователей в каждом сегменте — чтобы админ видел охват до отправки."""
+    segments: list[PromoOfferSegment] = []
+
+    for key in TARGET_SEGMENTS:
+        try:
+            count = await get_target_users_count(db, key)
+        except SQLAlchemyError as exc:
+            logger.warning('Failed to count promo offer segment', segment=key, exc=exc)
+            count = 0
+        segments.append(PromoOfferSegment(key=key, count=count))
+
+    return PromoOfferSegmentListResponse(segments=segments)
+
+
 # ============== Template Endpoints ==============
 
 
@@ -394,9 +458,76 @@ async def list_offers(
     )
 
 
-def _get_bot() -> Bot:
-    """Create bot instance for sending notifications."""
-    return create_bot()
+def _build_promo_keyboard(offer_id: int, button_text: str) -> InlineKeyboardMarkup:
+    """Клавиатура промопредложения: кнопка активации своего оффера + закрыть."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                build_miniapp_or_callback_button(
+                    text=button_text,
+                    callback_data=f'claim_discount_{offer_id}',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text='❌ Закрыть',
+                    callback_data='promo_offer_close',
+                )
+            ],
+        ]
+    )
+
+
+async def _start_promo_broadcast(
+    db: AsyncSession,
+    admin: User,
+    *,
+    target: str | None,
+    message_text: str,
+    button_text: str,
+    notify_targets: list[tuple[int, int]],
+) -> int:
+    """Завести запись рассылки и запустить доставку промопредложений в фоне.
+
+    Возвращает id записи: по нему кабинет читает прогресс, счётчики доставленных,
+    заблокировавших бота и ошибок — теми же ручками, что и обычные рассылки.
+    """
+    broadcast = BroadcastHistory(
+        target_type=target or 'promo_offer_direct',
+        message_text=message_text,
+        total_count=len(notify_targets),
+        sent_count=0,
+        failed_count=0,
+        blocked_count=0,
+        status='queued',
+        admin_id=admin.id,
+        admin_name=admin.username or f'Admin #{admin.id}',
+        category='promo',
+    )
+    db.add(broadcast)
+    await db.commit()
+    await db.refresh(broadcast)
+
+    offer_by_telegram_id = dict(notify_targets)
+
+    def keyboard_factory(telegram_id: int) -> InlineKeyboardMarkup | None:
+        offer_id = offer_by_telegram_id.get(telegram_id)
+        return _build_promo_keyboard(offer_id, button_text) if offer_id else None
+
+    config = BroadcastConfig(
+        target=broadcast.target_type,
+        message_text=message_text,
+        selected_buttons=[],
+        initiator_name=broadcast.admin_name,
+        category='promo',
+        recipient_ids=[telegram_id for telegram_id, _offer_id in notify_targets],
+        keyboard_factory=keyboard_factory,
+    )
+
+    await broadcast_service.start_broadcast(broadcast.id, config)
+    await db.refresh(broadcast)
+
+    return broadcast.id
 
 
 def _build_default_promo_message(
@@ -417,101 +548,6 @@ def _build_default_promo_message(
     lines.append('\nНажмите кнопку ниже, чтобы активировать!')
 
     return '\n'.join(lines)
-
-
-async def _send_promo_notifications(
-    targets: list[tuple[int, int]],
-    message_text: str | None,
-    button_text: str | None,
-    discount_percent: int,
-    bonus_amount_kopeks: int,
-    valid_hours: int,
-) -> tuple[int, int]:
-    """Send Telegram promo notifications.
-
-    Args:
-        targets: list of (telegram_id, offer_id). Plain ids (not ORM objects) so this
-            can run as a detached background task after the request's DB session closed.
-
-    Returns:
-        Tuple of (sent_count, failed_count)
-    """
-    if not targets:
-        return 0, 0
-
-    bot = _get_bot()
-    sent = 0
-    failed = 0
-
-    # Build message text
-    text = message_text or _build_default_promo_message(
-        discount_percent=discount_percent,
-        bonus_amount_kopeks=bonus_amount_kopeks,
-        valid_hours=valid_hours,
-    )
-
-    # Default button text
-    btn_text = button_text or '🎁 Получить'
-
-    semaphore = asyncio.Semaphore(20)
-
-    async def send_single(telegram_id: int, offer_id: int) -> bool:
-        if not telegram_id:
-            return False
-
-        async with semaphore:
-            try:
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            build_miniapp_or_callback_button(
-                                text=btn_text,
-                                callback_data=f'claim_discount_{offer_id}',
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                text='❌ Закрыть',
-                                callback_data='promo_offer_close',
-                            )
-                        ],
-                    ]
-                )
-
-                await bot.send_message(
-                    chat_id=telegram_id,
-                    text=text,
-                    reply_markup=keyboard,
-                )
-                return True
-            except (TelegramForbiddenError, TelegramBadRequest) as exc:
-                logger.warning('Failed to send promo notification to user', telegram_id=telegram_id, exc=exc)
-                return False
-            except Exception as exc:
-                logger.error('Error sending promo notification to user', telegram_id=telegram_id, exc=exc)
-                return False
-
-    # Send in batches
-    batch_size = 50
-    for i in range(0, len(targets), batch_size):
-        batch = targets[i : i + batch_size]
-        tasks = [send_single(tg_id, offer_id) for tg_id, offer_id in batch]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for result in results:
-            if isinstance(result, bool) and result:
-                sent += 1
-            else:
-                failed += 1
-
-        # Small delay between batches
-        if i + batch_size < len(targets):
-            await asyncio.sleep(0.1)
-
-    # Close bot session
-    await bot.session.close()
-
-    return sent, failed
 
 
 async def _send_promo_email_notifications(
@@ -654,6 +690,7 @@ async def broadcast_offer(
     # Send Telegram/email notifications if requested
     notifications_sent = 0
     notifications_failed = 0
+    broadcast_id: int | None = None
 
     if payload.send_notification and (notify_targets or email_targets):
         # Render placeholders in custom message text
@@ -671,30 +708,29 @@ async def broadcast_offer(
             except (KeyError, ValueError, IndexError):
                 logger.warning('Failed to render promo message placeholders')
 
-        notify_kwargs = {
-            'message_text': rendered_message_text,
-            'button_text': payload.button_text,
-            'discount_percent': payload.discount_percent,
-            'bonus_amount_kopeks': payload.bonus_amount_kopeks,
-            'valid_hours': payload.valid_hours,
-        }
-
         if notify_targets:
-            if len(notify_targets) <= _SYNC_NOTIFY_LIMIT:
-                # Small batch: send inline so exact sent/failed counts come back immediately.
-                notifications_sent, notifications_failed = await _send_promo_notifications(
-                    notify_targets, **notify_kwargs
-                )
-            else:
-                # Mass broadcast: a synchronous fan-out to thousands of users overruns the
-                # proxy timeout — the cabinet showed an error while the offers were already
-                # committed and notifications kept sending (Telegram bug #652234). Detach it:
-                # the request returns now with created_offers; delivery is observable via /logs.
-                _schedule_promo_notifications(_send_promo_notifications(notify_targets, **notify_kwargs))
-                logger.info(
-                    'Promo broadcast: notifications dispatched in background',
-                    recipients=len(notify_targets),
-                )
+            # Доставка в Telegram идёт через сервис рассылок: фан-аут на тысячи получателей
+            # не укладывался в таймаут прокси, а детач в фон не оставлял следов — кабинет
+            # не видел ни прогресса, ни числа заблокировавших бота. Теперь на отправку
+            # заводится запись рассылки, и кабинет опрашивает её по broadcast_id.
+            broadcast_id = await _start_promo_broadcast(
+                db,
+                admin,
+                target=payload.target,
+                message_text=rendered_message_text
+                or _build_default_promo_message(
+                    discount_percent=payload.discount_percent,
+                    bonus_amount_kopeks=payload.bonus_amount_kopeks,
+                    valid_hours=payload.valid_hours,
+                ),
+                button_text=payload.button_text or '🎁 Получить',
+                notify_targets=notify_targets,
+            )
+            logger.info(
+                'Promo broadcast: telegram delivery started',
+                broadcast_id=broadcast_id,
+                recipients=len(notify_targets),
+            )
 
         if email_targets:
             # Email-путь получает тот же текст, что и Telegram (кнопке «Получить»
@@ -728,6 +764,8 @@ async def broadcast_offer(
         target=payload.target,
         notifications_sent=notifications_sent,
         notifications_failed=notifications_failed,
+        broadcast_id=broadcast_id,
+        telegram_recipients=len(notify_targets),
     )
 
 

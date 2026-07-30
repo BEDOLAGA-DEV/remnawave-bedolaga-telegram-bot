@@ -360,19 +360,26 @@ async def send_cart_notification_after_topup(
     amount_kopeks: int,
     db: AsyncSession,
     bot: Any | None,
+    *,
+    notify_email: bool = True,
 ) -> bool:
     """Run post-topup side-effects: resume daily / auto-purchase saved cart / auto-extend.
 
     Возвращает False всегда (имя оставлено ради 19+ существующих вызовов).
     Само сообщение «Баланс пополнен…» больше не шлётся — оно дублировало
     основное «Пополнение успешно!» и ломало MAIN_MENU_MODE=cabinet.
+
+    ``notify_email=False`` — вызывающий уже уведомил юзера сам и хочет только
+    авто-действия (ручное пополнение с выключенным уведомлением). Провайдеры
+    оставляют значение по умолчанию.
     """
     # Единственная общая точка после зачисления во ВСЕХ провайдерах — поэтому
     # email/WS-канал для юзеров без Telegram подключён здесь, а не в 18+
     # webhook-обработчиках. Уходит до автопокупки, чтобы уведомления пришли в
     # хронологическом порядке «пополнение → подписка» (#2952). Для
     # telegram-юзеров это no-op — им сообщение уже отправил провайдер.
-    await notify_email_user_topup(user, amount_kopeks)
+    if notify_email:
+        await notify_email_user_topup(user, amount_kopeks)
 
     from app.services.subscription_auto_purchase_service import (
         auto_purchase_saved_cart_after_topup,

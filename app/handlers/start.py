@@ -96,6 +96,93 @@ def _split_start_param_subid(param: str | None) -> tuple[str | None, str | None]
     return head, tail
 
 
+async def answer_menu_with_media(message, text: str, keyboard, db) -> None:
+    """Отвечает меню с медиа-шапкой на входящее сообщение (например, /start).
+
+    Отличается от :func:`send_menu_with_media` тем, что при отсутствии видео
+    делегирует обычному ``message.answer`` — а он патчится
+    ``message_patch._answer_with_photo`` и несёт всю накопленную обработку
+    (фото-логотип, лимит подписи, топики форумов, privacy-restricted). Поэтому
+    без настроенного видео поведение остаётся ровно прежним.
+    """
+    from app.utils.message_patch import caption_exceeds_telegram_limit
+
+    if not caption_exceeds_telegram_limit(text):
+        from app.services.start_media_service import get_start_video_file_id
+
+        video_file_id = await get_start_video_file_id(db)
+        if video_file_id:
+            try:
+                await message.answer_video(
+                    video=video_file_id,
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+                return
+            except Exception as video_error:
+                logger.warning(
+                    'Не удалось отправить видео меню — уходим на стандартный путь',
+                    error=str(video_error),
+                )
+
+    await message.answer(text, reply_markup=keyboard, parse_mode='HTML')
+
+
+async def send_menu_with_media(
+    bot,
+    chat_id: int,
+    text: str,
+    keyboard,
+    db,
+) -> None:
+    """Отправляет меню с медиа-шапкой: видео → фото-логотип → обычный текст.
+
+    Видео стартового меню загружается администратором через кабинет и хранится
+    как Telegram file_id. Если оно задано и подпись влезает в лимит Telegram —
+    меню уходит видеосообщением; иначе работает прежнее поведение
+    (``ENABLE_LOGO_MODE`` с фото-логотипом, иначе текст).
+
+    Сбой отправки видео не должен лишать пользователя меню: падаем на фото/текст.
+    """
+    from app.utils.message_patch import _cache_logo_file_id, caption_exceeds_telegram_limit, get_logo_media
+
+    caption_fits = not caption_exceeds_telegram_limit(text)
+
+    if caption_fits:
+        from app.services.start_media_service import get_start_video_file_id
+
+        video_file_id = await get_start_video_file_id(db)
+        if video_file_id:
+            try:
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=video_file_id,
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML',
+                )
+                return
+            except Exception as video_error:
+                logger.warning(
+                    'Не удалось отправить видео стартового меню — уходим на фото/текст',
+                    error=str(video_error),
+                )
+
+    if settings.ENABLE_LOGO_MODE and caption_fits:
+        _result = await bot.send_photo(
+            chat_id=chat_id,
+            photo=get_logo_media(),
+            caption=text,
+            reply_markup=keyboard,
+            parse_mode='HTML',
+        )
+        _cache_logo_file_id(_result)
+        return
+
+    await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard, parse_mode='HTML')
+
+
 async def _persist_pending_subid_after_registration(
     db: AsyncSession,
     state: FSMContext,
@@ -235,6 +322,7 @@ _COUPON_ERROR_TEXTS = {
     'invalid': '❌ Купон не найден или уже использован.',
     'expired': '⌛ Срок действия купона истёк.',
     'already_redeemed_by_you': 'ℹ️ Вы уже активировали этот купон.',
+    'per_user_limit': 'ℹ️ Вы уже использовали свой лимит купонов из этой раздачи.',
     'internal': '❌ Произошла ошибка при активации купона. Попробуйте позже или обратитесь в поддержку.',
 }
 
@@ -1345,7 +1433,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         )
         if not await try_answer_rich_main_menu(message, user, texts, db, keyboard):
             menu_text = await get_main_menu_text(user, texts, db)
-            await message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
+            await answer_menu_with_media(message, menu_text, keyboard, db)
 
         if pinned_message and not pinned_message.send_before_menu:
             await _send_pinned_message(message.bot, db, user, pinned_message)
@@ -2005,7 +2093,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 await _send_pinned_message(callback.bot, db, existing_user, pinned_message)
             if not await try_answer_rich_main_menu(callback.message, existing_user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(existing_user, texts, db)
-                await callback.message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
+                await answer_menu_with_media(callback.message, menu_text, keyboard, db)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(callback.bot, db, existing_user, pinned_message)
         except Exception as e:
@@ -2264,7 +2352,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 await _send_pinned_message(callback.bot, db, user, pinned_message)
             if not await try_answer_rich_main_menu(callback.message, user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(user, texts, db)
-                await callback.message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
+                await answer_menu_with_media(callback.message, menu_text, keyboard, db)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(callback.bot, db, user, pinned_message)
             logger.info('✅ Главное меню показано пользователю', telegram_id=user.telegram_id)
@@ -2337,7 +2425,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 await _send_pinned_message(message.bot, db, existing_user, pinned_message)
             if not await try_answer_rich_main_menu(message, existing_user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(existing_user, texts, db)
-                await message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
+                await answer_menu_with_media(message, menu_text, keyboard, db)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(message.bot, db, existing_user, pinned_message)
         except Exception as e:
@@ -2631,7 +2719,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
                 await _send_pinned_message(message.bot, db, user, pinned_message)
             if not await try_answer_rich_main_menu(message, user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(user, texts, db)
-                await message.answer(menu_text, reply_markup=keyboard, parse_mode='HTML')
+                await answer_menu_with_media(message, menu_text, keyboard, db)
             logger.info('✅ Главное меню показано пользователю', telegram_id=user.telegram_id)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(message.bot, db, user, pinned_message)
@@ -2908,22 +2996,7 @@ async def required_sub_channel_check(
 
             if not await try_send_rich_main_menu(bot, query.from_user.id, user, texts, db, keyboard):
                 menu_text = await get_main_menu_text(user, texts, db)
-                if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(menu_text):
-                    _result = await bot.send_photo(
-                        chat_id=query.from_user.id,
-                        photo=get_logo_media(),
-                        caption=menu_text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML',
-                    )
-                    _cache_logo_file_id(_result)
-                else:
-                    await bot.send_message(
-                        chat_id=query.from_user.id,
-                        text=menu_text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML',
-                    )
+                await send_menu_with_media(bot, query.from_user.id, menu_text, keyboard, db)
             if pinned_message and not pinned_message.send_before_menu:
                 await _send_pinned_message(bot, db, user, pinned_message)
         else:
@@ -3076,22 +3149,7 @@ async def required_sub_channel_check(
 
                     if not await try_send_rich_main_menu(bot, query.from_user.id, user, texts, db, keyboard):
                         menu_text = await get_main_menu_text(user, texts, db)
-                        if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(menu_text):
-                            _result = await bot.send_photo(
-                                chat_id=query.from_user.id,
-                                photo=get_logo_media(),
-                                caption=menu_text,
-                                reply_markup=keyboard,
-                                parse_mode='HTML',
-                            )
-                            _cache_logo_file_id(_result)
-                        else:
-                            await bot.send_message(
-                                chat_id=query.from_user.id,
-                                text=menu_text,
-                                reply_markup=keyboard,
-                                parse_mode='HTML',
-                            )
+                        await send_menu_with_media(bot, query.from_user.id, menu_text, keyboard, db)
                     if pinned_message and not pinned_message.send_before_menu:
                         await _send_pinned_message(bot, db, user, pinned_message)
                 else:

@@ -1,5 +1,46 @@
 # Changelog
 
+## [3.67.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.66.0...v3.67.0) (2026-07-29)
+
+
+### New Features
+
+* **cabinet:** согласие с офертой и политикой при первой авторизации ([3b0306f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3b0306fae60ac2ad905d6c10c35402167d983902))
+* **coupons:** лимит активаций на пользователя и удаление партий ([8260944](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/82609441ae29e24d9037ce77b8299836a6ec8844))
+* **devices:** запрет уменьшать лимит устройств ниже включённого в тариф ([8aafb64](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8aafb648b97830aabf885eda47954f92fe888a6f))
+* **lava:** кабинет-эндпоинты автопродления Lava ([0dea218](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0dea218298be16111e61572d9d450154e3f476a3))
+* **lava:** паритет покупки привязкой, уведомления, сверка суммы ([de3518b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/de3518b763fb1a49d38629472969115a18014134))
+* **lava:** рекуррентные подписки Lava по образцу Platega ([9d1772b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9d1772bcfe26a3ef75bb8a47e7e33180d1fa3cba))
+* **menu:** кнопка «Меню» Telegram открывает веб-кабинет (WebApp) ([c7e2087](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c7e208750efd6a2cb43c6c6607cf84d3109f595c))
+* **promo-offers:** охват сегментов и прогресс доставки промопредложений ([5e4548b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5e4548b3d3dcee63db42f9b6a57a8daea274a290))
+* **quick-amounts:** возможность отключить кнопки быстрых сумм пополнения ([b1f9be6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b1f9be6da15a25c95de1a4f729a1e8f9b844a93c))
+* **start:** видео в стартовом меню бота, загрузка из кабинета ([524960c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/524960c3561953df2f18108b224dfef5292ff811))
+* **tariff:** expose custom traffic settings in Telegram admin ([d75cbfe](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d75cbfec5820e051fc6bacee9a67514b0945b167))
+* **tariff:** прямая оплата тарифа без отдельного шага пополнения баланса ([a060575](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a06057504de86285273e801bc411879b964a4a36))
+* **webapi:** эндпоинт ручного пополнения баланса с идемпотентностью ([cd9811c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/cd9811c18f679047a30c6c304ca99ab89f386cc6))
+
+
+### Bug Fixes
+
+* **i18n:** исправление ошибок перевода в fa/ua/zh локалях ([2cc0f36](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2cc0f36dd89c68ee8499929ede93020932332c40))
+* **lava:** взаимоисключение с Platega + сдвиг списания при ручном продлении ([da84ed1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/da84ed101e539031db5ad8178e6d7b8e5139ce6d))
+* **lava:** закрыты находки адверсариального ревью рекуррента ([94e3fcd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/94e3fcd3147a31520e7cf51ce2a47ef0a95421d2))
+* **lava:** имя провайдера в правой части «через …» вместо имени метода ([df92f68](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/df92f68fc5d5ca099071b8d6310b3d7388db503a))
+* **pricing:** корректная цена за месяц для коротких и некратных периодов ([9b172b2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b172b2d7af1ee33ac132a9341c9f967a47ed7a2))
+* **promo-offers:** счётчик сегмента expired — живая ветка вместо мёртвой ([d93762f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d93762ff0bcbd4834afc3f3bca858e63f53e08cd))
+* **promocode:** MissingGreenlet при отказе активации — rollback экспирировал db_user хендлера ([d0c1d5d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d0c1d5dec2e828222d84d39d0e7aad83188abc5e))
+* **recurrent:** цена автопродления учитывает докупки устройств и трафика ([85344c6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/85344c663e7c5f5b99761d8ad06aebdac7916a4f))
+* **remnawave:** клэмп size в 1..1000 для /api/users/stream ([7bf8047](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7bf8047e8bde7c56b55680cbc9e18f45f6765fc1))
+* **rich-menu:** RICH_MESSAGE_DATE_INVALID на подписках дальше ~3 лет ([9ee31d3](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9ee31d3d57e5fcac58bb26886b256ab62fb6884b))
+* **search:** регистронезависимый поиск по юзерам для кириллицы ([5323803](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/53238035f72b4a1ee7554196d0899e9bde23d6df))
+* **startup:** однозначно широкие статус-значки в резюме запуска ([3dae638](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3dae638755499094d405601a9fe81eecf5389fbc))
+* **start:** видео не доходило до самой команды /start ([1f61e0b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1f61e0bec2686314f7e151b00d4b4e616e749329))
+* **subscription:** не показывать неоплаченный черновик триала как подписку ([fe992c6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fe992c65817eff1156f2f7d56232d59a1bf385fe))
+* **tariff:** превью покупки считает цену тем же PricingEngine, что и confirm ([baef285](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/baef285194868a8c422833b37f33b0e941abc547))
+* **tariff:** СБП-оформление доступно с экрана «недостаточно средств» ([a5a13ae](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a5a13aea1d9249b4dc7eca8b1c4851e9acaa337e))
+* **tribute:** per-событийный ключ идемпотентности вместо donation_request_id ([e9515ad](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e9515adb725f121d5b13b174c6ea8933228fbb17))
+* устранить замечания CodeQL из PR [#3123](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3123) ([c7cc8b4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c7cc8b4585b94766be87fd5a260ec8f436a5b7a8))
+
 ## [3.66.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.65.1...v3.66.0) (2026-07-24)
 
 

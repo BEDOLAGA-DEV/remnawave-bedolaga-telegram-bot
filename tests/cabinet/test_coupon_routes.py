@@ -44,7 +44,8 @@ def _batch(**overrides) -> SimpleNamespace:
 
 def test_coupon_routes_registered(registered_paths) -> None:
     assert registered_paths.get('/cabinet/admin/coupons') == {'GET', 'POST'}
-    assert registered_paths.get('/cabinet/admin/coupons/{batch_id}') == {'GET'}
+    # DELETE — полное удаление партии (в отличие от /revoke, который гасит купоны)
+    assert registered_paths.get('/cabinet/admin/coupons/{batch_id}') == {'GET', 'DELETE'}
     assert registered_paths.get('/cabinet/admin/coupons/{batch_id}/links') == {'GET'}
     assert registered_paths.get('/cabinet/admin/coupons/{batch_id}/revoke') == {'POST'}
     assert registered_paths.get('/cabinet/coupon/redeem') == {'POST'}

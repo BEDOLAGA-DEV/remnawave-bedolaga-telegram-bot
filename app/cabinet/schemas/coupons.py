@@ -15,6 +15,7 @@ class CouponBatchResponse(BaseModel):
     period_days: int
     coupons_total: int
     wholesale_price_kopeks: int
+    max_per_user: int = 0
     valid_until: datetime | None
     is_revoked: bool
     created_at: datetime
@@ -38,6 +39,9 @@ class CouponBatchCreateRequest(BaseModel):
     period_days: int = Field(..., ge=1, le=3650)
     coupons_count: int = Field(..., ge=1, le=500)
     wholesale_price_kopeks: int = Field(0, ge=0, description='Bookkeeping-only price per coupon')
+    max_per_user: int = Field(
+        0, ge=0, le=500, description='How many coupons of this batch one user may redeem; 0 — unlimited'
+    )
     valid_days: int = Field(0, ge=0, le=3650, description='Coupon lifetime in days; 0 — perpetual')
 
 
@@ -81,3 +85,10 @@ class CouponStatusResponse(BaseModel):
     period_days: int
     valid_until: datetime | None
     bot_link: str | None
+
+
+class CouponBatchDeleteResponse(BaseModel):
+    """Результат полного удаления партии (в отличие от отзыва)."""
+
+    batch_id: int
+    deleted_coupons: int

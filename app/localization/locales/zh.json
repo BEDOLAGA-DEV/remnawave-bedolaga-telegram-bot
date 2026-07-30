@@ -1420,7 +1420,7 @@
   "SUBSCRIPTION_EXPIRING": "\n⚠️<b>订阅即将过期！</b>\n\n您的订阅将在{days}天后过期。\n\n别忘记续订，以免失去服务器访问权限。\n",
   "SUBSCRIPTION_EXPIRING_PAID": "\n⚠️<b>订阅{tariff_label}将在{days_text}后过期！</b>\n\n您的付费订阅将于{end_date}过期。\n\n💳<b>自动支付：</b>{autopay_status}\n\n{action_text}\n",
   "SUBSCRIPTION_EXTEND": "💎延长订阅",
-  "SUBSCRIPTION_HAPP_CRYPTOLINK_BLOCK": "<blockquoteexpandable><code>{crypto_link}</code></blockquote>",
+  "SUBSCRIPTION_HAPP_CRYPTOLINK_BLOCK": "<blockquote expandable><code>{crypto_link}</code></blockquote>",
   "SUBSCRIPTION_HAPP_LINK_PROMPT": "🔒订阅链接已创建。点击下方的“连接”按钮以在Happ中打开。",
   "SUBSCRIPTION_HAPP_OPEN_BUTTON_HINT": "▶️点击下方的“连接”按钮以打开Happ并自动添加订阅。",
   "SUBSCRIPTION_HAPP_OPEN_HINT": "💡如果链接未自动打开，请手动复制：",
@@ -2131,5 +2131,13 @@
   "SBP_RECURRING_NOTIFY_CANCELLED": "ℹ️ SBP自动续费已取消。",
   "SBP_RECURRING_NOTIFY_ACTIVATED": "✅ SBP自动续费已激活。",
   "SBP_PURCHASE_BUTTON": "⚡ 通过SBP自动扣款订阅",
-  "SBP_PURCHASE_PENDING_NOTE": "ℹ️ 订阅将在确认并完成首次扣款后激活。"
+  "SBP_PURCHASE_PENDING_NOTE": "ℹ️ 订阅将在确认并完成首次扣款后激活。",
+  "LAVA_PURCHASE_BUTTON": "⚡ 使用 Lava 自动续订下单",
+  "LAVA_PURCHASE_PENDING_NOTE": "ℹ️ 支付首期账单后订阅即生效。",
+  "LAVA_RECURRING_ENABLE_ERROR": "❌ 无法开启 Lava 自动续订，请稍后再试。",
+  "LAVA_RECURRING_ENABLE_SUCCESS": "⚡ <b>Lava 自动续订</b>\n\n请点击下方按钮支付首期账单。\n支付后自动续订即生效。",
+  "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ 已取消 Lava 自动续订。",
+  "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ 订阅已通过 Lava 自动扣款续订。",
+  "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ Lava 自动续订扣款失败。",
+  "LAVA_RECURRING_PAY_BUTTON": "💳 支付"
 }

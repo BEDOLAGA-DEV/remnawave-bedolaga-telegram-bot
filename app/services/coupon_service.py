@@ -55,7 +55,8 @@ class CouponRedemptionError(Exception):
 
     Codes: ``invalid`` (unknown / revoked / redeemed by someone else —
     deliberately uniform so the response is not an oracle), ``expired``,
-    ``already_redeemed_by_you``, ``internal``.
+    ``already_redeemed_by_you``, ``per_user_limit`` (партия ограничена
+    ``max_per_user``, пользователь уже выбрал свой лимит), ``internal``.
     """
 
     def __init__(self, code: str) -> None:
@@ -93,6 +94,24 @@ def _check_redeemable(coupon: Coupon, user: User) -> None:
         raise CouponRedemptionError('expired')
 
 
+async def _check_per_user_limit(db: AsyncSession, coupon: Coupon, user: User) -> None:
+    """Проверяет лимит активаций партии на пользователя (``max_per_user``).
+
+    0 — без ограничения (прежнее поведение). Для раздач и конкурсов ставится 1:
+    купоны в партии одноразовые, но их много, и без лимита один человек мог
+    активировать всю партию.
+    """
+    limit = int(getattr(coupon.batch, 'max_per_user', 0) or 0)
+    if limit <= 0:
+        return
+
+    from app.database.crud.coupon import count_batch_redemptions_by_user
+
+    used = await count_batch_redemptions_by_user(db, coupon.batch_id, user.id)
+    if used >= limit:
+        raise CouponRedemptionError('per_user_limit')
+
+
 async def redeem_coupon(db: AsyncSession, token: str, user: User) -> CouponRedemptionResult:
     """Atomically redeem a one-time coupon for ``user``.
 
@@ -112,6 +131,7 @@ async def redeem_coupon(db: AsyncSession, token: str, user: User) -> CouponRedem
         raise CouponRedemptionError('invalid')
 
     _check_redeemable(coupon, user)
+    await _check_per_user_limit(db, coupon, user)
 
     tariff = coupon.batch.tariff
     if tariff is None:
@@ -125,8 +145,17 @@ async def redeem_coupon(db: AsyncSession, token: str, user: User) -> CouponRedem
 
     # Claim under row lock: reload the row FOR UPDATE and re-check — a
     # concurrent redemption or batch revoke may have won between the two reads.
+    # Лимит на пользователя серилизуем по строке пользователя: без этого два
+    # одновременно открытых купона ОДНОЙ партии блокируют разные строки, оба
+    # видят счётчик до инкремента и оба проходят лимит.
+    if int(getattr(coupon.batch, 'max_per_user', 0) or 0) > 0:
+        from app.database.crud.user import lock_user_for_update
+
+        await lock_user_for_update(db, user)
+
     await db.refresh(coupon, with_for_update=True)
     _check_redeemable(coupon, user)
+    await _check_per_user_limit(db, coupon, user)
 
     try:
         subscription, renewed = await _grant_subscription_days(db, user, tariff, period_days)

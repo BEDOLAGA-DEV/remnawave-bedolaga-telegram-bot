@@ -25,8 +25,10 @@ def test_normalize_sorts_and_dedupes():
     assert normalize_quick_amounts([50000, 10000, 50000, 30000]) == [10000, 30000, 50000]
 
 
-def test_normalize_empty_list_returns_none():
-    assert normalize_quick_amounts([]) is None
+def test_normalize_empty_list_means_disabled():
+    # [] — «кнопки отключены админом», НЕ схлопывается в None (None = дефолты).
+    # Старая семантика [] → None делала отключение кнопок невозможным.
+    assert normalize_quick_amounts([]) == []
 
 
 def test_normalize_rejects_non_list():

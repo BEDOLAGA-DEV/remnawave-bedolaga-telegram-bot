@@ -1101,25 +1101,91 @@ def test_collapsible_flag_default_is_enabled():
     assert Settings.model_fields['MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE'].default is True
 
 
-def test_tg_time_outside_int32_range_falls_back_to_text():
-    """Telegram хранит даты 32-битным unix time: tg-time с датой после 19.01.2038
-    или до эпохи сервер отклоняет ошибкой RICH_MESSAGE_DATE_INVALID — вместо тега
-    остаётся fallback-текст."""
-    valid = rich_menu._tg_time(datetime(2030, 1, 1, tzinfo=UTC), 'd', '01.01.2030')
-    assert valid.startswith('<tg-time unix="')
+def test_tg_time_beyond_telegram_date_limit_falls_back_to_text():
+    """Telegram принимает дату сущности только до «сейчас + 1098 дней»
+    (core.telegram.org/api/entities). Дальше сервер отвечает RICH_MESSAGE_DATE_INVALID
+    и роняет ВСЁ rich-сообщение, поэтому вместо тега оставляем fallback-текст.
 
-    boundary = rich_menu._tg_time(datetime.fromtimestamp(2**31 - 1, UTC), 'd', 'граница')
-    assert boundary.startswith('<tg-time unix="2147483647"')
+    Даты берём относительными: абсолютные протухали бы вместе с лимитом.
+    """
+    now = datetime.now(UTC)
 
-    too_late = rich_menu._tg_time(datetime(2038, 1, 20, tzinfo=UTC), 'd', '20.01.2038')
-    assert too_late == '20.01.2038'
+    soon = rich_menu._tg_time(now + timedelta(days=30), 'd', 'через месяц')
+    assert soon.startswith('<tg-time unix="')
+
+    near_limit = rich_menu._tg_time(now + timedelta(days=1000), 'd', 'почти предел')
+    assert near_limit.startswith('<tg-time unix="')
+
+    # Чуть больше 3 лет — уже за лимитом Telegram, хотя в 32-битный unix влезает.
+    # Ровно этот случай ломал меню: старая проверка пропускала всё до 2038 года.
+    beyond = rich_menu._tg_time(now + timedelta(days=1100), 'd', '01.01.2030')
+    assert beyond == '01.01.2030'
+
+    int32_max = rich_menu._tg_time(datetime.fromtimestamp(2**31 - 1, UTC), 'd', 'граница')
+    assert int32_max == 'граница'
 
     too_early = rich_menu._tg_time(datetime(1969, 12, 31, tzinfo=UTC), 'd', '31.12.1969')
     assert too_early == '31.12.1969'
 
     # Fallback-текст экранируется так же, как внутри tg-time
-    escaped = rich_menu._tg_time(datetime(2099, 1, 1, tzinfo=UTC), 'd', 'a<b>&c')
+    escaped = rich_menu._tg_time(now + timedelta(days=5000), 'd', 'a<b>&c')
     assert escaped == 'a&lt;b&gt;&amp;c'
+
+
+def test_strip_tg_time_keeps_inner_text():
+    """Страховка: снимаем теги дат, но текст внутри остаётся."""
+    source = '<p>до <tg-time unix="123" format="d">31.12.2029</tg-time> ещё далеко</p>'
+
+    assert rich_menu._strip_tg_time(source) == '<p>до 31.12.2029 ещё далеко</p>'
+    # Несколько тегов и переносы внутри
+    many = '<tg-time unix="1" format="r">a</tg-time>|<tg-time unix="2" format="d">b\nc</tg-time>'
+    assert rich_menu._strip_tg_time(many) == 'a|b\nc'
+    # Остальная разметка не страдает
+    assert rich_menu._strip_tg_time('<b>без дат</b>') == '<b>без дат</b>'
+
+
+def test_is_rich_date_error_matches_server_code():
+    from aiogram.exceptions import TelegramBadRequest
+
+    date_error = TelegramBadRequest(method=None, message='Bad Request: RICH_MESSAGE_DATE_INVALID')
+    other_error = TelegramBadRequest(method=None, message='Bad Request: MESSAGE_TOO_LONG')
+
+    assert rich_menu._is_rich_date_error(date_error) is True
+    assert rich_menu._is_rich_date_error(other_error) is False
+
+
+async def test_send_retries_without_tg_time_on_date_error():
+    """Одна отвергнутая дата не должна ронять меню целиком в классику."""
+    from aiogram.exceptions import TelegramBadRequest
+
+    calls: list[str] = []
+
+    async def fake_send(*, chat_id, rich_message, reply_markup=None, message_effect_id=None):
+        calls.append(rich_message.html)
+        if len(calls) == 1:
+            raise TelegramBadRequest(method=None, message='Bad Request: RICH_MESSAGE_DATE_INVALID')
+
+    bot = SimpleNamespace(send_rich_message=fake_send)
+    rich_html = '<p><tg-time unix="99999999999" format="d">01.01.2099</tg-time></p>'
+
+    await rich_menu._send_rich_menu(bot, 1, rich_html, None, 'ru')
+
+    assert len(calls) == 2, 'должен быть ровно один повтор'
+    assert '<tg-time' in calls[0]
+    assert '<tg-time' not in calls[1]
+    assert '01.01.2099' in calls[1], 'текст даты должен остаться'
+
+
+def test_tg_time_keeps_past_dates():
+    """Новый лимит не должен задеть обычную истёкшую подписку."""
+    past = rich_menu._tg_time(datetime.now(UTC) - timedelta(days=30), 'd', 'месяц назад')
+    assert past.startswith('<tg-time unix="')
+
+
+def test_tg_time_survives_extreme_datetimes():
+    """datetime.max/min: timestamp() на них падает на части платформ — не роняем меню."""
+    assert rich_menu._tg_time(datetime.max.replace(tzinfo=UTC), 'd', 'макс') == 'макс'
+    assert rich_menu._tg_time(datetime.min.replace(tzinfo=UTC), 'd', 'мин') == 'мин'
 
 
 async def test_far_future_end_date_in_table_renders_without_tg_time(monkeypatch):
@@ -1141,6 +1207,31 @@ async def test_far_future_end_date_in_table_renders_without_tg_time(monkeypatch)
 
     assert '<tg-time' not in html_out
     assert '2099' in html_out
+    assert '🟢 Активна' in html_out
+
+
+async def test_multi_year_subscription_renders_without_tg_time(monkeypatch):
+    """Репорт из поддержки: у юзера подписка на несколько лет вперёд, и /start
+    отдавал RICH_MESSAGE_DATE_INVALID — меню не отправлялось совсем.
+
+    Дата влезает в 32-битный unix (старая проверка её пропускала), но выходит за
+    лимит Telegram «сейчас + 1098 дней».
+    """
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+
+    now = datetime.now(UTC)
+    long_sub = _make_subscription(now)
+    long_sub.end_date = now + timedelta(days=4 * 365)
+
+    async def fake_get_all(db, user_id):
+        return [long_sub]
+
+    monkeypatch.setattr(rich_menu, 'get_all_subscriptions_by_user_id', fake_get_all)
+
+    html_out = await rich_menu.build_main_menu_rich_html(_make_user(long_sub), DummyTexts(), AsyncMock())
+
+    assert '<tg-time' not in html_out
     assert '🟢 Активна' in html_out
 
 

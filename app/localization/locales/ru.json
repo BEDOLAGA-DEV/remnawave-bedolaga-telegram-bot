@@ -2131,5 +2131,13 @@
   "SBP_RECURRING_NOTIFY_CANCELLED": "ℹ️ СБП-автопродление отменено.",
   "SBP_RECURRING_NOTIFY_ACTIVATED": "✅ СБП-автопродление активировано.",
   "SBP_PURCHASE_BUTTON": "⚡ Оформить с автооплатой СБП",
-  "SBP_PURCHASE_PENDING_NOTE": "ℹ️ Подписка активируется после подтверждения и первого списания."
+  "SBP_PURCHASE_PENDING_NOTE": "ℹ️ Подписка активируется после подтверждения и первого списания.",
+  "LAVA_PURCHASE_BUTTON": "⚡ Оформить с автооплатой Lava",
+  "LAVA_PURCHASE_PENDING_NOTE": "ℹ️ Подписка активируется после оплаты первого счёта.",
+  "LAVA_RECURRING_ENABLE_ERROR": "❌ Не удалось подключить автопродление Lava. Попробуйте позже.",
+  "LAVA_RECURRING_ENABLE_SUCCESS": "⚡ <b>Автопродление Lava</b>\n\nОплатите первый счёт по кнопке ниже.\nПосле оплаты автопродление станет активным.",
+  "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ Автопродление Lava отменено.",
+  "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ Подписка продлена автосписанием Lava.",
+  "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ Не удалось списать оплату по автопродлению Lava.",
+  "LAVA_RECURRING_PAY_BUTTON": "💳 Оплатить"
 }

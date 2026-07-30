@@ -1523,6 +1523,19 @@ async def confirm_broadcast(callback: types.CallbackQuery, db_user: User, state:
     )
 
 
+# Пороги сегментов. Вынесены в константы, потому что get_target_users_count (SQL COUNT)
+# и get_target_users (фильтрация в Python) обязаны совпадать: разъехавшиеся пороги дают
+# счётчик в интерфейсе, который не сходится с реальным числом получателей.
+LOW_BALANCE_THRESHOLD_KOPEKS = 10000
+TRIAL_ENDING_DAYS = 3
+AUTOPAY_FAILED_WINDOW_DAYS = 7
+INACTIVE_TARGET_DAYS = {
+    'inactive_30d': 30,
+    'inactive_60d': 60,
+    'inactive_90d': 90,
+}
+
+
 async def get_target_users_count(db: AsyncSession, target: str) -> int:
     """Быстрый подсчёт пользователей через SQL COUNT вместо загрузки всех в память."""
     from sqlalchemy import distinct, func as sql_func
@@ -1611,34 +1624,38 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
         return result.scalar() or 0
 
     if target in ('expired', 'expired_subscribers'):
-        # Истекшие подписки — исключаем юзеров с хотя бы одной активной
+        # Зеркало одноимённых веток get_target_users: активная (ACTIVE и не истекшая)
+        # подписка исключает; иначе нужен хотя бы один истёкший сабж (EXPIRED/DISABLED
+        # или end_date в прошлом) либо платное прошлое без единой подписки. LIMITED с
+        # будущей датой истёкшим не считается, ACTIVE с прошедшей — активной не считается.
         now = datetime.now(UTC)
-        expired_statuses = [
-            SubscriptionStatus.EXPIRED.value,
-            SubscriptionStatus.DISABLED.value,
-            SubscriptionStatus.LIMITED.value,
-        ]
         has_active_sub = (
             select(Subscription.id)
             .where(
                 Subscription.user_id == User.id,
                 Subscription.status == SubscriptionStatus.ACTIVE.value,
+                Subscription.end_date > now,
             )
             .correlate(User)
             .exists()
         )
-        query = (
-            select(sql_func.count(distinct(User.id)))
-            .outerjoin(Subscription, User.id == Subscription.user_id)
+        has_expired_sub = (
+            select(Subscription.id)
             .where(
-                base_filter,
-                ~has_active_sub,
+                Subscription.user_id == User.id,
                 or_(
-                    Subscription.status.in_(expired_statuses),
-                    and_(Subscription.end_date <= now, Subscription.status != SubscriptionStatus.ACTIVE.value),
-                    and_(Subscription.id == None, User.has_had_paid_subscription == True),
+                    Subscription.status.in_([SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value]),
+                    Subscription.end_date <= now,
                 ),
             )
+            .correlate(User)
+            .exists()
+        )
+        has_any_sub = select(Subscription.id).where(Subscription.user_id == User.id).correlate(User).exists()
+        query = select(sql_func.count(User.id)).where(
+            base_filter,
+            ~has_active_sub,
+            or_(has_expired_sub, and_(~has_any_sub, User.has_had_paid_subscription == True)),
         )
         result = await db.execute(query)
         return result.scalar() or 0
@@ -1683,6 +1700,59 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
                 Subscription.status == SubscriptionStatus.ACTIVE.value,
                 or_(Subscription.traffic_used_gb == None, Subscription.traffic_used_gb <= 0),
             )
+        )
+        result = await db.execute(query)
+        return result.scalar() or 0
+
+    if target == 'trial_ending':
+        now = datetime.now(UTC)
+        query = (
+            select(sql_func.count(distinct(User.id)))
+            .join(Subscription, User.id == Subscription.user_id)
+            .where(
+                base_filter,
+                Subscription.is_trial == True,
+                Subscription.status == SubscriptionStatus.ACTIVE.value,
+                Subscription.end_date > now,
+                Subscription.end_date <= now + timedelta(days=TRIAL_ENDING_DAYS),
+            )
+        )
+        result = await db.execute(query)
+        return result.scalar() or 0
+
+    if target == 'autopay_failed':
+        from app.database.models import SubscriptionEvent
+
+        window_start = datetime.now(UTC) - timedelta(days=AUTOPAY_FAILED_WINDOW_DAYS)
+        has_recent_failure = (
+            select(SubscriptionEvent.id)
+            .where(
+                SubscriptionEvent.user_id == User.id,
+                SubscriptionEvent.event_type == 'autopay_failed',
+                SubscriptionEvent.occurred_at >= window_start,
+            )
+            .correlate(User)
+            .exists()
+        )
+        query = select(sql_func.count(User.id)).where(base_filter, has_recent_failure)
+        result = await db.execute(query)
+        return result.scalar() or 0
+
+    if target == 'low_balance':
+        query = select(sql_func.count(User.id)).where(
+            base_filter,
+            User.balance_kopeks > 0,
+            User.balance_kopeks < LOW_BALANCE_THRESHOLD_KOPEKS,
+        )
+        result = await db.execute(query)
+        return result.scalar() or 0
+
+    if target in INACTIVE_TARGET_DAYS:
+        threshold = datetime.now(UTC) - timedelta(days=INACTIVE_TARGET_DAYS[target])
+        query = select(sql_func.count(User.id)).where(
+            base_filter,
+            User.last_activity.isnot(None),
+            User.last_activity < threshold,
         )
         result = await db.execute(query)
         return result.scalar() or 0
@@ -1853,7 +1923,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
 
     if target == 'trial_ending':
         now = datetime.now(UTC)
-        in_3_days = now + timedelta(days=3)
+        in_3_days = now + timedelta(days=TRIAL_ENDING_DAYS)
         return [
             user
             for user in users
@@ -1874,7 +1944,7 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
     if target == 'autopay_failed':
         from app.database.models import SubscriptionEvent
 
-        week_ago = datetime.now(UTC) - timedelta(days=7)
+        week_ago = datetime.now(UTC) - timedelta(days=AUTOPAY_FAILED_WINDOW_DAYS)
         stmt = (
             select(SubscriptionEvent.user_id)
             .where(
@@ -1890,21 +1960,13 @@ async def get_target_users(db: AsyncSession, target: str) -> list:
         return [user for user in users if user.id in failed_user_ids]
 
     if target == 'low_balance':
-        threshold_kopeks = 10000  # 100 рублей
+        threshold_kopeks = LOW_BALANCE_THRESHOLD_KOPEKS
         return [
             user for user in users if (user.balance_kopeks or 0) < threshold_kopeks and (user.balance_kopeks or 0) > 0
         ]
 
-    if target == 'inactive_30d':
-        threshold = datetime.now(UTC) - timedelta(days=30)
-        return [user for user in users if user.last_activity and user.last_activity < threshold]
-
-    if target == 'inactive_60d':
-        threshold = datetime.now(UTC) - timedelta(days=60)
-        return [user for user in users if user.last_activity and user.last_activity < threshold]
-
-    if target == 'inactive_90d':
-        threshold = datetime.now(UTC) - timedelta(days=90)
+    if target in INACTIVE_TARGET_DAYS:
+        threshold = datetime.now(UTC) - timedelta(days=INACTIVE_TARGET_DAYS[target])
         return [user for user in users if user.last_activity and user.last_activity < threshold]
 
     # Фильтр по тарифу

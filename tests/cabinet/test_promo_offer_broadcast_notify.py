@@ -3,54 +3,135 @@
 The broadcast committed an offer per recipient and then sent Telegram notifications to
 everyone synchronously inside the HTTP request; a large fan-out overran the proxy timeout,
 so the cabinet showed an error while offers were already created and notifications kept
-going. The fan-out now takes plain (telegram_id, offer_id) tuples — not ORM objects bound
-to the request session — so it can run detached as a background task.
+going. Delivery now goes through the broadcast service: it takes plain telegram_id values
+and a keyboard factory closing over plain offer ids — not ORM objects bound to the request
+session — so it keeps running after the request (and its session) is gone.
 
-This pins the refactored signature/behaviour: it works off plain ids and counts
-sent/failed correctly (including skipping recipients without a telegram_id).
+This pins that contract: only recipients with a telegram_id are handed over, the payload
+carries no ORM objects, and nothing is queued when there is nobody to notify.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime, timedelta
 
-import pytest
-from aiogram.types import InlineKeyboardButton
+from app.cabinet.routes.admin_promo_offers import PromoOfferBroadcastRequest, broadcast_offer
+from app.database.models import (
+    BroadcastHistory,
+    DiscountOffer,
+    PromoGroup,
+    Subscription,
+    SubscriptionEvent,
+    SubscriptionStatus,
+    Tariff,
+    User,
+    UserStatus,
+)
+from tests.fixtures.sqlite_memory import memory_session
 
-from app.cabinet.routes import admin_promo_offers as m
+
+NOTIFY_TABLES = (
+    User.__table__,
+    Subscription.__table__,
+    SubscriptionEvent.__table__,
+    Tariff.__table__,
+    PromoGroup.__table__,
+    DiscountOffer.__table__,
+    BroadcastHistory.__table__,
+)
 
 
-@pytest.mark.asyncio
-async def test_send_promo_notifications_works_off_plain_ids(monkeypatch):
-    chat_ids: list[int] = []
+def _admin() -> User:
+    return User(id=99, telegram_id=99, username='admin', status=UserStatus.ACTIVE.value)
 
-    bot = MagicMock()
-    bot.send_message = AsyncMock(side_effect=lambda chat_id, text, reply_markup: chat_ids.append(chat_id))
-    bot.session = MagicMock()
-    bot.session.close = AsyncMock()
-    monkeypatch.setattr(m, '_get_bot', lambda: bot)
-    # Isolate the fan-out from the keyboard helper (which needs miniapp config).
+
+def _payload(**kwargs) -> PromoOfferBroadcastRequest:
+    defaults = {
+        'notification_type': 'extend_discount',
+        'valid_hours': 24,
+        'discount_percent': 10,
+        'target': 'active',
+        'send_notification': True,
+        'message_text': 'hi',
+    }
+    defaults.update(kwargs)
+    return PromoOfferBroadcastRequest(**defaults)
+
+
+async def _seed_subscriber(db, *, telegram_id: int | None, email: str | None = None) -> User:
+    now = datetime.now(UTC)
+    user = User(
+        telegram_id=telegram_id,
+        email=email,
+        email_verified=bool(email),
+        username=f'user{telegram_id or email}',
+        first_name='User',
+        status=UserStatus.ACTIVE.value,
+        balance_kopeks=0,
+        last_activity=now,
+    )
+    db.add(user)
+    await db.commit()
+
+    db.add(
+        Subscription(
+            user_id=user.id,
+            status=SubscriptionStatus.ACTIVE.value,
+            is_trial=False,
+            start_date=now - timedelta(days=5),
+            end_date=now + timedelta(days=25),
+            remnawave_short_id=f'short{user.id}',
+        )
+    )
+    await db.commit()
+    return user
+
+
+async def test_delivery_runs_off_plain_ids(monkeypatch):
+    """В сервис рассылок уходят голые telegram_id, без ORM-объектов сессии запроса."""
+    started: list[object] = []
+
+    async def fake_start_broadcast(broadcast_id, config):
+        started.append(config)
+
     monkeypatch.setattr(
-        m,
-        'build_miniapp_or_callback_button',
-        lambda text, callback_data: InlineKeyboardButton(text=text, callback_data=callback_data),
+        'app.cabinet.routes.admin_promo_offers.broadcast_service.start_broadcast',
+        fake_start_broadcast,
     )
 
-    sent, failed = await m._send_promo_notifications(
-        [(111, 1), (222, 2), (0, 3)],  # (telegram_id, offer_id); 0 => email-only, skipped
-        message_text='hi',
-        button_text=None,
-        discount_percent=10,
-        bonus_amount_kopeks=0,
-        valid_hours=24,
+    async with memory_session(monkeypatch, NOTIFY_TABLES) as db:
+        await _seed_subscriber(db, telegram_id=111)
+        await _seed_subscriber(db, telegram_id=222)
+        # Email-only получатель: оффер ему создаётся, но в Telegram-доставку он не идёт
+        await _seed_subscriber(db, telegram_id=None, email='mail@example.com')
+
+        response = await broadcast_offer(_payload(), admin=_admin(), db=db)
+
+        assert response.created_offers == 3
+        assert response.telegram_recipients == 2
+
+        assert len(started) == 1
+        config = started[0]
+        assert sorted(config.recipient_ids) == [111, 222]
+        assert all(isinstance(telegram_id, int) for telegram_id in config.recipient_ids)
+
+
+async def test_nothing_queued_without_telegram_recipients(monkeypatch):
+    """Некому слать в Telegram — запись рассылки не заводится."""
+
+    async def fail_start_broadcast(broadcast_id, config):
+        raise AssertionError('рассылку не должны были запускать')
+
+    monkeypatch.setattr(
+        'app.cabinet.routes.admin_promo_offers.broadcast_service.start_broadcast',
+        fail_start_broadcast,
     )
 
-    assert (sent, failed) == (2, 1)
-    assert chat_ids == [111, 222]
-    bot.session.close.assert_awaited()
+    async with memory_session(monkeypatch, NOTIFY_TABLES) as db:
+        await _seed_subscriber(db, telegram_id=None, email='mail@example.com')
 
+        response = await broadcast_offer(_payload(), admin=_admin(), db=db)
 
-@pytest.mark.asyncio
-async def test_empty_targets_is_noop(monkeypatch):
-    monkeypatch.setattr(m, '_get_bot', lambda: (_ for _ in ()).throw(AssertionError('bot must not be created')))
-    assert await m._send_promo_notifications([], None, None, 0, 0, 24) == (0, 0)
+        assert response.created_offers == 1
+        assert response.telegram_recipients == 0
+        assert response.broadcast_id is None

@@ -192,6 +192,12 @@ class PlategaPaymentMixin:
                 'status': existing.status,
             }
 
+        # Взаимоисключение с рекуррентом Lava: оба движка push-модели, и две
+        # живые привязки на одной подписке списывали бы дважды за цикл.
+        from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
+
+        await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+
         period_days = (
             resolve_autopay_period_candidate(getattr(subscription, 'autopay_period_days', None), tariff)
             or resolve_autopay_period_candidate(getattr(settings, 'DEFAULT_AUTOPAY_PERIOD_DAYS', 0), tariff)
@@ -201,7 +207,31 @@ class PlategaPaymentMixin:
         is_daily = bool(getattr(tariff, 'is_daily', False))
         interval, charge_days = resolve_platega_interval(period_days, is_daily)
 
-        amount_kopeks = tariff.get_purchasable_price_for_period(charge_days)
+        # Сумма — полная цена продления, а не голая цена периода: у подписки
+        # могут быть докупленные устройства (в классическом режиме — ещё и
+        # трафик/серверы), и балансовое автопродление списывает именно с ними.
+        # Голая цена периода недобирала бы разницу при каждом списании.
+        # user=None намеренно: временные промо-скидки в повторяющемся списании
+        # не замораживаем (см. docstring), поэтому считаем «чистую» цену
+        # тарифа за период плюс доп. устройства.
+        amount_kopeks = 0
+        try:
+            from app.services.pricing_engine import pricing_engine
+
+            pricing_result = await pricing_engine.calculate_tariff_purchase_price(
+                tariff,
+                charge_days,
+                device_limit=getattr(subscription, 'device_limit', None),
+            )
+            amount_kopeks = int(pricing_result.final_total or 0)
+        except Exception as pricing_error:  # pragma: no cover - defensive
+            logger.warning(
+                'Не удалось посчитать цену с доп. устройствами — берём голую цену периода',
+                error=str(pricing_error),
+            )
+        # Фолбэк на прежнее поведение: голая цена периода без доплат.
+        if amount_kopeks <= 0:
+            amount_kopeks = tariff.get_purchasable_price_for_period(charge_days)
         # Нулевая цена отклоняется наравне с отсутствующей: подписка Platega на
         # 0 ₽ бессмысленна и вела бы к пустым регулярным «списаниям».
         if not amount_kopeks:

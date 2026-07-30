@@ -830,7 +830,10 @@ class RemnaWaveAPI:
 
         Возвращает ``{'users': [...], 'nextCursor': str | None, 'hasMore': bool}``.
         """
-        params: dict[str, Any] = {'size': size}
+        # Контракт панели (zod, 2.8.x): size строго 1..1000, иначе 400 «Validation
+        # failed». Настраиваемые батчи (TRAFFIC_CHECK_BATCH_SIZE) со времён
+        # offset-пагинации могли быть больше — клэмпим, а не роняем весь обход.
+        params: dict[str, Any] = {'size': max(1, min(size, 1000))}
         if cursor is not None:
             params['cursor'] = cursor
 

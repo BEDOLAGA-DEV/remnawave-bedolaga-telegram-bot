@@ -14,6 +14,8 @@ from app.services.grace_access_service import (
     GraceCompletionReason,
     GracePanelOverlay,
     GracePanelSnapshot,
+    GracePanelTransitionConflict,
+    GracePanelTransitionPending,
     GraceReason,
     GraceRestoreOutcome,
     GraceSessionState,
@@ -101,7 +103,11 @@ class FakePanelGateway:
         self.applied_overlays: list[tuple[str, GracePanelOverlay]] = []
         self.restored_snapshots: list[tuple[str, GracePanelSnapshot]] = []
         self.applied_billing: list[GraceBillingState] = []
+        self.applied_billing_overlays: list[GracePanelOverlay] = []
         self.fail_overlay_attempts = 0
+        self.conflict_billing_attempts = 0
+        self.pending_billing_attempts = 0
+        self.pending_restore_attempts = 0
         self.restore_outcome = GraceRestoreOutcome.RESTORED
 
     async def read_snapshot(self, remnawave_uuid: str) -> GracePanelSnapshot | None:
@@ -133,6 +139,9 @@ class FakePanelGateway:
         expected_overlay: GracePanelOverlay,
     ) -> GraceRestoreOutcome:
         self.restored_snapshots.append((remnawave_uuid, snapshot))
+        if self.pending_restore_attempts > 0:
+            self.pending_restore_attempts -= 1
+            raise GracePanelTransitionPending
         if self.restore_outcome is GraceRestoreOutcome.RESTORED:
             self.snapshot = replace(
                 snapshot,
@@ -141,8 +150,20 @@ class FakePanelGateway:
             )
         return self.restore_outcome
 
-    async def apply_billing_state(self, billing: GraceBillingState) -> None:
+    async def apply_billing_state(
+        self,
+        billing: GraceBillingState,
+        *,
+        expected_overlay: GracePanelOverlay,
+    ) -> None:
         self.applied_billing.append(billing)
+        self.applied_billing_overlays.append(expected_overlay)
+        if self.conflict_billing_attempts > 0:
+            self.conflict_billing_attempts -= 1
+            raise GracePanelTransitionConflict('panel state changed outside grace')
+        if self.pending_billing_attempts > 0:
+            self.pending_billing_attempts -= 1
+            raise GracePanelTransitionPending
 
 
 class FakeBillingGateway:
@@ -452,6 +473,49 @@ async def test_timeout_restores_original_panel_values_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_limited_snapshot_restore_stays_restoring_while_panel_derives_status() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(
+        status='limited',
+        end_at=now + timedelta(days=20),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=10 * GIB,
+    )
+    snapshot = replace(
+        make_snapshot(
+            expire_at=billing.end_at,
+            traffic_limit_bytes=billing.traffic_limit_bytes,
+            used_traffic_bytes=billing.used_traffic_bytes,
+        ),
+        status='LIMITED',
+    )
+    service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    await service.start_if_eligible(billing, GraceReason.LIMITED)
+    panel.pending_restore_attempts = 1
+    clock.advance(timedelta(days=3, seconds=1))
+
+    pending = await service.reconcile()
+
+    assert pending.unchanged == 1
+    assert pending.errors == 0
+    assert pending.timed_out == 0
+    assert store.only_session().state is GraceSessionState.RESTORING
+    assert store.only_session().last_error is None
+
+    completed = await service.reconcile()
+
+    assert completed.timed_out == 1
+    assert completed.errors == 0
+    assert store.only_session().state is GraceSessionState.COMPLETED
+    assert store.only_session().completion_reason is GraceCompletionReason.TIMEOUT
+    assert panel.restored_snapshots == [
+        (PANEL_UUID, snapshot),
+        (PANEL_UUID, snapshot),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_payment_wins_over_grace_snapshot() -> None:
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     clock = MutableClock(now)
@@ -533,6 +597,108 @@ async def test_canonical_squad_change_ends_grace_and_applies_fresh_billing() -> 
     completed = next(iter(store.sessions.values()))
     assert completed.state is GraceSessionState.COMPLETED
     assert completed.completion_reason is GraceCompletionReason.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_limited_canonical_change_waits_without_error_then_completes() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(
+        status='limited',
+        end_at=now + timedelta(days=20),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=10 * GIB,
+    )
+    snapshot = replace(
+        make_snapshot(
+            expire_at=billing.end_at,
+            traffic_limit_bytes=billing.traffic_limit_bytes,
+            used_traffic_bytes=billing.used_traffic_bytes,
+        ),
+        status='LIMITED',
+    )
+    service, store, panel, billing_gateway = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+    )
+    started = await service.start_if_eligible(billing, GraceReason.LIMITED)
+    assert started.session is not None
+
+    changed_billing = replace(
+        billing,
+        traffic_limit_bytes=20 * GIB,
+        squad_uuids=('55555555-5555-5555-5555-555555555555',),
+    )
+    billing_gateway.state = changed_billing
+    panel.pending_billing_attempts = 1
+    store.sessions[started.session.id] = replace(
+        store.only_session(),
+        last_error='RemnaWaveAPIError: invalid status LIMITED',
+    )
+
+    pending = await service.reconcile()
+
+    assert pending.unchanged == 1
+    assert pending.errors == 0
+    assert pending.conflicts == 0
+    assert store.only_session().state is GraceSessionState.ACTIVE
+    assert store.only_session().last_error is None
+    assert panel.applied_billing_overlays == [started.session.overlay]
+
+    completed = await service.reconcile()
+
+    assert completed.conflicts == 1
+    assert completed.errors == 0
+    assert store.only_session().state is GraceSessionState.COMPLETED
+    assert store.only_session().completion_reason is GraceCompletionReason.CONFLICT
+    assert panel.applied_billing == [changed_billing, changed_billing]
+    assert panel.applied_billing_overlays == [
+        started.session.overlay,
+        started.session.overlay,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_limited_transition_conflict_completes_without_retry_error() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(
+        status='limited',
+        end_at=now + timedelta(days=20),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=10 * GIB,
+    )
+    snapshot = replace(
+        make_snapshot(
+            expire_at=billing.end_at,
+            traffic_limit_bytes=billing.traffic_limit_bytes,
+            used_traffic_bytes=billing.used_traffic_bytes,
+        ),
+        status='LIMITED',
+    )
+    service, store, panel, billing_gateway = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+    )
+    started = await service.start_if_eligible(billing, GraceReason.LIMITED)
+    assert started.session is not None
+
+    changed_billing = replace(billing, traffic_limit_bytes=20 * GIB)
+    billing_gateway.state = changed_billing
+    panel.conflict_billing_attempts = 1
+
+    result = await service.reconcile()
+
+    assert result.conflicts == 1
+    assert result.errors == 0
+    completed = store.only_session()
+    assert completed.state is GraceSessionState.COMPLETED
+    assert completed.completion_reason is GraceCompletionReason.CONFLICT
+    assert completed.last_error == 'GracePanelTransitionConflict: panel state changed outside grace'
+    assert panel.applied_billing == [changed_billing]
+    assert panel.applied_billing_overlays == [started.session.overlay]
 
 
 @pytest.mark.asyncio

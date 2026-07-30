@@ -47,7 +47,7 @@ from app.services.subscription_purchase_service import (
 )
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
-from app.utils.pricing_utils import format_period_description
+from app.utils.pricing_utils import calculate_price_per_month, format_period_description
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
@@ -192,8 +192,8 @@ async def _build_tariff_response(
                 discount_percent = 0
                 final_price = original_price
 
-            per_month = final_price // months if months > 0 else final_price
-            original_per_month = original_price // months if months > 0 else original_price
+            per_month = calculate_price_per_month(final_price, period_days)
+            original_per_month = calculate_price_per_month(original_price, period_days)
 
             period_data: dict[str, Any] = {
                 'days': period_days,
@@ -415,6 +415,9 @@ async def get_purchase_options(
                 # СБП-оформление (Platega recurrent): фронт показывает кнопку
                 # «Оформить с автооплатой СБП» рядом с покупкой с баланса.
                 'platega_recurrent_enabled': settings.is_platega_recurrent_enabled(),
+                # Автопродление Lava: фронт показывает переключатель на странице
+                # подписки, если фича включена.
+                'lava_recurrent_enabled': settings.is_lava_recurrent_enabled(),
             }
 
         # Classic mode - return periods

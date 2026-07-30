@@ -8,9 +8,36 @@
 from unittest.mock import MagicMock, patch
 
 from app.localization.texts import _build_dynamic_values
+from app.utils.pricing_utils import calculate_price_per_month
 
 
 # DEPRECATED: format_period_option_label tests removed - function replaced with unified price_display system
+
+
+class TestCalculatePricePerMonth:
+    """Тесты для calculate_price_per_month из pricing_utils.py."""
+
+    def test_whole_months_divide_evenly(self) -> None:
+        """Периоды, кратные 30 дням, делятся на целые месяцы."""
+        assert calculate_price_per_month(16030, 30) == 16030
+        assert calculate_price_per_month(30000, 90) == 10000
+        assert calculate_price_per_month(60000, 180) == 10000
+
+    def test_short_period_is_extrapolated(self) -> None:
+        """Для периода короче месяца ставка экстраполируется, а не равна цене периода."""
+        assert calculate_price_per_month(4830, 7) == 20700
+        assert calculate_price_per_month(9900, 14) == 21214
+
+    def test_period_not_multiple_of_month_is_prorated(self) -> None:
+        """Некратные 30 дням периоды считаются пропорцией, а не делением на округлённые месяцы."""
+        assert calculate_price_per_month(15000, 45) == 10000
+        assert calculate_price_per_month(100000, 365) == 8219
+
+    def test_non_positive_input_falls_back_to_price(self) -> None:
+        """Нулевые и отрицательные значения не роняют расчёт."""
+        assert calculate_price_per_month(0, 90) == 0
+        assert calculate_price_per_month(10000, 0) == 10000
+        assert calculate_price_per_month(-100, 30) == 0
 
 
 class TestBuildDynamicValues:

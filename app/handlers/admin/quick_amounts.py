@@ -35,6 +35,9 @@ def _format_rubles(amount_kopeks: int) -> str:
 def _format_amounts_line(quick_amounts: list[int] | None) -> str:
     if quick_amounts:
         return ', '.join(f'{_format_rubles(amount)} ₽' for amount in quick_amounts)
+    if quick_amounts is not None:
+        # Пустой список — кнопки отключены админом (None = дефолты)
+        return '🚫 отключены'
     defaults = ', '.join(f'{_format_rubles(amount)} ₽' for amount in DEFAULT_QUICK_AMOUNTS)
     return f'{defaults} (по умолчанию)'
 
@@ -47,7 +50,12 @@ def _method_title(config, defaults: dict) -> str:
 def _list_keyboard(configs: list, defaults: dict) -> InlineKeyboardMarkup:
     buttons = []
     for config in configs:
-        marker = '⚙️' if config.quick_amounts else '▫️'
+        if config.quick_amounts:
+            marker = '⚙️'
+        elif config.quick_amounts is not None:
+            marker = '🚫'
+        else:
+            marker = '▫️'
         buttons.append(
             [
                 InlineKeyboardButton(
@@ -60,9 +68,13 @@ def _list_keyboard(configs: list, defaults: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _view_keyboard(method_id: str, has_custom: bool) -> InlineKeyboardMarkup:
+def _view_keyboard(method_id: str, quick_amounts: list[int] | None) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(text='✏️ Изменить', callback_data=f'qamounts:edit:{method_id}')]]
-    if has_custom:
+    if quick_amounts != []:
+        buttons.append(
+            [InlineKeyboardButton(text='🚫 Отключить кнопки', callback_data=f'qamounts:disable:{method_id}')]
+        )
+    if quick_amounts is not None:
         buttons.append(
             [InlineKeyboardButton(text='♻️ Сбросить к умолчанию', callback_data=f'qamounts:reset:{method_id}')]
         )
@@ -74,7 +86,8 @@ def _view_text(config, defaults: dict) -> str:
     return (
         f'💸 <b>Быстрые суммы: {_method_title(config, defaults)}</b>\n\n'
         f'<b>Текущие суммы:</b> {_format_amounts_line(config.quick_amounts)}\n\n'
-        'Кнопки с этими суммами показываются пользователю при пополнении баланса.'
+        'Кнопки с этими суммами показываются пользователю при пополнении баланса. '
+        'Если кнопки отключены, пользователь вводит сумму вручную.'
     )
 
 
@@ -107,9 +120,27 @@ async def view_quick_amounts(callback: CallbackQuery, state: FSMContext, **kwarg
     defaults = _get_method_defaults()
     await callback.message.edit_text(
         _view_text(config, defaults),
-        reply_markup=_view_keyboard(method_id, bool(config.quick_amounts)),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith('qamounts:disable:'))
+@admin_required
+async def disable_quick_amounts(callback: CallbackQuery, **kwargs) -> None:
+    """Полностью убирает кнопки быстрых сумм: пользователь вводит сумму вручную."""
+    method_id = callback.data.split(':', 2)[2]
+    async with AsyncSessionLocal() as db:
+        config = await update_config(db, method_id, {'quick_amounts': []})
+    if not config:
+        await callback.answer('Способ оплаты не найден', show_alert=True)
+        return
+    await callback.answer('Кнопки быстрых сумм отключены', show_alert=True)
+    defaults = _get_method_defaults()
+    await callback.message.edit_text(
+        _view_text(config, defaults),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts),
+    )
 
 
 @router.callback_query(F.data.startswith('qamounts:edit:'))
@@ -142,7 +173,7 @@ async def reset_quick_amounts(callback: CallbackQuery, **kwargs) -> None:
     defaults = _get_method_defaults()
     await callback.message.edit_text(
         _view_text(config, defaults),
-        reply_markup=_view_keyboard(method_id, bool(config.quick_amounts)),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts),
     )
 
 
@@ -199,7 +230,7 @@ async def process_quick_amounts(message: Message, state: FSMContext, **kwargs) -
     await message.answer(
         f'✅ Быстрые суммы для <b>{_method_title(config, defaults)}</b> обновлены: '
         f'{_format_amounts_line(config.quick_amounts)}',
-        reply_markup=_view_keyboard(method_id, bool(config.quick_amounts)),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts),
     )
 
 

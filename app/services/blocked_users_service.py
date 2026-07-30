@@ -317,11 +317,13 @@ class BlockedUsersService:
             # user keeps getting charged for a deleted account. This path has
             # no grace-access guard (unlike UserService.delete_user_account), so
             # a plain best-effort cancel loop is enough — no lock to re-acquire.
+            from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
             from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
             for sub in getattr(user, 'subscriptions', None) or []:
                 await cancel_platega_recurring_for_subscription_safe(db, sub.id)
 
+                await cancel_lava_recurring_for_subscription_safe(db, sub.id)
             # Удаляем связанные записи (порядок важен из-за foreign keys)
 
             # 1. Платежные системы (до транзакций, т.к. ссылаются на них)

@@ -130,6 +130,29 @@ def coerce_panel_device_limit(value: object, default: int = 1) -> int:
     return default
 
 
+def resolve_min_device_limit(tariff: object | None = None) -> int:
+    """Нижняя граница, до которой пользователь может уменьшить лимит устройств.
+
+    По умолчанию (``ALLOW_DEVICES_BELOW_TARIFF_LIMIT=False``) опустить лимит
+    ниже включённого в тариф нельзя: уменьшают почти всегда не ради
+    самоограничения, а чтобы платить меньше — либо промахиваются и потом
+    спрашивают в поддержке, почему устройств меньше, чем положено по тарифу.
+
+    Вне тарифного режима (тариф не передан / у него нет лимита) граница — 1,
+    как и раньше.
+    """
+    from app.config import settings
+
+    if settings.ALLOW_DEVICES_BELOW_TARIFF_LIMIT:
+        return 1
+
+    tariff_devices = getattr(tariff, 'device_limit', None) if tariff is not None else None
+    try:
+        return max(1, int(tariff_devices or 0))
+    except (TypeError, ValueError):
+        return 1
+
+
 def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
     """Return a device limit value for RemnaWave payloads when selection is enabled."""
     import structlog

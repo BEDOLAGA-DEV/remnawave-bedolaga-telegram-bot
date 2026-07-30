@@ -26,6 +26,7 @@ from app.services.admin_notification_service import AdminNotificationService
 from app.services.pricing_engine import RenewalPricing
 from app.services.remnawave_service import RemnaWaveConfigurationError
 from app.services.subscription_service import SubscriptionService
+from app.utils.pricing_utils import calculate_price_per_month
 
 
 logger = structlog.get_logger(__name__)
@@ -107,8 +108,8 @@ class SubscriptionRenewalPricing:
 
         # per_month
         per_month = int(payload.get('per_month', 0) or 0)
-        if not per_month and months > 0:
-            per_month = final_total // months
+        if not per_month and period_days > 0:
+            per_month = calculate_price_per_month(final_total, period_days)
 
         # server_ids: legacy at top level, RenewalPricing in breakdown
         server_ids = list(payload.get('server_ids') or breakdown.get('server_ids') or [])

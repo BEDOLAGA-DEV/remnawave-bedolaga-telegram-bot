@@ -46,9 +46,28 @@ class PromoCodeService:
             return f'{user.id} ({user.email})'
         return f'#{user.id}'
 
+    @staticmethod
+    async def _rollback_keeping_user_usable(db: AsyncSession, user: User | None) -> None:
+        """Rollback, после которого ORM-объект юзера остаётся пригодным для вызывающего.
+
+        ``rollback()`` экспирирует все объекты сессии — включая ``db_user`` хендлера
+        (та же сессия → identity map → тот же инстанс). Без refresh последующий доступ
+        к атрибутам (``db_user.language`` в error-ветке) запускает ленивую догрузку вне
+        greenlet-моста и падает ``MissingGreenlet`` вместо сообщения об ошибке.
+        """
+        await db.rollback()
+        if user is None:
+            return
+        try:
+            await db.refresh(user)
+        except Exception as refresh_error:
+            # Best-effort: недоступная БД не должна маскировать исходную ошибку активации
+            logger.warning('Не удалось перечитать пользователя после rollback', error=refresh_error)
+
     async def activate_promocode(
         self, db: AsyncSession, user_id: int, code: str, *, subscription_id: int | None = None
     ) -> dict[str, Any]:
+        user: User | None = None
         try:
             user = await get_user_by_id(db, user_id)
             if not user:
@@ -115,7 +134,7 @@ class PromoCodeService:
             )
             if claim.rowcount == 0:
                 # Lost the race / fully used between the is_valid read and now.
-                await db.rollback()
+                await self._rollback_keeping_user_usable(db, user)
                 return {'success': False, 'error': 'used'}
 
             try:
@@ -124,7 +143,7 @@ class PromoCodeService:
                 )
             except _SelectSubscriptionRequired as e:
                 # Мульти-тариф: нужен выбор подписки — откатываем резерв И claim инкремента.
-                await db.rollback()
+                await self._rollback_keeping_user_usable(db, user)
                 return {
                     'success': False,
                     'error': 'select_subscription',
@@ -135,7 +154,7 @@ class PromoCodeService:
                 # Эффект не применён — откатываем резерв использования И claim инкремента.
                 # (trial_provisioning_failed уже сделал свою компенсацию + commit до raise,
                 # поэтому здесь rollback для него — no-op, что и требуется.)
-                await db.rollback()
+                await self._rollback_keeping_user_usable(db, user)
                 error_key = str(e)
                 if error_key in (
                     'active_discount_exists',
@@ -238,7 +257,7 @@ class PromoCodeService:
 
         except Exception as e:
             logger.error('Ошибка активации промокода для пользователя', code=code, user_id=user_id, error=e)
-            await db.rollback()
+            await self._rollback_keeping_user_usable(db, user)
             return {'success': False, 'error': 'server_error'}
 
     async def _apply_promocode_effects(
@@ -570,6 +589,7 @@ class PromoCodeService:
         Returns:
             dict с ключами success, error (опционально), deactivated_code (опционально)
         """
+        user: User | None = None
         try:
             user = await get_user_by_id(db, user_id)
             if not user:
@@ -645,5 +665,5 @@ class PromoCodeService:
 
         except Exception as e:
             logger.error('Ошибка деактивации промокода для пользователя', user_id=user_id, error=e)
-            await db.rollback()
+            await self._rollback_keeping_user_usable(db, user)
             return {'success': False, 'error': 'server_error'}

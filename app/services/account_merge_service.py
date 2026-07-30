@@ -493,9 +493,11 @@ async def _handle_subscription_merge(
             primary.remnawave_uuid = None
         # СБП-автопродление Platega удаляемой подписки отменяем ДО delete: CASCADE
         # снесёт локальную запись, и Platega продолжила бы списывать в никуда.
+        from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
         from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
         await cancel_platega_recurring_for_subscription_safe(db, primary_sub.id, commit=False)
+        await cancel_lava_recurring_for_subscription_safe(db, primary_sub.id, commit=False)
         # Явно удаляем subscription_servers перед подпиской (CASCADE настроен, но делаем явно для ясности)
         await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == primary_sub.id))
         # Удаляем запись подписки primary
@@ -523,9 +525,11 @@ async def _handle_subscription_merge(
             deferred_remnawave_deletions.append(secondary.remnawave_uuid)
             secondary.remnawave_uuid = None
         # СБП-автопродление Platega удаляемой подписки отменяем ДО delete (см. выше).
+        from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
         from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
         await cancel_platega_recurring_for_subscription_safe(db, secondary_sub.id, commit=False)
+        await cancel_lava_recurring_for_subscription_safe(db, secondary_sub.id, commit=False)
         # Явно удаляем subscription_servers перед подпиской (CASCADE настроен, но делаем явно для ясности)
         await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id == secondary_sub.id))
         # Удаляем запись подписки secondary

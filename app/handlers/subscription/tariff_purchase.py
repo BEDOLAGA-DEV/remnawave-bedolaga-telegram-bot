@@ -342,6 +342,15 @@ def get_tariff_confirm_keyboard(
                 )
             ]
         )
+    if settings.is_lava_recurrent_enabled():
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('LAVA_PURCHASE_BUTTON', '⚡ Оформить с автооплатой Lava'),
+                    callback_data=f'tariff_lava:{tariff_id}',
+                )
+            ]
+        )
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -350,15 +359,67 @@ def get_tariff_insufficient_balance_keyboard(
     tariff_id: int,
     period: int,
     language: str,
+    missing_kopeks: int = 0,
 ) -> InlineKeyboardMarkup:
-    """Создает клавиатуру при недостаточном балансе."""
+    """Создает клавиатуру при недостаточном балансе.
+
+    Если включена автопокупка после пополнения (AUTO_PURCHASE_AFTER_TOPUP_ENABLED),
+    показываем способы оплаты сразу, предзаполненные ровно недостающей суммой: после
+    оплаты подписка оформится автоматически, без отдельного шага «Пополнить баланс».
+    Иначе оставляем классический переход в пополнение баланса.
+
+    СБП-оформление показываем и здесь: привязке баланс не нужен (первое списание
+    Platega = подтверждение в банке), а без кнопки на этом экране фича была
+    недостижима для пользователей без денег на балансе.
+    """
     texts = get_texts(language)
+    back_button = InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')
+    sbp_rows = _sbp_purchase_rows(tariff_id, texts)
+
+    if settings.is_auto_purchase_after_topup_enabled() and missing_kopeks > 0:
+        from app.keyboards.inline import get_payment_methods_keyboard
+
+        # Оставляем только кнопки прямой оплаты (topup_amount|метод|сумма), отбрасывая
+        # навигацию клавиатуры пополнения — возврат ведём к выбору тарифа.
+        payment_rows = [
+            row
+            for row in get_payment_methods_keyboard(missing_kopeks, language).inline_keyboard
+            if row and all((button.callback_data or '').startswith('topup_amount|') for button in row)
+        ]
+        if payment_rows:
+            return InlineKeyboardMarkup(inline_keyboard=[*payment_rows, *sbp_rows, [back_button]])
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')],
+            *sbp_rows,
+            [back_button],
         ]
     )
+
+
+def _sbp_purchase_rows(tariff_id: int, texts) -> list[list[InlineKeyboardButton]]:
+    """Ряды оформления привязкой провайдера — те же, что на confirm-экранах."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if settings.is_platega_recurrent_enabled():
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('SBP_PURCHASE_BUTTON', '⚡ Оформить с автооплатой СБП'),
+                    callback_data=f'tariff_sbp:{tariff_id}',
+                )
+            ]
+        )
+    if settings.is_lava_recurrent_enabled():
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('LAVA_PURCHASE_BUTTON', '⚡ Оформить с автооплатой Lava'),
+                    callback_data=f'tariff_lava:{tariff_id}',
+                )
+            ]
+        )
+    return rows
 
 
 def format_tariff_info_for_user(
@@ -415,6 +476,15 @@ def get_daily_tariff_confirm_keyboard(
                 )
             ]
         )
+    if settings.is_lava_recurrent_enabled():
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('LAVA_PURCHASE_BUTTON', '⚡ Оформить с автооплатой Lava'),
+                    callback_data=f'tariff_lava:{tariff_id}',
+                )
+            ]
+        )
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -428,6 +498,7 @@ def get_daily_tariff_insufficient_balance_keyboard(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup')],
+            *_sbp_purchase_rows(tariff_id, texts),
             [InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')],
         ]
     )
@@ -1425,13 +1496,38 @@ async def select_tariff_period(
         await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
         return
 
-    # Получаем скидку для выбранного периода
-    group_pct, offer_pct, discount_percent = _get_user_period_discount(db_user, period)
+    # Существующая подписка этого тарифа нужна ДО расчёта цены: confirm передаёт
+    # её device_limit в движок, и превью обязано считать так же.
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-    # Получаем цену
-    prices = tariff.period_prices or {}
-    base_price = prices.get(str(period), 0)
-    final_price = _apply_promo_discount(base_price, group_pct, offer_pct)
+        _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+    else:
+        _existing_sub = await get_subscription_by_user_id(db, db_user.id)
+
+    device_limit = None
+    if _existing_sub and _existing_sub.tariff_id == tariff.id:
+        device_limit = _existing_sub.device_limit
+
+    # Цена — тем же PricingEngine, что и confirm_tariff_purchase: ручной расчёт от
+    # period_prices не видел доплату за устройства сверх включённых в тариф, превью
+    # показывало заниженную цену («После оплаты: 0»), а подтверждение отбивало
+    # «Недостаточно средств».
+    from app.services.pricing_engine import pricing_engine
+
+    result = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period,
+        device_limit=device_limit,
+        user=db_user,
+    )
+    final_price = result.final_total
+    original_price = result.original_total
+    total_discount = result.promo_group_discount + result.promo_offer_discount
+    discount_percent = (
+        round((1 - final_price / original_price) * 100) if original_price > 0 and total_discount > 0 else 0
+    )
+    shown_device_limit = device_limit if device_limit is not None else tariff.device_limit
 
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
@@ -1444,7 +1540,7 @@ async def select_tariff_period(
         if discount_percent > 0:
             discount_text = texts.t(
                 'TARIFF_PURCHASE_DISCOUNT_SHORT_LINE', '\n🎁 Скидка: {percent}% (-{amount})'
-            ).format(percent=discount_percent, amount=format_price_kopeks(base_price - final_price))
+            ).format(percent=discount_percent, amount=format_price_kopeks(total_discount))
 
         await callback.message.edit_text(
             texts.t(
@@ -1461,7 +1557,7 @@ async def select_tariff_period(
             ).format(
                 name=html.escape(tariff.name),
                 traffic=traffic,
-                devices=tariff.device_limit,
+                devices=shown_device_limit,
                 period=format_period(period),
                 discount=discount_text,
                 total=format_price_kopeks(final_price),
@@ -1475,14 +1571,6 @@ async def select_tariff_period(
         # Недостаточно средств - сохраняем корзину для автопокупки
         missing = final_price - user_balance
 
-        # Ищем существующую подписку для передачи subscription_id в корзину
-        if settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-            _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
-        else:
-            _existing_sub = await get_subscription_by_user_id(db, db_user.id)
-
         # Сохраняем данные корзины для автопокупки после пополнения
         cart_data = {
             'cart_mode': 'tariff_purchase',
@@ -1495,7 +1583,7 @@ async def select_tariff_period(
             'return_to_cart': True,
             'description': f'Покупка тарифа {tariff.name} на {period} дней',
             'traffic_limit_gb': tariff.traffic_limit_gb,
-            'device_limit': tariff.device_limit,
+            'device_limit': shown_device_limit,
             'allowed_squads': tariff.allowed_squads or [],
             'discount_percent': discount_percent,
             'subscription_id': _existing_sub.id if _existing_sub else None,
@@ -1522,11 +1610,13 @@ async def select_tariff_period(
                 'TARIFF_PURCHASE_CART_SAVED_HINT',
                 '\n\n🛒 <i>Корзина сохранена! После пополнения баланса подписка будет оформлена автоматически.</i>',
             ),
-            reply_markup=get_tariff_insufficient_balance_keyboard(tariff_id, period, db_user.language),
+            reply_markup=get_tariff_insufficient_balance_keyboard(
+                tariff_id, period, db_user.language, missing_kopeks=missing
+            ),
             parse_mode='HTML',
         )
 
-    # Resolve target subscription_id at preview time and pin it in FSM.
+    # Pin the resolved subscription_id in FSM (resolved above, before pricing).
     # Without this, ``confirm_tariff_purchase`` re-queries by
     # ``(user_id, tariff_id)`` and can race with concurrent panel
     # webhooks that briefly flip the active sub's status — falling
@@ -1535,9 +1625,6 @@ async def select_tariff_period(
     # активен", refunds, leaves user confused).
     target_subscription_id: int | None = None
     if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
         target_subscription_id = _existing_sub.id if _existing_sub else None
 
     await state.update_data(
@@ -4646,6 +4733,60 @@ async def preview_instant_switch(
 
 
 @error_handler
+async def purchase_tariff_with_lava(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    """Оформление подписки на тариф через автопродление Lava.
+
+    Зеркало ``purchase_tariff_with_sbp``: первое списание оплачивается по
+    ссылке Lava и оживляет подписку (для нового тарифа создаётся заготовка).
+    Выбранный период игнорируется — каденс задан продуктом в кабинете Lava.
+    """
+    texts = get_texts(db_user.language)
+    tariff_id = int(callback.data.split(':')[1])
+
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff or not tariff.is_active:
+        await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+        return
+
+    from app.services.payment.lava import purchase_tariff_with_lava_recurring
+
+    try:
+        result = await purchase_tariff_with_lava_recurring(db, user=db_user, tariff=tariff)
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        await callback.answer(
+            texts.t('LAVA_RECURRING_ENABLE_ERROR', '❌ Не удалось подключить автопродление Lava. Попробуйте позже.'),
+            show_alert=True,
+        )
+        return
+
+    redirect_url = result.get('redirect_url')
+    text = texts.t(
+        'LAVA_RECURRING_ENABLE_SUCCESS',
+        '⚡ <b>Автопродление Lava</b>\n\nОплатите первый счёт по кнопке ниже.\nПосле оплаты автопродление станет активным.',
+    )
+    text += '\n\n' + texts.t(
+        'LAVA_PURCHASE_PENDING_NOTE',
+        'ℹ️ Подписка активируется после оплаты первого счёта.',
+    )
+
+    buttons = []
+    if redirect_url:
+        buttons.append(
+            [InlineKeyboardButton(text=texts.t('LAVA_RECURRING_PAY_BUTTON', '💳 Оплатить'), url=redirect_url)]
+        )
+    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_list')])
+
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@error_handler
 async def confirm_instant_switch(
     callback: types.CallbackQuery,
     db_user: User,
@@ -5094,7 +5235,9 @@ async def return_to_saved_tariff_cart(
                     balance=format_price_kopeks(user_balance),
                     missing=format_price_kopeks(missing),
                 ),
-                reply_markup=get_tariff_insufficient_balance_keyboard(tariff_id, period, db_user.language),
+                reply_markup=get_tariff_insufficient_balance_keyboard(
+                    tariff_id, period, db_user.language, missing_kopeks=missing
+                ),
                 parse_mode='HTML',
             )
         else:  # tariff_purchase
@@ -5115,7 +5258,9 @@ async def return_to_saved_tariff_cart(
                     balance=format_price_kopeks(user_balance),
                     missing=format_price_kopeks(missing),
                 ),
-                reply_markup=get_tariff_insufficient_balance_keyboard(tariff_id, period, db_user.language),
+                reply_markup=get_tariff_insufficient_balance_keyboard(
+                    tariff_id, period, db_user.language, missing_kopeks=missing
+                ),
                 parse_mode='HTML',
             )
         await callback.answer()
@@ -5335,6 +5480,7 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
 
     # Оформление через СБП-автопродление Platega (альтернатива балансу)
     dp.callback_query.register(purchase_tariff_with_sbp, F.data.startswith('tariff_sbp:'))
+    dp.callback_query.register(purchase_tariff_with_lava, F.data.startswith('tariff_lava:'))
 
     # Подтверждение покупки суточного тарифа
     dp.callback_query.register(confirm_daily_tariff_purchase, F.data.startswith('daily_tariff_confirm:'))

@@ -233,3 +233,34 @@ def test_is_trial_already_used_gate():
     # не платил, PENDING-триал (повторная попытка оплаты) → можно
     pending_trial = Subscription(status=SubscriptionStatus.PENDING.value, is_trial=True)
     assert _user(False, pending_trial).is_trial_already_used() is False
+
+
+def test_subscription_property_ignores_pending_trial_draft():
+    """Незавершённый платный триал не должен подставляться как основная подписка.
+
+    Регрессия: после «Назад» с экрана оплаты платного триала в меню оставался
+    PENDING-черновик, и подписка выглядела купленной.
+    """
+    from app.database.models import Subscription, SubscriptionStatus, User
+
+    def _user(*subs):
+        u = User(has_had_paid_subscription=False)
+        u.subscriptions = list(subs)
+        return u
+
+    pending_trial = Subscription(status=SubscriptionStatus.PENDING.value, is_trial=True)
+    active = Subscription(status=SubscriptionStatus.ACTIVE.value, is_trial=False)
+    expired = Subscription(status=SubscriptionStatus.EXPIRED.value, is_trial=False)
+
+    # предикат
+    assert pending_trial.is_pending_trial is True
+    assert active.is_pending_trial is False
+    # PENDING-триал (не оплачен) как non-trial не считается
+    assert Subscription(status=SubscriptionStatus.PENDING.value, is_trial=False).is_pending_trial is False
+
+    # только незавершённый триал → «подписки нет»
+    assert _user(pending_trial).subscription is None
+    # активная подписка имеет приоритет
+    assert _user(active, pending_trial).subscription is active
+    # истёкшая подписка (для продления) показывается, черновик триала — нет
+    assert _user(pending_trial, expired).subscription is expired

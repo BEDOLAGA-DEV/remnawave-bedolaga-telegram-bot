@@ -309,6 +309,10 @@ async def main():
             settings.BOT_USERNAME = bot_user.username
             logger.info('BOT_USERNAME auto-detected', bot_username=bot_user.username)
 
+        from app.utils.chat_menu_button import configure_chat_menu_button
+
+        await configure_chat_menu_button(bot)
+
         monitoring_service.bot = bot
         maintenance_service.set_bot(bot)
         broadcast_service.set_bot(bot)

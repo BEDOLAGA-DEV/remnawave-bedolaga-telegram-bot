@@ -41,6 +41,8 @@ from app.services.grace_access_service import (
     GraceCompletionReason,
     GracePanelOverlay,
     GracePanelSnapshot,
+    GracePanelTransitionConflict,
+    GracePanelTransitionPending,
     GraceReason,
     GraceReconcileResult,
     GraceRestoreOutcome,
@@ -332,6 +334,22 @@ class RemnawaveGracePanelGateway:
             current = _panel_user_to_snapshot(current_user)
             if _panel_matches_target(current, target):
                 return GraceRestoreOutcome.ALREADY_RESTORED
+            if target.status is PanelUserStatus.LIMITED:
+                if not _limited_transition_source_is_safe(
+                    current,
+                    target,
+                    expected_overlay,
+                    now=now,
+                ):
+                    return GraceRestoreOutcome.CONFLICT
+                updated = await _apply_limited_target(
+                    api,
+                    remnawave_uuid=remnawave_uuid,
+                    target=target,
+                    expected_overlay=expected_overlay,
+                    current_user=current_user,
+                )
+                return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
             if not panel_matches_overlay(
                 current,
                 expected_overlay,
@@ -343,14 +361,7 @@ class RemnawaveGracePanelGateway:
             ):
                 return GraceRestoreOutcome.CONFLICT
 
-            updated = await api.update_user(
-                uuid=remnawave_uuid,
-                status=target.status,
-                expire_at=target.expire_at,
-                traffic_limit_bytes=target.traffic_limit_bytes,
-                active_internal_squads=list(target.squad_uuids),
-                external_squad_uuid=target.external_squad_uuid,
-            )
+            updated = await api.update_user(**_serialize_panel_target(remnawave_uuid, target))
             if updated is not None and _panel_matches_target(_panel_user_to_snapshot(updated), target):
                 return GraceRestoreOutcome.RESTORED
 
@@ -367,26 +378,58 @@ class RemnawaveGracePanelGateway:
                 return GraceRestoreOutcome.CONFLICT
         raise GracePanelError('Remnawave restore PATCH could not be verified')
 
-    async def apply_billing_state(self, billing: GraceBillingState) -> None:
+    async def apply_billing_state(
+        self,
+        billing: GraceBillingState,
+        *,
+        expected_overlay: GracePanelOverlay,
+    ) -> None:
         from app.services.remnawave_service import remnawave_service
 
         if not billing.remnawave_uuid:
             raise GracePanelError('Canonical subscription has no Remnawave UUID')
-        target = _build_billing_target(billing, now=datetime.now(UTC))
-        kwargs: dict[str, Any] = {
-            'uuid': billing.remnawave_uuid,
-            'status': target.status,
-            'expire_at': target.expire_at,
-            'traffic_limit_bytes': target.traffic_limit_bytes,
-            'active_internal_squads': list(target.squad_uuids),
-            'external_squad_uuid': target.external_squad_uuid,
-        }
-        if target.device_limit is not None:
-            kwargs['hwid_device_limit'] = target.device_limit
+        now = datetime.now(UTC)
+        target = _build_billing_target(billing, now=now)
 
         async with remnawave_service.get_api_client() as api:
-            updated = await api.update_user(**kwargs)
-        if updated is None or not _panel_matches_target(_panel_user_to_snapshot(updated), target):
+            if target.status is PanelUserStatus.LIMITED:
+                current_user = await api.get_user_by_uuid(billing.remnawave_uuid)
+                if current_user is None:
+                    raise GracePanelTransitionConflict('Canonical Remnawave user disappeared during LIMITED restore')
+                current = _panel_user_to_snapshot(current_user)
+                if _panel_matches_target(current, target):
+                    if _panel_user_matches_device_limit(current_user, target):
+                        return
+                    updated_device = await api.update_user(
+                        uuid=billing.remnawave_uuid,
+                        hwid_device_limit=target.device_limit,
+                    )
+                    if updated_device is None:
+                        updated_device = await api.get_user_by_uuid(billing.remnawave_uuid)
+                    if updated_device is not None and _panel_user_matches_target(updated_device, target):
+                        return
+                    raise GracePanelTransitionConflict('Remnawave did not confirm canonical LIMITED device limit')
+                if not _limited_transition_source_is_safe(
+                    current,
+                    target,
+                    expected_overlay,
+                    now=now,
+                ):
+                    raise GracePanelTransitionConflict(
+                        'Remnawave changed outside grace; canonical LIMITED state was not applied'
+                    )
+                updated = await _apply_limited_target(
+                    api,
+                    remnawave_uuid=billing.remnawave_uuid,
+                    target=target,
+                    expected_overlay=expected_overlay,
+                    current_user=current_user,
+                )
+            else:
+                updated = await api.update_user(**_serialize_panel_target(billing.remnawave_uuid, target))
+        if updated is None or not _panel_user_matches_target(updated, target):
+            if target.status is PanelUserStatus.LIMITED:
+                raise GracePanelTransitionConflict('Remnawave changed while canonical LIMITED state was being applied')
             raise GracePanelError('Remnawave did not confirm canonical billing state')
 
 
@@ -913,20 +956,16 @@ async def apply_recovered_grace_update_locked(
         raise GracePanelError('Recovered canonical subscription has no Remnawave UUID')
 
     target = _build_billing_target(billing, now=datetime.now(UTC))
-    canonical_kwargs = dict(update_kwargs)
-    canonical_kwargs.update(
-        uuid=billing.remnawave_uuid,
-        status=target.status,
-        expire_at=target.expire_at,
-        traffic_limit_bytes=target.traffic_limit_bytes,
-        active_internal_squads=list(target.squad_uuids),
-        external_squad_uuid=target.external_squad_uuid,
+    if target.status not in {PanelUserStatus.ACTIVE, PanelUserStatus.DISABLED}:
+        raise GracePanelError(f'Canonical renewal unexpectedly resolved to derived panel status {target.status.value}')
+    canonical_kwargs = _serialize_panel_target(
+        billing.remnawave_uuid,
+        target,
+        base_kwargs=update_kwargs,
     )
-    if target.device_limit is not None:
-        canonical_kwargs['hwid_device_limit'] = target.device_limit
 
     updated = await api.update_user(**canonical_kwargs)
-    if updated is None or not _panel_matches_target(_panel_user_to_snapshot(updated), target):
+    if updated is None or not _panel_user_matches_target(updated, target):
         raise GracePanelError('Remnawave did not confirm canonical billing state after renewal')
 
     completed = await core.complete_after_payment(
@@ -1461,6 +1500,148 @@ def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _Pane
         external_squad_uuid=billing.external_squad_uuid,
         device_limit=billing.device_limit,
     )
+
+
+def _serialize_panel_target(
+    remnawave_uuid: str,
+    target: _PanelTarget,
+    *,
+    base_kwargs: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a writable Remnawave payload without sending derived statuses."""
+    kwargs = dict(base_kwargs or {})
+    kwargs.pop('status', None)
+    kwargs.update(
+        uuid=remnawave_uuid,
+        expire_at=target.expire_at,
+        traffic_limit_bytes=target.traffic_limit_bytes,
+        active_internal_squads=list(target.squad_uuids),
+        external_squad_uuid=target.external_squad_uuid,
+    )
+    if target.status in {PanelUserStatus.ACTIVE, PanelUserStatus.DISABLED}:
+        kwargs['status'] = target.status
+    elif target.status not in {PanelUserStatus.LIMITED, PanelUserStatus.EXPIRED}:
+        raise GracePanelError(f'Unsupported canonical panel status {target.status!r}')
+    if target.device_limit is not None:
+        kwargs['hwid_device_limit'] = target.device_limit
+    return kwargs
+
+
+def _panel_matches_limited_intermediate(
+    snapshot: GracePanelSnapshot,
+    target: _PanelTarget,
+    expected_overlay: GracePanelOverlay,
+    *,
+    statuses: frozenset[str] = frozenset({'active', 'limited'}),
+) -> bool:
+    return (
+        _normalize(snapshot.status) in statuses
+        and snapshot.expire_at is not None
+        and abs((_as_utc(snapshot.expire_at) - _as_utc(target.expire_at)).total_seconds()) <= 2
+        and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
+        and snapshot.external_squad_uuid == expected_overlay.external_squad_uuid
+    )
+
+
+def _limited_transition_source_is_safe(
+    current: GracePanelSnapshot,
+    target: _PanelTarget,
+    expected_overlay: GracePanelOverlay,
+    *,
+    now: datetime,
+) -> bool:
+    if _panel_matches_limited_intermediate(current, target, expected_overlay):
+        return True
+
+    current_status = _normalize(current.status)
+    overlay_status_is_safe = current_status in {'active', 'limited'} or (
+        current_status == 'expired' and _as_utc(now) >= _as_utc(expected_overlay.expire_at)
+    )
+    return overlay_status_is_safe and panel_matches_overlay(
+        current,
+        expected_overlay,
+        now=now,
+    )
+
+
+async def _apply_limited_target(
+    api: Any,
+    *,
+    remnawave_uuid: str,
+    target: _PanelTarget,
+    expected_overlay: GracePanelOverlay,
+    current_user: Any,
+) -> Any | None:
+    """Restore a derived LIMITED target without exposing canonical routing early."""
+    intermediate = _panel_user_to_snapshot(current_user)
+    if not _panel_matches_limited_intermediate(
+        intermediate,
+        target,
+        expected_overlay,
+    ) or not _panel_user_matches_device_limit(current_user, target):
+        phase_a_kwargs: dict[str, Any] = {
+            'uuid': remnawave_uuid,
+            'expire_at': target.expire_at,
+            'traffic_limit_bytes': target.traffic_limit_bytes,
+            'active_internal_squads': list(expected_overlay.squad_uuids),
+            'external_squad_uuid': expected_overlay.external_squad_uuid,
+        }
+        if target.device_limit is not None:
+            phase_a_kwargs['hwid_device_limit'] = target.device_limit
+        phase_a_user = await api.update_user(**phase_a_kwargs)
+        if phase_a_user is None:
+            phase_a_user = await api.get_user_by_uuid(remnawave_uuid)
+        if phase_a_user is None:
+            return None
+        intermediate = _panel_user_to_snapshot(phase_a_user)
+        if not _panel_user_matches_device_limit(phase_a_user, target):
+            return None
+
+    if _panel_matches_limited_intermediate(
+        intermediate,
+        target,
+        expected_overlay,
+        statuses=frozenset({'active'}),
+    ):
+        raise GracePanelTransitionPending('Remnawave has not derived LIMITED after applying canonical quota fields')
+    if not _panel_matches_limited_intermediate(
+        intermediate,
+        target,
+        expected_overlay,
+        statuses=frozenset({'limited'}),
+    ):
+        return None
+
+    phase_b_user = await api.update_user(
+        uuid=remnawave_uuid,
+        active_internal_squads=list(target.squad_uuids),
+        external_squad_uuid=target.external_squad_uuid,
+    )
+    if phase_b_user is not None and _panel_user_matches_target(phase_b_user, target):
+        return phase_b_user
+
+    verified_user = await api.get_user_by_uuid(remnawave_uuid)
+    if verified_user is not None and _panel_user_matches_target(verified_user, target):
+        return verified_user
+    return None
+
+
+def _panel_user_matches_device_limit(panel_user: Any, target: _PanelTarget) -> bool:
+    if target.device_limit is None:
+        return True
+    raw_limit = getattr(panel_user, 'hwid_device_limit', None)
+    try:
+        return raw_limit is not None and int(raw_limit) == target.device_limit
+    except (TypeError, ValueError):
+        return False
+
+
+def _panel_user_matches_target(panel_user: Any, target: _PanelTarget) -> bool:
+    return _panel_matches_target(
+        _panel_user_to_snapshot(panel_user),
+        target,
+    ) and _panel_user_matches_device_limit(panel_user, target)
 
 
 def _panel_matches_target(snapshot: GracePanelSnapshot, target: _PanelTarget) -> bool:

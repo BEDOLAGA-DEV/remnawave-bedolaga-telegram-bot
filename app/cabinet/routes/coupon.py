@@ -37,6 +37,7 @@ _ERROR_MESSAGES = {
     'invalid': 'Coupon not found or already used',
     'expired': 'Coupon has expired',
     'already_redeemed_by_you': 'You have already redeemed this coupon',
+    'per_user_limit': 'You have reached your limit of coupons from this batch',
     'internal': 'Server error occurred',
 }
 

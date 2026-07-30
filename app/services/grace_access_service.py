@@ -81,6 +81,14 @@ class GraceRestoreOutcome(StrEnum):
     CONFLICT = 'conflict'
 
 
+class GracePanelTransitionPending(Exception):
+    """Signal that Remnawave is still deriving a server-owned panel status."""
+
+
+class GracePanelTransitionConflict(Exception):
+    """Signal that a derived-status transition hit an unrelated panel state."""
+
+
 class GraceStartDecision(StrEnum):
     STARTED = 'started'
     RETRIED = 'retried'
@@ -238,9 +246,24 @@ class GracePanelGateway(Protocol):
         remnawave_uuid: str,
         snapshot: GracePanelSnapshot,
         expected_overlay: GracePanelOverlay,
-    ) -> GraceRestoreOutcome: ...
+    ) -> GraceRestoreOutcome:
+        """Roll the panel back to ``snapshot``, but only if it still carries our overlay.
 
-    async def apply_billing_state(self, billing: GraceBillingState) -> None: ...
+        ``expected_overlay`` is the guard: someone else may have changed the panel
+        since the overlay was applied, and blindly restoring an old snapshot would
+        undo their change.
+        """
+
+    async def apply_billing_state(
+        self,
+        billing: GraceBillingState,
+        *,
+        expected_overlay: GracePanelOverlay,
+    ) -> None:
+        """Push the bot's canonical values onto the panel, replacing our overlay.
+
+        Guarded by ``expected_overlay`` for the same reason as ``restore_snapshot``.
+        """
 
 
 class GraceBillingGateway(Protocol):
@@ -381,7 +404,10 @@ class GraceAccessService:
             return False
 
         if apply_billing_state:
-            await self._panel.apply_billing_state(billing)
+            await self._panel.apply_billing_state(
+                billing,
+                expected_overlay=session.overlay,
+            )
         await self._complete(session, GraceCompletionReason.PAID)
         return True
 
@@ -424,6 +450,22 @@ class GraceAccessService:
                     activate_pending=activate_pending,
                     force_restore=force_restore,
                 )
+            except GracePanelTransitionConflict as error:
+                latest_session = await self._store.get_open(session.subscription_id)
+                if latest_session is None:
+                    result = replace(result, unchanged=result.unchanged + 1)
+                    continue
+                await self._complete(
+                    latest_session,
+                    GraceCompletionReason.CONFLICT,
+                    last_error=_error_text(error),
+                )
+                result = replace(result, conflicts=result.conflicts + 1)
+                continue
+            except GracePanelTransitionPending:
+                await self._clear_error(session.subscription_id)
+                result = replace(result, unchanged=result.unchanged + 1)
+                continue
             except Exception as error:
                 await self._remember_error(session.subscription_id, error)
                 logger.exception(
@@ -490,7 +532,10 @@ class GraceAccessService:
         latest_billing = await self._billing.get_subscription(session.subscription_id)
 
         if latest_billing and billing_has_recovered(session, latest_billing):
-            await self._panel.apply_billing_state(latest_billing)
+            await self._panel.apply_billing_state(
+                latest_billing,
+                expected_overlay=session.overlay,
+            )
             return await self._complete(session, GraceCompletionReason.PAID)
 
         if latest_billing is None or billing_is_revoked(latest_billing):
@@ -529,7 +574,12 @@ class GraceAccessService:
             # squad preflight.  Any other state may be a manual/emergency
             # revocation. Canonical billing is fail-closed and must win.
             try:
-                await self._panel.apply_billing_state(latest_billing)
+                await self._panel.apply_billing_state(
+                    latest_billing,
+                    expected_overlay=session.overlay,
+                )
+            except (GracePanelTransitionConflict, GracePanelTransitionPending):
+                raise
             except Exception as error:
                 failed_session = replace(
                     session,
@@ -558,11 +608,17 @@ class GraceAccessService:
 
         latest_billing = await self._billing.get_subscription(session.subscription_id)
         if latest_billing and billing_has_recovered(session, latest_billing):
-            await self._panel.apply_billing_state(latest_billing)
+            await self._panel.apply_billing_state(
+                latest_billing,
+                expected_overlay=session.overlay,
+            )
             return await self._complete(session, GraceCompletionReason.PAID)
         if latest_billing is None or billing_is_revoked(latest_billing):
             if latest_billing is not None:
-                await self._panel.apply_billing_state(latest_billing)
+                await self._panel.apply_billing_state(
+                    latest_billing,
+                    expected_overlay=session.overlay,
+                )
                 return await self._complete(session, GraceCompletionReason.REVOKED)
             _, completed = await self._restore_and_complete(session, GraceCompletionReason.REVOKED)
             return completed
@@ -589,16 +645,25 @@ class GraceAccessService:
     ) -> str:
         billing = await self._billing.get_subscription(session.subscription_id)
         if billing and billing_has_recovered(session, billing):
-            await self._panel.apply_billing_state(billing)
+            await self._panel.apply_billing_state(
+                billing,
+                expected_overlay=session.overlay,
+            )
             await self._complete(session, GraceCompletionReason.PAID)
             return GraceCompletionReason.PAID.value
 
         if billing is None or billing_is_revoked(billing):
             if billing is not None:
-                await self._panel.apply_billing_state(billing)
+                await self._panel.apply_billing_state(
+                    billing,
+                    expected_overlay=session.overlay,
+                )
                 latest_billing = await self._billing.get_subscription(session.subscription_id)
                 if latest_billing and billing_has_recovered(session, latest_billing):
-                    await self._panel.apply_billing_state(latest_billing)
+                    await self._panel.apply_billing_state(
+                        latest_billing,
+                        expected_overlay=session.overlay,
+                    )
                     await self._complete(session, GraceCompletionReason.PAID)
                     return GraceCompletionReason.PAID.value
                 await self._complete(session, GraceCompletionReason.REVOKED)
@@ -616,7 +681,10 @@ class GraceAccessService:
             session, billing
         ):
             if billing.remnawave_uuid == session.remnawave_uuid:
-                await self._panel.apply_billing_state(billing)
+                await self._panel.apply_billing_state(
+                    billing,
+                    expected_overlay=session.overlay,
+                )
                 await self._complete(session, GraceCompletionReason.CONFLICT)
                 return GraceCompletionReason.CONFLICT.value
             action, _ = await self._restore_and_complete(session, GraceCompletionReason.CONFLICT)
@@ -652,7 +720,10 @@ class GraceAccessService:
             # grant unrestricted access after a crashed/stale renewal PATCH, so
             # fail closed to the current canonical billing state.
             if _normalize_status(current_panel.status) == 'active':
-                await self._panel.apply_billing_state(billing)
+                await self._panel.apply_billing_state(
+                    billing,
+                    expected_overlay=session.overlay,
+                )
                 await self._complete(
                     session,
                     GraceCompletionReason.CONFLICT,
@@ -692,7 +763,10 @@ class GraceAccessService:
 
         latest_billing = await self._billing.get_subscription(session.subscription_id)
         if latest_billing and billing_has_recovered(restoring_session, latest_billing):
-            await self._panel.apply_billing_state(latest_billing)
+            await self._panel.apply_billing_state(
+                latest_billing,
+                expected_overlay=restoring_session.overlay,
+            )
             completed = await self._complete(restoring_session, GraceCompletionReason.PAID)
             return GraceCompletionReason.PAID.value, completed
 
@@ -706,7 +780,10 @@ class GraceAccessService:
         # over an old snapshot, even if the restore PATCH has already succeeded.
         latest_billing = await self._billing.get_subscription(session.subscription_id)
         if latest_billing and billing_has_recovered(restoring_session, latest_billing):
-            await self._panel.apply_billing_state(latest_billing)
+            await self._panel.apply_billing_state(
+                latest_billing,
+                expected_overlay=restoring_session.overlay,
+            )
             completed = await self._complete(restoring_session, GraceCompletionReason.PAID)
             return GraceCompletionReason.PAID.value, completed
 
@@ -748,6 +825,18 @@ class GraceAccessService:
                 session,
                 updated_at=_as_utc(self._clock()),
                 last_error=_error_text(error),
+            )
+        )
+
+    async def _clear_error(self, subscription_id: int) -> None:
+        session = await self._store.get_open(subscription_id)
+        if not session or session.last_error is None:
+            return
+        await self._store.save(
+            replace(
+                session,
+                updated_at=_as_utc(self._clock()),
+                last_error=None,
             )
         )
 

@@ -18,7 +18,7 @@ telegram-bot-api) модуль запоминает недоступность �
 
 import html
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -220,16 +220,27 @@ def _looks_like_unsupported(error: Exception) -> bool:
     return 'unknown method' in text or 'method not found' in text or 'text is empty' in text
 
 
-# Telegram хранит даты 32-битным unix time: tg-time со значением вне диапазона
-# сервер отклоняет ошибкой RICH_MESSAGE_DATE_INVALID и меню не отправляется.
-# Реальный кейс — «вечные» подписки, импортированные из панели с датой окончания
-# после 19.01.2038; такие даты показываем fallback-текстом без tg-time.
-_TG_TIME_MAX_UNIX = 2**31 - 1
+# Telegram принимает дату сущности только в диапазоне [0, сейчас + 1098 дней]
+# (core.telegram.org/api/entities, messageEntityFormattedDate: «time()+1098*86400»).
+# Дата за границей отклоняется ошибкой RICH_MESSAGE_DATE_INVALID, и сервер роняет
+# ВСЁ rich-сообщение, а не одну ячейку — меню целиком уходит в классический вид.
+#
+# Раньше здесь стоял предел 32-битного unix time (19.01.2038). Он ловил только
+# «вечные» подписки из панели, а лимит Telegram почти на десятилетие ближе: любая
+# подписка дальше ~3 лет вперёд ломала меню. Считаем границу от текущего момента,
+# с суточным запасом на расхождение часов с серверами Telegram.
+_TG_TIME_MAX_AHEAD = timedelta(days=1097)
 
 
 def _tg_time(moment: datetime, time_format: str, fallback: str) -> str:
-    unix_time = int(moment.timestamp())
-    if not 0 < unix_time <= _TG_TIME_MAX_UNIX:
+    try:
+        unix_time = int(moment.timestamp())
+        max_unix = int((datetime.now(UTC) + _TG_TIME_MAX_AHEAD).timestamp())
+    except (OverflowError, OSError, ValueError):
+        # datetime.max и прочие сентинелы: timestamp() на них падает на части платформ.
+        return html.escape(fallback)
+
+    if not 0 < unix_time <= max_unix:
         return html.escape(fallback)
     return f'<tg-time unix="{unix_time}" format="{time_format}">{html.escape(fallback)}</tg-time>'
 
@@ -500,6 +511,8 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     if settings.is_multi_tariff_enabled():
         heading = texts.t('MAIN_MENU_RICH_SUBSCRIPTIONS_HEADING', '📱 Подписки')
         subscriptions = await get_all_subscriptions_by_user_id(db, user.id)
+        # Неоплаченные черновики триала не показываем как существующую подписку
+        subscriptions = [sub for sub in subscriptions if not getattr(sub, 'is_pending_trial', False)]
         subscription_block = _build_subscriptions_table(subscriptions, texts)
         if len(subscriptions) > 1 and settings.MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE:
             # Несколько подписок раздувают меню — сворачиваем таблицу в details;
@@ -560,6 +573,24 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     return ''.join(blocks)
 
 
+_TG_TIME_TAG_RE = re.compile(r'<tg-time\b[^>]*>(.*?)</tg-time>', re.DOTALL | re.IGNORECASE)
+
+
+def _is_rich_date_error(error: Exception) -> bool:
+    return 'rich_message_date_invalid' in str(error).lower()
+
+
+def _strip_tg_time(rich_html: str) -> str:
+    """Убирает теги tg-time, оставляя их текст.
+
+    Страховка от RICH_MESSAGE_DATE_INVALID: одна дата вне допустимого диапазона
+    отвергает ВСЁ rich-сообщение, а не свою ячейку. Границу мы держим сами
+    (см. _tg_time), но Telegram уже дважды оказывался строже, чем мы считали, —
+    пусть в таком случае меню теряет форматирование дат, а не уезжает в классику.
+    """
+    return _TG_TIME_TAG_RE.sub(r'\1', rich_html)
+
+
 def _input_rich_message(rich_html: str, language: str | None) -> InputRichMessage:
     return InputRichMessage(
         html=rich_html,
@@ -589,6 +620,19 @@ async def _send_rich_menu(
             message_effect_id=effect_id,
         )
     except TelegramBadRequest as error:
+        if _is_rich_date_error(error):
+            logger.warning(
+                'Сервер отклонил дату в rich-меню — повтор без tg-time',
+                error=str(error),
+                chat_id=chat_id,
+            )
+            await bot.send_rich_message(
+                chat_id=chat_id,
+                rich_message=_input_rich_message(_strip_tg_time(rich_html), language),
+                reply_markup=keyboard,
+                message_effect_id=effect_id,
+            )
+            return
         # Невалидный/отключённый эффект не должен ронять rich-меню в классику —
         # повторяем без эффекта и больше его не шлём до рестарта.
         if effect_id and 'effect' in str(error).lower():
@@ -725,6 +769,24 @@ async def try_edit_rich_main_menu(
     except (TelegramNotFound, TelegramBadRequest) as error:
         if 'message is not modified' in str(error).lower():
             return True
+        if _is_rich_date_error(error) and is_editable_as_rich:
+            # Та же страховка, что и в _send_rich_menu: дата вне диапазона роняет
+            # всё сообщение, поэтому повторяем один раз без tg-time.
+            logger.warning('Сервер отклонил дату в rich-меню — правка без tg-time', error=str(error))
+            try:
+                await bot(
+                    EditMessageText(
+                        chat_id=chat_id,
+                        message_id=message.message_id,
+                        rich_message=_input_rich_message(_strip_tg_time(rich_html), language),
+                        reply_markup=keyboard,
+                        parse_mode=None,
+                    )
+                )
+                return True
+            except TelegramBadRequest as retry_error:
+                logger.warning('Повтор rich-меню без tg-time не удался', error=str(retry_error))
+                return False
         if _looks_like_unsupported(error):
             _mark_rich_unavailable(error)
         elif _retry_without_logo(error):

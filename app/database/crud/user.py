@@ -27,6 +27,7 @@ from app.database.models import (
     UserPromoGroup,
     UserStatus,
 )
+from app.utils.text_search import contains_conditions
 from app.utils.validators import sanitize_telegram_name
 
 
@@ -45,13 +46,15 @@ def _user_search_conditions(search: str) -> list:
     in-range BIGINT number. A digit string that overflows BIGINT (or a non-ASCII
     "digit" that int() rejects) would otherwise crash the query, so it falls back
     to text-only matching instead.
+
+    Регистр сворачивается через contains_conditions, а не голым ILIKE: под локалью
+    базы `C` (наш docker-compose) ILIKE не трогает кириллицу, и «поз» не находил
+    «Позитив». Подробности — в app/utils/text_search.py.
     """
-    search_term = f'%{search}%'
-    conditions = [
-        User.first_name.ilike(search_term),
-        User.last_name.ilike(search_term),
-        User.username.ilike(search_term),
-    ]
+    conditions = contains_conditions(
+        (User.first_name, User.last_name, User.username),
+        search,
+    )
     if search.isdigit():
         try:
             search_int = int(search)

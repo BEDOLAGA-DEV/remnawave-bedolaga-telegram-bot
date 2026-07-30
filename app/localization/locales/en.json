@@ -2131,5 +2131,13 @@
   "SBP_RECURRING_NOTIFY_CANCELLED": "ℹ️ SBP auto-renewal cancelled.",
   "SBP_RECURRING_NOTIFY_ACTIVATED": "✅ SBP auto-renewal activated.",
   "SBP_PURCHASE_BUTTON": "⚡ Subscribe with SBP auto-payment",
-  "SBP_PURCHASE_PENDING_NOTE": "ℹ️ The subscription activates after confirmation and the first charge."
+  "SBP_PURCHASE_PENDING_NOTE": "ℹ️ The subscription activates after confirmation and the first charge.",
+  "LAVA_PURCHASE_BUTTON": "⚡ Subscribe with Lava auto-renewal",
+  "LAVA_PURCHASE_PENDING_NOTE": "ℹ️ The subscription activates once the first invoice is paid.",
+  "LAVA_RECURRING_ENABLE_ERROR": "❌ Could not enable Lava auto-renewal. Please try again later.",
+  "LAVA_RECURRING_ENABLE_SUCCESS": "⚡ <b>Lava auto-renewal</b>\n\nPay the first invoice using the button below.\nAuto-renewal becomes active after payment.",
+  "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ Lava auto-renewal has been cancelled.",
+  "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ Subscription renewed by Lava auto-payment.",
+  "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ Lava auto-renewal payment failed.",
+  "LAVA_RECURRING_PAY_BUTTON": "💳 Pay"
 }

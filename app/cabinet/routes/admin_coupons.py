@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.coupon import (
     create_coupon_batch,
+    delete_coupon_batch,
     get_batch_coupon_tokens,
     get_batch_status_counts,
     get_coupon_batch_by_id,
@@ -25,6 +26,7 @@ from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.coupons import (
     CouponBatchCreatedResponse,
     CouponBatchCreateRequest,
+    CouponBatchDeleteResponse,
     CouponBatchLinksResponse,
     CouponBatchListResponse,
     CouponBatchResponse,
@@ -54,6 +56,7 @@ def _serialize_batch(batch: CouponBatch, counts: dict[str, int]) -> CouponBatchR
         period_days=batch.period_days,
         coupons_total=batch.coupons_total,
         wholesale_price_kopeks=batch.wholesale_price_kopeks,
+        max_per_user=getattr(batch, 'max_per_user', 0) or 0,
         valid_until=batch.valid_until,
         is_revoked=batch.is_revoked,
         created_at=batch.created_at,
@@ -114,6 +117,7 @@ async def create_coupon_batch_endpoint(
         period_days=payload.period_days,
         coupons_count=payload.coupons_count,
         wholesale_price_kopeks=payload.wholesale_price_kopeks,
+        max_per_user=payload.max_per_user,
         valid_until=valid_until,
         created_by=admin.id,
     )
@@ -180,3 +184,30 @@ async def revoke_coupon_batch(
 
     counts = await get_batch_status_counts(db, batch.id)
     return CouponBatchRevokeResponse(revoked_count=revoked_count, batch=_serialize_batch(batch, counts))
+
+
+@router.delete('/{batch_id}', response_model=CouponBatchDeleteResponse)
+async def delete_batch(
+    batch_id: int,
+    admin: User = Depends(require_permission('coupons:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Полностью удаляет партию вместе с её купонами.
+
+    Отличие от ``/revoke``: отзыв гасит непогашенные купоны, но оставляет
+    партию и историю; удаление стирает записи целиком. Уже выданные по купонам
+    подписки НЕ отзываются — пропадает только связь «кто каким купоном
+    воспользовался», поэтому для действующих раздач предпочтителен отзыв.
+    """
+    batch = await _get_batch_or_404(db, batch_id)
+    counts = await get_batch_status_counts(db, batch_id)
+
+    total = await delete_coupon_batch(db, batch)
+    logger.info(
+        'Админ удалил партию купонов',
+        admin_id=admin.id,
+        batch_id=batch_id,
+        deleted_coupons=total,
+        redeemed=counts.get(CouponStatus.REDEEMED.value, 0),
+    )
+    return CouponBatchDeleteResponse(batch_id=batch_id, deleted_coupons=total)

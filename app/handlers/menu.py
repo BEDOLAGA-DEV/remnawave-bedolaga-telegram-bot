@@ -1386,6 +1386,8 @@ async def _get_multi_tariff_status(user, texts, db: AsyncSession) -> tuple[str, 
     from app.database.crud.subscription import get_all_subscriptions_by_user_id
 
     subscriptions = await get_all_subscriptions_by_user_id(db, user.id)
+    # Неоплаченные черновики триала не показываем как существующую подписку
+    subscriptions = [sub for sub in subscriptions if not getattr(sub, 'is_pending_trial', False)]
 
     if not subscriptions:
         return texts.t('SUB_STATUS_NONE', '❌ Отсутствует'), ''

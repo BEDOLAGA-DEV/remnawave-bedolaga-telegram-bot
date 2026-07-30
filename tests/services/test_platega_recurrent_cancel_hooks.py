@@ -561,15 +561,23 @@ async def test_delete_user_from_db_cancels_platega_for_each_subscription(monkeyp
     grace-access guard, so a plain best-effort cancel loop before the
     deletes is enough — no lock to re-acquire.
     """
+    import app.services.payment.lava as lava_module
     import app.services.payment.platega as platega_module
     from app.services.blocked_users_service import BlockedUsersService
 
     recorded: list[tuple[object, int]] = []
+    recorded_lava: list[tuple[object, int]] = []
 
     async def fake_cancel(db, subscription_id):
         recorded.append((db, subscription_id))
 
+    async def fake_cancel_lava(db, subscription_id):
+        recorded_lava.append((db, subscription_id))
+
     monkeypatch.setattr(platega_module, 'cancel_platega_recurring_for_subscription_safe', fake_cancel)
+    # Тот же teardown-путь гасит и рекуррент Lava — оба провайдера обязаны быть
+    # отменены до удаления пользователя.
+    monkeypatch.setattr(lava_module, 'cancel_lava_recurring_for_subscription_safe', fake_cancel_lava)
 
     subs = [SimpleNamespace(id=21, connected_squads=None), SimpleNamespace(id=22, connected_squads=None)]
     user = SimpleNamespace(id=9, telegram_id=999, email=None, subscriptions=subs)
@@ -588,5 +596,6 @@ async def test_delete_user_from_db_cancels_platega_for_each_subscription(monkeyp
 
     assert ok is True
     assert recorded == [(db, 21), (db, 22)]
+    assert recorded_lava == [(db, 21), (db, 22)]
     db.delete.assert_awaited_once_with(user)
     db.commit.assert_awaited_once()

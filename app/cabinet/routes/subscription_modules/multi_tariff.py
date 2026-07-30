@@ -150,10 +150,12 @@ async def delete_subscription(
     # runs BEFORE any irreversible panel/DB step, and the guard is
     # re-acquired immediately below — closing that window before anything
     # that can't be undone happens.
+    from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
     await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
+    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
     try:
         await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))
     except GraceAccessDeletionBlocked as error:

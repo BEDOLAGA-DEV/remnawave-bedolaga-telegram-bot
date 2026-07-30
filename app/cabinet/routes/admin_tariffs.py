@@ -131,6 +131,7 @@ async def list_tariffs(
                 is_trial_available=tariff.is_trial_available,
                 is_daily=tariff.is_daily,
                 daily_price_kopeks=tariff.daily_price_kopeks,
+                lava_product_id=tariff.lava_product_id,
                 allow_traffic_topup=tariff.allow_traffic_topup,
                 show_in_gift=tariff.show_in_gift,
                 traffic_limit_gb=tariff.traffic_limit_gb,
@@ -267,6 +268,7 @@ async def get_tariff(
         # Дневной тариф
         is_daily=tariff.is_daily,
         daily_price_kopeks=tariff.daily_price_kopeks,
+        lava_product_id=tariff.lava_product_id,
         # Режим сброса трафика
         traffic_reset_mode=tariff.traffic_reset_mode,
         # Внешний сквад
@@ -325,6 +327,7 @@ async def create_new_tariff(
         # Дневной тариф
         is_daily=request.is_daily,
         daily_price_kopeks=request.daily_price_kopeks,
+        lava_product_id=request.lava_product_id,
         # Режим сброса трафика
         traffic_reset_mode=request.traffic_reset_mode,
         # Внешний сквад
@@ -419,6 +422,8 @@ async def update_existing_tariff(
     # Дневной тариф
     if request.is_daily is not None:
         updates['is_daily'] = request.is_daily
+    if request.lava_product_id is not None:
+        updates['lava_product_id'] = request.lava_product_id.strip() or None
     if request.daily_price_kopeks is not None:
         updates['daily_price_kopeks'] = request.daily_price_kopeks
     # Режим сброса трафика (None допускается как значение для сброса к глобальной настройке)

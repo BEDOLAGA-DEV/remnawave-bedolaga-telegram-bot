@@ -197,10 +197,12 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
         # иначе оба движка продления начнут списывать параллельно (двойное
         # списание). Прямое взаимоисключение (СБП -> выключение
         # balance-autopay) уже реализовано в create_platega_sbp_subscription.
+        from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
         from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
         await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
+        await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
     texts = get_texts(db_user.language)
     status = texts.t('AUTOPAY_STATUS_ENABLED', 'включен') if enable else texts.t('AUTOPAY_STATUS_DISABLED', 'выключен')
     await callback.answer(texts.t('AUTOPAY_TOGGLE_SUCCESS', '✅ Автоплатеж {status}!').format(status=status))
@@ -543,10 +545,11 @@ async def handle_sbp_recurring_cancel(
         )
         return
 
+    # Это кнопка отмены именно СБП-автопродления Platega — привязку Lava она
+    # трогать не должна (у неё своя поверхность отмены).
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
     await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
-
     await callback.answer(texts.t('SBP_RECURRING_CANCELLED', '✅ Автопродление через СБП отменено'))
     # Меню гейтится флагом — при выключенной фиче не дёргаем его, чтобы после
     # успешной отмены юзер не получил второй алерт «недоступно».
