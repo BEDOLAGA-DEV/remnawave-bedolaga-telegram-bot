@@ -25,6 +25,9 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+_RESTORE_ECHO_TIMESTAMP_TOLERANCE = timedelta(minutes=1)
+_COMPLETED_EXPIRED_ECHO_DEDUPE_TTL = timedelta(minutes=30)
+
 
 class GraceReason(StrEnum):
     EXPIRED = 'expired'
@@ -228,6 +231,13 @@ class GraceSessionStore(Protocol):
 
     async def get_by_incident(self, subscription_id: int, incident_key: str) -> GraceAccessSession | None: ...
 
+    async def list_recent_completed(
+        self,
+        subscription_id: int,
+        *,
+        limit: int = 8,
+    ) -> Sequence[GraceAccessSession]: ...
+
     async def create(self, session: GraceAccessSession) -> GraceAccessSession: ...
 
     async def save(self, session: GraceAccessSession) -> GraceAccessSession: ...
@@ -247,24 +257,16 @@ class GracePanelGateway(Protocol):
         remnawave_id: int,
         snapshot: GracePanelSnapshot,
         expected_overlay: GracePanelOverlay,
-    ) -> GraceRestoreOutcome:
-        """Roll the panel back to ``snapshot``, but only if it still carries our overlay.
-
-        ``expected_overlay`` is the guard: someone else may have changed the panel
-        since the overlay was applied, and blindly restoring an old snapshot would
-        undo their change.
-        """
+        *,
+        force_disable: bool = False,
+    ) -> GraceRestoreOutcome: ...
 
     async def apply_billing_state(
         self,
         billing: GraceBillingState,
         *,
         expected_overlay: GracePanelOverlay,
-    ) -> None:
-        """Push the bot's canonical values onto the panel, replacing our overlay.
-
-        Guarded by ``expected_overlay`` for the same reason as ``restore_snapshot``.
-        """
+    ) -> None: ...
 
 
 class GraceBillingGateway(Protocol):
@@ -313,6 +315,23 @@ class GraceAccessService:
                 )
                 return GraceStartResult(decision, active_session)
             return GraceStartResult(GraceStartDecision.ALREADY_ACTIVE, open_session)
+
+        if reason is GraceReason.EXPIRED:
+            completed_after = _as_utc(self._clock()) - _COMPLETED_EXPIRED_ECHO_DEDUPE_TTL
+            completed_sessions = await self._store.list_recent_completed(
+                billing.subscription_id,
+                limit=8,
+            )
+            for completed_session in completed_sessions:
+                if (
+                    completed_session.completed_at is not None
+                    and _as_utc(completed_session.completed_at) >= completed_after
+                    and billing_matches_completed_expired_echo(billing, completed_session)
+                ):
+                    return GraceStartResult(
+                        GraceStartDecision.ALREADY_GRANTED,
+                        completed_session,
+                    )
 
         panel_snapshot = await self._panel.read_snapshot(billing.remnawave_id)
         if not panel_snapshot:
@@ -425,8 +444,10 @@ class GraceAccessService:
         """Finish existing sessions without ever granting a new overlay.
 
         Normal drain lets ACTIVE sessions run to their original ``grace_until``.
-        ``force_restore`` is reserved for the explicit emergency CLI and restores
-        ACTIVE sessions immediately.  PENDING sessions are never activated.
+        ``force_restore`` is reserved for the explicit emergency CLI and requests
+        an immediate fail-closed restore. A panel-owned LIMITED transition stays
+        pending until Remnawave derives EXPIRED because forcing it would require
+        an indistinguishable user.disabled event. PENDING sessions are never activated.
         """
         return await self._run_reconciliation(
             limit=limit,
@@ -502,12 +523,20 @@ class GraceAccessService:
         event_name: str,
         payload: Mapping[str, Any],
     ) -> bool:
-        """Return whether a panel event is an echo of the active grace overlay."""
-        session = await self._store.get_open(subscription_id)
-        if not session:
-            return False
-
+        """Return whether a panel event is a provable grace-owned panel echo."""
         normalized_event = event_name.strip().lower()
+        session = await self._store.get_open(subscription_id)
+
+        if session is None:
+            if normalized_event != 'user.modified':
+                return False
+            completed_sessions = await self._store.list_recent_completed(
+                subscription_id,
+                limit=8,
+            )
+            return any(
+                webhook_matches_expired_restore(payload, completed_session) for completed_session in completed_sessions
+            )
 
         # A real administrative disable must always win.  We deliberately let
         # restore-generated ``user.disabled`` pass too: changing EXPIRED to
@@ -516,10 +545,15 @@ class GraceAccessService:
         if normalized_event == 'user.disabled':
             return False
 
-        # user.modified is handled field-by-field by the webhook service: only
-        # grace-owned fields are masked while usage and URLs keep synchronizing.
+        # Ordinary user.modified events are handled field-by-field by the
+        # webhook service.  A strictly matching restore echo is suppressed here
+        # to close the race where RESTORING becomes COMPLETED between the guard
+        # and that field-level masking query.
         if normalized_event == 'user.modified':
-            return False
+            return session.state is GraceSessionState.RESTORING and webhook_matches_expired_restore(
+                payload,
+                session,
+            )
 
         # These transitions are expected consequences of enabling/consuming/
         # expiring the temporary overlay. Billing remains authoritative; a real
@@ -751,18 +785,19 @@ class GraceAccessService:
         completion_reason: GraceCompletionReason,
     ) -> tuple[str, GraceAccessSession]:
         now = _as_utc(self._clock())
-        restoring_session = session
-        if session.state is not GraceSessionState.RESTORING:
-            restoring_session = replace(
-                session,
-                state=GraceSessionState.RESTORING,
-                updated_at=now,
-                last_error=None,
-            )
-            restoring_session = await self._store.save(restoring_session)
-            if restoring_session.state is GraceSessionState.COMPLETED:
-                reason = restoring_session.completion_reason or GraceCompletionReason.CONFLICT
-                return reason.value, restoring_session
+        # Refresh the durable checkpoint before every external restore attempt.
+        # Besides crash recovery, this timestamps the narrow window in which a
+        # full user.modified payload can be proven to be our own restore echo.
+        restoring_session = replace(
+            session,
+            state=GraceSessionState.RESTORING,
+            updated_at=now,
+            last_error=None,
+        )
+        restoring_session = await self._store.save(restoring_session)
+        if restoring_session.state is GraceSessionState.COMPLETED:
+            reason = restoring_session.completion_reason or GraceCompletionReason.CONFLICT
+            return reason.value, restoring_session
 
         latest_billing = await self._billing.get_subscription(session.subscription_id)
         if latest_billing and billing_has_recovered(restoring_session, latest_billing):
@@ -777,6 +812,7 @@ class GraceAccessService:
             restoring_session.remnawave_id,
             restoring_session.panel_before,
             restoring_session.overlay,
+            force_disable=completion_reason is not GraceCompletionReason.TIMEOUT,
         )
 
         # Payment may land after the pre-restore check.  Paid billing always wins
@@ -856,6 +892,34 @@ def build_incident_key(
         return f'{reason.value}:{end_at}'
     reset_at = _as_utc(last_traffic_reset_at).isoformat() if last_traffic_reset_at else 'unknown'
     return f'{reason.value}:{end_at}:{billing.traffic_limit_bytes}:{reset_at}'
+
+
+def billing_matches_completed_expired_echo(
+    billing: GraceBillingState,
+    session: GraceAccessSession,
+) -> bool:
+    """Recognize the overlay deadline echoed back as a second expiry incident."""
+    billing_before = session.billing_before
+    return (
+        _normalize_status(billing.status) == GraceReason.EXPIRED.value
+        and billing.remnawave_id == session.remnawave_id
+        and _session_can_match_expired_restore(session)
+        and session.state is GraceSessionState.COMPLETED
+        and session.completion_reason
+        in {
+            GraceCompletionReason.TIMEOUT,
+            GraceCompletionReason.DRAINED,
+        }
+        and _datetimes_equal(billing.end_at, session.overlay.expire_at)
+        and billing.traffic_limit_bytes == billing_before.traffic_limit_bytes
+        and billing.device_limit == billing_before.device_limit
+        and set(billing.squad_uuids) == set(billing_before.squad_uuids)
+        and billing.external_squad_uuid == billing_before.external_squad_uuid
+        and billing.is_trial == billing_before.is_trial
+        and billing.is_daily == billing_before.is_daily
+        and billing.is_free_tariff == billing_before.is_free_tariff
+        and _normalize_status(billing.user_status) == _normalize_status(billing_before.user_status)
+    )
 
 
 def billing_still_matches_session(
@@ -1093,6 +1157,138 @@ def webhook_matches_overlay(payload: Mapping[str, Any], overlay: GracePanelOverl
         markers += 1
 
     return markers > 0
+
+
+def webhook_matches_expired_restore(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+) -> bool:
+    """Strictly identify either user.modified phase of an EXPIRED restore.
+
+    The restore checkpoint timestamp plus every Grace-owned field from
+    Remnawave's full-user webhook model distinguishes both the status-only
+    fail-closed phase and the canonical field phase from later manual updates.
+    """
+    if not _session_can_match_expired_restore(session):
+        return False
+    if session.state is GraceSessionState.COMPLETED and session.completion_reason not in {
+        GraceCompletionReason.TIMEOUT,
+        GraceCompletionReason.DRAINED,
+        GraceCompletionReason.REVOKED,
+        GraceCompletionReason.CONFLICT,
+    }:
+        return False
+
+    id_present, payload_id = _webhook_payload_value(payload, 'id')
+    try:
+        identity_matches = id_present and int(payload_id) == session.remnawave_id
+    except (TypeError, ValueError):
+        identity_matches = False
+    if not identity_matches:
+        return False
+
+    updated_present, raw_updated_at = _webhook_payload_value(payload, 'updatedAt')
+    updated_at = _parse_datetime(raw_updated_at) if updated_present else None
+    if not _restore_echo_timestamp_matches(updated_at, session):
+        return False
+
+    status_present, raw_status = _webhook_payload_value(payload, 'status')
+    if not status_present:
+        return False
+    normalized_status = _normalize_status(raw_status)
+
+    expire_present, raw_expire_at = _webhook_payload_value(payload, 'expireAt')
+    expire_at = _parse_datetime(raw_expire_at) if expire_present else None
+    if not expire_present or expire_at is None:
+        return False
+    overlay_expiry_matches = _datetimes_equal(expire_at, session.overlay.expire_at)
+    before_status = _normalize_status(session.panel_before.status)
+    canonical_expiry_matches = overlay_expiry_matches or (
+        before_status == 'disabled'
+        and session.panel_before.expire_at is not None
+        and _datetimes_equal(expire_at, session.panel_before.expire_at)
+    )
+
+    limit_present, raw_limit = _webhook_payload_value(payload, 'trafficLimitBytes')
+    squads_present, raw_squads = _webhook_payload_value(payload, 'activeInternalSquads')
+    external_present, external_squad_uuid = _webhook_payload_value(payload, 'externalSquadUuid')
+    if not limit_present or not squads_present or not external_present:
+        return False
+    try:
+        traffic_limit_bytes = int(raw_limit)
+    except (TypeError, ValueError):
+        return False
+    squad_uuids = set(_extract_squad_uuids(raw_squads))
+
+    canonical_phase_matches = (
+        canonical_expiry_matches
+        and normalized_status in _expected_expired_restore_statuses(session)
+        and traffic_limit_bytes == session.panel_before.traffic_limit_bytes
+        and squad_uuids == set(session.panel_before.squad_uuids)
+        and external_squad_uuid == session.panel_before.external_squad_uuid
+    )
+    disabled_overlay_phase_matches = (
+        overlay_expiry_matches
+        and normalized_status == 'disabled'
+        and traffic_limit_bytes == session.overlay.traffic_limit_bytes
+        and squad_uuids == set(session.overlay.squad_uuids)
+        and external_squad_uuid == session.overlay.external_squad_uuid
+    )
+    return canonical_phase_matches or disabled_overlay_phase_matches
+
+
+def _session_can_match_expired_restore(session: GraceAccessSession) -> bool:
+    if session.reason is not GraceReason.EXPIRED:
+        return False
+    if session.state not in {GraceSessionState.RESTORING, GraceSessionState.COMPLETED}:
+        return False
+    before_status = _normalize_status(session.panel_before.status)
+    before_expire_at = session.panel_before.expire_at
+    return before_status in {'expired', 'disabled'} or bool(
+        before_expire_at and _as_utc(before_expire_at) <= _as_utc(session.started_at)
+    )
+
+
+def _expected_expired_restore_statuses(session: GraceAccessSession) -> frozenset[str]:
+    before_status = _normalize_status(session.panel_before.status)
+    if session.state is GraceSessionState.RESTORING:
+        # RESTORING is persisted before either a natural EXPIRED restore or a
+        # forced DISABLED drain. The completion reason is not durable yet, so
+        # accept both only inside the strict full-field/timestamp fingerprint.
+        return frozenset({'disabled', 'expired'})
+    if session.completion_reason is GraceCompletionReason.DRAINED:
+        # A force drain may run before the watchdog (generic DISABLED restore)
+        # or after it has already derived EXPIRED (field-only restore).
+        return frozenset({'disabled', 'expired'})
+    if before_status == 'disabled':
+        # A field-only restore deliberately keeps a watchdog-derived EXPIRED
+        # rather than emitting user.disabled for an already expired user.
+        return frozenset({'disabled', 'expired'})
+    if before_status != 'expired':
+        return frozenset({'disabled', 'expired'})
+    return frozenset({'expired'})
+
+
+def _restore_echo_timestamp_matches(
+    panel_updated_at: datetime | None,
+    session: GraceAccessSession,
+) -> bool:
+    if panel_updated_at is None:
+        return False
+    lower_bound = _as_utc(session.updated_at) - _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    upper_reference = session.completed_at or session.updated_at
+    upper_bound = _as_utc(upper_reference) + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    normalized_updated_at = _as_utc(panel_updated_at)
+    return lower_bound <= normalized_updated_at <= upper_bound
+
+
+def _webhook_payload_value(payload: Mapping[str, Any], key: str) -> tuple[bool, Any]:
+    if key in payload:
+        return True, payload.get(key)
+    nested_user = payload.get('user')
+    if isinstance(nested_user, Mapping) and key in nested_user:
+        return True, nested_user.get(key)
+    return False, None
 
 
 def _extract_squad_uuids(raw_squads: Any) -> tuple[str, ...]:

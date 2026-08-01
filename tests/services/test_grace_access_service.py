@@ -95,6 +95,22 @@ class MemoryGraceStore:
         sessions = [session for session in self.sessions.values() if session.state is not GraceSessionState.COMPLETED]
         return sessions[:limit]
 
+    async def list_recent_completed(
+        self,
+        subscription_id: int,
+        *,
+        limit: int = 8,
+    ) -> list[GraceAccessSession]:
+        sessions = [
+            session
+            for session in self.sessions.values()
+            if session.subscription_id == subscription_id
+            and session.state is GraceSessionState.COMPLETED
+            and session.completed_at is not None
+        ]
+        sessions.sort(key=lambda session: session.completed_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+        return sessions[:limit]
+
     def only_session(self) -> GraceAccessSession:
         assert len(self.sessions) == 1
         return next(iter(self.sessions.values()))
@@ -112,6 +128,9 @@ class FakePanelGateway:
         self.pending_billing_attempts = 0
         self.pending_restore_attempts = 0
         self.restore_outcome = GraceRestoreOutcome.RESTORED
+        self.restore_force_flags: list[bool] = []
+        self.restore_state_probe: Any = None
+        self.observed_restore_states: list[GraceSessionState] = []
 
     async def read_snapshot(self, remnawave_id: int) -> GracePanelSnapshot | None:
         if remnawave_id != self.snapshot.remnawave_id:
@@ -140,7 +159,12 @@ class FakePanelGateway:
         remnawave_id: int,
         snapshot: GracePanelSnapshot,
         expected_overlay: GracePanelOverlay,
+        *,
+        force_disable: bool = False,
     ) -> GraceRestoreOutcome:
+        self.restore_force_flags.append(force_disable)
+        if self.restore_state_probe is not None:
+            self.observed_restore_states.append(self.restore_state_probe())
         self.restored_snapshots.append((remnawave_id, snapshot))
         if self.pending_restore_attempts > 0:
             self.pending_restore_attempts -= 1
@@ -224,6 +248,18 @@ def make_policy(**changes) -> GraceAccessPolicy:
     return replace(policy, **changes)
 
 
+def make_restore_modified_echo(session: GraceAccessSession) -> dict[str, object]:
+    return {
+        'id': session.remnawave_id,
+        'status': 'EXPIRED',
+        'updatedAt': (session.completed_at or session.updated_at).isoformat(),
+        'expireAt': session.overlay.expire_at.isoformat(),
+        'trafficLimitBytes': session.panel_before.traffic_limit_bytes,
+        'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in session.panel_before.squad_uuids],
+        'externalSquadUuid': session.panel_before.external_squad_uuid,
+    }
+
+
 def make_service(
     *,
     billing: GraceBillingState,
@@ -299,7 +335,11 @@ async def test_expired_grace_changes_only_panel_overlay() -> None:
     clock = MutableClock(now)
     billing = make_billing(status='expired', end_at=now - timedelta(days=1))
     snapshot = make_snapshot(expire_at=billing.end_at)
-    service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    service, store, panel, _ = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+    )
 
     result = await service.start_if_eligible(billing, GraceReason.EXPIRED)
 
@@ -496,6 +536,7 @@ async def test_limited_snapshot_restore_stays_restoring_while_panel_derives_stat
     service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
     await service.start_if_eligible(billing, GraceReason.LIMITED)
     panel.pending_restore_attempts = 1
+    panel.restore_state_probe = lambda: store.only_session().state
     clock.advance(timedelta(days=3, seconds=1))
 
     pending = await service.reconcile()
@@ -505,6 +546,7 @@ async def test_limited_snapshot_restore_stays_restoring_while_panel_derives_stat
     assert pending.timed_out == 0
     assert store.only_session().state is GraceSessionState.RESTORING
     assert store.only_session().last_error is None
+    assert panel.observed_restore_states == [GraceSessionState.RESTORING]
 
     completed = await service.reconcile()
 
@@ -515,6 +557,10 @@ async def test_limited_snapshot_restore_stays_restoring_while_panel_derives_stat
     assert panel.restored_snapshots == [
         (PANEL_ID, snapshot),
         (PANEL_ID, snapshot),
+    ]
+    assert panel.observed_restore_states == [
+        GraceSessionState.RESTORING,
+        GraceSessionState.RESTORING,
     ]
 
 
@@ -770,6 +816,383 @@ async def test_webhook_suppression_matches_only_grace_echo() -> None:
     # A delayed echo from the old overlay must still be suppressed until the
     # reconciliation transaction closes the persisted grace session.
     assert await service.should_suppress_webhook(42, 'user.enabled', grace_echo) is True
+
+
+@pytest.mark.asyncio
+async def test_exact_restore_modified_echo_is_suppressed_while_session_is_open() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, _, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+    restoring = replace(
+        started.session,
+        state=GraceSessionState.RESTORING,
+        updated_at=clock(),
+    )
+    await store.save(restoring)
+
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            make_restore_modified_echo(restoring),
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_exact_restore_modified_echo_is_suppressed_after_timeout_completion() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, _, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+
+    reconciled = await service.reconcile()
+
+    assert reconciled.timed_out == 1
+    completed = store.only_session()
+    assert completed.completion_reason is GraceCompletionReason.TIMEOUT
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            make_restore_modified_echo(completed),
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_force_restore_echo_accepts_disabled_status_after_grace_deadline() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, _, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+    restoring = replace(
+        started.session,
+        state=GraceSessionState.RESTORING,
+        updated_at=clock(),
+    )
+    await store.save(restoring)
+    disabled_echo = {
+        **make_restore_modified_echo(restoring),
+        'status': 'DISABLED',
+    }
+    disabled_overlay_echo = {
+        **disabled_echo,
+        'trafficLimitBytes': restoring.overlay.traffic_limit_bytes,
+        'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in restoring.overlay.squad_uuids],
+        'externalSquadUuid': restoring.overlay.external_squad_uuid,
+    }
+
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            disabled_echo,
+        )
+        is True
+    )
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            disabled_overlay_echo,
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_restore_echo_accepts_future_expiry_from_disabled_snapshot() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = make_snapshot(expire_at=now + timedelta(days=10))
+    service, store, _, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+
+    drained = await service.drain(force_restore=True)
+
+    assert drained.drained == 1
+    completed = store.only_session()
+    canonical_echo = {
+        **make_restore_modified_echo(completed),
+        'status': 'DISABLED',
+        'expireAt': snapshot.expire_at.isoformat(),
+    }
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            canonical_echo,
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_modified_payload_is_not_accepted_as_a_restore_echo() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, _, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+    await service.reconcile()
+    completed = store.only_session()
+
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            {
+                'id': completed.remnawave_id,
+                'expireAt': completed.overlay.expire_at.isoformat(),
+            },
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_delayed_restore_echo_remains_provable_without_weakening_incident_dedupe() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+    await service.reconcile()
+    completed = store.only_session()
+    restore_echo = make_restore_modified_echo(completed)
+    clock.advance(timedelta(minutes=16))
+
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            restore_echo,
+        )
+        is True
+    )
+
+    echoed_billing = replace(billing, end_at=completed.overlay.expire_at)
+    panel.snapshot = replace(panel.snapshot, expire_at=completed.overlay.expire_at)
+    duplicate = await service.start_if_eligible(echoed_billing, GraceReason.EXPIRED)
+    assert duplicate.decision is GraceStartDecision.ALREADY_GRANTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'changed_fields',
+    [
+        {'id': 9999},
+        {'status': 'DISABLED'},
+        {'expireAt': '2026-07-18T13:01:00+00:00'},
+        {'trafficLimitBytes': 101 * GIB},
+        {'activeInternalSquads': [{'uuid': LIMITED_SQUAD}]},
+        {'externalSquadUuid': LIMITED_SQUAD},
+        {'updatedAt': '2026-07-18T12:05:01+00:00'},
+    ],
+)
+async def test_mismatching_manual_modified_event_is_not_suppressed_by_completed_session(
+    changed_fields: dict[str, object],
+) -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, _, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+    await service.reconcile()
+    completed = store.only_session()
+    restore_echo = make_restore_modified_echo(completed)
+    manual_update = {**restore_echo, **changed_fields}
+
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            manual_update,
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'completion_reason',
+    [GraceCompletionReason.TIMEOUT, GraceCompletionReason.DRAINED],
+)
+async def test_completed_expired_grace_deduplicates_overlay_expiry_but_allows_new_term(
+    completion_reason: GraceCompletionReason,
+) -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, panel, billing_gateway = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+    )
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+
+    if completion_reason is GraceCompletionReason.TIMEOUT:
+        clock.advance(timedelta(days=3, seconds=1))
+        completed_result = await service.reconcile()
+        assert completed_result.timed_out == 1
+    else:
+        completed_result = await service.drain(force_restore=True)
+        assert completed_result.drained == 1
+
+    completed = store.only_session()
+    assert completed.completion_reason is completion_reason
+    assert panel.restore_force_flags == [completion_reason is GraceCompletionReason.DRAINED]
+    overlay_apply_count = len(panel.applied_overlays)
+    overlay_expiry = replace(billing, end_at=completed.overlay.expire_at)
+    panel.snapshot = replace(
+        panel.snapshot,
+        status='EXPIRED',
+        expire_at=completed.overlay.expire_at,
+    )
+
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            make_restore_modified_echo(completed),
+        )
+        is True
+    )
+    disabled_overlay_echo = {
+        **make_restore_modified_echo(completed),
+        'status': 'DISABLED',
+        'trafficLimitBytes': completed.overlay.traffic_limit_bytes,
+        'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
+        'externalSquadUuid': completed.overlay.external_squad_uuid,
+    }
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            disabled_overlay_echo,
+        )
+        is True
+    )
+
+    duplicate = await service.start_if_eligible(overlay_expiry, GraceReason.EXPIRED)
+
+    assert duplicate.decision is GraceStartDecision.ALREADY_GRANTED
+    assert duplicate.session == completed
+    assert len(store.sessions) == 1
+    assert len(panel.applied_overlays) == overlay_apply_count
+
+    new_end_at = completed.overlay.expire_at - timedelta(hours=1)
+    new_incident = replace(billing, end_at=new_end_at)
+    billing_gateway.state = new_incident
+    panel.snapshot = replace(panel.snapshot, expire_at=new_end_at)
+
+    restarted = await service.start_if_eligible(new_incident, GraceReason.EXPIRED)
+
+    assert restarted.decision is GraceStartDecision.STARTED
+    assert restarted.session is not None
+    assert restarted.session.id != completed.id
+    assert restarted.session.incident_key == build_incident_key(new_incident, GraceReason.EXPIRED)
+    assert len(store.sessions) == 2
+    assert len(panel.applied_overlays) == overlay_apply_count + 1
+
+
+@pytest.mark.asyncio
+async def test_completed_expired_echo_dedupe_does_not_hide_changed_canonical_tariff() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, panel, billing_gateway = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+    )
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+    await service.reconcile()
+    completed = store.only_session()
+    changed_tariff = replace(
+        billing,
+        end_at=completed.overlay.expire_at,
+        traffic_limit_bytes=billing.traffic_limit_bytes + GIB,
+    )
+    panel.snapshot = replace(
+        panel.snapshot,
+        status='EXPIRED',
+        expire_at=completed.overlay.expire_at,
+        traffic_limit_bytes=changed_tariff.traffic_limit_bytes,
+    )
+    billing_gateway.state = changed_tariff
+
+    restarted = await service.start_if_eligible(changed_tariff, GraceReason.EXPIRED)
+
+    assert restarted.decision is GraceStartDecision.STARTED
+    assert restarted.session is not None
+    assert restarted.session.id != completed.id
+    assert len(store.sessions) == 2
+
+
+@pytest.mark.asyncio
+async def test_completed_expired_echo_dedupe_does_not_block_later_matching_incident() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(days=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, panel, billing_gateway = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+    )
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    clock.advance(timedelta(days=3, seconds=1))
+    await service.reconcile()
+    completed = store.only_session()
+    clock.advance(timedelta(minutes=31))
+    later_incident = replace(billing, end_at=completed.overlay.expire_at)
+    billing_gateway.state = later_incident
+    panel.snapshot = replace(
+        panel.snapshot,
+        status='EXPIRED',
+        expire_at=completed.overlay.expire_at,
+    )
+
+    restarted = await service.start_if_eligible(later_incident, GraceReason.EXPIRED)
+
+    assert restarted.decision is GraceStartDecision.STARTED
+    assert restarted.session is not None
+    assert restarted.session.id != completed.id
+    assert len(store.sessions) == 2
 
 
 @pytest.mark.asyncio
