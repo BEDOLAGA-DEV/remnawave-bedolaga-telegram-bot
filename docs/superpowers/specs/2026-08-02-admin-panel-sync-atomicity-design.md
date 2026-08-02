@@ -1,8 +1,8 @@
 # Admin Mutation and RemnaWave Sync Atomicity
 
-**Revision:** R1  
-**Date:** 2026-08-02  
-**Status:** Approved by Егор in Telegram on 2026-08-02
+**Revision:** R2
+**Date:** 2026-08-02
+**Status:** Pending Егор's approval
 
 ## Problem
 
@@ -21,10 +21,17 @@ the local database mutation and return a safe failure response.
 
 ## Scope
 
-- Inventory every admin mutation caller of `_sync_subscription_to_panel`.
-- Classify each caller as mandatory-sync or explicitly best-effort.
-- Treat every caller as mandatory-sync unless this specification or an
-  approved follow-up explicitly justifies best-effort behavior.
+- Inventory every admin route/action that creates, updates, resets, disables,
+  cancels, changes tariff for, or deletes panel-relevant subscription state,
+  regardless of whether it uses `_sync_subscription_to_panel`, another
+  service, or a direct RemnaWave call.
+- The inventory explicitly includes reset, single and bulk delete,
+  cancellation, tariff-change, and direct-service/direct-panel paths.
+- Classify each inventoried route/action as mandatory-sync or explicitly
+  best-effort.
+- Treat every inventoried route/action as mandatory-sync unless this
+  specification or an approved follow-up explicitly justifies best-effort
+  behavior.
 - Remove transaction ownership from `_sync_subscription_to_panel`.
 - Give skipped and failed sync outcomes an explicit typed contract.
 - Make mandatory-sync callers commit only after panel sync succeeds.
@@ -81,14 +88,24 @@ transaction-safe mode or refactor that boundary without changing unrelated
 callers.
 
 This guarantees rollback of the bot database for known panel failures. It
-does not claim true atomicity across PostgreSQL and RemnaWave: a database
-commit failure after a successful panel update remains a documented residual
-risk and requires an outbox or compensation design outside this scope.
+does not claim true atomicity across PostgreSQL, RemnaWave, and payment
+providers. A database commit failure after a successful panel update, a
+multi-call panel operation that partially succeeds before a later required
+call fails, or a timeout with an unknown remote outcome can leave remote and
+local state divergent. Irreversible payment-provider effects already
+performed by cancellation, reset, or tariff-change flows cannot be rolled
+back with the database. These are accepted residual risks and require an
+outbox, idempotent reconciliation, or compensation design outside this scope.
 
 ### Caller classification
 
-Implementation must produce a complete caller inventory. Every admin route
-that changes panel-relevant subscription data is mandatory-sync. A
+Implementation must produce an enumerated inventory of every admin
+route/action that can mutate panel-relevant subscription state. Discovery
+must inspect route handlers, called services, bulk operations, and direct
+RemnaWave calls; searching only for `_sync_subscription_to_panel` is
+insufficient. The inventory must name the route, action, mutation class,
+panel integration path, transaction owner, and classification. Every
+inventoried route/action is mandatory-sync. A
 best-effort exception is permitted only when all of the following are true:
 
 - local completion without panel completion is an intentional product rule;
@@ -96,7 +113,7 @@ best-effort exception is permitted only when all of the following are true:
 - the response reports partial completion rather than unconditional success;
 - a regression test covers the behavior.
 
-No best-effort exception is approved by this R1 specification.
+No best-effort exception is approved by this R2 specification.
 
 ### Responses and diagnostics
 
@@ -128,14 +145,23 @@ forbidden.
    `subscription_id`, action, and classified reason without secrets.
 6. Multi-tariff operations always target the exact subscription; they never
    substitute the user-level UUID for a missing subscription identity.
-7. The implementation result includes the complete caller inventory and any
-   explicitly approved best-effort exceptions. For R1, the expected exception
-   list is empty.
+7. The implementation result includes the enumerated route/action inventory,
+   including reset, single and bulk delete, cancellation, tariff-change, and
+   direct-service/direct-panel paths, plus evidence that no panel-relevant
+   admin mutation is absent.
+8. The explicitly approved best-effort exception list is empty for R2.
 
 ## Verification
 
-- Add parameterized inventory or contract coverage for all mandatory callers.
-- For each mutation class, test sync success: one commit and a success result.
+- Add an inventory completeness test or equivalent executable check that
+  covers every enumerated route/action and fails when a panel-relevant admin
+  mutation lacks an explicit classification.
+- Add parameterized contract coverage for all mandatory route/actions,
+  including reset, single and bulk delete, cancellation, tariff-change, and
+  direct-service/direct-panel paths.
+- For each mutation class, test sync success: exactly one commit across the
+  entire route/action execution, including nested services, and a success
+  result.
 - Test missing configuration or other skipped sync: rollback and non-success.
 - Test panel API failure: rollback and non-success.
 - Assert that no false success message is returned after rollback.
@@ -153,7 +179,13 @@ forbidden.
 - Holding a database transaction open during a network call increases lock
   duration; the implementation should keep the mutated read/write set narrow
   and retain existing RemnaWave timeouts.
-- A successful panel update followed by a failed database commit can still
-  diverge. This is accepted residual risk for R1 and must not be described as
-  fully distributed-atomic behavior.
-
+- A successful panel update followed by a failed database commit, partial
+  success in a multi-call panel operation, or a timeout with an unknown
+  remote outcome can still diverge. These are accepted residual risks for R2
+  and must not be described as proof that the panel is unchanged or as fully
+  distributed-atomic behavior.
+- Cancellation, reset, and tariff-change flows may already have performed an
+  irreversible payment-provider action before a later failure. The local
+  transaction must still follow the failure contract, while the external
+  irreversibility is documented and surfaced as residual risk rather than
+  reported as successful end-to-end completion.
