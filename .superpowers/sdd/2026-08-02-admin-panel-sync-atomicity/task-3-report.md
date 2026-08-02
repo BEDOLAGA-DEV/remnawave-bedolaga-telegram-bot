@@ -126,7 +126,8 @@ exit 0
 - **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T3`
 - **Status:** `DONE_PENDING_FRESH_REVIEW`
 - **Base head:** `82dc2555937dc10b6aa9c40afbe84399c16aec34`
-- **Current head / commit:** pending commit
+- **Current head / commit:** `2124fda9726f04403ec8ca59db81335b56d5e96b`
+  (`test: cover admin mutation route contracts`)
 - **Timestamp:** `2026-08-02T22:34:12Z`
 - **Files:** `tests/cabinet/test_admin_panel_sync_contract.py`,
   `tests/services/test_reset_subscription.py`,
