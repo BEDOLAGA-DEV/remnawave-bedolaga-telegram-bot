@@ -60,6 +60,7 @@ from app.database.models import (
     WheelSpin,
     WithdrawalRequest,
 )
+from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
 from app.services.permission_service import PermissionService
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
@@ -309,7 +310,9 @@ async def _sync_subscription_to_panel(
     subscription: Subscription,
     reset_traffic: bool = False,
     reset_traffic_reason: str | None = None,
-) -> dict:
+    *,
+    action: str,
+) -> dict[str, object]:
     """
     Sync user subscription to Remnawave panel.
     Creates user if not exists, updates if exists.
@@ -329,8 +332,24 @@ async def _sync_subscription_to_panel(
 
         service = RemnaWaveService()
         if not service.is_configured:
-            logger.warning('Remnawave not configured, skipping panel sync for user', user_id=user.id)
-            return {'skipped': True, 'reason': 'Remnawave not configured'}
+            logger.warning(
+                'Admin panel sync skipped',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                action=action,
+                reason_code=PanelSyncReason.NOT_CONFIGURED,
+            )
+            raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
+
+        if reset_traffic and settings.is_multi_tariff_enabled() and not subscription.remnawave_uuid:
+            logger.warning(
+                'Admin panel sync skipped',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                action=action,
+                reason_code=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
+            )
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
 
         is_active = (
             subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
@@ -493,23 +512,46 @@ async def _sync_subscription_to_panel(
 
             # Reset traffic on panel if requested
             _reset_uuid = subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
-            if reset_traffic and _reset_uuid:
-                try:
-                    await api.reset_user_traffic(_reset_uuid)
-                    changes['traffic_reset'] = True
-                    reason_text = f' ({reset_traffic_reason})' if reset_traffic_reason else ''
-                    logger.info('Reset RemnaWave traffic for user', user_id=user.id, reason=reason_text)
-                except Exception as reset_exc:
-                    logger.warning('Failed to reset RemnaWave traffic', user_id=user.id, error=reset_exc)
+            if reset_traffic:
+                if not _reset_uuid:
+                    logger.warning(
+                        'Admin panel sync skipped',
+                        user_id=user.id,
+                        subscription_id=subscription.id,
+                        action=action,
+                        reason_code=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
+                    )
+                    raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+                await api.reset_user_traffic(_reset_uuid)
+                changes['traffic_reset'] = True
+                logger.info(
+                    'Reset RemnaWave traffic for user',
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    action=action,
+                )
 
             user.last_remnawave_sync = datetime.now(UTC)
-            await db.commit()
 
         return changes
 
-    except Exception as e:
-        logger.error('Error syncing user to panel', user_id=user.id, error=e)
-        return {'error': 'Ошибка синхронизации пользователя с панелью'}
+    except (PanelSyncSkipped, PanelSyncFailed):
+        raise
+    except TimeoutError:
+        reason_code = PanelSyncReason.PANEL_TIMEOUT_UNKNOWN
+    except (AttributeError, TypeError, ValueError):
+        reason_code = PanelSyncReason.PANEL_RESPONSE_INVALID
+    except Exception:
+        reason_code = PanelSyncReason.PANEL_API_FAILED
+
+    logger.error(
+        'Admin panel sync failed',
+        user_id=user.id,
+        subscription_id=subscription.id,
+        action=action,
+        reason_code=reason_code,
+    )
+    raise PanelSyncFailed(reason_code)
 
 
 # === List & Search ===
