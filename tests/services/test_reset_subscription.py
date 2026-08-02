@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -161,6 +161,40 @@ async def test_reset_with_panel_commit_false_propagates_panel_failure(monkeypatc
 
     with pytest.raises(PanelSyncFailed):
         await ss.reset_subscription_with_panel(AsyncMock(), user, sub, commit=False)
+
+
+@pytest.mark.parametrize('panel_results', [(True, False), (False, False)])
+async def test_strict_trial_wipe_rejects_mixed_or_total_panel_failure(monkeypatch, panel_results):
+    """Admin strict mode cannot translate partial remote deletion into partial local success."""
+    from contextlib import asynccontextmanager
+
+    import app.database.crud.subscription as subscription_crud
+    from app.services.admin_panel_sync import PanelSyncFailed
+
+    api = SimpleNamespace(delete_user=AsyncMock(side_effect=panel_results))
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    service = SimpleNamespace(is_configured=True, get_api_client=get_api_client)
+    monkeypatch.setattr(ss, 'SubscriptionService', lambda: service)
+    _set_multi_tariff(monkeypatch, True)
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
+    )
+    subscriptions = [
+        SimpleNamespace(id=7, user_id=1, remnawave_uuid='trial-7'),
+        SimpleNamespace(id=8, user_id=1, remnawave_uuid='trial-8'),
+    ]
+    db = AsyncMock()
+
+    with pytest.raises(PanelSyncFailed):
+        await subscription_crud.wipe_trial_subscriptions(db, subscriptions, require_all_panel_success=True)
+
+    assert api.delete_user.await_args_list == [call('trial-7'), call('trial-8')]
+    db.rollback.assert_not_awaited()
+    db.execute.assert_not_awaited()
 
 
 async def test_user_modified_does_not_resurrect_disabled_end_date():

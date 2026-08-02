@@ -864,6 +864,11 @@ class UserService:
             else:
                 panel_uuids = [user.remnawave_uuid] if user.remnawave_uuid else []
 
+            if force_panel_delete and not panel_uuids:
+                result.panel_error = 'Missing exact panel identity'
+                await db.rollback()
+                return result
+
             if panel_uuids:
                 if not force_panel_delete and any(is_active_paid_subscription(sub) for sub in subs):
                     logger.info(

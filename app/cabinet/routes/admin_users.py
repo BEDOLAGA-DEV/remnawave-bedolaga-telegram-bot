@@ -2925,18 +2925,17 @@ async def reset_user_trial(
                     user_id=user_id,
                 )
             else:
-                try:
-                    await _require_panel_disable_for_subscriptions(user, subs_to_delete, action='reset_user_trial')
-                except (PanelSyncSkipped, PanelSyncFailed):
-                    await db.rollback()
-                    return ResetTrialResponse(success=False, message=panel_sync_failure_message())
                 # Снос триала — общий код с ботовым bulk-сбросом: удаляет панель-юзера
                 # ПЕРВЫМ (race-safe относительно синк-воскрешения), затем строки в БД и
                 # чистит устаревший single-tariff remnawave_uuid.
                 from app.database.crud.subscription import wipe_trial_subscriptions
 
-                wiped = await wipe_trial_subscriptions(db, subs_to_delete)
-                subscription_deleted = wiped > 0
+                try:
+                    wiped = await wipe_trial_subscriptions(db, subs_to_delete, require_all_panel_success=True)
+                    subscription_deleted = wiped == len(subs_to_delete)
+                except (PanelSyncSkipped, PanelSyncFailed):
+                    await db.rollback()
+                    return ResetTrialResponse(success=False, message=panel_sync_failure_message())
 
     user.updated_at = datetime.now(UTC)
 

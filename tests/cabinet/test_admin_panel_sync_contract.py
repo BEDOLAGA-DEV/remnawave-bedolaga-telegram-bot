@@ -265,6 +265,168 @@ async def test_standalone_reset_panel_failure_prevents_local_delete(monkeypatch,
     db.commit.assert_not_awaited()
 
 
+UNIFIED_MANDATORY_ACTIONS = (
+    'create',
+    'extend',
+    'set_end_date',
+    'change_tariff',
+    'set_traffic',
+    'cancel',
+    'activate',
+    'add_traffic',
+    'set_devices',
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+@pytest.mark.parametrize(
+    'failure',
+    [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
+)
+async def test_unified_mandatory_action_typed_failure_rolls_back_once(
+    monkeypatch, user, subscription, db, action, failure
+):
+    """Every unified action must inherit the same typed fail-closed transaction boundary."""
+    sync = AsyncMock(side_effect=failure)
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync)
+
+    saved = await admin_users._sync_and_commit_admin_mutation(db, user, subscription, action=action)
+
+    assert saved is False
+    sync.assert_awaited_once_with(db, user, subscription, reset_traffic=False, action=action)
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+async def test_unified_mandatory_action_success_orders_panel_before_one_commit(
+    monkeypatch, user, subscription, db, action
+):
+    """Removing or moving the final commit would violate every unified route contract."""
+    events: list[tuple[str, object]] = []
+
+    async def sync(_db, _user, exact_subscription, *, reset_traffic, action):
+        events.append(('panel', (exact_subscription.id, exact_subscription.remnawave_uuid, action)))
+
+    async def commit():
+        events.append(('commit', None))
+
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync)
+    db.commit.side_effect = commit
+
+    saved = await admin_users._sync_and_commit_admin_mutation(db, user, subscription, action=action)
+
+    assert saved is True
+    assert events == [('panel', (23, 'subscription-level-uuid', action)), ('commit', None)]
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'failure',
+    [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
+)
+async def test_trial_reset_requires_one_authoritative_complete_panel_wipe(
+    monkeypatch, user, subscription, db, failure
+):
+    """Mixed or total panel wipe failure must not stage or commit a partial trial reset."""
+    subscription.is_trial = True
+    subscription.is_active = False
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.is_active_paid_subscription', lambda _: False)
+    legacy_disable = AsyncMock()
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', legacy_disable)
+
+    async def strict_wipe(_db, targets, *, require_all_panel_success=False):
+        assert targets == [subscription]
+        assert require_all_panel_success is True
+        raise failure
+
+    monkeypatch.setattr('app.database.crud.subscription.wipe_trial_subscriptions', strict_wipe)
+
+    result = await admin_users.reset_user_trial(
+        user_id=user.id,
+        request=admin_users.ResetTrialRequest(),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    legacy_disable.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_trial_reset_success_uses_one_panel_operation_and_one_commit(monkeypatch, user, subscription, db):
+    """Reintroducing the legacy pre-disable would double-mutate the same panel identity."""
+    subscription.is_trial = True
+    subscription.is_active = False
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.is_active_paid_subscription', lambda _: False)
+    legacy_disable = AsyncMock()
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', legacy_disable)
+    wipe = AsyncMock(return_value=1)
+    monkeypatch.setattr('app.database.crud.subscription.wipe_trial_subscriptions', wipe)
+
+    result = await admin_users.reset_user_trial(
+        user_id=user.id,
+        request=admin_users.ResetTrialRequest(),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    wipe.assert_awaited_once_with(db, [subscription], require_all_panel_success=True)
+    legacy_disable.assert_not_awaited()
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('remove_result', [False, RuntimeError('panel down')])
+async def test_device_reset_requires_every_exact_target_removal(monkeypatch, user, subscription, db, remove_result):
+    """A false or failed removal must not be reported as a complete device reset."""
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_id_for_user', AsyncMock(return_value=subscription)
+    )
+    api = SimpleNamespace(
+        get_user_devices_all=AsyncMock(return_value={'devices': [{'hwid': 'hw-1'}]}),
+        remove_device=AsyncMock(side_effect=remove_result if isinstance(remove_result, Exception) else None),
+    )
+    if not isinstance(remove_result, Exception):
+        api.remove_device.return_value = remove_result
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    service = SimpleNamespace(get_api_client=get_api_client)
+    monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', lambda: service)
+
+    result = await admin_users.reset_user_devices(
+        user_id=user.id,
+        admin=SimpleNamespace(id=1),
+        db=db,
+        subscription_id=subscription.id,
+    )
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    api.get_user_devices_all.assert_awaited_once_with('subscription-level-uuid')
+    api.remove_device.assert_awaited_once_with('subscription-level-uuid', 'hw-1')
+    db.commit.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_bulk_extend_reaches_required_sync_boundary_with_attributable_action(user, subscription, db, monkeypatch):
     """Omitting ``action`` makes the bulk extend handler fail before panel sync."""
