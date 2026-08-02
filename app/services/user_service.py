@@ -859,8 +859,13 @@ class UserService:
                 )
                 return result
 
-            if settings.is_multi_tariff_enabled():
-                panel_uuids = [sub.remnawave_uuid for sub in subs if sub.remnawave_uuid]
+            is_multi_tariff = settings.is_multi_tariff_enabled()
+            if is_multi_tariff:
+                if force_panel_delete and any(not sub.remnawave_uuid for sub in subs):
+                    result.panel_error = 'Missing exact panel identity'
+                    await db.rollback()
+                    return result
+                panel_uuids = [sub.remnawave_uuid for sub in subs]
             else:
                 panel_uuids = [user.remnawave_uuid] if user.remnawave_uuid else []
 

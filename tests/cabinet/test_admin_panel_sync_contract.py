@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from structlog.testing import capture_logs
@@ -171,8 +171,9 @@ async def test_successful_sync_does_not_commit(configured_panel, user, subscript
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('action,days_delta', [('extend', 7), ('shorten', -7)])
 async def test_admin_extend_reaches_required_sync_boundary_with_attributable_action(
-    monkeypatch, user, subscription, db
+    monkeypatch, user, subscription, db, action, days_delta
 ):
     """Omitting ``action`` makes the existing admin extend path fail before panel sync."""
     subscription.is_active = True
@@ -190,13 +191,14 @@ async def test_admin_extend_reaches_required_sync_boundary_with_attributable_act
 
     result = await admin_users.update_user_subscription(
         user_id=user.id,
-        request=UpdateSubscriptionRequest(action='extend', days=7),
+        request=UpdateSubscriptionRequest(action=action, days=7),
         admin=SimpleNamespace(id=1),
         db=db,
     )
 
     assert result.success is True
-    assert observed_actions == ['extend']
+    assert observed_actions == [action]
+    admin_users.extend_subscription.assert_awaited_once_with(db, subscription, days_delta, commit=False)
 
 
 @pytest.mark.asyncio
@@ -207,7 +209,10 @@ async def test_admin_extend_reaches_required_sync_boundary_with_attributable_act
         PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED),
     ],
 )
-async def test_admin_extend_panel_failure_rolls_back_without_false_success(monkeypatch, user, subscription, db, failure):
+@pytest.mark.parametrize('action,days_delta', [('extend', 7), ('shorten', -7)])
+async def test_admin_extend_panel_failure_rolls_back_without_false_success(
+    monkeypatch, user, subscription, db, failure, action, days_delta
+):
     """The route, not a nested helper, owns the one final transaction commit."""
     subscription.is_active = True
     user.subscriptions = [subscription]
@@ -217,7 +222,7 @@ async def test_admin_extend_panel_failure_rolls_back_without_false_success(monke
 
     result = await admin_users.update_user_subscription(
         user_id=user.id,
-        request=UpdateSubscriptionRequest(action='extend', days=7),
+        request=UpdateSubscriptionRequest(action=action, days=7),
         admin=SimpleNamespace(id=1),
         db=db,
     )
@@ -226,6 +231,7 @@ async def test_admin_extend_panel_failure_rolls_back_without_false_success(monke
     assert 'not saved' in result.message.lower()
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
+    admin_users.extend_subscription.assert_awaited_once_with(db, subscription, days_delta, commit=False)
 
 
 @pytest.mark.asyncio
@@ -265,16 +271,65 @@ async def test_standalone_reset_panel_failure_prevents_local_delete(monkeypatch,
     db.commit.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_standalone_reset_success_orders_exact_panel_before_local_delete_and_one_commit(
+    monkeypatch, user, subscription, db
+):
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
+    )
+    monkeypatch.setattr(
+        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
+    )
+    monkeypatch.setattr(
+        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock()
+    )
+    events: list[tuple[str, object]] = []
+
+    async def panel(_user, targets, *, action):
+        events.append(('panel', (targets[0].id, targets[0].remnawave_uuid, action)))
+
+    async def execute(statement):
+        events.append(('local_sql', statement.__class__.__name__))
+        return MagicMock()
+
+    async def commit():
+        events.append(('commit', None))
+
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', panel)
+    db.execute.side_effect = execute
+    db.commit.side_effect = commit
+
+    result = await admin_users.reset_user_subscription(
+        user_id=user.id,
+        request=admin_users.ResetSubscriptionRequest(),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    assert result.message == 'Subscription reset successfully'
+    assert events[0] == ('panel', (23, 'subscription-level-uuid', 'reset_user_subscription'))
+    assert [event[0] for event in events[1:-1]] == ['local_sql', 'local_sql']
+    assert events[-1] == ('commit', None)
+    db.commit.assert_awaited_once()
+
+
 UNIFIED_MANDATORY_ACTIONS = (
     'create',
     'extend',
+    'shorten',
     'set_end_date',
     'change_tariff',
     'set_traffic',
     'cancel',
+    'reset',
     'activate',
     'add_traffic',
-    'set_devices',
+    'remove_traffic',
+    'set_device_limit',
 )
 
 
@@ -424,6 +479,154 @@ async def test_device_reset_requires_every_exact_target_removal(monkeypatch, use
     assert 'not saved' in result.message.lower()
     api.get_user_devices_all.assert_awaited_once_with('subscription-level-uuid')
     api.remove_device.assert_awaited_once_with('subscription-level-uuid', 'hw-1')
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_device_reset_success_uses_exact_identity_and_preserves_response(monkeypatch, user, subscription, db):
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_id_for_user', AsyncMock(return_value=subscription)
+    )
+    api = SimpleNamespace(
+        get_user_devices_all=AsyncMock(return_value={'devices': [{'hwid': 'hw-1'}, {'hwid': 'hw-2'}]}),
+        remove_device=AsyncMock(return_value=True),
+    )
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    monkeypatch.setattr(
+        'app.services.remnawave_service.RemnaWaveService',
+        lambda: SimpleNamespace(get_api_client=get_api_client),
+    )
+
+    result = await admin_users.reset_user_devices(
+        user_id=user.id, admin=SimpleNamespace(id=1), db=db, subscription_id=subscription.id
+    )
+
+    assert result.success is True
+    assert result.message == 'Deleted 2/2 devices'
+    assert result.deleted_count == 2
+    assert api.remove_device.await_args_list == [
+        call('subscription-level-uuid', 'hw-1'),
+        call('subscription-level-uuid', 'hw-2'),
+    ]
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_standalone_delete_success_orders_exact_panel_local_stage_and_one_commit(
+    monkeypatch, user, subscription, db
+):
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    events: list[tuple[str, object]] = []
+
+    async def panel(_user, targets, *, action):
+        events.append(('panel', (targets[0].id, targets[0].remnawave_uuid, action)))
+
+    async def local(_db, _user, *, commit):
+        events.append(('local', commit))
+
+    async def commit():
+        events.append(('commit', None))
+
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', panel)
+    monkeypatch.setattr(admin_users, 'soft_delete_user', local)
+    db.commit.side_effect = commit
+
+    result = await admin_users.delete_user(
+        user_id=user.id,
+        request=admin_users.DeleteUserRequest(soft_delete=True),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    assert result.message == 'User soft deleted successfully'
+    assert events == [('panel', (23, 'subscription-level-uuid', 'delete_user')), ('local', False), ('commit', None)]
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'failure',
+    [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
+)
+async def test_standalone_delete_typed_failure_preserves_local_user(monkeypatch, user, subscription, db, failure):
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', AsyncMock(side_effect=failure))
+    local = AsyncMock()
+    monkeypatch.setattr(admin_users, 'soft_delete_user', local)
+
+    result = await admin_users.delete_user(
+        user_id=user.id,
+        request=admin_users.DeleteUserRequest(soft_delete=True),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    local.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disable_success_orders_exact_panel_local_stage_and_one_commit(monkeypatch, user, subscription, db):
+    subscription.tariff = SimpleNamespace(is_daily=False)
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.is_active_paid_subscription', lambda _: False)
+    events: list[tuple[str, object]] = []
+
+    async def panel(_user, targets, *, action):
+        events.append(('panel', (targets[0].id, targets[0].remnawave_uuid, action)))
+
+    async def deactivate(_db, target, *, commit):
+        events.append(('local', (target.id, commit)))
+
+    async def commit():
+        events.append(('commit', None))
+
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', panel)
+    monkeypatch.setattr('app.database.crud.subscription.deactivate_subscription', deactivate)
+    db.commit.side_effect = commit
+
+    result = await admin_users.disable_user(user_id=user.id, admin=SimpleNamespace(id=1), db=db)
+
+    assert result.success is True
+    assert result.message == 'User disabled successfully'
+    assert events == [('panel', (23, 'subscription-level-uuid', 'disable_user')), ('local', (23, False)), ('commit', None)]
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'failure',
+    [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
+)
+async def test_disable_typed_failure_prevents_local_stage(monkeypatch, user, subscription, db, failure):
+    subscription.tariff = SimpleNamespace(is_daily=False)
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.is_active_paid_subscription', lambda _: False)
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', AsyncMock(side_effect=failure))
+    deactivate = AsyncMock()
+    monkeypatch.setattr('app.database.crud.subscription.deactivate_subscription', deactivate)
+
+    result = await admin_users.disable_user(user_id=user.id, admin=SimpleNamespace(id=1), db=db)
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    deactivate.assert_not_awaited()
+    db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
 
 

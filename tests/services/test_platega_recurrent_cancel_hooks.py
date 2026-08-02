@@ -590,6 +590,42 @@ async def test_full_delete_missing_exact_panel_identity_aborts_before_local_dele
     db.commit.assert_not_awaited()
 
 
+async def test_full_delete_partial_exact_panel_identity_aborts_before_any_remote_call(monkeypatch):
+    """One known UUID must not hide a sibling subscription's missing exact identity."""
+    import app.services.user_service as user_service_module
+    from app.services.user_service import UserService
+
+    subscriptions = [
+        SimpleNamespace(id=11, remnawave_uuid='exact-11'),
+        SimpleNamespace(id=12, remnawave_uuid=None),
+    ]
+    user = SimpleNamespace(id=5, telegram_id=555, email=None, subscriptions=subscriptions, remnawave_uuid=None)
+    monkeypatch.setattr(user_service_module, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
+    )
+    monkeypatch.setattr(
+        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
+    )
+    monkeypatch.setattr(
+        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock()
+    )
+    panel_service = MagicMock()
+    monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', panel_service)
+    db = AsyncMock()
+
+    result = await UserService().delete_user_account(db, user_id=5, admin_id=1, force_panel_delete=True)
+
+    assert result.bot_deleted is False
+    assert result.panel_deleted is False
+    assert result.panel_error == 'Missing exact panel identity'
+    panel_service.assert_not_called()
+    db.execute.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
 async def test_delete_user_from_db_cancels_platega_for_each_subscription(monkeypatch):
     """blocked_users_service.py::delete_user_from_db (blocked-user cleanup)
     deletes the whole user, CASCADE-dropping subscriptions and their
