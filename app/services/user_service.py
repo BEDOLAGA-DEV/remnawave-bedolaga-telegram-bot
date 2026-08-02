@@ -828,6 +828,26 @@ class UserService:
                 )
                 return result
 
+            # A forced panel deletion must know every exact target before any
+            # external cancellation or local destructive work starts.  In
+            # multi-tariff mode a partial UUID set would otherwise allow a
+            # payment recurrence to be cancelled for one subscription before
+            # another missing identity rejects the overall operation.
+            is_multi_tariff = settings.is_multi_tariff_enabled()
+            if is_multi_tariff:
+                if force_panel_delete and any(not sub.remnawave_uuid for sub in subs):
+                    result.panel_error = 'Missing exact panel identity'
+                    await db.rollback()
+                    return result
+                panel_uuids = [sub.remnawave_uuid for sub in subs]
+            else:
+                panel_uuids = [user.remnawave_uuid] if user.remnawave_uuid else []
+
+            if force_panel_delete and not panel_uuids:
+                result.panel_error = 'Missing exact panel identity'
+                await db.rollback()
+                return result
+
             # Best-effort: stop Platega SBP autopay for every subscription of
             # this user before the row disappears — the platega_subscriptions
             # record CASCADE-deletes with its subscription, so cancelling
@@ -857,21 +877,6 @@ class UserService:
                     user_id=user_id,
                     subscription_ids=error.subscription_ids,
                 )
-                return result
-
-            is_multi_tariff = settings.is_multi_tariff_enabled()
-            if is_multi_tariff:
-                if force_panel_delete and any(not sub.remnawave_uuid for sub in subs):
-                    result.panel_error = 'Missing exact panel identity'
-                    await db.rollback()
-                    return result
-                panel_uuids = [sub.remnawave_uuid for sub in subs]
-            else:
-                panel_uuids = [user.remnawave_uuid] if user.remnawave_uuid else []
-
-            if force_panel_delete and not panel_uuids:
-                result.panel_error = 'Missing exact panel identity'
-                await db.rollback()
                 return result
 
             if panel_uuids:

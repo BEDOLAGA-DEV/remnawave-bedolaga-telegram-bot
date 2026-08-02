@@ -605,12 +605,12 @@ async def test_full_delete_partial_exact_panel_identity_aborts_before_any_remote
     monkeypatch.setattr(
         'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
     )
+    platega_cancel = AsyncMock()
+    lava_cancel = AsyncMock()
     monkeypatch.setattr(
-        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
+        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', platega_cancel
     )
-    monkeypatch.setattr(
-        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock()
-    )
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', lava_cancel)
     panel_service = MagicMock()
     monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', panel_service)
     db = AsyncMock()
@@ -620,6 +620,8 @@ async def test_full_delete_partial_exact_panel_identity_aborts_before_any_remote
     assert result.bot_deleted is False
     assert result.panel_deleted is False
     assert result.panel_error == 'Missing exact panel identity'
+    platega_cancel.assert_not_awaited()
+    lava_cancel.assert_not_awaited()
     panel_service.assert_not_called()
     db.execute.assert_not_awaited()
     db.commit.assert_not_awaited()
