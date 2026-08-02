@@ -309,7 +309,6 @@ async def _sync_subscription_to_panel(
     user: User,
     subscription: Subscription,
     reset_traffic: bool = False,
-    reset_traffic_reason: str | None = None,
     *,
     action: str,
 ) -> dict[str, object]:
@@ -1320,7 +1319,7 @@ async def update_user_subscription(
             )
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, new_sub)
+        await _sync_subscription_to_panel(db, user, new_sub, action='create')
 
         logger.info('Admin created subscription for user', admin_id=admin.id, user_id=user_id)
 
@@ -1347,7 +1346,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='extend')
 
         logger.info(
             'Admin extended subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
@@ -1382,7 +1381,7 @@ async def update_user_subscription(
             await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='shorten')
 
         logger.info(
             'Admin shortened subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
@@ -1412,7 +1411,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='set_end_date')
 
         logger.info('Admin set end_date for user subscription', admin_id=admin.id, user_id=user_id)
 
@@ -1515,7 +1514,7 @@ async def update_user_subscription(
                 user,
                 subscription,
                 reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
-                reset_traffic_reason='смена тарифа (cabinet admin)',
+                action='change_tariff',
             )
         except Exception as e:
             logger.error('Failed to sync tariff switch with RemnaWave', error=e)
@@ -1539,7 +1538,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='set_traffic')
 
         logger.info('Admin updated traffic for user', admin_id=admin.id, user_id=user_id)
 
@@ -1598,7 +1597,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='cancel')
 
         logger.info('Admin cancelled subscription for user', admin_id=admin.id, user_id=user_id)
 
@@ -1652,7 +1651,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='activate')
 
         logger.info('Admin activated subscription for user', admin_id=admin.id, user_id=user_id)
 
@@ -1679,7 +1678,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='add_traffic')
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
         _enable_uuid = (
@@ -1748,7 +1747,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='remove_traffic')
 
         logger.info(
             'Admin removed traffic purchase ( GB) for user',
@@ -1776,7 +1775,7 @@ async def update_user_subscription(
         await db.refresh(subscription)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription)
+        await _sync_subscription_to_panel(db, user, subscription, action='set_device_limit')
 
         logger.info(
             'Admin set device limit to for user', admin_id=admin.id, device_limit=request.device_limit, user_id=user_id

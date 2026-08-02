@@ -144,7 +144,7 @@ async def _do_extend_subscription(
 
     await extend_subscription(db, sub, days)
     await db.refresh(sub)
-    await _sync_subscription_to_panel(db, user, sub)
+    await _sync_subscription_to_panel(db, user, sub, action='extend_subscription')
 
     return BulkUserResult(
         user_id=user.id,
@@ -181,7 +181,7 @@ async def _do_cancel_subscription(
         sub.is_daily_paused = True
     await db.commit()
     await db.refresh(sub)
-    await _sync_subscription_to_panel(db, user, sub)
+    await _sync_subscription_to_panel(db, user, sub, action='cancel_subscription')
 
     return BulkUserResult(
         user_id=user.id,
@@ -229,7 +229,7 @@ async def _do_activate_subscription(
         sub.end_date = datetime.now(UTC) + timedelta(days=30)
     await db.commit()
     await db.refresh(sub)
-    await _sync_subscription_to_panel(db, user, sub)
+    await _sync_subscription_to_panel(db, user, sub, action='activate_subscription')
 
     return BulkUserResult(
         user_id=user.id,
@@ -325,7 +325,7 @@ async def _do_change_tariff(
             user,
             sub,
             reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
-            reset_traffic_reason='смена тарифа (bulk action)',
+            action='change_tariff',
         )
     except Exception as e:
         logger.error('Failed to sync tariff switch with RemnaWave', user_id=user.id, error=e)
@@ -363,7 +363,7 @@ async def _do_add_traffic(
     await reactivate_subscription(db, sub)
     await db.refresh(sub)
 
-    await _sync_subscription_to_panel(db, user, sub)
+    await _sync_subscription_to_panel(db, user, sub, action='add_traffic')
 
     # Explicitly enable user on panel (PATCH may not clear LIMITED status)
     _enable_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_uuid', None)
@@ -481,7 +481,7 @@ async def _do_set_devices(
     sub.device_limit = device_limit
     await db.commit()
     await db.refresh(sub)
-    await _sync_subscription_to_panel(db, user, sub)
+    await _sync_subscription_to_panel(db, user, sub, action='set_devices')
 
     return BulkUserResult(
         user_id=user.id,
@@ -724,7 +724,7 @@ async def _do_grant_subscription(
 
     # Sync to RemnaWave panel
     try:
-        await _sync_subscription_to_panel(db, user, new_sub)
+        await _sync_subscription_to_panel(db, user, new_sub, action='grant_subscription')
     except Exception as e:
         logger.error('Failed to sync new subscription with RemnaWave', user_id=user.id, error=e)
 

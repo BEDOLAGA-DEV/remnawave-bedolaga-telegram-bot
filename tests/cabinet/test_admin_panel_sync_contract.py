@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from structlog.testing import capture_logs
 
-from app.cabinet.routes import admin_users
+from app.cabinet.routes import admin_bulk_actions, admin_users
+from app.cabinet.schemas.bulk_actions import BulkActionParams
+from app.cabinet.schemas.users import UpdateSubscriptionRequest
 from app.config import settings
 from app.services.admin_panel_sync import (
     MANDATORY_ADMIN_PANEL_MUTATIONS,
@@ -166,6 +168,57 @@ async def test_successful_sync_does_not_commit(configured_panel, user, subscript
 
     assert changes == {'action': 'updated'}
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_extend_reaches_required_sync_boundary_with_attributable_action(
+    monkeypatch, user, subscription, db
+):
+    """Omitting ``action`` makes the existing admin extend path fail before panel sync."""
+    subscription.is_active = True
+    user.subscriptions = [subscription]
+    observed_actions: list[str] = []
+
+    async def required_sync(_db, _user, _subscription, *, action: str, **_kwargs):
+        observed_actions.append(action)
+        return {}
+
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(admin_users, 'extend_subscription', AsyncMock())
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', required_sync)
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=UpdateSubscriptionRequest(action='extend', days=7),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    assert observed_actions == ['extend']
+
+
+@pytest.mark.asyncio
+async def test_bulk_extend_reaches_required_sync_boundary_with_attributable_action(user, subscription, db, monkeypatch):
+    """Omitting ``action`` makes the bulk extend handler fail before panel sync."""
+    subscription.is_active = True
+    user.subscriptions = [subscription]
+    observed_actions: list[str] = []
+
+    async def required_sync(_db, _user, _subscription, *, action: str, **_kwargs):
+        observed_actions.append(action)
+        return {}
+
+    monkeypatch.setattr(admin_bulk_actions, 'extend_subscription', AsyncMock())
+    monkeypatch.setattr(admin_bulk_actions, '_sync_subscription_to_panel', required_sync)
+
+    result = await admin_bulk_actions._do_extend_subscription(
+        db, user, BulkActionParams(days=7), dry_run=False, sub_override=subscription
+    )
+
+    assert result.success is True
+    assert observed_actions == ['extend_subscription']
 
 
 def test_mutation_key_identifies_one_route_action_pair():
