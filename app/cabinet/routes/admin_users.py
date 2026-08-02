@@ -60,7 +60,7 @@ from app.database.models import (
     WheelSpin,
     WithdrawalRequest,
 )
-from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
+from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped, panel_sync_failure_message
 from app.services.permission_service import PermissionService
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
@@ -551,6 +551,26 @@ async def _sync_subscription_to_panel(
         reason_code=reason_code,
     )
     raise PanelSyncFailed(reason_code)
+
+
+async def _sync_and_commit_admin_mutation(
+    db: AsyncSession, user: User, subscription: Subscription, *, action: str, reset_traffic: bool = False
+) -> bool:
+    """Finish one mandatory admin mutation, with the route as transaction owner."""
+    try:
+        await _sync_subscription_to_panel(db, user, subscription, reset_traffic=reset_traffic, action=action)
+        await db.commit()
+        return True
+    except (PanelSyncSkipped, PanelSyncFailed) as error:
+        await db.rollback()
+        logger.warning(
+            'Admin mutation was not saved because panel synchronization did not complete',
+            user_id=user.id,
+            subscription_id=subscription.id,
+            action=action,
+            reason_code=error.reason_code,
+        )
+        return False
 
 
 # === List & Search ===
@@ -1310,6 +1330,7 @@ async def update_user_subscription(
                 is_trial=is_trial,
                 tariff_id=request.tariff_id,
                 connected_squads=connected_squads,
+                commit=False,
             )
         except IntegrityError:
             await db.rollback()
@@ -1318,8 +1339,8 @@ async def update_user_subscription(
                 detail='User already has an active subscription for this tariff. Extend it instead.',
             )
 
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, new_sub, action='create')
+        if not await _sync_and_commit_admin_mutation(db, user, new_sub, action='create'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin created subscription for user', admin_id=admin.id, user_id=user_id)
 
@@ -1342,11 +1363,11 @@ async def update_user_subscription(
                 detail='Days must be a positive integer',
             )
 
-        await extend_subscription(db, subscription, request.days)
-        await db.refresh(subscription)
+        await extend_subscription(db, subscription, request.days, commit=False)
 
         # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='extend')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='extend'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info(
             'Admin extended subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
@@ -1371,17 +1392,12 @@ async def update_user_subscription(
         if subscription.end_date <= now:
             subscription.status = SubscriptionStatus.EXPIRED.value
             subscription.grace_suppressed_until = now
-        await db.commit()
-        await db.refresh(subscription)
-
         # Check if subscription expired after shortening
         if subscription.end_date <= now:
             subscription.status = SubscriptionStatus.EXPIRED.value
-            await db.commit()
-            await db.refresh(subscription)
 
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='shorten')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='shorten'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info(
             'Admin shortened subscription for user by days', admin_id=admin.id, user_id=user_id, days=request.days
@@ -1407,11 +1423,8 @@ async def update_user_subscription(
             subscription.status = SubscriptionStatus.EXPIRED.value
             subscription.grace_suppressed_until = datetime.now(UTC)
 
-        await db.commit()
-        await db.refresh(subscription)
-
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='set_end_date')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='set_end_date'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin set end_date for user subscription', admin_id=admin.id, user_id=user_id)
 
@@ -1504,20 +1517,10 @@ async def update_user_subscription(
             commit=False,
         )
 
-        await db.commit()
-        await db.refresh(subscription)
-
-        # Синхронизируем с RemnaWave (discovery/create + сброс трафика по админ-настройке)
-        try:
-            await _sync_subscription_to_panel(
-                db,
-                user,
-                subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
-                action='change_tariff',
-            )
-        except Exception as e:
-            logger.error('Failed to sync tariff switch with RemnaWave', error=e)
+        if not await _sync_and_commit_admin_mutation(
+            db, user, subscription, reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH, action='change_tariff'
+        ):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin changed tariff for user to', admin_id=admin.id, user_id=user_id, tariff_name=tariff.name)
 
@@ -1534,11 +1537,8 @@ async def update_user_subscription(
         if request.traffic_used_gb is not None:
             subscription.traffic_used_gb = request.traffic_used_gb
 
-        await db.commit()
-        await db.refresh(subscription)
-
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='set_traffic')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='set_traffic'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin updated traffic for user', admin_id=admin.id, user_id=user_id)
 
@@ -1593,11 +1593,8 @@ async def update_user_subscription(
         # For daily tariffs: mark as paused to prevent auto-resume by DailySubscriptionService
         if subscription.tariff and getattr(subscription.tariff, 'is_daily', False):
             subscription.is_daily_paused = True
-        await db.commit()
-        await db.refresh(subscription)
-
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='cancel')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='cancel'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin cancelled subscription for user', admin_id=admin.id, user_id=user_id)
 
@@ -1614,7 +1611,22 @@ async def update_user_subscription(
         # дальше юзер сам покупает тариф с нуля и выбирает срок.
         from app.services.subscription_service import reset_subscription_with_panel
 
-        result = await reset_subscription_with_panel(db, user, subscription)
+        try:
+            # ``commit=False`` keeps the panel disable and local reset in this
+            # route-owned transaction. Payment cancellation is intentionally
+            # best-effort and irreversible (accepted distributed-system risk).
+            result = await reset_subscription_with_panel(db, user, subscription, commit=False)
+            await db.commit()
+        except (PanelSyncSkipped, PanelSyncFailed) as error:
+            await db.rollback()
+            logger.warning(
+                'Admin mutation was not saved because panel synchronization did not complete',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                action='reset',
+                reason_code=error.reason_code,
+            )
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info(
             'Admin reset subscription for user',
@@ -1647,11 +1659,8 @@ async def update_user_subscription(
         if subscription.end_date and subscription.end_date <= datetime.now(UTC):
             # Extend by 30 days if expired
             subscription.end_date = datetime.now(UTC) + timedelta(days=30)
-        await db.commit()
-        await db.refresh(subscription)
-
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='activate')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='activate'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin activated subscription for user', admin_id=admin.id, user_id=user_id)
 
@@ -1670,15 +1679,13 @@ async def update_user_subscription(
 
         from app.database.crud.subscription import add_subscription_traffic, reactivate_subscription
 
-        await add_subscription_traffic(db, subscription, request.traffic_gb)
+        await add_subscription_traffic(db, subscription, request.traffic_gb, commit=False)
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
-        await reactivate_subscription(db, subscription)
+        await reactivate_subscription(db, subscription, commit=False)
 
-        await db.refresh(subscription)
-
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='add_traffic')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='add_traffic'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
         _enable_uuid = (
@@ -1743,11 +1750,8 @@ async def update_user_subscription(
         else:
             subscription.traffic_reset_at = None
 
-        await db.commit()
-        await db.refresh(subscription)
-
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='remove_traffic')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='remove_traffic'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info(
             'Admin removed traffic purchase ( GB) for user',
@@ -1771,11 +1775,8 @@ async def update_user_subscription(
             )
 
         subscription.device_limit = request.device_limit
-        await db.commit()
-        await db.refresh(subscription)
-
-        # Sync to Remnawave panel
-        await _sync_subscription_to_panel(db, user, subscription, action='set_device_limit')
+        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='set_device_limit'):
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info(
             'Admin set device limit to for user', admin_id=admin.id, device_limit=request.device_limit, user_id=user_id

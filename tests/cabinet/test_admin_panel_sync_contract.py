@@ -200,6 +200,35 @@ async def test_admin_extend_reaches_required_sync_boundary_with_attributable_act
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'failure',
+    [
+        PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED),
+        PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED),
+    ],
+)
+async def test_admin_extend_panel_failure_rolls_back_without_false_success(monkeypatch, user, subscription, db, failure):
+    """The route, not a nested helper, owns the one final transaction commit."""
+    subscription.is_active = True
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(admin_users, 'extend_subscription', AsyncMock())
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', AsyncMock(side_effect=failure))
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=UpdateSubscriptionRequest(action='extend', days=7),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_bulk_extend_reaches_required_sync_boundary_with_attributable_action(user, subscription, db, monkeypatch):
     """Omitting ``action`` makes the bulk extend handler fail before panel sync."""
     subscription.is_active = True

@@ -1404,7 +1404,9 @@ async def extend_subscription(
     return subscription
 
 
-async def add_subscription_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
+async def add_subscription_traffic(
+    db: AsyncSession, subscription: Subscription, gb: int, *, commit: bool = True
+) -> Subscription:
     # Lock subscription row — защита от lost-update гонки с housekeeping в extend_subscription
     # (см. _apply_base_limit_preserving_active_purchases / _housekeep_expired_purchases).
     # Без lock'а одновременный renewal + topup могут затереть друг друга.
@@ -1443,8 +1445,9 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
         # Первая докупка
         subscription.traffic_reset_at = new_expires_at
 
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
 
     logger.info(
         '📈 К подписке пользователя добавлено ГБ трафика (истекает )',

@@ -9,6 +9,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import app.services.subscription_service as ss
 from app.config import Settings
 from app.database.crud.subscription import reset_subscription
@@ -143,6 +145,22 @@ async def test_reset_with_panel_survives_panel_error(monkeypatch):
 
     assert result['panel_disabled'] is False
     assert sub.status == SubscriptionStatus.DISABLED.value
+
+
+async def test_reset_with_panel_commit_false_propagates_panel_failure(monkeypatch):
+    """The admin route can roll back its staged reset when panel disable fails."""
+
+    async def boom(self, uuid):
+        raise RuntimeError('panel down')
+
+    monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', boom)
+    sub = _sub(remnawave_uuid='SUB_UUID')
+    user = SimpleNamespace(id=1, remnawave_uuid=None)
+
+    from app.services.admin_panel_sync import PanelSyncFailed
+
+    with pytest.raises(PanelSyncFailed):
+        await ss.reset_subscription_with_panel(AsyncMock(), user, sub, commit=False)
 
 
 async def test_user_modified_does_not_resurrect_disabled_end_date():

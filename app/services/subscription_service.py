@@ -1315,7 +1315,7 @@ class SubscriptionService:
         return propagate_result
 
 
-async def reset_subscription_with_panel(db, user: User, subscription: Subscription) -> dict:
+async def reset_subscription_with_panel(db, user: User, subscription: Subscription, *, commit: bool = True) -> dict:
     """Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
     НЕ удаляя пользователя из БД (тикеты и аккаунт остаются).
 
@@ -1347,11 +1347,19 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
             panel_disabled = await SubscriptionService().disable_remnawave_user(panel_uuid)
         except Exception as e:
             logger.warning('Не удалось отключить пользователя в RemnaWave при обнулении подписки', error=e)
+            if not commit:
+                from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason
+
+                raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from e
     else:
         logger.warning(
             'Обнуление подписки: панельный UUID не найден, отключение в панели пропущено',
             subscription_id=getattr(subscription, 'id', None),
         )
+        if not commit:
+            from app.services.admin_panel_sync import PanelSyncReason, PanelSyncSkipped
 
-    await reset_subscription(db, subscription)
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+
+    await reset_subscription(db, subscription, commit=commit)
     return {'panel_disabled': panel_disabled, 'panel_uuid': panel_uuid}
