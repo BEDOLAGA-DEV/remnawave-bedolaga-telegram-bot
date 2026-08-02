@@ -197,6 +197,48 @@ async def test_strict_trial_wipe_rejects_mixed_or_total_panel_failure(monkeypatc
     db.execute.assert_not_awaited()
 
 
+async def test_strict_trial_wipe_deletes_each_exact_panel_target_before_local_rows(monkeypatch):
+    """The admin authoritative wipe must not hide its panel-before-local ordering behind a stub."""
+    from contextlib import asynccontextmanager
+
+    import app.database.crud.subscription as subscription_crud
+
+    events: list[tuple[str, object]] = []
+
+    async def delete_user(panel_uuid):
+        events.append(('panel', panel_uuid))
+        return True
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield SimpleNamespace(delete_user=delete_user)
+
+    monkeypatch.setattr(ss, 'SubscriptionService', lambda: SimpleNamespace(is_configured=True, get_api_client=get_api_client))
+    _set_multi_tariff(monkeypatch, True)
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
+    )
+    monkeypatch.setattr(subscription_crud, 'decrement_subscription_server_counts', AsyncMock())
+    subscriptions = [
+        SimpleNamespace(id=7, user_id=1, remnawave_uuid='trial-7'),
+        SimpleNamespace(id=8, user_id=1, remnawave_uuid='trial-8'),
+    ]
+    db = AsyncMock()
+
+    async def execute(statement):
+        events.append(('local', statement.__class__.__name__))
+        return MagicMock()
+
+    db.execute.side_effect = execute
+
+    wiped = await subscription_crud.wipe_trial_subscriptions(db, subscriptions, require_all_panel_success=True)
+
+    assert wiped == 2
+    assert events[:2] == [('panel', 'trial-7'), ('panel', 'trial-8')]
+    assert [event[0] for event in events[2:]] == ['local', 'local']
+    db.commit.assert_not_awaited()
+
+
 async def test_user_modified_does_not_resurrect_disabled_end_date():
     """A user.modified webhook carrying a stale FUTURE expireAt must NOT restore the
     end_date of a subscription the bot deliberately DISABLED (e.g. after reset) —

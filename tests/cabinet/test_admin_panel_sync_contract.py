@@ -333,6 +333,181 @@ UNIFIED_MANDATORY_ACTIONS = (
 )
 
 
+def _unified_request(action: str, subscription: SimpleNamespace) -> UpdateSubscriptionRequest:
+    """Small valid request factory for exercising the public route branches."""
+    values: dict[str, object] = {'action': action, 'subscription_id': subscription.id}
+    if action in {'extend', 'shorten'}:
+        values['days'] = 7
+    elif action == 'set_end_date':
+        values['end_date'] = datetime.now(UTC) + timedelta(days=45)
+    elif action == 'change_tariff':
+        values['tariff_id'] = 99
+    elif action == 'set_traffic':
+        values['traffic_limit_gb'] = 42
+    elif action == 'add_traffic':
+        values['traffic_gb'] = 5
+    elif action == 'remove_traffic':
+        values['traffic_purchase_id'] = 71
+    elif action == 'set_device_limit':
+        values['device_limit'] = 3
+    return UpdateSubscriptionRequest(**values)
+
+
+async def _configure_unified_route_action(monkeypatch, db, user, subscription, action: str) -> None:
+    """Remove unrelated I/O while retaining each real route branch and its local staging."""
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    subscription.is_active = True
+    subscription.tariff_id = 1
+    subscription.device_limit = 1
+    subscription.purchased_traffic_gb = 5
+    subscription.traffic_used_gb = 1.0
+    subscription.traffic_reset_at = None
+    subscription.is_daily_paused = False
+    subscription.is_trial = False
+    user.subscriptions = [subscription]
+
+    if action in {'change_tariff', 'activate'}:
+        monkeypatch.setattr(
+            'app.database.crud.subscription.get_subscription_by_user_and_tariff', AsyncMock(return_value=None)
+        )
+
+    async def no_commit(*_args, **kwargs):
+        assert kwargs.get('commit') is False
+
+    if action in {'extend', 'shorten'}:
+        monkeypatch.setattr(admin_users, 'extend_subscription', AsyncMock(side_effect=no_commit))
+    elif action == 'create':
+        user.subscriptions = []
+        new_subscription = SimpleNamespace(**vars(subscription))
+        monkeypatch.setattr(
+            'app.database.crud.subscription.create_paid_subscription',
+            AsyncMock(return_value=new_subscription),
+        )
+    elif action == 'change_tariff':
+        tariff = SimpleNamespace(
+            id=99,
+            name='Target',
+            traffic_limit_gb=50,
+            device_limit=2,
+            max_device_limit=8,
+            allowed_squads=[],
+        )
+        monkeypatch.setattr(admin_users, 'get_tariff_by_id', AsyncMock(return_value=tariff))
+        monkeypatch.setattr(
+            'app.database.crud.subscription.calc_device_limit_on_tariff_switch', lambda **_: 2
+        )
+        monkeypatch.setattr('app.database.crud.transaction.create_transaction', AsyncMock(side_effect=no_commit))
+        monkeypatch.setattr(
+            'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
+        )
+        monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
+    elif action == 'cancel':
+        monkeypatch.setattr(
+            'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
+        )
+        monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
+    elif action == 'reset':
+        async def reset_with_panel(_db, _user, _subscription, *, commit):
+            assert commit is False
+            return {'panel_disabled': True}
+
+        monkeypatch.setattr('app.services.subscription_service.reset_subscription_with_panel', reset_with_panel)
+    elif action == 'add_traffic':
+        monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock(side_effect=no_commit))
+        monkeypatch.setattr('app.database.crud.subscription.reactivate_subscription', AsyncMock(side_effect=no_commit))
+        monkeypatch.setattr(
+            'app.services.subscription_service.SubscriptionService.enable_remnawave_user', AsyncMock(return_value=True)
+        )
+    elif action == 'remove_traffic':
+        purchase = SimpleNamespace(id=71, traffic_gb=5, expires_at=datetime.now(UTC) + timedelta(days=1))
+        db.execute.side_effect = [
+            MagicMock(scalar_one_or_none=lambda: purchase),
+            MagicMock(scalars=lambda: MagicMock(all=list)),
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+@pytest.mark.parametrize(
+    'failure',
+    [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
+)
+async def test_every_unified_action_route_fails_closed_after_local_staging(
+    monkeypatch, user, subscription, db, action, failure
+):
+    """Public route branches, rather than the shared finisher, own fail-closed responses."""
+    await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
+    observed: list[tuple[int, str, str]] = []
+
+    async def fail_sync(_db, _user, target, *, action: str, **_kwargs):
+        observed.append((target.id, target.remnawave_uuid, action))
+        raise failure
+
+    if action == 'reset':
+        async def fail_reset(_db, _user, target, *, commit):
+            assert commit is False
+            observed.append((target.id, target.remnawave_uuid, 'reset'))
+            raise failure
+
+        monkeypatch.setattr('app.services.subscription_service.reset_subscription_with_panel', fail_reset)
+    else:
+        monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', fail_sync)
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=_unified_request(action, subscription),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    assert observed == [(23, 'subscription-level-uuid', action)]
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+async def test_every_unified_action_route_stages_exact_target_then_panel_then_one_commit(
+    monkeypatch, user, subscription, db, action
+):
+    """Each public branch must preserve its response and use the selected subscription UUID."""
+    await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
+    events: list[tuple[str, object]] = []
+
+    async def sync(_db, _user, target, *, action: str, **_kwargs):
+        events.append(('panel', (target.id, target.remnawave_uuid, action)))
+
+    async def commit():
+        events.append(('commit', None))
+
+    if action == 'reset':
+        async def reset_with_panel(_db, _user, target, *, commit):
+            assert commit is False
+            events.append(('panel', (target.id, target.remnawave_uuid, 'reset')))
+            return {'panel_disabled': True}
+
+        monkeypatch.setattr('app.services.subscription_service.reset_subscription_with_panel', reset_with_panel)
+    else:
+        monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync)
+    db.commit.side_effect = commit
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=_unified_request(action, subscription),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    assert events == [('panel', (23, 'subscription-level-uuid', action)), ('commit', None)]
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
 @pytest.mark.parametrize(
@@ -515,6 +690,41 @@ async def test_device_reset_success_uses_exact_identity_and_preserves_response(m
         call('subscription-level-uuid', 'hw-1'),
         call('subscription-level-uuid', 'hw-2'),
     ]
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'delete_result, expected_success',
+    [
+        (SimpleNamespace(bot_deleted=False, panel_deleted=False, panel_error='panel unavailable', grace_blocked=False), False),
+        (SimpleNamespace(bot_deleted=True, panel_deleted=True, panel_error=None, grace_blocked=False), True),
+    ],
+)
+async def test_full_delete_route_preserves_service_transaction_result_without_extra_commit(
+    monkeypatch, user, db, delete_result, expected_success
+):
+    """The route maps the real deletion boundary result without committing around it a second time."""
+    service_call = AsyncMock(return_value=delete_result)
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.user_service.UserService.delete_user_account', service_call)
+
+    result = await admin_users.full_delete_user(
+        user_id=user.id,
+        request=admin_users.FullDeleteUserRequest(delete_from_panel=True),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is expected_success
+    assert result.deleted_from_bot is delete_result.bot_deleted
+    assert result.deleted_from_panel is delete_result.panel_deleted
+    assert result.panel_error == delete_result.panel_error
+    if expected_success:
+        assert result.message == 'User fully deleted from bot and panel'
+    else:
+        assert 'not saved' in result.message.lower()
+    service_call.assert_awaited_once_with(db, user.id, 1, force_panel_delete=True)
     db.commit.assert_not_awaited()
 
 
