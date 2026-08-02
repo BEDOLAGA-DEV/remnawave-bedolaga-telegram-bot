@@ -1462,7 +1462,7 @@ async def add_subscription_traffic(
     # меняется, и хелпер молча выйдет по совпадению сумм.
     from app.services.recurrent_amount import sync_recurrent_bindings_after_price_change
 
-    await sync_recurrent_bindings_after_price_change(db, subscription.id)
+    await sync_recurrent_bindings_after_price_change(db, subscription.id, commit=commit)
 
     return subscription
 

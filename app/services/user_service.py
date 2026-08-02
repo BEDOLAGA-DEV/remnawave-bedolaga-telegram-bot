@@ -844,9 +844,9 @@ class UserService:
             from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
             for sub in subs:
-                await cancel_platega_recurring_for_subscription_safe(db, sub.id)
+                await cancel_platega_recurring_for_subscription_safe(db, sub.id, commit=False)
 
-                await cancel_lava_recurring_for_subscription_safe(db, sub.id)
+                await cancel_lava_recurring_for_subscription_safe(db, sub.id, commit=False)
             try:
                 await ensure_no_open_grace_for_subscriptions(db, tuple(sub.id for sub in subs))
             except GraceAccessDeletionBlocked as error:
@@ -947,6 +947,10 @@ class UserService:
                                         )
                                 except Exception as fallback_e:
                                     logger.error('❌ Ошибка деактивации RemnaWave как fallback', fallback_e=fallback_e)
+
+            if force_panel_delete and panel_uuids and (not result.panel_deleted or result.panel_error):
+                await db.rollback()
+                return result
 
             try:
                 async with db.begin_nested():

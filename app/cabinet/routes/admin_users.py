@@ -553,6 +553,30 @@ async def _sync_subscription_to_panel(
     raise PanelSyncFailed(reason_code)
 
 
+async def _require_panel_disable_for_subscriptions(user: User, subscriptions: list[Subscription], *, action: str) -> None:
+    """Require exact panel disables before a destructive local mutation."""
+    from app.services.subscription_service import SubscriptionService
+
+    service = SubscriptionService()
+    if not service.is_configured:
+        raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
+
+    targets = (
+        [(subscription.id, subscription.remnawave_uuid) for subscription in subscriptions]
+        if settings.is_multi_tariff_enabled()
+        else [(subscriptions[0].id if subscriptions else 0, user.remnawave_uuid)]
+    )
+    for subscription_id, panel_uuid in targets:
+        if not panel_uuid:
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+        try:
+            disabled = await service.disable_remnawave_user(panel_uuid)
+        except Exception as error:
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
+        if not disabled:
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
+
+
 async def _sync_and_commit_admin_mutation(
     db: AsyncSession, user: User, subscription: Subscription, *, action: str, reset_traffic: bool = False
 ) -> bool:
@@ -2714,10 +2738,16 @@ async def reset_user_devices(
                 device_hwid = d.get('hwid') or d.get('deviceId') or d.get('id')
                 if device_hwid:
                     try:
-                        await api.remove_device(_rst_uuid, device_hwid)
+                        removed = await api.remove_device(_rst_uuid, device_hwid)
+                        if not removed:
+                            return ResetDevicesResponse(
+                                success=False, message=panel_sync_failure_message(), deleted_count=deleted
+                            )
                         deleted += 1
                     except Exception:
-                        pass
+                        return ResetDevicesResponse(
+                            success=False, message=panel_sync_failure_message(), deleted_count=deleted
+                        )
 
         logger.info('Admin reset devices for user /', admin_id=admin.id, user_id=user_id, deleted=deleted, total=total)
         return ResetDevicesResponse(success=True, message=f'Deleted {deleted}/{total} devices', deleted_count=deleted)
@@ -2750,8 +2780,15 @@ async def delete_user(
             detail='User not found',
         )
 
+    subs = getattr(user, 'subscriptions', None) or []
+    try:
+        await _require_panel_disable_for_subscriptions(user, subs, action='delete_user')
+    except (PanelSyncSkipped, PanelSyncFailed):
+        await db.rollback()
+        return DeleteUserResponse(success=False, message=panel_sync_failure_message())
+
     if request.soft_delete:
-        await soft_delete_user(db, user)
+        await soft_delete_user(db, user, commit=False)
         action = 'soft deleted'
     else:
         from app.services.grace_access_runtime import (
@@ -2768,8 +2805,9 @@ async def delete_user(
             ) from error
         # Hard delete
         await db.delete(user)
-        await db.commit()
         action = 'permanently deleted'
+
+    await db.commit()
 
     reason_text = f' (reason: {request.reason})' if request.reason else ''
     logger.info('Admin user', admin_id=admin.id, action=action, user_id=user_id, reason_text=reason_text)
@@ -2832,9 +2870,10 @@ async def full_delete_user(
         panel_error=delete_result.panel_error,
     )
 
+    success = delete_result.bot_deleted and (not request.delete_from_panel or delete_result.panel_deleted)
     return FullDeleteUserResponse(
-        success=delete_result.bot_deleted,
-        message='User fully deleted from bot and panel' if delete_result.bot_deleted else 'Failed to delete user',
+        success=success,
+        message='User fully deleted from bot and panel' if success else panel_sync_failure_message(),
         deleted_from_bot=delete_result.bot_deleted,
         deleted_from_panel=delete_result.panel_deleted,
         panel_error=delete_result.panel_error,
@@ -2886,6 +2925,11 @@ async def reset_user_trial(
                     user_id=user_id,
                 )
             else:
+                try:
+                    await _require_panel_disable_for_subscriptions(user, subs_to_delete, action='reset_user_trial')
+                except (PanelSyncSkipped, PanelSyncFailed):
+                    await db.rollback()
+                    return ResetTrialResponse(success=False, message=panel_sync_failure_message())
                 # Снос триала — общий код с ботовым bulk-сбросом: удаляет панель-юзера
                 # ПЕРВЫМ (race-safe относительно синк-воскрешения), затем строки в БД и
                 # чистит устаревший single-tariff remnawave_uuid.
@@ -2957,6 +3001,21 @@ async def reset_user_subscription(
             detail='Open grace access must be drained or restored before resetting subscriptions.',
         ) from error
 
+    if request.deactivate_in_panel:
+        try:
+            await _require_panel_disable_for_subscriptions(user, subs, action='reset_user_subscription')
+            panel_deactivated = True
+        except (PanelSyncSkipped, PanelSyncFailed) as error:
+            await db.rollback()
+            logger.warning(
+                'Admin mutation was not saved because panel synchronization did not complete',
+                user_id=user.id,
+                subscription_id=subs[0].id,
+                action='reset_user_subscription',
+                reason_code=error.reason_code,
+            )
+            return ResetSubscriptionResponse(success=False, message=panel_sync_failure_message())
+
     # Best-effort: stop Platega SBP autopay before any irreversible panel/DB
     # step. Each cancellation commits its own transaction internally, which
     # releases the grace-guard's Postgres advisory lock acquired just above.
@@ -2967,9 +3026,9 @@ async def reset_user_subscription(
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
     for sub in subs:
-        await cancel_platega_recurring_for_subscription_safe(db, sub.id)
+        await cancel_platega_recurring_for_subscription_safe(db, sub.id, commit=False)
 
-        await cancel_lava_recurring_for_subscription_safe(db, sub.id)
+        await cancel_lava_recurring_for_subscription_safe(db, sub.id, commit=False)
     try:
         await ensure_no_open_grace_for_subscriptions(db, tuple(sub.id for sub in subs))
     except GraceAccessDeletionBlocked as error:
@@ -2977,28 +3036,6 @@ async def reset_user_subscription(
             status_code=status.HTTP_409_CONFLICT,
             detail='Open grace access must be drained or restored before resetting subscriptions.',
         ) from error
-
-    # Deactivate in Remnawave panel if requested
-    if request.deactivate_in_panel:
-        try:
-            from app.services.subscription_service import SubscriptionService
-
-            subscription_service = SubscriptionService()
-            if settings.is_multi_tariff_enabled():
-                for sub in subs:
-                    if sub.remnawave_uuid:
-                        try:
-                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid, db=db)
-                        except Exception:
-                            pass
-                panel_deactivated = True
-            elif user.remnawave_uuid:
-                panel_deactivated = await subscription_service.disable_remnawave_user(user.remnawave_uuid, db=db)
-            if panel_deactivated:
-                logger.info('Disabled Remnawave users for subscription reset', user_id=user_id)
-        except Exception as e:
-            panel_error = 'Ошибка обработки пользователя в Remnawave'
-            logger.warning('Failed to disable Remnawave user during subscription reset', error=e)
 
     # Delete all subscriptions from database
     from sqlalchemy import delete
@@ -3061,36 +3098,23 @@ async def disable_user(
             user_id=user_id,
             remnawave_uuid=user.remnawave_uuid,
         )
-    else:
-        try:
-            from app.services.subscription_service import SubscriptionService
-
-            subscription_service = SubscriptionService()
-            if settings.is_multi_tariff_enabled():
-                for sub in subs:
-                    if sub.remnawave_uuid:
-                        try:
-                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid, db=db)
-                        except Exception:
-                            pass
-                panel_deactivated = True
-            elif user.remnawave_uuid:
-                panel_deactivated = await subscription_service.disable_remnawave_user(user.remnawave_uuid, db=db)
-            if panel_deactivated:
-                logger.info('Disabled Remnawave user(s)', user_id=user_id)
-        except Exception as e:
-            panel_error = 'Ошибка обработки пользователя в Remnawave'
-            logger.warning('Failed to disable Remnawave user', error=e)
+        await db.rollback()
+        return DisableUserResponse(success=False, message=panel_sync_failure_message())
+    try:
+        await _require_panel_disable_for_subscriptions(user, subs, action='disable_user')
+        panel_deactivated = True
+    except (PanelSyncSkipped, PanelSyncFailed):
+        await db.rollback()
+        return DisableUserResponse(success=False, message=panel_sync_failure_message())
 
     # Deactivate all subscriptions in bot database (skip active paid ones)
     for sub in subs:
         if is_active_paid_subscription(sub):
             continue
-        await deactivate_subscription(db, sub)
+        await deactivate_subscription(db, sub, commit=False)
         # For daily: mark paused to prevent auto-resume
         if sub.tariff and getattr(sub.tariff, 'is_daily', False):
             sub.is_daily_paused = True
-            await db.commit()
         subscription_deactivated = True
     if subscription_deactivated:
         logger.info('Deactivated subscriptions for user', user_id=user_id)

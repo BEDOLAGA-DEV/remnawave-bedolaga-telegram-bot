@@ -229,6 +229,43 @@ async def test_admin_extend_panel_failure_rolls_back_without_false_success(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'failure',
+    [
+        PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED),
+        PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED),
+    ],
+)
+async def test_standalone_reset_panel_failure_prevents_local_delete(monkeypatch, user, subscription, db, failure):
+    """Panel failure must occur before the standalone reset stages destructive SQL."""
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
+    )
+    monkeypatch.setattr(
+        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
+    )
+    monkeypatch.setattr(
+        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock()
+    )
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', AsyncMock(side_effect=failure))
+
+    result = await admin_users.reset_user_subscription(
+        user_id=user.id,
+        request=admin_users.ResetSubscriptionRequest(),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    db.execute.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_bulk_extend_reaches_required_sync_boundary_with_attributable_action(user, subscription, db, monkeypatch):
     """Omitting ``action`` makes the bulk extend handler fail before panel sync."""
     subscription.is_active = True

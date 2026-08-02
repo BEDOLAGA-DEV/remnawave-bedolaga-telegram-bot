@@ -325,12 +325,12 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
     from app.cabinet.routes.subscription_modules import multi_tariff
     from app.database.models import SubscriptionStatus
 
-    recorded: list[tuple[object, int]] = []
+    recorded: list[tuple[object, int, bool]] = []
 
     call_order: list[str] = []
 
-    async def fake_cancel(db, subscription_id):
-        recorded.append((db, subscription_id))
+    async def fake_cancel(db, subscription_id, *, commit=True):
+        recorded.append((db, subscription_id, commit))
         call_order.append('platega_cancel')
 
     monkeypatch.setattr(platega_module, 'cancel_platega_recurring_for_subscription_safe', fake_cancel)
@@ -369,7 +369,7 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
     result = await multi_tariff.delete_subscription(subscription_id=42, user=user, db=db)
 
     assert result == {'message': 'Subscription deleted'}
-    assert recorded == [(db, 42)]  # cancel called with the subscription being deleted, before db.delete
+    assert recorded == [(db, 42, True)]  # unrelated caller keeps the compatibility default
     db.delete.assert_awaited_once_with(subscription)
     # The Platega cancel commits its own transaction, releasing the grace
     # guard's advisory lock acquired by the first check — so the guard MUST
@@ -394,11 +394,11 @@ async def test_cancel_safe_wiring_proof_my_subscriptions_delete_execute(monkeypa
     from app.database.models import SubscriptionStatus
     from app.handlers.subscription import my_subscriptions
 
-    recorded: list[tuple[object, int]] = []
+    recorded: list[tuple[object, int, bool]] = []
     call_order: list[str] = []
 
-    async def fake_cancel(db, subscription_id):
-        recorded.append((db, subscription_id))
+    async def fake_cancel(db, subscription_id, *, commit=True):
+        recorded.append((db, subscription_id, commit))
         call_order.append('platega_cancel')
 
     monkeypatch.setattr(platega_module, 'cancel_platega_recurring_for_subscription_safe', fake_cancel)
@@ -435,7 +435,7 @@ async def test_cancel_safe_wiring_proof_my_subscriptions_delete_execute(monkeypa
 
     await my_subscriptions.handle_subscription_delete_execute(callback, db_user, db, state)
 
-    assert recorded == [(db, 99)]  # cancel called with the subscription being deleted, before db.delete
+    assert recorded == [(db, 99, True)]  # unrelated caller keeps the compatibility default
     db.delete.assert_awaited_once_with(subscription)
     callback.answer.assert_awaited_once_with('Подписка удалена', show_alert=True)
     # Same ordering constraint as multi_tariff.delete_subscription: the
@@ -520,12 +520,12 @@ async def test_delete_user_account_cancels_platega_between_grace_checks(monkeypa
     from app.services.grace_access_runtime import GraceAccessDeletionBlocked
     from app.services.user_service import UserService
 
-    recorded: list[tuple[object, int]] = []
+    recorded: list[tuple[object, int, bool]] = []
     call_order: list[str] = []
     calls = {'n': 0}
 
-    async def fake_cancel(db, subscription_id):
-        recorded.append((db, subscription_id))
+    async def fake_cancel(db, subscription_id, *, commit=True):
+        recorded.append((db, subscription_id, commit))
         call_order.append('platega_cancel')
 
     async def fake_ensure_no_open_grace(db, subscription_ids):
@@ -548,7 +548,7 @@ async def test_delete_user_account_cancels_platega_between_grace_checks(monkeypa
 
     result = await UserService().delete_user_account(db, user_id=5, admin_id=1)
 
-    assert recorded == [(db, 11), (db, 12)]  # cancelled for every subscription, before the second check
+    assert recorded == [(db, 11, False), (db, 12, False)]  # caller retains the only commit
     assert call_order == ['grace_check', 'platega_cancel', 'platega_cancel', 'grace_check']
     assert result.grace_blocked is True
     assert result.bot_deleted is False
