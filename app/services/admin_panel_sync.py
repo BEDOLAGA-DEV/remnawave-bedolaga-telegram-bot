@@ -17,8 +17,17 @@ class PanelSyncReason(StrEnum):
     PANEL_TIMEOUT_UNKNOWN = 'panel_timeout_unknown'
 
 
+class PanelSyncTarget(StrEnum):
+    """Required RemnaWave target when multi-tariff mode is enabled."""
+
+    EXACT_SUBSCRIPTION_UUID = 'subscription.remnawave_uuid'
+    EACH_EXACT_SUBSCRIPTION_UUID = 'each subscription.remnawave_uuid'
+
+
 class PanelSyncError(RuntimeError):
     def __init__(self, reason_code: PanelSyncReason) -> None:
+        if not isinstance(reason_code, PanelSyncReason):
+            raise TypeError('reason_code must be a PanelSyncReason')
         super().__init__(reason_code.value)
         self.reason_code = reason_code
 
@@ -38,7 +47,12 @@ class AdminPanelMutation:
     mutation_class: str
     integration_path: str
     transaction_owner: str
+    multi_tariff_target: PanelSyncTarget
     classification: str = 'mandatory-sync'
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.multi_tariff_target, PanelSyncTarget):
+            raise TypeError('multi_tariff_target must be a PanelSyncTarget')
 
     @property
     def key(self) -> str:
@@ -50,6 +64,7 @@ def _mutation(
     action: str,
     mutation_class: str,
     integration_path: str,
+    multi_tariff_target: PanelSyncTarget = PanelSyncTarget.EXACT_SUBSCRIPTION_UUID,
 ) -> AdminPanelMutation:
     return AdminPanelMutation(
         route=route,
@@ -57,6 +72,7 @@ def _mutation(
         mutation_class=mutation_class,
         integration_path=integration_path,
         transaction_owner=route,
+        multi_tariff_target=multi_tariff_target,
     )
 
 
@@ -79,10 +95,48 @@ MANDATORY_ADMIN_PANEL_MUTATIONS = (
     # Direct single-user panel operations.
     _mutation('delete_user_device', 'delete_device', 'set_devices', 'RemnaWaveService.remove_device'),
     _mutation('reset_user_devices', 'reset_devices', 'reset', 'RemnaWaveService.remove_device'),
-    _mutation('full_delete_user', 'delete_user', 'delete_user', 'UserService.delete_user_account'),
-    _mutation('reset_user_trial', 'reset_trial', 'delete_subscription', 'wipe_trial_subscriptions'),
-    _mutation('reset_user_subscription', 'reset_subscription', 'reset', 'SubscriptionService.disable_remnawave_user'),
-    _mutation('disable_user', 'disable', 'disable_user', 'SubscriptionService.disable_remnawave_user'),
+    _mutation(
+        'full_delete_user',
+        'delete_user',
+        'delete_user',
+        'UserService.delete_user_account',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'reset_user_trial',
+        'reset_trial',
+        'delete_subscription',
+        'wipe_trial_subscriptions',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'reset_user_subscription',
+        'reset_subscription',
+        'reset',
+        'SubscriptionService.disable_remnawave_user',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'disable_user',
+        'disable',
+        'disable_user',
+        'SubscriptionService.disable_remnawave_user',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'block_user',
+        'block',
+        'disable_user',
+        'UserService.block_user -> SubscriptionService.disable_remnawave_user',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'unblock_user',
+        'unblock',
+        'activate',
+        'UserService.unblock_user -> SubscriptionService.update_remnawave_user',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
     _mutation('sync_user_to_panel', 'sync_to_panel', 'sync', 'RemnaWaveService direct API'),
     # Bulk action handlers behind POST /admin/bulk/execute.
     _mutation('_do_extend_subscription', 'extend_subscription', 'extend', '_sync_subscription_to_panel'),
