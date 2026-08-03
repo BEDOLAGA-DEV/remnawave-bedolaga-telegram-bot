@@ -1456,6 +1456,10 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
                 from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason
 
                 raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from e
+        if not panel_disabled and not commit:
+            from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason
+
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
     else:
         logger.warning(
             'Обнуление подписки: панельный UUID не найден, отключение в панели пропущено',

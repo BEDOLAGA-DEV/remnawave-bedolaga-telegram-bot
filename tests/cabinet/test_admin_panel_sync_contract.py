@@ -602,6 +602,31 @@ async def test_standalone_reset_success_orders_exact_panel_before_local_delete_a
     db.commit.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_standalone_reset_explicit_false_cannot_bypass_mandatory_panel_disable(
+    monkeypatch, user, subscription, db
+):
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
+    mandatory_disable = AsyncMock(side_effect=PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED))
+    monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', mandatory_disable)
+
+    result = await admin_users.reset_user_subscription(
+        user_id=user.id,
+        request=admin_users.ResetSubscriptionRequest(deactivate_in_panel=False),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert result.message == panel_sync_failure_message()
+    mandatory_disable.assert_awaited_once_with(user, [subscription], action='reset_user_subscription')
+    db.execute.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
 def _unified_request(action: str, subscription: SimpleNamespace) -> UpdateSubscriptionRequest:
     """Small valid request factory for exercising the public route branches."""
     values: dict[str, object] = {'action': action, 'subscription_id': subscription.id}
@@ -740,6 +765,81 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
             MagicMock(scalar_one_or_none=lambda: purchase),
             MagicMock(scalars=lambda: MagicMock(all=list)),
         ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enable_outcome', [False, RuntimeError('panel unavailable'), 'missing_uuid'])
+async def test_single_add_traffic_late_enable_failure_rolls_back_without_commit(
+    monkeypatch, user, subscription, db, enable_outcome
+):
+    """The route must not commit traffic before its required direct enable succeeds."""
+    await _configure_unified_route_action(monkeypatch, db, user, subscription, 'add_traffic')
+    before = dict(vars(subscription))
+
+    async def rollback():
+        vars(subscription).clear()
+        vars(subscription).update(before)
+
+    db.rollback.side_effect = rollback
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', AsyncMock(return_value={}))
+    enable = AsyncMock(return_value=False)
+    if isinstance(enable_outcome, Exception):
+        enable.side_effect = enable_outcome
+    if enable_outcome == 'missing_uuid':
+        subscription.remnawave_uuid = None
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService.enable_remnawave_user', enable)
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=_unified_request('add_traffic', subscription),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert result.message == panel_sync_failure_message()
+    assert vars(subscription) == before
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    if enable_outcome == 'missing_uuid':
+        enable.assert_not_awaited()
+    else:
+        enable.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('disable_outcome', [False, RuntimeError('panel unavailable')])
+async def test_unified_reset_panel_failure_rolls_back_before_local_reset(
+    monkeypatch, user, subscription, db, disable_outcome
+):
+    """The public reset action must translate False/exception into a typed rollback path."""
+    from app.services import subscription_service as subscription_service_module
+
+    real_reset_with_panel = subscription_service_module.reset_subscription_with_panel
+    await _configure_unified_route_action(monkeypatch, db, user, subscription, 'reset')
+    original = dict(vars(subscription))
+    disable = AsyncMock(return_value=False)
+    if isinstance(disable_outcome, Exception):
+        disable.side_effect = disable_outcome
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService.disable_remnawave_user', disable)
+
+    monkeypatch.setattr(
+        'app.services.subscription_service.reset_subscription_with_panel',
+        real_reset_with_panel,
+    )
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=_unified_request('reset', subscription),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert result.message == panel_sync_failure_message()
+    assert vars(subscription) == original
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1155,6 +1255,33 @@ async def test_full_delete_route_preserves_service_transaction_result_without_ex
         assert 'not saved' in result.message.lower()
     service_call.assert_awaited_once_with(db, user.id, 1, force_panel_delete=True)
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_full_delete_explicit_false_cannot_bypass_mandatory_panel_delete(monkeypatch, user, db):
+    user.subscriptions = []
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    delete_account = AsyncMock(
+        return_value=SimpleNamespace(
+            bot_deleted=True,
+            panel_deleted=False,
+            panel_error='panel unavailable',
+            panel_reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            grace_blocked=False,
+        )
+    )
+    monkeypatch.setattr(UserService, 'delete_user_account', delete_account)
+
+    result = await admin_users.full_delete_user(
+        user_id=user.id,
+        request=admin_users.FullDeleteUserRequest(delete_from_panel=False),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert result.message == panel_sync_failure_message()
+    delete_account.assert_awaited_once_with(db, user.id, 1, force_panel_delete=True)
 
 
 @pytest.mark.asyncio

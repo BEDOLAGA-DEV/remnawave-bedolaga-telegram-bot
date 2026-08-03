@@ -185,7 +185,6 @@ async def _do_cancel_subscription(
     # For daily tariffs: mark as paused to prevent auto-resume by DailySubscriptionService
     if sub.tariff and getattr(sub.tariff, 'is_daily', False):
         sub.is_daily_paused = True
-    await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub, action='cancel_subscription')
 
     return BulkUserResult(
@@ -232,7 +231,6 @@ async def _do_activate_subscription(
     if sub.end_date and sub.end_date <= datetime.now(UTC):
         # Extend by 30 days if expired
         sub.end_date = datetime.now(UTC) + timedelta(days=30)
-    await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub, action='activate_subscription')
 
     return BulkUserResult(
@@ -484,7 +482,6 @@ async def _do_set_devices(
         )
 
     sub.device_limit = device_limit
-    await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub, action='set_devices')
 
     return BulkUserResult(

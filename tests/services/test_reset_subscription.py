@@ -163,6 +163,22 @@ async def test_reset_with_panel_commit_false_propagates_panel_failure(monkeypatc
         await ss.reset_subscription_with_panel(AsyncMock(), user, sub, commit=False)
 
 
+async def test_reset_with_panel_commit_false_rejects_false_before_local_reset(monkeypatch):
+    """A normal False panel result must fail before any rollback-sensitive local fields change."""
+    monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', AsyncMock(return_value=False))
+    sub = _sub(remnawave_uuid='SUB_UUID')
+    user = SimpleNamespace(id=1, remnawave_uuid=None)
+    original = dict(vars(sub))
+
+    from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason
+
+    with pytest.raises(PanelSyncFailed) as raised:
+        await ss.reset_subscription_with_panel(AsyncMock(), user, sub, commit=False)
+
+    assert raised.value.reason_code is PanelSyncReason.PANEL_API_FAILED
+    assert vars(sub) == original
+
+
 @pytest.mark.parametrize('panel_results', [(True, False), (False, False)])
 async def test_strict_trial_wipe_rejects_mixed_or_total_panel_failure(monkeypatch, panel_results):
     """Admin strict mode cannot translate partial remote deletion into partial local success."""

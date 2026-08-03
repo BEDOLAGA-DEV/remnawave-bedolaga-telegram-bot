@@ -1,11 +1,16 @@
 """Transaction contracts for real mandatory admin bulk panel mutations."""
 
+import contextlib
 import inspect
+import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import DateTime, Integer, String
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.cabinet.routes import admin_bulk_actions as bulk
 from app.cabinet.schemas.bulk_actions import BulkActionParams, BulkActionType
@@ -54,6 +59,98 @@ EXPECTED_SUCCESS_MESSAGES = {
     BulkActionType.GRANT_SUBSCRIPTION: 'Subscription granted: Pro for 7 days',
     BulkActionType.DELETE_USER: 'User deleted + panel',
 }
+
+
+class _RefreshRegressionBase(DeclarativeBase):
+    pass
+
+
+class _RefreshRegressionSubscription(_RefreshRegressionBase):
+    """Minimal persisted model exercising actual AsyncSession refresh semantics."""
+
+    __tablename__ = 'bulk_refresh_regression_subscriptions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    grace_suppressed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    device_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+def _ensure_real_aiosqlite(monkeypatch) -> None:
+    stub = sys.modules.get('aiosqlite')
+    if stub is not None and not hasattr(stub, 'connect'):
+        monkeypatch.delitem(sys.modules, 'aiosqlite', raising=False)
+
+
+@contextlib.asynccontextmanager
+async def _real_refresh_regression_session(monkeypatch):
+    _ensure_real_aiosqlite(monkeypatch)
+    engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+    async with engine.begin() as connection:
+        await connection.run_sync(_RefreshRegressionBase.metadata.create_all)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with maker() as session:
+            yield session
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('action', 'expected_status', 'expected_device_limit'),
+    [
+        (BulkActionType.CANCEL_SUBSCRIPTION, 'expired', 2),
+        (BulkActionType.ACTIVATE_SUBSCRIPTION, 'active', 2),
+        (BulkActionType.SET_DEVICES, 'active', 6),
+    ],
+)
+async def test_bulk_staged_mutation_survives_real_async_session_until_panel_sync(
+    monkeypatch, action, expected_status, expected_device_limit
+):
+    """A full-object refresh before sync would reload persisted values and fail this contract."""
+    async with _real_refresh_regression_session(monkeypatch) as db:
+        initial_status = 'expired' if action is BulkActionType.ACTIVATE_SUBSCRIPTION else 'active'
+        sub = _RefreshRegressionSubscription(
+            id=1,
+            user_id=42,
+            status=initial_status,
+            end_date=None if action is BulkActionType.ACTIVATE_SUBSCRIPTION else datetime.now(UTC) + timedelta(days=1),
+            grace_suppressed_until=None,
+            device_limit=2,
+        )
+        sub.tariff = None
+        sub.tariff_id = None
+        await db.merge(sub)
+        await db.commit()
+        sub = await db.get(_RefreshRegressionSubscription, 1)
+        sub.tariff = None
+        sub.tariff_id = None
+        user = SimpleNamespace(id=42, username='target', subscriptions=[sub])
+
+        async def assert_staged_state(_db, _user, target, *, action):
+            assert target.status == expected_status
+            assert target.device_limit == expected_device_limit
+
+        monkeypatch.setattr(bulk, '_sync_subscription_to_panel', assert_staged_state)
+        monkeypatch.setattr(
+            'app.database.crud.subscription.get_subscription_by_user_and_tariff', AsyncMock(return_value=None)
+        )
+        params = BulkActionParams(device_limit=6) if action is BulkActionType.SET_DEVICES else BulkActionParams()
+        handlers = {
+            BulkActionType.CANCEL_SUBSCRIPTION: bulk._do_cancel_subscription,
+            BulkActionType.ACTIVATE_SUBSCRIPTION: bulk._do_activate_subscription,
+            BulkActionType.SET_DEVICES: bulk._do_set_devices,
+        }
+
+        result = await handlers[action](db, user, params, False, sub_override=sub)
+        assert result.success is True
+        await db.commit()
+        await db.refresh(sub)
+        assert sub.status == expected_status
+        assert sub.device_limit == expected_device_limit
 
 
 def _subscription(subscription_id: int, *, status: str = 'active') -> SimpleNamespace:

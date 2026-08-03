@@ -1741,18 +1741,37 @@ async def update_user_subscription(
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
         await reactivate_subscription(db, subscription, commit=False)
 
-        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='add_traffic'):
-            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
+        try:
+            await _sync_subscription_to_panel(db, user, subscription, action='add_traffic')
 
-        # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _enable_uuid = (
-            subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_uuid', None)
-        )
-        if _enable_uuid and subscription.status == 'active':
+            # PATCH может не снять LIMITED-статус, поэтому direct enable — обязательная
+            # часть той же route-owned транзакции, а не пост-коммитный best effort.
+            _enable_uuid = (
+                subscription.remnawave_uuid
+                if settings.is_multi_tariff_enabled()
+                else getattr(user, 'remnawave_uuid', None)
+            )
+            if not _enable_uuid:
+                raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            await subscription_service.enable_remnawave_user(_enable_uuid)
+            try:
+                enabled = await subscription_service.enable_remnawave_user(_enable_uuid, db=db)
+            except Exception as error:
+                raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
+            if not enabled:
+                raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
+            await db.commit()
+        except (PanelSyncSkipped, PanelSyncFailed) as error:
+            await db.rollback()
+            _log_admin_panel_sync_failure(
+                user_id=user.id,
+                subscription_id=subscription.id,
+                action='add_traffic',
+                reason_code=error.reason_code,
+            )
+            return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin added traffic for user', admin_id=admin.id, traffic_gb=request.traffic_gb, user_id=user_id)
 
@@ -2976,9 +2995,7 @@ async def full_delete_user(
 
     # UserService.delete_user_account handles both bot DB and Remnawave panel
     user_service = UserService()
-    delete_result = await user_service.delete_user_account(
-        db, user_id, admin_id_val, force_panel_delete=request.delete_from_panel
-    )
+    delete_result = await user_service.delete_user_account(db, user_id, admin_id_val, force_panel_delete=True)
 
     if delete_result.grace_blocked:
         # Паритет с обычным delete-эндпоинтом: блокировка открытым grace — это
@@ -2999,8 +3016,8 @@ async def full_delete_user(
         panel_error=delete_result.panel_error,
     )
 
-    success = delete_result.bot_deleted and (not request.delete_from_panel or delete_result.panel_deleted)
-    if not success and request.delete_from_panel:
+    success = delete_result.bot_deleted and delete_result.panel_deleted
+    if not success:
         reason_value = getattr(delete_result, 'panel_reason_code', None) or PanelSyncReason.PANEL_API_FAILED.value
         try:
             reason_code = PanelSyncReason(reason_value)
@@ -3147,19 +3164,18 @@ async def reset_user_subscription(
             detail='Open grace access must be drained or restored before resetting subscriptions.',
         ) from error
 
-    if request.deactivate_in_panel:
-        try:
-            await _require_panel_disable_for_subscriptions(user, subs, action='reset_user_subscription')
-            panel_deactivated = True
-        except (PanelSyncSkipped, PanelSyncFailed) as error:
-            await db.rollback()
-            _log_admin_panel_sync_failure_for_targets(
-                user_id=user.id,
-                subscriptions=subs,
-                action='reset_user_subscription',
-                reason_code=error.reason_code,
-            )
-            return ResetSubscriptionResponse(success=False, message=panel_sync_failure_message())
+    try:
+        await _require_panel_disable_for_subscriptions(user, subs, action='reset_user_subscription')
+        panel_deactivated = True
+    except (PanelSyncSkipped, PanelSyncFailed) as error:
+        await db.rollback()
+        _log_admin_panel_sync_failure_for_targets(
+            user_id=user.id,
+            subscriptions=subs,
+            action='reset_user_subscription',
+            reason_code=error.reason_code,
+        )
+        return ResetSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
     # Best-effort: stop Platega SBP autopay before any irreversible panel/DB
     # step. Each cancellation commits its own transaction internally, which
