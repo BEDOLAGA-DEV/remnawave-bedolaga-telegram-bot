@@ -145,6 +145,27 @@ MANDATORY_ADMIN_PANEL_MUTATIONS = (
         PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
     ),
     _mutation('sync_user_to_panel', 'sync_to_panel', 'sync', 'RemnaWaveService direct API'),
+    _mutation(
+        'update_user_status',
+        'status_active',
+        'activate',
+        'UserService.unblock_user',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'update_user_status',
+        'status_blocked',
+        'disable_user',
+        'UserService.block_user',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'update_user_status',
+        'status_deleted',
+        'delete_user',
+        '_require_panel_disable_for_subscriptions',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
     # Tariff squad changes mutate every matching panel user before the tariff
     # transaction can be committed.  Keep the public handlers (not their
     # private shared helper) in the inventory.

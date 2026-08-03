@@ -55,6 +55,7 @@ READ_ONLY_PANEL_METHOD_PREFIXES = ('get_', 'list_', 'find_', 'fetch_')
 # ``bulk_execute`` is a request dispatcher, not an atomic mutation leaf: its
 # executable children are the individually inventoried ``_do_*`` handlers.
 BULK_ACTION_DISPATCHERS = {'bulk_execute'}
+USER_STATUS_READ_ONLY_SYNC_HANDLERS = {'sync_user_from_panel'}
 
 
 def _functions(tree: ast.AST) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -158,6 +159,32 @@ def _service_panel_methods(tree: ast.AST) -> set[str]:
     return _local_panel_functions(tree)
 
 
+def _local_status_mutation_handlers(tree: ast.AST) -> set[str]:
+    """Find public routes that write a user status even before panel calls exist.
+
+    This semantic source prevents a local-only status transition from avoiding
+    the inventory merely because its mandatory panel call was accidentally
+    removed.
+    """
+    return {
+        name
+        for name, function in _functions(tree).items()
+        if not name.startswith('_')
+        and any(
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == 'user'
+                and target.attr == 'status'
+                for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
+            )
+            for node in ast.walk(function)
+        )
+        and name not in USER_STATUS_READ_ONLY_SYNC_HANDLERS
+    }
+
+
 def _route_panel_handlers(route_tree: ast.AST, user_service_tree: ast.AST) -> set[str]:
     functions = _functions(route_tree)
     panel_functions = _local_panel_functions(route_tree)
@@ -230,12 +257,20 @@ def test_panel_relevant_admin_handlers_and_called_services_are_explicitly_classi
     user_service_tree = ast.parse(Path('app/services/user_service.py').read_text())
     discovered = set()
     for route_path in Path('app/cabinet/routes').glob('admin_*.py'):
-        discovered |= _route_panel_handlers(ast.parse(route_path.read_text()), user_service_tree)
+        route_tree = ast.parse(route_path.read_text())
+        discovered |= _route_panel_handlers(route_tree, user_service_tree)
+        discovered |= _local_status_mutation_handlers(route_tree)
     discovered -= BULK_ACTION_DISPATCHERS
     classified = {entry.route for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
 
     _assert_classified(discovered, classified)
-    assert {'block_user', 'unblock_user', 'sync_tariff_squads', 'update_existing_tariff'} <= discovered
+    assert {
+        'block_user',
+        'unblock_user',
+        'sync_tariff_squads',
+        'update_existing_tariff',
+        'update_user_status',
+    } <= discovered
 
     # sync_user_from_panel only reads the panel before updating the local DB.
     assert 'sync_user_from_panel' not in discovered

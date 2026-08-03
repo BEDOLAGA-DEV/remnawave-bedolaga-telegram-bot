@@ -23,7 +23,7 @@ from app.database.crud.tariff import (
     update_tariff,
 )
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, Transaction, TransactionType, User
-from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncSkipped, panel_sync_failure_message
+from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped, panel_sync_failure_message
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.tariffs import (
@@ -48,6 +48,18 @@ from ..schemas.tariffs import (
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/tariffs', tags=['Cabinet Admin Tariffs'])
+
+
+def _log_tariff_panel_sync_failure(
+    *, user_id: int | None, subscription_id: int | None, action: str, reason: PanelSyncReason
+) -> None:
+    logger.warning(
+        'Admin panel synchronization did not complete',
+        user_id=user_id,
+        subscription_id=subscription_id,
+        action=action,
+        reason_code=reason.value,
+    )
 
 
 async def _sync_tariff_squads_atomically(
@@ -78,6 +90,12 @@ async def _sync_tariff_squads_atomically(
 
     service = RemnaWaveService()
     if not service.is_configured:
+        _log_tariff_panel_sync_failure(
+            user_id=None,
+            subscription_id=None,
+            action=action,
+            reason=PanelSyncReason.NOT_CONFIGURED,
+        )
         raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
 
     new_squads = tariff.allowed_squads or []
@@ -85,6 +103,12 @@ async def _sync_tariff_squads_atomically(
         for sub in subscriptions:
             panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else sub.user.remnawave_uuid
             if not panel_uuid:
+                _log_tariff_panel_sync_failure(
+                    user_id=sub.user_id,
+                    subscription_id=sub.id,
+                    action=action,
+                    reason=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
+                )
                 raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
             try:
                 await update_panel_user_grace_safe(
@@ -95,12 +119,11 @@ async def _sync_tariff_squads_atomically(
                     external_squad_uuid=tariff.external_squad_uuid,
                 )
             except Exception as error:
-                logger.warning(
-                    'Admin panel synchronization did not complete',
+                _log_tariff_panel_sync_failure(
                     user_id=sub.user_id,
                     subscription_id=sub.id,
                     action=action,
-                    reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+                    reason=PanelSyncReason.PANEL_API_FAILED,
                 )
                 raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
             sub.connected_squads = new_squads
@@ -515,11 +538,11 @@ async def update_existing_tariff(
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=panel_sync_failure_message())
 
     if updates:
-        await update_tariff(db, tariff, **updates)
+        await update_tariff(db, tariff, **updates, commit=False)
 
     # Update promo groups separately
     if request.promo_group_ids is not None:
-        await set_tariff_promo_groups(db, tariff, request.promo_group_ids)
+        await set_tariff_promo_groups(db, tariff, request.promo_group_ids, commit=False)
 
     # The panel sync and every local tariff change share this route-owned
     # transaction boundary.  Do not rely on a later request lifecycle commit.

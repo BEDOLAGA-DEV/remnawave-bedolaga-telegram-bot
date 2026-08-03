@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from app.cabinet.routes import admin_tariffs
 from app.cabinet.schemas.tariffs import TariffUpdateRequest
+from app.database.crud.tariff import set_tariff_promo_groups, update_tariff
 from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
 from tests.cabinet.admin_panel_sync_case_manifest import (
     TARIFF_FAILED_CASES,
@@ -41,6 +42,7 @@ def _configure_tariff_route(monkeypatch, tariff, route: str):
     monkeypatch.setattr(admin_tariffs, 'get_tariff_by_id', AsyncMock(return_value=tariff))
     if route == 'update':
         monkeypatch.setattr(admin_tariffs, 'update_tariff', AsyncMock())
+        monkeypatch.setattr(admin_tariffs, 'set_tariff_promo_groups', AsyncMock())
         monkeypatch.setattr(admin_tariffs, 'load_period_prices_from_db', AsyncMock())
         monkeypatch.setattr(admin_tariffs, 'get_tariff', AsyncMock(return_value=SimpleNamespace(id=tariff.id)))
 
@@ -57,6 +59,8 @@ async def test_tariff_squad_routes_commit_only_after_successful_panel_sync(monke
     expected_action = 'tariff_update_sync_squads' if route == 'update' else 'sync_tariff_squads'
     sync.assert_awaited_once_with(db, ANY, action=expected_action)
     db.commit.assert_awaited_once()
+    if route == 'update':
+        admin_tariffs.update_tariff.assert_awaited_once_with(db, tariff, allowed_squads=['new'], commit=False)
     assert result is not None
 
 
@@ -79,6 +83,38 @@ async def test_tariff_squad_routes_rollback_and_return_safe_error_when_panel_syn
     assert 'not saved' in raised.value.detail.lower()
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tariff_crud_commit_false_stages_real_updates_without_a_nested_commit(db):
+    """The route's final commit is load-bearing even with squad and promo changes."""
+    tariff = SimpleNamespace(id=81, name='Starter', allowed_squads=['old'], allowed_promo_groups=[])
+
+    await update_tariff(db, tariff, allowed_squads=['new'], commit=False)
+    await set_tariff_promo_groups(db, tariff, [], commit=False)
+
+    assert tariff.allowed_squads == ['new']
+    assert tariff.allowed_promo_groups == []
+    db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tariff_update_with_promo_groups_passes_commit_false_to_every_nested_crud(monkeypatch, tariff, db):
+    _configure_tariff_route(monkeypatch, tariff, 'update')
+    sync = AsyncMock(return_value=1)
+    monkeypatch.setattr(admin_tariffs, '_sync_tariff_squads_atomically', sync)
+
+    await admin_tariffs.update_existing_tariff(
+        81,
+        TariffUpdateRequest(allowed_squads=['new'], promo_group_ids=[]),
+        SimpleNamespace(id=1),
+        db,
+    )
+
+    admin_tariffs.update_tariff.assert_awaited_once_with(db, tariff, allowed_squads=['new'], commit=False)
+    admin_tariffs.set_tariff_promo_groups.assert_awaited_once_with(db, tariff, [], commit=False)
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

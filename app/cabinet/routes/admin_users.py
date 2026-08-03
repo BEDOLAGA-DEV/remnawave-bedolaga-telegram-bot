@@ -579,6 +579,19 @@ async def _require_panel_disable_for_subscriptions(
             raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
 
 
+def _log_admin_panel_sync_failure(
+    *, user_id: int, subscription_id: int | None, action: str, reason_code: PanelSyncReason
+) -> None:
+    """Emit one bounded reconciliation diagnostic for a mandatory sync outcome."""
+    logger.warning(
+        'Admin panel synchronization did not complete',
+        user_id=user_id,
+        subscription_id=subscription_id,
+        action=action,
+        reason_code=reason_code.value,
+    )
+
+
 async def _sync_and_commit_admin_mutation(
     db: AsyncSession, user: User, subscription: Subscription, *, action: str, reset_traffic: bool = False
 ) -> bool:
@@ -1984,10 +1997,51 @@ async def update_user_status(
             message='Status unchanged',
         )
 
-    user.status = new_status
-    user.updated_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(user)
+    status_action = f'status_{new_status}'
+    if new_status == UserStatus.BLOCKED.value:
+        from app.services.user_service import UserService
+
+        if not await UserService().block_user(db, user_id, admin.id, reason=request.reason or 'Status update'):
+            return UpdateUserStatusResponse(
+                success=False,
+                old_status=old_status,
+                new_status=new_status,
+                message=panel_sync_failure_message(),
+            )
+    elif new_status == UserStatus.ACTIVE.value:
+        from app.services.user_service import UserService
+
+        if not await UserService().unblock_user(db, user_id, admin.id):
+            return UpdateUserStatusResponse(
+                success=False,
+                old_status=old_status,
+                new_status=new_status,
+                message=panel_sync_failure_message(),
+            )
+    else:
+        try:
+            await _require_panel_disable_for_subscriptions(
+                user, getattr(user, 'subscriptions', None) or [], action=status_action
+            )
+            user.status = new_status
+            user.updated_at = datetime.now(UTC)
+            await db.commit()
+            await db.refresh(user)
+        except (PanelSyncSkipped, PanelSyncFailed) as error:
+            await db.rollback()
+            logger.warning(
+                'Admin panel synchronization did not complete',
+                user_id=user_id,
+                subscription_id=None,
+                action=status_action,
+                reason_code=error.reason_code.value,
+            )
+            return UpdateUserStatusResponse(
+                success=False,
+                old_status=old_status,
+                new_status=new_status,
+                message=panel_sync_failure_message(),
+            )
 
     action = f'{old_status} -> {new_status}'
     if request.reason:
@@ -2648,15 +2702,20 @@ async def delete_user_device(
         if success:
             logger.info('Admin deleted device for user', admin_id=admin.id, hwid=hwid, user_id=user_id)
             return DeleteDeviceResponse(success=True, message='Device deleted', deleted_hwid=hwid)
-        return DeleteDeviceResponse(success=False, message='Failed to delete device')
-
-    except Exception:
-        logger.warning(
-            'Admin panel synchronization did not complete',
+        _log_admin_panel_sync_failure(
             user_id=user_id,
             subscription_id=subscription_id,
             action='delete_device',
-            reason_code='panel_api_failed',
+            reason_code=PanelSyncReason.PANEL_API_FAILED,
+        )
+        return DeleteDeviceResponse(success=False, message='Failed to delete device')
+
+    except Exception:
+        _log_admin_panel_sync_failure(
+            user_id=user_id,
+            subscription_id=subscription_id,
+            action='delete_device',
+            reason_code=PanelSyncReason.PANEL_API_FAILED,
         )
         return DeleteDeviceResponse(success=False, message=panel_sync_failure_message())
 
@@ -2756,11 +2815,23 @@ async def reset_user_devices(
                     try:
                         removed = await api.remove_device(_rst_uuid, device_hwid)
                         if not removed:
+                            _log_admin_panel_sync_failure(
+                                user_id=user_id,
+                                subscription_id=subscription_id,
+                                action='reset_devices',
+                                reason_code=PanelSyncReason.PANEL_API_FAILED,
+                            )
                             return ResetDevicesResponse(
                                 success=False, message=panel_sync_failure_message(), deleted_count=deleted
                             )
                         deleted += 1
                     except Exception:
+                        _log_admin_panel_sync_failure(
+                            user_id=user_id,
+                            subscription_id=subscription_id,
+                            action='reset_devices',
+                            reason_code=PanelSyncReason.PANEL_API_FAILED,
+                        )
                         return ResetDevicesResponse(
                             success=False, message=panel_sync_failure_message(), deleted_count=deleted
                         )
@@ -2769,12 +2840,11 @@ async def reset_user_devices(
         return ResetDevicesResponse(success=True, message=f'Deleted {deleted}/{total} devices', deleted_count=deleted)
 
     except Exception:
-        logger.warning(
-            'Admin panel synchronization did not complete',
+        _log_admin_panel_sync_failure(
             user_id=user_id,
             subscription_id=subscription_id,
             action='reset_devices',
-            reason_code='panel_api_failed',
+            reason_code=PanelSyncReason.PANEL_API_FAILED,
         )
         return ResetDevicesResponse(success=False, message=panel_sync_failure_message())
 
@@ -3778,6 +3848,12 @@ async def sync_user_from_panel(
 
         service = RemnaWaveService()
         if not service.is_configured:
+            _log_admin_panel_sync_failure(
+                user_id=user_id,
+                subscription_id=push_sub.id,
+                action='sync_to_panel',
+                reason_code=PanelSyncReason.NOT_CONFIGURED,
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=service.configuration_error or 'Remnawave API not configured',

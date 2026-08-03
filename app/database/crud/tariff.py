@@ -314,6 +314,7 @@ async def update_tariff(
     traffic_reset_mode: str | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = ...,  # ... = не передан, None = убрать внешний сквад
+    commit: bool = True,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -399,8 +400,9 @@ async def update_tariff(
         else:
             tariff.allowed_promo_groups = []
 
-    await db.commit()
-    await db.refresh(tariff)
+    if commit:
+        await db.commit()
+        await db.refresh(tariff)
 
     logger.info('Обновлен тариф', tariff_name=tariff.name, tariff_id=tariff.id)
 
@@ -458,6 +460,8 @@ async def set_tariff_promo_groups(
     db: AsyncSession,
     tariff: Tariff,
     promo_group_ids: list[int],
+    *,
+    commit: bool = True,
 ) -> Tariff:
     """Устанавливает промогруппы для тарифа."""
     if promo_group_ids:
@@ -467,8 +471,9 @@ async def set_tariff_promo_groups(
     else:
         tariff.allowed_promo_groups = []
 
-    await db.commit()
-    await db.refresh(tariff)
+    if commit:
+        await db.commit()
+        await db.refresh(tariff)
 
     return tariff
 

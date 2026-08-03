@@ -675,6 +675,7 @@ class UserService:
     async def block_user(
         self, db: AsyncSession, user_id: int, admin_id: int, reason: str = 'Заблокирован администратором'
     ) -> bool:
+        current_subscription_id = None
         try:
             user = await get_user_by_id(db, user_id)
             if not user:
@@ -687,6 +688,7 @@ class UserService:
             subs = getattr(user, 'subscriptions', None) or []
             service = SubscriptionService()
             for sub in subs:
+                current_subscription_id = sub.id
                 panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
                 if not panel_uuid or not await service.disable_remnawave_user(panel_uuid, db=db):
                     await db.rollback()
@@ -715,7 +717,7 @@ class UserService:
             logger.warning(
                 'Admin panel synchronization did not complete',
                 user_id=user_id,
-                subscription_id=None,
+                subscription_id=current_subscription_id,
                 action='block',
                 reason_code='panel_api_failed',
             )
