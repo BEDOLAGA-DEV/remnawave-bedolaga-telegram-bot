@@ -47,3 +47,52 @@ The known `uv.lock` change is pre-existing user-owned state. It is neither stage
 - The side-effect-free executable outcome manifest for every direct route has not yet replaced the self-validating `DIRECT_MUTATION_CASES` linkage.
 - The inventory guard has not yet been widened and made symmetric across all public admin route files, and tariff route keys are not yet registered in the authoritative inventory.
 - Full-pytest status and final delivery-head evidence remain pending after those gaps are resolved.
+
+---
+
+## Fix Round 2 — Implementation Evidence (code commit pinned below)
+
+- **Base HEAD:** `d95e832b796decbe47db7920d5f14f9d1ee3e0e2`
+- **Delivered code HEAD:** `3c8c2279db079f586de32e80317894a9e0f722e1`
+- **Evidence commit:** this report is committed separately after the delivered
+  code commit; neither hash is represented as a Chewbacca-reviewed head.
+- **Status:** `READY_FOR_FRESH_REVIEW_AFTER_EVIDENCE_COMMIT`
+- **Timestamp:** `2026-08-03T02:12:00Z`
+
+### Delivered code scope
+
+- Replaced inventory imports from whole test modules with the side-effect-free
+  `tests/cabinet/admin_panel_sync_case_manifest.py`.
+- Expanded AST discovery to every `app/cabinet/routes/admin_*.py`, follows
+  private local wrappers symmetrically to public handlers, and excludes the
+  non-leaf `bulk_execute` dispatcher while retaining its inventoried `_do_*`
+  leaves.
+- Registered public tariff squad sync leaves:
+  `update_existing_tariff:tariff_update_sync_squads` and
+  `sync_tariff_squads:sync_squads`, both targeting each exact subscription
+  UUID through `_sync_tariff_squads_atomically`.
+- Added executable public tariff route contracts for success, typed skipped,
+  and typed failed synchronization.  The success contract exposed and fixed a
+  missing route-owned commit in `update_existing_tariff`.
+
+### Verification
+
+- Focused Task 5 suite (including tariff contracts): `225 passed, 44 warnings`.
+- Scoped Ruff check: `All checks passed!`; scoped Ruff format check: passed.
+- Full `uv run pytest -q`: **baseline blocked at collection** by
+  `tests/services/test_account_merge_service.py:67`, duplicate argument
+  `has_had_paid_subscription` (and duplicate keyword arguments at line 109).
+  Task 5 does not modify that file.
+- Full `uv run ruff check app tests`: **baseline blocked** by the same test
+  syntax error plus pre-existing import-order errors in auth/oauth files.
+- Full `uv run ruff format --check app tests`: **baseline blocked** by the
+  same syntax error and existing unrelated formatting drift.
+- `uv run mypy app`: unavailable (`Failed to spawn: mypy`); it is not declared
+  by this project.
+
+### Working-tree and Plane contract
+
+- `uv.lock` remains a pre-existing user-owned modification and is excluded.
+- `plane_written: false`; recommended Plane update: record Task 5 fix round 2
+  as ready for fresh specification and quality review on the subsequent exact
+  evidence head, with the baseline full-suite/type-check constraints above.
