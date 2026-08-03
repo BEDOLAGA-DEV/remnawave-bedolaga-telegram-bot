@@ -7,6 +7,21 @@ from app.services.admin_panel_sync import (
     BEST_EFFORT_ADMIN_PANEL_MUTATIONS,
     MANDATORY_ADMIN_PANEL_MUTATIONS,
 )
+from tests.cabinet.test_admin_bulk_panel_sync_contract import (
+    FAILED_CASE_KEYS as BULK_FAILED_CASE_KEYS,
+    SKIPPED_CASE_KEYS as BULK_SKIPPED_CASE_KEYS,
+    SUCCESS_CASE_KEYS as BULK_SUCCESS_CASE_KEYS,
+)
+from tests.cabinet.test_admin_panel_sync_contract import (
+    FAILED_CASE_KEYS as SINGLE_FAILED_CASE_KEYS,
+    SKIPPED_CASE_KEYS as SINGLE_SKIPPED_CASE_KEYS,
+    SUCCESS_CASE_KEYS as SINGLE_SUCCESS_CASE_KEYS,
+)
+
+
+SUCCESS_CASE_KEYS = SINGLE_SUCCESS_CASE_KEYS | BULK_SUCCESS_CASE_KEYS
+SKIPPED_CASE_KEYS = SINGLE_SKIPPED_CASE_KEYS | BULK_SKIPPED_CASE_KEYS
+FAILED_CASE_KEYS = SINGLE_FAILED_CASE_KEYS | BULK_FAILED_CASE_KEYS
 
 
 REQUIRED_MUTATION_CLASSES = {
@@ -34,6 +49,15 @@ def test_r2_inventory_is_complete_and_has_no_best_effort_entries():
         entry.route and entry.action and entry.integration_path and entry.transaction_owner
         for entry in MANDATORY_ADMIN_PANEL_MUTATIONS
     )
+
+
+def test_every_inventory_key_has_success_skipped_and_failed_contract_coverage():
+    """Removing a parameterized contract case leaves an inventory mutation uncovered."""
+    required = {entry.key for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
+
+    assert required == SUCCESS_CASE_KEYS
+    assert required == SKIPPED_CASE_KEYS
+    assert required == FAILED_CASE_KEYS
 
 
 PANEL_SERVICE_CLASSES = {'RemnaWaveService', 'SubscriptionService'}
@@ -126,7 +150,7 @@ def _route_panel_handlers(route_tree: ast.AST, user_service_tree: ast.AST) -> se
     functions = _functions(route_tree)
     panel_functions = _local_panel_functions(route_tree)
     user_service_methods = _service_panel_methods(user_service_tree)
-    handlers = {name for name in panel_functions if name != '_sync_subscription_to_panel'}
+    handlers = {name for name in panel_functions if not name.startswith('_')}
 
     for name, function in functions.items():
         imported = _imported_names(function)

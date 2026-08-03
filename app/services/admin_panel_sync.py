@@ -103,6 +103,13 @@ MANDATORY_ADMIN_PANEL_MUTATIONS = (
         PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
     ),
     _mutation(
+        'delete_user',
+        'delete_user',
+        'delete_user',
+        '_require_panel_disable_for_subscriptions',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
         'reset_user_trial',
         'reset_trial',
         'delete_subscription',

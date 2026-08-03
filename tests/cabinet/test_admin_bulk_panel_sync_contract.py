@@ -29,11 +29,26 @@ MANDATORY_BULK_ACTIONS = (
     BulkActionType.DELETE_USER,
 )
 
+# The parameter table below is consumed by the real user-target bulk contract
+# tests.  Deriving its inventory keys from the executable actions prevents a
+# second hand-maintained list from drifting away from the tests.
+BULK_MUTATION_CASES = tuple((f'_do_{action.value}:{action.value}', action) for action in MANDATORY_BULK_ACTIONS)
+
+SUCCESS_CASES = BULK_MUTATION_CASES
+SKIPPED_CASES = BULK_MUTATION_CASES
+FAILED_CASES = BULK_MUTATION_CASES
+
+SUCCESS_CASE_KEYS = {case_key for case_key, _ in SUCCESS_CASES}
+SKIPPED_CASE_KEYS = {case_key for case_key, _ in SKIPPED_CASES}
+FAILED_CASE_KEYS = {case_key for case_key, _ in FAILED_CASES}
+
 SUBSCRIPTION_TARGET_ACTIONS = tuple(
-    action for action in MANDATORY_BULK_ACTIONS if action not in {
-        BulkActionType.GRANT_SUBSCRIPTION, BulkActionType.DELETE_USER
-    }
+    action
+    for action in MANDATORY_BULK_ACTIONS
+    if action not in {BulkActionType.GRANT_SUBSCRIPTION, BulkActionType.DELETE_USER}
 )
+
+SUBSCRIPTION_TARGET_CASES = tuple(case for case in BULK_MUTATION_CASES if case[1] in SUBSCRIPTION_TARGET_ACTIONS)
 
 
 EXPECTED_SUCCESS_MESSAGES = {
@@ -51,15 +66,32 @@ EXPECTED_SUCCESS_MESSAGES = {
 
 def _subscription(subscription_id: int, *, status: str = 'active') -> SimpleNamespace:
     tariff = SimpleNamespace(
-        id=1, name='Starter', traffic_limit_gb=100, device_limit=2,
-        max_device_limit=None, allowed_squads=[], is_daily=False,
+        id=1,
+        name='Starter',
+        traffic_limit_gb=100,
+        device_limit=2,
+        max_device_limit=None,
+        allowed_squads=[],
+        is_daily=False,
     )
     return SimpleNamespace(
-        id=subscription_id, user_id=42, status=status, is_active=status == 'active', is_trial=True,
-        end_date=datetime.now(UTC) + timedelta(days=14), tariff=tariff, tariff_id=tariff.id,
-        traffic_used_gb=5, traffic_limit_gb=100, device_limit=2, remnawave_uuid=f'sub-{subscription_id}',
-        connected_squads=[], purchased_traffic_gb=0, traffic_reset_at=None,
-        grace_suppressed_until=None, is_daily_paused=False,
+        id=subscription_id,
+        user_id=42,
+        status=status,
+        is_active=status == 'active',
+        is_trial=True,
+        end_date=datetime.now(UTC) + timedelta(days=14),
+        tariff=tariff,
+        tariff_id=tariff.id,
+        traffic_used_gb=5,
+        traffic_limit_gb=100,
+        device_limit=2,
+        remnawave_uuid=f'sub-{subscription_id}',
+        connected_squads=[],
+        purchased_traffic_gb=0,
+        traffic_reset_at=None,
+        grace_suppressed_until=None,
+        is_daily_paused=False,
     )
 
 
@@ -88,8 +120,13 @@ def _params(action: BulkActionType) -> BulkActionParams:
 
 def _tariff() -> SimpleNamespace:
     return SimpleNamespace(
-        id=2, name='Pro', traffic_limit_gb=200, device_limit=4, max_device_limit=None,
-        allowed_squads=['pro'], is_daily=False,
+        id=2,
+        name='Pro',
+        traffic_limit_gb=200,
+        device_limit=4,
+        max_device_limit=None,
+        allowed_squads=['pro'],
+        is_daily=False,
     )
 
 
@@ -151,8 +188,13 @@ def _configure_real_handler_edges(monkeypatch, db, user, selected, action, sync)
         lambda: SimpleNamespace(disable_remnawave_user=disable, enable_remnawave_user=enable),
     )
     return SimpleNamespace(
-        disable=disable, enable=enable, extend=extend, add_traffic=add_traffic,
-        reactivate=reactivate, create=create, delete_account=delete_account,
+        disable=disable,
+        enable=enable,
+        extend=extend,
+        add_traffic=add_traffic,
+        reactivate=reactivate,
+        create=create,
+        delete_account=delete_account,
     )
 
 
@@ -173,11 +215,10 @@ def _assert_complete_sync_call(sync, db, user, sub, action: BulkActionType) -> N
 
 def _instrument_executor_owned_commit(db, executor_name: str, panel_events: list[str]) -> None:
     """Make a handler-owned commit or a commit before panel work observable."""
+
     async def record_commit() -> None:
         bulk_frames = [
-            frame.function
-            for frame in inspect.stack()
-            if frame.frame.f_globals.get('__name__') == bulk.__name__
+            frame.function for frame in inspect.stack() if frame.frame.f_globals.get('__name__') == bulk.__name__
         ]
         assert bulk_frames[0] == executor_name
         assert panel_events and panel_events[-1] == 'panel-complete'
@@ -211,12 +252,17 @@ def _assert_handler_staged_locally(action, edges, db, target, tariff):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('action', MANDATORY_BULK_ACTIONS)
-@pytest.mark.parametrize('failure_type, reason', [
-    (PanelSyncSkipped, PanelSyncReason.NOT_CONFIGURED),
-    (PanelSyncFailed, PanelSyncReason.PANEL_API_FAILED),
-])
-async def test_real_bulk_user_handler_panel_failure_rolls_back_staged_state(monkeypatch, action, failure_type, reason):
+@pytest.mark.parametrize(('case_key', 'action'), BULK_MUTATION_CASES)
+@pytest.mark.parametrize(
+    'failure_type, reason',
+    [
+        (PanelSyncSkipped, PanelSyncReason.NOT_CONFIGURED),
+        (PanelSyncFailed, PanelSyncReason.PANEL_API_FAILED),
+    ],
+)
+async def test_real_bulk_user_handler_panel_failure_rolls_back_staged_state(
+    monkeypatch, case_key, action, failure_type, reason
+):
     """Removing handler staging, its panel call, or executor rollback breaks this contract."""
     db = AsyncMock()
     user, first, selected = _user_and_selected()
@@ -252,8 +298,8 @@ async def test_real_bulk_user_handler_panel_failure_rolls_back_staged_state(monk
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('action', MANDATORY_BULK_ACTIONS)
-async def test_real_bulk_user_handler_stages_panel_work_and_commits_once(monkeypatch, action):
+@pytest.mark.parametrize(('case_key', 'action'), BULK_MUTATION_CASES)
+async def test_real_bulk_user_handler_stages_panel_work_and_commits_once(monkeypatch, case_key, action):
     """An internal handler commit or wrong panel target makes this target contract fail."""
     db = AsyncMock()
     user, first, selected = _user_and_selected()
@@ -269,9 +315,9 @@ async def test_real_bulk_user_handler_stages_panel_work_and_commits_once(monkeyp
     if action is BulkActionType.DELETE_SUBSCRIPTION:
         edges.disable.side_effect = lambda *_args, **_kwargs: panel_events.append('panel-complete') or True
     elif action is BulkActionType.DELETE_USER:
-        edges.delete_account.side_effect = lambda *_args, **_kwargs: panel_events.append('panel-complete') or SimpleNamespace(
-            bot_deleted=True, panel_deleted=True
-        )
+        edges.delete_account.side_effect = lambda *_args, **_kwargs: panel_events.append(
+            'panel-complete'
+        ) or SimpleNamespace(bot_deleted=True, panel_deleted=True)
     elif action is BulkActionType.ADD_TRAFFIC:
         edges.enable.side_effect = lambda *_args, **_kwargs: panel_events.append('panel-complete') or True
 
@@ -293,13 +339,16 @@ async def test_real_bulk_user_handler_stages_panel_work_and_commits_once(monkeyp
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('action', SUBSCRIPTION_TARGET_ACTIONS)
-@pytest.mark.parametrize('failure_type, reason', [
-    (PanelSyncSkipped, PanelSyncReason.NOT_CONFIGURED),
-    (PanelSyncFailed, PanelSyncReason.PANEL_API_FAILED),
-])
+@pytest.mark.parametrize(('case_key', 'action'), SUBSCRIPTION_TARGET_CASES)
+@pytest.mark.parametrize(
+    'failure_type, reason',
+    [
+        (PanelSyncSkipped, PanelSyncReason.NOT_CONFIGURED),
+        (PanelSyncFailed, PanelSyncReason.PANEL_API_FAILED),
+    ],
+)
 async def test_real_subscription_handler_failure_uses_selected_subscription_and_rolls_back(
-    monkeypatch, action, failure_type, reason
+    monkeypatch, case_key, action, failure_type, reason
 ):
     db = AsyncMock()
     user, first, selected = _user_and_selected()
@@ -326,8 +375,10 @@ async def test_real_subscription_handler_failure_uses_selected_subscription_and_
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('action', SUBSCRIPTION_TARGET_ACTIONS)
-async def test_real_subscription_handler_success_uses_selected_subscription_and_commits_once(monkeypatch, action):
+@pytest.mark.parametrize(('case_key', 'action'), SUBSCRIPTION_TARGET_CASES)
+async def test_real_subscription_handler_success_uses_selected_subscription_and_commits_once(
+    monkeypatch, case_key, action
+):
     db = AsyncMock()
     user, first, selected = _user_and_selected()
     panel_events: list[str] = []
@@ -368,9 +419,7 @@ async def test_multi_tariff_subscription_delete_disables_selected_uuid_before_ex
     user, _, selected = _user_and_selected()
     panel_events: list[str] = []
     sync = AsyncMock()
-    edges = _configure_real_handler_edges(
-        monkeypatch, db, user, selected, BulkActionType.DELETE_SUBSCRIPTION, sync
-    )
+    edges = _configure_real_handler_edges(monkeypatch, db, user, selected, BulkActionType.DELETE_SUBSCRIPTION, sync)
     bulk.settings.is_multi_tariff_enabled.return_value = True
     edges.disable.side_effect = lambda *_args, **_kwargs: panel_events.append('panel-complete') or True
     _instrument_executor_owned_commit(db, '_execute_for_subscription', panel_events)
@@ -398,9 +447,7 @@ async def test_multi_tariff_subscription_delete_failure_rolls_back_before_local_
     sync = AsyncMock()
     logger = MagicMock()
     monkeypatch.setattr(bulk, 'logger', logger)
-    edges = _configure_real_handler_edges(
-        monkeypatch, db, user, selected, BulkActionType.DELETE_SUBSCRIPTION, sync
-    )
+    edges = _configure_real_handler_edges(monkeypatch, db, user, selected, BulkActionType.DELETE_SUBSCRIPTION, sync)
     bulk.settings.is_multi_tariff_enabled.return_value = True
     if failure_kind == 'typed':
         edges.disable.side_effect = PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)

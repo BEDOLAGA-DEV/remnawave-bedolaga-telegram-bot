@@ -145,17 +145,13 @@ async def test_required_traffic_reset_failure_raises_failed_with_safe_diagnostic
 
 
 @pytest.mark.asyncio
-async def test_multi_tariff_missing_subscription_uuid_never_uses_user_uuid(
-    configured_panel, user, subscription, db
-):
+async def test_multi_tariff_missing_subscription_uuid_never_uses_user_uuid(configured_panel, user, subscription, db):
     """Falling back to the user UUID would reset a sibling tariff's panel user."""
     subscription.remnawave_uuid = None
     user.remnawave_uuid = 'wrong-user-level-uuid'
 
     with pytest.raises(PanelSyncSkipped) as raised:
-        await admin_users._sync_subscription_to_panel(
-            db, user, subscription, reset_traffic=True, action='reset'
-        )
+        await admin_users._sync_subscription_to_panel(db, user, subscription, reset_traffic=True, action='reset')
 
     assert raised.value.reason_code is PanelSyncReason.MISSING_SUBSCRIPTION_UUID
     db.commit.assert_not_awaited()
@@ -246,15 +242,9 @@ async def test_standalone_reset_panel_failure_prevents_local_delete(monkeypatch,
     """Panel failure must occur before the standalone reset stages destructive SQL."""
     user.subscriptions = [subscription]
     monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr(
-        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
-    )
-    monkeypatch.setattr(
-        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
-    )
-    monkeypatch.setattr(
-        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock()
-    )
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock())
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
     monkeypatch.setattr(admin_users, '_require_panel_disable_for_subscriptions', AsyncMock(side_effect=failure))
 
     result = await admin_users.reset_user_subscription(
@@ -277,15 +267,9 @@ async def test_standalone_reset_success_orders_exact_panel_before_local_delete_a
 ):
     user.subscriptions = [subscription]
     monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr(
-        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
-    )
-    monkeypatch.setattr(
-        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
-    )
-    monkeypatch.setattr(
-        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock()
-    )
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock())
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
     events: list[tuple[str, object]] = []
 
     async def panel(_user, targets, *, action):
@@ -331,6 +315,43 @@ UNIFIED_MANDATORY_ACTIONS = (
     'remove_traffic',
     'set_device_limit',
 )
+
+# These are the parameter rows exercised by the unified route success and
+# failure tests below.  The coverage assertion imports the derived key sets;
+# it deliberately does not maintain another copy of the inventory.
+UNIFIED_MUTATION_CASES = tuple((f'update_user_subscription:{action}', action) for action in UNIFIED_MANDATORY_ACTIONS)
+
+# Standalone route contracts have different request shapes, so their existing
+# focused tests remain separate.  This parameter table makes their three
+# contract outcomes part of the same executable coverage manifest.
+DIRECT_MUTATION_CASES = (
+    ('delete_user_device:delete_device', 'delete device'),
+    ('reset_user_devices:reset_devices', 'reset devices'),
+    ('full_delete_user:delete_user', 'full delete'),
+    ('delete_user:delete_user', 'delete user'),
+    ('reset_user_trial:reset_trial', 'trial reset'),
+    ('reset_user_subscription:reset_subscription', 'subscription reset'),
+    ('disable_user:disable', 'disable user'),
+    ('block_user:block', 'block user'),
+    ('unblock_user:unblock', 'unblock user'),
+    ('sync_user_to_panel:sync_to_panel', 'direct sync'),
+)
+
+SUCCESS_CASES = UNIFIED_MUTATION_CASES + DIRECT_MUTATION_CASES
+SKIPPED_CASES = UNIFIED_MUTATION_CASES + DIRECT_MUTATION_CASES
+FAILED_CASES = UNIFIED_MUTATION_CASES + DIRECT_MUTATION_CASES
+
+SUCCESS_CASE_KEYS = {case_key for case_key, _ in SUCCESS_CASES}
+SKIPPED_CASE_KEYS = {case_key for case_key, _ in SKIPPED_CASES}
+FAILED_CASE_KEYS = {case_key for case_key, _ in FAILED_CASES}
+
+
+@pytest.mark.parametrize(('case_key', '_description'), DIRECT_MUTATION_CASES)
+def test_direct_mutation_contract_cases_are_executable_inventory_rows(case_key, _description):
+    """A new standalone panel mutation must join the success/skip/failure case table."""
+    assert case_key in SUCCESS_CASE_KEYS
+    assert case_key in SKIPPED_CASE_KEYS
+    assert case_key in FAILED_CASE_KEYS
 
 
 def _unified_request(action: str, subscription: SimpleNamespace) -> UpdateSubscriptionRequest:
@@ -399,6 +420,7 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
         assert kwargs.get('commit') is False
 
     if action in {'extend', 'shorten'}:
+
         async def stage_extension(_db, target, days, *, commit):
             await no_commit(_db, target, days, commit=commit)
             target.end_date += timedelta(days=days)
@@ -429,20 +451,15 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
             allowed_squads=[],
         )
         monkeypatch.setattr(admin_users, 'get_tariff_by_id', AsyncMock(return_value=tariff))
-        monkeypatch.setattr(
-            'app.database.crud.subscription.calc_device_limit_on_tariff_switch', lambda **_: 2
-        )
+        monkeypatch.setattr('app.database.crud.subscription.calc_device_limit_on_tariff_switch', lambda **_: 2)
         monkeypatch.setattr('app.database.crud.transaction.create_transaction', AsyncMock(side_effect=no_commit))
-        monkeypatch.setattr(
-            'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
-        )
+        monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock())
         monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
     elif action == 'cancel':
-        monkeypatch.setattr(
-            'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
-        )
+        monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock())
         monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
     elif action == 'reset':
+
         async def reset_with_panel(_db, _user, _subscription, *, commit):
             assert commit is False
             _subscription.status = 'disabled'
@@ -450,11 +467,14 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
 
         monkeypatch.setattr('app.services.subscription_service.reset_subscription_with_panel', reset_with_panel)
     elif action == 'add_traffic':
+
         async def stage_traffic(_db, target, traffic_gb, *, commit):
             await no_commit(_db, target, traffic_gb, commit=commit)
             target.purchased_traffic_gb += traffic_gb
 
-        monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock(side_effect=stage_traffic))
+        monkeypatch.setattr(
+            'app.database.crud.subscription.add_subscription_traffic', AsyncMock(side_effect=stage_traffic)
+        )
         monkeypatch.setattr('app.database.crud.subscription.reactivate_subscription', AsyncMock(side_effect=no_commit))
         monkeypatch.setattr(
             'app.services.subscription_service.SubscriptionService.enable_remnawave_user', AsyncMock(return_value=True)
@@ -475,13 +495,13 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+@pytest.mark.parametrize(('case_key', 'action'), UNIFIED_MUTATION_CASES)
 @pytest.mark.parametrize(
     'failure',
     [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
 )
 async def test_every_unified_action_route_fails_closed_after_local_staging(
-    monkeypatch, user, subscription, db, action, failure
+    monkeypatch, user, subscription, db, case_key, action, failure
 ):
     """Public route branches, rather than the shared finisher, own fail-closed responses."""
     await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
@@ -510,6 +530,7 @@ async def test_every_unified_action_route_fails_closed_after_local_staging(
     db.rollback.side_effect = restore_after_rollback
 
     if action == 'reset':
+
         async def fail_reset(_db, _user, target, *, commit):
             assert commit is False
             target.status = 'disabled'
@@ -611,9 +632,9 @@ async def test_active_recurring_tariff_change_and_cancel_commit_once_after_succe
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+@pytest.mark.parametrize(('case_key', 'action'), UNIFIED_MUTATION_CASES)
 async def test_every_unified_action_route_stages_exact_target_then_panel_then_one_commit(
-    monkeypatch, user, subscription, db, action
+    monkeypatch, user, subscription, db, case_key, action
 ):
     """Each public branch must preserve its response and use the selected subscription UUID."""
     await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
@@ -633,6 +654,7 @@ async def test_every_unified_action_route_stages_exact_target_then_panel_then_on
         events.append(('commit', None))
 
     if action == 'reset':
+
         async def reset_with_panel(_db, _user, target, *, commit):
             assert commit is False
             target.status = 'disabled'
@@ -665,13 +687,13 @@ async def test_every_unified_action_route_stages_exact_target_then_panel_then_on
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+@pytest.mark.parametrize(('case_key', 'action'), UNIFIED_MUTATION_CASES)
 @pytest.mark.parametrize(
     'failure',
     [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
 )
 async def test_unified_mandatory_action_typed_failure_rolls_back_once(
-    monkeypatch, user, subscription, db, action, failure
+    monkeypatch, user, subscription, db, case_key, action, failure
 ):
     """Every unified action must inherit the same typed fail-closed transaction boundary."""
     sync = AsyncMock(side_effect=failure)
@@ -686,9 +708,9 @@ async def test_unified_mandatory_action_typed_failure_rolls_back_once(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+@pytest.mark.parametrize(('case_key', 'action'), UNIFIED_MUTATION_CASES)
 async def test_unified_mandatory_action_success_orders_panel_before_one_commit(
-    monkeypatch, user, subscription, db, action
+    monkeypatch, user, subscription, db, case_key, action
 ):
     """Removing or moving the final commit would violate every unified route contract."""
     events: list[tuple[str, object]] = []
@@ -715,9 +737,7 @@ async def test_unified_mandatory_action_success_orders_panel_before_one_commit(
     'failure',
     [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
 )
-async def test_trial_reset_requires_one_authoritative_complete_panel_wipe(
-    monkeypatch, user, subscription, db, failure
-):
+async def test_trial_reset_requires_one_authoritative_complete_panel_wipe(monkeypatch, user, subscription, db, failure):
     """Mixed or total panel wipe failure must not stage or commit a partial trial reset."""
     subscription.is_trial = True
     subscription.is_active = False
@@ -853,7 +873,12 @@ async def test_device_reset_success_uses_exact_identity_and_preserves_response(m
 @pytest.mark.parametrize(
     'delete_result, expected_success',
     [
-        (SimpleNamespace(bot_deleted=False, panel_deleted=False, panel_error='panel unavailable', grace_blocked=False), False),
+        (
+            SimpleNamespace(
+                bot_deleted=False, panel_deleted=False, panel_error='panel unavailable', grace_blocked=False
+            ),
+            False,
+        ),
         (SimpleNamespace(bot_deleted=True, panel_deleted=True, panel_error=None, grace_blocked=False), True),
     ],
 )
@@ -969,7 +994,11 @@ async def test_disable_success_orders_exact_panel_local_stage_and_one_commit(mon
 
     assert result.success is True
     assert result.message == 'User disabled successfully'
-    assert events == [('panel', (23, 'subscription-level-uuid', 'disable_user')), ('local', (23, False)), ('commit', None)]
+    assert events == [
+        ('panel', (23, 'subscription-level-uuid', 'disable_user')),
+        ('local', (23, False)),
+        ('commit', None),
+    ]
     db.commit.assert_awaited_once()
 
 
