@@ -1,53 +1,73 @@
-"""add apple oauth provider id to users
+"""composite index on users(referred_by_id, has_made_first_topup)
 
-Revision ID: 0086
-Revises: 0085
-Create Date: 2026-05-16
+The tiered partner commission policy (commit 4b48d519) introduced
+``get_paid_referrals_count(referrer_id)``, which executes
+
+    SELECT COUNT(*) FROM users
+    WHERE referred_by_id = $1 AND has_made_first_topup = true
+
+on every referral commission calculation — i.e. on every paying
+referral's top-up. The pre-existing single-column index on
+``users.referred_by_id`` is selective enough for partners with a handful
+of referrals, but for partners with thousands of referrals (campaign
+landings, KOL bots) PostgreSQL has to fetch each row and re-filter on
+``has_made_first_topup``.
+
+A composite index lets the query plan as an index-only scan and keeps
+tier selection O(log N) in referral count.
+
+``CREATE INDEX CONCURRENTLY`` is used so the migration does not take an
+``ACCESS EXCLUSIVE`` lock on ``users`` during the index build — matches
+the repo convention established by migrations 0041, 0042, 0043, 0048,
+0080, 0081 for any index on ``users`` or other large tables.
+``CONCURRENTLY`` requires running outside a transaction, hence the
+``autocommit_block()``. On SQLite (used in dev/CI) ``CONCURRENTLY`` is
+not supported, so the migration falls back to the standard
+``create_index`` path there.
+
+Revision ID: 0090
+Revises: 0089
+Create Date: 2026-05-28
 """
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = '0086'
-down_revision: Union[str, None] = '0085'
+revision: str = '0090'
+down_revision: Union[str, None] = '0089'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_TABLE = 'users'
-_COLUMN = 'apple_id'
-_INDEX = 'ix_users_apple_id'
 
-
-def _column_exists(bind: sa.engine.Connection) -> bool:
-    inspector = sa.inspect(bind)
-    if not inspector.has_table(_TABLE):
-        return False
-    return any(col['name'] == _COLUMN for col in inspector.get_columns(_TABLE))
-
-
-def _index_exists(bind: sa.engine.Connection) -> bool:
-    inspector = sa.inspect(bind)
-    if not inspector.has_table(_TABLE):
-        return False
-    return any(index['name'] == _INDEX for index in inspector.get_indexes(_TABLE))
+INDEX_NAME = 'ix_users_referred_by_paid'
 
 
 def upgrade() -> None:
     bind = op.get_bind()
-    if not sa.inspect(bind).has_table(_TABLE):
-        return
-    if not _column_exists(bind):
-        op.add_column(_TABLE, sa.Column(_COLUMN, sa.String(length=255), nullable=True))
-    if not _index_exists(bind):
-        op.create_index(_INDEX, _TABLE, [_COLUMN], unique=True)
+    dialect_name = bind.dialect.name
+
+    if dialect_name == 'postgresql':
+        with op.get_context().autocommit_block():
+            op.execute(
+                f'CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX_NAME} ON users (referred_by_id, has_made_first_topup)'
+            )
+    else:
+        op.create_index(
+            INDEX_NAME,
+            'users',
+            ['referred_by_id', 'has_made_first_topup'],
+            unique=False,
+        )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
-    if _index_exists(bind):
-        op.drop_index(_INDEX, table_name=_TABLE)
-    if _column_exists(bind):
-        op.drop_column(_TABLE, _COLUMN)
+    dialect_name = bind.dialect.name
+
+    if dialect_name == 'postgresql':
+        with op.get_context().autocommit_block():
+            op.execute(f'DROP INDEX CONCURRENTLY IF EXISTS {INDEX_NAME}')
+    else:
+        op.drop_index(INDEX_NAME, table_name='users')
