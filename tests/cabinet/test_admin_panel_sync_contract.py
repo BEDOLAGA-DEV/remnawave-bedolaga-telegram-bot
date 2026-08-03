@@ -4,12 +4,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from structlog.testing import capture_logs
 
 from app.cabinet.routes import admin_bulk_actions, admin_users
 from app.cabinet.schemas.bulk_actions import BulkActionParams
 from app.cabinet.schemas.users import UpdateSubscriptionRequest
 from app.config import settings
+from app.database.models import Subscription, User
 from app.external.remnawave_api import RemnaWaveAPIError
 from app.services.admin_panel_sync import (
     MANDATORY_ADMIN_PANEL_MUTATIONS,
@@ -23,6 +26,7 @@ from app.services.admin_panel_sync import (
 from app.services.subscription_service import SubscriptionService
 from app.services.user_service import UserService
 from tests.cabinet.admin_panel_sync_case_manifest import UNIFIED_CASES as UNIFIED_MUTATION_CASES
+from tests.fixtures.sqlite_memory import memory_session
 
 
 @pytest.fixture
@@ -977,6 +981,373 @@ async def test_active_recurring_tariff_change_and_cancel_commit_once_after_succe
     assert events[-2:] == ['panel', 'commit']
     assert events[:2] == ['platega', 'lava']
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'panel_outcome',
+    [
+        PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID),
+        PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED),
+    ],
+)
+async def test_strict_reset_active_recurrences_never_commit_before_skipped_or_failed_panel(
+    monkeypatch, user, subscription, db, panel_outcome
+):
+    """Passing the default commit=True to either recurrence helper makes this fail."""
+    subscription.user_id = user.id
+    subscription.is_trial = False
+    subscription.autopay_enabled = True
+    subscription.traffic_used_gb = 5.0
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    cancellation_flags: list[tuple[str, bool]] = []
+
+    async def active_platega(_db, _subscription_id, *, commit=True):
+        cancellation_flags.append(('platega', commit))
+        if commit:
+            await _db.commit()
+
+    async def active_lava(_db, _subscription_id, *, commit=True):
+        cancellation_flags.append(('lava', commit))
+        if commit:
+            await _db.commit()
+
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', active_platega)
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', active_lava)
+    if isinstance(panel_outcome, PanelSyncSkipped):
+        subscription.remnawave_uuid = None
+    else:
+        monkeypatch.setattr(SubscriptionService, 'disable_remnawave_user', AsyncMock(return_value=False))
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=UpdateSubscriptionRequest(action='reset', subscription_id=subscription.id),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert result.message == panel_sync_failure_message()
+    assert cancellation_flags == [('platega', False), ('lava', False)]
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_strict_reset_active_recurrences_share_the_single_route_commit_on_success(
+    monkeypatch, user, subscription, db
+):
+    """Both active recurrence rows stay staged until panel disable completes."""
+    subscription.user_id = user.id
+    subscription.is_trial = False
+    subscription.autopay_enabled = True
+    subscription.traffic_used_gb = 5.0
+    user.subscriptions = [subscription]
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(SubscriptionService, 'disable_remnawave_user', AsyncMock(return_value=True))
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+    events: list[str] = []
+
+    async def active_cancel(name, _db, _subscription_id, *, commit=True):
+        assert commit is False
+        events.append(name)
+
+    async def commit():
+        events.append('commit')
+
+    monkeypatch.setattr(
+        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe',
+        lambda db, subscription_id, *, commit=True: active_cancel('platega', db, subscription_id, commit=commit),
+    )
+    monkeypatch.setattr(
+        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe',
+        lambda db, subscription_id, *, commit=True: active_cancel('lava', db, subscription_id, commit=commit),
+    )
+    db.commit.side_effect = commit
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=UpdateSubscriptionRequest(action='reset', subscription_id=subscription.id),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    assert events == ['platega', 'lava', 'commit']
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outcome', ['success', 'skipped', 'failed'])
+async def test_unified_extend_syncs_every_deactivated_sibling_trial_atomically(
+    monkeypatch, user, subscription, db, outcome
+):
+    """A paid extension's hidden CRUD trial cleanup is part of the public mutation."""
+    subscription.user_id = user.id
+    subscription.is_trial = False
+    subscription.autopay_enabled = False
+    subscription.device_limit = 2
+    subscription.traffic_used_gb = 0.0
+    subscription.tariff_id = 10
+    sibling = SimpleNamespace(
+        id=24,
+        user_id=user.id,
+        status='trial',
+        is_trial=True,
+        autopay_enabled=True,
+        end_date=datetime.now(UTC) + timedelta(days=7),
+        remnawave_uuid='sibling-trial-uuid',
+    )
+    user.subscriptions = [subscription, sibling]
+    before = dict(vars(sibling))
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+
+    async def extend_with_hidden_trial_cleanup(_db, target, days, *, commit):
+        assert target is subscription
+        assert days == 3
+        assert commit is False
+        target.end_date += timedelta(days=days)
+        sibling.status = 'disabled'
+        sibling.is_trial = False
+        sibling.autopay_enabled = False
+
+    monkeypatch.setattr(admin_users, 'extend_subscription', extend_with_hidden_trial_cleanup)
+    primary_sync = AsyncMock(return_value={})
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', primary_sync)
+    disable = AsyncMock(return_value=outcome == 'success')
+    service = SimpleNamespace(is_configured=outcome != 'skipped', disable_remnawave_user=disable)
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService', lambda: service)
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+
+    async def rollback():
+        vars(sibling).clear()
+        vars(sibling).update(before)
+
+    db.rollback.side_effect = rollback
+
+    with capture_logs() as logs:
+        result = await admin_users.update_user_subscription(
+            user_id=user.id,
+            request=UpdateSubscriptionRequest(action='extend', subscription_id=subscription.id, days=3),
+            admin=SimpleNamespace(id=1),
+            db=db,
+        )
+
+    primary_sync.assert_awaited_once_with(db, user, subscription, reset_traffic=False, action='extend')
+    if outcome == 'success':
+        assert result.success is True
+        disable.assert_awaited_once_with(
+            'sibling-trial-uuid',
+            user_id=user.id,
+            subscription_id=sibling.id,
+            action='extend',
+        )
+        db.commit.assert_awaited_once()
+        db.rollback.assert_not_awaited()
+        assert sibling.status == 'disabled'
+    else:
+        assert result.success is False
+        assert result.message == panel_sync_failure_message()
+        db.commit.assert_not_awaited()
+        db.rollback.assert_awaited_once()
+        assert vars(sibling) == before
+        reason = PanelSyncReason.NOT_CONFIGURED if outcome == 'skipped' else PanelSyncReason.PANEL_API_FAILED
+        assert any(
+            event.get('subscription_id') == sibling.id
+            and event.get('action') == 'extend'
+            and event.get('reason_code') in {reason, reason.value}
+            for event in logs
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('create_variant', ['new', 'revive', 'trial_conversion'])
+async def test_unified_create_variants_sync_every_deactivated_sibling_trial_before_commit(
+    monkeypatch, user, db, create_variant
+):
+    """New, revived, and converted paid creates share the hidden sibling cleanup contract."""
+    now = datetime.now(UTC)
+
+    def sub(subscription_id, *, status, is_trial, panel_uuid):
+        return SimpleNamespace(
+            id=subscription_id,
+            user_id=user.id,
+            status=status,
+            is_trial=is_trial,
+            is_active=status in {'active', 'trial'},
+            autopay_enabled=is_trial,
+            end_date=now + timedelta(days=7),
+            remnawave_uuid=panel_uuid,
+            remnawave_short_uuid=None,
+            remnawave_short_id=f'sub-{subscription_id}',
+            subscription_url=None,
+            subscription_crypto_link=None,
+            traffic_limit_gb=20,
+            traffic_used_gb=0.0,
+            device_limit=2,
+            connected_squads=[],
+            tariff_id=10,
+            tariff=SimpleNamespace(external_squad_uuid=None),
+        )
+
+    sibling = sub(42, status='trial', is_trial=True, panel_uuid='sibling-trial-uuid')
+    if create_variant == 'new':
+        primary = sub(41, status='active', is_trial=False, panel_uuid='new-paid-uuid')
+        user.subscriptions = [sibling]
+    elif create_variant == 'revive':
+        primary = sub(41, status='expired', is_trial=False, panel_uuid='revived-paid-uuid')
+        primary.is_active = False
+        user.subscriptions = [primary, sibling]
+    else:
+        primary = sub(41, status='trial', is_trial=True, panel_uuid='converted-trial-uuid')
+        user.subscriptions = [primary, sibling]
+
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_user_and_tariff', AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        admin_users,
+        'get_tariff_by_id',
+        AsyncMock(
+            return_value=SimpleNamespace(
+                id=99, traffic_limit_gb=50, device_limit=3, allowed_squads=[], external_squad_uuid=None
+            )
+        ),
+    )
+
+    async def create_with_hidden_trial_cleanup(**kwargs):
+        assert kwargs['commit'] is False
+        primary.status = 'active'
+        primary.is_trial = False
+        sibling.status = 'disabled'
+        sibling.is_trial = False
+        sibling.autopay_enabled = False
+        return primary
+
+    monkeypatch.setattr('app.database.crud.subscription.create_paid_subscription', create_with_hidden_trial_cleanup)
+    primary_sync = AsyncMock(return_value={})
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', primary_sync)
+    disable = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService',
+        lambda: SimpleNamespace(is_configured=True, disable_remnawave_user=disable),
+    )
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=UpdateSubscriptionRequest(action='create', tariff_id=99, days=3),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    primary_sync.assert_awaited_once_with(db, user, primary, reset_traffic=False, action='create')
+    disable.assert_awaited_once_with(
+        'sibling-trial-uuid',
+        user_id=user.id,
+        subscription_id=sibling.id,
+        action='create',
+    )
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outcome', ['success', 'skipped', 'failed'])
+async def test_real_multisubscription_extend_commits_or_rolls_back_sibling_trial_as_one_unit(monkeypatch, outcome):
+    """Exercise the real CRUD query/flush and real transaction over two subscription rows."""
+    now = datetime.now(UTC)
+    async with memory_session(monkeypatch, [User.__table__, Subscription.__table__]) as db:
+        user_row = User(id=1701, username='real-multi-user')
+        paid = Subscription(
+            id=2301,
+            user_id=user_row.id,
+            status='active',
+            is_trial=False,
+            start_date=now - timedelta(days=1),
+            end_date=now + timedelta(days=30),
+            traffic_limit_gb=20,
+            traffic_used_gb=0.0,
+            device_limit=2,
+            connected_squads=[],
+            autopay_enabled=False,
+            remnawave_uuid='paid-panel-uuid',
+            remnawave_short_id='real-paid',
+        )
+        sibling = Subscription(
+            id=2302,
+            user_id=user_row.id,
+            status='trial',
+            is_trial=True,
+            start_date=now - timedelta(days=1),
+            end_date=now + timedelta(days=7),
+            traffic_limit_gb=5,
+            traffic_used_gb=0.0,
+            device_limit=1,
+            connected_squads=[],
+            autopay_enabled=True,
+            remnawave_uuid='real-sibling-panel-uuid',
+            remnawave_short_id='real-trial',
+        )
+        db.add_all([user_row, paid, sibling])
+        await db.commit()
+        user_id = user_row.id
+        paid_id = paid.id
+        sibling_id = sibling.id
+        user_row = await db.scalar(select(User).options(selectinload(User.subscriptions)).where(User.id == user_id))
+        paid = next(subscription for subscription in user_row.subscriptions if subscription.id == paid_id)
+
+        monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user_row))
+        monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+        monkeypatch.setattr('app.database.crud.subscription._housekeep_expired_purchases', AsyncMock())
+        monkeypatch.setattr('app.database.crud.subscription.clear_notifications', AsyncMock())
+        monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', AsyncMock(return_value={}))
+        disable = AsyncMock(return_value=outcome == 'success')
+        monkeypatch.setattr(
+            'app.services.subscription_service.SubscriptionService',
+            lambda: SimpleNamespace(is_configured=outcome != 'skipped', disable_remnawave_user=disable),
+        )
+        monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+        original_commit = db.commit
+        commit_spy = AsyncMock(wraps=original_commit)
+        monkeypatch.setattr(db, 'commit', commit_spy)
+
+        result = await admin_users.update_user_subscription(
+            user_id=user_id,
+            request=UpdateSubscriptionRequest(action='extend', subscription_id=paid_id, days=3),
+            admin=SimpleNamespace(id=1),
+            db=db,
+        )
+
+        db.expire_all()
+        persisted = {
+            subscription.id: subscription
+            for subscription in (await db.scalars(select(Subscription).order_by(Subscription.id))).all()
+        }
+        if outcome == 'success':
+            assert result.success is True
+            assert commit_spy.await_count == 1
+            assert persisted[sibling_id].status == 'disabled'
+            assert persisted[sibling_id].is_trial is False
+            disable.assert_awaited_once_with(
+                'real-sibling-panel-uuid',
+                user_id=user_id,
+                subscription_id=sibling_id,
+                action='extend',
+            )
+        else:
+            assert result.success is False
+            assert commit_spy.await_count == 0
+            assert persisted[sibling_id].status == 'trial'
+            assert persisted[sibling_id].is_trial is True
 
 
 @pytest.mark.asyncio

@@ -560,7 +560,10 @@ async def _require_panel_disable_for_subscriptions(
 
     service = SubscriptionService()
     if not service.is_configured:
-        raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
+        raise PanelSyncSkipped(
+            PanelSyncReason.NOT_CONFIGURED,
+            subscription_id=getattr(subscriptions[0], 'id', None) if subscriptions else None,
+        )
 
     targets = (
         [(subscription.id, subscription.remnawave_uuid) for subscription in subscriptions]
@@ -569,7 +572,7 @@ async def _require_panel_disable_for_subscriptions(
     )
     for subscription_id, panel_uuid in targets:
         if not panel_uuid:
-            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID, subscription_id=subscription_id)
         try:
             disabled = await service.disable_remnawave_user(
                 panel_uuid,
@@ -578,9 +581,63 @@ async def _require_panel_disable_for_subscriptions(
                 action=action,
             )
         except Exception as error:
-            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED, subscription_id=subscription_id) from error
         if not disabled:
-            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED, subscription_id=subscription_id)
+
+
+_ALIVE_TRIAL_STATUSES = {
+    SubscriptionStatus.ACTIVE.value,
+    SubscriptionStatus.TRIAL.value,
+    SubscriptionStatus.LIMITED.value,
+}
+
+
+def _discover_panel_relevant_trial_candidates(
+    user: User,
+    *,
+    exclude_subscription_id: int | None = None,
+) -> tuple[Subscription, ...]:
+    """Snapshot live trials that a paid CRUD helper may deactivate implicitly."""
+    return tuple(
+        subscription
+        for subscription in (getattr(user, 'subscriptions', None) or [])
+        if getattr(subscription, 'id', None) != exclude_subscription_id
+        and bool(getattr(subscription, 'is_trial', False))
+        and getattr(subscription, 'status', None) in _ALIVE_TRIAL_STATUSES
+    )
+
+
+def _deactivated_sibling_trials(
+    candidates: tuple[Subscription, ...],
+    *,
+    primary_subscription_id: int,
+) -> list[Subscription]:
+    """Return only snapshot candidates actually changed by the completed CRUD call."""
+    return [
+        subscription
+        for subscription in candidates
+        if getattr(subscription, 'id', None) != primary_subscription_id
+        and getattr(subscription, 'status', None) == SubscriptionStatus.DISABLED.value
+        and not bool(getattr(subscription, 'is_trial', False))
+    ]
+
+
+async def _sync_deactivated_sibling_trials_to_panel(
+    user: User,
+    primary_subscription: Subscription,
+    candidates: tuple[Subscription, ...],
+    *,
+    action: str,
+) -> list[Subscription]:
+    """Require exact panel disable for every hidden sibling-trial mutation."""
+    affected = _deactivated_sibling_trials(
+        candidates,
+        primary_subscription_id=primary_subscription.id,
+    )
+    if affected:
+        await _require_panel_disable_for_subscriptions(user, affected, action=action)
+    return affected
 
 
 def _log_admin_panel_sync_failure(
@@ -611,19 +668,34 @@ def _log_admin_panel_sync_failure_for_targets(
 
 
 async def _sync_and_commit_admin_mutation(
-    db: AsyncSession, user: User, subscription: Subscription, *, action: str, reset_traffic: bool = False
+    db: AsyncSession,
+    user: User,
+    subscription: Subscription,
+    *,
+    action: str,
+    reset_traffic: bool = False,
+    sibling_trial_candidates: tuple[Subscription, ...] = (),
 ) -> bool:
     """Finish one mandatory admin mutation, with the route as transaction owner."""
+    user_id = user.id
+    primary_subscription_id = subscription.id
     try:
         await _sync_subscription_to_panel(db, user, subscription, reset_traffic=reset_traffic, action=action)
+        await _sync_deactivated_sibling_trials_to_panel(
+            user,
+            subscription,
+            sibling_trial_candidates,
+            action=action,
+        )
         await db.commit()
         return True
     except (PanelSyncSkipped, PanelSyncFailed) as error:
+        failed_subscription_id = error.subscription_id or primary_subscription_id
         await db.rollback()
         logger.warning(
             'Admin mutation was not saved because panel synchronization did not complete',
-            user_id=user.id,
-            subscription_id=subscription.id,
+            user_id=user_id,
+            subscription_id=failed_subscription_id,
             action=action,
             reason_code=error.reason_code,
         )
@@ -1338,6 +1410,7 @@ async def update_user_subscription(
         subscription = next((s for s in subs if s.is_active), subs[0] if subs else None)
 
     if request.action == 'create':
+        sibling_trial_candidates = _discover_panel_relevant_trial_candidates(user)
         # In multi-tariff mode, allow creating additional subscriptions
         if subscription and not is_multi_tariff:
             raise HTTPException(
@@ -1396,7 +1469,13 @@ async def update_user_subscription(
                 detail='User already has an active subscription for this tariff. Extend it instead.',
             )
 
-        if not await _sync_and_commit_admin_mutation(db, user, new_sub, action='create'):
+        if not await _sync_and_commit_admin_mutation(
+            db,
+            user,
+            new_sub,
+            action='create',
+            sibling_trial_candidates=sibling_trial_candidates,
+        ):
             return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info('Admin created subscription for user', admin_id=admin.id, user_id=user_id)
@@ -1420,10 +1499,20 @@ async def update_user_subscription(
                 detail='Days must be a positive integer',
             )
 
+        sibling_trial_candidates = _discover_panel_relevant_trial_candidates(
+            user,
+            exclude_subscription_id=subscription.id,
+        )
         await extend_subscription(db, subscription, request.days, commit=False)
 
         # Sync to Remnawave panel
-        if not await _sync_and_commit_admin_mutation(db, user, subscription, action='extend'):
+        if not await _sync_and_commit_admin_mutation(
+            db,
+            user,
+            subscription,
+            action='extend',
+            sibling_trial_candidates=sibling_trial_candidates,
+        ):
             return UpdateSubscriptionResponse(success=False, message=panel_sync_failure_message())
 
         logger.info(
@@ -2103,6 +2192,11 @@ async def block_user(
     """Block a user — sets DB status AND disables panel user in RemnaWave."""
     from app.services.user_service import UserService
 
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    old_status = user.status
     user_service = UserService()
     success = await user_service.block_user(
         db,
@@ -2111,7 +2205,12 @@ async def block_user(
         reason=reason or 'Заблокирован администратором',
     )
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found or block failed')
+        return UpdateUserStatusResponse(
+            success=False,
+            old_status=old_status,
+            new_status=UserStatus.BLOCKED.value,
+            message=panel_sync_failure_message(),
+        )
 
     return UpdateUserStatusResponse(
         success=True,
@@ -2130,10 +2229,20 @@ async def unblock_user(
     """Unblock a user — sets DB status AND re-enables panel user in RemnaWave."""
     from app.services.user_service import UserService
 
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    old_status = user.status
     user_service = UserService()
     success = await user_service.unblock_user(db, user_id, admin.id)
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found or unblock failed')
+        return UpdateUserStatusResponse(
+            success=False,
+            old_status=old_status,
+            new_status=UserStatus.ACTIVE.value,
+            message=panel_sync_failure_message(),
+        )
 
     return UpdateUserStatusResponse(
         success=True,
@@ -2698,6 +2807,30 @@ async def get_user_devices(
         return UserDevicesResponse()
 
 
+async def _resolve_device_panel_target(
+    db: AsyncSession,
+    user: User,
+    subscription_id: int | None,
+) -> tuple[Subscription | None, str | None]:
+    """Resolve the local row used for diagnostics and its mode-correct panel UUID."""
+    subscriptions = getattr(user, 'subscriptions', None) or []
+    if settings.is_multi_tariff_enabled():
+        if not subscription_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Subscription panel identity is required',
+            )
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        target = await get_subscription_by_id_for_user(db, subscription_id, user.id)
+        return target, getattr(target, 'remnawave_uuid', None) if target else None
+
+    target = next((subscription for subscription in subscriptions if subscription.is_active), None)
+    if target is None:
+        target = subscriptions[0] if subscriptions else None
+    return target, user.remnawave_uuid
+
+
 @router.delete('/{user_id}/devices/{hwid}', response_model=DeleteDeviceResponse)
 async def delete_user_device(
     user_id: int,
@@ -2711,52 +2844,42 @@ async def delete_user_device(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
 
-    _uuid = None
-    if settings.is_multi_tariff_enabled():
-        if not subscription_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail='Subscription panel identity is required'
-            )
-        from app.database.crud.subscription import get_subscription_by_id_for_user
-
-        sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
-        if sub:
-            _uuid = sub.remnawave_uuid
-    else:
-        _uuid = user.remnawave_uuid
-
-    if not _uuid:
-        _log_admin_panel_sync_failure(
-            user_id=user_id,
-            subscription_id=subscription_id or 0,
-            action='delete_device',
-            reason_code=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
-        )
-        await db.rollback()
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=panel_sync_failure_message())
-
+    target_id = subscription_id
     try:
         from app.services.remnawave_service import RemnaWaveService
 
+        target, panel_uuid = await _resolve_device_panel_target(db, user, subscription_id)
+        target_id = getattr(target, 'id', None) or subscription_id
         service = RemnaWaveService()
+        if not getattr(service, 'is_configured', True):
+            raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED, subscription_id=target_id)
+        if not panel_uuid:
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID, subscription_id=target_id)
         async with service.get_api_client() as api:
-            success = await api.remove_device(_uuid, hwid)
+            success = await api.remove_device(panel_uuid, hwid)
 
         if success:
             logger.info('Admin deleted device for user', admin_id=admin.id, hwid=hwid, user_id=user_id)
             return DeleteDeviceResponse(success=True, message='Device deleted', deleted_hwid=hwid)
+        raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED, subscription_id=target_id)
+
+    except HTTPException:
+        raise
+    except (PanelSyncSkipped, PanelSyncFailed) as error:
+        await db.rollback()
         _log_admin_panel_sync_failure(
             user_id=user_id,
-            subscription_id=subscription_id,
+            subscription_id=error.subscription_id,
             action='delete_device',
-            reason_code=PanelSyncReason.PANEL_API_FAILED,
+            reason_code=error.reason_code,
         )
-        return DeleteDeviceResponse(success=False, message='Failed to delete device')
+        return DeleteDeviceResponse(success=False, message=panel_sync_failure_message())
 
     except Exception:
+        await db.rollback()
         _log_admin_panel_sync_failure(
             user_id=user_id,
-            subscription_id=subscription_id,
+            subscription_id=target_id,
             action='delete_device',
             reason_code=PanelSyncReason.PANEL_API_FAILED,
         )
@@ -2822,36 +2945,19 @@ async def reset_user_devices(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
 
-    _rst_uuid = None
-    if settings.is_multi_tariff_enabled():
-        if not subscription_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail='Subscription panel identity is required'
-            )
-        from app.database.crud.subscription import get_subscription_by_id_for_user
-
-        sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
-        if sub:
-            _rst_uuid = sub.remnawave_uuid
-    else:
-        _rst_uuid = user.remnawave_uuid
-
-    if not _rst_uuid:
-        _log_admin_panel_sync_failure(
-            user_id=user_id,
-            subscription_id=subscription_id or 0,
-            action='reset_devices',
-            reason_code=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
-        )
-        await db.rollback()
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=panel_sync_failure_message())
-
+    target_id = subscription_id
     try:
         from app.services.remnawave_service import RemnaWaveService
 
+        target, panel_uuid = await _resolve_device_panel_target(db, user, subscription_id)
+        target_id = getattr(target, 'id', None) or subscription_id
         service = RemnaWaveService()
+        if not getattr(service, 'is_configured', True):
+            raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED, subscription_id=target_id)
+        if not panel_uuid:
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID, subscription_id=target_id)
         async with service.get_api_client() as api:
-            devices_info = await api.get_user_devices_all(_rst_uuid)
+            devices_info = await api.get_user_devices_all(panel_uuid)
             devices = devices_info.get('devices', [])
             total = len(devices)
 
@@ -2863,36 +2969,40 @@ async def reset_user_devices(
                 device_hwid = d.get('hwid') or d.get('deviceId') or d.get('id')
                 if device_hwid:
                     try:
-                        removed = await api.remove_device(_rst_uuid, device_hwid)
+                        removed = await api.remove_device(panel_uuid, device_hwid)
                         if not removed:
-                            _log_admin_panel_sync_failure(
-                                user_id=user_id,
-                                subscription_id=subscription_id,
-                                action='reset_devices',
-                                reason_code=PanelSyncReason.PANEL_API_FAILED,
-                            )
-                            return ResetDevicesResponse(
-                                success=False, message=panel_sync_failure_message(), deleted_count=deleted
+                            raise PanelSyncFailed(
+                                PanelSyncReason.PANEL_API_FAILED,
+                                subscription_id=target_id,
                             )
                         deleted += 1
-                    except Exception:
-                        _log_admin_panel_sync_failure(
-                            user_id=user_id,
-                            subscription_id=subscription_id,
-                            action='reset_devices',
-                            reason_code=PanelSyncReason.PANEL_API_FAILED,
-                        )
-                        return ResetDevicesResponse(
-                            success=False, message=panel_sync_failure_message(), deleted_count=deleted
-                        )
+                    except (PanelSyncSkipped, PanelSyncFailed):
+                        raise
+                    except Exception as error:
+                        raise PanelSyncFailed(
+                            PanelSyncReason.PANEL_API_FAILED,
+                            subscription_id=target_id,
+                        ) from error
 
         logger.info('Admin reset devices for user /', admin_id=admin.id, user_id=user_id, deleted=deleted, total=total)
         return ResetDevicesResponse(success=True, message=f'Deleted {deleted}/{total} devices', deleted_count=deleted)
 
-    except Exception:
+    except HTTPException:
+        raise
+    except (PanelSyncSkipped, PanelSyncFailed) as error:
+        await db.rollback()
         _log_admin_panel_sync_failure(
             user_id=user_id,
-            subscription_id=subscription_id,
+            subscription_id=error.subscription_id,
+            action='reset_devices',
+            reason_code=error.reason_code,
+        )
+        return ResetDevicesResponse(success=False, message=panel_sync_failure_message())
+    except Exception:
+        await db.rollback()
+        _log_admin_panel_sync_failure(
+            user_id=user_id,
+            subscription_id=target_id,
             action='reset_devices',
             reason_code=PanelSyncReason.PANEL_API_FAILED,
         )

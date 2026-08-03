@@ -669,3 +669,100 @@ async def test_bulk_subscription_delete_missing_panel_identity_rolls_back_before
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
     db.execute.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('action', [BulkActionType.EXTEND_SUBSCRIPTION, BulkActionType.GRANT_SUBSCRIPTION])
+@pytest.mark.parametrize('outcome', ['success', 'skipped', 'failed'])
+async def test_bulk_paid_mutations_sync_hidden_sibling_trial_before_executor_commit(monkeypatch, action, outcome):
+    """Bulk extend/grant cannot commit CRUD-deactivated sibling trials without exact panel disable."""
+    db = AsyncMock()
+    now = datetime.now(UTC)
+    primary = _subscription(101)
+    primary.is_trial = False
+    primary.tariff_id = 1
+    sibling = _subscription(202)
+    sibling.status = 'trial'
+    sibling.is_trial = True
+    sibling.is_active = True
+    sibling.remnawave_uuid = 'sibling-trial-uuid'
+    sibling.autopay_enabled = True
+    sibling.end_date = now + timedelta(days=10)
+    user = SimpleNamespace(
+        id=42,
+        username='target',
+        remnawave_uuid='user-42',
+        subscriptions=[primary, sibling],
+    )
+    primary.user = user
+    sibling.user = user
+    before = _snapshot(sibling)
+    monkeypatch.setattr(bulk, 'get_user_by_id', AsyncMock(return_value=user))
+    fake_settings = MagicMock()
+    fake_settings.is_multi_tariff_enabled.return_value = True
+    monkeypatch.setattr(bulk, 'settings', fake_settings)
+    monkeypatch.setattr('app.cabinet.routes.admin_users.settings', fake_settings)
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_user_and_tariff', AsyncMock(return_value=None)
+    )
+
+    async def stage_hidden_cleanup(*args, **kwargs):
+        assert kwargs.get('commit') is False
+        sibling.status = 'disabled'
+        sibling.is_trial = False
+        sibling.autopay_enabled = False
+        if action is BulkActionType.GRANT_SUBSCRIPTION:
+            granted = _subscription(303)
+            granted.is_trial = False
+            granted.user = user
+            return granted
+        return args[1]
+
+    if action is BulkActionType.EXTEND_SUBSCRIPTION:
+        monkeypatch.setattr(bulk, 'extend_subscription', stage_hidden_cleanup)
+        params = BulkActionParams(days=7)
+        tariff = None
+        expected_primary = primary
+    else:
+        monkeypatch.setattr(bulk, 'create_paid_subscription', stage_hidden_cleanup)
+        params = BulkActionParams(days=7, tariff_id=2)
+        tariff = _tariff()
+        expected_primary = None
+
+    primary_sync = AsyncMock(return_value={})
+    monkeypatch.setattr(bulk, '_sync_subscription_to_panel', primary_sync)
+    disable = AsyncMock(return_value=outcome == 'success')
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService',
+        lambda: SimpleNamespace(is_configured=outcome != 'skipped', disable_remnawave_user=disable),
+    )
+
+    async def rollback():
+        _restore(sibling, before)
+
+    db.rollback.side_effect = rollback
+    result = await bulk._execute_for_user(db, user.id, action, params, tariff, dry_run=False)
+
+    synced_primary = primary_sync.await_args.args[2]
+    if expected_primary is not None:
+        assert synced_primary is expected_primary
+    else:
+        assert synced_primary.id == 303
+    if outcome == 'success':
+        assert result.success is True
+        disable.assert_awaited_once_with(
+            'sibling-trial-uuid',
+            user_id=user.id,
+            subscription_id=sibling.id,
+            action=action.value,
+        )
+        db.commit.assert_awaited_once()
+        db.rollback.assert_not_awaited()
+        assert sibling.status == 'disabled'
+    else:
+        assert result.success is False
+        assert result.message == panel_sync_failure_message()
+        assert result.subscription_id == sibling.id
+        db.commit.assert_not_awaited()
+        db.rollback.assert_awaited_once()
+        assert vars(sibling) == before

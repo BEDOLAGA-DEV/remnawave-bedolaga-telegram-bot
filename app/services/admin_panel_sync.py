@@ -25,11 +25,12 @@ class PanelSyncTarget(StrEnum):
 
 
 class PanelSyncError(RuntimeError):
-    def __init__(self, reason_code: PanelSyncReason) -> None:
+    def __init__(self, reason_code: PanelSyncReason, *, subscription_id: int | None = None) -> None:
         if not isinstance(reason_code, PanelSyncReason):
             raise TypeError('reason_code must be a PanelSyncReason')
         super().__init__(reason_code.value)
         self.reason_code = reason_code
+        self.subscription_id = subscription_id
 
 
 class PanelSyncSkipped(PanelSyncError):
@@ -78,9 +79,27 @@ def _mutation(
 
 MANDATORY_ADMIN_PANEL_MUTATIONS = (
     # Single-subscription admin route.
-    _mutation('update_user_subscription', 'create', 'create', '_sync_subscription_to_panel'),
-    _mutation('update_user_subscription', 'extend', 'extend', '_sync_subscription_to_panel'),
-    _mutation('update_user_subscription', 'shorten', 'extend', '_sync_subscription_to_panel'),
+    _mutation(
+        'update_user_subscription',
+        'create',
+        'create',
+        '_sync_subscription_to_panel + deactivate_user_trial_subscriptions -> exact sibling disables',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'update_user_subscription',
+        'extend',
+        'extend',
+        '_sync_subscription_to_panel + deactivate_user_trial_subscriptions -> exact sibling disables',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
+    _mutation(
+        'update_user_subscription',
+        'shorten',
+        'extend',
+        '_sync_subscription_to_panel + deactivate_user_trial_subscriptions guard',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
     _mutation('update_user_subscription', 'set_end_date', 'set_end_date', '_sync_subscription_to_panel'),
     _mutation('update_user_subscription', 'change_tariff', 'change_tariff', '_sync_subscription_to_panel'),
     _mutation('update_user_subscription', 'set_traffic', 'set_traffic', '_sync_subscription_to_panel'),
@@ -184,7 +203,13 @@ MANDATORY_ADMIN_PANEL_MUTATIONS = (
         PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
     ),
     # Bulk action handlers behind POST /admin/bulk/execute.
-    _mutation('_do_extend_subscription', 'extend_subscription', 'extend', '_sync_subscription_to_panel'),
+    _mutation(
+        '_do_extend_subscription',
+        'extend_subscription',
+        'extend',
+        '_sync_subscription_to_panel + deactivate_user_trial_subscriptions -> exact sibling disables',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
     _mutation('_do_cancel_subscription', 'cancel_subscription', 'cancel', '_sync_subscription_to_panel'),
     _mutation('_do_activate_subscription', 'activate_subscription', 'activate', '_sync_subscription_to_panel'),
     _mutation('_do_change_tariff', 'change_tariff', 'change_tariff', '_sync_subscription_to_panel'),
@@ -197,7 +222,13 @@ MANDATORY_ADMIN_PANEL_MUTATIONS = (
         'SubscriptionService.disable_remnawave_user',
     ),
     _mutation('_do_delete_user', 'delete_user', 'delete_user', 'UserService.delete_user_account'),
-    _mutation('_do_grant_subscription', 'grant_subscription', 'create', '_sync_subscription_to_panel'),
+    _mutation(
+        '_do_grant_subscription',
+        'grant_subscription',
+        'create',
+        '_sync_subscription_to_panel + deactivate_user_trial_subscriptions -> exact sibling disables',
+        PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID,
+    ),
 )
 
 

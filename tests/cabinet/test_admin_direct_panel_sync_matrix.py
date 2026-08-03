@@ -12,7 +12,7 @@ from structlog.testing import capture_logs
 from app.cabinet.routes import admin_users
 from app.config import settings
 from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
-from app.services.user_service import DeleteUserResult, UserService
+from app.services.user_service import DeleteUserResult
 from tests.cabinet.admin_panel_sync_case_manifest import (
     DIRECT_FAILED_CASES,
     DIRECT_SKIPPED_CASES,
@@ -92,14 +92,14 @@ async def _device_case(monkeypatch, user, subscription, db, *, reset: bool, outc
     )
     if outcome == 'failed':
         api.remove_device.side_effect = RuntimeError('secret-value')
-    elif outcome == 'skipped':
-        subscription.remnawave_uuid = None
 
     @asynccontextmanager
     async def get_api_client():
         yield api
 
-    service_factory = MagicMock(return_value=SimpleNamespace(get_api_client=get_api_client))
+    service_factory = MagicMock(
+        return_value=SimpleNamespace(is_configured=outcome != 'skipped', get_api_client=get_api_client)
+    )
     monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', service_factory)
     try:
         if reset:
@@ -117,7 +117,7 @@ async def _device_case(monkeypatch, user, subscription, db, *, reset: bool, outc
     except HTTPException as error:
         result = SimpleNamespace(success=False, message=str(error.detail))
     if outcome == 'skipped':
-        service_factory.assert_not_called()
+        service_factory.assert_called_once_with()
         api.get_user_devices_all.assert_not_awaited()
         api.remove_device.assert_not_awaited()
     else:
@@ -324,6 +324,7 @@ async def _status_service_case(monkeypatch, user, subscription, db, *, unblock: 
     if unblock:
         user.status = 'blocked'
         subscription.status = 'disabled'
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
     monkeypatch.setattr('app.services.user_service.get_user_by_id', AsyncMock(return_value=user))
     monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
     monkeypatch.setattr('app.database.crud.subscription.deactivate_subscription', AsyncMock())
@@ -337,11 +338,10 @@ async def _status_service_case(monkeypatch, user, subscription, db, *, unblock: 
             **({'update_remnawave_user': method} if unblock else {'disable_remnawave_user': method}),
         ),
     )
-    service = UserService()
     result = (
-        await service.unblock_user(db, user.id, admin_id=1)
+        await admin_users.unblock_user(user_id=user.id, admin=SimpleNamespace(id=1), db=db)
         if unblock
-        else await service.block_user(db, user.id, admin_id=1)
+        else await admin_users.block_user(user_id=user.id, admin=SimpleNamespace(id=1), db=db)
     )
     if outcome == 'skipped':
         method.assert_not_awaited()
@@ -355,14 +355,18 @@ async def _status_service_case(monkeypatch, user, subscription, db, *, unblock: 
             subscription_id=subscription.id,
             action='block',
         )
-    assert result is (outcome == 'success')
+    assert result.success is (outcome == 'success')
     if outcome == 'success':
         db.commit.assert_awaited_once()
         db.rollback.assert_not_awaited()
     else:
         db.rollback.assert_awaited_once()
         db.commit.assert_not_awaited()
-    return SimpleNamespace(success=result, message='ok' if result else 'not saved')
+    if outcome == 'success':
+        assert result.message in {'User blocked', 'User unblocked'}
+    else:
+        assert result.message == admin_users.panel_sync_failure_message()
+    return result
 
 
 async def _sync_case(monkeypatch, user, subscription, db, *, outcome: str):
@@ -463,7 +467,7 @@ async def test_direct_skipped_matrix_executes_public_contract(monkeypatch, direc
     }[case_key.split(':', 1)[0]]
     reason = (
         PanelSyncReason.MISSING_SUBSCRIPTION_UUID
-        if case_key.split(':', 1)[0] in {'delete_user_device', 'reset_user_devices', 'sync_user_to_panel'}
+        if case_key.split(':', 1)[0] == 'sync_user_to_panel'
         else PanelSyncReason.NOT_CONFIGURED
     )
     _assert_bounded_diagnostic(
@@ -534,4 +538,146 @@ async def test_sync_from_panel_unconfigured_uses_its_own_safe_503_branch(monkeyp
         subscription_id=subscription.id,
         action='sync_from_panel',
         reason=PanelSyncReason.NOT_CONFIGURED,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reset', [False, True])
+@pytest.mark.parametrize('outcome', ['skipped', 'false'])
+async def test_device_public_routes_use_single_tariff_exact_diagnostics_and_shared_fail_closed_response(
+    monkeypatch, direct_user, direct_db, reset, outcome
+):
+    """Single-tariff routes still identify the exact local subscription row."""
+    user, subscription = direct_user
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    api = SimpleNamespace(
+        get_user_devices_all=AsyncMock(return_value={'devices': [{'hwid': 'hw-1'}]}),
+        remove_device=AsyncMock(return_value=False),
+    )
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    monkeypatch.setattr(
+        'app.services.remnawave_service.RemnaWaveService',
+        lambda: SimpleNamespace(is_configured=outcome != 'skipped', get_api_client=get_api_client),
+    )
+
+    with capture_logs() as logs:
+        if reset:
+            result = await admin_users.reset_user_devices(
+                user_id=user.id, admin=SimpleNamespace(id=1), db=direct_db, subscription_id=None
+            )
+        else:
+            result = await admin_users.delete_user_device(
+                user_id=user.id,
+                hwid='hw-1',
+                admin=SimpleNamespace(id=1),
+                db=direct_db,
+                subscription_id=None,
+            )
+
+    assert result.success is False
+    assert result.message == admin_users.panel_sync_failure_message()
+    action = 'reset_devices' if reset else 'delete_device'
+    reason = PanelSyncReason.NOT_CONFIGURED if outcome == 'skipped' else PanelSyncReason.PANEL_API_FAILED
+    _assert_bounded_diagnostic(
+        logs,
+        user_id=user.id,
+        subscription_id=subscription.id,
+        action=action,
+        reason=reason,
+    )
+    if outcome == 'skipped':
+        api.get_user_devices_all.assert_not_awaited()
+        api.remove_device.assert_not_awaited()
+    else:
+        if reset:
+            api.get_user_devices_all.assert_awaited_once_with(user.remnawave_uuid)
+        api.remove_device.assert_awaited_once_with(user.remnawave_uuid, 'hw-1')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('unblock', [False, True])
+async def test_block_unblock_public_routes_keep_404_only_for_confirmed_absent_user(monkeypatch, direct_db, unblock):
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as raised:
+        if unblock:
+            await admin_users.unblock_user(user_id=404, admin=SimpleNamespace(id=1), db=direct_db)
+        else:
+            await admin_users.block_user(user_id=404, admin=SimpleNamespace(id=1), db=direct_db)
+
+    assert raised.value.status_code == 404
+    assert raised.value.detail == 'User not found'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reset', [False, True])
+async def test_device_failure_keeps_exact_diagnostic_id_after_realistic_rollback_expiration(
+    monkeypatch, direct_user, direct_db, reset
+):
+    """Reading the ORM target after rollback would require forbidden implicit async IO."""
+    user, subscription = direct_user
+
+    class ExpiringTarget:
+        expired = False
+        remnawave_uuid = subscription.remnawave_uuid
+
+        @property
+        def id(self):
+            if self.expired:
+                raise RuntimeError('expired ORM attribute requires async refresh')
+            return subscription.id
+
+    target = ExpiringTarget()
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.database.crud.subscription.get_subscription_by_id_for_user', AsyncMock(return_value=target)
+    )
+    api = SimpleNamespace(
+        get_user_devices_all=AsyncMock(side_effect=RuntimeError('panel unavailable')),
+        remove_device=AsyncMock(side_effect=RuntimeError('panel unavailable')),
+    )
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    monkeypatch.setattr(
+        'app.services.remnawave_service.RemnaWaveService',
+        lambda: SimpleNamespace(is_configured=True, get_api_client=get_api_client),
+    )
+
+    async def expire_on_rollback():
+        target.expired = True
+
+    direct_db.rollback.side_effect = expire_on_rollback
+    with capture_logs() as logs:
+        if reset:
+            result = await admin_users.reset_user_devices(
+                user_id=user.id,
+                admin=SimpleNamespace(id=1),
+                db=direct_db,
+                subscription_id=subscription.id,
+            )
+        else:
+            result = await admin_users.delete_user_device(
+                user_id=user.id,
+                hwid='hw-1',
+                admin=SimpleNamespace(id=1),
+                db=direct_db,
+                subscription_id=subscription.id,
+            )
+
+    assert result.success is False
+    _assert_bounded_diagnostic(
+        logs,
+        user_id=user.id,
+        subscription_id=subscription.id,
+        action='reset_devices' if reset else 'delete_device',
+        reason=PanelSyncReason.PANEL_API_FAILED,
     )

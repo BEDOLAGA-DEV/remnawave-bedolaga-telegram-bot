@@ -48,7 +48,11 @@ from ..schemas.bulk_actions import (
     BulkSubscriptionInfo,
     BulkUserResult,
 )
-from .admin_users import _sync_subscription_to_panel
+from .admin_users import (
+    _discover_panel_relevant_trial_candidates,
+    _sync_deactivated_sibling_trials_to_panel,
+    _sync_subscription_to_panel,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -148,9 +152,19 @@ async def _do_extend_subscription(
             username=user.username,
         )
 
+    sibling_trial_candidates = _discover_panel_relevant_trial_candidates(
+        user,
+        exclude_subscription_id=sub.id,
+    )
     await extend_subscription(db, sub, days, commit=False)
     await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub, action='extend_subscription')
+    await _sync_deactivated_sibling_trials_to_panel(
+        user,
+        sub,
+        sibling_trial_candidates,
+        action='extend_subscription',
+    )
 
     return BulkUserResult(
         user_id=user.id,
@@ -694,6 +708,7 @@ async def _do_grant_subscription(
         )
 
     connected_squads = tariff.allowed_squads or []
+    sibling_trial_candidates = _discover_panel_relevant_trial_candidates(user)
 
     from sqlalchemy.exc import IntegrityError
 
@@ -721,8 +736,15 @@ async def _do_grant_subscription(
 
     try:
         await _sync_subscription_to_panel(db, user, new_sub, action='grant_subscription')
+        await _sync_deactivated_sibling_trials_to_panel(
+            user,
+            new_sub,
+            sibling_trial_candidates,
+            action='grant_subscription',
+        )
     except (PanelSyncSkipped, PanelSyncFailed) as error:
-        error.subscription_id = new_sub.id
+        if error.subscription_id is None:
+            error.subscription_id = new_sub.id
         raise
 
     # Refresh user to get updated subscriptions list

@@ -9,6 +9,7 @@ from app.cabinet.schemas.users import UserStatusEnum
 from app.services.admin_panel_sync import (
     BEST_EFFORT_ADMIN_PANEL_MUTATIONS,
     MANDATORY_ADMIN_PANEL_MUTATIONS,
+    PanelSyncTarget,
 )
 from tests.cabinet.admin_panel_sync_case_manifest import (
     FAILED_CASE_KEYS,
@@ -367,6 +368,57 @@ def _assert_classified(discovered: set[str], classified: set[str]) -> None:
     assert not missing, f'panel mutations missing inventory entries: {sorted(missing)}'
 
 
+def _transitive_function_callers(tree: ast.AST, roots: set[str]) -> set[str]:
+    """Find every same-module function that can reach a hidden mutation root."""
+    functions = _functions(tree)
+    reachable = set(roots)
+    while True:
+        callers = {
+            name
+            for name, function in functions.items()
+            if any(
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in reachable
+                for node in ast.walk(function)
+            )
+        }
+        updated = reachable | callers
+        if updated == reachable:
+            return updated
+        reachable = updated
+
+
+def _hidden_crud_mutation_keys(route_tree: ast.AST, hidden_crud_functions: set[str]) -> set[str]:
+    """Map called CRUD side effects back to their public action/inventory key."""
+    keys = set()
+    for name, function in _functions(route_tree).items():
+        if name == 'update_user_subscription':
+            for node in ast.walk(function):
+                if not (
+                    isinstance(node, ast.If)
+                    and isinstance(node.test, ast.Compare)
+                    and isinstance(node.test.left, ast.Attribute)
+                    and isinstance(node.test.left.value, ast.Name)
+                    and node.test.left.value.id == 'request'
+                    and node.test.left.attr == 'action'
+                    and len(node.test.comparators) == 1
+                    and isinstance(node.test.comparators[0], ast.Constant)
+                ):
+                    continue
+                if any(
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Name)
+                    and call.func.id in hidden_crud_functions
+                    for call in ast.walk(node)
+                ):
+                    keys.add(f'{name}:{node.test.comparators[0].value}')
+        elif any(
+            isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in hidden_crud_functions
+            for call in ast.walk(function)
+        ):
+            keys.add(name)
+    return keys
+
+
 def test_panel_relevant_admin_handlers_and_called_services_are_explicitly_classified():
     user_service_tree = ast.parse(Path('app/services/user_service.py').read_text())
     discovered = set()
@@ -389,6 +441,60 @@ def test_panel_relevant_admin_handlers_and_called_services_are_explicitly_classi
 
     # sync_user_from_panel only reads the panel before updating the local DB.
     assert 'sync_user_from_panel' not in discovered
+
+
+def test_called_crud_trial_side_effects_require_each_exact_target_inventory_contract():
+    """CRUD helpers that disable sibling trials cannot remain hidden behind one-target rows."""
+    crud_tree = ast.parse(Path('app/database/crud/subscription.py').read_text())
+    hidden_callers = _transitive_function_callers(crud_tree, {'deactivate_user_trial_subscriptions'})
+    assert {
+        '_revive_paid_subscription',
+        '_convert_trial_subscription_to_paid',
+        'create_paid_subscription',
+        'extend_subscription',
+    } <= hidden_callers
+
+    unified_tree = ast.parse(Path('app/cabinet/routes/admin_users.py').read_text())
+    bulk_tree = ast.parse(Path('app/cabinet/routes/admin_bulk_actions.py').read_text())
+    unified_keys = _hidden_crud_mutation_keys(unified_tree, hidden_callers)
+    bulk_routes = _hidden_crud_mutation_keys(bulk_tree, hidden_callers)
+    discovered_keys = {key for key in unified_keys if ':' in key}
+    inventory = {entry.key: entry for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
+
+    _assert_classified(discovered_keys, set(inventory))
+    _assert_classified(bulk_routes, {entry.route for entry in MANDATORY_ADMIN_PANEL_MUTATIONS})
+    assert {
+        'update_user_subscription:create',
+        'update_user_subscription:extend',
+        'update_user_subscription:shorten',
+    } <= discovered_keys
+    assert {'_do_extend_subscription', '_do_grant_subscription'} <= bulk_routes
+
+    affected_entries = [
+        entry for entry in MANDATORY_ADMIN_PANEL_MUTATIONS if entry.key in discovered_keys or entry.route in bulk_routes
+    ]
+    assert affected_entries
+    assert all(entry.multi_tariff_target is PanelSyncTarget.EACH_EXACT_SUBSCRIPTION_UUID for entry in affected_entries)
+    assert all('deactivate_user_trial_subscriptions' in entry.integration_path for entry in affected_entries)
+
+
+def test_new_called_crud_trial_side_effect_fails_inventory_guard():
+    crud_tree = ast.parse("""
+async def deactivate_user_trial_subscriptions():
+    pass
+
+async def new_paid_helper():
+    await deactivate_user_trial_subscriptions()
+""")
+    route_tree = ast.parse("""
+async def new_admin_paid_mutation():
+    await new_paid_helper()
+""")
+    hidden_callers = _transitive_function_callers(crud_tree, {'deactivate_user_trial_subscriptions'})
+    discovered = _hidden_crud_mutation_keys(route_tree, hidden_callers)
+
+    with pytest.raises(AssertionError, match='new_admin_paid_mutation'):
+        _assert_classified(discovered, set())
 
 
 def test_each_shared_subscription_action_that_syncs_to_panel_has_an_inventory_entry():
