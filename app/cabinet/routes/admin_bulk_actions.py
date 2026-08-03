@@ -1001,9 +1001,10 @@ async def _execute_for_subscription(
 
     except (PanelSyncSkipped, PanelSyncFailed) as error:
         await db.rollback()
+        failed_subscription_id = getattr(error, 'subscription_id', None)
         return _panel_failure_result(
             user_id=user.id if user else 0,
-            subscription_id=sub_id,
+            subscription_id=failed_subscription_id if failed_subscription_id is not None else sub_id,
             action=action,
             error=error,
         )

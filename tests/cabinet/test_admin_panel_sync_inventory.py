@@ -107,6 +107,9 @@ READ_ONLY_PANEL_METHOD_PREFIXES = ('get_', 'list_', 'find_', 'fetch_')
 # executable children are the individually inventoried ``_do_*`` handlers.
 BULK_ACTION_DISPATCHERS = {'bulk_execute'}
 USER_STATUS_READ_ONLY_SYNC_HANDLERS = {'sync_user_from_panel'}
+# This inbound reconciliation route calls shared subscription CRUD helpers to
+# mirror panel state locally; it does not initiate an outward admin mutation.
+ADMIN_USERS_HIDDEN_CRUD_READ_ONLY_CALLERS = {'sync_user_from_panel'}
 
 
 def _functions(tree: ast.AST) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -419,6 +422,27 @@ def _hidden_crud_mutation_keys(route_tree: ast.AST, hidden_crud_functions: set[s
     return keys
 
 
+def _assert_production_hidden_crud_inventory(
+    unified_tree: ast.AST,
+    bulk_tree: ast.AST,
+    hidden_callers: set[str],
+):
+    """Run the production transitive-CRUD inventory assertion path."""
+    unified_keys = _hidden_crud_mutation_keys(unified_tree, hidden_callers)
+    bulk_routes = _hidden_crud_mutation_keys(bulk_tree, hidden_callers)
+    inventory = {entry.key: entry for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
+    inventory_routes = {entry.route for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
+
+    assert unified_keys >= ADMIN_USERS_HIDDEN_CRUD_READ_ONLY_CALLERS
+    _assert_classified(
+        unified_keys,
+        set(inventory) | inventory_routes | ADMIN_USERS_HIDDEN_CRUD_READ_ONLY_CALLERS,
+    )
+    _assert_classified(bulk_routes, inventory_routes)
+    discovered_keys = unified_keys - ADMIN_USERS_HIDDEN_CRUD_READ_ONLY_CALLERS
+    return unified_keys, bulk_routes, discovered_keys, inventory
+
+
 def test_panel_relevant_admin_handlers_and_called_services_are_explicitly_classified():
     user_service_tree = ast.parse(Path('app/services/user_service.py').read_text())
     discovered = set()
@@ -456,13 +480,11 @@ def test_called_crud_trial_side_effects_require_each_exact_target_inventory_cont
 
     unified_tree = ast.parse(Path('app/cabinet/routes/admin_users.py').read_text())
     bulk_tree = ast.parse(Path('app/cabinet/routes/admin_bulk_actions.py').read_text())
-    unified_keys = _hidden_crud_mutation_keys(unified_tree, hidden_callers)
-    bulk_routes = _hidden_crud_mutation_keys(bulk_tree, hidden_callers)
-    discovered_keys = {key for key in unified_keys if ':' in key}
-    inventory = {entry.key: entry for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
-
-    _assert_classified(discovered_keys, set(inventory))
-    _assert_classified(bulk_routes, {entry.route for entry in MANDATORY_ADMIN_PANEL_MUTATIONS})
+    unified_keys, bulk_routes, discovered_keys, inventory = _assert_production_hidden_crud_inventory(
+        unified_tree,
+        bulk_tree,
+        hidden_callers,
+    )
     assert {
         'update_user_subscription:create',
         'update_user_subscription:extend',
@@ -479,22 +501,20 @@ def test_called_crud_trial_side_effects_require_each_exact_target_inventory_cont
 
 
 def test_new_called_crud_trial_side_effect_fails_inventory_guard():
-    crud_tree = ast.parse("""
-async def deactivate_user_trial_subscriptions():
-    pass
-
-async def new_paid_helper():
-    await deactivate_user_trial_subscriptions()
-""")
-    route_tree = ast.parse("""
+    crud_tree = ast.parse(Path('app/database/crud/subscription.py').read_text())
+    unified_source = Path('app/cabinet/routes/admin_users.py').read_text()
+    unified_tree = ast.parse(
+        unified_source
+        + """
 async def new_admin_paid_mutation():
-    await new_paid_helper()
-""")
+    await create_paid_subscription()
+"""
+    )
+    bulk_tree = ast.parse(Path('app/cabinet/routes/admin_bulk_actions.py').read_text())
     hidden_callers = _transitive_function_callers(crud_tree, {'deactivate_user_trial_subscriptions'})
-    discovered = _hidden_crud_mutation_keys(route_tree, hidden_callers)
 
     with pytest.raises(AssertionError, match='new_admin_paid_mutation'):
-        _assert_classified(discovered, set())
+        _assert_production_hidden_crud_inventory(unified_tree, bulk_tree, hidden_callers)
 
 
 def test_each_shared_subscription_action_that_syncs_to_panel_has_an_inventory_entry():

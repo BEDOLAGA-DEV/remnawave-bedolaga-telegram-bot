@@ -630,12 +630,12 @@ async def _sync_deactivated_sibling_trials_to_panel(
     *,
     action: str,
 ) -> list[Subscription]:
-    """Require exact panel disable for every hidden sibling-trial mutation."""
+    """Disable hidden sibling-trial identities only when they are distinct panel users."""
     affected = _deactivated_sibling_trials(
         candidates,
         primary_subscription_id=primary_subscription.id,
     )
-    if affected:
+    if affected and settings.is_multi_tariff_enabled():
         await _require_panel_disable_for_subscriptions(user, affected, action=action)
     return affected
 

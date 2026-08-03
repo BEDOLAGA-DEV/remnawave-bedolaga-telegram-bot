@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.cabinet.routes import admin_bulk_actions as bulk
-from app.cabinet.schemas.bulk_actions import BulkActionParams, BulkActionType
+from app.cabinet.schemas.bulk_actions import BulkActionParams, BulkActionType, BulkExecuteRequest
 from app.services.admin_panel_sync import (
     PanelSyncFailed,
     PanelSyncReason,
@@ -675,7 +675,7 @@ async def test_bulk_subscription_delete_missing_panel_identity_rolls_back_before
 @pytest.mark.parametrize('action', [BulkActionType.EXTEND_SUBSCRIPTION, BulkActionType.GRANT_SUBSCRIPTION])
 @pytest.mark.parametrize('outcome', ['success', 'skipped', 'failed'])
 async def test_bulk_paid_mutations_sync_hidden_sibling_trial_before_executor_commit(monkeypatch, action, outcome):
-    """Bulk extend/grant cannot commit CRUD-deactivated sibling trials without exact panel disable."""
+    """Supported bulk target boundaries preserve exact sibling sync outcomes."""
     db = AsyncMock()
     now = datetime.now(UTC)
     primary = _subscription(101)
@@ -698,6 +698,9 @@ async def test_bulk_paid_mutations_sync_hidden_sibling_trial_before_executor_com
     sibling.user = user
     before = _snapshot(sibling)
     monkeypatch.setattr(bulk, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(bulk, 'get_subscription_by_id', AsyncMock(return_value=primary))
+    logger = MagicMock()
+    monkeypatch.setattr(bulk, 'logger', logger)
     fake_settings = MagicMock()
     fake_settings.is_multi_tariff_enabled.return_value = True
     monkeypatch.setattr(bulk, 'settings', fake_settings)
@@ -741,7 +744,10 @@ async def test_bulk_paid_mutations_sync_hidden_sibling_trial_before_executor_com
         _restore(sibling, before)
 
     db.rollback.side_effect = rollback
-    result = await bulk._execute_for_user(db, user.id, action, params, tariff, dry_run=False)
+    if action is BulkActionType.EXTEND_SUBSCRIPTION:
+        result = await bulk._execute_for_subscription(db, primary.id, action, params, tariff, dry_run=False)
+    else:
+        result = await bulk._execute_for_user(db, user.id, action, params, tariff, dry_run=False)
 
     synced_primary = primary_sync.await_args.args[2]
     if expected_primary is not None:
@@ -766,3 +772,95 @@ async def test_bulk_paid_mutations_sync_hidden_sibling_trial_before_executor_com
         db.commit.assert_not_awaited()
         db.rollback.assert_awaited_once()
         assert vars(sibling) == before
+        reason = PanelSyncReason.NOT_CONFIGURED if outcome == 'skipped' else PanelSyncReason.PANEL_API_FAILED
+        logger.warning.assert_any_call(
+            'Bulk panel synchronization did not complete',
+            user_id=user.id,
+            subscription_id=sibling.id,
+            action=action.value,
+            reason_code=reason.value,
+        )
+
+    if outcome == 'skipped':
+        disable.assert_not_awaited()
+    else:
+        disable.assert_awaited_once_with(
+            'sibling-trial-uuid',
+            user_id=user.id,
+            subscription_id=sibling.id,
+            action=action.value,
+        )
+
+
+@pytest.mark.anyio
+async def test_public_bulk_single_tariff_trial_to_paid_keeps_shared_panel_identity_active(monkeypatch):
+    """Granting paid access must not disable the shared user UUID after primary sync."""
+    db = AsyncMock()
+    trial = _subscription(202, status='trial')
+    trial.is_trial = True
+    trial.is_active = False
+    trial.autopay_enabled = True
+    user = SimpleNamespace(
+        id=42,
+        username='target',
+        remnawave_uuid='shared-user-uuid',
+        subscriptions=[trial],
+    )
+    trial.user = user
+    paid = _subscription(303)
+    paid.is_trial = False
+    paid.user = user
+    tariff = _tariff()
+    remote = {'status': 'disabled'}
+    events: list[str] = []
+
+    async def create_with_trial_cleanup(**kwargs):
+        assert kwargs['commit'] is False
+        trial.status = 'disabled'
+        trial.is_trial = False
+        trial.autopay_enabled = False
+        return paid
+
+    async def sync_primary(_db, synced_user, target, *, action):
+        assert synced_user is user
+        assert target is paid
+        assert action == BulkActionType.GRANT_SUBSCRIPTION.value
+        remote['status'] = 'active'
+        events.append('primary-active')
+
+    async def disable_shared(panel_uuid, **_kwargs):
+        assert panel_uuid == user.remnawave_uuid
+        remote['status'] = 'disabled'
+        events.append('shared-disabled')
+        return True
+
+    monkeypatch.setattr(type(bulk.settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(bulk, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(bulk, 'get_tariff_by_id', AsyncMock(return_value=tariff))
+    monkeypatch.setattr(bulk, 'create_paid_subscription', create_with_trial_cleanup)
+    monkeypatch.setattr(bulk, '_sync_subscription_to_panel', sync_primary)
+    disable = AsyncMock(side_effect=disable_shared)
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService',
+        lambda: SimpleNamespace(is_configured=True, disable_remnawave_user=disable),
+    )
+
+    result = await bulk.bulk_execute(
+        BulkExecuteRequest(
+            action=BulkActionType.GRANT_SUBSCRIPTION,
+            user_ids=[user.id],
+            params=BulkActionParams(days=7, tariff_id=tariff.id),
+        ),
+        stream=False,
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success_count == 1
+    assert result.results[0].success is True
+    assert trial.status == 'disabled'
+    assert events == ['primary-active']
+    assert remote == {'status': 'active'}
+    disable.assert_not_awaited()
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()

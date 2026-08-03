@@ -1166,6 +1166,83 @@ async def test_unified_extend_syncs_every_deactivated_sibling_trial_atomically(
 
 
 @pytest.mark.asyncio
+async def test_public_unified_single_tariff_paid_with_sibling_keeps_shared_panel_identity_active(
+    monkeypatch, user, subscription, db
+):
+    """Extending paid access reconciles the shared UUID once and leaves it active."""
+    subscription.user_id = user.id
+    subscription.is_active = True
+    subscription.is_trial = False
+    subscription.autopay_enabled = False
+    subscription.device_limit = 2
+    subscription.traffic_used_gb = 0.0
+    subscription.tariff_id = 10
+    sibling = SimpleNamespace(
+        id=24,
+        user_id=user.id,
+        status='trial',
+        is_active=False,
+        is_trial=True,
+        autopay_enabled=True,
+        end_date=datetime.now(UTC) + timedelta(days=7),
+        remnawave_uuid=None,
+    )
+    user.remnawave_uuid = 'shared-user-uuid'
+    user.subscriptions = [subscription, sibling]
+    remote = {'status': 'disabled'}
+    events: list[str] = []
+
+    async def extend_with_hidden_trial_cleanup(_db, target, days, *, commit):
+        assert target is subscription
+        assert days == 3
+        assert commit is False
+        target.end_date += timedelta(days=days)
+        sibling.status = 'disabled'
+        sibling.is_trial = False
+        sibling.autopay_enabled = False
+
+    async def sync_primary(_db, synced_user, target, *, reset_traffic, action):
+        assert synced_user is user
+        assert target is subscription
+        assert reset_traffic is False
+        assert action == 'extend'
+        remote['status'] = 'active'
+        events.append('primary-active')
+
+    async def disable_shared(panel_uuid, **_kwargs):
+        assert panel_uuid == user.remnawave_uuid
+        remote['status'] = 'disabled'
+        events.append('shared-disabled')
+        return True
+
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(admin_users, 'extend_subscription', extend_with_hidden_trial_cleanup)
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync_primary)
+    disable = AsyncMock(side_effect=disable_shared)
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService',
+        lambda: SimpleNamespace(is_configured=True, disable_remnawave_user=disable),
+    )
+    monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=UpdateSubscriptionRequest(action='extend', subscription_id=subscription.id, days=3),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    assert sibling.status == 'disabled'
+    assert events == ['primary-active']
+    assert remote == {'status': 'active'}
+    disable.assert_not_awaited()
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('create_variant', ['new', 'revive', 'trial_conversion'])
 async def test_unified_create_variants_sync_every_deactivated_sibling_trial_before_commit(
     monkeypatch, user, db, create_variant
