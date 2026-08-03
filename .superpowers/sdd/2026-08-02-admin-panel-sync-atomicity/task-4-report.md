@@ -72,3 +72,40 @@
 
 - The pre-existing suite warnings (Pydantic deprecations and Lava async-mock warnings) remain unchanged.
 - `uv.lock` remains user-owned dirty state and is excluded from this fix commit.
+
+---
+
+## Fix Round 2
+
+- **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T4-FIX-R2`
+- **Base HEAD:** `928bdbb05ca68d47c242b70877e822001db30226`
+- **Current implementation HEAD:** `a4042d1ee65e08fc87cc1e5d6166e68d16de024f`
+- **Status:** `READY_FOR_FRESH_REVIEW`
+- **Timestamp:** `2026-08-03T01:30:11Z`
+
+### Changed files
+
+- `tests/cabinet/test_admin_bulk_panel_sync_contract.py`
+- `.superpowers/sdd/2026-08-02-admin-panel-sync-atomicity/task-4-report.md`
+
+### Clause-by-clause review closure
+
+1. **Preserved success response:** both user and subscription target-executor matrices now parameterize all supported mandatory actions and assert their exact established success message.
+2. **Multi-tariff delete direct path:** real-handler tests cover selected subscription UUID success plus typed `PanelSyncFailed`, false, and exception outcomes. Failures prove a non-success response, one rollback, no commit, and no local delete execution.
+3. **Late add-traffic direct enable:** multi-tariff tests assert `_sync_subscription_to_panel(db, user, selected, action='add_traffic')`, exact `enable_remnawave_user(selected.remnawave_uuid, db=db)`, and success/false/exception contracts. Late failures restore staged subscription state, roll back once, and do not commit.
+4. **Executor commit ownership/order:** commit instrumentation inspects the active production call site and fails unless `_execute_for_user` or `_execute_for_subscription` is the direct owner after the final real handler/panel success event. This distinguishes an internal handler commit from the target-boundary commit.
+5. **Complete subscription sync contracts:** success and typed-failure matrices assert the full `_sync_subscription_to_panel(db, user, selected, action=...)` invocation for every sync-backed subscription action, including `reset_traffic=False` for tariff change; delete-subscription is asserted against its direct disable path.
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| Mutation check: temporarily replace the extend success response, then run `uv run pytest -p no:cacheprovider tests/cabinet/test_admin_bulk_panel_sync_contract.py -q -k 'user_handler_stages_panel_work_and_commits_once or subscription_handler_success_uses_selected_subscription_and_commits_once'` | expected RED: `2 failed, 14 passed`; production text restored before final verification |
+| `PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider tests/cabinet/test_admin_bulk_panel_sync_contract.py tests/cabinet/test_bulk_change_tariff_preserves_period.py tests/services/test_platega_recurrent_cancel_hooks.py -q` | `77 passed` (32 pre-existing warnings) |
+| `uv run ruff check tests/cabinet/test_admin_bulk_panel_sync_contract.py` | `All checks passed!` |
+| `git diff --check 928bdbb05ca68d47c242b70877e822001db30226 -- tests/cabinet/test_admin_bulk_panel_sync_contract.py` | passed |
+
+### Concerns
+
+- The existing warning set remains: Pydantic deprecations plus four known Lava async-mock resource warnings.
+- `uv.lock` was already dirty, remains unstaged, and is intentionally excluded.
