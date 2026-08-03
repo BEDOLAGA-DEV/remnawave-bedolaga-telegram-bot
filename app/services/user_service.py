@@ -788,7 +788,13 @@ class UserService:
             return False
 
     async def delete_user_account(
-        self, db: AsyncSession, user_id: int, admin_id: int, *, force_panel_delete: bool = False
+        self,
+        db: AsyncSession,
+        user_id: int,
+        admin_id: int,
+        *,
+        force_panel_delete: bool = False,
+        commit: bool = True,
     ) -> DeleteUserResult:
         """Полное удаление пользователя из бота и (опционально) из панели RemnaWave.
 
@@ -837,7 +843,8 @@ class UserService:
             if is_multi_tariff:
                 if force_panel_delete and any(not sub.remnawave_uuid for sub in subs):
                     result.panel_error = 'Missing exact panel identity'
-                    await db.rollback()
+                    if commit:
+                        await db.rollback()
                     return result
                 panel_uuids = [sub.remnawave_uuid for sub in subs]
             else:
@@ -845,7 +852,8 @@ class UserService:
 
             if force_panel_delete and not panel_uuids:
                 result.panel_error = 'Missing exact panel identity'
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 return result
 
             # Best-effort: stop Platega SBP autopay for every subscription of
@@ -964,7 +972,8 @@ class UserService:
                                     logger.error('❌ Ошибка деактивации RemnaWave как fallback', fallback_e=fallback_e)
 
             if force_panel_delete and panel_uuids and (not result.panel_deleted or result.panel_error):
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 return result
 
             try:
@@ -1444,11 +1453,15 @@ class UserService:
                 await db.execute(update(UserRole).where(UserRole.assigned_by == user_id).values(assigned_by=None))
                 await db.execute(update(AccessPolicy).where(AccessPolicy.created_by == user_id).values(created_by=None))
                 await db.execute(delete(User).where(User.id == user_id))
-                await db.commit()
+                if commit:
+                    await db.commit()
+                else:
+                    await db.flush()
                 logger.info('✅ Пользователь окончательно удален из базы', user_id=user_id)
             except Exception as e:
                 logger.error('❌ Ошибка финального удаления пользователя', error=e)
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 return result
 
             result.bot_deleted = True
@@ -1462,7 +1475,8 @@ class UserService:
 
         except Exception as e:
             logger.error('❌ Критическая ошибка удаления пользователя', user_id=user_id, error=e)
-            await db.rollback()
+            if commit:
+                await db.rollback()
             return result
 
     async def get_user_statistics(self, db: AsyncSession) -> dict[str, Any]:

@@ -458,8 +458,8 @@ async def test_cancel_safe_wiring_proof_admin_bulk_delete_subscription(monkeypat
     recorded: list[tuple[object, int]] = []
     call_order: list[str] = []
 
-    async def fake_cancel(db, subscription_id):
-        recorded.append((db, subscription_id))
+    async def fake_cancel(db, subscription_id, *, commit=True):
+        recorded.append((db, subscription_id, commit))
         call_order.append('platega_cancel')
 
     async def fake_ensure_no_open_grace(db, subscription_ids):
@@ -476,21 +476,25 @@ async def test_cancel_safe_wiring_proof_admin_bulk_delete_subscription(monkeypat
         is_active=False,
         is_trial=False,
         tariff=None,
-        remnawave_uuid=None,
+        remnawave_uuid='panel-sub-77',
     )
-    user = SimpleNamespace(id=1, username='victim', subscriptions=[], remnawave_uuid=None)
+    user = SimpleNamespace(id=1, username='victim', subscriptions=[], remnawave_uuid='panel-user-1')
     db = AsyncMock()
+
+    disable = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService.disable_remnawave_user',
+        disable,
+    )
 
     result = await admin_bulk_actions._do_delete_subscription(
         db, user, BulkActionParams(), dry_run=False, sub_override=sub
     )
 
     assert result.success is True
-    assert recorded == [(db, 77)]  # cancel called with the subscription being deleted, before its DB delete
-    # Same ordering constraint as the other two sites: the Platega cancel
-    # commits its own transaction, releasing the grace guard's advisory lock
-    # acquired by the first check, so the guard must be re-acquired right
-    # after cancel and before the irreversible delete statements.
+    assert recorded == [(db, 77, False)]  # cancellation stays in the caller-owned transaction
+    disable.assert_awaited_once_with('panel-user-1', db=db)
+    # Grace protection is retained around the cancellation and destructive work.
     assert call_order == ['grace_check', 'platega_cancel', 'grace_check']
 
 
@@ -587,6 +591,30 @@ async def test_full_delete_missing_exact_panel_identity_aborts_before_local_dele
     assert result.panel_error is not None
     db.rollback.assert_awaited_once()
     db.execute.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+async def test_full_delete_commit_false_leaves_rollback_to_bulk_boundary(monkeypatch):
+    """The bulk caller owns the one rollback for a typed panel rejection."""
+    import app.services.user_service as user_service_module
+    from app.services.user_service import UserService
+
+    subscription = SimpleNamespace(id=11, remnawave_uuid=None)
+    user = SimpleNamespace(id=5, telegram_id=555, email=None, subscriptions=[subscription], remnawave_uuid=None)
+    monkeypatch.setattr(user_service_module, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
+    )
+    db = AsyncMock()
+
+    result = await UserService().delete_user_account(
+        db, user_id=5, admin_id=1, force_panel_delete=True, commit=False
+    )
+
+    assert result.bot_deleted is False
+    assert result.panel_error == 'Missing exact panel identity'
+    db.rollback.assert_not_awaited()
     db.commit.assert_not_awaited()
 
 
