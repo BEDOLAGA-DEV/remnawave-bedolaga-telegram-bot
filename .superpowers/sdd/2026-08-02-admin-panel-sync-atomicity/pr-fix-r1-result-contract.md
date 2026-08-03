@@ -18,10 +18,10 @@ actions. No unrelated product payload was included.
 - base_head: `232719bb124cd8781e73d0a511e8ba569296a704` (`upstream/main`)
 - branch: `fix/admin-panel-sync-atomicity` (pushed from local reconstruction
   branch `fix/admin-panel-sync-atomicity-r1`)
-- pre-contract implementation head: `7c01f0e6` ancestry includes reconstructed
-  atomicity series; final current head is the commit containing this contract.
-- pushed: pending the authorized `--force-with-lease` update of the existing PR
-  head verified as `a974c3635034422c6bc1024e947e1bc5092c70dd` on `origin`.
+- commit/current_head: the branch commit storing this contract (resolve with
+  `git rev-parse HEAD` after the final documentation commit).
+- pushed: `true`; the authorized `--force-with-lease` update replaced the
+  reviewed old PR head `a974c3635034422c6bc1024e947e1bc5092c70dd` on `origin`.
 - pr_url: `https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/pull/3134`
 - working_tree: clean before this artifact was added; expected clean after commit.
 
