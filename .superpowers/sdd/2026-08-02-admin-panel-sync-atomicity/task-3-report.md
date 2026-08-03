@@ -149,3 +149,28 @@ exit 0
 - **Concerns:** accepted distributed-transaction residual remains for remote payment cancellation
   after a complete preflight. Existing payment async-mock warnings remain. Fresh independent
   specification and quality review is still required.
+
+## Fix Round 5 — Final Circuit-Breaker
+
+- **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T3`
+- **Status:** `DONE_PENDING_FRESH_REVIEW`
+- **Base head:** `8c7b08a9a378166a425a64538750740943a31ba2`
+- **Current implementation head / commit:** `284c17869b74a6eb2929ac5105114cc4e90caf7b`
+  (`fix: keep admin recurrence cleanup atomic`)
+- **Timestamp:** `2026-08-03T00:04:08Z`
+- **Files:** `app/cabinet/routes/admin_users.py`,
+  `tests/cabinet/test_admin_panel_sync_contract.py`.
+- **Acceptance evidence:** `change_tariff` and `cancel` now pass `commit=False` to both
+  Platega and Lava recurrence-cancellation helpers. Active-recurrence failure contracts assert
+  each exact no-commit call, zero commits, and one rollback; success contracts assert cleanup
+  precedes panel synchronization and the sole route commit. The unified public-action matrix
+  now observes local staging before panel sync for all twelve actions, restores direct fields,
+  created relation membership, and removed related-record state during simulated rollback,
+  asserts `create_paid_subscription(..., commit=False)`, and locks exact established success
+  messages per branch.
+- **Verification:** focused Task 3 suite: `140 passed` (44 existing async-mock warnings);
+  Ruff changed Python files: passed; working-tree diff check: passed.
+- **Concerns:** remote payment cancellation remains externally irreversible after an otherwise
+  valid preflight if a later panel operation or local commit fails. The 44 focused-suite
+  async-mock warnings pre-date this round. Fresh independent specification and quality review
+  remains mandatory.
