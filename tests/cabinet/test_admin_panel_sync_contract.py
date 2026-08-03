@@ -20,6 +20,7 @@ from app.services.admin_panel_sync import (
     panel_sync_failure_message,
 )
 from app.services.remnawave_service import RemnaWaveService
+from app.services.user_service import UserService
 
 
 @pytest.fixture
@@ -32,6 +33,7 @@ def user():
         email='contract@example.test',
         remnawave_uuid='user-level-uuid',
         last_remnawave_sync=None,
+        status='active',
     )
 
 
@@ -103,6 +105,60 @@ def test_typed_failures_are_bounded_and_safe():
     message = panel_sync_failure_message()
     assert 'not saved' in message.lower()
     assert 'token' not in message.lower()
+
+
+@pytest.mark.asyncio
+async def test_device_delete_requires_exact_subscription_uuid_in_multi_tariff_mode(monkeypatch, user, db):
+    """A user-level UUID must never receive a multi-tariff device mutation."""
+    monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+
+    with pytest.raises(Exception) as raised:
+        await admin_users.delete_user_device(
+            user_id=user.id,
+            hwid='hwid-1',
+            admin=SimpleNamespace(id=1),
+            db=db,
+            subscription_id=None,
+        )
+
+    assert getattr(raised.value, 'status_code', None) == 400
+    assert 'subscription panel identity' in str(getattr(raised.value, 'detail', '')).lower()
+
+
+@pytest.mark.asyncio
+async def test_block_panel_failure_rolls_back_without_local_success(monkeypatch, user, subscription, db):
+    """Swallowing a required disable would falsely report a local block as successful."""
+    user.subscriptions = [subscription]
+    monkeypatch.setattr('app.services.user_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService',
+        lambda: SimpleNamespace(disable_remnawave_user=AsyncMock(return_value=False)),
+    )
+
+    assert await UserService().block_user(db, user.id, admin_id=1) is False
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    assert user.status != 'blocked'
+
+
+@pytest.mark.asyncio
+async def test_unblock_panel_failure_rolls_back_without_local_success(monkeypatch, user, subscription, db):
+    """Queued retries cannot replace the mandatory panel update at this boundary."""
+    user.status = 'blocked'
+    subscription.status = 'disabled'
+    user.subscriptions = [subscription]
+    monkeypatch.setattr('app.services.user_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService',
+        lambda: SimpleNamespace(update_remnawave_user=AsyncMock(return_value=None)),
+    )
+
+    assert await UserService().unblock_user(db, user.id, admin_id=1) is False
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    assert user.status == 'blocked'
 
 
 @pytest.mark.asyncio

@@ -22,3 +22,28 @@
 ## Working tree contract
 
 The known `uv.lock` change is pre-existing user-owned state. It is neither staged nor committed by Task 5. All other changed files are Task 5 evidence and must be clean after the implementation commit.
+
+---
+
+## Fix Round 1 — Partial Evidence
+
+- **Base HEAD:** `abeb5d48124528ea396eb0ecad9a412997f70d90`
+- **Status:** `NOT_REVIEW_READY`
+- **Timestamp:** `2026-08-03T02:03:00Z`
+
+### Implemented in this round
+
+- Block/unblock now require successful panel work before their sole local commit, roll back on panel failure, and emit bounded structured diagnostics.
+- Multi-tariff device delete/reset requires an explicit exact subscription identity; direct sync rejects a missing exact subscription UUID and no longer returns raw exception text.
+- Tariff squad synchronization now has a synchronous fail-closed helper used by the tariff-update trigger and direct sync route.
+
+### Verification
+
+- Focused Task 5 command: `229 passed, 44 warnings`.
+- Scoped Ruff for changed source/tests: `All checks passed!`.
+
+### Remaining review gaps
+
+- The side-effect-free executable outcome manifest for every direct route has not yet replaced the self-validating `DIRECT_MUTATION_CASES` linkage.
+- The inventory guard has not yet been widened and made symmetric across all public admin route files, and tariff route keys are not yet registered in the authoritative inventory.
+- Full-pytest status and final delivery-head evidence remain pending after those gaps are resolved.

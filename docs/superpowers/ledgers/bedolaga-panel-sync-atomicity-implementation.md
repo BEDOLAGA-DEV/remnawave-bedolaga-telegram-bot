@@ -81,3 +81,7 @@
 ## Recommended Plane update
 
 `plane_written: false`. Record Task 5 as **implementation complete, awaiting fresh specification-compliance and code-quality review** on the committed head; attach this ledger, focused test result, and the repository-baseline check blockers above. Note the explicit `delete_user:delete_user` inventory correction and empty best-effort list.
+
+## Fix Round 1 status
+
+This ledger is **not review-ready** until the direct outcome manifest and all-route inventory guard are corrected. The fail-closed runtime fixes are tracked in the Fix Round 1 task report; do not treat this prior Task 5 ledger as approval evidence for a later head.

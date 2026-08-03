@@ -22,7 +22,6 @@ from app.database.crud.user import (
     get_users_spending_stats,
     get_users_statistics,
     subtract_user_balance,
-    update_user,
 )
 from app.database.models import (
     AdvertisingCampaign,
@@ -681,110 +680,90 @@ class UserService:
             if not user:
                 return False
 
-            from app.database.crud.subscription import deactivate_subscription, is_active_paid_subscription
+            from app.database.crud.subscription import deactivate_subscription
+            from app.database.models import SubscriptionStatus
+            from app.services.subscription_service import SubscriptionService
 
             subs = getattr(user, 'subscriptions', None) or []
-            has_active_paid = any(is_active_paid_subscription(sub) for sub in subs)
+            service = SubscriptionService()
+            for sub in subs:
+                panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
+                if not panel_uuid or not await service.disable_remnawave_user(panel_uuid, db=db):
+                    await db.rollback()
+                    logger.warning(
+                        'Admin panel synchronization did not complete',
+                        user_id=user_id,
+                        subscription_id=getattr(sub, 'id', None),
+                        action='block',
+                        reason_code='panel_api_failed' if panel_uuid else 'missing_subscription_uuid',
+                    )
+                    return False
 
-            if has_active_paid:
-                logger.info(
-                    '⏭️ Пропуск отключения RemnaWave и подписки: у пользователя активная оплаченная подписка',
-                    user_id=user_id,
-                    remnawave_uuid=user.remnawave_uuid,
-                )
-            else:
-                from app.services.subscription_service import SubscriptionService
+            for sub in subs:
+                if sub.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value):
+                    await deactivate_subscription(db, sub, commit=False)
 
-                subscription_service = SubscriptionService()
-
-                if settings.is_multi_tariff_enabled():
-                    # In multi-tariff mode, disable each subscription's panel user individually
-                    for sub in subs:
-                        panel_uuid = sub.remnawave_uuid
-                        if panel_uuid:
-                            try:
-                                await subscription_service.disable_remnawave_user(panel_uuid)
-                                logger.info(
-                                    '✅ RemnaWave пользователь деактивирован при блокировке',
-                                    remnawave_uuid=panel_uuid,
-                                    subscription_id=sub.id,
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    '❌ Ошибка деактивации RemnaWave при блокировке',
-                                    error=e,
-                                    subscription_id=sub.id,
-                                )
-                elif user.remnawave_uuid:
-                    try:
-                        await subscription_service.disable_remnawave_user(user.remnawave_uuid)
-                        logger.info(
-                            '✅ RemnaWave пользователь деактивирован при блокировке',
-                            remnawave_uuid=user.remnawave_uuid,
-                        )
-                    except Exception as e:
-                        logger.error('❌ Ошибка деактивации RemnaWave пользователя при блокировке', error=e)
-
-                for sub in subs:
-                    if sub.status in ['active', 'trial']:
-                        await deactivate_subscription(db, sub)
-
-            await update_user(db, user, status=UserStatus.BLOCKED.value)
+            user.status = UserStatus.BLOCKED.value
+            user.updated_at = datetime.now(UTC)
+            await db.commit()
 
             logger.info('Админ заблокировал пользователя', admin_id=admin_id, user_id=user_id, reason=reason)
             return True
 
-        except Exception as e:
-            logger.error('Ошибка блокировки пользователя', error=e)
+        except Exception:
+            await db.rollback()
+            logger.warning(
+                'Admin panel synchronization did not complete',
+                user_id=user_id,
+                subscription_id=None,
+                action='block',
+                reason_code='panel_api_failed',
+            )
             return False
 
     async def unblock_user(self, db: AsyncSession, user_id: int, admin_id: int) -> bool:
+        user = None
+        original_user_status = None
+        original_subscription_statuses: list[tuple[Subscription, str]] = []
         try:
             user = await get_user_by_id(db, user_id)
             if not user:
                 return False
 
-            await update_user(db, user, status=UserStatus.ACTIVE.value)
-
             from app.database.models import SubscriptionStatus
+            from app.services.subscription_service import SubscriptionService
 
             now = datetime.now(UTC)
+            original_user_status = user.status
+            user.status = UserStatus.ACTIVE.value
+            user.updated_at = now
+            service = SubscriptionService()
             for sub in getattr(user, 'subscriptions', None) or []:
                 if sub.end_date and sub.end_date > now and sub.status != SubscriptionStatus.ACTIVE.value:
+                    original_subscription_statuses.append((sub, sub.status))
                     sub.status = SubscriptionStatus.ACTIVE.value
-                    try:
-                        from app.services.subscription_service import SubscriptionService
-
-                        subscription_service = SubscriptionService()
-                        await subscription_service.update_remnawave_user(db, sub)
-                        logger.info(
-                            '✅ RemnaWave подписка восстановлена при разблокировке',
-                            subscription_id=sub.id,
-                            remnawave_uuid=sub.remnawave_uuid
-                            if settings.is_multi_tariff_enabled()
-                            else user.remnawave_uuid,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            '❌ Ошибка восстановления RemnaWave подписки при разблокировке',
-                            subscription_id=sub.id,
-                            error=e,
-                        )
-                        from app.services.remnawave_retry_queue import remnawave_retry_queue
-
-                        if hasattr(sub, 'id') and hasattr(sub, 'user_id'):
-                            remnawave_retry_queue.enqueue(
-                                subscription_id=sub.id,
-                                user_id=sub.user_id,
-                                action='update',
-                            )
+                    if not await service.update_remnawave_user(db, sub):
+                        raise RuntimeError('required panel update did not complete')
             await db.commit()
 
             logger.info('Админ разблокировал пользователя', admin_id=admin_id, user_id=user_id)
             return True
 
-        except Exception as e:
-            logger.error('Ошибка разблокировки пользователя', error=e)
+        except Exception:
+            await db.rollback()
+            if user is not None and original_user_status is not None:
+                user.status = original_user_status
+            for sub, original_status in original_subscription_statuses:
+                sub.status = original_status
+            logger.warning(
+                'Admin panel synchronization did not complete',
+                user_id=user_id,
+                subscription_id=getattr(original_subscription_statuses[-1][0], 'id', None)
+                if original_subscription_statuses
+                else None,
+                action='unblock',
+                reason_code='panel_api_failed',
+            )
             return False
 
     async def delete_user_account(

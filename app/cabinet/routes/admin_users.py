@@ -553,7 +553,9 @@ async def _sync_subscription_to_panel(
     raise PanelSyncFailed(reason_code)
 
 
-async def _require_panel_disable_for_subscriptions(user: User, subscriptions: list[Subscription], *, action: str) -> None:
+async def _require_panel_disable_for_subscriptions(
+    user: User, subscriptions: list[Subscription], *, action: str
+) -> None:
     """Require exact panel disables before a destructive local mutation."""
     from app.services.subscription_service import SubscriptionService
 
@@ -2620,7 +2622,11 @@ async def delete_user_device(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
 
     _uuid = None
-    if settings.is_multi_tariff_enabled() and subscription_id:
+    if settings.is_multi_tariff_enabled():
+        if not subscription_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail='Subscription panel identity is required'
+            )
         from app.database.crud.subscription import get_subscription_by_id_for_user
 
         sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
@@ -2644,9 +2650,15 @@ async def delete_user_device(
             return DeleteDeviceResponse(success=True, message='Device deleted', deleted_hwid=hwid)
         return DeleteDeviceResponse(success=False, message='Failed to delete device')
 
-    except Exception as e:
-        logger.error('Error deleting device for user', hwid=hwid, user_id=user_id, error=e)
-        return DeleteDeviceResponse(success=False, message='Ошибка удаления устройства')
+    except Exception:
+        logger.warning(
+            'Admin panel synchronization did not complete',
+            user_id=user_id,
+            subscription_id=subscription_id,
+            action='delete_device',
+            reason_code='panel_api_failed',
+        )
+        return DeleteDeviceResponse(success=False, message=panel_sync_failure_message())
 
 
 @router.patch('/{user_id}/devices/{hwid}/name', response_model=RenameDeviceResponse)
@@ -2709,7 +2721,11 @@ async def reset_user_devices(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
 
     _rst_uuid = None
-    if settings.is_multi_tariff_enabled() and subscription_id:
+    if settings.is_multi_tariff_enabled():
+        if not subscription_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail='Subscription panel identity is required'
+            )
         from app.database.crud.subscription import get_subscription_by_id_for_user
 
         sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
@@ -2752,9 +2768,15 @@ async def reset_user_devices(
         logger.info('Admin reset devices for user /', admin_id=admin.id, user_id=user_id, deleted=deleted, total=total)
         return ResetDevicesResponse(success=True, message=f'Deleted {deleted}/{total} devices', deleted_count=deleted)
 
-    except Exception as e:
-        logger.error('Error resetting devices for user', user_id=user_id, error=e)
-        return ResetDevicesResponse(success=False, message='Ошибка сброса устройств')
+    except Exception:
+        logger.warning(
+            'Admin panel synchronization did not complete',
+            user_id=user_id,
+            subscription_id=subscription_id,
+            action='reset_devices',
+            reason_code='panel_api_failed',
+        )
+        return ResetDevicesResponse(success=False, message=panel_sync_failure_message())
 
 
 # === Delete User ===
@@ -4058,6 +4080,20 @@ async def sync_user_to_panel(
             detail='User has no subscription to sync',
         )
 
+    if settings.is_multi_tariff_enabled() and not push_sub.remnawave_uuid:
+        logger.warning(
+            'Admin panel synchronization did not complete',
+            user_id=user_id,
+            subscription_id=push_sub.id,
+            action='sync_to_panel',
+            reason_code='missing_subscription_uuid',
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=panel_sync_failure_message(),
+        )
+
     try:
         from app.config import settings
         from app.external.remnawave_api import UserStatus as PanelUserStatus
@@ -4073,16 +4109,14 @@ async def sync_user_to_panel(
         if not service.is_configured:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=service.configuration_error or 'Remnawave API not configured',
+                detail=panel_sync_failure_message(),
             )
 
         sub = push_sub
         changes = {}
         errors = []
         action = 'no_changes'
-        panel_uuid = (
-            sub.remnawave_uuid if settings.is_multi_tariff_enabled() and sub.remnawave_uuid else user.remnawave_uuid
-        )
+        panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
 
         # Prepare data for panel
         is_active = (
@@ -4265,11 +4299,18 @@ async def sync_user_to_panel(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error('Error syncing user to panel', user_id=user_id, error=e)
+    except Exception:
+        await db.rollback()
+        logger.warning(
+            'Admin panel synchronization did not complete',
+            user_id=user_id,
+            subscription_id=push_sub.id,
+            action='sync_to_panel',
+            reason_code='panel_api_failed',
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f'Sync error: {e!s}',
+            detail=panel_sync_failure_message(),
         )
 
 

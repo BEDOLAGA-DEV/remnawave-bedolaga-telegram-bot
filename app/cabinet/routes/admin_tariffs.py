@@ -1,6 +1,7 @@
 """Admin routes for managing tariffs in cabinet."""
 
 import asyncio
+from types import SimpleNamespace
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +23,7 @@ from app.database.crud.tariff import (
     update_tariff,
 )
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, Transaction, TransactionType, User
+from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncSkipped, panel_sync_failure_message
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.tariffs import (
@@ -46,6 +48,63 @@ from ..schemas.tariffs import (
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/tariffs', tags=['Cabinet Admin Tariffs'])
+
+
+async def _sync_tariff_squads_atomically(
+    db: AsyncSession,
+    tariff: Tariff,
+    *,
+    action: str,
+) -> int:
+    """Stage every local squad change only after its exact panel update succeeds."""
+    from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
+    from app.services.grace_access_runtime import update_panel_user_grace_safe
+    from app.services.remnawave_service import RemnaWaveService
+
+    result = await db.execute(
+        select(Subscription)
+        .join(User, Subscription.user_id == User.id)
+        .options(joinedload(Subscription.user))
+        .where(
+            and_(
+                Subscription.tariff_id == tariff.id,
+                Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
+            )
+        )
+    )
+    subscriptions = list(result.unique().scalars().all())
+    if not subscriptions:
+        return 0
+
+    service = RemnaWaveService()
+    if not service.is_configured:
+        raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
+
+    new_squads = tariff.allowed_squads or []
+    async with service.get_api_client() as api:
+        for sub in subscriptions:
+            panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else sub.user.remnawave_uuid
+            if not panel_uuid:
+                raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+            try:
+                await update_panel_user_grace_safe(
+                    api,
+                    sub.id,
+                    uuid=panel_uuid,
+                    active_internal_squads=new_squads,
+                    external_squad_uuid=tariff.external_squad_uuid,
+                )
+            except Exception as error:
+                logger.warning(
+                    'Admin panel synchronization did not complete',
+                    user_id=sub.user_id,
+                    subscription_id=sub.id,
+                    action=action,
+                    reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+                )
+                raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
+            sub.connected_squads = new_squads
+    return len(subscriptions)
 
 
 async def _get_tariff_servers(
@@ -436,6 +495,25 @@ async def update_existing_tariff(
     if request.show_in_gift is not None:
         updates['show_in_gift'] = request.show_in_gift
 
+    new_squads = request.allowed_squads if request.allowed_squads is not None else old_squads
+    squads_changed = request.allowed_squads is not None and sorted(old_squads) != sorted(new_squads)
+    ext_squad_changed = (
+        'external_squad_uuid' in request.model_fields_set and request.external_squad_uuid != old_external_squad
+    )
+    if squads_changed or ext_squad_changed:
+        staged_tariff = SimpleNamespace(
+            id=tariff.id,
+            allowed_squads=new_squads,
+            external_squad_uuid=request.external_squad_uuid
+            if 'external_squad_uuid' in request.model_fields_set
+            else old_external_squad,
+        )
+        try:
+            await _sync_tariff_squads_atomically(db, staged_tariff, action='tariff_update_sync_squads')
+        except (PanelSyncSkipped, PanelSyncFailed):
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=panel_sync_failure_message())
+
     if updates:
         await update_tariff(db, tariff, **updates)
 
@@ -447,18 +525,6 @@ async def update_existing_tariff(
 
     # Перезагружаем периоды из БД для синхронизации с ботом
     await load_period_prices_from_db(db)
-
-    # Auto-sync squads to active subscriptions in Remnawave when squads changed
-    new_squads = tariff.allowed_squads or []
-    squads_changed = request.allowed_squads is not None and sorted(old_squads) != sorted(new_squads)
-    ext_squad_changed = (
-        'external_squad_uuid' in request.model_fields_set and tariff.external_squad_uuid != old_external_squad
-    )
-    if squads_changed or ext_squad_changed:
-        asyncio.create_task(
-            _background_sync_squads(tariff_id, admin.id),
-            name=f'sync-squads-tariff-{tariff_id}',
-        )
 
     return await get_tariff(tariff_id, admin, db)
 
@@ -728,6 +794,22 @@ async def sync_tariff_squads(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Tariff not found',
         )
+
+    try:
+        updated_count = await _sync_tariff_squads_atomically(db, tariff, action='sync_tariff_squads')
+    except (PanelSyncSkipped, PanelSyncFailed):
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=panel_sync_failure_message())
+
+    await db.commit()
+    return SyncSquadsResponse(
+        tariff_id=tariff_id,
+        tariff_name=tariff.name,
+        total_subscriptions=updated_count,
+        updated_count=updated_count,
+        failed_count=0,
+        skipped_count=0,
+    )
 
     # Fetch active + trial subscriptions for this tariff whose users exist in Remnawave
     result = await db.execute(
