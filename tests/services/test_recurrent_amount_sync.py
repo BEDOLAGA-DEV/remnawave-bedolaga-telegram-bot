@@ -179,6 +179,26 @@ async def test_stale_bindings_of_both_providers_are_cancelled(monkeypatch):
         assert sorted(cancelled) == ['lava', 'platega']
 
 
+async def test_stale_binding_cleanup_propagates_caller_owned_transaction(monkeypatch):
+    """A traffic top-up rollback must not be defeated by recurrent cleanup commits."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        user, _, subscription = await _seed(db, device_limit=3)
+        db.add(_platega(subscription, user, BASE_PRICE))
+        await db.commit()
+
+        observed: list[bool] = []
+        import app.services.payment.platega as platega_module
+
+        async def cancel_platega(db_, sub_id, *, commit=True):
+            observed.append(commit)
+
+        monkeypatch.setattr(platega_module, 'cancel_platega_recurring_for_subscription_safe', cancel_platega)
+
+        await sync_recurrent_bindings_after_price_change(db, subscription.id, commit=False)
+
+        assert observed == [False]
+
+
 async def test_sync_never_raises_on_missing_subscription(monkeypatch):
     """Best-effort: докупка уже оплачена и не должна падать из-за рекуррента."""
     async with memory_session(monkeypatch, TABLES) as db:
@@ -193,8 +213,8 @@ async def test_device_purchase_triggers_sync(monkeypatch):
 
         called: list[int] = []
 
-        async def fake_sync(db_, subscription_id):
-            called.append(subscription_id)
+        async def fake_sync(db_, subscription_id, *, commit=True):
+            called.append((subscription_id, commit))
 
         monkeypatch.setattr(ra, 'sync_recurrent_bindings_after_price_change', fake_sync)
 
@@ -202,4 +222,4 @@ async def test_device_purchase_triggers_sync(monkeypatch):
 
         await add_subscription_devices(db, subscription, 2)
 
-        assert called == [subscription.id]
+        assert called == [(subscription.id, True)]

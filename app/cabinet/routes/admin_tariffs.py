@@ -1,6 +1,6 @@
 """Admin routes for managing tariffs in cabinet."""
 
-import asyncio
+from types import SimpleNamespace
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +22,7 @@ from app.database.crud.tariff import (
     update_tariff,
 )
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, Transaction, TransactionType, User
+from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped, panel_sync_failure_message
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.tariffs import (
@@ -46,6 +47,94 @@ from ..schemas.tariffs import (
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/admin/tariffs', tags=['Cabinet Admin Tariffs'])
+
+
+def _log_tariff_panel_sync_failure(
+    *, user_id: int | None, subscription_id: int | None, action: str, reason: PanelSyncReason
+) -> None:
+    logger.warning(
+        'Admin panel synchronization did not complete',
+        user_id=user_id,
+        subscription_id=subscription_id,
+        action=action,
+        reason_code=reason.value,
+    )
+
+
+async def _sync_tariff_squads_atomically(
+    db: AsyncSession,
+    tariff: Tariff,
+    *,
+    action: str,
+) -> int:
+    """Stage every local squad change only after its exact panel update succeeds."""
+    from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
+    from app.services.grace_access_runtime import update_panel_user_grace_safe
+    from app.services.remnawave_service import RemnaWaveService
+
+    result = await db.execute(
+        select(Subscription)
+        .join(User, Subscription.user_id == User.id)
+        .options(joinedload(Subscription.user))
+        .where(
+            and_(
+                Subscription.tariff_id == tariff.id,
+                Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
+            )
+        )
+    )
+    subscriptions = list(result.unique().scalars().all())
+    if not subscriptions:
+        return 0
+
+    service = RemnaWaveService()
+    if not service.is_configured:
+        for sub in subscriptions:
+            _log_tariff_panel_sync_failure(
+                user_id=sub.user_id,
+                subscription_id=sub.id,
+                action=action,
+                reason=PanelSyncReason.NOT_CONFIGURED,
+            )
+        raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
+
+    new_squads = tariff.allowed_squads or []
+    targets = [
+        (
+            sub,
+            sub.remnawave_uuid if settings.is_multi_tariff_enabled() else sub.user.remnawave_uuid,
+        )
+        for sub in subscriptions
+    ]
+    for sub, panel_uuid in targets:
+        if not panel_uuid:
+            _log_tariff_panel_sync_failure(
+                user_id=sub.user_id,
+                subscription_id=sub.id,
+                action=action,
+                reason=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
+            )
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+    async with service.get_api_client() as api:
+        for sub, panel_uuid in targets:
+            try:
+                await update_panel_user_grace_safe(
+                    api,
+                    sub.id,
+                    uuid=panel_uuid,
+                    active_internal_squads=new_squads,
+                    external_squad_uuid=tariff.external_squad_uuid,
+                )
+            except Exception as error:
+                _log_tariff_panel_sync_failure(
+                    user_id=sub.user_id,
+                    subscription_id=sub.id,
+                    action=action,
+                    reason=PanelSyncReason.PANEL_API_FAILED,
+                )
+                raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
+            sub.connected_squads = new_squads
+    return len(subscriptions)
 
 
 async def _get_tariff_servers(
@@ -436,29 +525,40 @@ async def update_existing_tariff(
     if request.show_in_gift is not None:
         updates['show_in_gift'] = request.show_in_gift
 
+    new_squads = request.allowed_squads if request.allowed_squads is not None else old_squads
+    squads_changed = request.allowed_squads is not None and sorted(old_squads) != sorted(new_squads)
+    ext_squad_changed = (
+        'external_squad_uuid' in request.model_fields_set and request.external_squad_uuid != old_external_squad
+    )
+    if squads_changed or ext_squad_changed:
+        staged_tariff = SimpleNamespace(
+            id=tariff.id,
+            allowed_squads=new_squads,
+            external_squad_uuid=request.external_squad_uuid
+            if 'external_squad_uuid' in request.model_fields_set
+            else old_external_squad,
+        )
+        try:
+            await _sync_tariff_squads_atomically(db, staged_tariff, action='tariff_update_sync_squads')
+        except (PanelSyncSkipped, PanelSyncFailed):
+            await db.rollback()
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=panel_sync_failure_message())
+
     if updates:
-        await update_tariff(db, tariff, **updates)
+        await update_tariff(db, tariff, **updates, commit=False)
 
     # Update promo groups separately
     if request.promo_group_ids is not None:
-        await set_tariff_promo_groups(db, tariff, request.promo_group_ids)
+        await set_tariff_promo_groups(db, tariff, request.promo_group_ids, commit=False)
+
+    # The panel sync and every local tariff change share this route-owned
+    # transaction boundary.  Do not rely on a later request lifecycle commit.
+    await db.commit()
 
     logger.info('Admin updated tariff', admin_id=admin.id, tariff_id=tariff_id)
 
     # Перезагружаем периоды из БД для синхронизации с ботом
     await load_period_prices_from_db(db)
-
-    # Auto-sync squads to active subscriptions in Remnawave when squads changed
-    new_squads = tariff.allowed_squads or []
-    squads_changed = request.allowed_squads is not None and sorted(old_squads) != sorted(new_squads)
-    ext_squad_changed = (
-        'external_squad_uuid' in request.model_fields_set and tariff.external_squad_uuid != old_external_squad
-    )
-    if squads_changed or ext_squad_changed:
-        asyncio.create_task(
-            _background_sync_squads(tariff_id, admin.id),
-            name=f'sync-squads-tariff-{tariff_id}',
-        )
 
     return await get_tariff(tariff_id, admin, db)
 
@@ -622,94 +722,6 @@ async def get_tariff_stats(
     )
 
 
-async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
-    """Run squad sync in background with its own DB session (fire-and-forget)."""
-    from app.database.database import AsyncSessionLocal
-    from app.services.remnawave_service import RemnaWaveService
-
-    try:
-        async with AsyncSessionLocal() as db:
-            tariff = await get_tariff_by_id(db, tariff_id)
-            if not tariff:
-                return
-
-            result = await db.execute(
-                select(Subscription)
-                .join(User, Subscription.user_id == User.id)
-                .options(joinedload(Subscription.user))
-                .where(
-                    and_(
-                        Subscription.tariff_id == tariff_id,
-                        Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
-                        User.remnawave_uuid.isnot(None),
-                    )
-                )
-            )
-            subscriptions = list(result.unique().scalars().all())
-
-            if not subscriptions:
-                return
-
-            new_squads = tariff.allowed_squads or []
-            ext_squad_uuid = tariff.external_squad_uuid
-
-            from app.services.grace_access_runtime import update_panel_user_grace_safe
-
-            service = RemnaWaveService()
-            updated = 0
-            failed = 0
-
-            async with service.get_api_client() as api:
-                semaphore = asyncio.Semaphore(5)
-
-                async def _sync_one(sub: Subscription) -> None:
-                    nonlocal updated, failed
-                    remnawave_uuid = (
-                        getattr(sub, 'remnawave_uuid', None)
-                        if settings.is_multi_tariff_enabled()
-                        else (sub.user.remnawave_uuid if sub.user else None)
-                    )
-                    if not remnawave_uuid:
-                        return
-                    async with semaphore:
-                        try:
-                            await update_panel_user_grace_safe(
-                                api,
-                                sub.id,
-                                uuid=remnawave_uuid,
-                                active_internal_squads=new_squads,
-                                external_squad_uuid=ext_squad_uuid,
-                            )
-                            sub.connected_squads = new_squads
-                            updated += 1
-                        except Exception as e:
-                            failed += 1
-                            logger.warning(
-                                'Background sync: failed to sync squads for user',
-                                user_id=sub.user_id,
-                                error=str(e),
-                            )
-
-                await asyncio.gather(*[_sync_one(sub) for sub in subscriptions])
-
-            await db.commit()
-            logger.info(
-                'Background squad sync completed after tariff update',
-                admin_id=admin_id,
-                tariff_id=tariff_id,
-                tariff_name=tariff.name,
-                total=len(subscriptions),
-                updated=updated,
-                failed=failed,
-            )
-    except Exception:
-        logger.exception('Background squad sync failed', tariff_id=tariff_id)
-
-
-_SYNC_SQUADS_CONCURRENCY = 5
-_SYNC_SQUADS_MAX_CONSECUTIVE_FAILURES = 10
-
-
 @router.post('/{tariff_id}/sync-squads', response_model=SyncSquadsResponse)
 async def sync_tariff_squads(
     tariff_id: int,
@@ -729,123 +741,18 @@ async def sync_tariff_squads(
             detail='Tariff not found',
         )
 
-    # Fetch active + trial subscriptions for this tariff whose users exist in Remnawave
-    result = await db.execute(
-        select(Subscription)
-        .join(User, Subscription.user_id == User.id)
-        .options(joinedload(Subscription.user))
-        .where(
-            and_(
-                Subscription.tariff_id == tariff_id,
-                Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
-                User.remnawave_uuid.isnot(None),
-            )
-        )
-    )
-    subscriptions = list(result.unique().scalars().all())
+    try:
+        updated_count = await _sync_tariff_squads_atomically(db, tariff, action='sync_tariff_squads')
+    except (PanelSyncSkipped, PanelSyncFailed):
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=panel_sync_failure_message())
 
-    if not subscriptions:
-        return SyncSquadsResponse(
-            tariff_id=tariff_id,
-            tariff_name=tariff.name,
-            total_subscriptions=0,
-            updated_count=0,
-            failed_count=0,
-            skipped_count=0,
-        )
-
-    new_squads = tariff.allowed_squads or []
-    # None means "clear external squad" — intentional when tariff has none
-    ext_squad_uuid = tariff.external_squad_uuid
-
-    # Sync to Remnawave panel with concurrency limit and circuit breaker
-    from app.services.grace_access_runtime import update_panel_user_grace_safe
-    from app.services.remnawave_service import RemnaWaveService
-
-    service = RemnaWaveService()
-    updated_count = 0
-    failed_count = 0
-    skipped_count = 0
-    consecutive_failures = 0
-    errors: list[str] = []
-    aborted = False
-
-    async with service.get_api_client() as api:
-        semaphore = asyncio.Semaphore(_SYNC_SQUADS_CONCURRENCY)
-
-        async def _sync_one(sub: Subscription) -> str:
-            # Counter mutations are safe: no `await` between read-modify-write
-            # and the check within each branch (single-threaded asyncio event loop).
-            nonlocal updated_count, failed_count, skipped_count, consecutive_failures, aborted
-
-            if aborted:
-                skipped_count += 1
-                return 'skipped'
-
-            remnawave_uuid = (
-                getattr(sub, 'remnawave_uuid', None)
-                if settings.is_multi_tariff_enabled()
-                else (sub.user.remnawave_uuid if sub.user else None)
-            )
-            if not remnawave_uuid:
-                skipped_count += 1
-                return 'skipped'
-
-            async with semaphore:
-                if aborted:
-                    skipped_count += 1
-                    return 'skipped'
-
-                try:
-                    await update_panel_user_grace_safe(
-                        api,
-                        sub.id,
-                        uuid=remnawave_uuid,
-                        active_internal_squads=new_squads,
-                        external_squad_uuid=ext_squad_uuid,
-                    )
-                    # Update local DB only on successful API call
-                    sub.connected_squads = new_squads
-                    updated_count += 1
-                    consecutive_failures = 0
-                    return 'ok'
-                except Exception as e:
-                    failed_count += 1
-                    consecutive_failures += 1
-                    errors.append(f'user_id={sub.user_id}: sync failed')
-                    logger.warning(
-                        'Failed to sync squads for user in Remnawave',
-                        user_id=sub.user_id,
-                        remnawave_uuid=remnawave_uuid,
-                        error=str(e),
-                    )
-                    if consecutive_failures >= _SYNC_SQUADS_MAX_CONSECUTIVE_FAILURES:
-                        aborted = True
-                        errors.append(f'Aborted after {_SYNC_SQUADS_MAX_CONSECUTIVE_FAILURES} consecutive failures')
-                    return 'error'
-
-        await asyncio.gather(*[_sync_one(sub) for sub in subscriptions])
-
-    # Commit local DB changes only for successfully synced subscriptions
     await db.commit()
-
-    logger.info(
-        'Admin synced squads for tariff',
-        admin_id=admin.id,
-        tariff_id=tariff_id,
-        tariff_name=tariff.name,
-        total=len(subscriptions),
-        updated=updated_count,
-        failed=failed_count,
-        skipped=skipped_count,
-    )
-
     return SyncSquadsResponse(
         tariff_id=tariff_id,
         tariff_name=tariff.name,
-        total_subscriptions=len(subscriptions),
+        total_subscriptions=updated_count,
         updated_count=updated_count,
-        failed_count=failed_count,
-        skipped_count=skipped_count,
-        errors=errors[:20],
+        failed_count=0,
+        skipped_count=0,
     )

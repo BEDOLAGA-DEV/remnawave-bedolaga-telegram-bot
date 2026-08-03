@@ -111,6 +111,8 @@ async def test_change_tariff_preserves_remaining_period(db: AsyncMock) -> None:
     # The tariff/limits ARE relabelled to the new tariff.
     assert sub.tariff_id == 2
     assert sub.traffic_limit_gb == 200
+    # The handler only stages the relabel; its target executor owns the commit.
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio

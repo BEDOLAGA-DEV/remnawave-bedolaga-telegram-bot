@@ -1282,11 +1282,14 @@ async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
     return users
 
 
-async def delete_user(db: AsyncSession, user: User) -> bool:
+async def delete_user(db: AsyncSession, user: User, *, commit: bool = True) -> bool:
     user.status = UserStatus.DELETED.value
     user.updated_at = datetime.now(UTC)
 
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     user_id_display = user.telegram_id or user.email or f'#{user.id}'
     logger.info('🗑️ Пользователь помечен как удаленный', user_id_display=user_id_display)
     return True

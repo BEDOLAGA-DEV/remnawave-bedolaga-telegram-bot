@@ -57,7 +57,9 @@ async def resolve_true_renewal_amount(
         return None
 
 
-async def sync_recurrent_bindings_after_price_change(db: AsyncSession, subscription_id: int) -> None:
+async def sync_recurrent_bindings_after_price_change(
+    db: AsyncSession, subscription_id: int, *, commit: bool = True
+) -> None:
     """Гасит привязки, чья сумма больше не соответствует цене продления.
 
     Вызывается после докупки устройств/трафика. Best-effort: никогда не бросает
@@ -110,12 +112,12 @@ async def sync_recurrent_bindings_after_price_change(db: AsyncSession, subscript
                     cancel_platega_recurring_for_subscription_safe,
                 )
 
-                await cancel_platega_recurring_for_subscription_safe(db, subscription_id)
+                await cancel_platega_recurring_for_subscription_safe(db, subscription_id, commit=commit)
                 agent = _PlategaSbpAgent()
             else:
                 from app.services.payment.lava import _LavaRecurrentAgent, cancel_lava_recurring_for_subscription_safe
 
-                await cancel_lava_recurring_for_subscription_safe(db, subscription_id)
+                await cancel_lava_recurring_for_subscription_safe(db, subscription_id, commit=commit)
                 agent = _LavaRecurrentAgent()
 
             # Уведомление best-effort: у модульного агента нет бота, поэтому

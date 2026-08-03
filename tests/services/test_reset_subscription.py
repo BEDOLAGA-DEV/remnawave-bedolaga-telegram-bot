@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
+
+import pytest
 
 import app.services.subscription_service as ss
 from app.config import Settings
@@ -143,6 +145,112 @@ async def test_reset_with_panel_survives_panel_error(monkeypatch):
 
     assert result['panel_disabled'] is False
     assert sub.status == SubscriptionStatus.DISABLED.value
+
+
+async def test_reset_with_panel_commit_false_propagates_panel_failure(monkeypatch):
+    """The admin route can roll back its staged reset when panel disable fails."""
+
+    async def boom(self, uuid):
+        raise RuntimeError('panel down')
+
+    monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', boom)
+    sub = _sub(remnawave_uuid='SUB_UUID')
+    user = SimpleNamespace(id=1, remnawave_uuid=None)
+
+    from app.services.admin_panel_sync import PanelSyncFailed
+
+    with pytest.raises(PanelSyncFailed):
+        await ss.reset_subscription_with_panel(AsyncMock(), user, sub, commit=False)
+
+
+async def test_reset_with_panel_commit_false_rejects_false_before_local_reset(monkeypatch):
+    """A normal False panel result must fail before any rollback-sensitive local fields change."""
+    monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', AsyncMock(return_value=False))
+    sub = _sub(remnawave_uuid='SUB_UUID')
+    user = SimpleNamespace(id=1, remnawave_uuid=None)
+    original = dict(vars(sub))
+
+    from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason
+
+    with pytest.raises(PanelSyncFailed) as raised:
+        await ss.reset_subscription_with_panel(AsyncMock(), user, sub, commit=False)
+
+    assert raised.value.reason_code is PanelSyncReason.PANEL_API_FAILED
+    assert vars(sub) == original
+
+
+@pytest.mark.parametrize('panel_results', [(True, False), (False, False)])
+async def test_strict_trial_wipe_rejects_mixed_or_total_panel_failure(monkeypatch, panel_results):
+    """Admin strict mode cannot translate partial remote deletion into partial local success."""
+    from contextlib import asynccontextmanager
+
+    import app.database.crud.subscription as subscription_crud
+    from app.services.admin_panel_sync import PanelSyncFailed
+
+    api = SimpleNamespace(delete_user=AsyncMock(side_effect=panel_results))
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    service = SimpleNamespace(is_configured=True, get_api_client=get_api_client)
+    monkeypatch.setattr(ss, 'SubscriptionService', lambda: service)
+    _set_multi_tariff(monkeypatch, True)
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
+    subscriptions = [
+        SimpleNamespace(id=7, user_id=1, remnawave_uuid='trial-7'),
+        SimpleNamespace(id=8, user_id=1, remnawave_uuid='trial-8'),
+    ]
+    db = AsyncMock()
+
+    with pytest.raises(PanelSyncFailed):
+        await subscription_crud.wipe_trial_subscriptions(db, subscriptions, require_all_panel_success=True)
+
+    assert api.delete_user.await_args_list == [call('trial-7'), call('trial-8')]
+    db.rollback.assert_not_awaited()
+    db.execute.assert_not_awaited()
+
+
+async def test_strict_trial_wipe_deletes_each_exact_panel_target_before_local_rows(monkeypatch):
+    """The admin authoritative wipe must not hide its panel-before-local ordering behind a stub."""
+    from contextlib import asynccontextmanager
+
+    import app.database.crud.subscription as subscription_crud
+
+    events: list[tuple[str, object]] = []
+
+    async def delete_user(panel_uuid):
+        events.append(('panel', panel_uuid))
+        return True
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield SimpleNamespace(delete_user=delete_user)
+
+    monkeypatch.setattr(
+        ss, 'SubscriptionService', lambda: SimpleNamespace(is_configured=True, get_api_client=get_api_client)
+    )
+    _set_multi_tariff(monkeypatch, True)
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
+    monkeypatch.setattr(subscription_crud, 'decrement_subscription_server_counts', AsyncMock())
+    subscriptions = [
+        SimpleNamespace(id=7, user_id=1, remnawave_uuid='trial-7'),
+        SimpleNamespace(id=8, user_id=1, remnawave_uuid='trial-8'),
+    ]
+    db = AsyncMock()
+
+    async def execute(statement):
+        events.append(('local', statement.__class__.__name__))
+        return MagicMock()
+
+    db.execute.side_effect = execute
+
+    wiped = await subscription_crud.wipe_trial_subscriptions(db, subscriptions, require_all_panel_success=True)
+
+    assert wiped == 2
+    assert events[:2] == [('panel', 'trial-7'), ('panel', 'trial-8')]
+    assert [event[0] for event in events[2:]] == ['local', 'local']
+    db.commit.assert_not_awaited()
 
 
 async def test_user_modified_does_not_resurrect_disabled_end_date():

@@ -20,6 +20,7 @@ from app.external.remnawave_api import (
     UserStatus,
     is_user_not_found_error,
 )
+from app.services.admin_panel_sync import PanelSyncReason
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -168,6 +169,8 @@ class SubscriptionService:
         *,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
+        commit: bool = True,
+        diagnostic_action: str = 'create',
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)
@@ -178,10 +181,17 @@ class SubscriptionService:
             from app.services.grace_access_runtime import lock_grace_sensitive_panel_updates
 
             await lock_grace_sensitive_panel_updates(db, (subscription.id,))
-            validation_success = await self.validate_and_clean_subscription(db, subscription, user)
+            validation_success = await self.validate_and_clean_subscription(
+                db,
+                subscription,
+                user,
+                rollback_on_error=commit,
+                diagnostic_action=diagnostic_action,
+            )
             if not validation_success:
                 logger.error('Ошибка валидации подписки для пользователя', _format_user_log=self._format_user_log(user))
-                await db.rollback()
+                if commit:
+                    await db.rollback()
                 return None
 
             open_grace_ids = await lock_grace_sensitive_panel_updates(db, (subscription.id,))
@@ -217,7 +227,8 @@ class SubscriptionService:
                             'Remnawave create/update deferred while grace is open and UUID is missing',
                             subscription_id=subscription.id,
                         )
-                        await db.commit()
+                        if commit:
+                            await db.commit()
                         return None
                     metadata_kwargs: dict[str, Any] = {
                         'uuid': remnawave_uuid,
@@ -241,7 +252,8 @@ class SubscriptionService:
                     subscription.remnawave_short_uuid = updated_user.short_uuid
                     subscription.subscription_url = updated_user.subscription_url
                     subscription.subscription_crypto_link = updated_user.happ_crypto_link
-                    await db.commit()
+                    if commit:
+                        await db.commit()
                     return updated_user
 
                 # Multi-tariff mode: each subscription has its own Remnawave user
@@ -276,7 +288,8 @@ class SubscriptionService:
                 if not settings.is_multi_tariff_enabled():
                     user.remnawave_uuid = updated_user.uuid
 
-                await db.commit()
+                if commit:
+                    await db.commit()
 
                 logger.info('✅ Создан/обновлен RemnaWave пользователь для подписки', subscription_id=subscription.id)
                 logger.info('🔗 Ссылка на подписку', subscription_url=updated_user.subscription_url)
@@ -285,15 +298,30 @@ class SubscriptionService:
                 return updated_user
 
         except asyncio.CancelledError:
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
-        except RemnaWaveAPIError as e:
-            await db.rollback()
-            logger.error('Ошибка RemnaWave API', error=e)
+        except RemnaWaveAPIError:
+            if commit:
+                await db.rollback()
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             return None
-        except Exception as e:
-            await db.rollback()
-            logger.error('Ошибка создания RemnaWave пользователя', error=e)
+        except Exception:
+            if commit:
+                await db.rollback()
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             return None
 
     async def _create_or_update_remnawave_user_multi(
@@ -355,7 +383,9 @@ class SubscriptionService:
 
                     updated = await api.update_user(uuid=existing.uuid, **common_kwargs)
                     if reset_traffic:
-                        await self._reset_user_traffic(api, updated.uuid, user, reset_reason)
+                        await self._reset_user_traffic(
+                            api, updated.uuid, user, reset_reason, subscription_id=subscription.id
+                        )
                     return updated
             except Exception:
                 logger.warning(
@@ -386,7 +416,7 @@ class SubscriptionService:
 
         updated_user = await api.create_user(username=username, **common_kwargs)
         if reset_traffic:
-            await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
+            await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason, subscription_id=subscription.id)
         return updated_user
 
     async def _create_or_update_remnawave_user_single(
@@ -468,7 +498,9 @@ class SubscriptionService:
 
             updated_user = await api.update_user(uuid=remnawave_user.uuid, **common_kwargs)
             if reset_traffic:
-                await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
+                await self._reset_user_traffic(
+                    api, updated_user.uuid, user, reset_reason, subscription_id=subscription.id
+                )
             return updated_user
 
         logger.info('🆕 Создаем нового пользователя в панели', _format_user_log=self._format_user_log(user))
@@ -481,7 +513,7 @@ class SubscriptionService:
         )
         updated_user = await api.create_user(username=username, **common_kwargs)
         if reset_traffic:
-            await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
+            await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason, subscription_id=subscription.id)
         return updated_user
 
     async def update_remnawave_user(
@@ -492,6 +524,8 @@ class SubscriptionService:
         reset_traffic: bool = False,
         reset_reason: str | None = None,
         sync_squads: bool = True,
+        commit: bool = True,
+        diagnostic_action: str = 'update_subscription',
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)
@@ -564,7 +598,8 @@ class SubscriptionService:
                     updated_user = await api.update_user(**metadata_kwargs)
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
-                await db.commit()
+                if commit:
+                    await db.commit()
                 return updated_user
 
             # Загружаем tariff заранее, чтобы избежать lazy loading в async контексте
@@ -670,11 +705,13 @@ class SubscriptionService:
                             reset_uuid,
                             user,
                             reset_reason,
+                            subscription_id=subscription.id,
                         )
 
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
-                await db.commit()
+                if commit:
+                    await db.commit()
 
                 status_text = 'активным' if is_actually_active else 'истёкшим'
                 logger.info(
@@ -689,24 +726,44 @@ class SubscriptionService:
         except asyncio.CancelledError:
             # ``CancelledError`` is not an Exception on supported Python
             # versions.  Timeouts must still release advisory/SQLite locks.
-            await db.rollback()
+            if commit:
+                await db.rollback()
             raise
         except RemnaWaveAPIError as e:
             # Rollback ДО пересоздания: advisory-локи grace должны быть отпущены
             # прежде, чем recreate re-входит в create_remnawave_user со своим локом.
-            await db.rollback()
+            if commit:
+                await db.rollback()
             if is_user_not_found_error(e):
                 # Пользователя удалили из панели, пока подписка жива в боте, —
                 # пересоздаём вместо ошибки (create-флоу сам найдёт/создаст
                 # панель-юзера и сохранит новый UUID и ссылки в подписку).
-                return await self.recreate_deleted_panel_user(
-                    db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
-                )
-            logger.error('Ошибка RemnaWave API', error=e)
+                recreate_kwargs = {
+                    'reset_traffic': reset_traffic,
+                    'reset_reason': reset_reason,
+                    'diagnostic_action': diagnostic_action,
+                }
+                if not commit:
+                    recreate_kwargs['commit'] = False
+                return await self.recreate_deleted_panel_user(db, subscription, **recreate_kwargs)
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             return None
-        except Exception as e:
-            await db.rollback()
-            logger.error('Ошибка обновления RemnaWave пользователя', error=e)
+        except Exception:
+            if commit:
+                await db.rollback()
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             return None
 
     async def recreate_deleted_panel_user(
@@ -716,6 +773,8 @@ class SubscriptionService:
         *,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
+        commit: bool = True,
+        diagnostic_action: str = 'recreate',
     ) -> RemnaWaveUser | None:
         """Пересоздаёт панель-юзера, удалённого из RemnaWave при живой подписке.
 
@@ -739,9 +798,14 @@ class SubscriptionService:
             subscription_id=subscription.id,
             user_id=subscription.user_id,
         )
-        return await self.create_remnawave_user(
-            db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
-        )
+        create_kwargs = {
+            'reset_traffic': reset_traffic,
+            'reset_reason': reset_reason,
+            'diagnostic_action': diagnostic_action,
+        }
+        if not commit:
+            create_kwargs['commit'] = False
+        return await self.create_remnawave_user(db, subscription, **create_kwargs)
 
     @staticmethod
     def _format_user_log(user) -> str:
@@ -758,6 +822,8 @@ class SubscriptionService:
         user_uuid: str,
         user,  # User object вместо telegram_id
         reset_reason: str | None = None,
+        *,
+        subscription_id: int,
     ) -> None:
         if not user_uuid:
             return
@@ -768,12 +834,24 @@ class SubscriptionService:
             logger.info(
                 '🔄 Сброшен трафик RemnaWave', _format_user_log=self._format_user_log(user), reason_text=reason_text
             )
-        except Exception as exc:
+        except Exception:
             logger.warning(
-                '⚠️ Не удалось сбросить трафик RemnaWave', _format_user_log=self._format_user_log(user), error=exc
+                'Panel traffic reset did not complete',
+                user_id=user.id,
+                subscription_id=subscription_id,
+                action='reset_traffic',
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
             )
 
-    async def disable_remnawave_user(self, user_uuid: str, db: AsyncSession | None = None) -> bool:
+    async def disable_remnawave_user(
+        self,
+        user_uuid: str,
+        db: AsyncSession | None = None,
+        *,
+        user_id: int | None = None,
+        subscription_id: int | None = None,
+        action: str = 'disable_user',
+    ) -> bool:
         """``db`` — сессия вызывающего, уже держащего grace-локи (пути удаления
         после ensure_no_open_grace_*): без её проброса grace-обёртка открыла бы
         вторую сессию и самодедлочилась об advisory-локи первой."""
@@ -790,13 +868,19 @@ class SubscriptionService:
                 logger.info('✅ Отключен RemnaWave пользователь', user_uuid=user_uuid)
                 return True
 
-        except Exception as e:
-            error_msg = str(e).lower()
+        except Exception as error:
+            error_msg = str(error).lower()
             # "User already disabled" - считаем успехом
             if 'already disabled' in error_msg:
                 logger.info('✅ RemnaWave пользователь уже отключен', user_uuid=user_uuid)
                 return True
-            logger.error('Ошибка отключения RemnaWave пользователя', error=e)
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=user_id,
+                subscription_id=subscription_id,
+                action=action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             return False
 
     async def delete_remnawave_user(self, user_uuid: str) -> bool:
@@ -1046,7 +1130,15 @@ class SubscriptionService:
             logger.error('Ошибка синхронизации подписки', subscription_id=subscription.id, error=e)
             return False, 'unknown_error'
 
-    async def validate_and_clean_subscription(self, db: AsyncSession, subscription: Subscription, user: User) -> bool:
+    async def validate_and_clean_subscription(
+        self,
+        db: AsyncSession,
+        subscription: Subscription,
+        user: User,
+        *,
+        rollback_on_error: bool = True,
+        diagnostic_action: str = 'validation',
+    ) -> bool:
         try:
             needs_cleanup = False
             user_log = self._format_user_log(user)
@@ -1077,8 +1169,14 @@ class SubscriptionService:
                                 telegram_id=remnawave_user.telegram_id,
                             )
                             needs_cleanup = True
-                except Exception as api_error:
-                    logger.error('❌ Ошибка проверки пользователя в панели', api_error=api_error)
+                except Exception:
+                    logger.error(
+                        'Required panel synchronization failed',
+                        user_id=subscription.user_id,
+                        subscription_id=subscription.id,
+                        action=diagnostic_action,
+                        reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+                    )
                     # A timeout/5xx is not proof that the panel user vanished.
                     # Preserve the UUID and abort so a retry cannot create a
                     # duplicate Remnawave account.
@@ -1107,9 +1205,16 @@ class SubscriptionService:
 
             return True
 
-        except Exception as e:
-            logger.error('❌ Ошибка валидации подписки', _format_user_log=self._format_user_log(user), error=e)
-            await db.rollback()
+        except Exception:
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
+            if rollback_on_error:
+                await db.rollback()
             return False
 
     async def get_countries_price_by_uuids(
@@ -1315,7 +1420,7 @@ class SubscriptionService:
         return propagate_result
 
 
-async def reset_subscription_with_panel(db, user: User, subscription: Subscription) -> dict:
+async def reset_subscription_with_panel(db, user: User, subscription: Subscription, *, commit: bool = True) -> dict:
     """Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
     НЕ удаляя пользователя из БД (тикеты и аккаунт остаются).
 
@@ -1330,9 +1435,9 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
     # заново включит только что обнулённую подписку (и банк продолжит списывать).
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
-    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id, commit=commit)
 
-    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+    await cancel_lava_recurring_for_subscription_safe(db, subscription.id, commit=commit)
     # В мультитарифном режиме у каждой подписки свой панельный UUID — НЕ откатываемся
     # на user.remnawave_uuid (это легаси single-tariff UUID, иначе можно отключить
     # не того панельного пользователя). В single-tariff fallback на user корректен.
@@ -1347,11 +1452,23 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
             panel_disabled = await SubscriptionService().disable_remnawave_user(panel_uuid)
         except Exception as e:
             logger.warning('Не удалось отключить пользователя в RemnaWave при обнулении подписки', error=e)
+            if not commit:
+                from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason
+
+                raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from e
+        if not panel_disabled and not commit:
+            from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason
+
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
     else:
         logger.warning(
             'Обнуление подписки: панельный UUID не найден, отключение в панели пропущено',
             subscription_id=getattr(subscription, 'id', None),
         )
+        if not commit:
+            from app.services.admin_panel_sync import PanelSyncReason, PanelSyncSkipped
 
-    await reset_subscription(db, subscription)
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+
+    await reset_subscription(db, subscription, commit=commit)
     return {'panel_disabled': panel_disabled, 'panel_uuid': panel_uuid}

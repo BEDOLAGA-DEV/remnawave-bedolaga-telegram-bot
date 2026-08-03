@@ -1404,7 +1404,9 @@ async def extend_subscription(
     return subscription
 
 
-async def add_subscription_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
+async def add_subscription_traffic(
+    db: AsyncSession, subscription: Subscription, gb: int, *, commit: bool = True
+) -> Subscription:
     # Lock subscription row — защита от lost-update гонки с housekeeping в extend_subscription
     # (см. _apply_base_limit_preserving_active_purchases / _housekeep_expired_purchases).
     # Без lock'а одновременный renewal + topup могут затереть друг друга.
@@ -1443,8 +1445,9 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
         # Первая докупка
         subscription.traffic_reset_at = new_expires_at
 
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
 
     logger.info(
         '📈 К подписке пользователя добавлено ГБ трафика (истекает )',
@@ -1459,7 +1462,7 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
     # меняется, и хелпер молча выйдет по совпадению сумм.
     from app.services.recurrent_amount import sync_recurrent_bindings_after_price_change
 
-    await sync_recurrent_bindings_after_price_change(db, subscription.id)
+    await sync_recurrent_bindings_after_price_change(db, subscription.id, commit=commit)
 
     return subscription
 
@@ -1950,7 +1953,7 @@ async def get_trial_statistics(db: AsyncSession) -> dict:
     }
 
 
-async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
+async def wipe_trial_subscriptions(db: AsyncSession, subscriptions, *, require_all_panel_success: bool = False) -> int:
     """Снимает доступ и удаляет переданные триал-подписки — единый код для ботовой
     кнопки «Сбросить триалы» и кабинетного per-user сброса.
 
@@ -1985,7 +1988,30 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     is_multi = settings.is_multi_tariff_enabled()
     service = SubscriptionService()
 
-    if service.is_configured:
+    if require_all_panel_success:
+        from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
+
+        if not service.is_configured:
+            raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
+
+        panel_targets = (
+            [subscription.remnawave_uuid for subscription in subscriptions]
+            if is_multi
+            else [subscriptions[0].user.remnawave_uuid if subscriptions[0].user else None]
+        )
+        if any(not panel_uuid for panel_uuid in panel_targets):
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+
+        async with service.get_api_client() as api:
+            try:
+                results = await asyncio.gather(*(api.delete_user(panel_uuid) for panel_uuid in panel_targets))
+            except Exception as error:
+                raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
+        if any(result is not True for result in results):
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
+        to_reset = list(subscriptions)
+
+    elif service.is_configured:
         semaphore = asyncio.Semaphore(5)
 
         async with service.get_api_client() as api:
