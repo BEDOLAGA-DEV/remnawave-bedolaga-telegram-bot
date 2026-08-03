@@ -1,30 +1,30 @@
-# Task 5 Report — Exceptional Fix Round 6
+# Task 5 Report — Exceptional Fix Round 7
 
-- **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T5-FIX-R6`
-- **Base:** `73dbae5489df3f0be4ca2eab2d57a8410b877283`
-- **Delivered code/test commit:** `aa8fdd73780d5fdbd009d70c5a7c8f4a83fa4adb`
+- **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T5-R7`
+- **Base:** `c76138e3f26144a21d30756d55721fa5cf1dc725`
+- **Delivered code/test commit:** `3415b9c075c6a336231cdd59b14579ff5eae1321`
 - **Status:** `DONE_PENDING_FRESH_REVIEW`
 - **Plane written:** `false`
-- **Timestamp:** `2026-08-03T03:45:00Z`
+- **Timestamp:** `2026-08-03T04:08:00Z`
 
 ## Addressed findings
 
-1. The production `update_remnawave_user -> recreate_deleted_panel_user -> create_remnawave_user`
-   chain now passes its diagnostic action through to create and validation. Its invoked failure handlers emit only
-   `user_id`, `subscription_id`, action, and `panel_api_failed`; raw caught exceptions are never attached.
-   Regressions run the real unblock 404/recreation chain with secret-bearing create and validation failures,
-   check the real structlog capture end-to-end, assert rollback/no commit, required bounded fields, and absence
-   of each supplied secret/URL/payload marker.
-2. Semantic status discovery derives accepted `status_<value>` actions from the real `UserStatusEnum` rather
-   than a fixed baseline. A mutation regression replaces that real enum surface with an extended enum while
-   parsing the actual status route; the existing inventory assertion rejects `status_suspended`.
+1. Both real unblock 404/recreation regressions now select only the nested
+   `Required panel synchronization failed` event and require its complete captured dictionary: event, error
+   level, `user_id`, `subscription_id`, `action='unblock'`, and
+   `reason_code='panel_api_failed'`. The outer `UserService` warning no longer satisfies the oracle.
+2. The validation-failure branch now explicitly proves the transaction boundary: no commit and exactly one
+   caller rollback. Both branches retain whole-stream checks that supplied secret markers never appear.
+3. Mutation check: temporarily suppressing only the invoked nested subscription-service diagnostic made both
+   regressions fail with an empty selected nested-event list; production source was restored before final checks.
 
 ## Verification
 
-- Focused Task 5 suite plus direct/status/tariff matrices: `282 passed, 44 warnings in 9.77s`.
-- Affected recreate/create compatibility suite: `47 passed, 28 warnings in 5.71s`.
-- Scoped Ruff format/check: `4 files already formatted`; `All checks passed!`.
-- `git diff --check 73dbae5489df3f0be4ca2eab2d57a8410b877283..aa8fdd73780d5fdbd009d70c5a7c8f4a83fa4adb`: passed.
+- Focused Task 5 brief suite: `232 passed, 44 warnings in 9.63s`.
+- Affected recreate/relink compatibility suite: `13 passed, 1 warning in 3.00s`.
+- Load-bearing create/validation regressions: `2 passed, 28 warnings in 5.05s` after the final formatter run.
+- Scoped Ruff format/check: `1 file already formatted`; `All checks passed!`.
+- Pre-commit `git diff --check`: passed.
 
 ## Scope and concerns
 
