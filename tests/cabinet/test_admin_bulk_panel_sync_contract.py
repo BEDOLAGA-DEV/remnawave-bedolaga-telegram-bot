@@ -15,6 +15,7 @@ from app.services.admin_panel_sync import (
     PanelSyncSkipped,
     panel_sync_failure_message,
 )
+from tests.cabinet.admin_panel_sync_case_manifest import BULK_CASES
 
 
 MANDATORY_BULK_ACTIONS = (
@@ -30,17 +31,8 @@ MANDATORY_BULK_ACTIONS = (
 )
 
 # The parameter table below is consumed by the real user-target bulk contract
-# tests.  Deriving its inventory keys from the executable actions prevents a
-# second hand-maintained list from drifting away from the tests.
-BULK_MUTATION_CASES = tuple((f'_do_{action.value}:{action.value}', action) for action in MANDATORY_BULK_ACTIONS)
-
-SUCCESS_CASES = BULK_MUTATION_CASES
-SKIPPED_CASES = BULK_MUTATION_CASES
-FAILED_CASES = BULK_MUTATION_CASES
-
-SUCCESS_CASE_KEYS = {case_key for case_key, _ in SUCCESS_CASES}
-SKIPPED_CASE_KEYS = {case_key for case_key, _ in SKIPPED_CASES}
-FAILED_CASE_KEYS = {case_key for case_key, _ in FAILED_CASES}
+# tests.  Its inventory keys live in the side-effect-free shared manifest.
+BULK_MUTATION_CASES = tuple((case_key, BulkActionType(action)) for case_key, action in BULK_CASES)
 
 SUBSCRIPTION_TARGET_ACTIONS = tuple(
     action

@@ -21,6 +21,7 @@ from app.services.admin_panel_sync import (
 )
 from app.services.remnawave_service import RemnaWaveService
 from app.services.user_service import UserService
+from tests.cabinet.admin_panel_sync_case_manifest import UNIFIED_CASES as UNIFIED_MUTATION_CASES
 
 
 @pytest.fixture
@@ -355,59 +356,6 @@ async def test_standalone_reset_success_orders_exact_panel_before_local_delete_a
     assert [event[0] for event in events[1:-1]] == ['local_sql', 'local_sql']
     assert events[-1] == ('commit', None)
     db.commit.assert_awaited_once()
-
-
-UNIFIED_MANDATORY_ACTIONS = (
-    'create',
-    'extend',
-    'shorten',
-    'set_end_date',
-    'change_tariff',
-    'set_traffic',
-    'cancel',
-    'reset',
-    'activate',
-    'add_traffic',
-    'remove_traffic',
-    'set_device_limit',
-)
-
-# These are the parameter rows exercised by the unified route success and
-# failure tests below.  The coverage assertion imports the derived key sets;
-# it deliberately does not maintain another copy of the inventory.
-UNIFIED_MUTATION_CASES = tuple((f'update_user_subscription:{action}', action) for action in UNIFIED_MANDATORY_ACTIONS)
-
-# Standalone route contracts have different request shapes, so their existing
-# focused tests remain separate.  This parameter table makes their three
-# contract outcomes part of the same executable coverage manifest.
-DIRECT_MUTATION_CASES = (
-    ('delete_user_device:delete_device', 'delete device'),
-    ('reset_user_devices:reset_devices', 'reset devices'),
-    ('full_delete_user:delete_user', 'full delete'),
-    ('delete_user:delete_user', 'delete user'),
-    ('reset_user_trial:reset_trial', 'trial reset'),
-    ('reset_user_subscription:reset_subscription', 'subscription reset'),
-    ('disable_user:disable', 'disable user'),
-    ('block_user:block', 'block user'),
-    ('unblock_user:unblock', 'unblock user'),
-    ('sync_user_to_panel:sync_to_panel', 'direct sync'),
-)
-
-SUCCESS_CASES = UNIFIED_MUTATION_CASES + DIRECT_MUTATION_CASES
-SKIPPED_CASES = UNIFIED_MUTATION_CASES + DIRECT_MUTATION_CASES
-FAILED_CASES = UNIFIED_MUTATION_CASES + DIRECT_MUTATION_CASES
-
-SUCCESS_CASE_KEYS = {case_key for case_key, _ in SUCCESS_CASES}
-SKIPPED_CASE_KEYS = {case_key for case_key, _ in SKIPPED_CASES}
-FAILED_CASE_KEYS = {case_key for case_key, _ in FAILED_CASES}
-
-
-@pytest.mark.parametrize(('case_key', '_description'), DIRECT_MUTATION_CASES)
-def test_direct_mutation_contract_cases_are_executable_inventory_rows(case_key, _description):
-    """A new standalone panel mutation must join the success/skip/failure case table."""
-    assert case_key in SUCCESS_CASE_KEYS
-    assert case_key in SKIPPED_CASE_KEYS
-    assert case_key in FAILED_CASE_KEYS
 
 
 def _unified_request(action: str, subscription: SimpleNamespace) -> UpdateSubscriptionRequest:

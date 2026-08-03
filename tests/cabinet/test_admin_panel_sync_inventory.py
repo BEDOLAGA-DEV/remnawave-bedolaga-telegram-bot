@@ -7,21 +7,11 @@ from app.services.admin_panel_sync import (
     BEST_EFFORT_ADMIN_PANEL_MUTATIONS,
     MANDATORY_ADMIN_PANEL_MUTATIONS,
 )
-from tests.cabinet.test_admin_bulk_panel_sync_contract import (
-    FAILED_CASE_KEYS as BULK_FAILED_CASE_KEYS,
-    SKIPPED_CASE_KEYS as BULK_SKIPPED_CASE_KEYS,
-    SUCCESS_CASE_KEYS as BULK_SUCCESS_CASE_KEYS,
+from tests.cabinet.admin_panel_sync_case_manifest import (
+    FAILED_CASE_KEYS,
+    SKIPPED_CASE_KEYS,
+    SUCCESS_CASE_KEYS,
 )
-from tests.cabinet.test_admin_panel_sync_contract import (
-    FAILED_CASE_KEYS as SINGLE_FAILED_CASE_KEYS,
-    SKIPPED_CASE_KEYS as SINGLE_SKIPPED_CASE_KEYS,
-    SUCCESS_CASE_KEYS as SINGLE_SUCCESS_CASE_KEYS,
-)
-
-
-SUCCESS_CASE_KEYS = SINGLE_SUCCESS_CASE_KEYS | BULK_SUCCESS_CASE_KEYS
-SKIPPED_CASE_KEYS = SINGLE_SKIPPED_CASE_KEYS | BULK_SKIPPED_CASE_KEYS
-FAILED_CASE_KEYS = SINGLE_FAILED_CASE_KEYS | BULK_FAILED_CASE_KEYS
 
 
 REQUIRED_MUTATION_CLASSES = {
@@ -62,6 +52,9 @@ def test_every_inventory_key_has_success_skipped_and_failed_contract_coverage():
 
 PANEL_SERVICE_CLASSES = {'RemnaWaveService', 'SubscriptionService'}
 READ_ONLY_PANEL_METHOD_PREFIXES = ('get_', 'list_', 'find_', 'fetch_')
+# ``bulk_execute`` is a request dispatcher, not an atomic mutation leaf: its
+# executable children are the individually inventoried ``_do_*`` handlers.
+BULK_ACTION_DISPATCHERS = {'bulk_execute'}
 
 
 def _functions(tree: ast.AST) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -142,6 +135,25 @@ def _local_panel_functions(tree: ast.AST) -> set[str]:
         panel_functions = updated
 
 
+def _public_callers(tree: ast.AST, leaves: set[str]) -> set[str]:
+    """Walk local wrappers to their public route rather than inventorying helpers."""
+    functions = _functions(tree)
+    reachable = set(leaves)
+    while True:
+        callers = {
+            name
+            for name, function in functions.items()
+            if any(
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in reachable
+                for node in ast.walk(function)
+            )
+        }
+        updated = reachable | callers
+        if updated == reachable:
+            return {name for name in updated if not name.startswith('_')}
+        reachable = updated
+
+
 def _service_panel_methods(tree: ast.AST) -> set[str]:
     return _local_panel_functions(tree)
 
@@ -150,7 +162,8 @@ def _route_panel_handlers(route_tree: ast.AST, user_service_tree: ast.AST) -> se
     functions = _functions(route_tree)
     panel_functions = _local_panel_functions(route_tree)
     user_service_methods = _service_panel_methods(user_service_tree)
-    handlers = {name for name in panel_functions if not name.startswith('_')}
+    handlers = _public_callers(route_tree, panel_functions)
+    user_service_leaves = set()
 
     for name, function in functions.items():
         imported = _imported_names(function)
@@ -175,8 +188,8 @@ def _route_panel_handlers(route_tree: ast.AST, user_service_tree: ast.AST) -> se
             and node.func.attr in user_service_methods
             for node in ast.walk(function)
         ):
-            handlers.add(name)
-    return handlers
+            user_service_leaves.add(name)
+    return handlers | _public_callers(route_tree, user_service_leaves)
 
 
 def _panel_actions(route_tree: ast.AST, handler_name: str) -> set[str]:
@@ -214,17 +227,15 @@ def _assert_classified(discovered: set[str], classified: set[str]) -> None:
 
 
 def test_panel_relevant_admin_handlers_and_called_services_are_explicitly_classified():
-    route_tree = ast.parse(Path('app/cabinet/routes/admin_users.py').read_text())
-    bulk_tree = ast.parse(Path('app/cabinet/routes/admin_bulk_actions.py').read_text())
     user_service_tree = ast.parse(Path('app/services/user_service.py').read_text())
-
-    discovered = _route_panel_handlers(route_tree, user_service_tree) | _route_panel_handlers(
-        bulk_tree, user_service_tree
-    )
+    discovered = set()
+    for route_path in Path('app/cabinet/routes').glob('admin_*.py'):
+        discovered |= _route_panel_handlers(ast.parse(route_path.read_text()), user_service_tree)
+    discovered -= BULK_ACTION_DISPATCHERS
     classified = {entry.route for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
 
     _assert_classified(discovered, classified)
-    assert {'block_user', 'unblock_user'} <= discovered
+    assert {'block_user', 'unblock_user', 'sync_tariff_squads', 'update_existing_tariff'} <= discovered
 
     # sync_user_from_panel only reads the panel before updating the local DB.
     assert 'sync_user_from_panel' not in discovered

@@ -521,6 +521,10 @@ async def update_existing_tariff(
     if request.promo_group_ids is not None:
         await set_tariff_promo_groups(db, tariff, request.promo_group_ids)
 
+    # The panel sync and every local tariff change share this route-owned
+    # transaction boundary.  Do not rely on a later request lifecycle commit.
+    await db.commit()
+
     logger.info('Admin updated tariff', admin_id=admin.id, tariff_id=tariff_id)
 
     # Перезагружаем периоды из БД для синхронизации с ботом
