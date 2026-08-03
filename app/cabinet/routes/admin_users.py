@@ -1473,9 +1473,9 @@ async def update_user_subscription(
             from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
             from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
-            await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+            await cancel_platega_recurring_for_subscription_safe(db, subscription.id, commit=False)
 
-            await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+            await cancel_lava_recurring_for_subscription_safe(db, subscription.id, commit=False)
         tariff = await get_tariff_by_id(db, request.tariff_id)
         if not tariff:
             raise HTTPException(
@@ -1608,9 +1608,9 @@ async def update_user_subscription(
         from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
         from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
-        await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+        await cancel_platega_recurring_for_subscription_safe(db, subscription.id, commit=False)
 
-        await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+        await cancel_lava_recurring_for_subscription_safe(db, subscription.id, commit=False)
         subscription.status = SubscriptionStatus.EXPIRED.value
         subscription.end_date = datetime.now(UTC)
         subscription.grace_suppressed_until = subscription.end_date

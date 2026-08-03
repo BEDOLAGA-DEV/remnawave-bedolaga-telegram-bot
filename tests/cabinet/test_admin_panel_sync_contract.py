@@ -353,6 +353,26 @@ def _unified_request(action: str, subscription: SimpleNamespace) -> UpdateSubscr
     return UpdateSubscriptionRequest(**values)
 
 
+def _unified_success_message(action: str, request: UpdateSubscriptionRequest) -> str:
+    """Exact legacy responses that the transaction-boundary tests must preserve."""
+    messages = {
+        'create': f'Subscription created for {request.days or 30} days',
+        'extend': f'Subscription extended by {request.days} days',
+        'shorten': f'Subscription shortened by {request.days} days',
+        'change_tariff': 'Tariff changed to Target',
+        'set_traffic': 'Traffic settings updated',
+        'cancel': 'Subscription cancelled',
+        'reset': 'Subscription reset',
+        'activate': 'Subscription activated',
+        'add_traffic': f'Added {request.traffic_gb} GB traffic (30 days)',
+        'remove_traffic': 'Removed 5 GB traffic package',
+        'set_device_limit': f'Device limit set to {request.device_limit}',
+    }
+    if action == 'set_end_date':
+        return f'Subscription end date set to {request.end_date.isoformat()}'
+    return messages[action]
+
+
 async def _configure_unified_route_action(monkeypatch, db, user, subscription, action: str) -> None:
     """Remove unrelated I/O while retaining each real route branch and its local staging."""
     monkeypatch.setattr(admin_users, 'get_user_by_id', AsyncMock(return_value=user))
@@ -367,6 +387,8 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
     subscription.is_daily_paused = False
     subscription.is_trial = False
     user.subscriptions = [subscription]
+    if action == 'activate':
+        subscription.status = 'expired'
 
     if action in {'change_tariff', 'activate'}:
         monkeypatch.setattr(
@@ -377,13 +399,25 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
         assert kwargs.get('commit') is False
 
     if action in {'extend', 'shorten'}:
-        monkeypatch.setattr(admin_users, 'extend_subscription', AsyncMock(side_effect=no_commit))
+        async def stage_extension(_db, target, days, *, commit):
+            await no_commit(_db, target, days, commit=commit)
+            target.end_date += timedelta(days=days)
+
+        monkeypatch.setattr(admin_users, 'extend_subscription', AsyncMock(side_effect=stage_extension))
     elif action == 'create':
         user.subscriptions = []
         new_subscription = SimpleNamespace(**vars(subscription))
+        new_subscription.local_record_staged = False
+
+        async def stage_creation(*_args, **kwargs):
+            await no_commit(*_args, **kwargs)
+            new_subscription.local_record_staged = True
+            user.subscriptions.append(new_subscription)
+            return new_subscription
+
         monkeypatch.setattr(
             'app.database.crud.subscription.create_paid_subscription',
-            AsyncMock(return_value=new_subscription),
+            AsyncMock(side_effect=stage_creation),
         )
     elif action == 'change_tariff':
         tariff = SimpleNamespace(
@@ -411,17 +445,29 @@ async def _configure_unified_route_action(monkeypatch, db, user, subscription, a
     elif action == 'reset':
         async def reset_with_panel(_db, _user, _subscription, *, commit):
             assert commit is False
+            _subscription.status = 'disabled'
             return {'panel_disabled': True}
 
         monkeypatch.setattr('app.services.subscription_service.reset_subscription_with_panel', reset_with_panel)
     elif action == 'add_traffic':
-        monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock(side_effect=no_commit))
+        async def stage_traffic(_db, target, traffic_gb, *, commit):
+            await no_commit(_db, target, traffic_gb, commit=commit)
+            target.purchased_traffic_gb += traffic_gb
+
+        monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock(side_effect=stage_traffic))
         monkeypatch.setattr('app.database.crud.subscription.reactivate_subscription', AsyncMock(side_effect=no_commit))
         monkeypatch.setattr(
             'app.services.subscription_service.SubscriptionService.enable_remnawave_user', AsyncMock(return_value=True)
         )
     elif action == 'remove_traffic':
         purchase = SimpleNamespace(id=71, traffic_gb=5, expires_at=datetime.now(UTC) + timedelta(days=1))
+        purchase.deleted = False
+        user.related_records = [purchase]
+
+        async def stage_related_delete(record):
+            record.deleted = True
+
+        db.delete.side_effect = stage_related_delete
         db.execute.side_effect = [
             MagicMock(scalar_one_or_none=lambda: purchase),
             MagicMock(scalars=lambda: MagicMock(all=list)),
@@ -439,15 +485,34 @@ async def test_every_unified_action_route_fails_closed_after_local_staging(
 ):
     """Public route branches, rather than the shared finisher, own fail-closed responses."""
     await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
+    original_subscription = dict(vars(subscription))
+    original_subscriptions = list(user.subscriptions)
+    original_related_records = [dict(vars(record)) for record in getattr(user, 'related_records', [])]
     observed: list[tuple[int, str, str]] = []
 
     async def fail_sync(_db, _user, target, *, action: str, **_kwargs):
+        if action == 'create':
+            assert target.local_record_staged is True
+            assert target in user.subscriptions
+        else:
+            assert dict(vars(subscription)) != original_subscription
         observed.append((target.id, target.remnawave_uuid, action))
         raise failure
+
+    async def restore_after_rollback():
+        subscription.__dict__.clear()
+        subscription.__dict__.update(original_subscription)
+        user.subscriptions[:] = original_subscriptions
+        for record, original in zip(getattr(user, 'related_records', []), original_related_records, strict=True):
+            record.__dict__.clear()
+            record.__dict__.update(original)
+
+    db.rollback.side_effect = restore_after_rollback
 
     if action == 'reset':
         async def fail_reset(_db, _user, target, *, commit):
             assert commit is False
+            target.status = 'disabled'
             observed.append((target.id, target.remnawave_uuid, 'reset'))
             raise failure
 
@@ -467,32 +532,69 @@ async def test_every_unified_action_route_fails_closed_after_local_staging(
     assert observed == [(23, 'subscription-level-uuid', action)]
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
+    assert dict(vars(subscription)) == original_subscription
+    assert user.subscriptions == original_subscriptions
+    assert [dict(vars(record)) for record in getattr(user, 'related_records', [])] == original_related_records
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
-async def test_every_unified_action_route_stages_exact_target_then_panel_then_one_commit(
+@pytest.mark.parametrize('action', ('change_tariff', 'cancel'))
+@pytest.mark.parametrize(
+    'failure',
+    [PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED), PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)],
+)
+async def test_active_recurring_tariff_change_and_cancel_do_not_commit_before_failed_panel_sync(
+    monkeypatch, user, subscription, db, action, failure
+):
+    """Active recurrence cleanup remains inside the route-owned transaction."""
+    await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
+    cancel_platega = AsyncMock()
+    cancel_lava = AsyncMock()
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', cancel_platega)
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', cancel_lava)
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', AsyncMock(side_effect=failure))
+
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=_unified_request(action, subscription),
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is False
+    assert 'not saved' in result.message.lower()
+    cancel_platega.assert_awaited_once_with(db, subscription.id, commit=False)
+    cancel_lava.assert_awaited_once_with(db, subscription.id, commit=False)
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', ('change_tariff', 'cancel'))
+async def test_active_recurring_tariff_change_and_cancel_commit_once_after_successful_panel_sync(
     monkeypatch, user, subscription, db, action
 ):
-    """Each public branch must preserve its response and use the selected subscription UUID."""
+    """Recurrence cleanup and local staging precede panel sync and the sole commit."""
     await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
-    events: list[tuple[str, object]] = []
+    events: list[str] = []
 
-    async def sync(_db, _user, target, *, action: str, **_kwargs):
-        events.append(('panel', (target.id, target.remnawave_uuid, action)))
+    async def cancel_platega(*_args, **kwargs):
+        assert kwargs['commit'] is False
+        events.append('platega')
+
+    async def cancel_lava(*_args, **kwargs):
+        assert kwargs['commit'] is False
+        events.append('lava')
+
+    async def sync(*_args, **_kwargs):
+        events.append('panel')
 
     async def commit():
-        events.append(('commit', None))
+        events.append('commit')
 
-    if action == 'reset':
-        async def reset_with_panel(_db, _user, target, *, commit):
-            assert commit is False
-            events.append(('panel', (target.id, target.remnawave_uuid, 'reset')))
-            return {'panel_disabled': True}
-
-        monkeypatch.setattr('app.services.subscription_service.reset_subscription_with_panel', reset_with_panel)
-    else:
-        monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync)
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', cancel_platega)
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', cancel_lava)
+    monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync)
     db.commit.side_effect = commit
 
     result = await admin_users.update_user_subscription(
@@ -503,7 +605,61 @@ async def test_every_unified_action_route_stages_exact_target_then_panel_then_on
     )
 
     assert result.success is True
-    assert events == [('panel', (23, 'subscription-level-uuid', action)), ('commit', None)]
+    assert events[-2:] == ['panel', 'commit']
+    assert events[:2] == ['platega', 'lava']
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('action', UNIFIED_MANDATORY_ACTIONS)
+async def test_every_unified_action_route_stages_exact_target_then_panel_then_one_commit(
+    monkeypatch, user, subscription, db, action
+):
+    """Each public branch must preserve its response and use the selected subscription UUID."""
+    await _configure_unified_route_action(monkeypatch, db, user, subscription, action)
+    events: list[tuple[str, object]] = []
+    original_subscription = dict(vars(subscription))
+
+    async def sync(_db, _user, target, *, action: str, **_kwargs):
+        if action == 'create':
+            assert target.local_record_staged is True
+            assert target in user.subscriptions
+        else:
+            assert dict(vars(subscription)) != original_subscription
+        events.append(('local', action))
+        events.append(('panel', (target.id, target.remnawave_uuid, action)))
+
+    async def commit():
+        events.append(('commit', None))
+
+    if action == 'reset':
+        async def reset_with_panel(_db, _user, target, *, commit):
+            assert commit is False
+            target.status = 'disabled'
+            events.append(('local', 'reset'))
+            events.append(('panel', (target.id, target.remnawave_uuid, 'reset')))
+            return {'panel_disabled': True}
+
+        monkeypatch.setattr('app.services.subscription_service.reset_subscription_with_panel', reset_with_panel)
+    else:
+        monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync)
+    db.commit.side_effect = commit
+
+    request = _unified_request(action, subscription)
+    result = await admin_users.update_user_subscription(
+        user_id=user.id,
+        request=request,
+        admin=SimpleNamespace(id=1),
+        db=db,
+    )
+
+    assert result.success is True
+    assert result.message == _unified_success_message(action, request)
+    assert events == [
+        ('local', action),
+        ('panel', (23, 'subscription-level-uuid', action)),
+        ('commit', None),
+    ]
     db.commit.assert_awaited_once()
     db.rollback.assert_not_awaited()
 
