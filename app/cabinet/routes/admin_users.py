@@ -319,7 +319,6 @@ async def _sync_subscription_to_panel(
     Returns dict with changes/errors.
     """
     try:
-        from app.config import settings
         from app.external.remnawave_api import UserStatus as PanelUserStatus
         from app.services.grace_access_runtime import (
             create_panel_user_grace_safe,
@@ -4171,7 +4170,6 @@ async def sync_user_to_panel(
         )
 
     try:
-        from app.config import settings
         from app.external.remnawave_api import UserStatus as PanelUserStatus
         from app.services.grace_access_runtime import (
             create_panel_user_grace_safe,

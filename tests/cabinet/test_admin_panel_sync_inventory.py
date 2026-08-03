@@ -41,13 +41,60 @@ def test_r2_inventory_is_complete_and_has_no_best_effort_entries():
     )
 
 
-def test_every_inventory_key_has_success_skipped_and_failed_contract_coverage():
-    """Removing a parameterized contract case leaves an inventory mutation uncovered."""
+def _assert_every_inventory_key_has_outcome_contracts(
+    success_keys=SUCCESS_CASE_KEYS,
+    skipped_keys=SKIPPED_CASE_KEYS,
+    failed_keys=FAILED_CASE_KEYS,
+):
     required = {entry.key for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
 
-    assert required == SUCCESS_CASE_KEYS
-    assert required == SKIPPED_CASE_KEYS
-    assert required == FAILED_CASE_KEYS
+    assert required == success_keys
+    assert required == skipped_keys
+    assert required == failed_keys
+
+
+def test_every_inventory_key_has_success_skipped_and_failed_contract_coverage():
+    """Each key set comes only from rows executed by its outcome parametrization."""
+    _assert_every_inventory_key_has_outcome_contracts()
+
+
+@pytest.mark.parametrize('outcome', ['success', 'skipped', 'failed'])
+def test_deleting_any_outcome_row_breaks_inventory_equality(outcome):
+    """Mutation proof: one deleted executable row makes the real equality guard fail."""
+    outcome_sets = {
+        'success': SUCCESS_CASE_KEYS,
+        'skipped': SKIPPED_CASE_KEYS,
+        'failed': FAILED_CASE_KEYS,
+    }
+    missing_one = outcome_sets[outcome] - {next(iter(outcome_sets[outcome]))}
+    arguments = {
+        'success_keys': SUCCESS_CASE_KEYS,
+        'skipped_keys': SKIPPED_CASE_KEYS,
+        'failed_keys': FAILED_CASE_KEYS,
+    }
+    arguments[f'{outcome}_keys'] = missing_one
+
+    with pytest.raises(AssertionError):
+        _assert_every_inventory_key_has_outcome_contracts(**arguments)
+
+
+def test_tariff_sync_has_only_the_reviewed_fail_closed_implementation():
+    source = Path('app/cabinet/routes/admin_tariffs.py').read_text()
+    tree = ast.parse(source)
+    functions = _functions(tree)
+
+    assert '_background_sync_squads' not in functions
+    sync_body = functions['sync_tariff_squads'].body
+    assert (
+        sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == '_sync_tariff_squads_atomically'
+            for node in ast.walk(functions['sync_tariff_squads'])
+        )
+        == 1
+    )
+    assert isinstance(sync_body[-1], ast.Return)
 
 
 PANEL_SERVICE_CLASSES = {'RemnaWaveService', 'SubscriptionService'}
