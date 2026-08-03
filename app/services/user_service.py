@@ -689,14 +689,15 @@ class UserService:
             subs = getattr(user, 'subscriptions', None) or []
             service = SubscriptionService()
             for sub in subs:
-                current_subscription_id = sub.id
+                sub_id = sub.id
+                current_subscription_id = sub_id
                 panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
                 if not getattr(service, 'is_configured', True):
                     await db.rollback()
                     logger.warning(
                         'Admin panel synchronization did not complete',
                         user_id=user_id,
-                        subscription_id=sub.id,
+                        subscription_id=sub_id,
                         action='block',
                         reason_code='not_configured',
                     )
@@ -705,14 +706,14 @@ class UserService:
                     panel_uuid,
                     db=db,
                     user_id=user_id,
-                    subscription_id=sub.id,
+                    subscription_id=sub_id,
                     action='block',
                 ):
                     await db.rollback()
                     logger.warning(
                         'Admin panel synchronization did not complete',
                         user_id=user_id,
-                        subscription_id=getattr(sub, 'id', None),
+                        subscription_id=sub_id,
                         action='block',
                         reason_code='panel_api_failed' if panel_uuid else 'missing_subscription_uuid',
                     )
@@ -744,6 +745,7 @@ class UserService:
         user = None
         original_user_status = None
         original_subscription_statuses: list[tuple[Subscription, str]] = []
+        failure_subscription_id = None
         failure_reason = 'panel_api_failed'
         try:
             user = await get_user_by_id(db, user_id)
@@ -760,6 +762,7 @@ class UserService:
             service = SubscriptionService()
             for sub in getattr(user, 'subscriptions', None) or []:
                 if sub.end_date and sub.end_date > now and sub.status != SubscriptionStatus.ACTIVE.value:
+                    failure_subscription_id = sub.id
                     original_subscription_statuses.append((sub, sub.status))
                     if not getattr(service, 'is_configured', True):
                         failure_reason = 'not_configured'
@@ -782,17 +785,17 @@ class UserService:
             return True
 
         except Exception:
-            await db.rollback()
+            # Keep mock-session callers coherent before rollback; a real rollback
+            # restores these rows itself and expires the instances afterwards.
             if user is not None and original_user_status is not None:
                 user.status = original_user_status
             for sub, original_status in original_subscription_statuses:
                 sub.status = original_status
+            await db.rollback()
             logger.warning(
                 'Admin panel synchronization did not complete',
                 user_id=user_id,
-                subscription_id=getattr(original_subscription_statuses[-1][0], 'id', None)
-                if original_subscription_statuses
-                else None,
+                subscription_id=failure_subscription_id,
                 action='unblock',
                 reason_code=failure_reason,
             )

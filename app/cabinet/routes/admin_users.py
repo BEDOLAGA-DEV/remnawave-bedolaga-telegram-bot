@@ -654,14 +654,13 @@ def _log_admin_panel_sync_failure(
 
 
 def _log_admin_panel_sync_failure_for_targets(
-    *, user_id: int, subscriptions, action: str, reason_code: PanelSyncReason
+    *, user_id: int, subscription_ids: tuple[int, ...], action: str, reason_code: PanelSyncReason
 ) -> None:
-    """Emit deterministic bounded diagnostics for every exact local target."""
-    targets = list(subscriptions) or [None]
-    for target in targets:
+    """Emit diagnostics from scalar snapshots safe to use after rollback."""
+    for subscription_id in subscription_ids or (0,):
         _log_admin_panel_sync_failure(
             user_id=user_id,
-            subscription_id=getattr(target, 'id', 0),
+            subscription_id=subscription_id,
             action=action,
             reason_code=reason_code,
         )
@@ -1757,6 +1756,8 @@ async def update_user_subscription(
         # дальше юзер сам покупает тариф с нуля и выбирает срок.
         from app.services.subscription_service import reset_subscription_with_panel
 
+        failure_user_id = user.id
+        failure_subscription_id = subscription.id
         try:
             # ``commit=False`` keeps the panel disable and local reset in this
             # route-owned transaction. Payment cancellation is intentionally
@@ -1767,8 +1768,8 @@ async def update_user_subscription(
             await db.rollback()
             logger.warning(
                 'Admin mutation was not saved because panel synchronization did not complete',
-                user_id=user.id,
-                subscription_id=subscription.id,
+                user_id=failure_user_id,
+                subscription_id=failure_subscription_id,
                 action='reset',
                 reason_code=error.reason_code,
             )
@@ -1830,6 +1831,8 @@ async def update_user_subscription(
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
         await reactivate_subscription(db, subscription, commit=False)
 
+        failure_user_id = user.id
+        failure_subscription_id = subscription.id
         try:
             await _sync_subscription_to_panel(db, user, subscription, action='add_traffic')
 
@@ -1855,8 +1858,8 @@ async def update_user_subscription(
         except (PanelSyncSkipped, PanelSyncFailed) as error:
             await db.rollback()
             _log_admin_panel_sync_failure(
-                user_id=user.id,
-                subscription_id=subscription.id,
+                user_id=failure_user_id,
+                subscription_id=failure_subscription_id,
                 action='add_traffic',
                 reason_code=error.reason_code,
             )
@@ -2145,6 +2148,7 @@ async def update_user_status(
                 message=panel_sync_failure_message(),
             )
     else:
+        status_subscription_ids = tuple(sub.id for sub in getattr(user, 'subscriptions', None) or [])
         try:
             await _require_panel_disable_for_subscriptions(
                 user, getattr(user, 'subscriptions', None) or [], action=status_action
@@ -2157,7 +2161,7 @@ async def update_user_status(
             await db.rollback()
             _log_admin_panel_sync_failure_for_targets(
                 user_id=user_id,
-                subscriptions=getattr(user, 'subscriptions', None) or [],
+                subscription_ids=status_subscription_ids,
                 action=status_action,
                 reason_code=error.reason_code,
             )
@@ -3033,13 +3037,14 @@ async def delete_user(
         )
 
     subs = getattr(user, 'subscriptions', None) or []
+    subscription_ids = tuple(sub.id for sub in subs)
     try:
         await _require_panel_disable_for_subscriptions(user, subs, action='delete_user')
     except (PanelSyncSkipped, PanelSyncFailed) as error:
         await db.rollback()
         _log_admin_panel_sync_failure_for_targets(
             user_id=user_id,
-            subscriptions=subs,
+            subscription_ids=subscription_ids,
             action='delete_user',
             reason_code=error.reason_code,
         )
@@ -3102,6 +3107,7 @@ async def full_delete_user(
 
     # Pre-fetch admin.id to avoid MissingGreenlet after transaction rollback
     admin_id_val = admin.id
+    subscription_ids = tuple(sub.id for sub in getattr(user, 'subscriptions', None) or [])
 
     # UserService.delete_user_account handles both bot DB and Remnawave panel
     user_service = UserService()
@@ -3135,7 +3141,7 @@ async def full_delete_user(
             reason_code = PanelSyncReason.PANEL_API_FAILED
         _log_admin_panel_sync_failure_for_targets(
             user_id=user_id,
-            subscriptions=getattr(user, 'subscriptions', None) or [],
+            subscription_ids=subscription_ids,
             action='delete_user',
             reason_code=reason_code,
         )
@@ -3173,6 +3179,7 @@ async def reset_user_trial(
 
     # Delete subscriptions if any exist
     subs = getattr(user, 'subscriptions', None) or []
+    subscription_ids = tuple(sub.id for sub in subs)
     if subs:
         from app.database.crud.subscription import is_active_paid_subscription
 
@@ -3205,7 +3212,7 @@ async def reset_user_trial(
                     await db.rollback()
                     _log_admin_panel_sync_failure_for_targets(
                         user_id=user_id,
-                        subscriptions=subs_to_delete,
+                        subscription_ids=subscription_ids,
                         action='reset_trial',
                         reason_code=error.reason_code,
                     )
@@ -3253,6 +3260,7 @@ async def reset_user_subscription(
     panel_error: str | None = None
 
     subs = getattr(user, 'subscriptions', None) or []
+    subscription_ids = tuple(sub.id for sub in subs)
     if not subs:
         return ResetSubscriptionResponse(
             success=True,
@@ -3280,8 +3288,8 @@ async def reset_user_subscription(
     except (PanelSyncSkipped, PanelSyncFailed) as error:
         await db.rollback()
         _log_admin_panel_sync_failure_for_targets(
-            user_id=user.id,
-            subscriptions=subs,
+            user_id=user_id,
+            subscription_ids=subscription_ids,
             action='reset_user_subscription',
             reason_code=error.reason_code,
         )
@@ -3361,6 +3369,7 @@ async def disable_user(
     from app.database.crud.subscription import deactivate_subscription, is_active_paid_subscription
 
     subs = getattr(user, 'subscriptions', None) or []
+    subscription_ids = tuple(sub.id for sub in subs)
     has_active_paid = any(is_active_paid_subscription(s) for s in subs)
 
     if has_active_paid:
@@ -3378,7 +3387,7 @@ async def disable_user(
         await db.rollback()
         _log_admin_panel_sync_failure_for_targets(
             user_id=user_id,
-            subscriptions=subs,
+            subscription_ids=subscription_ids,
             action='disable_user',
             reason_code=error.reason_code,
         )
@@ -4343,11 +4352,13 @@ async def sync_user_to_panel(
             detail='User has no subscription to sync',
         )
 
+    push_subscription_id = push_sub.id
+
     if settings.is_multi_tariff_enabled() and not push_sub.remnawave_uuid:
         logger.warning(
             'Admin panel synchronization did not complete',
             user_id=user_id,
-            subscription_id=push_sub.id,
+            subscription_id=push_subscription_id,
             action='sync_to_panel',
             reason_code='missing_subscription_uuid',
         )
@@ -4371,7 +4382,7 @@ async def sync_user_to_panel(
         if not service.is_configured:
             _log_admin_panel_sync_failure(
                 user_id=user_id,
-                subscription_id=push_sub.id,
+                subscription_id=push_subscription_id,
                 action='sync_to_panel',
                 reason_code=PanelSyncReason.NOT_CONFIGURED,
             )
@@ -4573,7 +4584,7 @@ async def sync_user_to_panel(
         logger.warning(
             'Admin panel synchronization did not complete',
             user_id=user_id,
-            subscription_id=push_sub.id,
+            subscription_id=push_subscription_id,
             action='sync_to_panel',
             reason_code='panel_api_failed',
         )

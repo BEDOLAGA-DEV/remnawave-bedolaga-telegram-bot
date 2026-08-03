@@ -60,6 +60,21 @@ def subscription():
     )
 
 
+def test_post_rollback_target_diagnostics_accept_immutable_subscription_ids(monkeypatch):
+    """Failure handlers must log scalar snapshots, never expired ORM instances."""
+    logger = MagicMock()
+    monkeypatch.setattr(admin_users, 'logger', logger)
+
+    admin_users._log_admin_panel_sync_failure_for_targets(
+        user_id=17,
+        subscription_ids=(23, 24),
+        action='reset_user_subscription',
+        reason_code=PanelSyncReason.PANEL_API_FAILED,
+    )
+
+    assert [call.kwargs['subscription_id'] for call in logger.warning.call_args_list] == [23, 24]
+
+
 @pytest.fixture
 def db():
     return AsyncMock()
