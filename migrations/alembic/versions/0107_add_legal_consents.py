@@ -3,16 +3,16 @@
 Смысл чекбокса «ознакомлен» — в доказательстве, поэтому храним журнал, а не флаг
 на пользователе: кто, с каким документом, когда и откуда согласился.
 
-Revision ID: 0103
-Revises: 0102
+Revision ID: 0107
+Revises: 0106
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0103'
-down_revision = '0102'
+revision = '0107'
+down_revision = '0106'
 branch_labels = None
 depends_on = None
 

@@ -3,16 +3,16 @@
 0 (по умолчанию) — без ограничения, прежнее поведение. Для раздач и конкурсов
 ставится 1: один человек не сможет забрать всю партию.
 
-Revision ID: 0102
-Revises: 0101
+Revision ID: 0106
+Revises: 0105
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0102'
-down_revision = '0101'
+revision = '0106'
+down_revision = '0105'
 branch_labels = None
 depends_on = None
 
