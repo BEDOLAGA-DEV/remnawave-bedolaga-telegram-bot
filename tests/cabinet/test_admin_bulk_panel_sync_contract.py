@@ -9,7 +9,12 @@ import pytest
 
 from app.cabinet.routes import admin_bulk_actions as bulk
 from app.cabinet.schemas.bulk_actions import BulkActionParams, BulkActionType
-from app.services.admin_panel_sync import PanelSyncFailed, PanelSyncReason, PanelSyncSkipped
+from app.services.admin_panel_sync import (
+    PanelSyncFailed,
+    PanelSyncReason,
+    PanelSyncSkipped,
+    panel_sync_failure_message,
+)
 
 
 MANDATORY_BULK_ACTIONS = (
@@ -391,6 +396,8 @@ async def test_multi_tariff_subscription_delete_failure_rolls_back_before_local_
     db = AsyncMock()
     user, _, selected = _user_and_selected()
     sync = AsyncMock()
+    logger = MagicMock()
+    monkeypatch.setattr(bulk, 'logger', logger)
     edges = _configure_real_handler_edges(
         monkeypatch, db, user, selected, BulkActionType.DELETE_SUBSCRIPTION, sync
     )
@@ -408,12 +415,19 @@ async def test_multi_tariff_subscription_delete_failure_rolls_back_before_local_
 
     assert result.success is False
     assert result.subscription_id == selected.id
-    assert 'deleted' not in result.message.lower()
+    assert result.message == panel_sync_failure_message()
     edges.disable.assert_awaited_once_with(selected.remnawave_uuid, db=db)
     sync.assert_not_awaited()
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
     db.execute.assert_not_awaited()
+    logger.warning.assert_any_call(
+        'Bulk panel synchronization did not complete',
+        user_id=user.id,
+        subscription_id=selected.id,
+        action=BulkActionType.DELETE_SUBSCRIPTION.value,
+        reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+    )
 
 
 @pytest.mark.anyio

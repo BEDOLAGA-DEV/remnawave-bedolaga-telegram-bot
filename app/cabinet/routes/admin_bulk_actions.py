@@ -572,7 +572,11 @@ async def _do_delete_subscription(
         raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
     from app.services.subscription_service import SubscriptionService
 
-    disabled = await SubscriptionService().disable_remnawave_user(_sub_uuid, db=db)
+    try:
+        disabled = await SubscriptionService().disable_remnawave_user(_sub_uuid, db=db)
+    except Exception as error:
+        logger.warning('Bulk subscription panel disable failed', user_id=user.id, subscription_id=sub.id)
+        raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED) from error
     if not disabled:
         raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)
 
