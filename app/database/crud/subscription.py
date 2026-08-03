@@ -1953,9 +1953,7 @@ async def get_trial_statistics(db: AsyncSession) -> dict:
     }
 
 
-async def wipe_trial_subscriptions(
-    db: AsyncSession, subscriptions, *, require_all_panel_success: bool = False
-) -> int:
+async def wipe_trial_subscriptions(db: AsyncSession, subscriptions, *, require_all_panel_success: bool = False) -> int:
     """Снимает доступ и удаляет переданные триал-подписки — единый код для ботовой
     кнопки «Сбросить триалы» и кабинетного per-user сброса.
 

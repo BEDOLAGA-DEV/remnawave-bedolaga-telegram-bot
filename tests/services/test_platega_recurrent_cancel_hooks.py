@@ -573,15 +573,9 @@ async def test_full_delete_missing_exact_panel_identity_aborts_before_local_dele
     )
     monkeypatch.setattr(user_service_module, 'get_user_by_id', AsyncMock(return_value=user))
     monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
-    monkeypatch.setattr(
-        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
-    )
-    monkeypatch.setattr(
-        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock()
-    )
-    monkeypatch.setattr(
-        'app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock()
-    )
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock())
+    monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
     db = AsyncMock()
 
     result = await UserService().delete_user_account(db, user_id=5, admin_id=1, force_panel_delete=True)
@@ -603,14 +597,10 @@ async def test_full_delete_commit_false_leaves_rollback_to_bulk_boundary(monkeyp
     user = SimpleNamespace(id=5, telegram_id=555, email=None, subscriptions=[subscription], remnawave_uuid=None)
     monkeypatch.setattr(user_service_module, 'get_user_by_id', AsyncMock(return_value=user))
     monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
-    monkeypatch.setattr(
-        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
-    )
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
     db = AsyncMock()
 
-    result = await UserService().delete_user_account(
-        db, user_id=5, admin_id=1, force_panel_delete=True, commit=False
-    )
+    result = await UserService().delete_user_account(db, user_id=5, admin_id=1, force_panel_delete=True, commit=False)
 
     assert result.bot_deleted is False
     assert result.panel_error == 'Missing exact panel identity'
@@ -630,14 +620,10 @@ async def test_full_delete_partial_exact_panel_identity_aborts_before_any_remote
     user = SimpleNamespace(id=5, telegram_id=555, email=None, subscriptions=subscriptions, remnawave_uuid=None)
     monkeypatch.setattr(user_service_module, 'get_user_by_id', AsyncMock(return_value=user))
     monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
-    monkeypatch.setattr(
-        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
-    )
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
     platega_cancel = AsyncMock()
     lava_cancel = AsyncMock()
-    monkeypatch.setattr(
-        'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', platega_cancel
-    )
+    monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', platega_cancel)
     monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', lava_cancel)
     panel_service = MagicMock()
     monkeypatch.setattr('app.services.remnawave_service.RemnaWaveService', panel_service)

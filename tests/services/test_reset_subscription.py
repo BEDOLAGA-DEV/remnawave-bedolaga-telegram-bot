@@ -180,9 +180,7 @@ async def test_strict_trial_wipe_rejects_mixed_or_total_panel_failure(monkeypatc
     service = SimpleNamespace(is_configured=True, get_api_client=get_api_client)
     monkeypatch.setattr(ss, 'SubscriptionService', lambda: service)
     _set_multi_tariff(monkeypatch, True)
-    monkeypatch.setattr(
-        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
-    )
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
     subscriptions = [
         SimpleNamespace(id=7, user_id=1, remnawave_uuid='trial-7'),
         SimpleNamespace(id=8, user_id=1, remnawave_uuid='trial-8'),
@@ -213,11 +211,11 @@ async def test_strict_trial_wipe_deletes_each_exact_panel_target_before_local_ro
     async def get_api_client():
         yield SimpleNamespace(delete_user=delete_user)
 
-    monkeypatch.setattr(ss, 'SubscriptionService', lambda: SimpleNamespace(is_configured=True, get_api_client=get_api_client))
-    _set_multi_tariff(monkeypatch, True)
     monkeypatch.setattr(
-        'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock()
+        ss, 'SubscriptionService', lambda: SimpleNamespace(is_configured=True, get_api_client=get_api_client)
     )
+    _set_multi_tariff(monkeypatch, True)
+    monkeypatch.setattr('app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions', AsyncMock())
     monkeypatch.setattr(subscription_crud, 'decrement_subscription_server_counts', AsyncMock())
     subscriptions = [
         SimpleNamespace(id=7, user_id=1, remnawave_uuid='trial-7'),
