@@ -353,13 +353,17 @@ async def test_unblock_real_recreation_create_failure_redacts_entire_log_stream(
     api.create_user.assert_awaited_once()
     db.commit.assert_not_awaited()
     db.rollback.assert_awaited_once()
-    assert any(
-        event.get('user_id') == user.id
-        and event.get('subscription_id') == subscription.id
-        and event.get('action') == 'unblock'
-        and event.get('reason_code') == PanelSyncReason.PANEL_API_FAILED.value
-        for event in logs
-    )
+    nested_diagnostics = [event for event in logs if event.get('event') == 'Required panel synchronization failed']
+    assert nested_diagnostics == [
+        {
+            'event': 'Required panel synchronization failed',
+            'log_level': 'error',
+            'user_id': user.id,
+            'subscription_id': subscription.id,
+            'action': 'unblock',
+            'reason_code': PanelSyncReason.PANEL_API_FAILED.value,
+        }
+    ]
     rendered_logs = repr(logs)
     assert 'synthetic-secret' not in rendered_logs
     assert 'https://panel.invalid' not in rendered_logs
@@ -383,13 +387,19 @@ async def test_unblock_real_recreation_validation_failure_redacts_entire_log_str
         assert await UserService().unblock_user(db, user.id, admin_id=1) is False
 
     api.create_user.assert_not_awaited()
-    assert any(
-        event.get('user_id') == user.id
-        and event.get('subscription_id') == subscription.id
-        and event.get('action') == 'unblock'
-        and event.get('reason_code') == PanelSyncReason.PANEL_API_FAILED.value
-        for event in logs
-    )
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+    nested_diagnostics = [event for event in logs if event.get('event') == 'Required panel synchronization failed']
+    assert nested_diagnostics == [
+        {
+            'event': 'Required panel synchronization failed',
+            'log_level': 'error',
+            'user_id': user.id,
+            'subscription_id': subscription.id,
+            'action': 'unblock',
+            'reason_code': PanelSyncReason.PANEL_API_FAILED.value,
+        }
+    ]
     assert 'validation-secret' not in repr(logs)
 
 
