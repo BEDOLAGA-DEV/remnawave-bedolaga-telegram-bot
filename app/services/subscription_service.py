@@ -170,6 +170,7 @@ class SubscriptionService:
         reset_traffic: bool = False,
         reset_reason: str | None = None,
         commit: bool = True,
+        diagnostic_action: str = 'create',
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)
@@ -185,6 +186,7 @@ class SubscriptionService:
                 subscription,
                 user,
                 rollback_on_error=commit,
+                diagnostic_action=diagnostic_action,
             )
             if not validation_success:
                 logger.error('Ошибка валидации подписки для пользователя', _format_user_log=self._format_user_log(user))
@@ -299,15 +301,27 @@ class SubscriptionService:
             if commit:
                 await db.rollback()
             raise
-        except RemnaWaveAPIError as e:
+        except RemnaWaveAPIError:
             if commit:
                 await db.rollback()
-            logger.error('Ошибка RemnaWave API', error=e)
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             return None
-        except Exception as e:
+        except Exception:
             if commit:
                 await db.rollback()
-            logger.error('Ошибка создания RemnaWave пользователя', error=e)
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             return None
 
     async def _create_or_update_remnawave_user_multi(
@@ -727,6 +741,7 @@ class SubscriptionService:
                 recreate_kwargs = {
                     'reset_traffic': reset_traffic,
                     'reset_reason': reset_reason,
+                    'diagnostic_action': diagnostic_action,
                 }
                 if not commit:
                     recreate_kwargs['commit'] = False
@@ -759,6 +774,7 @@ class SubscriptionService:
         reset_traffic: bool = False,
         reset_reason: str | None = None,
         commit: bool = True,
+        diagnostic_action: str = 'recreate',
     ) -> RemnaWaveUser | None:
         """Пересоздаёт панель-юзера, удалённого из RemnaWave при живой подписке.
 
@@ -785,6 +801,7 @@ class SubscriptionService:
         create_kwargs = {
             'reset_traffic': reset_traffic,
             'reset_reason': reset_reason,
+            'diagnostic_action': diagnostic_action,
         }
         if not commit:
             create_kwargs['commit'] = False
@@ -1120,6 +1137,7 @@ class SubscriptionService:
         user: User,
         *,
         rollback_on_error: bool = True,
+        diagnostic_action: str = 'validation',
     ) -> bool:
         try:
             needs_cleanup = False
@@ -1151,8 +1169,14 @@ class SubscriptionService:
                                 telegram_id=remnawave_user.telegram_id,
                             )
                             needs_cleanup = True
-                except Exception as api_error:
-                    logger.error('❌ Ошибка проверки пользователя в панели', api_error=api_error)
+                except Exception:
+                    logger.error(
+                        'Required panel synchronization failed',
+                        user_id=subscription.user_id,
+                        subscription_id=subscription.id,
+                        action=diagnostic_action,
+                        reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+                    )
                     # A timeout/5xx is not proof that the panel user vanished.
                     # Preserve the UUID and abort so a retry cannot create a
                     # duplicate Remnawave account.
@@ -1181,8 +1205,14 @@ class SubscriptionService:
 
             return True
 
-        except Exception as e:
-            logger.error('❌ Ошибка валидации подписки', _format_user_log=self._format_user_log(user), error=e)
+        except Exception:
+            logger.error(
+                'Required panel synchronization failed',
+                user_id=subscription.user_id,
+                subscription_id=subscription.id,
+                action=diagnostic_action,
+                reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+            )
             if rollback_on_error:
                 await db.rollback()
             return False

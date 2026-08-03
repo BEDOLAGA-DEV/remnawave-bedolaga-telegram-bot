@@ -328,9 +328,69 @@ async def test_update_real_nested_service_recreation_path_propagates_commit_fals
         reset_traffic=False,
         reset_reason=None,
         commit=False,
+        diagnostic_action='unblock',
     )
     db.commit.assert_not_awaited()
     db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unblock_real_recreation_create_failure_redacts_entire_log_stream(monkeypatch, user, subscription, db):
+    """The 404-to-recreate create failure must not serialize panel credentials."""
+    api = SimpleNamespace(
+        update_user=AsyncMock(side_effect=RemnaWaveAPIError('missing', status_code=404)),
+        get_user_by_uuid=AsyncMock(return_value=None),
+        create_user=AsyncMock(
+            side_effect=RuntimeError('secret=https://panel.invalid/?token=synthetic-secret&payload=x')
+        ),
+    )
+    await _configure_real_unblock_service(monkeypatch, user, [subscription], api)
+    subscription.actual_status = 'active'
+
+    with capture_logs() as logs:
+        assert await UserService().unblock_user(db, user.id, admin_id=1) is False
+
+    api.create_user.assert_awaited_once()
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+    assert any(
+        event.get('user_id') == user.id
+        and event.get('subscription_id') == subscription.id
+        and event.get('action') == 'unblock'
+        and event.get('reason_code') == PanelSyncReason.PANEL_API_FAILED.value
+        for event in logs
+    )
+    rendered_logs = repr(logs)
+    assert 'synthetic-secret' not in rendered_logs
+    assert 'https://panel.invalid' not in rendered_logs
+    assert 'payload=x' not in rendered_logs
+
+
+@pytest.mark.asyncio
+async def test_unblock_real_recreation_validation_failure_redacts_entire_log_stream(
+    monkeypatch, user, subscription, db
+):
+    """The recreation validation boundary is part of the same credential-redaction contract."""
+    api = SimpleNamespace(
+        update_user=AsyncMock(side_effect=RemnaWaveAPIError('missing', status_code=404)),
+        get_user_by_uuid=AsyncMock(side_effect=RuntimeError('secret=https://panel.invalid/?token=validation-secret')),
+        create_user=AsyncMock(),
+    )
+    await _configure_real_unblock_service(monkeypatch, user, [subscription], api)
+    subscription.actual_status = 'active'
+
+    with capture_logs() as logs:
+        assert await UserService().unblock_user(db, user.id, admin_id=1) is False
+
+    api.create_user.assert_not_awaited()
+    assert any(
+        event.get('user_id') == user.id
+        and event.get('subscription_id') == subscription.id
+        and event.get('action') == 'unblock'
+        and event.get('reason_code') == PanelSyncReason.PANEL_API_FAILED.value
+        for event in logs
+    )
+    assert 'validation-secret' not in repr(logs)
 
 
 @pytest.mark.asyncio

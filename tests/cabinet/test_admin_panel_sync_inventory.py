@@ -1,8 +1,11 @@
 import ast
+import sys
+from enum import StrEnum
 from pathlib import Path
 
 import pytest
 
+from app.cabinet.schemas.users import UserStatusEnum
 from app.services.admin_panel_sync import (
     BEST_EFFORT_ADMIN_PANEL_MUTATIONS,
     MANDATORY_ADMIN_PANEL_MUTATIONS,
@@ -206,7 +209,6 @@ def _service_panel_methods(tree: ast.AST) -> set[str]:
     return _local_panel_functions(tree)
 
 
-STATUS_ACTION_BASELINE = {'active', 'blocked', 'deleted'}
 PANEL_RELEVANT_SUBSCRIPTION_FIELDS = {
     'status',
     'end_date',
@@ -267,7 +269,7 @@ def _semantic_mutation_keys(tree: ast.AST) -> set[str]:
             for node in assignments
         )
         if writes_user_status and has_status_request:
-            actions = STATUS_ACTION_BASELINE | _compared_string_values(function, 'new_status')
+            actions = {status.value for status in UserStatusEnum} | _compared_string_values(function, 'new_status')
             keys |= {f'{name}:status_{action}' for action in actions}
 
         for node in ast.walk(function):
@@ -432,13 +434,17 @@ async def update_user_subscription(request):
         _assert_classified(discovered_keys, {'update_user_subscription:extend'})
 
 
-def test_new_status_action_fails_real_semantic_inventory_guard():
-    route_tree = ast.parse("""
-async def update_user_status(request, user):
-    new_status = request.status.value
-    if new_status == 'suspended':
-        user.status = new_status
-""")
+def test_real_status_enum_extension_fails_semantic_inventory_guard(monkeypatch):
+    """A generic status route must inventory every value accepted by its request enum."""
+
+    class ExtendedUserStatusEnum(StrEnum):
+        ACTIVE = 'active'
+        BLOCKED = 'blocked'
+        DELETED = 'deleted'
+        SUSPENDED = 'suspended'
+
+    monkeypatch.setattr(sys.modules[__name__], 'UserStatusEnum', ExtendedUserStatusEnum)
+    route_tree = ast.parse(Path('app/cabinet/routes/admin_users.py').read_text())
     with pytest.raises(AssertionError, match='status_suspended'):
         _assert_classified(
             _semantic_mutation_keys(route_tree),

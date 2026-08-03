@@ -88,7 +88,11 @@ async def test_recreate_active_delegates_to_create_flow():
 
     assert result is recreated
     service.create_remnawave_user.assert_awaited_once()
-    assert service.create_remnawave_user.await_args.kwargs == {'reset_traffic': True, 'reset_reason': 'renewal'}
+    assert service.create_remnawave_user.await_args.kwargs == {
+        'reset_traffic': True,
+        'reset_reason': 'renewal',
+        'diagnostic_action': 'recreate',
+    }
 
 
 async def test_recreate_trial_is_also_alive():
