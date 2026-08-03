@@ -1,80 +1,54 @@
-# Task 5 Report — Current Fix Round 4 Evidence
+# Task 5 Report — Final Fix Round 5 Evidence
 
-- **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T5-FIX-R4`
-- **Base HEAD:** `501396c5e2fda0ad515a71855b31bdb0f6a24b3b`
+- **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T5-FIX-R5`
+- **Base HEAD:** `fe2f80d5552851b4f1448c38ffef3c341f1785c6`
 - **Status:** `CODE_AND_EVIDENCE_CONTENT_READY_FOR_PINNING`
-- **Timestamp:** `2026-08-03T02:33:00Z`
+- **Timestamp:** `2026-08-03T03:14:04Z`
 - **Plane written:** `false`
 
-The former `0bbcd928`/31-row/33-row and `NOT_REVIEW_READY` declarations are superseded historical
-states. They are not the current delivered state and do not claim review of this revision.
+Earlier Fix Round 4 declarations are superseded historical states. They do not claim review of this revision.
 
-## Fix Round 4 result
+## Final Fix Round 5 result
 
-1. Distinct direct SUCCESS/SKIPPED/FAILED matrices now drive 30 executable parametrizations covering
-   all ten direct keys. Every row calls its actual public route or `UserService` contract and checks the
-   relevant exact identity, transaction, response, and bounded/redacted diagnostic behavior. Exported
-   key sets derive from these executed rows. A mutation test proves removing one row from any outcome
-   makes the real 36-row inventory equality fail.
-2. Removed the uncalled `_background_sync_squads`, obsolete constants/import, and unreachable legacy
-   `sync_tariff_squads` implementation. The two public tariff flows retain only the reviewed
-   `_sync_tariff_squads_atomically` fail-closed boundary.
-3. Refreshed the implementation ledger to the complete 36-row mandatory inventory, including all
-   `/status` and tariff rows, current verification, residuals, and `plane_written: false`.
-
-The real direct-sync parametrization exposed a shadowing local `settings` import that raised
-`UnboundLocalError` before the public route could execute; removing that redundant local import is the
-minimal code correction required by the matrix contract.
+1. The semantic inventory source now emits route/action keys for bounded public status mutations and
+   allowlisted subscription-field mutations independently of panel-call reachability. Mutation tests prove a
+   new `status_suspended` action and a new local-only subscription action fail the real guard.
+2. Every direct `SKIPPED` row now reaches a genuine not-attempted precondition and proves the panel API/service
+   method was not called. Failed device, status, destructive, trial-delete, and full-delete rows retain an
+   attempted false/exception path.
+3. `SubscriptionService.update_remnawave_user` has a backward-compatible `commit=False` mode, including the
+   open-grace and panel-user recreation branches. `UserService.unblock_user` owns the sole final commit. Real
+   nested-service tests cover one and two subscriptions, late failure rollback, open grace, and recreation.
+4. Mandatory skipped/failed routes and invoked panel helpers emit bounded exact-target diagnostics. Tests require
+   exact `user_id`, `subscription_id`, action, and enum reason while scanning the entire captured log set for
+   secret-bearing URLs, tokens, and payload text.
+5. `sync_user_from_panel` now uses its own available identity/action, rolls back, and returns safe bounded errors;
+   the missing `sync_to_panel` diagnostic is in the actual outbound route. Branch-specific regression coverage is
+   included.
 
 ## Verification recorded before the content commit
 
-- Focused Task 5 command including all direct/status/tariff matrices: `270 passed, 44 warnings`.
-- Focused changed-files Ruff format/check: passed / `All checks passed!`.
-- Full pytest attempt: baseline collection failure at
-  `tests/services/test_account_merge_service.py:67` (duplicate function argument); unchanged by Task 5.
-- Repository Ruff format attempt: baseline parser failure plus 11 unrelated files requiring formatting.
-- Repository Ruff check attempt: baseline parser failures plus unrelated import-order findings.
+- Exact focused Task 5 command from the brief plus direct/status/tariff matrices:
+  `280 passed, 44 warnings in 10.26s`.
+- Additional affected service compatibility checks:
+  `28 passed, 1 warning in 3.25s`.
+- Focused changed-files Ruff format/check: `9 files already formatted`; `All checks passed!`.
+- Full pytest attempt: unchanged baseline collection failure at
+  `tests/services/test_account_merge_service.py:67` (duplicate function argument), `46 warnings, 1 error`.
+- Repository Ruff format/check attempts: unchanged baseline parser failure, 11 unrelated formatting files,
+  and 10 unrelated syntax/import-order findings.
 - Mypy attempt: unavailable, `Failed to spawn: mypy`.
+- `git diff --check`: passed.
 - `uv.lock`: pre-existing user-owned modification, excluded from staging and commits.
 
 ## Evidence relationship
 
-This file and the current ledger are included in the code/evidence-content commit. A second, separate
-final result-contract commit will append the exact delivered-code parent hash and describe its own
-parent/evidence relationship. That final artifact will not claim Chewbacca review or encode a false
-self-hash; reviewers must use the exact Git HEAD supplied by the controller.
+This file and the current ledger are included in the code/evidence-content commit. A second, separate final
+result-contract commit will append the exact delivered-code parent hash and describe its own parent/evidence
+relationship. It will not claim Chewbacca approval or encode a false self-hash; reviewers must bind decisions to
+the exact final Git HEAD supplied by the controller.
 
 ## Required next gate
 
-Fresh isolated specification-compliance and code-quality reviews are required on the final result-contract
-HEAD. No review approval is claimed here.
-
----
-
-## Fix Round 4 Final Result Contract
-
-- `task_id`: `BEDOLAGA-PANEL-SYNC-ATOMICITY-T5-FIX-R4`
-- `artifact_type`: `implementation_result_contract`
-- `owner_agent`: `K2SO`
-- `role`: `fresh isolated Fix Round 4 implementer`
-- `status`: `DONE`
-- `delivered_code_and_evidence_commit`: `637cb446dcae08e5877641e7b6fba02bf38d361f`
-- `result_contract_parent`: `637cb446dcae08e5877641e7b6fba02bf38d361f`
-- `review_head`: the exact commit containing this contract, supplied by `git rev-parse HEAD` after commit
-- `review_status`: `FRESH_SPEC_AND_QUALITY_GATES_REQUIRED`
-- `timestamp`: `2026-08-03T02:35:00Z`
-- `plane_written`: `false`
-
-### Evidence
-
-- Three requested gaps are closed in the delivered parent: executable direct outcome linkage, legacy
-  tariff implementation removal, and current complete ledger/report evidence.
-- Focused verification on the delivered content: `270 passed, 44 warnings`.
-- Scoped Ruff format/check and diff checks passed.
-- Full pytest and repository Ruff attempts remain baseline-blocked exactly as recorded above; mypy is unavailable.
-- `uv.lock` remains an unstaged, pre-existing user-owned modification.
-
-This result-contract commit contains only this pinning artifact. Its parent is the delivered code/evidence
-commit above. It intentionally does not assert its own unknowable pre-commit hash and does not claim
-specification, quality, Chewbacca, PR, or self-review approval. Reviewers must bind their decisions to
-the exact final Git HEAD returned with this artifact.
+Fresh isolated specification-compliance and code-quality reviews are required on the final result-contract HEAD.
+No review approval is claimed here.

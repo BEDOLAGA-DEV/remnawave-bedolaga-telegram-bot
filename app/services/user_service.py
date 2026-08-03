@@ -71,6 +71,7 @@ class DeleteUserResult:
     panel_error: str | None = None
     # Удаление отклонено guard'ом открытого grace-доступа (HTTP-слой мапит в 409)
     grace_blocked: bool = False
+    panel_reason_code: str | None = None
 
 
 class UserService:
@@ -690,7 +691,23 @@ class UserService:
             for sub in subs:
                 current_subscription_id = sub.id
                 panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
-                if not panel_uuid or not await service.disable_remnawave_user(panel_uuid, db=db):
+                if not getattr(service, 'is_configured', True):
+                    await db.rollback()
+                    logger.warning(
+                        'Admin panel synchronization did not complete',
+                        user_id=user_id,
+                        subscription_id=sub.id,
+                        action='block',
+                        reason_code='not_configured',
+                    )
+                    return False
+                if not panel_uuid or not await service.disable_remnawave_user(
+                    panel_uuid,
+                    db=db,
+                    user_id=user_id,
+                    subscription_id=sub.id,
+                    action='block',
+                ):
                     await db.rollback()
                     logger.warning(
                         'Admin panel synchronization did not complete',
@@ -727,6 +744,7 @@ class UserService:
         user = None
         original_user_status = None
         original_subscription_statuses: list[tuple[Subscription, str]] = []
+        failure_reason = 'panel_api_failed'
         try:
             user = await get_user_by_id(db, user_id)
             if not user:
@@ -743,8 +761,20 @@ class UserService:
             for sub in getattr(user, 'subscriptions', None) or []:
                 if sub.end_date and sub.end_date > now and sub.status != SubscriptionStatus.ACTIVE.value:
                     original_subscription_statuses.append((sub, sub.status))
+                    if not getattr(service, 'is_configured', True):
+                        failure_reason = 'not_configured'
+                        raise RuntimeError('required panel configuration missing')
+                    panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
+                    if not panel_uuid:
+                        failure_reason = 'missing_subscription_uuid'
+                        raise RuntimeError('required panel identity missing')
                     sub.status = SubscriptionStatus.ACTIVE.value
-                    if not await service.update_remnawave_user(db, sub):
+                    if not await service.update_remnawave_user(
+                        db,
+                        sub,
+                        commit=False,
+                        diagnostic_action='unblock',
+                    ):
                         raise RuntimeError('required panel update did not complete')
             await db.commit()
 
@@ -764,7 +794,7 @@ class UserService:
                 if original_subscription_statuses
                 else None,
                 action='unblock',
-                reason_code='panel_api_failed',
+                reason_code=failure_reason,
             )
             return False
 
@@ -824,6 +854,16 @@ class UserService:
             if is_multi_tariff:
                 if force_panel_delete and any(not sub.remnawave_uuid for sub in subs):
                     result.panel_error = 'Missing exact panel identity'
+                    result.panel_reason_code = 'missing_subscription_uuid'
+                    for sub in subs:
+                        if not sub.remnawave_uuid:
+                            logger.warning(
+                                'Admin panel synchronization did not complete',
+                                user_id=user_id,
+                                subscription_id=sub.id,
+                                action='delete_user',
+                                reason_code='missing_subscription_uuid',
+                            )
                     if commit:
                         await db.rollback()
                     return result
@@ -833,9 +873,36 @@ class UserService:
 
             if force_panel_delete and not panel_uuids:
                 result.panel_error = 'Missing exact panel identity'
+                result.panel_reason_code = 'missing_subscription_uuid'
+                for sub in subs or [None]:
+                    logger.warning(
+                        'Admin panel synchronization did not complete',
+                        user_id=user_id,
+                        subscription_id=getattr(sub, 'id', 0),
+                        action='delete_user',
+                        reason_code='missing_subscription_uuid',
+                    )
                 if commit:
                     await db.rollback()
                 return result
+
+            if force_panel_delete and panel_uuids:
+                from app.services.remnawave_service import RemnaWaveService
+
+                if not RemnaWaveService().is_configured:
+                    result.panel_error = 'Panel not configured'
+                    result.panel_reason_code = 'not_configured'
+                    for sub in subs or [None]:
+                        logger.warning(
+                            'Admin panel synchronization did not complete',
+                            user_id=user_id,
+                            subscription_id=getattr(sub, 'id', 0),
+                            action='delete_user',
+                            reason_code='not_configured',
+                        )
+                    if commit:
+                        await db.rollback()
+                    return result
 
             # Best-effort: stop Platega SBP autopay for every subscription of
             # this user before the row disappears — the platega_subscriptions
@@ -887,7 +954,8 @@ class UserService:
                             telegram_id=int(user.telegram_id) if user.telegram_id else None,
                         )
 
-                    for panel_uuid in panel_uuids:
+                    for target_index, panel_uuid in enumerate(panel_uuids):
+                        target_subscription_id = getattr(subs[target_index], 'id', 0) if subs else 0
                         try:
                             from app.services.remnawave_service import RemnaWaveService
 
@@ -912,7 +980,13 @@ class UserService:
                                 from app.services.subscription_service import SubscriptionService
 
                                 subscription_service = SubscriptionService()
-                                disabled = await subscription_service.disable_remnawave_user(panel_uuid, db=db)
+                                disabled = await subscription_service.disable_remnawave_user(
+                                    panel_uuid,
+                                    db=db,
+                                    user_id=user_id,
+                                    subscription_id=target_subscription_id,
+                                    action='delete_user',
+                                )
                                 result.panel_deleted = disabled
                                 if disabled:
                                     logger.info(
@@ -928,20 +1002,28 @@ class UserService:
                                         delete_mode=delete_mode,
                                     )
 
-                        except Exception as e:
+                        except Exception:
                             result.panel_error = 'Ошибка обработки пользователя в Remnawave'
+                            result.panel_reason_code = 'panel_api_failed'
                             logger.warning(
-                                '⚠️ Ошибка обработки пользователя в Remnawave',
-                                delete_mode=delete_mode,
-                                remnawave_uuid=panel_uuid,
-                                error=e,
+                                'Admin panel synchronization did not complete',
+                                user_id=user_id,
+                                subscription_id=target_subscription_id,
+                                action='delete_user',
+                                reason_code='panel_api_failed',
                             )
                             if delete_mode == 'delete':
                                 try:
                                     from app.services.subscription_service import SubscriptionService
 
                                     subscription_service = SubscriptionService()
-                                    disabled = await subscription_service.disable_remnawave_user(panel_uuid, db=db)
+                                    disabled = await subscription_service.disable_remnawave_user(
+                                        panel_uuid,
+                                        db=db,
+                                        user_id=user_id,
+                                        subscription_id=target_subscription_id,
+                                        action='delete_user',
+                                    )
                                     if disabled:
                                         result.panel_deleted = True
                                         result.panel_error = 'Удаление не удалось, пользователь деактивирован'
@@ -949,8 +1031,14 @@ class UserService:
                                             '✅ RemnaWave пользователь деактивирован как fallback',
                                             remnawave_uuid=panel_uuid,
                                         )
-                                except Exception as fallback_e:
-                                    logger.error('❌ Ошибка деактивации RemnaWave как fallback', fallback_e=fallback_e)
+                                except Exception:
+                                    logger.error(
+                                        'Admin panel synchronization did not complete',
+                                        user_id=user_id,
+                                        subscription_id=target_subscription_id,
+                                        action='delete_user',
+                                        reason_code='panel_api_failed',
+                                    )
 
             if force_panel_delete and panel_uuids and (not result.panel_deleted or result.panel_error):
                 if commit:

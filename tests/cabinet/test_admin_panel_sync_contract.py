@@ -10,6 +10,7 @@ from app.cabinet.routes import admin_bulk_actions, admin_users
 from app.cabinet.schemas.bulk_actions import BulkActionParams
 from app.cabinet.schemas.users import UpdateSubscriptionRequest
 from app.config import settings
+from app.external.remnawave_api import RemnaWaveAPIError
 from app.services.admin_panel_sync import (
     MANDATORY_ADMIN_PANEL_MUTATIONS,
     AdminPanelMutation,
@@ -19,7 +20,7 @@ from app.services.admin_panel_sync import (
     PanelSyncTarget,
     panel_sync_failure_message,
 )
-from app.services.remnawave_service import RemnaWaveService
+from app.services.subscription_service import SubscriptionService
 from app.services.user_service import UserService
 from tests.cabinet.admin_panel_sync_case_manifest import UNIFIED_CASES as UNIFIED_MUTATION_CASES
 
@@ -162,10 +163,183 @@ async def test_unblock_panel_failure_rolls_back_without_local_success(monkeypatc
     assert user.status == 'blocked'
 
 
+async def _configure_real_unblock_service(monkeypatch, user, subscriptions, api):
+    monkeypatch.setattr('app.services.user_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.lock_grace_sensitive_panel_updates', AsyncMock(return_value=set())
+    )
+    monkeypatch.setattr('app.utils.subscription_utils.resolve_hwid_device_limit_for_payload', lambda _: 2)
+    monkeypatch.setattr(type(settings), 'format_remnawave_user_description', lambda self, **_: 'description')
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    service = SubscriptionService()
+    service._config_error = None
+    service.get_api_client = get_api_client
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService', lambda: service)
+    user.subscriptions = subscriptions
+    for target in subscriptions:
+        target.user_id = user.id
+        target.status = 'disabled'
+        target.actual_status = 'disabled'
+        target.device_limit = 2
+        target.connected_squads = []
+        target.subscription_url = None
+        target.subscription_crypto_link = None
+        target.tariff = SimpleNamespace(traffic_reset_mode=None, external_squad_uuid=None)
+    user.status = 'blocked'
+    return service
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('subscription_count', [1, 2])
+async def test_unblock_real_nested_service_uses_exact_uuids_and_one_owner_commit(
+    monkeypatch, user, subscription, db, subscription_count
+):
+    subscriptions = [subscription]
+    if subscription_count == 2:
+        subscriptions.append(SimpleNamespace(**{**vars(subscription), 'id': 24, 'remnawave_uuid': 'sub-exact-uuid-2'}))
+    api = SimpleNamespace(
+        update_user=AsyncMock(
+            side_effect=[
+                SimpleNamespace(subscription_url=f'https://safe/{target.id}', happ_crypto_link=None)
+                for target in subscriptions
+            ]
+        )
+    )
+    await _configure_real_unblock_service(monkeypatch, user, subscriptions, api)
+
+    assert await UserService().unblock_user(db, user.id, admin_id=1) is True
+
+    assert [call.kwargs['uuid'] for call in api.update_user.await_args_list] == [
+        target.remnawave_uuid for target in subscriptions
+    ]
+    db.commit.assert_awaited_once()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unblock_real_nested_service_late_failure_rolls_back_once_without_partial_local_success(
+    monkeypatch, user, subscription, db
+):
+    second = SimpleNamespace(**{**vars(subscription), 'id': 24, 'remnawave_uuid': 'sub-exact-uuid-2'})
+    subscriptions = [subscription, second]
+    api = SimpleNamespace(
+        update_user=AsyncMock(
+            side_effect=[
+                SimpleNamespace(subscription_url='https://safe/23', happ_crypto_link=None),
+                RuntimeError('secret=https://panel.invalid/?token=secret-value'),
+            ]
+        )
+    )
+    await _configure_real_unblock_service(monkeypatch, user, subscriptions, api)
+
+    with capture_logs() as logs:
+        assert await UserService().unblock_user(db, user.id, admin_id=1) is False
+
+    assert [call.kwargs['uuid'] for call in api.update_user.await_args_list] == [
+        'subscription-level-uuid',
+        'sub-exact-uuid-2',
+    ]
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+    assert user.status == 'blocked'
+    assert [target.status for target in subscriptions] == ['disabled', 'disabled']
+    assert any(
+        event.get('user_id') == user.id
+        and event.get('subscription_id') == second.id
+        and event.get('action') == 'unblock'
+        and event.get('reason_code') == PanelSyncReason.PANEL_API_FAILED.value
+        for event in logs
+    )
+    assert 'secret-value' not in repr(logs)
+
+
+@pytest.mark.asyncio
+async def test_update_real_nested_service_open_grace_branch_respects_commit_false(monkeypatch, user, subscription, db):
+    """The grace-preserving fast path must remain inside its caller-owned transaction."""
+    user.status = 'active'
+    subscription.user_id = user.id
+    subscription.actual_status = 'expired'
+    subscription.device_limit = 2
+    api = SimpleNamespace(
+        update_user=AsyncMock(
+            return_value=SimpleNamespace(
+                subscription_url='https://safe/grace',
+                happ_crypto_link=None,
+            )
+        )
+    )
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(
+        'app.services.grace_access_runtime.lock_grace_sensitive_panel_updates',
+        AsyncMock(return_value={subscription.id}),
+    )
+    monkeypatch.setattr('app.utils.subscription_utils.resolve_hwid_device_limit_for_payload', lambda _: 2)
+    monkeypatch.setattr(type(settings), 'format_remnawave_user_description', lambda self, **_: 'description')
+
+    @asynccontextmanager
+    async def get_api_client():
+        yield api
+
+    service = SubscriptionService()
+    service._config_error = None
+    service.get_api_client = get_api_client
+
+    result = await service.update_remnawave_user(
+        db,
+        subscription,
+        commit=False,
+        diagnostic_action='unblock',
+    )
+
+    assert result is not None
+    api.update_user.assert_awaited_once()
+    assert api.update_user.await_args.kwargs['uuid'] == subscription.remnawave_uuid
+    assert 'status' not in api.update_user.await_args.kwargs
+    db.commit.assert_not_awaited()
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_real_nested_service_recreation_path_propagates_commit_false(monkeypatch, user, subscription, db):
+    """A panel-side 404 must not re-enter the legacy create path with nested commit enabled."""
+    api = SimpleNamespace(update_user=AsyncMock(side_effect=RemnaWaveAPIError('missing', status_code=404)))
+    service = await _configure_real_unblock_service(monkeypatch, user, [subscription], api)
+    recreated = SimpleNamespace(subscription_url='https://safe/recreated', happ_crypto_link=None)
+    service.recreate_deleted_panel_user = AsyncMock(return_value=recreated)
+
+    result = await service.update_remnawave_user(
+        db,
+        subscription,
+        commit=False,
+        diagnostic_action='unblock',
+    )
+
+    assert result is recreated
+    service.recreate_deleted_panel_user.assert_awaited_once_with(
+        db,
+        subscription,
+        reset_traffic=False,
+        reset_reason=None,
+        commit=False,
+    )
+    db.commit.assert_not_awaited()
+    db.rollback.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_sync_not_configured_raises_skipped_without_commit(monkeypatch, user, subscription, db):
     """Removing the typed skip would let callers commit a mutation without a panel sync."""
-    monkeypatch.setattr(RemnaWaveService, 'is_configured', False)
+    monkeypatch.setattr(
+        'app.services.remnawave_service.RemnaWaveService',
+        lambda: SimpleNamespace(is_configured=False),
+    )
 
     with pytest.raises(PanelSyncSkipped) as raised:
         await admin_users._sync_subscription_to_panel(db, user, subscription, action='extend')

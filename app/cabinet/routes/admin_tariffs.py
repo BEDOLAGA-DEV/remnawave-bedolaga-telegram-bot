@@ -89,26 +89,34 @@ async def _sync_tariff_squads_atomically(
 
     service = RemnaWaveService()
     if not service.is_configured:
-        _log_tariff_panel_sync_failure(
-            user_id=None,
-            subscription_id=None,
-            action=action,
-            reason=PanelSyncReason.NOT_CONFIGURED,
-        )
+        for sub in subscriptions:
+            _log_tariff_panel_sync_failure(
+                user_id=sub.user_id,
+                subscription_id=sub.id,
+                action=action,
+                reason=PanelSyncReason.NOT_CONFIGURED,
+            )
         raise PanelSyncSkipped(PanelSyncReason.NOT_CONFIGURED)
 
     new_squads = tariff.allowed_squads or []
+    targets = [
+        (
+            sub,
+            sub.remnawave_uuid if settings.is_multi_tariff_enabled() else sub.user.remnawave_uuid,
+        )
+        for sub in subscriptions
+    ]
+    for sub, panel_uuid in targets:
+        if not panel_uuid:
+            _log_tariff_panel_sync_failure(
+                user_id=sub.user_id,
+                subscription_id=sub.id,
+                action=action,
+                reason=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
+            )
+            raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
     async with service.get_api_client() as api:
-        for sub in subscriptions:
-            panel_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else sub.user.remnawave_uuid
-            if not panel_uuid:
-                _log_tariff_panel_sync_failure(
-                    user_id=sub.user_id,
-                    subscription_id=sub.id,
-                    action=action,
-                    reason=PanelSyncReason.MISSING_SUBSCRIPTION_UUID,
-                )
-                raise PanelSyncSkipped(PanelSyncReason.MISSING_SUBSCRIPTION_UUID)
+        for sub, panel_uuid in targets:
             try:
                 await update_panel_user_grace_safe(
                     api,

@@ -1,10 +1,11 @@
 """Public tariff-route contracts for mandatory panel squad synchronization."""
 
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from structlog.testing import capture_logs
 
 from app.cabinet.routes import admin_tariffs
 from app.cabinet.schemas.tariffs import TariffUpdateRequest
@@ -136,3 +137,45 @@ async def test_tariff_squad_routes_rollback_and_return_safe_error_when_panel_syn
     assert 'not saved' in raised.value.detail.lower()
     db.rollback.assert_awaited_once()
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('configured', 'panel_uuid', 'reason'),
+    [
+        (False, 'sub-exact-uuid', PanelSyncReason.NOT_CONFIGURED),
+        (True, None, PanelSyncReason.MISSING_SUBSCRIPTION_UUID),
+    ],
+)
+async def test_tariff_helper_logs_each_exact_target_for_genuine_skips(
+    monkeypatch, tariff, db, configured, panel_uuid, reason
+):
+    subscription = SimpleNamespace(
+        id=23,
+        user_id=17,
+        remnawave_uuid=panel_uuid,
+        user=SimpleNamespace(remnawave_uuid='wrong-user-uuid'),
+    )
+    result = MagicMock()
+    result.unique.return_value.scalars.return_value.all.return_value = [subscription]
+    db.execute.return_value = result
+    get_api_client = MagicMock()
+    monkeypatch.setattr(
+        'app.services.remnawave_service.RemnaWaveService',
+        lambda: SimpleNamespace(is_configured=configured, get_api_client=get_api_client),
+    )
+    monkeypatch.setattr(type(admin_tariffs.settings), 'is_multi_tariff_enabled', lambda self: True)
+
+    with capture_logs() as logs:
+        with pytest.raises(PanelSyncSkipped) as raised:
+            await admin_tariffs._sync_tariff_squads_atomically(db, tariff, action='sync_tariff_squads')
+
+    assert raised.value.reason_code is reason
+    get_api_client.assert_not_called()
+    assert any(
+        event.get('user_id') == 17
+        and event.get('subscription_id') == 23
+        and event.get('action') == 'sync_tariff_squads'
+        and event.get('reason_code') == reason.value
+        for event in logs
+    )

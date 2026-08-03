@@ -206,30 +206,95 @@ def _service_panel_methods(tree: ast.AST) -> set[str]:
     return _local_panel_functions(tree)
 
 
-def _local_status_mutation_handlers(tree: ast.AST) -> set[str]:
-    """Find public routes that write a user status even before panel calls exist.
+STATUS_ACTION_BASELINE = {'active', 'blocked', 'deleted'}
+PANEL_RELEVANT_SUBSCRIPTION_FIELDS = {
+    'status',
+    'end_date',
+    'tariff_id',
+    'traffic_limit_gb',
+    'device_limit',
+    'connected_squads',
+}
 
-    This semantic source prevents a local-only status transition from avoiding
-    the inventory merely because its mandatory panel call was accidentally
-    removed.
+
+def _compared_string_values(function: ast.AST, variable: str) -> set[str]:
+    values = set()
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Compare) or not isinstance(node.left, ast.Name) or node.left.id != variable:
+            continue
+        for comparator in node.comparators:
+            if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+                values.add(comparator.value)
+            elif (
+                isinstance(comparator, ast.Attribute)
+                and comparator.attr == 'value'
+                and isinstance(comparator.value, ast.Attribute)
+            ):
+                values.add(comparator.value.attr.lower())
+    return values
+
+
+def _semantic_mutation_keys(tree: ast.AST) -> set[str]:
+    """Discover bounded local mutations without depending on a panel call.
+
+    Patterns are intentionally narrow: public status routes assigning
+    ``user.status`` and ``request.action`` branches assigning one of the
+    allowlisted subscription billing/panel fields on ``subscription``/``sub``.
+    Read-sync routes are excluded explicitly to avoid classifying inbound state.
     """
-    return {
-        name
-        for name, function in _functions(tree).items()
-        if not name.startswith('_')
-        and any(
-            isinstance(node, (ast.Assign, ast.AnnAssign))
-            and any(
+    keys = set()
+    for name, function in _functions(tree).items():
+        if name.startswith('_') or name in USER_STATUS_READ_ONLY_SYNC_HANDLERS:
+            continue
+        assignments = [node for node in ast.walk(function) if isinstance(node, (ast.Assign, ast.AnnAssign))]
+        writes_user_status = any(
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == 'user'
+            and target.attr == 'status'
+            for node in assignments
+            for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
+        )
+        has_status_request = any(
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == 'new_status' for target in node.targets)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == 'value'
+            and isinstance(node.value.value, ast.Attribute)
+            and node.value.value.attr == 'status'
+            and isinstance(node.value.value.value, ast.Name)
+            and node.value.value.value.id == 'request'
+            for node in assignments
+        )
+        if writes_user_status and has_status_request:
+            actions = STATUS_ACTION_BASELINE | _compared_string_values(function, 'new_status')
+            keys |= {f'{name}:status_{action}' for action in actions}
+
+        for node in ast.walk(function):
+            if not (
+                isinstance(node, ast.If)
+                and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Attribute)
+                and isinstance(node.test.left.value, ast.Name)
+                and node.test.left.value.id == 'request'
+                and node.test.left.attr == 'action'
+                and len(node.test.comparators) == 1
+                and isinstance(node.test.comparators[0], ast.Constant)
+                and isinstance(node.test.comparators[0].value, str)
+            ):
+                continue
+            has_local_subscription_write = any(
                 isinstance(target, ast.Attribute)
                 and isinstance(target.value, ast.Name)
-                and target.value.id == 'user'
-                and target.attr == 'status'
-                for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
+                and target.value.id in {'subscription', 'sub'}
+                and target.attr in PANEL_RELEVANT_SUBSCRIPTION_FIELDS
+                for assignment in ast.walk(node)
+                if isinstance(assignment, (ast.Assign, ast.AnnAssign))
+                for target in (assignment.targets if isinstance(assignment, ast.Assign) else (assignment.target,))
             )
-            for node in ast.walk(function)
-        )
-        and name not in USER_STATUS_READ_ONLY_SYNC_HANDLERS
-    }
+            if has_local_subscription_write:
+                keys.add(f'{name}:{node.test.comparators[0].value}')
+    return keys
 
 
 def _route_panel_handlers(route_tree: ast.AST, user_service_tree: ast.AST) -> set[str]:
@@ -306,7 +371,8 @@ def test_panel_relevant_admin_handlers_and_called_services_are_explicitly_classi
     for route_path in Path('app/cabinet/routes').glob('admin_*.py'):
         route_tree = ast.parse(route_path.read_text())
         discovered |= _route_panel_handlers(route_tree, user_service_tree)
-        discovered |= _local_status_mutation_handlers(route_tree)
+        semantic_keys = _semantic_mutation_keys(route_tree)
+        _assert_classified(semantic_keys, {entry.key for entry in MANDATORY_ADMIN_PANEL_MUTATIONS})
     discovered -= BULK_ACTION_DISPATCHERS
     classified = {entry.route for entry in MANDATORY_ADMIN_PANEL_MUTATIONS}
 
@@ -364,3 +430,34 @@ async def update_user_subscription(request):
     }
     with pytest.raises(AssertionError, match='unlisted_sync_action'):
         _assert_classified(discovered_keys, {'update_user_subscription:extend'})
+
+
+def test_new_status_action_fails_real_semantic_inventory_guard():
+    route_tree = ast.parse("""
+async def update_user_status(request, user):
+    new_status = request.status.value
+    if new_status == 'suspended':
+        user.status = new_status
+""")
+    with pytest.raises(AssertionError, match='status_suspended'):
+        _assert_classified(
+            _semantic_mutation_keys(route_tree),
+            {
+                'update_user_status:status_active',
+                'update_user_status:status_blocked',
+                'update_user_status:status_deleted',
+            },
+        )
+
+
+def test_new_local_subscription_action_fails_real_semantic_inventory_guard():
+    route_tree = ast.parse("""
+async def update_user_subscription(request, subscription):
+    if request.action == 'suspend_locally':
+        subscription.status = 'disabled'
+""")
+    with pytest.raises(AssertionError, match='suspend_locally'):
+        _assert_classified(
+            _semantic_mutation_keys(route_tree),
+            {'update_user_subscription:extend'},
+        )
