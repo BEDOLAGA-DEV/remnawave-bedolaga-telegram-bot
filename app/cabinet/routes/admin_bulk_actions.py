@@ -929,11 +929,17 @@ async def _execute_for_user(
         return result
 
     except (PanelSyncSkipped, PanelSyncFailed) as error:
+        failed_subscription_id = getattr(error, 'subscription_id', None)
+        fallback_subscription_id = None
+        if failed_subscription_id is None and user:
+            target = _resolve_subscription(user)
+            fallback_subscription_id = target.id if target else None
         await db.rollback()
-        target = _resolve_subscription(user) if user else None
         return _panel_failure_result(
             user_id=uid,
-            subscription_id=getattr(error, 'subscription_id', None) or (target.id if target else None),
+            subscription_id=(
+                failed_subscription_id if failed_subscription_id is not None else fallback_subscription_id
+            ),
             action=action,
             error=error,
         )
@@ -1000,10 +1006,11 @@ async def _execute_for_subscription(
         return result
 
     except (PanelSyncSkipped, PanelSyncFailed) as error:
-        await db.rollback()
+        failed_user_id = user.id if user else 0
         failed_subscription_id = getattr(error, 'subscription_id', None)
+        await db.rollback()
         return _panel_failure_result(
-            user_id=user.id if user else 0,
+            user_id=failed_user_id,
             subscription_id=failed_subscription_id if failed_subscription_id is not None else sub_id,
             action=action,
             error=error,

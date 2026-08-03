@@ -8,9 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import DateTime, Integer, String
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import DateTime, ForeignKey, Integer, String, event
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.cabinet.routes import admin_bulk_actions as bulk
 from app.cabinet.schemas.bulk_actions import BulkActionParams, BulkActionType, BulkExecuteRequest
@@ -78,6 +78,31 @@ class _RefreshRegressionSubscription(_RefreshRegressionBase):
     device_limit: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class _RollbackRegressionUser(_RefreshRegressionBase):
+    """Minimal mapped user whose state expires on a real session rollback."""
+
+    __tablename__ = 'bulk_rollback_regression_users'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(40), nullable=False)
+    subscriptions: Mapped[list['_RollbackRegressionSubscription']] = relationship(back_populates='user')
+
+
+class _RollbackRegressionSubscription(_RefreshRegressionBase):
+    """Minimal mapped subscription used to expose post-rollback ORM access."""
+
+    __tablename__ = 'bulk_rollback_regression_subscriptions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('bulk_rollback_regression_users.id'), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    user: Mapped[_RollbackRegressionUser] = relationship(back_populates='subscriptions')
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == 'active'
+
+
 def _ensure_real_aiosqlite(monkeypatch) -> None:
     stub = sys.modules.get('aiosqlite')
     if stub is not None and not hasattr(stub, 'connect'):
@@ -96,6 +121,118 @@ async def _real_refresh_regression_session(monkeypatch):
             yield session
     finally:
         await engine.dispose()
+
+
+async def _persist_rollback_regression_graph(db: AsyncSession):
+    user = _RollbackRegressionUser(id=42, username='target')
+    primary = _RollbackRegressionSubscription(id=101, status='active')
+    sibling = _RollbackRegressionSubscription(id=202, status='trial')
+    user.subscriptions = [primary, sibling]
+    db.add(user)
+    await db.commit()
+    return user, primary, sibling
+
+
+def _track_post_rollback_orm_loads(db: AsyncSession, rollback: AsyncMock) -> list[str]:
+    statements: list[str] = []
+
+    def track_load(state) -> None:
+        if rollback.await_count:
+            statements.append(str(state.statement))
+
+    event.listen(db.sync_session, 'do_orm_execute', track_load)
+    return statements
+
+
+@pytest.mark.anyio
+async def test_bulk_user_typed_sibling_failure_avoids_real_session_post_rollback_orm_access(monkeypatch):
+    """Resolving user.subscriptions after rollback raises MissingGreenlet and breaks the safe result."""
+    async with _real_refresh_regression_session(monkeypatch) as db:
+        user, primary, sibling = await _persist_rollback_regression_graph(db)
+        rollback = AsyncMock(wraps=db.rollback)
+        commit = AsyncMock(wraps=db.commit)
+        monkeypatch.setattr(db, 'rollback', rollback)
+        monkeypatch.setattr(db, 'commit', commit)
+        post_rollback_orm_loads = _track_post_rollback_orm_loads(db, rollback)
+        logger = MagicMock()
+        monkeypatch.setattr(bulk, 'logger', logger)
+        monkeypatch.setattr(bulk, 'get_user_by_id', AsyncMock(return_value=user))
+
+        async def stage_then_fail(_db, _user, _params, _tariff, _dry_run):
+            primary.status = 'expired'
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED, subscription_id=sibling.id)
+
+        monkeypatch.setattr(bulk, '_do_grant_subscription', stage_then_fail)
+
+        result = await bulk._execute_for_user(
+            db,
+            42,
+            BulkActionType.GRANT_SUBSCRIPTION,
+            BulkActionParams(tariff_id=2, days=7),
+            _tariff(),
+            dry_run=False,
+        )
+
+        assert result.user_id == 42
+        assert result.subscription_id == 202
+        assert result.success is False
+        assert result.message == panel_sync_failure_message()
+        rollback.assert_awaited_once()
+        commit.assert_not_awaited()
+        assert post_rollback_orm_loads == []
+        logger.warning.assert_called_once_with(
+            'Bulk panel synchronization did not complete',
+            user_id=42,
+            subscription_id=202,
+            action=BulkActionType.GRANT_SUBSCRIPTION.value,
+            reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+        )
+
+
+@pytest.mark.anyio
+async def test_bulk_subscription_typed_sibling_failure_avoids_real_session_post_rollback_orm_access(monkeypatch):
+    """Reading user.id after rollback raises MissingGreenlet and breaks the safe result."""
+    async with _real_refresh_regression_session(monkeypatch) as db:
+        user, primary, sibling = await _persist_rollback_regression_graph(db)
+        rollback = AsyncMock(wraps=db.rollback)
+        commit = AsyncMock(wraps=db.commit)
+        monkeypatch.setattr(db, 'rollback', rollback)
+        monkeypatch.setattr(db, 'commit', commit)
+        post_rollback_orm_loads = _track_post_rollback_orm_loads(db, rollback)
+        logger = MagicMock()
+        monkeypatch.setattr(bulk, 'logger', logger)
+        monkeypatch.setattr(bulk, 'get_subscription_by_id', AsyncMock(return_value=primary))
+
+        async def stage_then_fail(_db, _user, _params, _dry_run, *, sub_override):
+            assert sub_override is primary
+            primary.status = 'expired'
+            raise PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED, subscription_id=sibling.id)
+
+        monkeypatch.setitem(bulk._ACTION_HANDLERS, BulkActionType.EXTEND_SUBSCRIPTION, stage_then_fail)
+
+        result = await bulk._execute_for_subscription(
+            db,
+            101,
+            BulkActionType.EXTEND_SUBSCRIPTION,
+            BulkActionParams(days=7),
+            None,
+            dry_run=False,
+        )
+
+        assert result.user_id == 42
+        assert result.subscription_id == 202
+        assert result.success is False
+        assert result.message == panel_sync_failure_message()
+        rollback.assert_awaited_once()
+        commit.assert_not_awaited()
+        assert post_rollback_orm_loads == []
+        logger.warning.assert_called_once_with(
+            'Bulk panel synchronization did not complete',
+            user_id=42,
+            subscription_id=202,
+            action=BulkActionType.EXTEND_SUBSCRIPTION.value,
+            reason_code=PanelSyncReason.PANEL_API_FAILED.value,
+        )
 
 
 @pytest.mark.anyio
