@@ -109,3 +109,39 @@
 
 - The existing warning set remains: Pydantic deprecations plus four known Lava async-mock resource warnings.
 - `uv.lock` was already dirty, remains unstaged, and is intentionally excluded.
+
+---
+
+## Fix Round 3
+
+- **Task ID:** `BEDOLAGA-PANEL-SYNC-ATOMICITY-T4-FIX-R3`
+- **Base HEAD:** `c4a3f5d6f0a22bf52dcaeeca976a2a0a8fd45231`
+- **Current implementation HEAD:** `9704be538445ca0d46e1075bf1cbeb831d92cc18`
+- **Status:** `READY_FOR_FRESH_REVIEW`
+- **Timestamp:** `2026-08-03T01:36:24Z`
+
+### Changed files
+
+- `app/cabinet/routes/admin_bulk_actions.py`
+- `tests/cabinet/test_admin_bulk_panel_sync_contract.py`
+- `.superpowers/sdd/2026-08-02-admin-panel-sync-atomicity/task-4-report.md`
+
+### I1 closure evidence
+
+- `_do_delete_subscription` now catches an exception raised by `disable_remnawave_user`, emits only a bounded local diagnostic (`user_id`, `subscription_id`), and raises `PanelSyncFailed(PanelSyncReason.PANEL_API_FAILED)` chained from the original error.
+- The subscription executor consequently reaches its typed panel-failure boundary, which performs exactly one rollback, no commit, no local delete, returns `panel_sync_failure_message()` (the local mutation was not saved), and emits the standard bounded diagnostic containing exact `user_id`, selected `subscription_id`, `delete_subscription` action, and `panel_api_failed` reason code.
+- The real multi-tariff direct-disable contract covers typed, false, and raised outcomes; the raised `RuntimeError` was RED before the normalization (`Action failed: internal error`) and GREEN after it.
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider tests/cabinet/test_admin_bulk_panel_sync_contract.py -q -k 'multi_tariff_subscription_delete_failure_rolls_back_before_local_delete'` before production change | expected RED: `1 failed, 2 passed` — raised disable returned `Action failed: internal error` |
+| `PYTHONDONTWRITEBYTECODE=1 uv run pytest -p no:cacheprovider tests/cabinet/test_admin_bulk_panel_sync_contract.py tests/cabinet/test_bulk_change_tariff_preserves_period.py tests/services/test_platega_recurrent_cancel_hooks.py -q` | `77 passed` (32 pre-existing warnings) |
+| `uv run ruff check app/cabinet/routes/admin_bulk_actions.py tests/cabinet/test_admin_bulk_panel_sync_contract.py` | `All checks passed!` |
+| `git diff --check c4a3f5d6f0a22bf52dcaeeca976a2a0a8fd45231 -- app/cabinet/routes/admin_bulk_actions.py tests/cabinet/test_admin_bulk_panel_sync_contract.py` | passed |
+
+### Concerns
+
+- The existing warning set remains: Pydantic deprecations plus four known Lava async-mock resource warnings.
+- `uv.lock` was already dirty, remains unstaged, and is intentionally excluded.
