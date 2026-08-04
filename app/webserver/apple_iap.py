@@ -20,6 +20,18 @@ from app.services.apple_iap import (
 logger = structlog.get_logger(__name__)
 
 
+_WEBHOOK_REASON_STATUS = {
+    'invalid_signature': status.HTTP_403_FORBIDDEN,
+    'configuration_error': status.HTTP_503_SERVICE_UNAVAILABLE,
+    'missing_notification_uuid': status.HTTP_400_BAD_REQUEST,
+    'signed_transaction_verification_failed': status.HTTP_400_BAD_REQUEST,
+}
+
+
+def _webhook_error_status(reason: str) -> int:
+    return _WEBHOOK_REASON_STATUS.get(reason, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 def create_apple_iap_router(bot: Any = None) -> APIRouter:
     router = APIRouter()
     fulfillment_service = AppleIAPFulfillmentService(apple_iap_fulfillment_service.apple_service, bot=bot)
@@ -54,26 +66,34 @@ def create_apple_iap_router(bot: Any = None) -> APIRouter:
             return JSONResponse({'status': 'error', 'reason': 'missing_signed_payload'}, status_code=400)
 
         ok, reason = await notification_service.process_signed_payload(signed_payload, raw_body)
-        if not ok and reason == 'invalid_signature':
-            return JSONResponse({'status': 'error', 'reason': reason}, status_code=403)
-        if not ok and reason == 'configuration_error':
-            return JSONResponse({'status': 'error', 'reason': reason}, status_code=503)
         if not ok:
-            return JSONResponse({'status': 'error', 'reason': reason}, status_code=500)
+            return JSONResponse({'status': 'error', 'reason': reason}, status_code=_webhook_error_status(reason))
         return JSONResponse({'status': 'ok', 'reason': reason})
 
     @router.get('/health/apple-iap')
     async def apple_iap_health() -> JSONResponse:
+        enabled = settings.is_apple_iap_enabled()
+        if enabled:
+            status_text = 'ok'
+            status_code = status.HTTP_200_OK
+        elif settings.APPLE_IAP_ENABLED:
+            status_text = 'configuration_error'
+            status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        else:
+            status_text = 'disabled'
+            status_code = status.HTTP_200_OK
+
         return JSONResponse(
             {
-                'status': 'ok',
-                'enabled': settings.is_apple_iap_enabled(),
+                'status': status_text,
+                'enabled': enabled,
                 'environment': settings.get_apple_iap_environment(),
                 'webhook_path': settings.APPLE_IAP_WEBHOOK_PATH,
                 'products_count': len(settings.get_apple_iap_products()),
                 'root_certificates_count': len(settings.get_apple_iap_root_cert_paths()),
                 'online_certificate_checks': settings.APPLE_IAP_ENABLE_ONLINE_CERT_CHECKS,
-            }
+            },
+            status_code=status_code,
         )
 
     return router

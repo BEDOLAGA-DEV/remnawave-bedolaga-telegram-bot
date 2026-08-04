@@ -10,15 +10,15 @@ run in the background on startup, removing the DB row and the panel user togethe
 
 This migration is intentionally a no-op, kept only to preserve the revision chain.
 
-Revision ID: 0088
-Revises: 0087
+Revision ID: 0092
+Revises: 0091
 Create Date: 2026-06-02
 """
 
 from typing import Sequence, Union
 
-revision: str = '0088'
-down_revision: Union[str, None] = '0087'
+revision: str = '0092'
+down_revision: Union[str, None] = '0091'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

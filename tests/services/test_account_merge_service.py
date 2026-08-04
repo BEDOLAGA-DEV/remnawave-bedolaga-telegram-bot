@@ -46,6 +46,7 @@ def _make_user(
     yandex_id: str | None = None,
     discord_id: str | None = None,
     vk_id: int | None = None,
+    apple_id: str | None = None,
     balance_kopeks: int = 0,
     username: str | None = None,
     first_name: str | None = None,
@@ -56,6 +57,12 @@ def _make_user(
     referred_by_id: int | None = None,
     remnawave_id: int | None = None,
     remnawave_uuid: str | None = None,
+    has_had_paid_subscription: bool = False,
+    has_made_first_topup: bool = False,
+    restriction_topup: bool = False,
+    restriction_subscription: bool = False,
+    restriction_reason: str | None = None,
+    used_promocodes: int = 0,
     subscription: object | None = None,
     subscriptions: list | None = None,
     created_at: datetime | None = None,
@@ -78,6 +85,7 @@ def _make_user(
         yandex_id=yandex_id,
         discord_id=discord_id,
         vk_id=vk_id,
+        apple_id=apple_id,
         balance_kopeks=balance_kopeks,
         username=username,
         first_name=first_name,
@@ -91,6 +99,12 @@ def _make_user(
         # на тумбстоуне secondary она всё равно обнуляется (unique-констрейнт).
         remnawave_id=remnawave_id,
         remnawave_uuid=remnawave_uuid,
+        has_had_paid_subscription=has_had_paid_subscription,
+        has_made_first_topup=has_made_first_topup,
+        restriction_topup=restriction_topup,
+        restriction_subscription=restriction_subscription,
+        restriction_reason=restriction_reason,
+        used_promocodes=used_promocodes,
         subscription=subscription,
         # Production code reads `user.subscriptions` (list). Tests historically
         # pass a singular `subscription=` for convenience — wrap it.
@@ -113,7 +127,7 @@ _subscription_id_counter = 100
 
 def _make_subscription(
     *,
-    id: int | None = None,
+    id: int = 1,
     user_id: int = 1,
     status: str = 'active',
     is_trial: bool = False,
@@ -187,8 +201,9 @@ class TestComputeAuthMethods:
             yandex_id='y123',
             discord_id='d123',
             vk_id=99999,
+            apple_id='apple-sub-123',
         )
-        assert compute_auth_methods(user) == ['telegram', 'email', 'google', 'yandex', 'discord', 'vk']
+        assert compute_auth_methods(user) == ['telegram', 'email', 'google', 'yandex', 'discord', 'vk', 'apple']
 
     def test_oauth_only(self):
         user = _make_user(google_id='g123', discord_id='d123')
@@ -360,7 +375,7 @@ class TestExecuteMergeOAuthTransfer:
     async def test_transfers_oauth_ids(self, monkeypatch):
         db = _make_db()
         primary = _make_user(id=1, google_id='g_primary')
-        secondary = _make_user(id=2, yandex_id='y_sec', discord_id='d_sec', vk_id=12345)
+        secondary = _make_user(id=2, yandex_id='y_sec', discord_id='d_sec', vk_id=12345, apple_id='apple_sec')
         monkeypatch.setattr(
             account_merge_service,
             'get_user_by_id',
@@ -375,10 +390,12 @@ class TestExecuteMergeOAuthTransfer:
         assert result.yandex_id == 'y_sec'
         assert result.discord_id == 'd_sec'
         assert result.vk_id == 12345
+        assert result.apple_id == 'apple_sec'
         # cleared on secondary
         assert secondary.yandex_id is None
         assert secondary.discord_id is None
         assert secondary.vk_id is None
+        assert secondary.apple_id is None
 
     async def test_does_not_overwrite_existing_oauth(self, monkeypatch):
         db = _make_db()
@@ -645,6 +662,7 @@ class TestExecuteMergeSecondaryDeleted:
             yandex_id='y2',
             discord_id='d2',
             vk_id=999,
+            apple_id='apple2',
             email='sec@e.com',
             referral_code='REF',
             remnawave_id=1002,
@@ -664,6 +682,7 @@ class TestExecuteMergeSecondaryDeleted:
         assert secondary.yandex_id is None
         assert secondary.discord_id is None
         assert secondary.vk_id is None
+        assert secondary.apple_id is None
         assert secondary.email is None
         assert secondary.referral_code is None
         assert secondary.remnawave_id is None

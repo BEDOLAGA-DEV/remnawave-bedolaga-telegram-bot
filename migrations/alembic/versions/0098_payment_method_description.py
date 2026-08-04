@@ -1,7 +1,7 @@
 """payment_method_configs: per-method description override
 
-Revision ID: 0094
-Revises: 0093
+Revision ID: 0098
+Revises: 0097
 Create Date: 2026-06-26
 
 Adds ``description`` to ``payment_method_configs`` so admins can set a custom
@@ -14,8 +14,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0094'
-down_revision: Union[str, None] = '0093'
+revision: str = '0098'
+down_revision: Union[str, None] = '0097'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -18,8 +18,8 @@ Three constraints shaped this revision:
    here; ``remnawave_id`` stays nullable until the backfill has run, and the
    NOT NULL flip is a separate later revision.
 
-Revision ID: 0104
-Revises: 0103
+Revision ID: 0108
+Revises: 0107
 Create Date: 2026-08-01
 
 """
@@ -29,8 +29,8 @@ from alembic import op
 
 
 # Стиль как у соседних ревизий: alembic читает эти имена по соглашению.
-revision = '0104'
-down_revision = '0103'
+revision = '0108'
+down_revision = '0107'
 branch_labels = None
 depends_on = None
 

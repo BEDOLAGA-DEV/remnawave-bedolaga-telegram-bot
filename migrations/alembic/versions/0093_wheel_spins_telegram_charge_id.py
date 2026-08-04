@@ -12,8 +12,8 @@ processing of the same Telegram charge id is refused at the database level
 (NULLs stay distinct, so the pre-existing rows and all non-Stars spins are
 unaffected).
 
-Revision ID: 0089
-Revises: 0088
+Revision ID: 0093
+Revises: 0092
 Create Date: 2026-06-04
 """
 
@@ -22,8 +22,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0089'
-down_revision: Union[str, None] = '0088'
+revision: str = '0093'
+down_revision: Union[str, None] = '0092'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

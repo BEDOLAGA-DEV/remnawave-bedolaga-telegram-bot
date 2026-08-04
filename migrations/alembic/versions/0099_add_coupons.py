@@ -6,8 +6,9 @@ per-link secret token). Redeeming a coupon via the ``/start coupon_<token>``
 deep link grants a new subscription for the batch period or extends an
 existing one. ON DELETE CASCADE ties coupons to their batch.
 
-Revision ID: 0095
-Revises: 0094
+Revision ID: 0099
+Revises: 0098
+
 Create Date: 2026-07-11
 
 """
@@ -18,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = '0095'
-down_revision: Union[str, None] = '0094'
+revision: str = '0099'
+down_revision: Union[str, None] = '0098'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

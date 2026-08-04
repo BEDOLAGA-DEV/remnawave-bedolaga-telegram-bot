@@ -12,8 +12,8 @@ no incremental migration created it. The cabinet endpoint
 Idempotent: guarded by the inspector so it is a no-op where the table is
 already present (fresh installs via create_all).
 
-Revision ID: 0096
-Revises: 0095
+Revision ID: 0100
+Revises: 0099
 Create Date: 2026-07-12
 
 """
@@ -24,8 +24,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = '0096'
-down_revision: Union[str, None] = '0095'
+revision: str = '0100'
+down_revision: Union[str, None] = '0099'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
