@@ -42,7 +42,10 @@ async def memory_session(monkeypatch, tables: Sequence[Table]) -> AsyncIterator[
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=list(tables)))
-    maker = async_sessionmaker(engine, expire_on_commit=False)
+    # autoflush=False повторяет прод (app/database/database.py): иначе тест
+    # видит ещё не отправленные в БД изменения, которых в проде на этом месте
+    # не будет, и пропускает целый класс ошибок «SELECT читает старое значение».
+    maker = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
     try:
         async with maker() as session:
             yield session

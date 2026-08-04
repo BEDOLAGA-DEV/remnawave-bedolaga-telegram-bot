@@ -518,9 +518,9 @@ async def switch_tariff(
     try:
         subscription_service = SubscriptionService()
         _has_panel = (
-            getattr(subscription, 'remnawave_uuid', None)
+            getattr(subscription, 'remnawave_id', None)
             if settings.is_multi_tariff_enabled()
-            else getattr(user, 'remnawave_uuid', None)
+            else getattr(user, 'remnawave_id', None)
         )
         if _has_panel:
             await subscription_service.update_remnawave_user(
@@ -549,18 +549,23 @@ async def switch_tariff(
 
     # Reset all devices on tariff switch
     devices_reset = False
-    _switch_uuid = (
-        subscription.remnawave_uuid
-        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-        else user.remnawave_uuid
+    _switch_panel_user_id = (
+        subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+        else user.remnawave_id
     )
-    if _switch_uuid:
+    if _switch_panel_user_id:
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                await api.reset_user_devices(_switch_uuid)
-                devices_reset = True
-                logger.info('Reset all devices for user on tariff switch', user_id=user.id)
+                # 3.0.0: сброс делается одним delete-all и исключений наружу не
+                # бросает — сбой панели приходит как False, поэтому флаг ставим
+                # по результату, а не по «не упало».
+                devices_reset = await api.reset_user_devices(_switch_panel_user_id)
+                if devices_reset:
+                    logger.info('Reset all devices for user on tariff switch', user_id=user.id)
+                else:
+                    logger.error('Failed to reset devices on tariff switch', user_id=user.id)
         except Exception as e:
             logger.error('Failed to reset devices on tariff switch', error=e)
 

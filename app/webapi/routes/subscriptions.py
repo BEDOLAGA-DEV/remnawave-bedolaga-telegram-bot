@@ -322,13 +322,13 @@ async def add_subscription_traffic_endpoint(
     await service.update_remnawave_user(db, subscription)
 
     user = await get_user_by_id(db, subscription.user_id)
-    _enable_uuid = (
-        subscription.remnawave_uuid
-        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-        else (user.remnawave_uuid if user else None)
+    _enable_panel_user_id = (
+        subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+        else (user.remnawave_id if user else None)
     )
-    if user and _enable_uuid and subscription.status == 'active':
-        await service.enable_remnawave_user(_enable_uuid)
+    if user and _enable_panel_user_id and subscription.status == 'active':
+        await service.enable_remnawave_user(_enable_panel_user_id)
 
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
@@ -352,13 +352,13 @@ async def add_subscription_devices_endpoint(
     await service.update_remnawave_user(db, subscription)
 
     user = await get_user_by_id(db, subscription.user_id)
-    _enable_uuid = (
-        subscription.remnawave_uuid
-        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-        else (user.remnawave_uuid if user else None)
+    _enable_panel_user_id = (
+        subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+        else (user.remnawave_id if user else None)
     )
-    if user and _enable_uuid and subscription.status == 'active':
-        await service.enable_remnawave_user(_enable_uuid)
+    if user and _enable_panel_user_id and subscription.status == 'active':
+        await service.enable_remnawave_user(_enable_panel_user_id)
 
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)
@@ -402,23 +402,23 @@ async def delete_subscription(
     """
     Деактивировать подписку.
     Подписка не удаляется физически, а помечается как DISABLED.
-    Также деактивируется пользователь в RemnaWave, если есть UUID.
+    Также деактивируется пользователь в RemnaWave, если есть панельная идентичность.
     """
     subscription = await _get_subscription(db, subscription_id)
 
     await deactivate_subscription(db, subscription)
 
-    # Деактивируем пользователя в RemnaWave (per-subscription UUID в мульти-тарифе)
+    # Деактивируем пользователя в RemnaWave (per-subscription id панели в мульти-тарифе)
     from app.config import settings
 
-    disable_uuid = (
-        subscription.remnawave_uuid
-        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-        else (subscription.user.remnawave_uuid if subscription.user else None)
+    disable_panel_user_id = (
+        subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+        else (subscription.user.remnawave_id if subscription.user else None)
     )
-    if disable_uuid:
+    if disable_panel_user_id:
         subscription_service = SubscriptionService()
-        await subscription_service.disable_remnawave_user(disable_uuid)
+        await subscription_service.disable_remnawave_user(disable_panel_user_id)
 
     subscription = await _get_subscription(db, subscription.id)
     return _serialize_subscription(subscription)

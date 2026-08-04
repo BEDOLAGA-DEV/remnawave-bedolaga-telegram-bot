@@ -457,7 +457,7 @@ async def _convert_trial_subscription_to_paid(
     cabinet (prod report 2026-07). Reusing the trial row keeps the SAME
     Remnawave user/link the user already configured during the trial — the
     callers' "update, don't create" panel sync kicks in automatically because
-    the row carries ``remnawave_uuid``. ``extend_subscription`` does the heavy
+    the row carries ``remnawave_id``. ``extend_subscription`` does the heavy
     lifting: tariff change with TRIAL_ADD_REMAINING_DAYS_TO_PAID carry-over,
     ``is_trial`` reset (+ the ``_converted_from_trial`` marker), traffic/device
     limits, daily flags and deactivation of any other trials.
@@ -1960,7 +1960,7 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     панели идут параллельно с ограничением (Semaphore) на ОДНОМ клиенте API (как массовый
     синк) — операция тяжёлая. Подписку, у которой удаление в панели не удалось (транзиент),
     в БД НЕ трогаем (иначе снова orphan + воскрешение) — её подхватит следующий запуск.
-    Чистит устаревший single-tariff `user.remnawave_uuid`. НЕ коммитит — это делает
+    Чистит устаревшую single-tariff панельную идентичность на `User`. НЕ коммитит — это делает
     вызывающий; исключение — когда НИ ОДНО панельное удаление не удалось: тогда в БД
     мутировать нечего и транзакция откатывается, чтобы снять grace-локи pre-delete
     guard'а (не вызывайте с несохранёнными изменениями в сессии). Возвращает число
@@ -1980,6 +1980,7 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
 
     from sqlalchemy import update
 
+    from app.external.remnawave_api import RemnaWaveInvalidUserIdError
     from app.services.subscription_service import SubscriptionService
 
     is_multi = settings.is_multi_tariff_enabled()
@@ -1991,24 +1992,59 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
         async with service.get_api_client() as api:
 
             async def _delete_panel_user(subscription) -> bool:
-                panel_uuid = (
-                    subscription.remnawave_uuid
+                panel_user_id = (
+                    subscription.remnawave_id
                     if is_multi
-                    else (subscription.user.remnawave_uuid if subscription.user else None)
+                    else (subscription.user.remnawave_id if subscription.user else None)
                 )
-                if not panel_uuid:
-                    return True  # в панели нечего удалять
+                if not panel_user_id:
+                    # Отличаем «панельного юзера никогда не было» от «числовой id
+                    # ещё не проставлен бэкфилом». Во втором случае удалить
+                    # локальную строку значит осиротить ЖИВОЙ панельный аккаунт:
+                    # он останется ACTIVE и продолжит занимать лицензию, а связи
+                    # с ботом уже не будет. Отличить может только сама панель —
+                    # гадать нельзя: строка с shortUuid, которого панель не знает,
+                    # иначе блокировала бы сброс триала навсегда (бэкфил такую
+                    # тоже не разрешает — по построению).
+                    stale_short_uuid = (subscription.remnawave_short_uuid or '').strip()
+                    if not stale_short_uuid:
+                        return True  # в панели нечего удалять
+                    async with semaphore:
+                        try:
+                            adopted = await api.get_user_by_short_uuid(stale_short_uuid)
+                        except Exception as error:
+                            logger.error(
+                                'Не удалось проверить short_uuid в панели — триал не сбрасываем',
+                                subscription_id=subscription.id,
+                                remnawave_short_uuid=stale_short_uuid,
+                                error=error,
+                            )
+                            return False
+                    if adopted is None:
+                        return True  # панель этого shortUuid не знает — удалять нечего
+                    panel_user_id = adopted.id
                 async with semaphore:
                     try:
-                        await api.delete_user(panel_uuid)
+                        await api.delete_user(panel_user_id)
                         return True
+                    except RemnaWaveInvalidUserIdError as error:
+                        # Битая ссылка в БД, а не «панель-юзера нет»: удалять по такому
+                        # идентификатору нечего, но и строку сносить нельзя — иначе можно
+                        # осиротить живого панельного юзера. Оставляем на разбор оператору.
+                        logger.error(
+                            'Непригодный идентификатор панель-юзера при сбросе триала',
+                            panel_user_id=panel_user_id,
+                            subscription_id=subscription.id,
+                            error=error,
+                        )
+                        return False
                     except Exception as error:
                         msg = str(error).lower()
                         if 'not found' in msg or 'not exist' in msg:
                             return True  # уже удалён — считаем успехом
                         logger.error(
                             'Не удалось удалить панель-юзера при сбросе триала',
-                            user_uuid=panel_uuid,
+                            panel_user_id=panel_user_id,
                             subscription_id=subscription.id,
                             error=error,
                         )
@@ -2048,11 +2084,13 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
 
     await db.execute(delete(Subscription).where(Subscription.id.in_(subscription_ids)))
 
-    # single-tariff: панель-юзер на уровне пользователя — чистим устаревший uuid, чтобы
-    # синк по нему ничего не восстанавливал.
+    # single-tariff: панель-юзер на уровне пользователя — чистим устаревшую панельную
+    # идентичность, чтобы синк по ней ничего не восстанавливал. Историческую колонку
+    # remnawave_uuid обнуляем заодно: панель-юзера больше нет, и её единственный
+    # оставшийся потребитель — one-shot бэкфил, который иначе попробует её разрезолвить.
     if not is_multi:
         user_ids = list({subscription.user_id for subscription in to_reset})
-        await db.execute(update(User).where(User.id.in_(user_ids)).values(remnawave_uuid=None))
+        await db.execute(update(User).where(User.id.in_(user_ids)).values(remnawave_id=None, remnawave_uuid=None))
 
     return len(to_reset)
 

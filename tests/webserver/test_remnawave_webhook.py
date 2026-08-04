@@ -23,7 +23,7 @@ def reset_remnawave_webhook_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         raising=False,
     )
-    RemnaWaveWebhookService._intentional_panel_deletions_by_uuid.clear()
+    RemnaWaveWebhookService._intentional_panel_deletions_by_id.clear()
     RemnaWaveWebhookService._intentional_panel_deletions_by_telegram_id.clear()
 
 
@@ -72,9 +72,10 @@ async def test_remnawave_webhook_accepts_event_without_scope(monkeypatch: pytest
         lambda _bot: service,
     )
 
+    # 3.0.0: ExtendedUsersSchema несёт числовой `id`, поля `uuid` в конверте нет.
     payload = {
         'event': 'user.modified',
-        'data': {'uuid': 'user-123'},
+        'data': {'id': 123, 'shortUuid': 'abc123'},
         'timestamp': '2026-03-30T12:00:00.000Z',
     }
     raw_body = json.dumps(payload).encode('utf-8')
@@ -91,13 +92,13 @@ async def test_remnawave_webhook_accepts_event_without_scope(monkeypatch: pytest
     response = await route.endpoint(request)
 
     assert response.status_code == 200
-    process_event.assert_awaited_once_with(None, 'user.modified', {'uuid': 'user-123'})
+    process_event.assert_awaited_once_with(None, 'user.modified', {'id': 123, 'shortUuid': 'abc123'})
 
 
 @pytest.mark.anyio('asyncio')
 async def test_remnawave_webhook_rejects_payload_without_event() -> None:
     bot = AsyncMock()
-    payload = {'data': {'uuid': 'user-123'}}
+    payload = {'data': {'id': 123}}
     raw_body = json.dumps(payload).encode('utf-8')
 
     router = create_remnawave_webhook_router(bot)
@@ -116,28 +117,39 @@ async def test_remnawave_webhook_rejects_payload_without_event() -> None:
 
 
 def test_intentional_panel_deletion_guard_marks_and_detects() -> None:
-    """Verify that mark + is_intentional round-trip works correctly."""
+    """Verify that mark + is_intentional round-trip works correctly.
+
+    3.0.0: гвард ключуется числовым панельным id (`data['id']`), не UUID.
+    """
     RemnaWaveWebhookService.mark_intentional_panel_deletion(
-        panel_uuids=['panel-user-123'],
+        panel_user_ids=[123],
         telegram_id=8368498066,
     )
 
-    assert RemnaWaveWebhookService._is_intentional_panel_deletion_event(
-        {'uuid': 'panel-user-123', 'telegramId': 8368498066}
-    )
+    assert RemnaWaveWebhookService._is_intentional_panel_deletion_event({'id': 123, 'telegramId': 8368498066})
 
-    # Unknown UUID should not match
-    assert not RemnaWaveWebhookService._is_intentional_panel_deletion_event(
-        {'uuid': 'unknown-uuid', 'telegramId': 99999}
-    )
+    # Вложенный user.id (device-события) резолвится тем же гвардом
+    assert RemnaWaveWebhookService._is_intentional_panel_deletion_event({'user': {'id': 123}})
+
+    # Панель шлёт число, но JSON-мост может донести строку — она обязана
+    # сматчиться с тем же ключом, иначе гвард молча протечёт.
+    assert RemnaWaveWebhookService._is_intentional_panel_deletion_event({'id': '123'})
+
+    # Unknown panel id should not match
+    assert not RemnaWaveWebhookService._is_intentional_panel_deletion_event({'id': 999, 'telegramId': 99999})
+
+    # Протухший UUID идентификатором больше не является — он не должен
+    # случайно совпасть ни с одним ключом гварда.
+    assert not RemnaWaveWebhookService._is_intentional_panel_deletion_event({'id': 'panel-user-123'})
 
 
 def test_intentional_panel_deletion_guard_respects_hard_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify that the guard stops accepting entries after hitting the cap."""
     monkeypatch.setattr(RemnaWaveWebhookService, '_MAX_INTENTIONAL_ENTRIES', 3)
 
-    RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_uuids=['a', 'b', 'c'])
+    RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_user_ids=[1, 2, 3])
     # 3 entries — at capacity
-    RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_uuids=['d'])
-    # 'd' should NOT be stored (cap reached)
-    assert 'd' not in RemnaWaveWebhookService._intentional_panel_deletions_by_uuid
+    RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_user_ids=[4])
+    # 4 should NOT be stored (cap reached)
+    assert 4 not in RemnaWaveWebhookService._intentional_panel_deletions_by_id
+    assert set(RemnaWaveWebhookService._intentional_panel_deletions_by_id) == {1, 2, 3}

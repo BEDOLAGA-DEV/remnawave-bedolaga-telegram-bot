@@ -423,8 +423,9 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
             return
 
         async with service.get_api_client() as api:
-            # Try to find user by email in panel
-            panel_users = await api.get_user_by_email(user.email)
+            # Try to find user by email in panel.
+            # 3.0.0 удалил GET /api/users/by-email — поиск живёт фильтром стрима.
+            panel_users = await api.find_users_by_email(user.email)
 
             if not panel_users:
                 logger.debug('No subscription found in panel for email', email=user.email)
@@ -438,48 +439,48 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
             panel_users_to_sync = panel_users if settings.is_multi_tariff_enabled() else panel_users[:1]
 
             for panel_user in panel_users_to_sync:
-                logger.info('Syncing panel subscription for email', email=user.email, uuid=panel_user.uuid)
+                logger.info('Syncing panel subscription for email', email=user.email, panel_user_id=panel_user.id)
 
-                # Check if another user already owns this remnawave_uuid
+                # Check if another user already owns this remnawave_id
                 if settings.is_multi_tariff_enabled():
                     from sqlalchemy import select as _select
 
                     from app.database.models import Subscription as _Subscription
 
                     _sub_result = await db.execute(
-                        _select(_Subscription).where(_Subscription.remnawave_uuid == panel_user.uuid)
+                        _select(_Subscription).where(_Subscription.remnawave_id == panel_user.id)
                     )
                     _existing_sub = _sub_result.scalar_one_or_none()
                     if _existing_sub and _existing_sub.user_id != user.id:
                         logger.warning(
-                            'Panel UUID already owned by another user subscription, skipping',
+                            'Panel user already owned by another user subscription, skipping',
                             email=user.email,
-                            panel_uuid=panel_user.uuid,
+                            panel_user_id=panel_user.id,
                             existing_owner_id=_existing_sub.user_id,
                         )
                         continue
                 else:
-                    from app.database.crud.user import get_user_by_remnawave_uuid
+                    from app.database.crud.user import get_user_by_remnawave_id
 
-                    existing_owner = await get_user_by_remnawave_uuid(db, panel_user.uuid)
+                    existing_owner = await get_user_by_remnawave_id(db, panel_user.id)
                     if existing_owner and existing_owner.id != user.id:
                         logger.warning(
-                            'Panel UUID already belongs to another user, skipping',
+                            'Panel user already belongs to another user, skipping',
                             email=user.email,
-                            panel_uuid=panel_user.uuid,
+                            panel_user_id=panel_user.id,
                             existing_owner_id=existing_owner.id,
                         )
                         continue
 
                 # Link user to panel (only in single-tariff mode)
                 if not settings.is_multi_tariff_enabled():
-                    user.remnawave_uuid = panel_user.uuid
+                    user.remnawave_id = panel_user.id
 
                 # Find existing subscription
                 if settings.is_multi_tariff_enabled():
                     active_subs = await get_active_subscriptions_by_user_id(db, user.id)
                     existing_sub = next(
-                        (s for s in active_subs if s.remnawave_uuid == panel_user.uuid),
+                        (s for s in active_subs if s.remnawave_id == panel_user.id),
                         None,
                     )
                 else:
@@ -512,14 +513,18 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                     existing_sub.status = sub_status.value
                     existing_sub.remnawave_short_uuid = panel_user.short_uuid
                     existing_sub.subscription_url = panel_user.subscription_url
-                    existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
+                    # Не затираем рабочую ссылку пустым значением: панель
+                    # отдаёт happ-ссылку не на всех путях, а потеря сохранённой
+                    # ломает кнопку подключения у живого клиента.
+                    if panel_user.happ_crypto_link:
+                        existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
                     existing_sub.connected_squads = connected_squads
                     existing_sub.device_limit = device_limit
                     existing_sub.is_trial = False
                     logger.info(
                         'Updated subscription for email user',
                         email=user.email,
-                        uuid=panel_user.uuid,
+                        panel_user_id=panel_user.id,
                     )
                 else:
                     from app.database.crud.subscription import generate_unique_short_id
@@ -533,7 +538,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                         traffic_used_gb=traffic_used_gb,
                         status=sub_status.value,
                         is_trial=False,
-                        remnawave_uuid=panel_user.uuid if settings.is_multi_tariff_enabled() else None,
+                        remnawave_id=panel_user.id if settings.is_multi_tariff_enabled() else None,
                         remnawave_short_id=_short_id,
                         remnawave_short_uuid=panel_user.short_uuid,
                         subscription_url=panel_user.subscription_url,
@@ -545,7 +550,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                     logger.info(
                         'Created subscription for email user',
                         email=user.email,
-                        uuid=panel_user.uuid,
+                        panel_user_id=panel_user.id,
                     )
 
             await db.commit()

@@ -257,10 +257,10 @@ class DailySubscriptionService:
 
                 subscription_service = SubscriptionService()
                 _has_panel_user = (
-                    getattr(subscription, 'remnawave_uuid', None)
+                    getattr(subscription, 'remnawave_id', None)
                     if settings.is_multi_tariff_enabled()
-                    else getattr(user, 'remnawave_uuid', None)
-                )
+                    else getattr(user, 'remnawave_id', None)
+                ) is not None
                 if _has_panel_user:
                     await subscription_service.update_remnawave_user(
                         db,
@@ -278,12 +278,12 @@ class DailySubscriptionService:
                     )
                     # POST может игнорировать activeInternalSquads — отправляем PATCH
                     await db.refresh(user)
-                    _sync_uuid = (
-                        getattr(subscription, 'remnawave_uuid', None)
+                    _sync_panel_user_id = (
+                        getattr(subscription, 'remnawave_id', None)
                         if settings.is_multi_tariff_enabled()
-                        else getattr(user, 'remnawave_uuid', None)
+                        else getattr(user, 'remnawave_id', None)
                     )
-                    if _sync_uuid and subscription.connected_squads:
+                    if _sync_panel_user_id is not None and subscription.connected_squads:
                         try:
                             await subscription_service.update_remnawave_user(
                                 db,
@@ -700,16 +700,16 @@ class DailySubscriptionService:
 
         service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
-            uuid = getattr(subscription, 'remnawave_uuid', None)
+            panel_user_id = getattr(subscription, 'remnawave_id', None)
         else:
             user = await get_user_by_id(db, subscription.user_id)
-            uuid = getattr(user, 'remnawave_uuid', None) if user else None
-        if not uuid:
+            panel_user_id = getattr(user, 'remnawave_id', None) if user else None
+        if panel_user_id is None:
             return None
 
         try:
             async with service.get_api_client() as api:
-                panel_user = await api.get_user_by_uuid(uuid)
+                panel_user = await api.get_user_by_id(panel_user_id)
         except Exception as exc:
             logger.warning(
                 'Не удалось получить used из панели для выравнивания докупки — применим понижение со страховкой',

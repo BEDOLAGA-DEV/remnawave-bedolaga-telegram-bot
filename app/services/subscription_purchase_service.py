@@ -1160,23 +1160,23 @@ class MiniAppSubscriptionPurchaseService:
         # Disable killed trials on RemnaWave panel
         for trial_sub in killed_trials:
             try:
-                _trial_uuid = trial_sub.remnawave_uuid or (
-                    getattr(user, 'remnawave_uuid', None) if not settings.is_multi_tariff_enabled() else None
-                )
-                if _trial_uuid:
-                    await subscription_service.disable_remnawave_user(_trial_uuid)
+                _trial_panel_id = trial_sub.remnawave_id
+                if _trial_panel_id is None and not settings.is_multi_tariff_enabled():
+                    _trial_panel_id = getattr(user, 'remnawave_id', None)
+                if _trial_panel_id is not None:
+                    await subscription_service.disable_remnawave_user(_trial_panel_id)
                 await decrement_subscription_server_counts(db, trial_sub)
             except Exception as trial_err:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
 
         try:
             # In multi-tariff mode, each subscription has its own panel user.
-            # A new subscription has no remnawave_uuid yet, so always CREATE.
-            # In single-tariff mode, reuse the user-level UUID if available.
+            # A new subscription has no remnawave_id yet, so always CREATE.
+            # In single-tariff mode, reuse the user-level panel id if available.
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = subscription.remnawave_id is None
             else:
-                _should_create = not getattr(user, 'remnawave_uuid', None)
+                _should_create = getattr(user, 'remnawave_id', None) is None
 
             if _should_create:
                 await subscription_service.create_remnawave_user(
@@ -1200,7 +1200,7 @@ class MiniAppSubscriptionPurchaseService:
             remnawave_retry_queue.enqueue(
                 subscription_id=subscription.id,
                 user_id=user.id,
-                action='create' if not getattr(subscription, 'remnawave_uuid', None) else 'update',
+                action='create' if getattr(subscription, 'remnawave_id', None) is None else 'update',
             )
 
         transaction = await create_transaction(

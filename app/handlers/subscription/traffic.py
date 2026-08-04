@@ -376,10 +376,35 @@ async def confirm_reset_traffic(
         remnawave_service = RemnaWaveService()
 
         user = db_user
-        remnawave_uuid = getattr(subscription, 'remnawave_uuid', None) or user.remnawave_uuid
-        if remnawave_uuid:
-            async with remnawave_service.get_api_client() as api:
-                await api.reset_user_traffic(remnawave_uuid)
+        # В multi-tariff у каждой подписки СВОЙ панельный юзер: фолбэк на
+        # user-уровень обнулил бы трафик соседнему тарифу, за который тут
+        # никто не платил, а нужный остался бы на лимите.
+        panel_user_id = getattr(subscription, 'remnawave_id', None)
+        if not panel_user_id and not settings.is_multi_tariff_enabled():
+            panel_user_id = user.remnawave_id
+        async with remnawave_service.get_api_client() as api:
+            if not panel_user_id:
+                # Деньги уже списаны и закоммичены выше. Между миграцией 0104 и
+                # прогоном бэкфила `remnawave_id` пуст у всех доапгрейдных строк,
+                # и без подхвата по shortUuid сброс молча не доезжал бы до панели:
+                # пользователь заплатил, остался LIMITED, а бот отрапортовал успех.
+                _short_uuid = (getattr(subscription, 'remnawave_short_uuid', None) or '').strip()
+                if _short_uuid:
+                    _adopted = await api.get_user_by_short_uuid(_short_uuid)
+                    if _adopted is not None:
+                        panel_user_id = _adopted.id
+                        subscription.remnawave_id = _adopted.id
+                        if not settings.is_multi_tariff_enabled():
+                            user.remnawave_id = _adopted.id
+                        await db.commit()
+            if panel_user_id:
+                await api.reset_user_traffic(panel_user_id)
+            else:
+                logger.error(
+                    'Сброс трафика оплачен, но панельный пользователь не опознан',
+                    user_id=db_user.id,
+                    subscription_id=subscription.id,
+                )
 
         await create_transaction(
             db=db,
@@ -659,13 +684,13 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         await subscription_service.update_remnawave_user(db, subscription)
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _en_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else db_user.remnawave_uuid
+        _en_panel_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+            else db_user.remnawave_id
         )
-        if _en_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(_en_uuid)
+        if _en_panel_id and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(_en_panel_id)
 
         await create_transaction(
             db=db,
@@ -966,13 +991,13 @@ async def execute_switch_traffic(
         await subscription_service.update_remnawave_user(db, subscription)
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _en_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else db_user.remnawave_uuid
+        _en_panel_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+            else db_user.remnawave_id
         )
-        if _en_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(_en_uuid)
+        if _en_panel_id and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(_en_panel_id)
 
         await db.refresh(db_user)
         await db.refresh(subscription)

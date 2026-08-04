@@ -1,5 +1,55 @@
 # Changelog
 
+## [4.0.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.67.0...v4.0.0) (2026-08-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** меняется не только имя переменной, но и формат значений — вместо UUID панельных пользователей нужны числовые id. Автоматически сконвертировать нельзя: uuid из 3.0.0 исчез, и панель их больше не знает.
+
+### New Features
+
+* **admin:** add Bedolaga-first User Detail contracts ([57e2794](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/57e2794f55ba8cff918ff5c622bb6bbf9df9afb5))
+* **cabinet:** панельная идентичность и контракты под 3.0.0 ([2b97440](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2b9744049dcfce6677e44442490202f08b31b0a9))
+* **config:** TRAFFIC_EXCLUDED_USER_UUIDS переименован в _USER_IDS ([88a92f7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/88a92f794267f599bba993811119cccba72fb2f7))
+* **db:** числовая панельная идентичность remnawave_id ([898bcf4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/898bcf49bcb829e54a02808c0af1055216d81837))
+* **remnawave:** бэкфил панельной идентичности ([b97e5f6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b97e5f6bbfa7bf792b06f4ac181e214cec5da96c))
+* **remnawave:** клиент API под 3.0.0 ([c763514](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c763514324c45aff3193631cc4c344873c3ebc55))
+* **remnawave:** сервисный слой на числовую идентичность ([6da10bc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6da10bcc94e2dbf37e7d646d48e3a3a018a60c4d))
+* **remnawave:** хендлеры, миддлвари и Web API под 3.0.0 ([c897d38](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c897d383ceb0177babc5f38ecca368899228bc0d))
+
+
+### Bug Fixes
+
+* **admin:** лог при пропуске синка панели у подписки без UUID ([3d77bc2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3d77bc20a621702ec2f0f3bd4f21a1f5a4a80a9e))
+* **admin:** отмена рекуррента Lava при сбросе выбранной подписки ([2f2006a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/2f2006a5d08289ccfb3c606d0cdb702ccd369ea7))
+* **notifications:** MissingGreenlet при уведомлении о регистрации по кампании ([0f1beff](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0f1beff51b284bae0183bb37000b860e82b4ee4e))
+* **remnawave:** grace-сессия строки-донора не теряет идентичность ([dc09e78](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/dc09e78077d00c02b3dc3e16a4e846bcf1cbed30))
+* **remnawave:** бэкфил не блокируется одной парой и отдаёт id живой строке ([5cd3adb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5cd3adb5bd856ca54d984bb4f9f59ce33a097b0d))
+* **remnawave:** бэкфил не откатывался целиком на single-tariff ([d461784](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d461784f3c70cb58c7dd11fc9c51b60be0190ae8))
+* **remnawave:** бэкфилл падал на старте и брал не тот режим ([deeb24f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/deeb24fbcdd235f63892b50d2ca478b2c6ac6325))
+* **remnawave:** бэкфилл привязывал чужой аккаунт, создание падало на индексе ([98e63b0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/98e63b07b5c8e8c562c1e96936049f057257d2d8))
+* **remnawave:** вебхук не проверял соседей, и подписи тестов врали ([70d35c1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/70d35c1afee123938ce833688120dc2397855d98))
+* **remnawave:** защита от противоречивых uuid не работала на первом прогоне ([928ce20](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/928ce20a011618ee4793bc50c068eafde65e0946))
+* **remnawave:** карта uuid не праймилась, холостой прогон писал в БД ([e9445ee](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e9445ee2f12c811965e4936687258d79152c707a))
+* **remnawave:** ложный успех при удалении устройств, окно суток и happ-ссылка ([b007de8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b007de8f4117d4626a03fd3c54316a1e34aaaee6))
+* **remnawave:** не терять и не подсовывать протухшую идентичность подписки ([bef6e6d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/bef6e6d7d1db65660800b58e7fc20856f40b0751))
+* **remnawave:** несовпадение владельца снова вело к очистке, а не к перепривязке ([ea4db92](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ea4db928b3d9dd171af3d00b8f9c706d4cc47fca))
+* **remnawave:** повторный прогон бэкфила и выбор живой подписки ([b515c3d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/b515c3d30bb762f89b425069d5685d8750168ce0))
+* **remnawave:** поля, которых нет в контракте 3.0.0, и след прогона бэкфила ([babf846](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/babf84634d676a71e7c2b77f03ec7aadaefb391f))
+* **remnawave:** порядок UPDATE'ов при переносе панельного id ([28b01f1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/28b01f1ee71841a2d9654e357c26729f8a6f09af))
+* **remnawave:** протухший id больше не решает за пользователя ([83c6415](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/83c6415c11d007151dde99dfea61178382ba1e8a))
+* **remnawave:** след прогона врал, а защита индекса не мешала записи в панель ([fe3dc5b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fe3dc5bb42cef0b1becbaa56c6ad9be3076c9276))
+* **remnawave:** суточная проверка снова не сработала бы, а граница id ослабла ([3c31285](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3c31285a4c920b715dc57253c6525af82972a5b6))
+* **remnawave:** точный ключ не должен проигрывать догадке и ронять синк ([d2fd3d5](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d2fd3d5db91ed82aea639b5602dc9f900aeaa18b))
+* **remnawave:** холостой прогон бэкфила называл свой отчёт «conflicts» ([6b7204b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6b7204b1d5cf5a1a6e4cffa9972aef9f55995500))
+* **settings:** осмысленные категории для настроек, начинающихся с глагола ([e6f1505](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e6f150537ad57b24f95f9f7024d0d329c5cd6c56))
+
+
+### Documentation
+
+* **remnawave:** точное обоснование раздельных flush при переносе id ([6eb80c6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6eb80c6957987a48098bfffe2b11701dc4267285))
+
 ## [3.67.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.66.0...v3.67.0) (2026-07-29)
 
 

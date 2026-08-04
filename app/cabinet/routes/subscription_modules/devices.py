@@ -53,17 +53,17 @@ REMNAWAVE_SYNC_TIMEOUT = 10.0
 router = APIRouter()
 
 
-def _resolve_panel_uuid(subscription: Subscription | None, user: User) -> str | None:
-    """Resolve RemnaWave panel UUID: per-subscription in multi-tariff, user-level otherwise.
+def _resolve_panel_user_id(subscription: Subscription | None, user: User) -> int | None:
+    """Resolve RemnaWave panel user id: per-subscription in multi-tariff, user-level otherwise.
 
-    Multi-tariff: each subscription is its OWN panel user — return the sub's UUID
-    and do NOT fall back to ``user.remnawave_uuid`` when it's null. The fallback
+    Multi-tariff: each subscription is its OWN panel user — return the sub's id
+    and do NOT fall back to ``user.remnawave_id`` when it's null. The fallback
     would read/operate on another tariff's panel user, making HWID devices/limit
     look shared across tariffs (баг с общим лимитом «по наименьшему тарифу»).
     """
     if settings.is_multi_tariff_enabled() and subscription is not None:
-        return subscription.remnawave_uuid
-    return user.remnawave_uuid
+        return subscription.remnawave_id
+    return user.remnawave_id
 
 
 @router.post('/devices')
@@ -277,9 +277,9 @@ async def purchase_devices_legacy(
     try:
         service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_uuid
+            _should_create = not subscription.remnawave_id
         else:
-            _should_create = not getattr(user, 'remnawave_uuid', None)
+            _should_create = not getattr(user, 'remnawave_id', None)
 
         async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
             if _should_create:
@@ -552,9 +552,9 @@ async def purchase_devices(
         service = SubscriptionService()
         try:
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = not subscription.remnawave_id
             else:
-                _should_create = not getattr(user, 'remnawave_uuid', None)
+                _should_create = not getattr(user, 'remnawave_id', None)
 
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
                 if _should_create:
@@ -907,8 +907,8 @@ async def get_devices(
             detail='No subscription found',
         )
 
-    _puuid = _resolve_panel_uuid(subscription, user)
-    if not _puuid:
+    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    if not _panel_user_id:
         return {
             'devices': [],
             'total': 0,
@@ -918,7 +918,7 @@ async def get_devices(
     try:
         service = RemnaWaveService()
         async with service.get_api_client() as api:
-            response = await api.get_user_devices_all(_puuid)
+            response = await api.get_user_devices_all(_panel_user_id)
 
             devices_list = response.get('devices', [])
             # Подтягиваем все локальные alias'ы юзера одним запросом — дешевле
@@ -1051,25 +1051,35 @@ async def delete_device(
             detail='No subscription found',
         )
 
-    _puuid = _resolve_panel_uuid(subscription, user)
-    if not _puuid:
+    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    if not _panel_user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='User UUID not found',
+            detail='Panel user not found',
         )
 
     try:
         service = RemnaWaveService()
         async with service.get_api_client() as api:
-            delete_data = {'userUuid': _puuid, 'hwid': hwid}
-            await api._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
+            # Тело запроса в 3.0.0 — {'userId': int, 'hwid': str}; собираем его не
+            # руками, а клиентом: он валидирует идентификатор на границе и
+            # проверяет, что hwid действительно пропал из ответа панели.
+            removed = await api.remove_device(_panel_user_id, hwid)
 
-            return {
-                'success': True,
-                'message': 'Device deleted successfully',
-                'deleted_hwid': hwid,
-            }
+        if not removed:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail='Failed to delete device',
+            )
 
+        return {
+            'success': True,
+            'message': 'Device deleted successfully',
+            'deleted_hwid': hwid,
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error('Error deleting device', error=e)
         raise HTTPException(
@@ -1095,18 +1105,18 @@ async def delete_all_devices(
             detail='No subscription found',
         )
 
-    _puuid = _resolve_panel_uuid(subscription, user)
-    if not _puuid:
+    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    if not _panel_user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='User UUID not found',
+            detail='Panel user not found',
         )
 
     try:
         service = RemnaWaveService()
         async with service.get_api_client() as api:
             # Get all devices first
-            response = await api.get_user_devices_all(_puuid)
+            response = await api.get_user_devices_all(_panel_user_id)
 
             if not response:
                 return {
@@ -1123,23 +1133,25 @@ async def delete_all_devices(
                     'deleted_count': 0,
                 }
 
-            deleted_count = 0
-            for device in devices_list:
-                device_hwid = device.get('hwid')
-                if device_hwid:
-                    try:
-                        delete_data = {'userUuid': _puuid, 'hwid': device_hwid}
-                        await api._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
-                        deleted_count += 1
-                    except Exception as device_error:
-                        logger.error('Error deleting device', device_hwid=device_hwid, device_error=device_error)
+            # 3.0.0 даёт атомарный `POST /api/hwid/devices/delete-all` — на него
+            # переведены все остальные места. Здесь оставался цикл «по одному
+            # запросу на устройство», и он ко всему прочему возвращал
+            # `success: true` даже когда не удалилось НИ ОДНО устройство.
+            total = len(devices_list)
+            if not await api.reset_user_devices(_panel_user_id):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail='Failed to delete devices',
+                )
 
             return {
                 'success': True,
-                'message': f'Deleted {deleted_count} devices',
-                'deleted_count': deleted_count,
+                'message': f'Deleted {total} devices',
+                'deleted_count': total,
             }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error('Error deleting all devices', error=e)
         raise HTTPException(
@@ -1212,12 +1224,12 @@ async def get_device_reduction_info(
 
     # Get connected devices count
     connected_devices_count = 0
-    _puuid = _resolve_panel_uuid(subscription, user)
-    if _puuid:
+    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    if _panel_user_id:
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                response = await api.get_user_devices_all(_puuid)
+                response = await api.get_user_devices_all(_panel_user_id)
                 if response:
                     connected_devices_count = response.get('total', 0)
         except Exception as e:
@@ -1308,12 +1320,12 @@ async def reduce_devices(
     # Get connected devices and remove excess (last connected ones)
     connected_devices_count = 0
     devices_removed_count = 0
-    _puuid = _resolve_panel_uuid(subscription, user)
-    if _puuid:
+    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    if _panel_user_id:
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                response = await api.get_user_devices_all(_puuid)
+                response = await api.get_user_devices_all(_panel_user_id)
                 if response:
                     devices_list = response.get('devices', [])
                     connected_devices_count = len(devices_list)
@@ -1340,10 +1352,9 @@ async def reduce_devices(
                             device_hwid = device.get('hwid')
                             if device_hwid:
                                 try:
-                                    delete_data = {'userUuid': _puuid, 'hwid': device_hwid}
-                                    await api._make_request('POST', '/api/hwid/devices/delete', data=delete_data)
-                                    devices_removed_count += 1
-                                    logger.info('Removed device for user', device_hwid=device_hwid, user_id=user.id)
+                                    if await api.remove_device(_panel_user_id, device_hwid):
+                                        devices_removed_count += 1
+                                        logger.info('Removed device for user', device_hwid=device_hwid, user_id=user.id)
                                 except Exception as del_error:
                                     logger.error('Error removing device', device_hwid=device_hwid, del_error=del_error)
         except Exception as e:

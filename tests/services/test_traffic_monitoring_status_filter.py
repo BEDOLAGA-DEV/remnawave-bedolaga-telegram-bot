@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.external.remnawave_api import UserStatus
+from app.external.remnawave_api import RemnaWaveUser, UserStatus
 from app.services.traffic_monitoring_service import (
     _NON_MONITORED_STATUSES,
     TrafficMonitoringServiceV2,
@@ -24,9 +24,13 @@ def service():
     return TrafficMonitoringServiceV2()
 
 
-def _make_user(uuid: str, status: UserStatus) -> MagicMock:
-    user = MagicMock()
-    user.uuid = uuid
+def _make_user(name: str, status: UserStatus) -> MagicMock:
+    # spec=RemnaWaveUser: в 3.0.0 поля `uuid` у панельного юзера нет. Со spec
+    # ЧТЕНИЕ несуществующего атрибута падает в AttributeError вместо того, чтобы
+    # молча отдать новый MagicMock, — то есть прод, соскользнувший на мёртвую
+    # идентичность, роняет тест, а не зеленит его.
+    user = MagicMock(spec=RemnaWaveUser)
+    user.username = name
     user.status = status
     return user
 
@@ -65,8 +69,8 @@ async def test_disabled_and_expired_are_filtered_out(service):
 
     result = await service.get_all_users_with_traffic()
 
-    uuids = [u.uuid for u in result]
-    assert uuids == ['active-1', 'limited-1']
+    usernames = [u.username for u in result]
+    assert usernames == ['active-1', 'limited-1']
     assert all(u.status not in _NON_MONITORED_STATUSES for u in result)
 
 
@@ -81,7 +85,7 @@ async def test_all_active_pass_through(service):
 
     result = await service.get_all_users_with_traffic()
 
-    assert {u.uuid for u in result} == {'a', 'b', 'c'}
+    assert {u.username for u in result} == {'a', 'b', 'c'}
 
 
 async def test_all_inactive_returns_empty(service):
@@ -111,8 +115,8 @@ async def test_filter_applies_across_paginated_batches(service):
 
     # 99 активных из первого батча + 1 активный из второго; disabled/expired убраны
     assert len(result) == 100
-    assert 'disabled-mid' not in {u.uuid for u in result}
-    assert 'expired-last' not in {u.uuid for u in result}
-    assert 'active-last' in {u.uuid for u in result}
+    assert 'disabled-mid' not in {u.username for u in result}
+    assert 'expired-last' not in {u.username for u in result}
+    assert 'active-last' in {u.username for u in result}
     # Должно быть две страницы (первая вернула hasMore=True)
     assert api.get_all_users_page_stream.call_count == 2

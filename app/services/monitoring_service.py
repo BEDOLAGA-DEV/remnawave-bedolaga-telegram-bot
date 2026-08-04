@@ -596,15 +596,15 @@ class MonitoringService:
                 return None
 
             user = await get_user_by_id(db, subscription.user_id)
-            remnawave_uuid = (
-                subscription.remnawave_uuid
-                if settings.is_multi_tariff_enabled() and getattr(subscription, 'remnawave_uuid', None)
-                else user.remnawave_uuid
+            panel_user_id = (
+                subscription.remnawave_id
+                if settings.is_multi_tariff_enabled() and getattr(subscription, 'remnawave_id', None) is not None
+                else user.remnawave_id
                 if user
                 else None
             )
-            if not user or not remnawave_uuid:
-                logger.error('RemnaWave UUID не найден для пользователя', user_id=subscription.user_id)
+            if not user or panel_user_id is None:
+                logger.error('RemnaWave id не найден для пользователя', user_id=subscription.user_id)
                 return None
 
             # Обновляем subscription в сессии, чтобы избежать detached instance
@@ -654,7 +654,7 @@ class MonitoringService:
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
 
                 update_kwargs = dict(
-                    uuid=remnawave_uuid,
+                    user_id=panel_user_id,
                     status=RemnaWaveUserStatus.ACTIVE if is_active else RemnaWaveUserStatus.DISABLED,
                     expire_at=subscription.end_date
                     if is_active
@@ -691,7 +691,7 @@ class MonitoringService:
                 status_text = 'активным' if is_active else 'истёкшим'
                 logger.info(
                     '✅ Обновлен RemnaWave пользователь со статусом',
-                    remnawave_uuid=remnawave_uuid,
+                    remnawave_id=panel_user_id,
                     status_text=status_text,
                 )
                 return updated_user
@@ -699,7 +699,10 @@ class MonitoringService:
         except RemnaWaveAPIError as e:
             if is_user_not_found_error(e):
                 # Пользователя удалили из панели при живой подписке в боте —
-                # пересоздаём (create-флоу сохранит новый UUID и ссылки в подписку).
+                # пересоздаём (create-флоу сохранит новый id панели и ссылки в подписку).
+                # RemnaWaveInvalidUserIdError сюда намеренно не попадает: битый
+                # локальный идентификатор — баг в данных бота, а не «юзера нет»,
+                # и уход в пересоздание плодил бы дубли в панели.
                 return await self.subscription_service.recreate_deleted_panel_user(db, subscription)
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
             return None
@@ -1044,18 +1047,18 @@ class MonitoringService:
                                 is_trial=subscription.is_trial,
                             )
 
-                            panel_uuid = (
-                                subscription.remnawave_uuid
-                                if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-                                else user.remnawave_uuid
+                            panel_user_id = (
+                                subscription.remnawave_id
+                                if settings.is_multi_tariff_enabled() and subscription.remnawave_id is not None
+                                else user.remnawave_id
                             )
-                            if panel_uuid:
+                            if panel_user_id is not None:
                                 try:
-                                    await self.subscription_service.disable_remnawave_user(panel_uuid)
+                                    await self.subscription_service.disable_remnawave_user(panel_user_id)
                                 except Exception as api_error:
                                     logger.error(
                                         'Failed to disable RemnaWave user',
-                                        remnawave_uuid=panel_uuid,
+                                        remnawave_id=panel_user_id,
                                         api_error=api_error,
                                     )
 
@@ -1122,9 +1125,9 @@ class MonitoringService:
 
                             try:
                                 if settings.is_multi_tariff_enabled():
-                                    _should_create = not subscription.remnawave_uuid
+                                    _should_create = subscription.remnawave_id is None
                                 else:
-                                    _should_create = not getattr(user, 'remnawave_uuid', None)
+                                    _should_create = getattr(user, 'remnawave_id', None) is None
 
                                 if _should_create:
                                     # create_remnawave_user calls db.commit() internally --
@@ -1132,13 +1135,13 @@ class MonitoringService:
                                     await batch_db.commit()
                                     await self.subscription_service.create_remnawave_user(batch_db, subscription)
                                 else:
-                                    _enable_uuid = (
-                                        subscription.remnawave_uuid
+                                    _enable_panel_user_id = (
+                                        subscription.remnawave_id
                                         if settings.is_multi_tariff_enabled()
-                                        else user.remnawave_uuid
+                                        else user.remnawave_id
                                     )
-                                    if _enable_uuid:
-                                        await self.subscription_service.enable_remnawave_user(_enable_uuid)
+                                    if _enable_panel_user_id is not None:
+                                        await self.subscription_service.enable_remnawave_user(_enable_panel_user_id)
                             except Exception as api_error:
                                 logger.error(
                                     'Failed to update RemnaWave user',

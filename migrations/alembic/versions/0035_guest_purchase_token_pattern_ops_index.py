@@ -15,8 +15,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute(
-        'CREATE INDEX IF NOT EXISTS ix_guest_purchases_token_pattern '
-        'ON guest_purchases (token varchar_pattern_ops)'
+        'CREATE INDEX IF NOT EXISTS ix_guest_purchases_token_pattern ON guest_purchases (token varchar_pattern_ops)'
     )
 
 

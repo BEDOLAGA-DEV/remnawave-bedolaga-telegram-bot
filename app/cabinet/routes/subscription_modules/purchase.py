@@ -1109,21 +1109,21 @@ async def purchase_tariff(
             if trial_sub.id == (subscription.id if subscription else None):
                 continue  # This trial became the paid subscription, don't disable
             try:
-                _trial_uuid = trial_sub.remnawave_uuid or (
-                    getattr(user, 'remnawave_uuid', None) if not settings.is_multi_tariff_enabled() else None
+                _trial_panel_user_id = trial_sub.remnawave_id or (
+                    getattr(user, 'remnawave_id', None) if not settings.is_multi_tariff_enabled() else None
                 )
-                if _trial_uuid:
-                    await service.disable_remnawave_user(_trial_uuid)
+                if _trial_panel_user_id:
+                    await service.disable_remnawave_user(_trial_panel_user_id)
                 await decrement_subscription_server_counts(db, trial_sub)
             except Exception as trial_err:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
         try:
-            # Mirror the bot handler logic: in single-tariff mode, check user.remnawave_uuid
-            # (webhook clears it on panel deletion), not subscription.remnawave_uuid
+            # Mirror the bot handler logic: in single-tariff mode, check user.remnawave_id
+            # (webhook clears it on panel deletion), not subscription.remnawave_id
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = not subscription.remnawave_id
             else:
-                _should_create = not getattr(user, 'remnawave_uuid', None)
+                _should_create = not getattr(user, 'remnawave_id', None)
 
             # Time-bounded (see REMNAWAVE_SYNC_TIMEOUT): the subscription is already
             # committed, so a slow panel must not keep the cabinet pay button spinning;

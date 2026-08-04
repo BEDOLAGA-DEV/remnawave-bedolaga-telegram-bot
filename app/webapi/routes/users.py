@@ -688,11 +688,11 @@ async def delete_user_subscription(
     await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
     await deactivate_subscription(db, subscription)
 
-    # Деактивируем пользователя в RemnaWave, если есть UUID
-    remnawave_uuid = subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
-    if remnawave_uuid:
+    # Деактивируем пользователя в RemnaWave, если есть панельная идентичность
+    panel_user_id = subscription.remnawave_id if settings.is_multi_tariff_enabled() else user.remnawave_id
+    if panel_user_id:
         subscription_service = SubscriptionService()
-        await subscription_service.disable_remnawave_user(remnawave_uuid)
+        await subscription_service.disable_remnawave_user(panel_user_id)
 
     # Перезагружаем пользователя
     user = await get_user_by_id(db, user.id)

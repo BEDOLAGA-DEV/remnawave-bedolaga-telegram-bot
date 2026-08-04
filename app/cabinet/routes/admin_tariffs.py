@@ -4,7 +4,7 @@ import asyncio
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -641,7 +641,11 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
                     and_(
                         Subscription.tariff_id == tariff_id,
                         Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
-                        User.remnawave_uuid.isnot(None),
+                        # Тарифы существуют только в multi-tariff, а там панельная
+                        # идентичность живёт на подписке: `users.remnawave_id`
+                        # намеренно пуст, и фильтр по нему не выбирал бы никого —
+                        # синк сквадов молча возвращал бы «0 подписок» и 200 OK.
+                        or_(Subscription.remnawave_id.isnot(None), User.remnawave_id.isnot(None)),
                     )
                 )
             )
@@ -664,19 +668,19 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
 
                 async def _sync_one(sub: Subscription) -> None:
                     nonlocal updated, failed
-                    remnawave_uuid = (
-                        getattr(sub, 'remnawave_uuid', None)
+                    remnawave_id = (
+                        getattr(sub, 'remnawave_id', None)
                         if settings.is_multi_tariff_enabled()
-                        else (sub.user.remnawave_uuid if sub.user else None)
+                        else (sub.user.remnawave_id if sub.user else None)
                     )
-                    if not remnawave_uuid:
+                    if not remnawave_id:
                         return
                     async with semaphore:
                         try:
                             await update_panel_user_grace_safe(
                                 api,
                                 sub.id,
-                                uuid=remnawave_uuid,
+                                user_id=remnawave_id,
                                 active_internal_squads=new_squads,
                                 external_squad_uuid=ext_squad_uuid,
                             )
@@ -719,7 +723,7 @@ async def sync_tariff_squads(
     """Sync squads from tariff to all active/trial subscriptions in Remnawave panel.
 
     Updates connected_squads and external_squad_uuid for every active or trial
-    subscription linked to this tariff.  Only users that have a remnawave_uuid
+    subscription linked to this tariff.  Only users that have a remnawave_id
     (i.e. already exist in the panel) are touched.
     """
     tariff = await get_tariff_by_id(db, tariff_id)
@@ -738,7 +742,9 @@ async def sync_tariff_squads(
             and_(
                 Subscription.tariff_id == tariff_id,
                 Subscription.status.in_([SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value]),
-                User.remnawave_uuid.isnot(None),
+                # См. комментарий в фоновом синке: в multi-tariff идентичность
+                # на подписке, фильтр только по User не выбрал бы никого.
+                or_(Subscription.remnawave_id.isnot(None), User.remnawave_id.isnot(None)),
             )
         )
     )
@@ -782,12 +788,12 @@ async def sync_tariff_squads(
                 skipped_count += 1
                 return 'skipped'
 
-            remnawave_uuid = (
-                getattr(sub, 'remnawave_uuid', None)
+            remnawave_id = (
+                getattr(sub, 'remnawave_id', None)
                 if settings.is_multi_tariff_enabled()
-                else (sub.user.remnawave_uuid if sub.user else None)
+                else (sub.user.remnawave_id if sub.user else None)
             )
-            if not remnawave_uuid:
+            if not remnawave_id:
                 skipped_count += 1
                 return 'skipped'
 
@@ -800,7 +806,7 @@ async def sync_tariff_squads(
                     await update_panel_user_grace_safe(
                         api,
                         sub.id,
-                        uuid=remnawave_uuid,
+                        user_id=remnawave_id,
                         active_internal_squads=new_squads,
                         external_squad_uuid=ext_squad_uuid,
                     )
@@ -816,7 +822,7 @@ async def sync_tariff_squads(
                     logger.warning(
                         'Failed to sync squads for user in Remnawave',
                         user_id=sub.user_id,
-                        remnawave_uuid=remnawave_uuid,
+                        remnawave_id=remnawave_id,
                         error=str(e),
                     )
                     if consecutive_failures >= _SYNC_SQUADS_MAX_CONSECUTIVE_FAILURES:

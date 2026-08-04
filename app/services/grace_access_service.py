@@ -133,7 +133,8 @@ class GraceBillingState:
     """Canonical subscription data owned by the bot billing database."""
 
     subscription_id: int
-    remnawave_uuid: str | None
+    # Remnawave 3.0.0 identifies a panel user by its numeric ``id`` only.
+    remnawave_id: int | None
     status: str
     end_at: datetime | None
     traffic_limit_bytes: int
@@ -156,7 +157,7 @@ class GracePanelSnapshot:
     must never be restored: traffic consumed during grace is real traffic.
     """
 
-    remnawave_uuid: str
+    remnawave_id: int
     status: str
     expire_at: datetime | None
     traffic_limit_bytes: int
@@ -184,7 +185,7 @@ class GraceAccessSession:
 
     id: str
     subscription_id: int
-    remnawave_uuid: str
+    remnawave_id: int
     reason: GraceReason
     incident_key: str
     state: GraceSessionState
@@ -237,13 +238,13 @@ class GraceSessionStore(Protocol):
 class GracePanelGateway(Protocol):
     """Remnawave adapter implemented in the next integration step."""
 
-    async def read_snapshot(self, remnawave_uuid: str) -> GracePanelSnapshot | None: ...
+    async def read_snapshot(self, remnawave_id: int) -> GracePanelSnapshot | None: ...
 
-    async def apply_overlay(self, remnawave_uuid: str, overlay: GracePanelOverlay) -> None: ...
+    async def apply_overlay(self, remnawave_id: int, overlay: GracePanelOverlay) -> None: ...
 
     async def restore_snapshot(
         self,
-        remnawave_uuid: str,
+        remnawave_id: int,
         snapshot: GracePanelSnapshot,
         expected_overlay: GracePanelOverlay,
     ) -> GraceRestoreOutcome:
@@ -298,7 +299,7 @@ class GraceAccessService:
         """Create and apply one grace session for one billing incident."""
         if not billing_is_eligible(billing, reason, self._policy):
             return GraceStartResult(GraceStartDecision.NOT_ELIGIBLE)
-        if not billing.remnawave_uuid:
+        if not billing.remnawave_id:
             return GraceStartResult(GraceStartDecision.PANEL_USER_NOT_FOUND)
 
         open_session = await self._store.get_open(billing.subscription_id)
@@ -313,7 +314,7 @@ class GraceAccessService:
                 return GraceStartResult(decision, active_session)
             return GraceStartResult(GraceStartDecision.ALREADY_ACTIVE, open_session)
 
-        panel_snapshot = await self._panel.read_snapshot(billing.remnawave_uuid)
+        panel_snapshot = await self._panel.read_snapshot(billing.remnawave_id)
         if not panel_snapshot:
             return GraceStartResult(GraceStartDecision.PANEL_USER_NOT_FOUND)
         if not panel_status_matches_reason(panel_snapshot.status, reason):
@@ -344,7 +345,7 @@ class GraceAccessService:
         pending_session = GraceAccessSession(
             id=str(uuid4()),
             subscription_id=billing.subscription_id,
-            remnawave_uuid=billing.remnawave_uuid,
+            remnawave_id=billing.remnawave_id,
             reason=reason,
             incident_key=incident_key,
             state=GraceSessionState.PENDING,
@@ -551,7 +552,7 @@ class GraceAccessService:
             action = await self._restore_and_complete(session, GraceCompletionReason.CONFLICT)
             return action[1]
 
-        current_panel = await self._panel.read_snapshot(session.remnawave_uuid)
+        current_panel = await self._panel.read_snapshot(session.remnawave_id)
         if current_panel is None:
             return await self._complete(
                 session,
@@ -596,7 +597,7 @@ class GraceAccessService:
 
         if not overlay_is_already_applied:
             try:
-                await self._panel.apply_overlay(session.remnawave_uuid, session.overlay)
+                await self._panel.apply_overlay(session.remnawave_id, session.overlay)
             except Exception as error:
                 failed_session = replace(
                     session,
@@ -672,15 +673,17 @@ class GraceAccessService:
             return action
 
         # The recipient or canonical incident changed while grace was open
-        # (admin cancellation/shortening, tariff change, UUID replacement,
-        # squads/device/limit change).  Never continue an overlay based on a
-        # stale snapshot.  When the same panel user still belongs to billing,
-        # canonical billing wins immediately; otherwise restore the old user by
-        # compare-and-set and leave unrelated panel changes untouched.
+        # (admin cancellation/shortening, tariff change, panel identity
+        # replacement, squads/device/limit change).  Never continue an overlay
+        # based on a stale snapshot.  When the same panel user still belongs to
+        # billing, canonical billing wins immediately; otherwise restore the old
+        # user by compare-and-set and leave unrelated panel changes untouched.
+        # ``session.remnawave_id`` is always a positive int, so a subscription
+        # that lost its panel link (``None``) can never match it by accident.
         if not billing_incident_is_eligible(billing, session.reason) or not billing_still_matches_session(
             session, billing
         ):
-            if billing.remnawave_uuid == session.remnawave_uuid:
+            if billing.remnawave_id == session.remnawave_id:
                 await self._panel.apply_billing_state(
                     billing,
                     expected_overlay=session.overlay,
@@ -707,7 +710,7 @@ class GraceAccessService:
             return action
 
         if session.state is GraceSessionState.ACTIVE and not force_restore and now < _as_utc(session.grace_until):
-            current_panel = await self._panel.read_snapshot(session.remnawave_uuid)
+            current_panel = await self._panel.read_snapshot(session.remnawave_id)
             if current_panel is None:
                 await self._complete(session, GraceCompletionReason.CONFLICT)
                 return GraceCompletionReason.CONFLICT.value
@@ -771,7 +774,7 @@ class GraceAccessService:
             return GraceCompletionReason.PAID.value, completed
 
         outcome = await self._panel.restore_snapshot(
-            restoring_session.remnawave_uuid,
+            restoring_session.remnawave_id,
             restoring_session.panel_before,
             restoring_session.overlay,
         )
@@ -861,7 +864,7 @@ def billing_still_matches_session(
 ) -> bool:
     """Compare canonical fields that identify the incident without panel metadata."""
     before = session.billing_before
-    if current.remnawave_uuid != session.remnawave_uuid:
+    if current.remnawave_id != session.remnawave_id:
         return False
     if _normalize_status(current.status) != session.reason.value:
         return False
@@ -1015,7 +1018,7 @@ def panel_is_safe_pending_source(
     preflight PATCH.
     """
     unchanged_except_external = (
-        current.remnawave_uuid == before.remnawave_uuid
+        current.remnawave_id == before.remnawave_id
         and _normalize_status(current.status) == _normalize_status(before.status)
         and _datetimes_equal(current.expire_at, before.expire_at)
         and current.traffic_limit_bytes == before.traffic_limit_bytes

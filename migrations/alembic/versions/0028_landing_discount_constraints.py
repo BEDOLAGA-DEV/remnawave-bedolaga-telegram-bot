@@ -22,7 +22,7 @@ def _has_check_constraint(table: str, constraint_name: str) -> bool:
     conn = op.get_bind()
     result = conn.execute(
         sa.text(
-            "SELECT 1 FROM information_schema.table_constraints "
+            'SELECT 1 FROM information_schema.table_constraints '
             "WHERE table_schema = 'public' AND table_name = :table "
             "AND constraint_name = :name AND constraint_type = 'CHECK'"
         ),

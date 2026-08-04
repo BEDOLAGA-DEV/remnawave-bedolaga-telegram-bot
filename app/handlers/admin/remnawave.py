@@ -1411,12 +1411,22 @@ async def show_node_statistics(callback: types.CallbackQuery, db_user: User, db:
 """
 
         if node_usage:
-            text += '\n<b>Статистика за 7 дней:</b>\n'
-            total_usage = 0
-            for usage in node_usage[-5:]:
-                daily_usage = usage.get('total', 0)
-                total_usage += daily_usage
-                text += f'- {usage.get("date", "N/A")}: {format_bytes(daily_usage)}\n'
+            # Remnawave 3.0.0 удалил суточную разбивку по ноде: POST
+            # /api/bandwidth-stats/nodes/usage отдаёт строку НА ПОЛЬЗОВАТЕЛЯ
+            # ({id, totalBytes}) за весь период, без дат. Поэтому показываем
+            # топ потребителей, а не «по дням», и суммируем ВЕСЬ список —
+            # срез для показа не должен влиять на итог.
+            total_usage = sum(entry.get('total', 0) or 0 for entry in node_usage)
+            top_consumers = sorted(node_usage, key=lambda e: e.get('total', 0) or 0, reverse=True)[:5]
+
+            text += '\n<b>Топ потребителей за 7 дней:</b>\n'
+            for usage in top_consumers:
+                panel_user_id = usage.get('userId')
+                label = f'ID {panel_user_id}' if panel_user_id is not None else 'неизвестный'
+                text += f'- {label}: {format_bytes(usage.get("total", 0) or 0)}\n'
+
+            if len(node_usage) > len(top_consumers):
+                text += f'- …и ещё {len(node_usage) - len(top_consumers)}\n'
 
             text += f'\n<b>Общий трафик за 7 дней:</b> {format_bytes(total_usage)}'
         else:

@@ -79,9 +79,7 @@ def upgrade() -> None:
         op.create_table(
             'partner_applications',
             sa.Column('id', sa.Integer(), primary_key=True, index=True),
-            sa.Column(
-                'user_id', sa.Integer(), sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False
-            ),
+            sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False),
             sa.Column('company_name', sa.String(255), nullable=True),
             sa.Column('website_url', sa.String(500), nullable=True),
             sa.Column('telegram_channel', sa.String(255), nullable=True),
@@ -90,9 +88,7 @@ def upgrade() -> None:
             sa.Column('status', sa.String(20), nullable=False, server_default='pending'),
             sa.Column('admin_comment', sa.Text(), nullable=True),
             sa.Column('approved_commission_percent', sa.Integer(), nullable=True),
-            sa.Column(
-                'processed_by', sa.Integer(), sa.ForeignKey('users.id', ondelete='SET NULL'), nullable=True
-            ),
+            sa.Column('processed_by', sa.Integer(), sa.ForeignKey('users.id', ondelete='SET NULL'), nullable=True),
             sa.Column('processed_at', sa.DateTime(timezone=True), nullable=True),
             sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
             sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now()),

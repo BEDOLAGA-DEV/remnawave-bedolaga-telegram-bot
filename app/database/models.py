@@ -2091,6 +2091,9 @@ class User(Base):
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
     last_activity = Column(AwareDateTime(), default=func.now())
+    # Панельный идентификатор пользователя (Remnawave 3.0.0: числовой id).
+    # remnawave_uuid оставлен как исторические данные, читается только одноразовым бэкфилом (восстановление идентичности).
+    remnawave_id = Column(BigInteger, nullable=True, unique=True, index=True)
     remnawave_uuid = Column(String(255), nullable=True, unique=True)
 
     # Cabinet authentication fields
@@ -2287,6 +2290,21 @@ class Subscription(Base):
             unique=True,
             postgresql_where=text("tariff_id IS NOT NULL AND status IN ('active', 'trial', 'limited')"),
         ),
+        # Панельная идентичность подписки. Уникальность частичная: непривязанных
+        # подписок (remnawave_id IS NULL) может быть сколько угодно, а вот две
+        # подписки на одного панельного пользователя — всегда ошибка. Код это и
+        # так предполагал (scalar_one_or_none в crud/user.py), но ничем не
+        # гарантировал; попутно снимает seq-scan с горячего webhook/grace-пути.
+        Index(
+            'uq_subscriptions_remnawave_id',
+            'remnawave_id',
+            unique=True,
+            postgresql_where=text('remnawave_id IS NOT NULL'),
+            sqlite_where=text('remnawave_id IS NOT NULL'),
+        ),
+        # shortUuid пережил 3.0.0 и остаётся единственным панельным ключом,
+        # которым можно резолвить строку, потерявшую связь.
+        Index('ix_subscriptions_remnawave_short_uuid', 'remnawave_short_uuid'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -2334,6 +2352,10 @@ class Subscription(Base):
     grace_suppressed_until = Column(AwareDateTime(), nullable=True)
 
     remnawave_short_uuid = Column(String(255), nullable=True)
+    # Панельный идентификатор пользователя. С Remnawave 3.0.0 это числовой id —
+    # поле uuid из UsersSchema удалено. remnawave_uuid оставлен как исторические
+    # данные для аудита и разбора незарезолвленных строк; читается только одноразовым бэкфилом (восстановление идентичности).
+    remnawave_id = Column(BigInteger, nullable=True)
     remnawave_uuid = Column(String(255), nullable=True)
     remnawave_short_id = Column(
         String(16), nullable=False, unique=True, server_default=''
@@ -2594,7 +2616,13 @@ class GraceAccessSessionModel(Base):
 
     id = Column(String(36), primary_key=True)
     subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
-    remnawave_uuid = Column(String(255), nullable=False)
+    # Панельная идентичность сессии (Remnawave 3.0.0: числовой id). Nullable на
+    # время бэкфила: колонку нельзя добавить сразу NOT NULL на живой таблице, а
+    # флип делается отдельной ревизией после проверки нулей.
+    remnawave_id = Column(BigInteger, nullable=True, index=True)
+    # Ослаблено до nullable в 0104: панель 3.0.0 не отдаёт uuid, поэтому новые
+    # сессии его физически не могут заполнить. Историческое поле.
+    remnawave_uuid = Column(String(255), nullable=True)
     reason = Column(String(16), nullable=False)
     incident_key = Column(String(255), nullable=False)
     state = Column(String(16), nullable=False)

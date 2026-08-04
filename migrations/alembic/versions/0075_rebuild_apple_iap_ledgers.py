@@ -69,7 +69,9 @@ def upgrade() -> None:
     op.create_index('ix_apple_notifications_notification_type', 'apple_notifications', ['notification_type'])
     op.create_index('ix_apple_notifications_environment', 'apple_notifications', ['environment'])
     op.create_index('ix_apple_notifications_transaction_id', 'apple_notifications', ['transaction_id'])
-    op.create_index('ix_apple_notifications_original_transaction_id', 'apple_notifications', ['original_transaction_id'])
+    op.create_index(
+        'ix_apple_notifications_original_transaction_id', 'apple_notifications', ['original_transaction_id']
+    )
 
     op.create_table(
         'apple_iap_abuse_events',

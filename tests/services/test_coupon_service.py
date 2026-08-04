@@ -216,7 +216,9 @@ async def test_success_claims_under_lock_and_flips_before_remnawave_sync() -> No
         # point the coupon MUST already be claimed — otherwise the grant could
         # commit while the coupon is still ACTIVE (double-payout window).
         status_at_sync.append(coupon.status)
-        return SimpleNamespace(uuid='rw-uuid')
+        # 3.0.0: create_remnawave_user отдаёт RemnaWaveUser с числовым `id`;
+        # поля `uuid` у панельного юзера больше нет.
+        return SimpleNamespace(id=4242)
 
     with (
         patch('app.services.coupon_service.get_coupon_by_token', AsyncMock(return_value=coupon)),

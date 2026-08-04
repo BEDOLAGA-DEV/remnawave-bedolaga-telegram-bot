@@ -56,7 +56,7 @@ def upgrade() -> None:
             sa.text(
                 f'ALTER TABLE "{table_name}" '
                 f'ALTER COLUMN "{column_name}" TYPE TIMESTAMPTZ '
-                f"USING \"{column_name}\" AT TIME ZONE 'UTC'"
+                f'USING "{column_name}" AT TIME ZONE \'UTC\''
             )
         )
 

@@ -14,8 +14,8 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from sqlalchemy import select
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy import inspect as sa_inspect, select
+from sqlalchemy.exc import MissingGreenlet, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -77,6 +77,29 @@ class NotificationCategory(StrEnum):
 logger = structlog.get_logger(__name__)
 
 
+def _loaded_relationship(instance: object, name: str) -> Any:
+    """Значение связи, только если она УЖЕ загружена; иначе None и никакого IO.
+
+    ``getattr(obj, name, None)`` для этого не годится: у незагруженной связи
+    async-сессия не отдаёт None, а лезет в базу — и падает MissingGreenlet, потому
+    что default у getattr срабатывает лишь на AttributeError.
+
+    Ровно на этом падало уведомление о регистрации по рекламной кампании:
+    apply_campaign_bonus перечитывает пользователя через ``db.refresh(user)``
+    (сам по себе — фикс прошлого MissingGreenlet), а refresh сбрасывает ранее
+    загруженные связи, включая promo_group.
+    """
+    try:
+        state = sa_inspect(instance)
+    except NoInspectionAvailable:
+        # Не ORM-объект (тестовые фейки, SimpleNamespace) — обычный доступ безопасен.
+        return getattr(instance, name, None)
+
+    if name in state.unloaded:
+        return None
+    return state.dict.get(name)
+
+
 class AdminNotificationService:
     def __init__(self, bot: Bot):
         self.bot = bot
@@ -127,10 +150,17 @@ class AdminNotificationService:
             return f'ID {referred_by_id}'
 
     async def _get_user_promo_group(self, db: AsyncSession, user: User) -> PromoGroup | None:
-        if getattr(user, 'promo_group', None):
-            return user.promo_group
+        promo_group = _loaded_relationship(user, 'promo_group')
+        if promo_group:
+            return promo_group
 
-        if not user.promo_group_id:
+        try:
+            promo_group_id = user.promo_group_id
+        except Exception:
+            # Инстанс отвязан от сессии или протух — колонка тоже ушла бы в ленивую
+            # подгрузку. Берём последнее известное значение из __dict__.
+            promo_group_id = user.__dict__.get('promo_group_id')
+        if not promo_group_id:
             return None
 
         try:
@@ -139,16 +169,17 @@ class AdminNotificationService:
             # relationship might not be available — fallback to direct fetch
             pass
 
-        if getattr(user, 'promo_group', None):
-            return user.promo_group
+        promo_group = _loaded_relationship(user, 'promo_group')
+        if promo_group:
+            return promo_group
 
         try:
-            return await get_promo_group_by_id(db, user.promo_group_id)
+            return await get_promo_group_by_id(db, promo_group_id)
         except Exception as e:
             logger.error(
                 'Ошибка загрузки промогруппы пользователя',
-                promo_group_id=user.promo_group_id,
-                telegram_id=user.telegram_id,
+                promo_group_id=promo_group_id,
+                telegram_id=user.__dict__.get('telegram_id'),
                 e=e,
             )
             return None

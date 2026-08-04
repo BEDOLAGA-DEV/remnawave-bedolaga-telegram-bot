@@ -35,6 +35,8 @@ def _build_subscription() -> SimpleNamespace:
         subscription_crypto_link='https://old-crypto',
         connected_squads=[],
         remnawave_short_uuid='short',
+        # Панельная идентичность после миграции на 3.0.0 — числовой id, не uuid.
+        remnawave_id=4242,
         tariff_id=None,
         is_daily_paused=False,
         last_daily_charge_at=None,
@@ -49,7 +51,7 @@ async def test_users_subscription_trial_calls_remnawave_sync(monkeypatch: pytest
     created_subscription = _build_subscription()
     service_instance = SimpleNamespace(
         update_remnawave_user=AsyncMock(return_value=None),
-        create_remnawave_user=AsyncMock(return_value=SimpleNamespace(uuid='new')),
+        create_remnawave_user=AsyncMock(return_value=SimpleNamespace(id=4243)),
     )
 
     monkeypatch.setattr(users, '_get_user_by_id_or_telegram_id', AsyncMock(return_value=fake_user))
@@ -74,7 +76,7 @@ async def test_users_subscription_paid_calls_remnawave_sync(monkeypatch: pytest.
     created_subscription.is_trial = False
     service_instance = SimpleNamespace(
         update_remnawave_user=AsyncMock(return_value=None),
-        create_remnawave_user=AsyncMock(return_value=SimpleNamespace(uuid='new')),
+        create_remnawave_user=AsyncMock(return_value=SimpleNamespace(id=4243)),
     )
 
     monkeypatch.setattr(users, '_get_user_by_id_or_telegram_id', AsyncMock(return_value=fake_user))
@@ -114,7 +116,7 @@ def test_users_search_filter_skips_internal_id_for_out_of_int32() -> None:
 async def test_subscriptions_extend_calls_remnawave_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     subscription = _build_subscription()
     service_instance = SimpleNamespace(
-        update_remnawave_user=AsyncMock(return_value=SimpleNamespace(uuid='ok')),
+        update_remnawave_user=AsyncMock(return_value=SimpleNamespace(id=4242)),
         create_remnawave_user=AsyncMock(return_value=None),
     )
     get_subscription_mock = AsyncMock(side_effect=[subscription, subscription])
@@ -162,6 +164,10 @@ async def test_subscriptions_extend_rolls_back_when_sync_fails(monkeypatch: pyte
 
     assert error.value.status_code == 500
     restore_mock.assert_awaited_once()
+    # Панельная идентичность после 3.0.0 — числовой remnawave_id, и он обязан быть
+    # в снапшоте отката: провалившийся синк мог успеть перепривязать строку.
+    snapshot = restore_mock.await_args.args[2]
+    assert snapshot['remnawave_id'] == 4242
 
 
 @pytest.mark.anyio('asyncio')
@@ -199,7 +205,7 @@ async def test_users_patch_subscription_delegates_to_post(monkeypatch: pytest.Mo
     fake_user = SimpleNamespace(id=42)
     created_subscription = _build_subscription()
     service_instance = SimpleNamespace(
-        update_remnawave_user=AsyncMock(return_value=SimpleNamespace(uuid='ok')),
+        update_remnawave_user=AsyncMock(return_value=SimpleNamespace(id=4242)),
         create_remnawave_user=AsyncMock(return_value=None),
     )
 
@@ -268,4 +274,5 @@ async def test_users_subscription_replace_existing_restores_on_sync_failure(
     restore_mock.assert_awaited_once()
     restore_args = restore_mock.await_args
     assert restore_args.args[1] == existing_subscription.id
+    assert restore_args.args[2]['remnawave_id'] == existing_subscription.remnawave_id
     delete_mock.assert_not_awaited()

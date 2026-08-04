@@ -1756,13 +1756,13 @@ async def _auto_add_devices(
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _panel_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else getattr(user, 'remnawave_uuid', None)
+        _panel_user_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id is not None
+            else getattr(user, 'remnawave_id', None)
         )
-        if _panel_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(_panel_uuid)
+        if _panel_user_id is not None and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(_panel_user_id)
     except Exception as error:
         logger.warning(
             '⚠️ Автопокупка устройств: не удалось обновить Remnawave для пользователя',
@@ -2112,13 +2112,13 @@ async def _auto_add_traffic(
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _panel_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else getattr(user, 'remnawave_uuid', None)
+        _panel_user_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id is not None
+            else getattr(user, 'remnawave_id', None)
         )
-        if _panel_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(_panel_uuid)
+        if _panel_user_id is not None and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(_panel_user_id)
     except Exception as error:
         logger.warning(
             '⚠️ Автопокупка трафика: не удалось обновить Remnawave для пользователя',
@@ -2861,7 +2861,15 @@ async def try_resume_disabled_daily_after_topup(
     # Sync with RemnaWave
     try:
         subscription_service = SubscriptionService()
-        if getattr(user, 'remnawave_uuid', None):
+        # Multi-tariff keeps panel identity on the subscription, not the user —
+        # gating on the user column alone made every daily resume take the
+        # create branch and spawn a duplicate panel account.
+        _has_panel_user = (
+            getattr(subscription, 'remnawave_id', None)
+            if settings.is_multi_tariff_enabled()
+            else getattr(user, 'remnawave_id', None)
+        ) is not None
+        if _has_panel_user:
             await subscription_service.update_remnawave_user(
                 db,
                 subscription,
@@ -2878,7 +2886,12 @@ async def try_resume_disabled_daily_after_topup(
             )
             # POST may ignore activeInternalSquads — follow up with PATCH
             await db.refresh(user)
-            if getattr(user, 'remnawave_uuid', None) and subscription.connected_squads:
+            _synced_panel_user_id = (
+                getattr(subscription, 'remnawave_id', None)
+                if settings.is_multi_tariff_enabled()
+                else getattr(user, 'remnawave_id', None)
+            )
+            if _synced_panel_user_id is not None and subscription.connected_squads:
                 try:
                     await subscription_service.update_remnawave_user(
                         db,

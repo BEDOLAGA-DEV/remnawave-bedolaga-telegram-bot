@@ -53,6 +53,7 @@ from app.database.models import (
     WithdrawalRequest,
     YooKassaPayment,
 )
+from app.external.remnawave_api import RemnaWaveInvalidUserIdError
 from app.services.remnawave_service import RemnaWaveService
 
 
@@ -87,8 +88,9 @@ class BlockCheckResult:
     full_name: str
     status: BlockCheckStatus
     error_message: str | None = None
-    remnawave_uuid: str | None = None
-    remnawave_uuids: list[str] = field(default_factory=list)
+    # Панельная идентичность (Remnawave 3.0.0: числовой id).
+    remnawave_id: int | None = None
+    remnawave_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -160,8 +162,8 @@ class BlockedUsersService:
 
     async def _check_single_user(self, user: User) -> BlockCheckResult:
         """Проверяет одного пользователя."""
-        sub_uuids = [s.remnawave_uuid for s in (getattr(user, 'subscriptions', None) or []) if s.remnawave_uuid]
-        remnawave_uuids = sub_uuids or ([user.remnawave_uuid] if user.remnawave_uuid else [])
+        sub_ids = [s.remnawave_id for s in (getattr(user, 'subscriptions', None) or []) if s.remnawave_id]
+        remnawave_ids = sub_ids or ([user.remnawave_id] if user.remnawave_id else [])
 
         if not user.telegram_id:
             return BlockCheckResult(
@@ -170,8 +172,8 @@ class BlockedUsersService:
                 username=user.username,
                 full_name=user.full_name,
                 status=BlockCheckStatus.NO_TELEGRAM_ID,
-                remnawave_uuid=user.remnawave_uuid,
-                remnawave_uuids=remnawave_uuids,
+                remnawave_id=user.remnawave_id,
+                remnawave_ids=remnawave_ids,
             )
 
         status = await self.check_user_blocked(user.telegram_id)
@@ -182,8 +184,8 @@ class BlockedUsersService:
             username=user.username,
             full_name=user.full_name,
             status=status,
-            remnawave_uuid=user.remnawave_uuid,
-            remnawave_uuids=remnawave_uuids,
+            remnawave_id=user.remnawave_id,
+            remnawave_ids=remnawave_ids,
         )
 
     async def scan_all_users(
@@ -269,9 +271,9 @@ class BlockedUsersService:
 
         return result
 
-    async def delete_user_from_remnawave(self, remnawave_uuid: str) -> bool:
+    async def delete_user_from_remnawave(self, remnawave_id: int) -> bool:
         """Удаляет пользователя из панели Remnawave."""
-        if not remnawave_uuid:
+        if not remnawave_id:
             return False
 
         try:
@@ -280,15 +282,21 @@ class BlockedUsersService:
                 return False
 
             async with self.remnawave_service.get_api_client() as api:
-                await api.delete_user(remnawave_uuid)
-                logger.info('Удален пользователь из Remnawave', remnawave_uuid=remnawave_uuid)
+                # 3.0.0: DELETE отвечает 204/202 без тела — успех это отсутствие исключения.
+                await api.delete_user(remnawave_id)
+                logger.info('Удален пользователь из Remnawave', remnawave_id=remnawave_id)
                 return True
+        except RemnaWaveInvalidUserIdError as e:
+            # Битая панельная ссылка в БД бота — это не «пользователя уже нет»,
+            # иначе строка молча зачлась бы как успешная очистка панели.
+            logger.error('Непригодный панельный id, удаление пропущено', remnawave_id=remnawave_id, error=e)
+            return False
         except Exception as e:
             error_msg = str(e).lower()
             if 'not found' in error_msg or '404' in error_msg:
-                logger.info('Пользователь уже удален из Remnawave', remnawave_uuid=remnawave_uuid)
+                logger.info('Пользователь уже удален из Remnawave', remnawave_id=remnawave_id)
                 return True
-            logger.error('Ошибка удаления из Remnawave', remnawave_uuid=remnawave_uuid, error=e)
+            logger.error('Ошибка удаления из Remnawave', remnawave_id=remnawave_id, error=e)
             return False
 
     async def delete_user_from_db(self, db: AsyncSession, user_id: int) -> bool:
@@ -457,16 +465,16 @@ class BlockedUsersService:
                         continue
 
                 if action in (BlockedUserAction.DELETE_FROM_REMNAWAVE, BlockedUserAction.DELETE_BOTH):
-                    uuids_to_delete = user_result.remnawave_uuids or (
-                        [user_result.remnawave_uuid] if user_result.remnawave_uuid else []
+                    ids_to_delete = user_result.remnawave_ids or (
+                        [user_result.remnawave_id] if user_result.remnawave_id else []
                     )
-                    for rw_uuid in uuids_to_delete:
-                        success = await self.delete_user_from_remnawave(rw_uuid)
+                    for rw_id in ids_to_delete:
+                        success = await self.delete_user_from_remnawave(rw_id)
                         if success:
                             result.deleted_from_remnawave += 1
                         else:
                             result.errors.append(
-                                f'Ошибка удаления {user_result.telegram_id} (uuid={rw_uuid}) из Remnawave'
+                                f'Ошибка удаления {user_result.telegram_id} (panel_id={rw_id}) из Remnawave'
                             )
                         # Задержка для избежания rate limit
                         await asyncio.sleep(self.API_DELAY_SECONDS)

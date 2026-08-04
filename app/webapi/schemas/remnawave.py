@@ -61,15 +61,31 @@ class RemnaWaveNodeActionResponse(BaseModel):
     detail: str | None = None
 
 
+class RemnaWaveNodeUsageItem(BaseModel):
+    """Пользовательский трафик по ноде за период.
+
+    Раньше это был нетипизированный passthrough legacy-эндпоинта панели
+    (`{userUuid, username, nodeUuid, total, date}`). В Remnawave 3.0.0 legacy
+    удалён, разбивки по дням в замене нет, а идентичность пользователя стала
+    числовой — поэтому форма фиксируется здесь, на стороне бота: `date` больше
+    не отдаётся, `userUuid` заменён на `user_id`.
+    """
+
+    user_id: int | None = None
+    username: str | None = None
+    node_uuid: str | None = None
+    total_bytes: int = 0
+
+
 class RemnaWaveNodeStatisticsResponse(BaseModel):
     node: RemnaWaveNode
     realtime: dict[str, Any] | None = None
-    usage_history: list[dict[str, Any]] = Field(default_factory=list)
+    usage_history: list[RemnaWaveNodeUsageItem] = Field(default_factory=list)
     last_updated: datetime | None = None
 
 
 class RemnaWaveNodeUsageResponse(BaseModel):
-    items: list[dict[str, Any]] = Field(default_factory=list)
+    items: list[RemnaWaveNodeUsageItem] = Field(default_factory=list)
 
 
 class RemnaWaveBandwidth(BaseModel):

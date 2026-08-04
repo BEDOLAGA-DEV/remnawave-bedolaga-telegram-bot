@@ -18,7 +18,7 @@ Fix shape
 Pass ``include_inactive=True`` to the tariff-level lookup so an EXPIRED (or
 disabled) same-tariff subscription is found. It then flows into the existing
 extend-in-place branch (``extend_subscription`` clears the trial flag) and
-``update_remnawave_user`` (the row already carries ``remnawave_uuid``) → SAME
+``update_remnawave_user`` (the row already carries ``remnawave_id``) → SAME
 link. Picking a DIFFERENT tariff still returns ``None`` for that tariff → a new
 subscription, which is the intended "same-tariff only" semantic.
 

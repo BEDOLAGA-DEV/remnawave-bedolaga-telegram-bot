@@ -20,6 +20,7 @@ from app.database.database import AsyncSessionLocal
 from app.database.models import GraceAccessSessionModel
 from app.services.grace_access_runtime import grace_access_runtime
 from app.services.grace_access_service import GraceAccessMode
+from app.services.system_settings_service import bot_configuration_service
 
 
 async def _status() -> dict[str, Any]:
@@ -133,6 +134,11 @@ async def _restore_all(*, apply: bool, accept_conflicts: bool) -> int:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    # Одноразовому контейнеру тоже нужны настройки из system_settings: адрес и
+    # ключ панели редактируются из кабинета, и без загрузки восстановление
+    # ушло бы в ненастроенный (или чужой) клиент.
+    await bot_configuration_service.initialize(sync_web_api_token=False)
+
     if args.command == 'status':
         print(json.dumps(await _status(), ensure_ascii=False, indent=2))
         return 0

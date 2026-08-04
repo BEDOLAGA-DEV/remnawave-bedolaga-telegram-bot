@@ -19,9 +19,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    web_order_duplicates = bind.execute(
-        sa.text(
-            """
+    web_order_duplicates = (
+        bind.execute(
+            sa.text(
+                """
             SELECT web_order_line_item_id, COUNT(*) AS count
             FROM apple_transactions
             WHERE web_order_line_item_id IS NOT NULL
@@ -29,31 +30,36 @@ def upgrade() -> None:
             HAVING COUNT(*) > 1
             LIMIT 5
             """
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     if web_order_duplicates:
         sample = ', '.join(f'{row["web_order_line_item_id"]} ({row["count"]})' for row in web_order_duplicates)
         raise RuntimeError(
-            'Cannot create unique Apple IAP web_order_line_item_id index; '
-            f'duplicate values exist: {sample}'
+            f'Cannot create unique Apple IAP web_order_line_item_id index; duplicate values exist: {sample}'
         )
 
-    payload_hash_duplicates = bind.execute(
-        sa.text(
-            """
+    payload_hash_duplicates = (
+        bind.execute(
+            sa.text(
+                """
             SELECT payload_hash, COUNT(*) AS count
             FROM apple_notifications
             GROUP BY payload_hash
             HAVING COUNT(*) > 1
             LIMIT 5
             """
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     if payload_hash_duplicates:
         sample = ', '.join(f'{row["payload_hash"]} ({row["count"]})' for row in payload_hash_duplicates)
         raise RuntimeError(
-            'Cannot create unique Apple IAP notification payload_hash index; '
-            f'duplicate values exist: {sample}'
+            f'Cannot create unique Apple IAP notification payload_hash index; duplicate values exist: {sample}'
         )
 
     op.drop_index('ix_apple_transactions_web_order_line_item_id', table_name='apple_transactions')

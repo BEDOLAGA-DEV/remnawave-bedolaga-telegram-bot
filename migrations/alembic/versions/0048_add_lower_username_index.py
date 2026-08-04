@@ -23,10 +23,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     with op.get_context().autocommit_block():
         op.execute(
-            sa.text(
-                'CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_users_username_lower '
-                'ON users (lower(username))'
-            )
+            sa.text('CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_users_username_lower ON users (lower(username))')
         )
 
 

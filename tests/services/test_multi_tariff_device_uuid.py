@@ -1,19 +1,31 @@
 """Multi-tariff HWID device-limit bleed: each tariff is its own RemnaWave panel
-user, so device reads must resolve the SUBSCRIPTION's panel UUID and must NOT
-fall back to the user-level UUID in multi-tariff mode (the fallback showed/shared
+user, so device reads must resolve the SUBSCRIPTION's panel user and must NOT
+fall back to the user-level one in multi-tariff mode (the fallback showed/shared
 another tariff's devices, making the limit look "counted by the smallest tariff").
+
+API 3.0.0: панельный пользователь адресуется числовым `remnawave_id`, а не UUID.
+Резолверы обязаны отдавать именно id — легаси-колонка `remnawave_uuid` осталась
+в БД как исторические данные и читаться не должна (иначе клиент получит мусорный
+идентификатор и запрос отвалится валидацией на границе, а не 404).
 """
 
 from __future__ import annotations
 
-from app.cabinet.routes.subscription_modules.devices import _resolve_panel_uuid
+from app.cabinet.routes.subscription_modules.devices import _resolve_panel_user_id
 from app.config import Settings
-from app.handlers.subscription.devices import _get_remnawave_uuid
+from app.handlers.subscription.devices import _get_panel_user_id
+
+
+USER_PANEL_ID = 101
+SUB_B_PANEL_ID = 202
 
 
 class _Obj:
-    def __init__(self, uuid):
-        self.remnawave_uuid = uuid
+    """Носитель панельной привязки: числовой id 3.0.0 + легаси-uuid-ловушка."""
+
+    def __init__(self, panel_id: int | None, legacy_uuid: str = 'legacy-uuid-must-not-be-read'):
+        self.remnawave_id = panel_id
+        self.remnawave_uuid = legacy_uuid
 
 
 def _set_multi(monkeypatch, value: bool) -> None:
@@ -21,46 +33,83 @@ def _set_multi(monkeypatch, value: bool) -> None:
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: value)
 
 
-# ---- bot handler: _get_remnawave_uuid ----
+# ---- bot handler: _get_panel_user_id ----
 
 
-def test_bot_multi_tariff_uses_subscription_uuid(monkeypatch):
+def test_bot_multi_tariff_uses_subscription_panel_id(monkeypatch):
     _set_multi(monkeypatch, True)
-    assert _get_remnawave_uuid(_Obj('SUB-B'), _Obj('USER')) == 'SUB-B'
+    assert _get_panel_user_id(_Obj(SUB_B_PANEL_ID), _Obj(USER_PANEL_ID)) == SUB_B_PANEL_ID
 
 
 def test_bot_multi_tariff_null_sub_does_not_fall_back_to_user(monkeypatch):
-    """The bleed: a null sub UUID must NOT borrow the user's (another tariff's) panel user."""
+    """The bleed: a null sub id must NOT borrow the user's (another tariff's) panel user."""
     _set_multi(monkeypatch, True)
-    assert _get_remnawave_uuid(_Obj(None), _Obj('USER')) is None
+    assert _get_panel_user_id(_Obj(None), _Obj(USER_PANEL_ID)) is None
 
 
 def test_bot_single_tariff_falls_back_to_user(monkeypatch):
     _set_multi(monkeypatch, False)
-    assert _get_remnawave_uuid(_Obj(None), _Obj('USER')) == 'USER'
+    assert _get_panel_user_id(_Obj(None), _Obj(USER_PANEL_ID)) == USER_PANEL_ID
 
 
-# ---- cabinet route: _resolve_panel_uuid ----
-
-
-def test_cabinet_multi_tariff_uses_subscription_uuid(monkeypatch):
+def test_bot_no_subscription_uses_user_panel_id(monkeypatch):
     _set_multi(monkeypatch, True)
-    assert _resolve_panel_uuid(_Obj('SUB-B'), _Obj('USER')) == 'SUB-B'
+    assert _get_panel_user_id(None, _Obj(USER_PANEL_ID)) == USER_PANEL_ID
+
+
+def test_bot_never_returns_legacy_uuid(monkeypatch):
+    """Пустой remnawave_id не должен подмениться легаси-uuid'ом ни в одном режиме."""
+    for multi in (True, False):
+        _set_multi(monkeypatch, multi)
+        resolved = _get_panel_user_id(_Obj(None), _Obj(None))
+        assert resolved is None, f'multi={multi}: резолвер вернул {resolved!r} вместо None'
+
+
+# ---- cabinet route: _resolve_panel_user_id ----
+
+
+def test_cabinet_multi_tariff_uses_subscription_panel_id(monkeypatch):
+    _set_multi(monkeypatch, True)
+    assert _resolve_panel_user_id(_Obj(SUB_B_PANEL_ID), _Obj(USER_PANEL_ID)) == SUB_B_PANEL_ID
 
 
 def test_cabinet_multi_tariff_null_sub_no_user_fallback(monkeypatch):
     _set_multi(monkeypatch, True)
-    assert _resolve_panel_uuid(_Obj(None), _Obj('USER')) is None
+    assert _resolve_panel_user_id(_Obj(None), _Obj(USER_PANEL_ID)) is None
 
 
-def test_cabinet_single_tariff_uses_user_uuid(monkeypatch):
+def test_cabinet_single_tariff_uses_user_panel_id(monkeypatch):
     _set_multi(monkeypatch, False)
-    assert _resolve_panel_uuid(_Obj(None), _Obj('USER')) == 'USER'
+    assert _resolve_panel_user_id(_Obj(None), _Obj(USER_PANEL_ID)) == USER_PANEL_ID
 
 
-def test_cabinet_no_subscription_uses_user_uuid(monkeypatch):
+def test_cabinet_no_subscription_uses_user_panel_id(monkeypatch):
     _set_multi(monkeypatch, True)
-    assert _resolve_panel_uuid(None, _Obj('USER')) == 'USER'
+    assert _resolve_panel_user_id(None, _Obj(USER_PANEL_ID)) == USER_PANEL_ID
+
+
+def test_cabinet_never_returns_legacy_uuid(monkeypatch):
+    for multi in (True, False):
+        _set_multi(monkeypatch, multi)
+        resolved = _resolve_panel_user_id(_Obj(None), _Obj(None))
+        assert resolved is None, f'multi={multi}: резолвер вернул {resolved!r} вместо None'
+
+
+def test_both_resolvers_agree_and_return_numeric_ids(monkeypatch):
+    """В multi-tariff кабинет и бот обязаны резолвить одинаково и отдавать именно число.
+
+    Расхождение здесь = кабинет и бот показывают разные списки устройств для одной
+    и той же подписки. Тип проверяем явно: клиент 3.0.0 ждёт int, строковый UUID он
+    отвергает ещё до сети (RemnaWaveInvalidUserIdError).
+    """
+    _set_multi(monkeypatch, True)
+    sub, user = _Obj(SUB_B_PANEL_ID), _Obj(USER_PANEL_ID)
+
+    bot_value = _get_panel_user_id(sub, user)
+    cabinet_value = _resolve_panel_user_id(sub, user)
+
+    assert bot_value == cabinet_value == SUB_B_PANEL_ID
+    assert isinstance(bot_value, int) and isinstance(cabinet_value, int)
 
 
 # ---- deterministic per-subscription panel username suffix (collision guard) ----

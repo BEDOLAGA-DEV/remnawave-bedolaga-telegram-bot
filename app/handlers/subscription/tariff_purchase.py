@@ -1296,9 +1296,9 @@ async def handle_custom_confirm(
         # Обновляем пользователя в Remnawave
         # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
         if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_uuid
+            _should_create = not subscription.remnawave_id
         else:
-            _should_create = not getattr(db_user, 'remnawave_uuid', None)
+            _should_create = not getattr(db_user, 'remnawave_id', None)
         try:
             subscription_service = SubscriptionService()
             if _should_create:
@@ -1967,12 +1967,12 @@ async def confirm_tariff_purchase(
     # Обновляем пользователя в Remnawave
     # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
     # In multi-tariff mode, each subscription has its own panel user.
-    # A new subscription has no remnawave_uuid yet, so always CREATE.
-    # In single-tariff mode, reuse the user-level UUID if available.
+    # A new subscription has no remnawave_id yet, so always CREATE.
+    # In single-tariff mode, reuse the user-level panel id if available.
     if settings.is_multi_tariff_enabled():
-        _should_create = not subscription.remnawave_uuid
+        _should_create = not subscription.remnawave_id
     else:
-        _should_create = not getattr(db_user, 'remnawave_uuid', None)
+        _should_create = not getattr(db_user, 'remnawave_id', None)
     try:
         subscription_service = SubscriptionService()
         if _should_create:
@@ -1996,9 +1996,9 @@ async def confirm_tariff_purchase(
         # Ретрай повторяет то же mode-aware решение, что и синк выше: у
         # конвертированного из триала (или реанимированной #3004) подписки уже
         # есть панельный юзер — его надо ОБНОВИТЬ, а не создать дубль. Хардкод
-        # 'update' по subscription.remnawave_uuid здесь не годится: в
-        # single-tariff вебхук панели чистит user.remnawave_uuid при удалении
-        # юзера, а на подписке остаётся стухший UUID.
+        # 'update' по subscription.remnawave_id здесь не годится: в
+        # single-tariff вебхук панели чистит user.remnawave_id при удалении
+        # юзера, а на подписке остаётся стухший id.
         remnawave_retry_queue.enqueue(
             subscription_id=subscription.id,
             user_id=db_user.id,
@@ -2286,9 +2286,9 @@ async def confirm_daily_tariff_purchase(
     try:
         subscription_service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_uuid
+            _should_create = not subscription.remnawave_id
         else:
-            _should_create = not getattr(db_user, 'remnawave_uuid', None)
+            _should_create = not getattr(db_user, 'remnawave_id', None)
 
         if _should_create:
             await subscription_service.create_remnawave_user(
@@ -2948,9 +2948,9 @@ async def confirm_tariff_extend(
         try:
             subscription_service = SubscriptionService()
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = not subscription.remnawave_id
             else:
-                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+                _should_create = not getattr(db_user, 'remnawave_id', None)
 
             if _should_create:
                 await subscription_service.create_remnawave_user(
@@ -3757,9 +3757,9 @@ async def confirm_tariff_switch(
         try:
             subscription_service = SubscriptionService()
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = not subscription.remnawave_id
             else:
-                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+                _should_create = not getattr(db_user, 'remnawave_id', None)
 
             if _should_create:
                 await subscription_service.create_remnawave_user(
@@ -3787,24 +3787,30 @@ async def confirm_tariff_switch(
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
-        _reset_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else db_user.remnawave_uuid
+        _reset_panel_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+            else db_user.remnawave_id
         )
-        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
+        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_id', None):
             logger.warning(
-                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_uuid:
+        if _reset_panel_id:
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
                 service = RemnaWaveService()
                 async with service.get_api_client() as api:
-                    await api.reset_user_devices(_reset_uuid)
-                    logger.info('🔧 Сброшены устройства при смене тарифа для user_id', db_user_id=db_user.id)
+                    # reset_user_devices больше не бросает при отказе панели —
+                    # он ловит ошибку внутри и возвращает False. Без проверки
+                    # результата лог утверждал бы, что сброс прошёл, когда он
+                    # провалился, и старые HWID остались бы за новым лимитом.
+                    if await api.reset_user_devices(_reset_panel_id):
+                        logger.info('🔧 Сброшены устройства при смене тарифа для user_id', db_user_id=db_user.id)
+                    else:
+                        logger.error('Не удалось сбросить устройства при смене тарифа', db_user_id=db_user.id)
             except Exception as e:
                 logger.error('Ошибка сброса устройств при смене тарифа', error=e)
 
@@ -4046,9 +4052,9 @@ async def confirm_daily_tariff_switch(
         try:
             subscription_service = SubscriptionService()
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = not subscription.remnawave_id
             else:
-                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+                _should_create = not getattr(db_user, 'remnawave_id', None)
 
             if _should_create:
                 await subscription_service.create_remnawave_user(
@@ -4076,24 +4082,34 @@ async def confirm_daily_tariff_switch(
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
-        _reset_uuid_daily = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else db_user.remnawave_uuid
+        _reset_panel_id_daily = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+            else db_user.remnawave_id
         )
-        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
+        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_id', None):
             logger.warning(
-                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_uuid_daily:
+        if _reset_panel_id_daily:
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
                 service = RemnaWaveService()
                 async with service.get_api_client() as api:
-                    await api.reset_user_devices(_reset_uuid_daily)
-                    logger.info('🔧 Сброшены устройства при смене на суточный тариф для user_id', db_user_id=db_user.id)
+                    # reset_user_devices больше не бросает при отказе панели —
+                    # он ловит ошибку внутри и возвращает False. Без проверки
+                    # результата лог утверждал бы, что сброс прошёл, когда он
+                    # провалился, и старые HWID остались бы за новым лимитом.
+                    if await api.reset_user_devices(_reset_panel_id_daily):
+                        logger.info(
+                            '🔧 Сброшены устройства при смене на суточный тариф для user_id', db_user_id=db_user.id
+                        )
+                    else:
+                        logger.error(
+                            'Не удалось сбросить устройства при смене на суточный тариф', db_user_id=db_user.id
+                        )
             except Exception as e:
                 logger.error('Ошибка сброса устройств при смене тарифа', error=e)
 
@@ -4993,9 +5009,9 @@ async def confirm_instant_switch(
         try:
             subscription_service = SubscriptionService()
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = not subscription.remnawave_id
             else:
-                _should_create = not getattr(db_user, 'remnawave_uuid', None)
+                _should_create = not getattr(db_user, 'remnawave_id', None)
 
             if _should_create:
                 await subscription_service.create_remnawave_user(
@@ -5023,26 +5039,36 @@ async def confirm_instant_switch(
 
         # Гарантированный сброс устройств при смене тарифа
         await db.refresh(db_user)
-        _reset_uuid_instant = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else db_user.remnawave_uuid
+        _reset_panel_id_instant = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+            else db_user.remnawave_id
         )
-        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_uuid', None):
+        if settings.is_multi_tariff_enabled() and not getattr(subscription, 'remnawave_id', None):
             logger.warning(
-                'Multi-tariff: subscription missing remnawave_uuid, using user fallback',
+                'Multi-tariff: subscription missing remnawave_id, using user fallback',
                 subscription_id=getattr(subscription, 'id', None),
             )
-        if _reset_uuid_instant:
+        if _reset_panel_id_instant:
             try:
                 from app.services.remnawave_service import RemnaWaveService
 
                 service = RemnaWaveService()
                 async with service.get_api_client() as api:
-                    await api.reset_user_devices(_reset_uuid_instant)
-                    logger.info(
-                        '🔧 Сброшены устройства при мгновенном переключении тарифа для user_id', db_user_id=db_user.id
-                    )
+                    # reset_user_devices больше не бросает при отказе панели —
+                    # он ловит ошибку внутри и возвращает False. Без проверки
+                    # результата лог утверждал бы, что сброс прошёл, когда он
+                    # провалился, и старые HWID остались бы за новым лимитом.
+                    if await api.reset_user_devices(_reset_panel_id_instant):
+                        logger.info(
+                            '🔧 Сброшены устройства при мгновенном переключении тарифа для user_id',
+                            db_user_id=db_user.id,
+                        )
+                    else:
+                        logger.error(
+                            'Не удалось сбросить устройства при мгновенном переключении тарифа',
+                            db_user_id=db_user.id,
+                        )
             except Exception as e:
                 logger.error('Ошибка сброса устройств при переключении тарифа', error=e)
 

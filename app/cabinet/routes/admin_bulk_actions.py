@@ -366,13 +366,15 @@ async def _do_add_traffic(
     await _sync_subscription_to_panel(db, user, sub)
 
     # Explicitly enable user on panel (PATCH may not clear LIMITED status)
-    _enable_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_uuid', None)
-    if _enable_uuid and sub.status == 'active':
+    _enable_panel_user_id = (
+        sub.remnawave_id if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_id', None)
+    )
+    if _enable_panel_user_id and sub.status == 'active':
         try:
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            await subscription_service.enable_remnawave_user(_enable_uuid)
+            await subscription_service.enable_remnawave_user(_enable_panel_user_id)
         except Exception:
             pass  # "User already enabled" is expected for active subscriptions
 
@@ -567,13 +569,13 @@ async def _do_delete_subscription(
         )
 
     # Deactivate in RemnaWave panel first
-    _sub_uuid = sub.remnawave_uuid if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_uuid', None)
-    if _sub_uuid:
+    _sub_panel_user_id = sub.remnawave_id if settings.is_multi_tariff_enabled() else getattr(user, 'remnawave_id', None)
+    if _sub_panel_user_id:
         try:
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            await subscription_service.disable_remnawave_user(_sub_uuid, db=db)
+            await subscription_service.disable_remnawave_user(_sub_panel_user_id, db=db)
         except Exception as e:
             logger.warning('Failed to disable user in RemnaWave during subscription delete', error=e)
 

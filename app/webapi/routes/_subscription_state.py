@@ -23,6 +23,10 @@ def snapshot_subscription_state(subscription: Subscription) -> dict[str, Any]:
         'subscription_url': subscription.subscription_url,
         'subscription_crypto_link': subscription.subscription_crypto_link,
         'remnawave_short_uuid': subscription.remnawave_short_uuid,
+        # Панельная идентичность обязана быть в снапшоте: неудачный синк может успеть
+        # проставить её (или обнулить), и без отката строка осталась бы привязанной к
+        # панельному юзеру, которого сочли непригодным.
+        'remnawave_id': subscription.remnawave_id,
         'tariff_id': subscription.tariff_id,
         'autopay_enabled': getattr(subscription, 'autopay_enabled', False),
         'autopay_days_before': getattr(subscription, 'autopay_days_before', None),

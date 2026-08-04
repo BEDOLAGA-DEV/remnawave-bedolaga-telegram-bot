@@ -31,7 +31,9 @@ from app.database.models import (
 from app.external.remnawave_api import (
     RemnaWaveAPI,
     RemnaWaveAPIError,
+    RemnaWaveInvalidUserIdError,
     UserStatus,
+    coerce_panel_user_id,
     is_user_not_found_error,
 )
 from app.services.subscription_service import get_traffic_reset_strategy
@@ -66,18 +68,33 @@ def _get_lifetime_traffic_bytes(panel_user: dict[str, Any]) -> int:
     return panel_user.get('lifetimeUsedTrafficBytes', 0)
 
 
-_UUID_MAP_MISSING = object()
+_PANEL_ID_MAP_MISSING = object()
 _ATTR_NOT_CAPTURED = object()
 
 
-class _UUIDMapMutation:
-    """Tracks in-memory UUID map/user changes so they can be rolled back."""
+def _normalize_panel_user_id(value: Any) -> int | None:
+    """Приводит идентификатор панельного пользователя к int или None.
 
-    __slots__ = ('_map_original', '_user_original', 'uuid_map')
+    В 3.0.0 запись панели идентифицируется только числовым id. БД отдаёт
+    BigInteger, но JSON/FSM могут донести цифровую строку, а сравнение int со
+    str всегда False — на синке это переписывало бы идентичность каждому
+    пользователю на каждом проходе. Здесь мусорный идентификатор не ошибка, а
+    «идентичности нет»: сравнивать и матчить по нему нельзя.
+    """
+    try:
+        return coerce_panel_user_id(value)
+    except RemnaWaveInvalidUserIdError:
+        return None
 
-    def __init__(self, uuid_map: dict[str, 'User']):
-        self.uuid_map = uuid_map
-        self._map_original: dict[str, Any] = {}
+
+class _PanelIdMapMutation:
+    """Tracks in-memory panel-id map/user changes so they can be rolled back."""
+
+    __slots__ = ('_map_original', '_user_original', 'id_map')
+
+    def __init__(self, id_map: dict[int, 'User']):
+        self.id_map = id_map
+        self._map_original: dict[int, Any] = {}
         self._user_original: dict[User, tuple[Any, Any]] = {}
 
     def _capture_user_state(self, user: Optional['User']) -> None:
@@ -87,25 +104,25 @@ class _UUIDMapMutation:
         # SAVEPOINT rollback). getattr не спасает — SQLAlchemy бросает
         # MissingGreenlet, а не AttributeError. Ловим и помечаем sentinel'ом.
         try:
-            uuid_val = getattr(user, 'remnawave_uuid', None)
+            panel_id_val = getattr(user, 'remnawave_id', None)
         except Exception:
-            uuid_val = _ATTR_NOT_CAPTURED
+            panel_id_val = _ATTR_NOT_CAPTURED
         try:
             updated_val = getattr(user, 'updated_at', None)
         except Exception:
             updated_val = _ATTR_NOT_CAPTURED
-        self._user_original[user] = (uuid_val, updated_val)
+        self._user_original[user] = (panel_id_val, updated_val)
 
-    def _capture_map_entry(self, key: str | None) -> None:
+    def _capture_map_entry(self, key: int | None) -> None:
         if key is None or key in self._map_original:
             return
-        self._map_original[key] = self.uuid_map.get(key, _UUID_MAP_MISSING)
+        self._map_original[key] = self.id_map.get(key, _PANEL_ID_MAP_MISSING)
 
-    def set_user_uuid(self, user: Optional['User'], value: str | None) -> None:
+    def set_user_panel_id(self, user: Optional['User'], value: int | None) -> None:
         if not user:
             return
         self._capture_user_state(user)
-        user.remnawave_uuid = value
+        user.remnawave_id = value
 
     def set_user_updated_at(self, user: Optional['User'], value: datetime) -> None:
         if not user:
@@ -113,36 +130,36 @@ class _UUIDMapMutation:
         self._capture_user_state(user)
         user.updated_at = value
 
-    def remove_map_entry(self, key: str | None) -> None:
+    def remove_map_entry(self, key: int | None) -> None:
         if key is None:
             return
         self._capture_map_entry(key)
-        self.uuid_map.pop(key, None)
+        self.id_map.pop(key, None)
 
-    def set_map_entry(self, key: str | None, value: Optional['User']) -> None:
+    def set_map_entry(self, key: int | None, value: Optional['User']) -> None:
         if key is None:
             return
         self._capture_map_entry(key)
         if value is None:
-            self.uuid_map.pop(key, None)
+            self.id_map.pop(key, None)
         else:
-            self.uuid_map[key] = value
+            self.id_map[key] = value
 
     def has_changes(self) -> bool:
         return bool(self._map_original or self._user_original)
 
     def rollback(self) -> None:
-        for user, (uuid_value, updated_at) in self._user_original.items():
-            if uuid_value is not _ATTR_NOT_CAPTURED:
-                user.remnawave_uuid = uuid_value
+        for user, (panel_id_value, updated_at) in self._user_original.items():
+            if panel_id_value is not _ATTR_NOT_CAPTURED:
+                user.remnawave_id = panel_id_value
             if updated_at is not _ATTR_NOT_CAPTURED:
                 user.updated_at = updated_at
 
         for key, original in self._map_original.items():
-            if original is _UUID_MAP_MISSING:
-                self.uuid_map.pop(key, None)
+            if original is _PANEL_ID_MAP_MISSING:
+                self.id_map.pop(key, None)
             else:
-                self.uuid_map[key] = original
+                self.id_map[key] = original
 
 
 class RemnaWaveConfigurationError(Exception):
@@ -192,47 +209,52 @@ class RemnaWaveService:
         if not self.is_configured or self._api_kwargs is None:
             raise RemnaWaveConfigurationError(self._config_error or 'RemnaWave API не настроен')
 
-    def _ensure_user_remnawave_uuid(
+    def _ensure_user_remnawave_id(
         self,
         user: 'User',
-        panel_uuid: str | None,
-        uuid_map: dict[str, 'User'],
-    ) -> tuple[bool, _UUIDMapMutation | None]:
-        """Обновляет UUID пользователя, если он изменился в панели."""
+        panel_user_id: Any,
+        id_map: dict[int, 'User'],
+    ) -> tuple[bool, _PanelIdMapMutation | None]:
+        """Обновляет панельный id пользователя, если он изменился в панели."""
 
-        if not panel_uuid:
+        # Обе стороны приводим к int: колонка BigInteger против значения из
+        # JSON-снапшота панели. Сравнение int со str всегда False, а значит
+        # каждый проход синка переписывал бы идентичность всей базе и слал бы
+        # уведомление об этом.
+        panel_id = _normalize_panel_user_id(panel_user_id)
+        if panel_id is None:
             return False, None
 
-        current_uuid = getattr(user, 'remnawave_uuid', None)
-        if current_uuid == panel_uuid:
+        current_id = _normalize_panel_user_id(getattr(user, 'remnawave_id', None))
+        if current_id == panel_id:
             return False, None
 
-        mutation = _UUIDMapMutation(uuid_map)
+        mutation = _PanelIdMapMutation(id_map)
 
-        conflicting_user = uuid_map.get(panel_uuid)
+        conflicting_user = id_map.get(panel_id)
         if conflicting_user and conflicting_user is not user:
             logger.warning(
-                '♻️ Обнаружен конфликт UUID между пользователями и . Сбрасываем у старой записи.',
-                panel_uuid=panel_uuid,
+                '♻️ Обнаружен конфликт панельного id между пользователями и . Сбрасываем у старой записи.',
+                panel_user_id=panel_id,
                 getattr=getattr(conflicting_user, 'telegram_id', '?'),
                 getattr_2=getattr(user, 'telegram_id', '?'),
             )
-            mutation.set_user_uuid(conflicting_user, None)
+            mutation.set_user_panel_id(conflicting_user, None)
             mutation.set_user_updated_at(conflicting_user, datetime.now(UTC))
-            mutation.remove_map_entry(panel_uuid)
+            mutation.remove_map_entry(panel_id)
 
-        if current_uuid:
-            mutation.remove_map_entry(current_uuid)
+        if current_id:
+            mutation.remove_map_entry(current_id)
 
-        mutation.set_user_uuid(user, panel_uuid)
+        mutation.set_user_panel_id(user, panel_id)
         mutation.set_user_updated_at(user, datetime.now(UTC))
-        mutation.set_map_entry(panel_uuid, user)
+        mutation.set_map_entry(panel_id, user)
 
         logger.info(
-            '🔁 Обновлён RemnaWave UUID пользователя',
+            '🔁 Обновлён RemnaWave id пользователя',
             getattr=getattr(user, 'telegram_id', '?'),
-            current_uuid=current_uuid,
-            panel_uuid=panel_uuid,
+            current_panel_user_id=current_id,
+            panel_user_id=panel_id,
         )
 
         if mutation.has_changes():
@@ -603,7 +625,21 @@ class RemnaWaveService:
                 total_upload = sum(node.get('uploadBytes', 0) for node in realtime_usage)
                 total_realtime_traffic = total_download + total_upload
 
-                total_user_traffic = int(system_stats.get('users', {}).get('totalTrafficBytes', '0'))
+                # В 3.0.0 (как и в 2.8.35) блок `users` содержит только
+                # statusCounts и totalUsers; суммарный трафик живёт в
+                # `nodes.totalBytesLifetime` и приходит СТРОКОЙ. Прежнее чтение
+                # несуществующего `users.totalTrafficBytes` всегда давало 0.
+                # Контракт объявляет поле как z.string(). Голый int() валил ВЕСЬ
+                # ответ статистики на любой нечисловой форме, подменяя неверный,
+                # но безобидный ноль экраном ошибки.
+                try:
+                    total_user_traffic = int(str(system_stats.get('nodes', {}).get('totalBytesLifetime') or 0).strip())
+                except (TypeError, ValueError):
+                    logger.warning(
+                        'Панель вернула нечисловой totalBytesLifetime',
+                        value=system_stats.get('nodes', {}).get('totalBytesLifetime'),
+                    )
+                    total_user_traffic = 0
 
                 nodes_weekly_data = []
                 if nodes_stats.get('lastSevenDays'):
@@ -1181,9 +1217,9 @@ class RemnaWaveService:
         try:
             needs_panel_update = any(
                 (
-                    subscription.remnawave_uuid
+                    subscription.remnawave_id
                     if settings.is_multi_tariff_enabled()
-                    else (subscription.user and subscription.user.remnawave_uuid)
+                    else (subscription.user and subscription.user.remnawave_id)
                 )
                 for subscription in subscriptions
             )
@@ -1202,12 +1238,12 @@ class RemnaWaveService:
                 if not had_target_before:
                     new_squads.append(target_uuid)
 
-                _uuid = (
-                    getattr(subscription, 'remnawave_uuid', None)
+                _panel_user_id = (
+                    getattr(subscription, 'remnawave_id', None)
                     if settings.is_multi_tariff_enabled()
-                    else (subscription.user.remnawave_uuid if subscription.user else None)
+                    else (subscription.user.remnawave_id if subscription.user else None)
                 )
-                if _uuid:
+                if _panel_user_id:
                     if api is None:
                         panel_failed += 1
                         logger.error(
@@ -1220,7 +1256,7 @@ class RemnaWaveService:
                         await update_panel_user_grace_safe(
                             api,
                             subscription.id,
-                            uuid=_uuid,
+                            user_id=_panel_user_id,
                             active_internal_squads=new_squads,
                         )
                         panel_updated += 1
@@ -1324,7 +1360,7 @@ class RemnaWaveService:
             await exit_stack.aclose()
 
     async def sync_users_from_panel(self, db: AsyncSession, sync_type: str = 'all') -> dict[str, int]:
-        # In multi-tariff mode, match panel users to subscriptions by remnawave_uuid
+        # In multi-tariff mode, match panel users to subscriptions by remnawave_id
         if settings.is_multi_tariff_enabled():
             return await self._sync_users_from_panel_multi(db, sync_type)
 
@@ -1356,7 +1392,7 @@ class RemnaWaveService:
 
                     for user_obj in users_batch:
                         user_dict = {
-                            'uuid': user_obj.uuid,
+                            'id': user_obj.id,
                             'shortUuid': user_obj.short_uuid,
                             'username': user_obj.username,
                             'status': user_obj.status.value,
@@ -1395,12 +1431,14 @@ class RemnaWaveService:
             bot_users = bot_users_result.scalars().all()
             # Filter out email-only users (telegram_id=None) to avoid None key issues
             bot_users_by_telegram_id = {user.telegram_id: user for user in bot_users if user.telegram_id is not None}
-            bot_users_by_uuid = {
-                user.remnawave_uuid: user for user in bot_users if getattr(user, 'remnawave_uuid', None)
-            }
+            bot_users_by_panel_id = {}
+            for user in bot_users:
+                _user_panel_id = _normalize_panel_user_id(getattr(user, 'remnawave_id', None))
+                if _user_panel_id is not None:
+                    bot_users_by_panel_id[_user_panel_id] = user
             # Index users by email for email-only sync
             bot_users_by_email = {user.email.lower(): user for user in bot_users if user.email and user.email_verified}
-            # Also index email-only users by their remnawave_uuid for sync
+            # Also index email-only users by their remnawave_id for sync
             email_users_count = sum(1 for u in bot_users if u.telegram_id is None)
             if email_users_count > 0:
                 logger.info('📧 Email-only пользователей (без telegram_id)', email_users_count=email_users_count)
@@ -1445,10 +1483,10 @@ class RemnaWaveService:
 
             # Для оптимизации коммитим изменения каждые N пользователей
             batch_size = 50
-            pending_uuid_mutations: list[_UUIDMapMutation] = []
+            pending_panel_id_mutations: list[_PanelIdMapMutation] = []
 
             for i, panel_user in enumerate(unique_panel_users):
-                uuid_mutation: _UUIDMapMutation | None = None
+                panel_id_mutation: _PanelIdMapMutation | None = None
                 try:
                     telegram_id = panel_user.get('telegramId')
                     if not telegram_id:
@@ -1492,10 +1530,10 @@ class RemnaWaveService:
                                 )
                                 await db.flush()  # Сохраняем изменения без коммита
 
-                            _, uuid_mutation = self._ensure_user_remnawave_uuid(
+                            _, panel_id_mutation = self._ensure_user_remnawave_id(
                                 db_user,
-                                panel_user.get('uuid'),
-                                bot_users_by_uuid,
+                                panel_user.get('id'),
+                                bot_users_by_panel_id,
                             )
 
                             if is_created:
@@ -1526,11 +1564,11 @@ class RemnaWaveService:
                         if user_state.expired_attributes:
                             await db.refresh(db_user)
 
-                        # Обновляем UUID ДО операций с подпиской
-                        _, uuid_mutation = self._ensure_user_remnawave_uuid(
+                        # Обновляем панельный id ДО операций с подпиской
+                        _, panel_id_mutation = self._ensure_user_remnawave_id(
                             db_user,
-                            panel_user.get('uuid'),
-                            bot_users_by_uuid,
+                            panel_user.get('id'),
+                            bot_users_by_panel_id,
                         )
 
                         # Используем async запрос вместо доступа к relationship,
@@ -1539,10 +1577,21 @@ class RemnaWaveService:
                             from app.database.crud.subscription import get_active_subscriptions_by_user_id as _get_subs
 
                             _subs = await _get_subs(db, db_user.id)
-                            # Match by remnawave_uuid from panel
-                            existing_sub = next((s for s in _subs if s.remnawave_uuid == panel_user.get('uuid')), None)
+                            # Match by remnawave_id from panel. Пустая идентичность
+                            # никогда не матчится: иначе непровиженный черновик
+                            # (remnawave_id IS NULL) поймал бы панельного юзера
+                            # без id и получил бы его состояние.
+                            _panel_id = _normalize_panel_user_id(panel_user.get('id'))
+                            existing_sub = (
+                                next(
+                                    (s for s in _subs if _normalize_panel_user_id(s.remnawave_id) == _panel_id),
+                                    None,
+                                )
+                                if _panel_id is not None
+                                else None
+                            )
                             if not existing_sub and _subs:
-                                # No UUID match — fall back to best non-daily subscription
+                                # No panel-id match — fall back to best non-daily subscription
                                 _non_daily = [s for s in _subs if not getattr(s, 'is_daily_tariff', False)]
                                 _pool = _non_daily or _subs
                                 existing_sub = max(_pool, key=lambda s: s.days_left)
@@ -1571,12 +1620,12 @@ class RemnaWaveService:
                         exc_info=True,
                     )
                     stats['errors'] += 1
-                    if uuid_mutation:
-                        uuid_mutation.rollback()
-                    if pending_uuid_mutations:
-                        for mutation in reversed(pending_uuid_mutations):
+                    if panel_id_mutation:
+                        panel_id_mutation.rollback()
+                    if pending_panel_id_mutations:
+                        for mutation in reversed(pending_panel_id_mutations):
                             mutation.rollback()
-                        pending_uuid_mutations.clear()
+                        pending_panel_id_mutations.clear()
                     try:
                         await db.rollback()  # Выполняем rollback при ошибке
                     except Exception:
@@ -1593,35 +1642,35 @@ class RemnaWaveService:
                     break
 
                 else:
-                    if uuid_mutation and uuid_mutation.has_changes():
-                        pending_uuid_mutations.append(uuid_mutation)
+                    if panel_id_mutation and panel_id_mutation.has_changes():
+                        pending_panel_id_mutations.append(panel_id_mutation)
 
                 # Коммитим изменения каждые N пользователей для ускорения
                 if (i + 1) % batch_size == 0:
                     try:
                         await db.commit()
                         logger.debug('📦 Коммит изменений после обработки пользователей', i=i + 1)
-                        pending_uuid_mutations.clear()
+                        pending_panel_id_mutations.clear()
                     except Exception as commit_error:
                         logger.error(
                             '❌ Ошибка коммита после обработки пользователей', i=i + 1, commit_error=commit_error
                         )
                         await db.rollback()
-                        for mutation in reversed(pending_uuid_mutations):
+                        for mutation in reversed(pending_panel_id_mutations):
                             mutation.rollback()
-                        pending_uuid_mutations.clear()
+                        pending_panel_id_mutations.clear()
                         stats['errors'] += batch_size  # Учитываем ошибки за всю группу
 
             # Коммитим оставшиеся изменения
             try:
                 await db.commit()
-                pending_uuid_mutations.clear()
+                pending_panel_id_mutations.clear()
             except Exception as final_commit_error:
                 logger.error('❌ Ошибка финального коммита', final_commit_error=final_commit_error)
                 await db.rollback()
-                for mutation in reversed(pending_uuid_mutations):
+                for mutation in reversed(pending_panel_id_mutations):
                     mutation.rollback()
-                pending_uuid_mutations.clear()
+                pending_panel_id_mutations.clear()
 
             # Обработка email-only пользователей из панели
             if panel_users_email_only and sync_type in ['new_only', 'all']:
@@ -1633,7 +1682,7 @@ class RemnaWaveService:
                 for panel_user in panel_users_email_only:
                     try:
                         panel_email = panel_user.get('email', '').lower()
-                        panel_uuid = panel_user.get('uuid')
+                        panel_user_id = _normalize_panel_user_id(panel_user.get('id'))
 
                         if not panel_email:
                             continue
@@ -1641,15 +1690,15 @@ class RemnaWaveService:
                         # Ищем пользователя по email в боте
                         db_user = bot_users_by_email.get(panel_email)
 
-                        # Если не нашли по email, ищем по UUID
-                        if not db_user and panel_uuid:
-                            db_user = bot_users_by_uuid.get(panel_uuid)
+                        # Если не нашли по email, ищем по панельному id
+                        if not db_user and panel_user_id is not None:
+                            db_user = bot_users_by_panel_id.get(panel_user_id)
 
                         if db_user:
                             # Обновляем существующего пользователя
-                            # Обновляем remnawave_uuid если нет
-                            if panel_uuid and not db_user.remnawave_uuid:
-                                db_user.remnawave_uuid = panel_uuid
+                            # Обновляем remnawave_id если нет
+                            if panel_user_id is not None and not db_user.remnawave_id:
+                                db_user.remnawave_id = panel_user_id
 
                             # Используем async запрос вместо доступа к relationship
                             if settings.is_multi_tariff_enabled():
@@ -1658,12 +1707,21 @@ class RemnaWaveService:
                                 )
 
                                 _subs_e = await _get_subs_email(db, db_user.id)
-                                existing_sub = next(
-                                    (s for s in _subs_e if s.remnawave_uuid == panel_user.get('uuid')),
-                                    None,
+                                # Пустая идентичность не матчится — см. основной цикл.
+                                existing_sub = (
+                                    next(
+                                        (
+                                            s
+                                            for s in _subs_e
+                                            if _normalize_panel_user_id(s.remnawave_id) == panel_user_id
+                                        ),
+                                        None,
+                                    )
+                                    if panel_user_id is not None
+                                    else None
                                 )
                                 if not existing_sub and _subs_e:
-                                    # No UUID match — fall back to best non-daily subscription
+                                    # No panel-id match — fall back to best non-daily subscription
                                     _non_daily_e = [s for s in _subs_e if not getattr(s, 'is_daily_tariff', False)]
                                     _pool_e = _non_daily_e or _subs_e
                                     existing_sub = max(_pool_e, key=lambda s: s.days_left)
@@ -1703,7 +1761,7 @@ class RemnaWaveService:
 
                 batch_size = 50
                 processed_count = 0
-                cleanup_uuid_mutations: list[_UUIDMapMutation] = []
+                cleanup_panel_id_mutations: list[_PanelIdMapMutation] = []
 
                 # Собираем список пользователей для деактивации
                 users_to_deactivate = [
@@ -1711,9 +1769,9 @@ class RemnaWaveService:
                     for telegram_id, db_user in bot_users_by_telegram_id.items()
                     if telegram_id not in panel_telegram_ids
                     and any(True for _ in (getattr(db_user, 'subscriptions', None) or []))
-                    # BUG-6 fix: Skip users who have a remnawave_uuid — they exist in panel
+                    # BUG-6 fix: Skip users who have a remnawave_id — they exist in panel
                     # but may not have telegram_id set there (OAuth users who linked TG later)
-                    and not getattr(db_user, 'remnawave_uuid', None)
+                    and not getattr(db_user, 'remnawave_id', None)
                 ]
 
                 if users_to_deactivate:
@@ -1732,7 +1790,7 @@ class RemnaWaveService:
 
                 try:
                     for telegram_id, db_user in users_to_deactivate:
-                        cleanup_mutation: _UUIDMapMutation | None = None
+                        cleanup_mutation: _PanelIdMapMutation | None = None
                         try:
                             user_subscriptions = getattr(db_user, 'subscriptions', None) or []
 
@@ -1752,7 +1810,7 @@ class RemnaWaveService:
                             logger.info('🗑️ Деактивация подписок пользователя (нет в панели)', telegram_id=telegram_id)
 
                             # NOTE: Не сбрасываем HWID здесь — пользователь уже удалён из панели,
-                            # API вернёт 404, UUID очищается ниже (cleanup_mutation)
+                            # API вернёт 404, панельный id очищается ниже (cleanup_mutation)
 
                             for subscription in user_subscriptions:
                                 if is_recently_updated_by_webhook(subscription):
@@ -1819,11 +1877,11 @@ class RemnaWaveService:
                                 subscription.subscription_url = ''
                                 subscription.subscription_crypto_link = ''
 
-                            old_uuid = getattr(db_user, 'remnawave_uuid', None)
-                            cleanup_mutation = _UUIDMapMutation(bot_users_by_uuid)
-                            if old_uuid:
-                                cleanup_mutation.remove_map_entry(old_uuid)
-                            cleanup_mutation.set_user_uuid(db_user, None)
+                            old_panel_id = _normalize_panel_user_id(getattr(db_user, 'remnawave_id', None))
+                            cleanup_mutation = _PanelIdMapMutation(bot_users_by_panel_id)
+                            if old_panel_id is not None:
+                                cleanup_mutation.remove_map_entry(old_panel_id)
+                            cleanup_mutation.set_user_panel_id(db_user, None)
                             cleanup_mutation.set_user_updated_at(db_user, datetime.now(UTC))
 
                             stats['deleted'] += 1
@@ -1840,17 +1898,17 @@ class RemnaWaveService:
                             stats['errors'] += 1
                             if cleanup_mutation:
                                 cleanup_mutation.rollback()
-                            if cleanup_uuid_mutations:
-                                for mutation in reversed(cleanup_uuid_mutations):
+                            if cleanup_panel_id_mutations:
+                                for mutation in reversed(cleanup_panel_id_mutations):
                                     mutation.rollback()
-                                cleanup_uuid_mutations.clear()
+                                cleanup_panel_id_mutations.clear()
                             try:
                                 await db.rollback()
                             except:
                                 pass
                         else:
                             if cleanup_mutation and cleanup_mutation.has_changes():
-                                cleanup_uuid_mutations.append(cleanup_mutation)
+                                cleanup_panel_id_mutations.append(cleanup_mutation)
 
                             # Коммитим изменения каждые N пользователей
                             if processed_count % batch_size == 0:
@@ -1860,7 +1918,7 @@ class RemnaWaveService:
                                         '📦 Коммит изменений после деактивации подписок',
                                         processed_count=processed_count,
                                     )
-                                    cleanup_uuid_mutations.clear()
+                                    cleanup_panel_id_mutations.clear()
                                 except Exception as commit_error:
                                     logger.error(
                                         '❌ Ошибка коммита после деактивации подписок',
@@ -1868,24 +1926,24 @@ class RemnaWaveService:
                                         commit_error=commit_error,
                                     )
                                     await db.rollback()
-                                    for mutation in reversed(cleanup_uuid_mutations):
+                                    for mutation in reversed(cleanup_panel_id_mutations):
                                         mutation.rollback()
-                                    cleanup_uuid_mutations.clear()
+                                    cleanup_panel_id_mutations.clear()
                                     stats['errors'] += batch_size
                                     break  # Прерываем цикл при ошибке коммита
 
                     # Коммитим оставшиеся изменения
                     try:
                         await db.commit()
-                        cleanup_uuid_mutations.clear()
+                        cleanup_panel_id_mutations.clear()
                     except Exception as final_commit_error:
                         logger.error(
                             '❌ Ошибка финального коммита при деактивации', final_commit_error=final_commit_error
                         )
                         await db.rollback()
-                        for mutation in reversed(cleanup_uuid_mutations):
+                        for mutation in reversed(cleanup_panel_id_mutations):
                             mutation.rollback()
-                        cleanup_uuid_mutations.clear()
+                        cleanup_panel_id_mutations.clear()
 
                 finally:
                     # Закрываем API клиент
@@ -1909,7 +1967,7 @@ class RemnaWaveService:
             return {'created': 0, 'updated': 0, 'errors': 1, 'deleted': 0}
 
     async def _sync_users_from_panel_multi(self, db: AsyncSession, sync_type: str) -> dict[str, int]:
-        """Multi-tariff sync: match panel users to subscriptions by remnawave_uuid."""
+        """Multi-tariff sync: match panel users to subscriptions by remnawave_id."""
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
 
@@ -1931,7 +1989,7 @@ class RemnaWaveService:
                     for user_obj in users_batch:
                         panel_users.append(
                             {
-                                'uuid': user_obj.uuid,
+                                'id': user_obj.id,
                                 'shortUuid': user_obj.short_uuid,
                                 'username': user_obj.username,
                                 'status': user_obj.status.value,
@@ -1952,28 +2010,36 @@ class RemnaWaveService:
 
             logger.info('✅ [multi-tariff] Загружено из панели', panel_users_count=len(panel_users))
 
-            # Load all subscriptions with remnawave_uuid
+            # Load all subscriptions with remnawave_id
             subs_result = await db.execute(
                 select(Subscription)
                 .options(selectinload(Subscription.user), selectinload(Subscription.tariff))
-                .where(Subscription.remnawave_uuid.isnot(None))
+                .where(Subscription.remnawave_id.isnot(None))
             )
             all_subs = subs_result.scalars().all()
-            subs_by_uuid = {sub.remnawave_uuid: sub for sub in all_subs}
+            subs_by_panel_id = {}
+            for sub in all_subs:
+                _sub_panel_id = _normalize_panel_user_id(sub.remnawave_id)
+                if _sub_panel_id is not None:
+                    subs_by_panel_id[_sub_panel_id] = sub
 
             from app.services.grace_access_runtime import get_open_grace_subscription_ids
 
             open_grace_ids = await get_open_grace_subscription_ids(db)
 
-            # Fallback: build user-level UUID → user map for legacy migration
+            # Fallback: build user-level panel id → user map for legacy migration
             from app.database.models import User
 
             users_result = await db.execute(
                 select(User)
                 .options(selectinload(User.subscriptions).selectinload(Subscription.tariff))
-                .where(User.remnawave_uuid.isnot(None))
+                .where(User.remnawave_id.isnot(None))
             )
-            users_by_uuid = {u.remnawave_uuid: u for u in users_result.scalars().all() if u.remnawave_uuid}
+            users_by_panel_id = {}
+            for u in users_result.scalars().all():
+                _u_panel_id = _normalize_panel_user_id(u.remnawave_id)
+                if _u_panel_id is not None:
+                    users_by_panel_id[_u_panel_id] = u
 
             # Load all bot users for matching unlinked panel users
             all_users_result = await db.execute(select(User).options(selectinload(User.subscriptions)))
@@ -1982,24 +2048,33 @@ class RemnaWaveService:
             bot_users_by_email = {u.email.lower(): u for u in _all_users if u.email and u.email_verified}
 
             logger.info(
-                '📊 [multi-tariff] Подписок с remnawave_uuid',
-                subs_count=len(subs_by_uuid),
-                users_legacy_count=len(users_by_uuid),
+                '📊 [multi-tariff] Подписок с remnawave_id',
+                subs_count=len(subs_by_panel_id),
+                users_legacy_count=len(users_by_panel_id),
                 bot_users_by_tg=len(bot_users_by_tg),
                 bot_users_by_email=len(bot_users_by_email),
             )
 
             # Match and update
             for panel_user in panel_users:
-                panel_uuid = panel_user.get('uuid')
-                if not panel_uuid:
+                panel_user_id = _normalize_panel_user_id(panel_user.get('id'))
+                if panel_user_id is None:
+                    # В 3.0.0 числовой id обязателен: его отсутствие — нарушение
+                    # контракта панели, а не рядовой пропуск. Молча пропускать
+                    # такое нельзя, иначе весь синк отрапортует успех на нуле.
+                    logger.warning(
+                        '⚠️ [multi-tariff] Панельный пользователь без числового id — пропускаем',
+                        username=panel_user.get('username'),
+                        short_uuid=panel_user.get('shortUuid'),
+                    )
+                    stats['errors'] += 1
                     continue
 
-                subscription = subs_by_uuid.get(panel_uuid)
+                subscription = subs_by_panel_id.get(panel_user_id)
                 if not subscription:
-                    # Fallback: check if this UUID belongs to a user (legacy single-tariff)
+                    # Fallback: check if this panel id belongs to a user (legacy single-tariff)
                     # and auto-link it to the user's best active subscription
-                    legacy_user = users_by_uuid.get(panel_uuid)
+                    legacy_user = users_by_panel_id.get(panel_user_id)
                     if legacy_user:
                         user_subs = getattr(legacy_user, 'subscriptions', []) or []
                         active = [s for s in user_subs if s.status in ('active', 'trial')]
@@ -2007,13 +2082,13 @@ class RemnaWaveService:
                             non_daily = [s for s in active if not getattr(s, 'is_daily_tariff', False)]
                             pool = non_daily or active
                             best = max(pool, key=lambda s: s.days_left)
-                            if not best.remnawave_uuid:
-                                best.remnawave_uuid = panel_uuid
-                                subs_by_uuid[panel_uuid] = best
+                            if not best.remnawave_id:
+                                best.remnawave_id = panel_user_id
+                                subs_by_panel_id[panel_user_id] = best
                                 subscription = best
                                 logger.info(
-                                    '🔗 [multi-tariff] Привязан legacy UUID к подписке',
-                                    panel_uuid=panel_uuid,
+                                    '🔗 [multi-tariff] Привязан legacy панельный id к подписке',
+                                    panel_user_id=panel_user_id,
                                     subscription_id=best.id,
                                     user_id=legacy_user.id,
                                 )
@@ -2038,7 +2113,7 @@ class RemnaWaveService:
                     if not _bot_user:
                         logger.debug(
                             '⚠️ [multi-tariff] Panel user has no matching bot user',
-                            panel_uuid=panel_uuid,
+                            panel_user_id=panel_user_id,
                             username=panel_user.get('username'),
                         )
                         continue
@@ -2054,8 +2129,8 @@ class RemnaWaveService:
                         )
                         continue
 
-                    # Check if subscription with this UUID already exists for this user
-                    if any(s.remnawave_uuid == panel_uuid for s in _user_subs):
+                    # Check if subscription with this panel id already exists for this user
+                    if any(_normalize_panel_user_id(s.remnawave_id) == panel_user_id for s in _user_subs):
                         continue
 
                     try:
@@ -2107,7 +2182,7 @@ class RemnaWaveService:
                             traffic_used_gb=_used_bytes / (1024**3),
                             device_limit=coerce_panel_device_limit(panel_user.get('hwidDeviceLimit')),
                             connected_squads=_squad_uuids,
-                            remnawave_uuid=panel_uuid,
+                            remnawave_id=panel_user_id,
                             remnawave_short_id=_short_id,
                             remnawave_short_uuid=panel_user.get('shortUuid'),
                             subscription_url=panel_user.get('subscriptionUrl', ''),
@@ -2115,20 +2190,20 @@ class RemnaWaveService:
                             tariff_id=_matched_tariff_id,
                         )
                         db.add(new_sub)
-                        subs_by_uuid[panel_uuid] = new_sub
+                        subs_by_panel_id[panel_user_id] = new_sub
                         # Keep in-memory state consistent for subsequent iterations
                         if hasattr(_bot_user, 'subscriptions') and isinstance(_bot_user.subscriptions, list):
                             _bot_user.subscriptions.append(new_sub)
                         stats['created'] += 1
                         logger.info(
                             '✅ [multi-tariff] Создана подписка из панели',
-                            panel_uuid=panel_uuid,
+                            panel_user_id=panel_user_id,
                             user_id=_bot_user.id,
                         )
                     except Exception as create_err:
                         logger.error(
                             '❌ [multi-tariff] Ошибка создания подписки из панели',
-                            panel_uuid=panel_uuid,
+                            panel_user_id=panel_user_id,
                             error=create_err,
                         )
                         stats['errors'] += 1
@@ -2326,8 +2401,19 @@ class RemnaWaveService:
                 from app.database.crud.subscription import get_active_subscriptions_by_user_id as _get_subs_upd
 
                 _subs_upd = await _get_subs_upd(db, user.id)
-                # Strict match by panel_user UUID — never fallback to another subscription
-                subscription = next((s for s in _subs_upd if s.remnawave_uuid == panel_user.get('uuid')), None)
+                # Strict match by panel user id — never fallback to another subscription.
+                # Пустая идентичность не матчится ни при каких условиях: иначе
+                # состояние панельного пользователя записывалось бы на первый
+                # попавшийся непровиженный черновик (remnawave_id IS NULL).
+                _panel_id_upd = _normalize_panel_user_id(panel_user.get('id'))
+                subscription = (
+                    next(
+                        (s for s in _subs_upd if _normalize_panel_user_id(s.remnawave_id) == _panel_id_upd),
+                        None,
+                    )
+                    if _panel_id_upd is not None
+                    else None
+                )
             else:
                 subscription = await get_subscription_by_user_id(db, user.id)
 
@@ -2602,14 +2688,15 @@ class RemnaWaveService:
                                 if sub.tariff and sub.tariff.external_squad_uuid:
                                     create_kwargs['external_squad_uuid'] = sub.tariff.external_squad_uuid
 
-                                # Определяем UUID для обновления
-                                panel_uuid = (
-                                    sub.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
+                                # Определяем панельный id для обновления
+                                panel_user_id = (
+                                    sub.remnawave_id if settings.is_multi_tariff_enabled() else user.remnawave_id
                                 )
 
-                                # Если нет UUID в базе, ищем пользователя по telegram_id в панели
-                                if not panel_uuid and user.telegram_id:
-                                    existing_users = await api.get_user_by_telegram_id(user.telegram_id)
+                                # Если нет панельного id в базе, ищем пользователя по telegram_id в панели.
+                                # 3.0.0: маршрут by-telegram-id удалён, поиск живёт как фильтр стрима.
+                                if not panel_user_id and user.telegram_id:
+                                    existing_users = await api.find_users_by_telegram_id(user.telegram_id)
                                     if existing_users:
                                         if settings.is_multi_tariff_enabled():
                                             if sub.remnawave_short_id:
@@ -2623,20 +2710,20 @@ class RemnaWaveService:
                                                     None,
                                                 )
                                                 if _matched:
-                                                    panel_uuid = _matched.uuid
+                                                    panel_user_id = _matched.id
                                             # else: no short_id — can't match safely, skip
                                         else:
-                                            panel_uuid = existing_users[0].uuid
-                                        if panel_uuid:
+                                            panel_user_id = existing_users[0].id
+                                        if panel_user_id:
                                             logger.debug(
                                                 'Найден пользователь в панели',
                                                 telegram_id=user.telegram_id,
-                                                panel_uuid=panel_uuid,
+                                                panel_user_id=panel_user_id,
                                             )
 
                                 # Fallback: поиск по email (для OAuth юзеров без telegram_id)
-                                if not panel_uuid and user.email:
-                                    existing_users = await api.get_user_by_email(user.email)
+                                if not panel_user_id and user.email:
+                                    existing_users = await api.find_users_by_email(user.email)
                                     if existing_users:
                                         if settings.is_multi_tariff_enabled():
                                             if sub.remnawave_short_id:
@@ -2650,20 +2737,20 @@ class RemnaWaveService:
                                                     None,
                                                 )
                                                 if _matched:
-                                                    panel_uuid = _matched.uuid
+                                                    panel_user_id = _matched.id
                                             # else: no short_id — can't match safely, skip
                                         else:
-                                            panel_uuid = existing_users[0].uuid
-                                        if panel_uuid:
+                                            panel_user_id = existing_users[0].id
+                                        if panel_user_id:
                                             logger.debug(
                                                 'Найден пользователь в панели по email',
                                                 email=user.email,
-                                                panel_uuid=panel_uuid,
+                                                panel_user_id=panel_user_id,
                                             )
 
-                                if panel_uuid:
+                                if panel_user_id:
                                     update_kwargs = dict(
-                                        uuid=panel_uuid,
+                                        user_id=panel_user_id,
                                         status=status,
                                         expire_at=expire_at,
                                         traffic_limit_bytes=create_kwargs['traffic_limit_bytes'],
@@ -2672,6 +2759,16 @@ class RemnaWaveService:
                                         description=create_kwargs['description'],
                                         active_internal_squads=sub.connected_squads,
                                     )
+
+                                    # Пустой список сквадов НЕ отправляем: update_user
+                                    # пропускает только None, а по контракту `[]` значит
+                                    # «снять все инбаунды». В connected_squads пустота —
+                                    # это дефолт колонки (JSON default=list) и результат
+                                    # «сброса подписки»/healing, а не решение админа;
+                                    # намеренный отзыв делается литеральным [] в других
+                                    # местах и сюда не попадает.
+                                    if not sub.connected_squads:
+                                        update_kwargs.pop('active_internal_squads', None)
 
                                     if hwid_limit is not None:
                                         update_kwargs['hwid_device_limit'] = hwid_limit
@@ -2683,34 +2780,65 @@ class RemnaWaveService:
 
                                     try:
                                         await api.update_user(**update_kwargs)
-                                        # Сохраняем UUID если его не было
+                                        # Сохраняем панельный id если его не было
                                         if settings.is_multi_tariff_enabled():
-                                            if not sub.remnawave_uuid:
-                                                sub.remnawave_uuid = panel_uuid
-                                        elif not user.remnawave_uuid:
-                                            user.remnawave_uuid = panel_uuid
+                                            if not sub.remnawave_id:
+                                                sub.remnawave_id = panel_user_id
+                                        elif not user.remnawave_id:
+                                            user.remnawave_id = panel_user_id
                                         return ('updated', db_sub, None)
                                     except RemnaWaveAPIError as api_error:
-                                        # UUID в БД протух — панель-юзера уже нет. Пересоздаём,
+                                        # Панельный id в БД протух — юзера уже нет. Пересоздаём,
                                         # чтобы синхронизация в панель чинила рассинхрон,
-                                        # а не падала в ошибку.
+                                        # а не падала в ошибку. Непригодный локальный
+                                        # идентификатор (RemnaWaveInvalidUserIdError) сюда не
+                                        # попадает намеренно: это битые данные бота, а не
+                                        # отсутствие пользователя, и пересоздание плодило бы дубли.
                                         if is_user_not_found_error(api_error):
                                             new_user = await api.create_user(**create_kwargs)
                                             if settings.is_multi_tariff_enabled():
-                                                sub.remnawave_uuid = new_user.uuid
+                                                sub.remnawave_id = new_user.id
                                             else:
-                                                user.remnawave_uuid = new_user.uuid
+                                                user.remnawave_id = new_user.id
                                             sub.remnawave_short_uuid = new_user.short_uuid
                                             sub.subscription_url = new_user.subscription_url
                                             sub.subscription_crypto_link = new_user.happ_crypto_link
                                             return ('created', db_sub, new_user)
                                         raise
                                 else:
+                                    # Прежде чем заводить нового: у строки, привязанной
+                                    # до апгрейда на 3.0.0, числового id нет, а shortUuid
+                                    # панель по-прежнему знает. Без этой проверки массовый
+                                    # «Синхронизировать в панель» до бэкфила заводил бы
+                                    # дубль на КАЖДУЮ подписку и затирал shortUuid —
+                                    # единственный ключ, которым оригинал ещё можно найти.
+                                    adopted_short_uuid = (sub.remnawave_short_uuid or '').strip()
+                                    if adopted_short_uuid:
+                                        adopted = await api.get_user_by_short_uuid(adopted_short_uuid)
+                                        if adopted is not None:
+                                            if settings.is_multi_tariff_enabled():
+                                                sub.remnawave_id = adopted.id
+                                            else:
+                                                user.remnawave_id = adopted.id
+                                            # Общее правило преобразования create-тела в
+                                            # PATCH: снимает username и не даёт пустому
+                                            # списку сквадов снести все инбаунды живого
+                                            # аккаунта (см. _create_payload_as_patch).
+                                            from app.services.grace_access_runtime import (
+                                                _create_payload_as_patch,
+                                            )
+
+                                            adopt_kwargs = _create_payload_as_patch(create_kwargs)
+                                            updated = await api.update_user(user_id=adopted.id, **adopt_kwargs)
+                                            sub.subscription_url = updated.subscription_url
+                                            sub.subscription_crypto_link = updated.happ_crypto_link
+                                            return ('updated', db_sub, updated)
+
                                     new_user = await api.create_user(**create_kwargs)
                                     if settings.is_multi_tariff_enabled():
-                                        sub.remnawave_uuid = new_user.uuid
+                                        sub.remnawave_id = new_user.id
                                     else:
-                                        user.remnawave_uuid = new_user.uuid
+                                        user.remnawave_id = new_user.id
                                     sub.remnawave_short_uuid = new_user.short_uuid
                                     sub.subscription_url = new_user.subscription_url
                                     sub.subscription_crypto_link = new_user.happ_crypto_link
@@ -2738,9 +2866,9 @@ class RemnaWaveService:
                         if action == 'created':
                             if new_user and sub.user:
                                 if settings.is_multi_tariff_enabled():
-                                    sub.remnawave_uuid = new_user.uuid
+                                    sub.remnawave_id = new_user.id
                                 else:
-                                    sub.user.remnawave_uuid = new_user.uuid
+                                    sub.user.remnawave_id = new_user.id
                                 sub.remnawave_short_uuid = new_user.short_uuid
                             stats['created'] += 1
                         elif action == 'updated':
@@ -2786,7 +2914,7 @@ class RemnaWaveService:
     async def get_user_traffic_stats(self, telegram_id: int) -> dict[str, Any] | None:
         try:
             async with self.get_api_client() as api:
-                users = await api.get_user_by_telegram_id(telegram_id)
+                users = await api.find_users_by_telegram_id(telegram_id)
 
                 if not users:
                     return None
@@ -2807,15 +2935,15 @@ class RemnaWaveService:
             logger.error('Ошибка получения статистики трафика для пользователя', telegram_id=telegram_id, error=e)
             return None
 
-    async def get_user_traffic_stats_by_uuid(self, remnawave_uuid: str) -> dict[str, Any] | None:
+    async def get_user_traffic_stats_by_panel_id(self, remnawave_id: int) -> dict[str, Any] | None:
         """
-        Получить статистику трафика по RemnaWave UUID.
+        Получить статистику трафика по числовому id пользователя RemnaWave.
 
         Используется для email-пользователей у которых нет telegram_id.
         """
         try:
             async with self.get_api_client() as api:
-                user = await api.get_user_by_uuid(remnawave_uuid)
+                user = await api.get_user_by_id(remnawave_id)
 
                 if not user:
                     return None
@@ -2831,7 +2959,7 @@ class RemnaWaveService:
                 }
 
         except Exception as e:
-            logger.error('Ошибка получения статистики трафика по UUID', remnawave_uuid=remnawave_uuid, error=e)
+            logger.error('Ошибка получения статистики трафика по панельному id', remnawave_id=remnawave_id, error=e)
             return None
 
     async def get_telegram_id_by_email(self, user_identifier: str) -> int | None:
@@ -2972,11 +3100,11 @@ class RemnaWaveService:
                     logger.warning('Bulk squad add blocked while grace sessions are open')
                     return False
                 async with self.get_api_client() as api:
-                    response = await api._make_request(
-                        'POST',
-                        f'/api/internal-squads/{squad_uuid}/bulk-actions/add-users',
-                    )
-                    return response.get('response', {}).get('eventSent', False)
+                    # 3.0.0: bulk-действие отвечает 202/204 без тела, поля
+                    # `eventSent` в контракте больше нет — успех определяется
+                    # отсутствием исключения (чтение поля рапортовало провал
+                    # на успешной операции).
+                    return await api.add_users_to_internal_squad(squad_uuid)
         except Exception as e:
             logger.error('Error adding users to squad', error=e)
             return False
@@ -2990,11 +3118,8 @@ class RemnaWaveService:
                     logger.warning('Bulk squad removal blocked while grace sessions are open')
                     return False
                 async with self.get_api_client() as api:
-                    response = await api._make_request(
-                        'DELETE',
-                        f'/api/internal-squads/{squad_uuid}/bulk-actions/remove-users',
-                    )
-                    return response.get('response', {}).get('eventSent', False)
+                    # 3.0.0: см. add_all_users_to_squad — тела у ответа нет.
+                    return await api.remove_users_from_internal_squad(squad_uuid)
         except Exception as e:
             logger.error('Error removing users from squad', error=e)
             return False
@@ -3031,18 +3156,35 @@ class RemnaWaveService:
             return False
 
     async def get_node_user_usage_by_range(self, node_uuid: str, start_date, end_date) -> list[dict[str, Any]]:
+        """Трафик пользователей на ноде за период.
+
+        3.0.0 удалил `/api/bandwidth-stats/nodes/{uuid}/users/legacy`, который
+        отдавал строки `{userUuid, username, nodeUuid, total, date}` — по одной
+        на пользователя и день. Замена `POST /api/bandwidth-stats/nodes/usage`
+        сохраняет привязку трафика к пользователю (числовой `id`), но разбивки
+        по дням у неё нет: `date` в элементах больше не будет.
+        """
         try:
             async with self.get_api_client() as api:
-                start_str = start_date.isoformat().replace('+00:00', 'Z')
-                end_str = end_date.isoformat().replace('+00:00', 'Z')
+                # Эндпоинт валидирует start/end как дату (YYYY-MM-DD); полный ISO
+                # с `Z` панель отвергает (400) — как и в get_top_consumers.
+                start_str = start_date.date().isoformat()
+                end_str = end_date.date().isoformat()
 
-                params = {'start': start_str, 'end': end_str}
+                usage_data = await api.get_bandwidth_stats_nodes_usage([node_uuid], start_str, end_str)
 
-                usage_data = await api._make_request(
-                    'GET', f'/api/bandwidth-stats/nodes/{node_uuid}/users/legacy', params=params
-                )
-
-                return usage_data.get('response', [])
+                items: list[dict[str, Any]] = []
+                for node in usage_data.get('nodes', []) or []:
+                    _node_uuid = node.get('uuid') or node_uuid
+                    for user in node.get('users', []) or []:
+                        items.append(
+                            {
+                                'userId': user.get('id'),
+                                'nodeUuid': _node_uuid,
+                                'total': user.get('totalBytes', 0) or 0,
+                            }
+                        )
+                return items
 
         except Exception as e:
             logger.error('Ошибка получения статистики использования ноды', node_uuid=node_uuid, error=e)
@@ -3077,26 +3219,6 @@ class RemnaWaveService:
         except Exception as e:
             logger.error('Ошибка получения статистики ноды', node_uuid=node_uuid, error=e)
 
-    async def validate_user_data_before_sync(self, panel_user) -> bool:
-        try:
-            if not panel_user.telegram_id:
-                logger.debug('Нет telegram_id для пользователя', uuid=panel_user.uuid)
-                return False
-
-            if not panel_user.uuid:
-                logger.debug('Нет UUID для пользователя', telegram_id=panel_user.telegram_id)
-                return False
-
-            if panel_user.telegram_id <= 0:
-                logger.debug('Некорректный telegram_id', telegram_id=panel_user.telegram_id)
-                return False
-
-            return True
-
-        except Exception as e:
-            logger.error('Ошибка валидации данных пользователя', error=e)
-            return False
-
     async def force_cleanup_user_data(self, db: AsyncSession, user: User) -> bool:
         """
         ОПАСНАЯ ФУНКЦИЯ: Полностью сбрасывает данные подписки пользователя.
@@ -3123,23 +3245,30 @@ class RemnaWaveService:
 
             logger.info('🗑️ ПРИНУДИТЕЛЬНАЯ полная очистка данных пользователя', user_id_display=user_id_display)
 
-            # Reset devices for all subscription UUIDs in multi-tariff, or user UUID in single-tariff
-            _uuids_to_reset = set()
+            # Reset devices for all subscription panel ids in multi-tariff, or user panel id in single-tariff
+            _panel_ids_to_reset = set()
             if settings.is_multi_tariff_enabled():
                 user_subs = getattr(user, 'subscriptions', []) or []
                 for sub in user_subs:
-                    _sub_uuid = getattr(sub, 'remnawave_uuid', None)
-                    if _sub_uuid:
-                        _uuids_to_reset.add(_sub_uuid)
-            if not _uuids_to_reset and user.remnawave_uuid:
-                _uuids_to_reset.add(user.remnawave_uuid)
+                    _sub_panel_id = _normalize_panel_user_id(getattr(sub, 'remnawave_id', None))
+                    if _sub_panel_id is not None:
+                        _panel_ids_to_reset.add(_sub_panel_id)
+            if not _panel_ids_to_reset:
+                _user_panel_id = _normalize_panel_user_id(user.remnawave_id)
+                if _user_panel_id is not None:
+                    _panel_ids_to_reset.add(_user_panel_id)
 
-            for _uuid in _uuids_to_reset:
+            for _panel_user_id in _panel_ids_to_reset:
                 try:
                     async with self.get_api_client() as api:
-                        await api.reset_user_devices(_uuid)
+                        # reset_user_devices ловит отказ панели внутри и отдаёт
+                        # False — `except` ниже для этого случая уже недостижим,
+                        # и без проверки результата провал сброса не оставил бы
+                        # здесь ни одной записи в логе.
+                        if not await api.reset_user_devices(_panel_user_id):
+                            logger.error('Failed to reset devices for panel user', panel_user_id=_panel_user_id)
                 except Exception as e:
-                    logger.warning('Failed to reset devices for UUID', uuid=_uuid, error=e)
+                    logger.warning('Failed to reset devices for panel user', panel_user_id=_panel_user_id, error=e)
 
             try:
                 from sqlalchemy import delete
@@ -3178,6 +3307,10 @@ class RemnaWaveService:
                         user_id_display=user_id_display,
                         balance_kopeks=user.balance_kopeks,
                     )
+                user.remnawave_id = None
+                # force_cleanup удаляет панельного пользователя целиком, поэтому
+                # исторический uuid тоже теряет смысл: пара «мёртвый uuid + новый
+                # id» отравляет карту идентичностей бэкфила.
                 user.remnawave_uuid = None
                 user.updated_at = self._now_utc()
 
@@ -3213,15 +3346,55 @@ class RemnaWaveService:
             await db.rollback()
             return False
 
+    async def _load_all_panel_users(self) -> list[dict[str, Any]]:
+        """Полный ростер панели через курсорную пагинацию.
+
+        `GET /api/users` без параметров отдаёт лишь первую страницу (дефолт
+        size=25). Вызывающие здесь считают ответ ПОЛНЫМ списком и зачищают всех,
+        кого в нём нет, — то есть без пагинации сносят всех, кроме первых 25.
+        """
+        panel_users: list[dict[str, Any]] = []
+
+        async with self.get_api_client() as api:
+            cursor: str | None = None
+            size = 500
+
+            while True:
+                page = await api.get_all_users_page_stream(cursor=cursor, size=size, enrich_happ_links=False)
+
+                for user_obj in page['users']:
+                    panel_users.append(
+                        {
+                            'id': user_obj.id,
+                            'shortUuid': user_obj.short_uuid,
+                            'username': user_obj.username,
+                            'status': user_obj.status.value,
+                            'telegramId': user_obj.telegram_id,
+                            'email': user_obj.email,
+                            'expireAt': user_obj.expire_at.isoformat(),
+                            'trafficLimitBytes': user_obj.traffic_limit_bytes,
+                            'usedTrafficBytes': user_obj.used_traffic_bytes,
+                            'hwidDeviceLimit': user_obj.hwid_device_limit,
+                            'subscriptionUrl': user_obj.subscription_url,
+                            'subscriptionCryptoLink': user_obj.happ_crypto_link,
+                            'activeInternalSquads': user_obj.active_internal_squads,
+                        }
+                    )
+
+                if not page['hasMore'] or not page['nextCursor']:
+                    break
+
+                cursor = page['nextCursor']
+
+        return panel_users
+
     async def cleanup_orphaned_subscriptions(self, db: AsyncSession) -> dict[str, int]:
         try:
             stats = {'deactivated': 0, 'errors': 0, 'checked': 0}
 
             logger.info('🧹 Начинаем усиленную очистку неактуальных подписок...')
 
-            async with self.get_api_client() as api:
-                panel_users_data = await api._make_request('GET', '/api/users')
-                panel_users = panel_users_data['response']['users']
+            panel_users = await self._load_all_panel_users()
 
             panel_telegram_ids = set()
             for panel_user in panel_users:
@@ -3229,7 +3402,11 @@ class RemnaWaveService:
                 if telegram_id:
                     panel_telegram_ids.add(telegram_id)
 
-            logger.info('📊 Найдено пользователей в панели', panel_telegram_ids_count=len(panel_telegram_ids))
+            logger.info(
+                '📊 Найдено пользователей в панели',
+                panel_users_count=len(panel_users),
+                panel_telegram_ids_count=len(panel_telegram_ids),
+            )
 
             from app.database.crud.subscription import get_all_subscriptions
             from app.database.models import SubscriptionStatus
@@ -3299,9 +3476,7 @@ class RemnaWaveService:
 
             logger.info('🔄 Начинаем синхронизацию статусов подписок...')
 
-            async with self.get_api_client() as api:
-                panel_users_data = await api._make_request('GET', '/api/users')
-                panel_users = panel_users_data['response']['users']
+            panel_users = await self._load_all_panel_users()
 
             panel_users_dict = {}
             for panel_user in panel_users:
@@ -3310,7 +3485,9 @@ class RemnaWaveService:
                     panel_users_dict[telegram_id] = panel_user
 
             logger.info(
-                '📊 Найдено пользователей в панели для синхронизации', panel_users_dict_count=len(panel_users_dict)
+                '📊 Найдено пользователей в панели для синхронизации',
+                panel_users_count=len(panel_users),
+                panel_users_dict_count=len(panel_users_dict),
             )
 
             from app.database.crud.subscription import get_all_subscriptions
@@ -3436,15 +3613,13 @@ class RemnaWaveService:
                             subscription.status = SubscriptionStatus.EXPIRED.value
                             issues_fixed += 1
 
-                        _lookup_uuid = (
-                            getattr(subscription, 'remnawave_uuid', None)
-                            if settings.is_multi_tariff_enabled()
-                            else None
-                        ) or getattr(user, 'remnawave_uuid', None)
-                        if not subscription.remnawave_short_uuid and _lookup_uuid:
+                        _lookup_panel_id = (
+                            getattr(subscription, 'remnawave_id', None) if settings.is_multi_tariff_enabled() else None
+                        ) or getattr(user, 'remnawave_id', None)
+                        if not subscription.remnawave_short_uuid and _lookup_panel_id:
                             try:
                                 async with self.get_api_client() as api:
-                                    rw_user = await api.get_user_by_uuid(_lookup_uuid)
+                                    rw_user = await api.get_user_by_id(_lookup_panel_id)
                                     if rw_user:
                                         subscription.remnawave_short_uuid = rw_user.short_uuid
                                         subscription.subscription_url = rw_user.subscription_url
@@ -3531,10 +3706,10 @@ class RemnaWaveService:
 
             bot_users = await get_users_list(db, offset=0, limit=10000)
 
-            users_without_uuid = sum(
+            users_without_panel_id = sum(
                 1
                 for user in bot_users
-                if not user.remnawave_uuid and any(True for _ in (getattr(user, 'subscriptions', None) or []))
+                if not user.remnawave_id and any(True for _ in (getattr(user, 'subscriptions', None) or []))
             )
 
             from app.database.crud.subscription import get_expired_subscriptions
@@ -3542,11 +3717,13 @@ class RemnaWaveService:
             expired_subscriptions = await get_expired_subscriptions(db)
             active_expired = sum(1 for sub in expired_subscriptions if sub.status == 'active')
 
-            if users_without_uuid > 10:
+            if users_without_panel_id > 10:
                 recommendations['should_sync'] = True
                 recommendations['sync_type'] = 'all'
                 recommendations['priority'] = 'high'
-                recommendations['reasons'].append(f'Найдено {users_without_uuid} пользователей без связи с Remnawave')
+                recommendations['reasons'].append(
+                    f'Найдено {users_without_panel_id} пользователей без связи с Remnawave'
+                )
                 recommendations['estimated_time'] = '3-5 минут'
 
             if active_expired > 5:

@@ -342,7 +342,9 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
         id=42,
         status=SubscriptionStatus.EXPIRED.value,
         actual_status=SubscriptionStatus.EXPIRED.value,
-        remnawave_uuid=None,
+        # 3.0.0: панельный юзер адресуется числовым remnawave_id, колонка
+        # remnawave_uuid историческая и роутом не читается.
+        remnawave_id=None,
         tariff_id=None,
     )
     user = SimpleNamespace(id=1)
@@ -407,7 +409,7 @@ async def test_cancel_safe_wiring_proof_my_subscriptions_delete_execute(monkeypa
         id=99,
         status=SubscriptionStatus.EXPIRED.value,
         actual_status=SubscriptionStatus.EXPIRED.value,
-        remnawave_uuid=None,
+        remnawave_id=None,
     )
 
     async def fake_get_subscription(db, sub_id, user_id):
@@ -476,9 +478,9 @@ async def test_cancel_safe_wiring_proof_admin_bulk_delete_subscription(monkeypat
         is_active=False,
         is_trial=False,
         tariff=None,
-        remnawave_uuid=None,
+        remnawave_id=None,
     )
-    user = SimpleNamespace(id=1, username='victim', subscriptions=[], remnawave_uuid=None)
+    user = SimpleNamespace(id=1, username='victim', subscriptions=[], remnawave_id=None)
     db = AsyncMock()
 
     result = await admin_bulk_actions._do_delete_subscription(
@@ -540,8 +542,8 @@ async def test_delete_user_account_cancels_platega_between_grace_checks(monkeypa
         fake_ensure_no_open_grace,
     )
 
-    subs = [SimpleNamespace(id=11, remnawave_uuid=None), SimpleNamespace(id=12, remnawave_uuid=None)]
-    user = SimpleNamespace(id=5, telegram_id=555, email=None, subscriptions=subs, remnawave_uuid=None)
+    subs = [SimpleNamespace(id=11, remnawave_id=None), SimpleNamespace(id=12, remnawave_id=None)]
+    user = SimpleNamespace(id=5, telegram_id=555, email=None, subscriptions=subs, remnawave_id=None)
     monkeypatch.setattr(user_service_module, 'get_user_by_id', AsyncMock(return_value=user))
 
     db = AsyncMock()

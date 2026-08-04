@@ -634,22 +634,22 @@ async def _merge_phantom_into_active_user(
         # Transfer ALL subscriptions from phantom to active user
         for sub in phantom_subs:
             sub.user_id = active_user.id
-        # Transfer remnawave_uuid (clear first to avoid unique constraint violation on flush)
+        # Transfer remnawave_id (clear first to avoid unique constraint violation on flush)
         if settings.is_multi_tariff_enabled():
-            # In multi-tariff, transfer user-level UUID only if no subscription-level UUIDs exist
-            if phantom.remnawave_uuid and not active_user.remnawave_uuid:
+            # In multi-tariff, transfer user-level panel id only if no subscription-level ids exist
+            if phantom.remnawave_id and not active_user.remnawave_id:
                 phantom_subs = getattr(phantom, 'subscriptions', []) or []
-                has_sub_uuids = any(getattr(s, 'remnawave_uuid', None) for s in phantom_subs)
-                if not has_sub_uuids:
-                    uuid_to_transfer = phantom.remnawave_uuid
-                    phantom.remnawave_uuid = None
+                has_sub_ids = any(getattr(s, 'remnawave_id', None) for s in phantom_subs)
+                if not has_sub_ids:
+                    panel_id_to_transfer = phantom.remnawave_id
+                    phantom.remnawave_id = None
                     await db.flush()
-                    active_user.remnawave_uuid = uuid_to_transfer
-        elif phantom.remnawave_uuid and not active_user.remnawave_uuid:
-            uuid_to_transfer = phantom.remnawave_uuid
-            phantom.remnawave_uuid = None
+                    active_user.remnawave_id = panel_id_to_transfer
+        elif phantom.remnawave_id and not active_user.remnawave_id:
+            panel_id_to_transfer = phantom.remnawave_id
+            phantom.remnawave_id = None
             await db.flush()
-            active_user.remnawave_uuid = uuid_to_transfer
+            active_user.remnawave_id = panel_id_to_transfer
         await db.flush()
         logger.info(
             'Transferred subscriptions from phantom to active user',
@@ -662,10 +662,10 @@ async def _merge_phantom_into_active_user(
             phantom_subscription_ids=[sub.id for sub in phantom_subs],
             active_subscription_ids=[sub.id for sub in active_user_subs],
         )
-        if phantom.remnawave_uuid:
+        if phantom.remnawave_id:
             try:
                 subscription_service = SubscriptionService()
-                await subscription_service.disable_remnawave_user(phantom.remnawave_uuid)
+                await subscription_service.disable_remnawave_user(phantom.remnawave_id)
             except Exception as exc:
                 logger.warning('Failed to disable phantom Remnawave user', error=str(exc))
         for sub in phantom_subs:
@@ -675,7 +675,7 @@ async def _merge_phantom_into_active_user(
     # and constraint violations. Preserve record for audit trail.
     phantom.status = UserStatus.DELETED.value
     phantom.username = None
-    phantom.remnawave_uuid = None
+    phantom.remnawave_id = None
     phantom.referral_code = None
     await db.flush()
 
@@ -1518,7 +1518,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             # Keep status=DELETED so complete_registration properly handles
             # referral assignment and status change (not the "already active" branch)
             user.balance_kopeks = 0
-            user.remnawave_uuid = None
+            user.remnawave_id = None
             user.has_had_paid_subscription = False
             user.referred_by_id = None
 
@@ -2922,8 +2922,8 @@ async def required_sub_channel_check(
                 subscription_service = SubscriptionService()
                 for sub in _subs:
                     if sub.is_trial and sub.status == SubscriptionStatus.ACTIVE.value:
-                        remnawave_uuid = getattr(sub, 'remnawave_uuid', None) or user.remnawave_uuid
-                        if remnawave_uuid:
+                        panel_user_id = getattr(sub, 'remnawave_id', None) or user.remnawave_id
+                        if panel_user_id:
                             await subscription_service.update_remnawave_user(db, sub)
                         else:
                             await subscription_service.create_remnawave_user(db, sub)
@@ -2942,7 +2942,7 @@ async def required_sub_channel_check(
                                 subscription_id=sub.id,
                                 user_id=sub.user_id,
                                 action='update'
-                                if (getattr(sub, 'remnawave_uuid', None) or user.remnawave_uuid)
+                                if (getattr(sub, 'remnawave_id', None) or user.remnawave_id)
                                 else 'create',
                             )
 

@@ -15,6 +15,8 @@ from app.database.models import Subscription, SubscriptionStatus, User
 from app.external.remnawave_api import (
     RemnaWaveAPI,
     RemnaWaveAPIError,
+    RemnaWaveInvalidUserIdError,
+    RemnaWaveTransientError,
     RemnaWaveUser,
     TrafficLimitStrategy,
     UserStatus,
@@ -209,18 +211,18 @@ class SubscriptionService:
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
 
                 if preserve_open_grace:
-                    remnawave_uuid = (
-                        subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
+                    remnawave_id = (
+                        subscription.remnawave_id if settings.is_multi_tariff_enabled() else user.remnawave_id
                     )
-                    if not remnawave_uuid:
+                    if not remnawave_id:
                         logger.warning(
-                            'Remnawave create/update deferred while grace is open and UUID is missing',
+                            'Remnawave create/update deferred while grace is open and panel id is missing',
                             subscription_id=subscription.id,
                         )
                         await db.commit()
                         return None
                     metadata_kwargs: dict[str, Any] = {
-                        'uuid': remnawave_uuid,
+                        'user_id': remnawave_id,
                         'description': settings.format_remnawave_user_description(
                             full_name=user.full_name,
                             username=user.username,
@@ -250,6 +252,7 @@ class SubscriptionService:
                         api,
                         user,
                         subscription,
+                        db=db,
                         user_tag=user_tag,
                         hwid_limit=hwid_limit,
                         ext_squad_uuid=ext_squad_uuid,
@@ -271,10 +274,23 @@ class SubscriptionService:
                 subscription.remnawave_short_uuid = updated_user.short_uuid
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
-                subscription.remnawave_uuid = updated_user.uuid
+                if await self._panel_id_is_free_for(db, subscription, updated_user.id):
+                    subscription.remnawave_id = updated_user.id
+                else:
+                    # `uq_subscriptions_remnawave_id` частично-уникален. В
+                    # single-tariff соседняя подписка того же человека уже держит
+                    # этот аккаунт — ровно то состояние, которое оставляет бэкфилл.
+                    # Записать id второй строке значит словить IntegrityError уже
+                    # ПОСЛЕ успешного PATCH в панель и откатить оплату вместе с ним.
+                    # Адресация не теряется: остаётся `users.remnawave_id`.
+                    logger.warning(
+                        '⚠️ Панельный id уже закреплён за другой подпиской — адресуем через пользователя',
+                        subscription_id=subscription.id,
+                        remnawave_id=updated_user.id,
+                    )
                 # Legacy field — keep in sync for single-mode backward compat
                 if not settings.is_multi_tariff_enabled():
-                    user.remnawave_uuid = updated_user.uuid
+                    user.remnawave_id = updated_user.id
 
                 await db.commit()
 
@@ -296,12 +312,116 @@ class SubscriptionService:
             logger.error('Ошибка создания RemnaWave пользователя', error=e)
             return None
 
+    async def _adopt_panel_user_by_short_uuid(self, api: RemnaWaveAPI, subscription) -> RemnaWaveUser | None:
+        """Опознать уже существующего панельного пользователя подписки по shortUuid.
+
+        Нужно ровно для строк, привязанных до апгрейда на 3.0.0: `uuid` из API
+        исчез, числовой id ещё не проставлен бэкфилом, но `shortUuid` панель
+        по-прежнему знает (`GET /api/users/by-short-uuid/{shortUuid}` сохранился).
+
+        Возвращает None, если опознать нечем или не удалось — вызывающий тогда
+        честно создаёт нового пользователя. Транзиентную ошибку пробрасываем:
+        «панель моргнула» не должно превращаться в дубль аккаунта.
+        """
+        short_uuid = (getattr(subscription, 'remnawave_short_uuid', None) or '').strip()
+        if not short_uuid:
+            return None
+        # Отсутствие аккаунта доказывает ТОЛЬКО 404 (его `get_user_by_short_uuid`
+        # отдаёт как None). Любой другой ответ — 5xx на рестарте панели, 429,
+        # таймаут — означает «не знаем», и проглотить его здесь нельзя: вызывающий
+        # воспримет None как «создавать нового» и заведёт дубль рядом с живым
+        # оплаченным аккаунтом. Пробрасываем — пусть операция честно упадёт.
+        panel_user = await api.get_user_by_short_uuid(short_uuid)
+        if panel_user is None:
+            return None
+        logger.info(
+            '🔗 Панельный пользователь опознан по short_uuid — дубль не создаём',
+            subscription_id=getattr(subscription, 'id', None),
+            remnawave_id=panel_user.id,
+        )
+        return panel_user
+
+    async def _panel_id_is_free_for(self, db: AsyncSession, subscription, panel_id: int | None) -> bool:
+        """Не держит ли этот панельный id уже ДРУГАЯ строка подписок.
+
+        Колонка частично уникальна, и в single-tariff все подписки одного
+        человека адресуют один и тот же панельный аккаунт, поэтому конфликт —
+        штатная ситуация, а не аномалия.
+        """
+        if panel_id is None:
+            return False
+        other = (
+            await db.execute(
+                select(Subscription.id)
+                .where(
+                    Subscription.remnawave_id == int(panel_id),
+                    Subscription.id != getattr(subscription, 'id', None),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return other is None
+
+    async def _adopt_panel_id_for_update(self, db: AsyncSession, subscription, user, multi_tariff: bool) -> int | None:
+        """Достать числовой id панели по shortUuid и сохранить его на строке.
+
+        Нужно ровно для окна между миграцией 0104 и прогоном бэкфила, когда
+        `remnawave_id` пуст у всех доапгрейдных строк. Возвращает None, если
+        опознать нечем или панель этот shortUuid не знает — тогда вызывающий
+        честно откажется от обновления.
+        """
+        short_uuid = (getattr(subscription, 'remnawave_short_uuid', None) or '').strip()
+        if not short_uuid:
+            return None
+        try:
+            async with self.get_api_client() as api:
+                adopted = await api.get_user_by_short_uuid(short_uuid)
+        except Exception as error:
+            # Транзиент/деградация панели — не повод считать, что аккаунта нет.
+            logger.warning(
+                '⚠️ Не удалось опознать панельного пользователя по short_uuid для обновления',
+                subscription_id=getattr(subscription, 'id', None),
+                error=error,
+            )
+            return None
+        if adopted is None:
+            return None
+
+        logger.info(
+            '🔗 Панельный id восстановлен по short_uuid при обновлении',
+            subscription_id=getattr(subscription, 'id', None),
+            remnawave_id=adopted.id,
+        )
+        if multi_tariff:
+            # Четвёртый писатель в частично-уникальную колонку. Но здесь мало
+            # НЕ ЗАПИСАТЬ колонку: возвращённый id вызывающий тут же отправляет
+            # в панель PATCH-ом. Если аккаунт держит соседняя подписка, такой
+            # PATCH перепишет ЕЁ срок, лимиты и сквады — и это необратимо, в
+            # отличие от отката транзакции. Поэтому отказываемся целиком.
+            if not await self._panel_id_is_free_for(db, subscription, adopted.id):
+                logger.warning(
+                    '⚠️ Панельный id уже закреплён за другой подпиской — обновление отменено',
+                    subscription_id=getattr(subscription, 'id', None),
+                    remnawave_id=adopted.id,
+                )
+                return None
+            subscription.remnawave_id = adopted.id
+        else:
+            # Только на User: в single-tariff все подписки одного пользователя
+            # указывают на ОДИН панельный аккаунт, а `uq_subscriptions_remnawave_id`
+            # частично-уникален — записав id второй строке, мы бы словили
+            # IntegrityError и откатили вместе с ним уже применённое пополнение.
+            user.remnawave_id = adopted.id
+        await db.flush((subscription, user))
+        return adopted.id
+
     async def _create_or_update_remnawave_user_multi(
         self,
         api: RemnaWaveAPI,
         user: User,
         subscription: Subscription,
         *,
+        db: AsyncSession | None = None,
         user_tag: str | None,
         hwid_limit: int | None,
         ext_squad_uuid: str | None,
@@ -343,26 +463,59 @@ class SubscriptionService:
             common_kwargs['external_squad_uuid'] = ext_squad_uuid
 
         # If this subscription already has a Remnawave user — update it
-        if subscription.remnawave_uuid:
+        if subscription.remnawave_id:
             try:
-                existing = await api.get_user_by_uuid(subscription.remnawave_uuid)
+                existing = await api.get_user_by_id(subscription.remnawave_id)
                 if existing:
                     if settings.RESET_DEVICES_ON_RENEWAL:
-                        try:
-                            await api.reset_user_devices(existing.uuid)
-                        except Exception as hwid_error:
-                            logger.warning('⚠️ Не удалось сбросить HWID', hwid_error=hwid_error)
+                        if not await api.reset_user_devices(existing.id):
+                            logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=existing.id)
 
-                    updated = await api.update_user(uuid=existing.uuid, **common_kwargs)
+                    updated = await api.update_user(user_id=existing.id, **common_kwargs)
                     if reset_traffic:
-                        await self._reset_user_traffic(api, updated.uuid, user, reset_reason)
+                        await self._reset_user_traffic(api, updated.id, user, reset_reason)
                     return updated
+            except RemnaWaveInvalidUserIdError:
+                # Непригодный локальный id — это баг в данных бота, а не «юзера в
+                # панели нет». Уйти отсюда в ветку создания значило бы плодить
+                # дубли панельных пользователей на каждом проходе.
+                raise
+            except RemnaWaveTransientError:
+                # Панель недоступна/таймаут — это тоже НЕ «пользователя нет».
+                # Создание нового аккаунта на транзиентной ошибке даёт дубль
+                # ровно тогда, когда оригинал жив и панель просто моргнула.
+                raise
             except Exception:
                 logger.warning(
-                    '⚠️ Не удалось найти Remnawave юзера по UUID подписки, создаём нового',
+                    '⚠️ Не удалось найти Remnawave юзера по id подписки, создаём нового',
                     subscription_id=subscription.id,
-                    remnawave_uuid=subscription.remnawave_uuid,
+                    remnawave_id=subscription.remnawave_id,
                 )
+
+        # Строка могла быть привязана к панели ДО апгрейда на 3.0.0: числового
+        # id у неё ещё нет, но shortUuid сохранился и переживает апгрейд.
+        # Без этой попытки каждая такая подписка получила бы ВТОРОЙ панельный
+        # аккаунт при первом же продлении, а оплаченный оригинал осиротел бы.
+        adopted = await self._adopt_panel_user_by_short_uuid(api, subscription)
+        if adopted is not None:
+            # Та же защита частично-уникального индекса, что и на других
+            # писателях: иначе IntegrityError прилетал бы уже ПОСЛЕ update_user,
+            # то есть панель изменена, а транзакция отката.
+            if db is None or await self._panel_id_is_free_for(db, subscription, adopted.id):
+                subscription.remnawave_id = adopted.id
+            else:
+                logger.warning(
+                    '⚠️ Панельный id уже закреплён за другой подпиской — колонку не трогаем',
+                    subscription_id=getattr(subscription, 'id', None),
+                    remnawave_id=adopted.id,
+                )
+            if settings.RESET_DEVICES_ON_RENEWAL:
+                if not await api.reset_user_devices(adopted.id):
+                    logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=adopted.id)
+            updated = await api.update_user(user_id=adopted.id, **common_kwargs)
+            if reset_traffic:
+                await self._reset_user_traffic(api, updated.id, user, reset_reason)
+            return updated
 
         # New subscription — create a NEW Remnawave user.
         # short_id (6 hex chars) приклеивается к base; helper гарантирует, что
@@ -386,7 +539,7 @@ class SubscriptionService:
 
         updated_user = await api.create_user(username=username, **common_kwargs)
         if reset_traffic:
-            await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
+            await self._reset_user_traffic(api, updated_user.id, user, reset_reason)
         return updated_user
 
     async def _create_or_update_remnawave_user_single(
@@ -410,24 +563,73 @@ class SubscriptionService:
             user_id=user.id,
         )
 
-        # Search for existing Remnawave user
-        existing_users = []
-        if user.remnawave_uuid:
+        # Search for existing Remnawave user.
+        # Маршруты by-telegram-id/by-email в 3.0.0 удалены — их роль (найти уже
+        # существующего панельного юзера, когда локальная привязка потерялась)
+        # играют стрим-фильтры. Без этого шага бот создавал бы дубль панельного
+        # пользователя на каждом проходе синка.
+        existing_users: list[RemnaWaveUser] = []
+        # Порядок — по убыванию точности. Сначала два ТОЧНЫХ адреса: id
+        # пользователя и id самой подписки. Второй бэкфилл заполняет и в
+        # single-tariff (например, перенося его на живую строку), а раньше его
+        # тут не спрашивали вовсе.
+        for exact_id in (user.remnawave_id, getattr(subscription, 'remnawave_id', None)):
+            if existing_users or not exact_id:
+                continue
             try:
-                existing_user = await api.get_user_by_uuid(user.remnawave_uuid)
+                existing_user = await api.get_user_by_id(exact_id)
                 if existing_user:
                     existing_users = [existing_user]
             except Exception:
                 pass
 
+        adoption_error: Exception | None = None
+        if not existing_users:
+            # shortUuid — тоже точный ключ, и он обязан идти ПЕРЕД поиском по
+            # telegramId: у человека может быть несколько панельных аккаунтов, и
+            # тогда телеграм-поиск вернёт список, из которого ниже берётся
+            # первый попавшийся. Именно поэтому бэкфилл в такой ситуации
+            # отказывается угадывать — здесь нельзя вести себя иначе.
+            try:
+                adopted = await self._adopt_panel_user_by_short_uuid(api, subscription)
+            except Exception as error:
+                # «Панель моргнула» — это «не знаем», а не «аккаунта нет». В
+                # прежней позиции последнего шанса такую ошибку можно было
+                # ронять сразу; теперь этот шаг идёт первым, и падение отменяло
+                # бы операции, которые прекрасно решаются по telegramId.
+                # Поэтому идём дальше, но запоминаем: если больше ничем не
+                # опознаем, создавать нового НЕЛЬЗЯ — упадём честно.
+                adoption_error = error
+                adopted = None
+                logger.warning(
+                    '⚠️ Не удалось опознать панельного пользователя по short_uuid — пробуем другие ключи',
+                    subscription_id=getattr(subscription, 'id', None),
+                    error=error,
+                )
+            if adopted is not None:
+                existing_users = [adopted]
+
         if not existing_users and user.telegram_id:
-            existing_users = await api.get_user_by_telegram_id(user.telegram_id)
+            existing_users = await api.find_users_by_telegram_id(user.telegram_id)
 
         if not existing_users and user.email:
             try:
-                existing_users = await api.get_user_by_email(user.email)
+                existing_users = await api.find_users_by_email(user.email)
             except Exception:
                 pass
+
+        if not existing_users and adoption_error is not None:
+            # Ничем не опознали, а точный ключ остался непроверенным: создание
+            # здесь завело бы дубль рядом с живым оплаченным аккаунтом.
+            raise adoption_error
+
+        if len(existing_users) > 1:
+            logger.warning(
+                '⚠️ У пользователя несколько панельных аккаунтов, точного ключа нет — берём первый',
+                user_id=user.id,
+                subscription_id=getattr(subscription, 'id', None),
+                candidates=[u.id for u in existing_users],
+            )
 
         now = datetime.now(UTC)
         is_actually_active = (
@@ -460,15 +662,14 @@ class SubscriptionService:
             remnawave_user = existing_users[0]
 
             if settings.RESET_DEVICES_ON_RENEWAL:
-                try:
-                    await api.reset_user_devices(remnawave_user.uuid)
+                if await api.reset_user_devices(remnawave_user.id):
                     logger.info('🔧 Сброшены HWID устройства', _format_user_log=self._format_user_log(user))
-                except Exception as hwid_error:
-                    logger.warning('⚠️ Не удалось сбросить HWID', hwid_error=hwid_error)
+                else:
+                    logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=remnawave_user.id)
 
-            updated_user = await api.update_user(uuid=remnawave_user.uuid, **common_kwargs)
+            updated_user = await api.update_user(user_id=remnawave_user.id, **common_kwargs)
             if reset_traffic:
-                await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
+                await self._reset_user_traffic(api, updated_user.id, user, reset_reason)
             return updated_user
 
         logger.info('🆕 Создаем нового пользователя в панели', _format_user_log=self._format_user_log(user))
@@ -481,7 +682,7 @@ class SubscriptionService:
         )
         updated_user = await api.create_user(username=username, **common_kwargs)
         if reset_traffic:
-            await self._reset_user_traffic(api, updated_user.uuid, user, reset_reason)
+            await self._reset_user_traffic(api, updated_user.id, user, reset_reason)
         return updated_user
 
     async def update_remnawave_user(
@@ -499,20 +700,24 @@ class SubscriptionService:
                 logger.error('Пользователь не найден', user_id=subscription.user_id)
                 return None
 
-            # Resolve the Remnawave UUID: prefer subscription-level in multi-tariff mode
-            if settings.is_multi_tariff_enabled():
-                remnawave_uuid = subscription.remnawave_uuid
-                if not remnawave_uuid:
-                    logger.warning(
-                        'Multi-tariff: subscription has no remnawave_uuid, cannot update panel',
-                        subscription_id=subscription.id,
-                        user_id=subscription.user_id,
-                    )
-                    return None
-            else:
-                remnawave_uuid = user.remnawave_uuid
-            if not remnawave_uuid:
-                logger.error('RemnaWave UUID не найден для пользователя', user_id=subscription.user_id)
+            # Resolve the Remnawave panel id: prefer subscription-level in multi-tariff mode
+            multi_tariff = settings.is_multi_tariff_enabled()
+            remnawave_id = subscription.remnawave_id if multi_tariff else user.remnawave_id
+
+            if not remnawave_id:
+                # Строка была привязана к панели до апгрейда на 3.0.0: числового
+                # id ей ещё не проставил бэкфил, но shortUuid панель знает.
+                # Просто сдаться здесь нельзя — вызывающие этот метод (докупка
+                # трафика и устройств, смена сквадов) результат не проверяют:
+                # деньги списываются и коммитятся, а в панель не уезжает ничего.
+                remnawave_id = await self._adopt_panel_id_for_update(db, subscription, user, multi_tariff)
+
+            if not remnawave_id:
+                logger.error(
+                    'RemnaWave id не найден для пользователя',
+                    user_id=subscription.user_id,
+                    subscription_id=subscription.id,
+                )
                 return None
 
             # Routine outbound updates must not replace a temporary Telegram-only
@@ -542,7 +747,7 @@ class SubscriptionService:
                 )
                 async with self.get_api_client() as api:
                     metadata_kwargs: dict[str, Any] = {
-                        'uuid': remnawave_uuid,
+                        'user_id': remnawave_id,
                         'description': settings.format_remnawave_user_description(
                             full_name=user.full_name,
                             username=user.username,
@@ -602,7 +807,7 @@ class SubscriptionService:
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
 
                 update_kwargs = dict(
-                    uuid=remnawave_uuid,
+                    user_id=remnawave_id,
                     status=UserStatus.ACTIVE if is_actually_active else UserStatus.DISABLED,
                     expire_at=subscription.end_date
                     if is_actually_active
@@ -655,19 +860,19 @@ class SubscriptionService:
 
                 if reset_traffic:
                     if settings.is_multi_tariff_enabled():
-                        reset_uuid = subscription.remnawave_uuid
-                        if not reset_uuid:
+                        reset_id = subscription.remnawave_id
+                        if not reset_id:
                             logger.warning(
-                                'Multi-tariff: subscription has no remnawave_uuid, skipping traffic reset',
+                                'Multi-tariff: subscription has no remnawave_id, skipping traffic reset',
                                 subscription_id=subscription.id,
                                 user_id=subscription.user_id,
                             )
                     else:
-                        reset_uuid = user.remnawave_uuid
-                    if reset_uuid:
+                        reset_id = user.remnawave_id
+                    if reset_id:
                         await self._reset_user_traffic(
                             api,
-                            reset_uuid,
+                            reset_id,
                             user,
                             reset_reason,
                         )
@@ -679,7 +884,7 @@ class SubscriptionService:
                 status_text = 'активным' if is_actually_active else 'истёкшим'
                 logger.info(
                     '✅ Обновлен RemnaWave пользователь со статусом',
-                    remnawave_uuid=remnawave_uuid,
+                    remnawave_id=remnawave_id,
                     status_text=status_text,
                 )
                 strategy_name = settings.DEFAULT_TRAFFIC_RESET_STRATEGY
@@ -698,7 +903,7 @@ class SubscriptionService:
             if is_user_not_found_error(e):
                 # Пользователя удалили из панели, пока подписка жива в боте, —
                 # пересоздаём вместо ошибки (create-флоу сам найдёт/создаст
-                # панель-юзера и сохранит новый UUID и ссылки в подписку).
+                # панель-юзера и сохранит новый id и ссылки в подписку).
                 return await self.recreate_deleted_panel_user(
                     db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
                 )
@@ -755,15 +960,15 @@ class SubscriptionService:
     async def _reset_user_traffic(
         self,
         api: RemnaWaveAPI,
-        user_uuid: str,
+        panel_user_id: int,
         user,  # User object вместо telegram_id
         reset_reason: str | None = None,
     ) -> None:
-        if not user_uuid:
+        if not panel_user_id:
             return
 
         try:
-            await api.reset_user_traffic(user_uuid)
+            await api.reset_user_traffic(panel_user_id)
             reason_text = f' ({reset_reason})' if reset_reason else ''
             logger.info(
                 '🔄 Сброшен трафик RemnaWave', _format_user_log=self._format_user_log(user), reason_text=reason_text
@@ -773,7 +978,7 @@ class SubscriptionService:
                 '⚠️ Не удалось сбросить трафик RemnaWave', _format_user_log=self._format_user_log(user), error=exc
             )
 
-    async def disable_remnawave_user(self, user_uuid: str, db: AsyncSession | None = None) -> bool:
+    async def disable_remnawave_user(self, panel_user_id: int, db: AsyncSession | None = None) -> bool:
         """``db`` — сессия вызывающего, уже держащего grace-локи (пути удаления
         после ensure_no_open_grace_*): без её проброса grace-обёртка открыла бы
         вторую сессию и самодедлочилась об advisory-локи первой."""
@@ -783,39 +988,39 @@ class SubscriptionService:
             async with self.get_api_client() as api:
                 await set_panel_user_enabled_state_grace_safe(
                     api,
-                    user_uuid,
+                    panel_user_id,
                     enabled=False,
                     db=db,
                 )
-                logger.info('✅ Отключен RemnaWave пользователь', user_uuid=user_uuid)
+                logger.info('✅ Отключен RemnaWave пользователь', panel_user_id=panel_user_id)
                 return True
 
         except Exception as e:
             error_msg = str(e).lower()
             # "User already disabled" - считаем успехом
             if 'already disabled' in error_msg:
-                logger.info('✅ RemnaWave пользователь уже отключен', user_uuid=user_uuid)
+                logger.info('✅ RemnaWave пользователь уже отключен', panel_user_id=panel_user_id)
                 return True
             logger.error('Ошибка отключения RemnaWave пользователя', error=e)
             return False
 
-    async def delete_remnawave_user(self, user_uuid: str) -> bool:
+    async def delete_remnawave_user(self, panel_user_id: int) -> bool:
         """Полное удаление пользователя из панели RemnaWave (хуки прекращаются)."""
         try:
             async with self.get_api_client() as api:
-                await api.delete_user(user_uuid)
-                logger.info('🗑 Удалён RemnaWave пользователь', user_uuid=user_uuid)
+                await api.delete_user(panel_user_id)
+                logger.info('🗑 Удалён RemnaWave пользователь', panel_user_id=panel_user_id)
                 return True
 
         except Exception as e:
             error_msg = str(e).lower()
             if 'not found' in error_msg or 'not exist' in error_msg:
-                logger.info('🗑 RemnaWave пользователь уже удалён', user_uuid=user_uuid)
+                logger.info('🗑 RemnaWave пользователь уже удалён', panel_user_id=panel_user_id)
                 return True
-            logger.error('Ошибка удаления RemnaWave пользователя', error=e, user_uuid=user_uuid)
+            logger.error('Ошибка удаления RemnaWave пользователя', error=e, panel_user_id=panel_user_id)
             return False
 
-    async def enable_remnawave_user(self, user_uuid: str, db: AsyncSession | None = None) -> bool:
+    async def enable_remnawave_user(self, panel_user_id: int, db: AsyncSession | None = None) -> bool:
         """Включить пользователя в RemnaWave (реактивация).
 
         ``db`` — сессия вызывающего, уже держащего grace-локи этих подписок
@@ -826,18 +1031,18 @@ class SubscriptionService:
             async with self.get_api_client() as api:
                 await set_panel_user_enabled_state_grace_safe(
                     api,
-                    user_uuid,
+                    panel_user_id,
                     enabled=True,
                     db=db,
                 )
-                logger.info('✅ Включен RemnaWave пользователь', user_uuid=user_uuid)
+                logger.info('✅ Включен RemnaWave пользователь', panel_user_id=panel_user_id)
                 return True
 
         except Exception as e:
             error_msg = str(e).lower()
             # "User already enabled" - считаем успехом
             if 'already enabled' in error_msg:
-                logger.info('✅ RemnaWave пользователь уже включен', user_uuid=user_uuid)
+                logger.info('✅ RemnaWave пользователь уже включен', panel_user_id=panel_user_id)
                 return True
             logger.error('Ошибка включения RemnaWave пользователя', error=e)
             return False
@@ -869,21 +1074,21 @@ class SubscriptionService:
             if not user:
                 return None
             if settings.is_multi_tariff_enabled():
-                revoke_uuid = subscription.remnawave_uuid
-                if not revoke_uuid:
+                revoke_id = subscription.remnawave_id
+                if not revoke_id:
                     logger.warning(
-                        'Multi-tariff: subscription has no remnawave_uuid, cannot revoke',
+                        'Multi-tariff: subscription has no remnawave_id, cannot revoke',
                         subscription_id=subscription.id,
                         user_id=subscription.user_id,
                     )
                     return None
             else:
-                revoke_uuid = user.remnawave_uuid
-            if not revoke_uuid:
+                revoke_id = user.remnawave_id
+            if not revoke_id:
                 return None
 
             async with self.get_api_client() as api:
-                updated_user = await api.revoke_user_subscription(revoke_uuid)
+                updated_user = await api.revoke_user_subscription(revoke_id)
 
                 subscription.remnawave_short_uuid = updated_user.short_uuid
                 subscription.subscription_url = updated_user.subscription_url
@@ -913,21 +1118,21 @@ class SubscriptionService:
             if not user:
                 return False
             if settings.is_multi_tariff_enabled():
-                sync_uuid = subscription.remnawave_uuid
-                if not sync_uuid:
+                sync_id = subscription.remnawave_id
+                if not sync_id:
                     logger.warning(
-                        'Multi-tariff: subscription has no remnawave_uuid, cannot sync usage',
+                        'Multi-tariff: subscription has no remnawave_id, cannot sync usage',
                         subscription_id=subscription.id,
                         user_id=subscription.user_id,
                     )
                     return False
             else:
-                sync_uuid = user.remnawave_uuid
-            if not sync_uuid:
+                sync_id = user.remnawave_id
+            if not sync_id:
                 return False
 
             async with self.get_api_client() as api:
-                remnawave_user = await api.get_user_by_uuid(sync_uuid)
+                remnawave_user = await api.get_user_by_id(sync_id)
                 if not remnawave_user:
                     return False
 
@@ -964,19 +1169,19 @@ class SubscriptionService:
                 return False, 'user_not_found'
 
             # Проверяем, нужна ли синхронизация
-            sub_uuid = subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
-            needs_sync = not subscription.subscription_url or not sub_uuid
+            panel_user_id = subscription.remnawave_id if settings.is_multi_tariff_enabled() else user.remnawave_id
+            needs_sync = not subscription.subscription_url or not panel_user_id
 
             if not needs_sync:
                 # Проверяем, существует ли пользователь в RemnaWave
                 try:
                     async with self.get_api_client() as api:
-                        remnawave_user = await api.get_user_by_uuid(sub_uuid)
+                        remnawave_user = await api.get_user_by_id(panel_user_id)
                         if not remnawave_user:
                             needs_sync = True
                             logger.warning(
                                 'Пользователь не найден в RemnaWave, требуется синхронизация',
-                                remnawave_uuid=sub_uuid,
+                                remnawave_id=panel_user_id,
                             )
                 except Exception as check_error:
                     logger.warning('Не удалось проверить пользователя в RemnaWave', check_error=check_error)
@@ -989,12 +1194,12 @@ class SubscriptionService:
                 'Синхронизация подписки с RemnaWave',
                 subscription_id=subscription.id,
                 subscription_url=bool(subscription.subscription_url),
-                remnawave_uuid=bool(sub_uuid),
+                remnawave_id=bool(panel_user_id),
             )
 
             # Пытаемся синхронизировать
             result = None
-            if sub_uuid:
+            if panel_user_id:
                 # Пробуем обновить существующего пользователя
                 result = await self.update_remnawave_user(
                     db,
@@ -1005,12 +1210,18 @@ class SubscriptionService:
                 if not result:
                     logger.warning(
                         'Не удалось обновить пользователя в RemnaWave, пробуем создать заново',
-                        remnawave_uuid=sub_uuid,
+                        remnawave_id=panel_user_id,
                     )
-                    # Сбрасываем старый UUID, create_remnawave_user установит новый
+                    # Сбрасываем старый id, create_remnawave_user установит новый.
+                    # Исторический uuid обнуляем ВМЕСТЕ с ним (до 3.0.0 так и было):
+                    # иначе строка останется с uuid удалённого аккаунта при живом
+                    # новом id, а бэкфилл строит по этой паре карту uuid -> id и
+                    # выдаст grace-сессии мёртвого аккаунта живой, оплаченный.
                     if settings.is_multi_tariff_enabled():
+                        subscription.remnawave_id = None
                         subscription.remnawave_uuid = None
                     else:
+                        user.remnawave_id = None
                         user.remnawave_uuid = None
                     result = await self.create_remnawave_user(
                         db,
@@ -1049,23 +1260,38 @@ class SubscriptionService:
     async def validate_and_clean_subscription(self, db: AsyncSession, subscription: Subscription, user: User) -> bool:
         try:
             needs_cleanup = False
+            # Отдельно от `needs_cleanup`: «панель не знает этот id» и «аккаунт
+            # принадлежит другому человеку» — разные вещи. Перепривязка по
+            # shortUuid допустима только для первого; для второго она означала бы
+            # «оставить чужой аккаунт», ровно то, ради чего проверка и стоит.
+            panel_lost_the_id = False
+            foreign_short_uuid = False
             user_log = self._format_user_log(user)
 
-            # In multi-tariff mode, validate per-subscription UUID, not user-level UUID
-            check_uuid = subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
+            # In multi-tariff mode, validate per-subscription panel id, not user-level id.
+            # В single-tariff берём id пользователя, но при пустом — id самой
+            # подписки: бэкфилл штатно оставляет строку пользователя
+            # неразрешённой, заполнив при этом подписку, и без этого фолбэка
+            # проверка считала бы аккаунт отсутствующим и стирала идентичность,
+            # которую только что восстановили, — с пересозданием дубля в панели.
+            if settings.is_multi_tariff_enabled():
+                check_id = subscription.remnawave_id
+            else:
+                check_id = user.remnawave_id or subscription.remnawave_id
 
-            if check_uuid:
+            if check_id:
                 try:
                     async with self.get_api_client() as api:
-                        remnawave_user = await api.get_user_by_uuid(check_uuid)
+                        remnawave_user = await api.get_user_by_id(check_id)
 
                         if not remnawave_user:
                             logger.warning(
-                                '⚠️ UUID не найден в панели',
+                                '⚠️ id не найден в панели',
                                 user_log=user_log,
-                                remnawave_uuid=check_uuid,
+                                remnawave_id=check_id,
                             )
                             needs_cleanup = True
+                            panel_lost_the_id = True
                         elif (
                             user.telegram_id
                             and remnawave_user.telegram_id
@@ -1080,23 +1306,94 @@ class SubscriptionService:
                 except Exception as api_error:
                     logger.error('❌ Ошибка проверки пользователя в панели', api_error=api_error)
                     # A timeout/5xx is not proof that the panel user vanished.
-                    # Preserve the UUID and abort so a retry cannot create a
+                    # Preserve the panel id and abort so a retry cannot create a
                     # duplicate Remnawave account.
                     return False
 
-            if subscription.remnawave_short_uuid and not check_uuid:
-                logger.warning('⚠️ У подписки есть short_uuid, но нет remnawave_uuid')
+            # Гейт по `panel_lost_the_id`, а НЕ по «не было check_id»: строка с
+            # протухшим числовым id (панель его не знает) иначе теряла последний
+            # шанс — очистка стирала единственный точный ключ восстановления.
+            # И НЕ по `needs_cleanup`: тот же флаг ставит несовпадение владельца,
+            # а для него перепривязка недопустима.
+            if subscription.remnawave_short_uuid and (panel_lost_the_id or not check_id):
+                # Раньше это однозначно значило «мусорные данные». После апгрейда
+                # на 3.0.0 у той же комбинации есть второе прочтение: строка была
+                # привязана к панели, а числовой id ей ещё не проставил бэкфил.
+                # Разница принципиальна — очистка стирает remnawave_short_uuid,
+                # единственный точный ключ восстановления связи. Поэтому решает
+                # не догадка, а сама панель.
+                try:
+                    async with self.get_api_client() as api:
+                        panel_user = await api.get_user_by_short_uuid(subscription.remnawave_short_uuid)
+                except Exception as api_error:
+                    logger.error(
+                        '❌ Не удалось проверить short_uuid в панели — очистку не делаем',
+                        subscription_id=subscription.id,
+                        api_error=api_error,
+                    )
+                    return False
+
+                panel_telegram_id = getattr(panel_user, 'telegram_id', None) if panel_user is not None else None
+                if (
+                    panel_user is not None
+                    and user.telegram_id
+                    and panel_telegram_id
+                    and panel_telegram_id != user.telegram_id
+                ):
+                    # Нашли по shortUuid, но аккаунт чужой — привязывать нельзя.
+                    logger.warning(
+                        '⚠️ Аккаунт по short_uuid принадлежит другому telegram_id — не привязываем',
+                        subscription_id=subscription.id,
+                        panel_telegram_id=panel_telegram_id,
+                    )
+                    panel_user = None
+                    needs_cleanup = True
+                    foreign_short_uuid = True
+
+                if panel_user is not None:
+                    logger.info(
+                        '🔗 Панельный пользователь опознан по short_uuid, проставляем remnawave_id',
+                        subscription_id=subscription.id,
+                        remnawave_id=panel_user.id,
+                    )
+                    # Та же защита частично-уникального индекса, что и в
+                    # `create_remnawave_user`: соседняя подписка того же человека
+                    # штатно держит этот аккаунт после бэкфила, и безусловная
+                    # запись падала бы здесь на IntegrityError.
+                    if await self._panel_id_is_free_for(db, subscription, panel_user.id):
+                        subscription.remnawave_id = panel_user.id
+                    else:
+                        logger.warning(
+                            '⚠️ Панельный id уже закреплён за другой подпиской — адресуем через пользователя',
+                            subscription_id=subscription.id,
+                            remnawave_id=panel_user.id,
+                        )
+                    if not settings.is_multi_tariff_enabled() and not user.remnawave_id:
+                        user.remnawave_id = panel_user.id
+                    await db.flush((subscription, user))
+                    return True
+
+                if foreign_short_uuid:
+                    logger.warning('⚠️ short_uuid ведёт на аккаунт другого пользователя — связь рвём')
+                else:
+                    logger.warning('⚠️ У подписки есть short_uuid, но панель его не знает')
                 needs_cleanup = True
 
             if needs_cleanup:
                 logger.info('🧹 Очищаем мусорные данные подписки', user_log=user_log)
 
                 subscription.remnawave_short_uuid = None
+                subscription.remnawave_id = None
+                # Вместе с id обнуляем и исторический uuid — иначе строка несёт
+                # uuid удалённого аккаунта, а следующий id будет уже от нового:
+                # бэкфилл строит по этой паре карту и свяжет grace-сессию
+                # мёртвого аккаунта с живым. До 3.0.0 uuid чистился здесь же.
                 subscription.remnawave_uuid = None
                 subscription.subscription_url = ''
                 subscription.subscription_crypto_link = ''
 
                 if not settings.is_multi_tariff_enabled():
+                    user.remnawave_id = None
                     user.remnawave_uuid = None
 
                 # Keep cleanup in the caller's transaction.  Committing here
@@ -1221,23 +1518,23 @@ class SubscriptionService:
                         if not user:
                             return False
                         if settings.is_multi_tariff_enabled():
-                            remnawave_uuid = sub.remnawave_uuid
-                            if not remnawave_uuid:
+                            remnawave_id = sub.remnawave_id
+                            if not remnawave_id:
                                 logger.warning(
-                                    'Multi-tariff: subscription has no remnawave_uuid, skipping squad sync',
+                                    'Multi-tariff: subscription has no remnawave_id, skipping squad sync',
                                     subscription_id=sub.id,
                                     user_id=sub.user_id,
                                 )
                                 return False
                         else:
-                            remnawave_uuid = user.remnawave_uuid
-                        if not remnawave_uuid:
+                            remnawave_id = user.remnawave_id
+                        if not remnawave_id:
                             return False
 
                         ext_squad_uuid = sub.tariff.external_squad_uuid if sub.tariff else None
 
                         update_kwargs = dict(
-                            uuid=remnawave_uuid,
+                            user_id=remnawave_id,
                             description=settings.format_remnawave_user_description(
                                 full_name=user.full_name,
                                 username=user.username,
@@ -1320,7 +1617,7 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
     НЕ удаляя пользователя из БД (тикеты и аккаунт остаются).
 
     Панельного пользователя ОТКЛЮЧАЕМ (disable), а не удаляем — обратимо. Дальше юзер
-    может купить тариф с нуля. Возвращает ``{'panel_disabled': bool, 'panel_uuid': str|None}``.
+    может купить тариф с нуля. Возвращает ``{'panel_disabled': bool, 'panel_user_id': int|None}``.
     """
     from app.database.crud.subscription import reset_subscription
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
@@ -1333,25 +1630,25 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
     await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
     await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
-    # В мультитарифном режиме у каждой подписки свой панельный UUID — НЕ откатываемся
-    # на user.remnawave_uuid (это легаси single-tariff UUID, иначе можно отключить
+    # В мультитарифном режиме у каждой подписки свой панельный id — НЕ откатываемся
+    # на user.remnawave_id (это легаси single-tariff id, иначе можно отключить
     # не того панельного пользователя). В single-tariff fallback на user корректен.
     if settings.is_multi_tariff_enabled():
-        panel_uuid = getattr(subscription, 'remnawave_uuid', None)
+        panel_user_id = getattr(subscription, 'remnawave_id', None)
     else:
-        panel_uuid = getattr(subscription, 'remnawave_uuid', None) or getattr(user, 'remnawave_uuid', None)
+        panel_user_id = getattr(subscription, 'remnawave_id', None) or getattr(user, 'remnawave_id', None)
 
     panel_disabled = False
-    if panel_uuid:
+    if panel_user_id:
         try:
-            panel_disabled = await SubscriptionService().disable_remnawave_user(panel_uuid)
+            panel_disabled = await SubscriptionService().disable_remnawave_user(panel_user_id)
         except Exception as e:
             logger.warning('Не удалось отключить пользователя в RemnaWave при обнулении подписки', error=e)
     else:
         logger.warning(
-            'Обнуление подписки: панельный UUID не найден, отключение в панели пропущено',
+            'Обнуление подписки: панельный id не найден, отключение в панели пропущено',
             subscription_id=getattr(subscription, 'id', None),
         )
 
     await reset_subscription(db, subscription)
-    return {'panel_disabled': panel_disabled, 'panel_uuid': panel_uuid}
+    return {'panel_disabled': panel_disabled, 'panel_user_id': panel_user_id}

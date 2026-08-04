@@ -635,10 +635,10 @@ async def cleanup_blocked_broadcast_users(blocked_telegram_ids: list[int]) -> No
                 if settings.is_multi_tariff_enabled():
                     await session.refresh(user, ['subscriptions'])
                     for sub in user.subscriptions or []:
-                        if sub.remnawave_uuid:
-                            await subscription_service.disable_remnawave_user(sub.remnawave_uuid)
-                elif user.remnawave_uuid:
-                    await subscription_service.disable_remnawave_user(user.remnawave_uuid)
+                        if sub.remnawave_id:
+                            await subscription_service.disable_remnawave_user(sub.remnawave_id)
+                elif user.remnawave_id:
+                    await subscription_service.disable_remnawave_user(user.remnawave_id)
 
                 logger.info(
                     'Заблокированный пользователь очищен при рассылке',

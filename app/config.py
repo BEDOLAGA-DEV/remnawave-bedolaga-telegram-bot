@@ -450,7 +450,7 @@ class Settings(BaseSettings):
     # Фильтрация по серверам (UUID нод через запятую)
     TRAFFIC_MONITORED_NODES: str = ''  # Только эти ноды (пусто = все)
     TRAFFIC_IGNORED_NODES: str = ''  # Исключить эти ноды
-    TRAFFIC_EXCLUDED_USER_UUIDS: str = ''  # Исключить пользователей (UUID через запятую)
+    TRAFFIC_EXCLUDED_USER_IDS: str = ''  # Исключить пользователей (id панели через запятую)
 
     # Параллельность и кулдаун
     TRAFFIC_CHECK_BATCH_SIZE: int = 1000  # Размер батча для получения пользователей
@@ -1918,15 +1918,40 @@ class Settings(BaseSettings):
             return []
         return [n.strip() for n in value.split(',') if n.strip()]
 
-    def get_traffic_excluded_user_uuids(self) -> list[str]:
-        """Возвращает список UUID пользователей для исключения из мониторинга (например, тунельные/служебные)"""
-        if not self.TRAFFIC_EXCLUDED_USER_UUIDS:
+    def get_traffic_excluded_user_ids(self) -> list[int]:
+        """Возвращает список id пользователей панели для исключения из мониторинга
+
+        (например, тунельные/служебные). В Remnawave 3.0.0 пользователь панели
+        идентифицируется числовым id, поэтому нечисловые значения (протухшие
+        UUID из старого конфига) молча отбрасываются — сравнивать их не с чем.
+        """
+        if not self.TRAFFIC_EXCLUDED_USER_IDS:
             return []
         # Убираем комментарии (все после #)
-        value = self.TRAFFIC_EXCLUDED_USER_UUIDS.split('#')[0].strip()
+        value = self.TRAFFIC_EXCLUDED_USER_IDS.split('#')[0].strip()
         if not value:
             return []
-        return [uuid.strip().lower() for uuid in value.split(',') if uuid.strip()]
+        excluded: list[int] = []
+        dropped: list[str] = []
+        for raw in value.split(','):
+            candidate = raw.strip()
+            if not candidate:
+                continue
+            try:
+                excluded.append(int(candidate))
+            except ValueError:
+                dropped.append(candidate)
+        if dropped:
+            # Скорее всего в конфиге остались UUID из версии до 3.0.0. Молча их
+            # отбросить нельзя: оператор считает, что служебные аккаунты
+            # исключены, а суточная проверка начнёт слать по ним алерты.
+            logger.warning(
+                'TRAFFIC_EXCLUDED_USER_IDS: нечисловые значения отброшены '
+                '(в Remnawave 3.0.0 пользователь панели адресуется числовым id, не UUID)',
+                dropped=dropped[:10],
+                dropped_total=len(dropped),
+            )
+        return excluded
 
     def get_traffic_daily_check_time(self) -> time | None:
         """Возвращает время суточной проверки трафика"""
