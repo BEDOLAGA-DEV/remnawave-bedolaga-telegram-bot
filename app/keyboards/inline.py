@@ -275,16 +275,31 @@ def get_channel_sub_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def get_post_registration_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+def get_post_registration_keyboard(
+    language: str = DEFAULT_LANGUAGE,
+    *,
+    has_active_subscription: bool = False,
+) -> InlineKeyboardMarkup:
     texts = get_texts(language)
+
+    # Подписку могла выдать рекламная кампания — она создаётся сама, без
+    # шага «активировать пробную». Предлагать активацию поверх уже выданной
+    # подписки бессмысленно: кнопка ведёт в триал, которого у человека
+    # больше нет, а подключиться ему при этом не предлагают вовсе.
+    if has_active_subscription:
+        first_button = InlineKeyboardButton(
+            text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'),
+            callback_data='subscription_connect',
+        )
+    else:
+        first_button = InlineKeyboardButton(
+            text=texts.t('POST_REGISTRATION_TRIAL_BUTTON', '🚀 Подключиться бесплатно 🚀'),
+            callback_data='trial_activate',
+        )
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=texts.t('POST_REGISTRATION_TRIAL_BUTTON', '🚀 Подключиться бесплатно 🚀'),
-                    callback_data='trial_activate',
-                )
-            ],
+            [first_button],
             [InlineKeyboardButton(text=texts.t('SKIP_BUTTON', 'Пропустить ➡️'), callback_data='back_to_menu')],
         ]
     )

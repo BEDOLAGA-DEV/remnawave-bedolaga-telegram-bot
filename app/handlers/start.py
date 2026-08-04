@@ -2283,13 +2283,21 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
     offer_text = await get_welcome_text_for_user(db, callback.from_user)
     pinned_message = await get_active_pinned_message(db)
 
+    # Подписку мог выдать бонус рекламной кампании — она создаётся сама,
+    # без шага «активировать пробную». Тогда на приветственном экране
+    # предлагаем подключиться, а не активировать несуществующий триал.
+    _post_reg_subs = getattr(user, 'subscriptions', None) or []
+    has_subscription_after_registration = any(s.is_active for s in _post_reg_subs)
+
     if offer_text:
         try:
             if pinned_message and pinned_message.send_before_menu:
                 await _send_pinned_message(callback.bot, db, user, pinned_message)
             await callback.message.answer(
                 offer_text,
-                reply_markup=get_post_registration_keyboard(user.language),
+                reply_markup=get_post_registration_keyboard(
+                    user.language, has_active_subscription=has_subscription_after_registration
+                ),
                 parse_mode='HTML',
             )
             logger.info('✅ Приветственное сообщение отправлено пользователю', telegram_id=user.telegram_id)
@@ -2301,7 +2309,9 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
                 try:
                     await callback.message.answer(
                         offer_text,
-                        reply_markup=get_post_registration_keyboard(user.language),
+                        reply_markup=get_post_registration_keyboard(
+                    user.language, has_active_subscription=has_subscription_after_registration
+                ),
                         parse_mode=None,
                     )
                     if pinned_message and not pinned_message.send_before_menu:
@@ -2644,13 +2654,15 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
     if offer_text:
         try:
-            # Если у пользователя уже есть подписка (например, от промокода), не предлагаем триал
+            # Подписка уже есть (промокод, бонус рекламной кампании) — вместо
+            # активации триала предлагаем подключить устройство: раньше здесь
+            # оставалась только кнопка «Назад», и человек уходил с экрана,
+            # так и не узнав, как подключиться.
             _subs = getattr(user, 'subscriptions', None) or []
             user_has_subscription = any(s.is_active for s in _subs)
-            if user_has_subscription:
-                keyboard = get_back_keyboard(user.language, callback_data='back_to_menu')
-            else:
-                keyboard = get_post_registration_keyboard(user.language)
+            keyboard = get_post_registration_keyboard(
+                user.language, has_active_subscription=user_has_subscription
+            )
 
             if pinned_message and pinned_message.send_before_menu:
                 await _send_pinned_message(message.bot, db, user, pinned_message)
