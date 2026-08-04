@@ -7171,6 +7171,7 @@ async def switch_tariff_endpoint(
             reset_traffic=should_reset_traffic,
             reset_reason='смена тарифа',
             sync_squads=True,
+            tariff_switch_reset=True,
         )
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при смене тарифа', error=e)

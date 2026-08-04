@@ -6,9 +6,10 @@ rules remain testable and so future upstream updates only need a few stable entr
 points.
 
 The billing subscription always remains the source of truth.  Grace is a
-temporary overlay in Remnawave and is recorded as a separate session.  In
-particular, this service never resets used traffic and never extends the billing
-subscription itself.
+temporary overlay in Remnawave and is recorded as a separate session.  The one
+intentional exception to the otherwise read-only traffic accounting rule is a
+tariff switch whose existing billing policy explicitly requested a traffic
+reset; Grace coordinates that reset so its temporary quota cannot be inflated.
 """
 
 from __future__ import annotations
@@ -84,6 +85,14 @@ class GraceRestoreOutcome(StrEnum):
     CONFLICT = 'conflict'
 
 
+class GraceTrafficResetOutcome(StrEnum):
+    """Verified result of a tariff-switch reset while Grace is open."""
+
+    RECOVERED = 'recovered'
+    CONTINUED = 'continued'
+    EXHAUSTED = 'exhausted'
+
+
 class GracePanelTransitionPending(Exception):
     """Signal that Remnawave is still deriving a server-owned panel status."""
 
@@ -115,6 +124,7 @@ class GraceAccessPolicy:
     daily_enabled: bool = False
     free_enabled: bool = False
     reconcile_batch_size: int = 200
+    reset_traffic_on_tariff_switch: bool = False
 
     def __post_init__(self) -> None:
         if self.duration <= timedelta(0):
@@ -150,6 +160,11 @@ class GraceBillingState:
     is_free_tariff: bool = False
     user_status: str = 'active'
     grace_suppressed_until: datetime | None = None
+    # ``tariff_id_known`` distinguishes a real ``NULL`` tariff from legacy
+    # persisted Grace snapshots created before tariff identity was captured.
+    # Unknown legacy identity must never be accepted as proof of a safe switch.
+    tariff_id: int | None = None
+    tariff_id_known: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +217,46 @@ class GraceAccessSession:
     completed_at: datetime | None = None
     last_error: str | None = None
     version: int = 1
+    # Canonical LIMITED incident keys encountered while one unchanged Grace
+    # grant is rebased across tariffs.  They are dedupe aliases only: the
+    # original incident_key and the temporary overlay remain immutable.
+    incident_aliases: tuple[str, ...] = ()
+    # Mutable dedupe cursor for the most recently observed tariff in this
+    # LIMITED reset generation.  It is deliberately separate from
+    # ``billing_before``: the latter tracks the active canonical restore point
+    # and must not be rewritten after completion merely to advance dedupe.
+    limited_lineage_tail: GraceBillingState | None = None
+    # A higher/unlimited replacement tariff can make a stale canonical LIMITED
+    # row active. Its resulting user.enabled webhook must be allowed to update
+    # billing instead of being mistaken for an ordinary Grace overlay echo.
+    allow_recovery_enabled_webhook: bool = False
+    # Durable intent written before the irreversible Remnawave reset call.  It
+    # contains the exact post-switch canonical state so reconciliation can
+    # resume after a crash without issuing a second reset.  Completed immediate
+    # resets retain it briefly as proof for suppressing a delayed fence webhook.
+    traffic_reset_target: GraceBillingState | None = None
+    # Remaining bytes from the original one-shot Grace grant, measured from the
+    # panel immediately before the reset.  With no target it is retained as an
+    # applied fence fingerprint, not a pending reset. ``None`` means neither is
+    # present; zero stays distinct because Remnawave's traffic limit 0 means
+    # unlimited.
+    traffic_reset_remaining_bytes: int | None = None
+    # Lower bound of the irreversible reset operation. It survives later Grace
+    # completion so delayed reset webhooks are matched to the reset interval,
+    # not to the unrelated time at which the Grace session eventually closes.
+    traffic_reset_started_at: datetime | None = None
+    # Upper bound of the reset operation. It is deliberately independent from
+    # Grace completion, which may happen minutes or days later.
+    traffic_reset_finished_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GraceTrafficResetResult:
+    """Panel state produced by one idempotent tariff-switch traffic reset."""
+
+    outcome: GraceTrafficResetOutcome
+    panel: GracePanelSnapshot
+    overlay: GracePanelOverlay | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,18 +316,51 @@ class GracePanelGateway(Protocol):
         force_disable: bool = False,
     ) -> GraceRestoreOutcome: ...
 
+    async def revoke_missing_billing(
+        self,
+        remnawave_id: int,
+        *,
+        expected_overlay: GracePanelOverlay,
+    ) -> None: ...
+
     async def apply_billing_state(
         self,
         billing: GraceBillingState,
         *,
         expected_overlay: GracePanelOverlay,
+        expected_restored_snapshot: GracePanelSnapshot | None = None,
+        require_overlay_source: bool = False,
+        expected_last_traffic_reset_at: datetime | None = None,
     ) -> None: ...
+
+    async def prepare_tariff_rebase(
+        self,
+        billing: GraceBillingState,
+        *,
+        expected_overlay: GracePanelOverlay,
+        expected_last_traffic_reset_at: datetime | None,
+    ) -> GracePanelSnapshot | None: ...
+
+    async def apply_tariff_switch_traffic_reset(
+        self,
+        billing: GraceBillingState,
+        *,
+        reason: GraceReason,
+        expected_overlay: GracePanelOverlay,
+        expected_last_traffic_reset_at: datetime | None,
+        remaining_grace_bytes: int,
+    ) -> GraceTrafficResetResult: ...
 
 
 class GraceBillingGateway(Protocol):
-    """Read-only adapter for the bot's canonical subscription state."""
+    """Canonical billing adapter used by the Grace state machine."""
 
     async def get_subscription(self, subscription_id: int) -> GraceBillingState | None: ...
+
+    async def mark_active_after_traffic_reset(
+        self,
+        expected: GraceBillingState,
+    ) -> GraceBillingState | None: ...
 
 
 class GraceAccessService:
@@ -350,6 +438,41 @@ class GraceAccessService:
             reason,
             last_traffic_reset_at=panel_snapshot.last_traffic_reset_at,
         )
+        lineage_key: str | None = None
+        if reason is GraceReason.LIMITED:
+            lineage_key = build_tariff_rebase_lineage_key(
+                billing,
+                reason,
+                last_traffic_reset_at=panel_snapshot.last_traffic_reset_at,
+            )
+            lineage_session = await self._store.get_by_incident(
+                billing.subscription_id,
+                lineage_key,
+            )
+            if lineage_session and tariff_rebase_lineage_blocks_new_grant(
+                billing,
+                lineage_session,
+            ):
+                lineage_session = await self._advance_blocked_limited_lineage(
+                    lineage_session,
+                    billing,
+                    incident_key=incident_key,
+                )
+                return GraceStartResult(
+                    GraceStartDecision.ALREADY_GRANTED,
+                    lineage_session,
+                )
+            if lineage_session:
+                # A proven same-tariff entitlement increase may legitimately
+                # reuse a byte limit seen on an older tariff. Give that grant a
+                # deterministic tariff-qualified key. Besides avoiding the old
+                # key collision, this permits each tariff/quota entitlement only
+                # once per reset generation even if tariffs are later cycled.
+                incident_key = _build_limited_entitlement_incident_key(
+                    incident_key,
+                    billing,
+                )
+
         previous_session = await self._store.get_by_incident(billing.subscription_id, incident_key)
         if previous_session:
             return GraceStartResult(GraceStartDecision.ALREADY_GRANTED, previous_session)
@@ -374,6 +497,8 @@ class GraceAccessService:
             started_at=now,
             grace_until=overlay.expire_at,
             updated_at=now,
+            incident_aliases=((lineage_key,) if lineage_key is not None else ()),
+            limited_lineage_tail=(billing if reason is GraceReason.LIMITED else None),
         )
         pending_session = await self._store.create(pending_session)
         if pending_session.incident_key != incident_key:
@@ -391,6 +516,34 @@ class GraceAccessService:
             else GraceStartDecision.SUPERSEDED
         )
         return GraceStartResult(decision, active_session)
+
+    async def _advance_blocked_limited_lineage(
+        self,
+        session: GraceAccessSession,
+        billing: GraceBillingState,
+        *,
+        incident_key: str,
+    ) -> GraceAccessSession:
+        """Remember a post-completion switch without changing restore history."""
+        tail = session.limited_lineage_tail or session.billing_before
+        if (
+            session.state is not GraceSessionState.COMPLETED
+            or session.reason is not GraceReason.LIMITED
+            or billing.remnawave_id != tail.remnawave_id
+            or not billing.tariff_id_known
+        ):
+            return session
+        if tail.tariff_id_known and billing.tariff_id == tail.tariff_id:
+            return session
+
+        aliases = tuple(dict.fromkeys((*session.incident_aliases, incident_key)))
+        updated = replace(
+            session,
+            incident_aliases=aliases,
+            limited_lineage_tail=billing,
+            updated_at=_as_utc(self._clock()),
+        )
+        return await self._store.save(updated)
 
     async def payment_has_recovered(self, subscription_id: int) -> bool:
         """Return whether fresh canonical billing represents a real recovery."""
@@ -430,6 +583,27 @@ class GraceAccessService:
             )
         await self._complete(session, GraceCompletionReason.PAID)
         return True
+
+    async def apply_tariff_switch_traffic_reset(self, subscription_id: int) -> str | None:
+        """Apply an explicitly configured tariff-switch reset under Grace control.
+
+        ``None`` means the open session is not an exact tariff-switch reset
+        candidate.  Callers must never fall back to a direct panel reset while
+        Grace remains open: the old absolute overlay limit contains historical
+        usage and would turn into extra free quota after the counter is zeroed.
+        """
+        session = await self._store.get_open(subscription_id)
+        if session is None:
+            return None
+        billing = await self._billing.get_subscription(subscription_id)
+        if billing is None:
+            return None
+        return await self._try_tariff_switch_traffic_reset(
+            session,
+            billing,
+            now=_as_utc(self._clock()),
+            force_restore=False,
+        )
 
     async def reconcile(self, *, limit: int | None = None) -> GraceReconcileResult:
         """Repair pending sessions and finish paid or timed-out sessions."""
@@ -481,6 +655,7 @@ class GraceAccessService:
                     latest_session,
                     GraceCompletionReason.CONFLICT,
                     last_error=_error_text(error),
+                    retain_traffic_reset_proof=latest_session.traffic_reset_target is not None,
                 )
                 result = replace(result, conflicts=result.conflicts + 1)
                 continue
@@ -528,14 +703,28 @@ class GraceAccessService:
         session = await self._store.get_open(subscription_id)
 
         if session is None:
-            if normalized_event != 'user.modified':
+            if normalized_event not in {
+                'user.modified',
+                'user.enabled',
+                'user.traffic_reset',
+            }:
                 return False
             completed_sessions = await self._store.list_recent_completed(
                 subscription_id,
                 limit=8,
             )
+            if normalized_event == 'user.modified':
+                return any(
+                    webhook_matches_expired_restore(payload, completed_session)
+                    or webhook_matches_traffic_reset_intermediate(
+                        payload,
+                        completed_session,
+                    )
+                    for completed_session in completed_sessions
+                )
             return any(
-                webhook_matches_expired_restore(payload, completed_session) for completed_session in completed_sessions
+                webhook_matches_traffic_reset_signal(payload, completed_session)
+                for completed_session in completed_sessions
             )
 
         # A real administrative disable must always win.  We deliberately let
@@ -554,6 +743,9 @@ class GraceAccessService:
                 payload,
                 session,
             )
+
+        if normalized_event == 'user.enabled' and session.allow_recovery_enabled_webhook:
+            return False
 
         # These transitions are expected consequences of enabling/consuming/
         # expiring the temporary overlay. Billing remains authoritative; a real
@@ -679,6 +871,16 @@ class GraceAccessService:
         force_restore: bool,
     ) -> str:
         billing = await self._billing.get_subscription(session.subscription_id)
+        if session.traffic_reset_target is not None and billing is not None:
+            reset_action = await self._try_tariff_switch_traffic_reset(
+                session,
+                billing,
+                now=_as_utc(self._clock()),
+                force_restore=force_restore,
+            )
+            if reset_action is not None:
+                return reset_action
+
         if billing and billing_has_recovered(session, billing):
             await self._panel.apply_billing_state(
                 billing,
@@ -706,28 +908,60 @@ class GraceAccessService:
             action, _ = await self._restore_and_complete(session, GraceCompletionReason.REVOKED)
             return action
 
-        # The recipient or canonical incident changed while grace was open
-        # (admin cancellation/shortening, tariff change, panel identity
-        # replacement, squads/device/limit change).  Never continue an overlay
-        # based on a stale snapshot.  When the same panel user still belongs to
-        # billing, canonical billing wins immediately; otherwise restore the old
-        # user by compare-and-set and leave unrelated panel changes untouched.
-        # ``session.remnawave_id`` is always a positive int, so a subscription
-        # that lost its panel link (``None``) can never match it by accident.
+        now = _as_utc(self._clock())
+
+        # A proven tariff switch may update the future restore point while the
+        # already granted restricted overlay keeps its original quota and
+        # deadline.  Every ambiguous canonical or panel change still follows
+        # the fail-closed conflict path below.
         if not billing_incident_is_eligible(billing, session.reason) or not billing_still_matches_session(
             session, billing
         ):
+            reset_action = await self._try_tariff_switch_traffic_reset(
+                session,
+                billing,
+                now=now,
+                force_restore=force_restore,
+            )
+            if reset_action is not None:
+                return reset_action
+
+            rebased_action = await self._try_rebase_tariff_change(
+                session,
+                billing,
+                now=now,
+                force_restore=force_restore,
+            )
+            if rebased_action is not None:
+                return rebased_action
+
+            # The recipient or canonical incident changed while grace was open
+            # (admin cancellation/shortening, panel id replacement, or an
+            # unprovable squads/device/limit change). Canonical billing wins for
+            # the same panel user; unrelated panel changes remain untouched by
+            # the gateway compare-and-set checks.
+            # ``session.remnawave_id`` is always a positive int, so a
+            # subscription that lost its panel link cannot match by accident.
             if billing.remnawave_id == session.remnawave_id:
+                session = await self._remember_terminal_tariff_lineage(session, billing)
+                if session.state is GraceSessionState.COMPLETED:
+                    return (
+                        session.completion_reason or GraceCompletionReason.CONFLICT
+                    ).value
                 await self._panel.apply_billing_state(
                     billing,
                     expected_overlay=session.overlay,
+                    expected_restored_snapshot=(
+                        session.panel_before
+                        if session.state is GraceSessionState.RESTORING
+                        else None
+                    ),
                 )
                 await self._complete(session, GraceCompletionReason.CONFLICT)
                 return GraceCompletionReason.CONFLICT.value
             action, _ = await self._restore_and_complete(session, GraceCompletionReason.CONFLICT)
             return action
 
-        now = _as_utc(self._clock())
         if session.state is GraceSessionState.PENDING:
             if activate_pending and not force_restore and now < _as_utc(session.grace_until):
                 activated_session = await self._activate_pending(session)
@@ -779,6 +1013,607 @@ class GraceAccessService:
         action, _ = await self._restore_and_complete(session, completion_reason)
         return action
 
+    async def _try_tariff_switch_traffic_reset(
+        self,
+        session: GraceAccessSession,
+        billing: GraceBillingState,
+        *,
+        now: datetime,
+        force_restore: bool,
+    ) -> str | None:
+        target = session.traffic_reset_target
+        remaining_bytes = session.traffic_reset_remaining_bytes
+
+        if target is None:
+            if not tariff_change_requires_traffic_reset(
+                session,
+                billing,
+                self._policy,
+                now=now,
+                force_restore=force_restore,
+            ):
+                return None
+
+            current_panel = await self._panel.read_snapshot(session.remnawave_id)
+            if current_panel is None or not current_panel.traffic_is_known:
+                raise GracePanelTransitionConflict(
+                    'Remnawave traffic state is unavailable before the configured tariff reset'
+                )
+            overlay_matches = panel_matches_overlay(
+                current_panel,
+                session.overlay,
+                now=now,
+            )
+            reset_generation_matches = _reset_generations_equal(
+                current_panel.last_traffic_reset_at,
+                session.panel_before.last_traffic_reset_at,
+            )
+            if not overlay_matches or not reset_generation_matches:
+                raise GracePanelTransitionConflict(
+                    'Remnawave changed before the configured tariff reset could be checkpointed'
+                )
+
+            remaining_bytes = max(
+                0,
+                session.overlay.traffic_limit_bytes - current_panel.used_traffic_bytes,
+            )
+            checkpoint = replace(
+                session,
+                traffic_reset_target=billing,
+                traffic_reset_remaining_bytes=remaining_bytes,
+                traffic_reset_started_at=now,
+                traffic_reset_finished_at=None,
+                allow_recovery_enabled_webhook=session.reason is GraceReason.LIMITED,
+                updated_at=now,
+                last_error=None,
+            )
+            session = await self._store.save(checkpoint)
+            if session.state is GraceSessionState.COMPLETED:
+                return (session.completion_reason or GraceCompletionReason.CONFLICT).value
+            target = session.traffic_reset_target
+            remaining_bytes = session.traffic_reset_remaining_bytes
+
+        if target is None or remaining_bytes is None:
+            raise GracePanelTransitionConflict('Persisted tariff reset intent is incomplete')
+
+        fresh_billing = await self._billing.get_subscription(session.subscription_id)
+        if fresh_billing is None:
+            return await self._finish_changed_traffic_reset_checkpoint(
+                session,
+                None,
+                checkpoint_target=target,
+                remaining_bytes=remaining_bytes,
+                now=now,
+            )
+        if not traffic_reset_billing_matches_target(fresh_billing, target, session.reason):
+            return await self._finish_changed_traffic_reset_checkpoint(
+                session,
+                fresh_billing,
+                checkpoint_target=target,
+                remaining_bytes=remaining_bytes,
+                now=now,
+            )
+
+        reset_result = await self._panel.apply_tariff_switch_traffic_reset(
+            target,
+            reason=session.reason,
+            expected_overlay=session.overlay,
+            expected_last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+            remaining_grace_bytes=remaining_bytes,
+        )
+        reset_finished_at = _bounded_traffic_reset_finished_at(
+            session,
+            observed_at=reset_result.panel.last_traffic_reset_at,
+            now=_as_utc(self._clock()),
+        )
+        session = await self._store.save(
+            replace(
+                session,
+                traffic_reset_started_at=(
+                    session.traffic_reset_started_at or session.updated_at
+                ),
+                traffic_reset_finished_at=reset_finished_at,
+                updated_at=_as_utc(self._clock()),
+            )
+        )
+        if session.state is GraceSessionState.COMPLETED:
+            return (session.completion_reason or GraceCompletionReason.CONFLICT).value
+
+        latest_billing = await self._billing.get_subscription(session.subscription_id)
+        if latest_billing is None or not traffic_reset_billing_matches_target(
+            latest_billing,
+            target,
+            session.reason,
+        ):
+            return await self._finish_changed_traffic_reset_checkpoint(
+                session,
+                latest_billing,
+                checkpoint_target=target,
+                remaining_bytes=remaining_bytes,
+                now=_as_utc(self._clock()),
+            )
+
+        current_incident_key = build_incident_key(
+            target,
+            session.reason,
+            last_traffic_reset_at=reset_result.panel.last_traffic_reset_at,
+        )
+        lineage_key = build_tariff_rebase_lineage_key(
+            target,
+            session.reason,
+            last_traffic_reset_at=reset_result.panel.last_traffic_reset_at,
+        )
+        aliases = tuple(
+            value
+            for value in dict.fromkeys(
+                (*session.incident_aliases, current_incident_key, lineage_key)
+            )
+            if value != session.incident_key
+        )
+
+        if reset_result.outcome is GraceTrafficResetOutcome.RECOVERED:
+            active_billing = await self._billing.mark_active_after_traffic_reset(target)
+            if active_billing is None or _normalize_status(active_billing.status) != 'active':
+                raise GracePanelTransitionConflict(
+                    'Canonical LIMITED subscription was not activated after its verified traffic reset'
+                )
+            completed_source = replace(
+                session,
+                billing_before=target,
+                incident_aliases=aliases,
+                limited_lineage_tail=target,
+                updated_at=_as_utc(self._clock()),
+                last_error=None,
+            )
+            await self._complete(
+                completed_source,
+                GraceCompletionReason.PAID,
+                retain_traffic_reset_proof=True,
+            )
+            return GraceCompletionReason.PAID.value
+
+        if reset_result.outcome is GraceTrafficResetOutcome.EXHAUSTED:
+            exhausted_source = replace(
+                session,
+                billing_before=target,
+                incident_aliases=aliases,
+                allow_recovery_enabled_webhook=False,
+                updated_at=_as_utc(self._clock()),
+                last_error=None,
+            )
+            await self._complete(
+                exhausted_source,
+                GraceCompletionReason.TIMEOUT,
+                retain_traffic_reset_proof=True,
+            )
+            return GraceCompletionReason.TIMEOUT.value
+
+        if reset_result.overlay is None:
+            raise GracePanelTransitionConflict(
+                'Remnawave did not return the continued Grace overlay after traffic reset'
+            )
+        rebased_panel = replace(
+            session.panel_before,
+            expire_at=target.end_at,
+            traffic_limit_bytes=target.traffic_limit_bytes,
+            used_traffic_bytes=reset_result.panel.used_traffic_bytes,
+            squad_uuids=target.squad_uuids,
+            external_squad_uuid=target.external_squad_uuid,
+            last_traffic_reset_at=reset_result.panel.last_traffic_reset_at,
+        )
+        continued = replace(
+            session,
+            billing_before=target,
+            panel_before=rebased_panel,
+            overlay=reset_result.overlay,
+            incident_aliases=aliases,
+            limited_lineage_tail=(target if session.reason is GraceReason.LIMITED else None),
+            allow_recovery_enabled_webhook=False,
+            traffic_reset_target=None,
+            # The pending intent is cleared, while the applied fence quota is
+            # retained as a delayed reset-webhook fingerprint.
+            traffic_reset_remaining_bytes=remaining_bytes,
+            updated_at=_as_utc(self._clock()),
+            last_error=None,
+        )
+        saved = await self._store.save(continued)
+        if saved.state is GraceSessionState.COMPLETED:
+            return (saved.completion_reason or GraceCompletionReason.CONFLICT).value
+        return 'repaired'
+
+    async def _finish_changed_traffic_reset_checkpoint(
+        self,
+        session: GraceAccessSession,
+        billing: GraceBillingState | None,
+        *,
+        checkpoint_target: GraceBillingState,
+        remaining_bytes: int,
+        now: datetime,
+    ) -> str:
+        """Resolve a superseding canonical change from an exact reset state.
+
+        The reset marker may already have produced either the original overlay,
+        its quota fence, or the verified post-reset target.  Closing the session
+        without first converging one of those states would strand temporary
+        Grace routing after the session is no longer repairable.
+        """
+        current_panel = await self._panel.read_snapshot(session.remnawave_id)
+        if current_panel is None:
+            if billing is None:
+                await self._complete(
+                    session,
+                    GraceCompletionReason.REVOKED,
+                    retain_traffic_reset_proof=True,
+                )
+                return GraceCompletionReason.REVOKED.value
+            raise GracePanelTransitionConflict(
+                'Remnawave user disappeared while the tariff reset target was changing'
+            )
+        expected_source = traffic_reset_checkpoint_source_overlay(
+            session,
+            current_panel,
+            checkpoint_target=checkpoint_target,
+            remaining_bytes=remaining_bytes,
+            now=now,
+        )
+        if expected_source is None:
+            raise GracePanelTransitionConflict(
+                'Remnawave changed outside the persisted tariff reset checkpoint'
+            )
+
+        reset_generation_changed = not _reset_generations_equal(
+            current_panel.last_traffic_reset_at,
+            session.panel_before.last_traffic_reset_at,
+        )
+        if reset_generation_changed and session.traffic_reset_finished_at is None:
+            session = await self._store.save(
+                replace(
+                    session,
+                    traffic_reset_finished_at=_bounded_traffic_reset_finished_at(
+                        session,
+                        observed_at=current_panel.last_traffic_reset_at,
+                        now=now,
+                    ),
+                    updated_at=now,
+                )
+            )
+            if session.state is GraceSessionState.COMPLETED:
+                return (session.completion_reason or GraceCompletionReason.CONFLICT).value
+
+        if billing is None:
+            await self._panel.revoke_missing_billing(
+                session.remnawave_id,
+                expected_overlay=expected_source,
+            )
+            await self._complete(
+                session,
+                GraceCompletionReason.REVOKED,
+                retain_traffic_reset_proof=True,
+            )
+            return GraceCompletionReason.REVOKED.value
+
+        if (
+            session.reason is GraceReason.LIMITED
+            and reset_generation_changed
+            and _normalize_status(billing.status) == 'limited'
+            and billing.used_traffic_bytes == 0
+            and billing.end_at is not None
+            and _as_utc(billing.end_at) > now
+        ):
+            active_target = replace(billing, status='active')
+            await self._panel.apply_billing_state(
+                active_target,
+                expected_overlay=expected_source,
+                require_overlay_source=_normalize_status(current_panel.status) in {'active', 'limited'},
+                expected_last_traffic_reset_at=current_panel.last_traffic_reset_at,
+            )
+            active_billing = await self._billing.mark_active_after_traffic_reset(billing)
+            if active_billing is None or _normalize_status(active_billing.status) != 'active':
+                raise GracePanelTransitionConflict(
+                    'Superseding LIMITED billing was not activated after the verified reset'
+                )
+            completed_source = replace(
+                session,
+                billing_before=billing,
+                updated_at=_as_utc(self._clock()),
+                last_error=None,
+            )
+            await self._complete(
+                completed_source,
+                GraceCompletionReason.PAID,
+                retain_traffic_reset_proof=True,
+            )
+            return GraceCompletionReason.PAID.value
+
+        completion_reason = GraceCompletionReason.CONFLICT
+        if billing_has_recovered(session, billing):
+            completion_reason = GraceCompletionReason.PAID
+        elif billing_is_revoked(billing):
+            completion_reason = GraceCompletionReason.REVOKED
+
+        await self._panel.apply_billing_state(
+            billing,
+            expected_overlay=expected_source,
+            require_overlay_source=(
+                _normalize_status(billing.status) in {'active', 'trial'}
+                and _normalize_status(current_panel.status) in {'active', 'limited'}
+            ),
+            expected_last_traffic_reset_at=current_panel.last_traffic_reset_at,
+        )
+        completed_source = replace(
+            session,
+            billing_before=billing,
+            updated_at=_as_utc(self._clock()),
+            last_error=(
+                'Canonical billing superseded the persisted tariff reset target'
+                if completion_reason is GraceCompletionReason.CONFLICT
+                else None
+            ),
+        )
+        await self._complete(
+            completed_source,
+            completion_reason,
+            last_error=completed_source.last_error,
+            retain_traffic_reset_proof=True,
+        )
+        return completion_reason.value
+
+    async def _try_rebase_tariff_change(
+        self,
+        session: GraceAccessSession,
+        billing: GraceBillingState,
+        *,
+        now: datetime,
+        force_restore: bool,
+        recovery_checkpointed: bool = False,
+    ) -> str | None:
+        if not tariff_change_can_preserve_grace(
+            session,
+            billing,
+            self._policy,
+            now=now,
+            force_restore=force_restore,
+        ):
+            return None
+
+        current_panel = await self._panel.prepare_tariff_rebase(
+            billing,
+            expected_overlay=session.overlay,
+            expected_last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+        )
+        if current_panel is None:
+            return None
+
+        if session.reason is GraceReason.LIMITED:
+            if not current_panel.traffic_is_known:
+                return None
+            subscription_is_unexpired = bool(
+                billing.end_at is not None and _as_utc(billing.end_at) > now
+            )
+            new_tariff_has_access = (
+                billing.traffic_limit_bytes == 0
+                or current_panel.used_traffic_bytes < billing.traffic_limit_bytes
+            )
+            if subscription_is_unexpired and new_tariff_has_access:
+                # The database status can remain LIMITED until Remnawave echoes
+                # the tariff PATCH.  The open Grace guard deliberately masks that
+                # PATCH, so derive the factual recovery from fresh panel traffic
+                # and let canonical access win without waiting for the webhook.
+                if not recovery_checkpointed:
+                    recovering_session = replace(
+                        session,
+                        allow_recovery_enabled_webhook=True,
+                        updated_at=now,
+                        last_error=None,
+                    )
+                    recovering_session = await self._store.save(recovering_session)
+                    if recovering_session.state is GraceSessionState.COMPLETED:
+                        return (
+                            recovering_session.completion_reason
+                            or GraceCompletionReason.CONFLICT
+                        ).value
+
+                    # Saving the webhook marker is an intentional durable
+                    # checkpoint and therefore releases/reacquires the database
+                    # lock. Discard every pre-checkpoint billing decision and
+                    # process only the winner observed under the new lock.
+                    fresh_billing = await self._billing.get_subscription(session.subscription_id)
+                    checkpoint_session = replace(
+                        recovering_session,
+                        allow_recovery_enabled_webhook=False,
+                    )
+                    if fresh_billing is not None:
+                        fresh_action = await self._try_rebase_tariff_change(
+                            checkpoint_session,
+                            fresh_billing,
+                            now=_as_utc(self._clock()),
+                            force_restore=False,
+                            recovery_checkpointed=True,
+                        )
+                        if fresh_action is not None:
+                            return fresh_action
+                        fresh_completion = await self._complete_for_fresh_billing_change(
+                            checkpoint_session,
+                            fresh_billing,
+                            expected_restored_snapshot=None,
+                        )
+                        if fresh_completion is not None:
+                            return fresh_completion[0]
+                        if billing_still_matches_session(checkpoint_session, fresh_billing):
+                            await self._store.save(
+                                replace(
+                                    checkpoint_session,
+                                    updated_at=_as_utc(self._clock()),
+                                    last_error=None,
+                                )
+                            )
+                            return 'unchanged'
+
+                    completion_reason = (
+                        GraceCompletionReason.REVOKED
+                        if fresh_billing is None
+                        else GraceCompletionReason.CONFLICT
+                    )
+                    action, _ = await self._restore_and_complete(
+                        checkpoint_session,
+                        completion_reason,
+                    )
+                    return action
+
+                recovered_billing = replace(
+                    billing,
+                    status='active',
+                    used_traffic_bytes=current_panel.used_traffic_bytes,
+                )
+                await self._panel.apply_billing_state(
+                    recovered_billing,
+                    expected_overlay=session.overlay,
+                    require_overlay_source=True,
+                    expected_last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+                )
+                await self._complete(session, GraceCompletionReason.PAID)
+                return GraceCompletionReason.PAID.value
+
+        current_incident_key = build_incident_key(
+            billing,
+            session.reason,
+            last_traffic_reset_at=current_panel.last_traffic_reset_at,
+        )
+        lineage_key = build_tariff_rebase_lineage_key(
+            billing,
+            session.reason,
+            last_traffic_reset_at=current_panel.last_traffic_reset_at,
+        )
+        aliases = tuple(
+            dict.fromkeys(
+                (
+                    *session.incident_aliases,
+                    current_incident_key,
+                    lineage_key,
+                )
+            )
+        )
+        aliases = tuple(value for value in aliases if value != session.incident_key)
+        rebased_panel = replace(
+            session.panel_before,
+            expire_at=billing.end_at,
+            traffic_limit_bytes=billing.traffic_limit_bytes,
+            used_traffic_bytes=current_panel.used_traffic_bytes,
+            squad_uuids=billing.squad_uuids,
+            external_squad_uuid=billing.external_squad_uuid,
+        )
+        rebased = replace(
+            session,
+            billing_before=billing,
+            panel_before=rebased_panel,
+            incident_aliases=aliases,
+            limited_lineage_tail=billing,
+            allow_recovery_enabled_webhook=False,
+            updated_at=now,
+            last_error=None,
+        )
+        saved = await self._store.save(rebased)
+        if saved.state is GraceSessionState.COMPLETED:
+            return (saved.completion_reason or GraceCompletionReason.CONFLICT).value
+
+        logger.info(
+            'Grace canonical tariff restore point rebased',
+            subscription_id=session.subscription_id,
+            grace_session_id=session.id,
+            reason=session.reason.value,
+            old_tariff_id=session.billing_before.tariff_id,
+            new_tariff_id=billing.tariff_id,
+            grace_until=session.grace_until,
+        )
+        return 'repaired'
+
+    async def _complete_for_fresh_billing_change(
+        self,
+        session: GraceAccessSession,
+        billing: GraceBillingState | None,
+        *,
+        expected_restored_snapshot: GracePanelSnapshot | None,
+    ) -> tuple[str, GraceAccessSession] | None:
+        if billing is None:
+            return None
+
+        if billing_has_recovered(session, billing):
+            await self._panel.apply_billing_state(
+                billing,
+                expected_overlay=session.overlay,
+                expected_restored_snapshot=expected_restored_snapshot,
+            )
+            completed = await self._complete(session, GraceCompletionReason.PAID)
+            return GraceCompletionReason.PAID.value, completed
+
+        if billing_is_revoked(billing):
+            await self._panel.apply_billing_state(
+                billing,
+                expected_overlay=session.overlay,
+                expected_restored_snapshot=expected_restored_snapshot,
+            )
+            completed = await self._complete(session, GraceCompletionReason.REVOKED)
+            return GraceCompletionReason.REVOKED.value, completed
+
+        billing_changed = not billing_incident_is_eligible(
+            billing,
+            session.reason,
+        ) or not billing_still_matches_session(session, billing)
+        if not billing_changed or billing.remnawave_id != session.remnawave_id:
+            return None
+
+        session = await self._remember_terminal_tariff_lineage(session, billing)
+        if session.state is GraceSessionState.COMPLETED:
+            reason = session.completion_reason or GraceCompletionReason.CONFLICT
+            return reason.value, session
+        await self._panel.apply_billing_state(
+            billing,
+            expected_overlay=session.overlay,
+            expected_restored_snapshot=expected_restored_snapshot,
+        )
+        completed = await self._complete(session, GraceCompletionReason.CONFLICT)
+        return GraceCompletionReason.CONFLICT.value, completed
+
+    async def _remember_terminal_tariff_lineage(
+        self,
+        session: GraceAccessSession,
+        billing: GraceBillingState,
+    ) -> GraceAccessSession:
+        if (
+            session.reason is not GraceReason.LIMITED
+            or not tariff_change_matches_incident_family(session, billing, self._policy)
+        ):
+            return session
+        current_incident_key = build_incident_key(
+            billing,
+            session.reason,
+            last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+        )
+        lineage_key = build_tariff_rebase_lineage_key(
+            billing,
+            session.reason,
+            last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+        )
+        aliases = tuple(
+            dict.fromkeys(
+                (*session.incident_aliases, current_incident_key, lineage_key)
+            )
+        )
+        updated = replace(
+            session,
+            incident_aliases=aliases,
+            limited_lineage_tail=billing,
+            allow_recovery_enabled_webhook=False,
+            updated_at=_as_utc(self._clock()),
+        )
+        if session.state is GraceSessionState.RESTORING:
+            # Persist this metadata together with the terminal CAS below. A
+            # RESTORING -> RESTORING save is itself a durable checkpoint; doing
+            # it here would release the billing lock between the fresh read and
+            # its canonical panel PATCH.
+            return updated
+        return await self._store.save(updated)
+
     async def _restore_and_complete(
         self,
         session: GraceAccessSession,
@@ -800,13 +1635,13 @@ class GraceAccessService:
             return reason.value, restoring_session
 
         latest_billing = await self._billing.get_subscription(session.subscription_id)
-        if latest_billing and billing_has_recovered(restoring_session, latest_billing):
-            await self._panel.apply_billing_state(
-                latest_billing,
-                expected_overlay=restoring_session.overlay,
-            )
-            completed = await self._complete(restoring_session, GraceCompletionReason.PAID)
-            return GraceCompletionReason.PAID.value, completed
+        fresh_completion = await self._complete_for_fresh_billing_change(
+            restoring_session,
+            latest_billing,
+            expected_restored_snapshot=None,
+        )
+        if fresh_completion is not None:
+            return fresh_completion
 
         outcome = await self._panel.restore_snapshot(
             restoring_session.remnawave_id,
@@ -818,13 +1653,13 @@ class GraceAccessService:
         # Payment may land after the pre-restore check.  Paid billing always wins
         # over an old snapshot, even if the restore PATCH has already succeeded.
         latest_billing = await self._billing.get_subscription(session.subscription_id)
-        if latest_billing and billing_has_recovered(restoring_session, latest_billing):
-            await self._panel.apply_billing_state(
-                latest_billing,
-                expected_overlay=restoring_session.overlay,
-            )
-            completed = await self._complete(restoring_session, GraceCompletionReason.PAID)
-            return GraceCompletionReason.PAID.value, completed
+        fresh_completion = await self._complete_for_fresh_billing_change(
+            restoring_session,
+            latest_billing,
+            expected_restored_snapshot=restoring_session.panel_before,
+        )
+        if fresh_completion is not None:
+            return fresh_completion
 
         if outcome is GraceRestoreOutcome.CONFLICT:
             completed = await self._complete(
@@ -843,8 +1678,14 @@ class GraceAccessService:
         completion_reason: GraceCompletionReason,
         *,
         last_error: str | None = None,
+        retain_traffic_reset_proof: bool = False,
     ) -> GraceAccessSession:
         now = _as_utc(self._clock())
+        has_applied_fence_proof = (
+            session.traffic_reset_target is None
+            and session.traffic_reset_remaining_bytes is not None
+        )
+        retain_reset_proof = retain_traffic_reset_proof or has_applied_fence_proof
         completed_session = replace(
             session,
             state=GraceSessionState.COMPLETED,
@@ -852,6 +1693,21 @@ class GraceAccessService:
             completed_at=now,
             updated_at=now,
             last_error=last_error,
+            allow_recovery_enabled_webhook=False,
+            traffic_reset_target=(session.traffic_reset_target if retain_reset_proof else None),
+            traffic_reset_remaining_bytes=(
+                session.traffic_reset_remaining_bytes if retain_reset_proof else None
+            ),
+            traffic_reset_started_at=(
+                (session.traffic_reset_started_at or session.updated_at)
+                if retain_reset_proof
+                else None
+            ),
+            traffic_reset_finished_at=(
+                session.traffic_reset_finished_at
+                if retain_reset_proof
+                else None
+            ),
         )
         return await self._store.save(completed_session)
 
@@ -894,6 +1750,186 @@ def build_incident_key(
     return f'{reason.value}:{end_at}:{billing.traffic_limit_bytes}:{reset_at}'
 
 
+def build_tariff_rebase_lineage_key(
+    billing: GraceBillingState,
+    reason: GraceReason,
+    *,
+    last_traffic_reset_at: datetime | None = None,
+) -> str:
+    """Identify one tariff-switch lineage without changing grant semantics.
+
+    Ordinary LIMITED incident keys keep the traffic limit so a real traffic
+    purchase may earn a later Grace grant.  This additional alias groups only
+    tariff-rebased sessions by the underlying traffic-reset generation and is
+    used to prevent tariff cycling from minting fresh grants.
+    """
+    if reason is GraceReason.EXPIRED:
+        end_at = _as_utc(billing.end_at).isoformat() if billing.end_at else 'none'
+        return f'tariff-rebase:{reason.value}:{end_at}'
+    end_at = _as_utc(billing.end_at).isoformat() if billing.end_at else 'none'
+    reset_at = _as_utc(last_traffic_reset_at).isoformat() if last_traffic_reset_at else 'unknown'
+    return f'tariff-rebase:{reason.value}:{end_at}:{reset_at}'
+
+
+def tariff_rebase_lineage_blocks_new_grant(
+    current: GraceBillingState,
+    previous: GraceAccessSession,
+) -> bool:
+    """Block tariff-derived LIMITED repeats while preserving traffic purchases."""
+    before = previous.limited_lineage_tail or previous.billing_before
+    if previous.reason is not GraceReason.LIMITED:
+        return False
+    if previous.completion_reason is GraceCompletionReason.PAID:
+        return False
+    if current.remnawave_id != previous.remnawave_id:
+        return False
+    if not current.tariff_id_known or not before.tariff_id_known:
+        return True
+    if current.tariff_id != before.tariff_id:
+        return True
+    # On the same tariff, only a strictly larger canonical quota represents a
+    # possible new traffic entitlement. Zero is Remnawave's unlimited value,
+    # so it compares above every finite quota rather than below it.
+    current_limit = current.traffic_limit_bytes
+    previous_limit = before.traffic_limit_bytes
+    strictly_larger = (
+        (current_limit == 0 and previous_limit != 0)
+        or (current_limit != 0 and previous_limit != 0 and current_limit > previous_limit)
+    )
+    return not strictly_larger
+
+
+def _build_limited_entitlement_incident_key(
+    base_incident_key: str,
+    billing: GraceBillingState,
+) -> str:
+    """Disambiguate a lineage-approved grant from an older tariff's quota."""
+    if not billing.tariff_id_known:
+        tariff_identity = 'unknown'
+    elif billing.tariff_id is None:
+        tariff_identity = 'none'
+    else:
+        tariff_identity = str(billing.tariff_id)
+    return f'{base_incident_key}:entitlement:{tariff_identity}'
+
+
+def tariff_change_can_preserve_grace(
+    session: GraceAccessSession,
+    current: GraceBillingState,
+    policy: GraceAccessPolicy,
+    *,
+    now: datetime,
+    force_restore: bool,
+) -> bool:
+    """Prove that a canonical difference is a non-revoking tariff switch."""
+    if force_restore or session.state is not GraceSessionState.ACTIVE:
+        return False
+    if _as_utc(now) >= _as_utc(session.grace_until):
+        return False
+    return tariff_change_matches_incident_family(session, current, policy)
+
+
+def tariff_change_requires_traffic_reset(
+    session: GraceAccessSession,
+    current: GraceBillingState,
+    policy: GraceAccessPolicy,
+    *,
+    now: datetime,
+    force_restore: bool,
+) -> bool:
+    """Recognize only the DB state produced by the configured tariff reset.
+
+    Tariff switch entry points commit ``used_traffic_bytes == 0`` before their
+    panel synchronization call.  The explicit policy bit plus the exact tariff,
+    panel id, end-date and subscription-kind proof lets the worker safely recognize
+    the same intent if it wins the small race before ``SubscriptionService``.
+    """
+    if (
+        not policy.reset_traffic_on_tariff_switch
+        or force_restore
+        or session.state is not GraceSessionState.ACTIVE
+        or _as_utc(now) >= _as_utc(session.grace_until)
+        or current.used_traffic_bytes != 0
+    ):
+        return False
+    before = session.billing_before
+    return (
+        current.remnawave_id == session.remnawave_id
+        and before.tariff_id_known
+        and current.tariff_id_known
+        and before.tariff_id is not None
+        and current.tariff_id is not None
+        and before.tariff_id != current.tariff_id
+        and before.end_at is not None
+        and current.end_at is not None
+        and _datetimes_equal(before.end_at, current.end_at)
+        and billing_incident_is_eligible(current, session.reason)
+        and policy_allows_subscription(current, policy)
+        and classify_subscription_kind(current) is classify_subscription_kind(before)
+    )
+
+
+def traffic_reset_billing_matches_target(
+    current: GraceBillingState,
+    target: GraceBillingState,
+    reason: GraceReason,
+) -> bool:
+    """Keep a persisted reset intent bound to one exact canonical tariff."""
+    allowed_statuses = {reason.value}
+    if reason is GraceReason.LIMITED:
+        # The verified reset emits user.enabled; accepting ACTIVE makes the
+        # transition robust whether that webhook wins before or after retry.
+        allowed_statuses.add('active')
+    return (
+        current.subscription_id == target.subscription_id
+        and current.remnawave_id == target.remnawave_id
+        and _normalize_status(current.status) in allowed_statuses
+        and _normalize_status(current.user_status) == _normalize_status(target.user_status) == 'active'
+        and _datetimes_equal(current.end_at, target.end_at)
+        and current.traffic_limit_bytes == target.traffic_limit_bytes
+        and current.used_traffic_bytes >= 0
+        and current.device_limit == target.device_limit
+        and set(current.squad_uuids) == set(target.squad_uuids)
+        and current.external_squad_uuid == target.external_squad_uuid
+        and current.is_trial == target.is_trial
+        and current.is_daily == target.is_daily
+        and current.is_free_tariff == target.is_free_tariff
+        and current.tariff_id_known
+        and target.tariff_id_known
+        and current.tariff_id == target.tariff_id
+    )
+
+
+def tariff_change_matches_incident_family(
+    session: GraceAccessSession,
+    current: GraceBillingState,
+    policy: GraceAccessPolicy,
+) -> bool:
+    """Prove a tariff-only canonical change independently of session timing."""
+    if current.remnawave_id != session.remnawave_id:
+        return False
+    before = session.billing_before
+    if (
+        not before.tariff_id_known
+        or not current.tariff_id_known
+        or before.tariff_id is None
+        or current.tariff_id is None
+        or before.tariff_id == current.tariff_id
+    ):
+        return False
+    if before.end_at is None or current.end_at is None:
+        return False
+    if not billing_incident_is_eligible(current, session.reason):
+        return False
+    if not policy_allows_subscription(current, policy):
+        return False
+    if classify_subscription_kind(current) is not classify_subscription_kind(before):
+        return False
+    if current.used_traffic_bytes < before.used_traffic_bytes:
+        return False
+    return _datetimes_equal(current.end_at, before.end_at)
+
+
 def billing_matches_completed_expired_echo(
     billing: GraceBillingState,
     session: GraceAccessSession,
@@ -934,6 +1970,11 @@ def billing_still_matches_session(
         return False
     if not _datetimes_equal(current.end_at, before.end_at):
         return False
+    tariff_matches = (
+        not before.tariff_id_known
+        or not current.tariff_id_known
+        or current.tariff_id == before.tariff_id
+    )
     return (
         current.traffic_limit_bytes == before.traffic_limit_bytes
         and current.device_limit == before.device_limit
@@ -942,6 +1983,7 @@ def billing_still_matches_session(
         and current.is_trial == before.is_trial
         and current.is_daily == before.is_daily
         and current.is_free_tariff == before.is_free_tariff
+        and tariff_matches
     )
 
 
@@ -1044,6 +2086,70 @@ def billing_has_recovered(session: GraceAccessSession, current: GraceBillingStat
     if before.traffic_limit_bytes > 0 and current.traffic_limit_bytes > before.traffic_limit_bytes:
         return True
     return session.reason is GraceReason.LIMITED and current.used_traffic_bytes < before.used_traffic_bytes
+
+
+def traffic_reset_checkpoint_source_overlay(
+    session: GraceAccessSession,
+    current: GracePanelSnapshot,
+    *,
+    checkpoint_target: GraceBillingState,
+    remaining_bytes: int,
+    now: datetime,
+) -> GracePanelOverlay | None:
+    """Prove one panel state produced by the persisted reset checkpoint."""
+    fence = replace(
+        session.overlay,
+        traffic_limit_bytes=max(1, remaining_bytes),
+    )
+    for candidate in (session.overlay, fence):
+        if panel_matches_overlay(current, candidate, now=now):
+            return candidate
+
+    reset_generation_changed = not _reset_generations_equal(
+        current.last_traffic_reset_at,
+        session.panel_before.last_traffic_reset_at,
+    )
+    if not reset_generation_changed:
+        return None
+
+    normalized_status = _normalize_status(current.status)
+    if (
+        session.reason is GraceReason.LIMITED
+        and checkpoint_target.end_at is not None
+        and _as_utc(checkpoint_target.end_at) > _as_utc(now)
+        and normalized_status == 'active'
+        and _datetimes_equal(current.expire_at, checkpoint_target.end_at)
+        and current.traffic_limit_bytes == checkpoint_target.traffic_limit_bytes
+        and set(current.squad_uuids) == set(checkpoint_target.squad_uuids)
+        and current.external_squad_uuid == checkpoint_target.external_squad_uuid
+    ):
+        return GracePanelOverlay(
+            status='ACTIVE',
+            expire_at=_as_utc(checkpoint_target.end_at),
+            traffic_limit_bytes=checkpoint_target.traffic_limit_bytes,
+            squad_uuids=checkpoint_target.squad_uuids,
+            external_squad_uuid=checkpoint_target.external_squad_uuid,
+        )
+
+    if (
+        remaining_bytes == 0
+        and normalized_status in {'disabled', 'expired'}
+        and _datetimes_equal(current.expire_at, session.overlay.expire_at)
+        and current.traffic_limit_bytes == checkpoint_target.traffic_limit_bytes
+        and set(current.squad_uuids) == set(checkpoint_target.squad_uuids)
+        and current.external_squad_uuid == checkpoint_target.external_squad_uuid
+    ):
+        # ``apply_billing_state`` receives this only after the exact disabled
+        # state above was proven in the core; ACTIVE source validation is then
+        # deliberately disabled by the caller.
+        return GracePanelOverlay(
+            status='ACTIVE',
+            expire_at=session.overlay.expire_at,
+            traffic_limit_bytes=checkpoint_target.traffic_limit_bytes,
+            squad_uuids=checkpoint_target.squad_uuids,
+            external_squad_uuid=checkpoint_target.external_squad_uuid,
+        )
+    return None
 
 
 def panel_matches_overlay(
@@ -1237,6 +2343,122 @@ def webhook_matches_expired_restore(
     return canonical_phase_matches or disabled_overlay_phase_matches
 
 
+def webhook_matches_traffic_reset_intermediate(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+) -> bool:
+    """Strictly identify a delayed quota-fence ``user.modified`` echo.
+
+    A tariff-switch reset first replaces the absolute Grace limit with the
+    remaining quota.  Remnawave may deliver that intermediate webhook after
+    the final canonical PATCH, so completed reset sessions retain this exact
+    fingerprint for a short, timestamp-bounded suppression check.
+    """
+    if not _traffic_reset_webhook_identity_matches(payload, session):
+        return False
+
+    status_present, raw_status = _webhook_payload_value(payload, 'status')
+    expire_present, raw_expire_at = _webhook_payload_value(payload, 'expireAt')
+    limit_present, raw_limit = _webhook_payload_value(payload, 'trafficLimitBytes')
+    squads_present, raw_squads = _webhook_payload_value(payload, 'activeInternalSquads')
+    external_present, external_squad_uuid = _webhook_payload_value(payload, 'externalSquadUuid')
+    if not all(
+        (
+            status_present,
+            expire_present,
+            limit_present,
+            squads_present,
+            external_present,
+        )
+    ):
+        return False
+
+    expire_at = _parse_datetime(raw_expire_at)
+    try:
+        traffic_limit_bytes = int(raw_limit)
+    except (TypeError, ValueError):
+        return False
+    if expire_at is None:
+        return False
+
+    expected_statuses = {'active', 'limited'}
+    if _as_utc(session.completed_at or session.updated_at) >= _as_utc(session.overlay.expire_at):
+        expected_statuses.update({'expired', 'disabled'})
+    return (
+        _normalize_status(raw_status) in expected_statuses
+        and _datetimes_equal(expire_at, session.overlay.expire_at)
+        and traffic_limit_bytes == max(1, session.traffic_reset_remaining_bytes)
+        and set(_extract_squad_uuids(raw_squads)) == set(session.overlay.squad_uuids)
+        and external_squad_uuid == session.overlay.external_squad_uuid
+    )
+
+
+def webhook_matches_traffic_reset_signal(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+) -> bool:
+    """Match a reset-generated enabled/traffic-reset event with sparse fields."""
+    if not _traffic_reset_webhook_identity_matches(payload, session):
+        return False
+
+    status_present, raw_status = _webhook_payload_value(payload, 'status')
+    if status_present and _normalize_status(raw_status) != 'active':
+        return False
+
+    expire_present, raw_expire_at = _webhook_payload_value(payload, 'expireAt')
+    if expire_present:
+        expire_at = _parse_datetime(raw_expire_at)
+        if expire_at is None or not _datetimes_equal(
+            expire_at,
+            session.overlay.expire_at,
+        ):
+            return False
+
+    limit_present, raw_limit = _webhook_payload_value(payload, 'trafficLimitBytes')
+    if limit_present:
+        try:
+            traffic_limit_bytes = int(raw_limit)
+        except (TypeError, ValueError):
+            return False
+        if traffic_limit_bytes != max(1, session.traffic_reset_remaining_bytes or 0):
+            return False
+
+    squads_present, raw_squads = _webhook_payload_value(payload, 'activeInternalSquads')
+    if squads_present and set(_extract_squad_uuids(raw_squads)) != set(
+        session.overlay.squad_uuids
+    ):
+        return False
+
+    external_present, external_squad_uuid = _webhook_payload_value(
+        payload,
+        'externalSquadUuid',
+    )
+    return not external_present or (
+        external_squad_uuid == session.overlay.external_squad_uuid
+    )
+
+
+def _traffic_reset_webhook_identity_matches(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+) -> bool:
+    if (
+        session.state is not GraceSessionState.COMPLETED
+        or session.traffic_reset_remaining_bytes is None
+    ):
+        return False
+    id_present, payload_id = _webhook_payload_value(payload, 'id')
+    try:
+        identity_matches = id_present and int(payload_id) == session.remnawave_id
+    except (TypeError, ValueError):
+        identity_matches = False
+    if not identity_matches:
+        return False
+    updated_present, raw_updated_at = _webhook_payload_value(payload, 'updatedAt')
+    updated_at = _parse_datetime(raw_updated_at) if updated_present else None
+    return _traffic_reset_echo_timestamp_matches(updated_at, session)
+
+
 def _session_can_match_expired_restore(session: GraceAccessSession) -> bool:
     if session.reason is not GraceReason.EXPIRED:
         return False
@@ -1278,6 +2500,28 @@ def _restore_echo_timestamp_matches(
     lower_bound = _as_utc(session.updated_at) - _RESTORE_ECHO_TIMESTAMP_TOLERANCE
     upper_reference = session.completed_at or session.updated_at
     upper_bound = _as_utc(upper_reference) + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    normalized_updated_at = _as_utc(panel_updated_at)
+    return lower_bound <= normalized_updated_at <= upper_bound
+
+
+def _traffic_reset_echo_timestamp_matches(
+    panel_updated_at: datetime | None,
+    session: GraceAccessSession,
+) -> bool:
+    if (
+        panel_updated_at is None
+        or session.traffic_reset_started_at is None
+        or session.traffic_reset_finished_at is None
+    ):
+        return False
+    lower_bound = (
+        _as_utc(session.traffic_reset_started_at)
+        - _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    )
+    upper_bound = (
+        _as_utc(session.traffic_reset_finished_at)
+        + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    )
     normalized_updated_at = _as_utc(panel_updated_at)
     return lower_bound <= normalized_updated_at <= upper_bound
 
@@ -1329,6 +2573,27 @@ def _datetimes_equal(left: datetime | None, right: datetime | None) -> bool:
     if left is None or right is None:
         return left is right
     return abs((_as_utc(left) - _as_utc(right)).total_seconds()) <= 1
+
+
+def _reset_generations_equal(left: datetime | None, right: datetime | None) -> bool:
+    """Compare reset generations exactly so rapid consecutive resets are visible."""
+    if left is None or right is None:
+        return left is right
+    return _as_utc(left) == _as_utc(right)
+
+
+def _bounded_traffic_reset_finished_at(
+    session: GraceAccessSession,
+    *,
+    observed_at: datetime | None,
+    now: datetime,
+) -> datetime:
+    """Bound Remnawave's reset generation to the local durable operation window."""
+    started_at = _as_utc(session.traffic_reset_started_at or session.updated_at)
+    local_now = _as_utc(now)
+    candidate = _as_utc(observed_at) if observed_at is not None else local_now
+    upper_bound = max(local_now, started_at)
+    return min(max(candidate, started_at), upper_bound)
 
 
 def _normalize_status(value: object) -> str:

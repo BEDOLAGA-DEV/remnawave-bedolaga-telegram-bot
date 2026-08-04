@@ -2,8 +2,9 @@
 
 The billing database remains canonical.  This module persists versioned
 snapshots, applies a temporary Remnawave overlay, discovers recent incidents,
-and reconciles open sessions.  It deliberately never changes a subscription's
-billing dates/status and never resets used traffic.
+and reconciles open sessions.  Billing remains canonical; the only coordinated
+accounting mutation here is an explicitly configured tariff-switch traffic
+reset while a Grace overlay is open.
 """
 
 from __future__ import annotations
@@ -53,10 +54,14 @@ from app.services.grace_access_service import (
     GraceSessionState,
     GraceStartDecision,
     GraceStartResult,
+    GraceTrafficResetOutcome,
+    GraceTrafficResetResult,
     billing_is_eligible,
     build_incident_key,
+    build_tariff_rebase_lineage_key,
     panel_is_safe_pending_source,
     panel_matches_overlay,
+    traffic_reset_billing_matches_target,
 )
 
 
@@ -191,11 +196,47 @@ class SQLAlchemyGraceSessionStore:
             )
         )
         model = result.scalar_one_or_none()
-        if model is None:
-            return None
-        if model.remnawave_id is None:
-            await _repair_missing_panel_id(self._db, model)
-        return _model_to_session(model)
+        if model is not None:
+            if model.remnawave_id is None:
+                await _repair_missing_panel_id(self._db, model)
+            return _model_to_session(model)
+
+        # Rebased LIMITED sessions keep their immutable primary incident key
+        # and persist additional dedupe aliases inside the existing versioned
+        # JSON snapshot. Legacy rows have no such metadata, so their lineage is
+        # also derived from the immutable pre-Grace snapshot. Scanning one
+        # subscription's small Grace history keeps this portable across
+        # PostgreSQL and SQLite JSON implementations.
+        alias_result = await self._db.execute(
+            select(GraceAccessSessionModel)
+            .execution_options(populate_existing=True)
+            .where(GraceAccessSessionModel.subscription_id == subscription_id)
+            .order_by(GraceAccessSessionModel.updated_at.desc())
+        )
+        for alias_model in alias_result.scalars().all():
+            try:
+                if alias_model.remnawave_id is None:
+                    await _repair_missing_panel_id(self._db, alias_model)
+                session = _model_to_session(alias_model)
+            except Exception:
+                logger.exception(
+                    'Corrupt grace snapshot was ignored during incident alias lookup',
+                    grace_session_id=alias_model.id,
+                    subscription_id=subscription_id,
+                )
+                continue
+            legacy_lineage_key = (
+                build_tariff_rebase_lineage_key(
+                    session.billing_before,
+                    session.reason,
+                    last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+                )
+                if session.reason is GraceReason.LIMITED
+                else None
+            )
+            if incident_key in session.incident_aliases or incident_key == legacy_lineage_key:
+                return session
+        return None
 
     async def list_recent_completed(
         self,
@@ -265,7 +306,10 @@ class SQLAlchemyGraceSessionStore:
                 GraceSessionState.ACTIVE.value,
             ),
             GraceSessionState.RESTORING: _OPEN_STATES,
-            GraceSessionState.COMPLETED: _OPEN_STATES,
+            # COMPLETED -> COMPLETED is reserved for metadata-only LIMITED
+            # lineage advancement after a post-timeout tariff switch.  CAS still
+            # prevents stale workers from changing a terminal winner.
+            GraceSessionState.COMPLETED: (*_OPEN_STATES, GraceSessionState.COMPLETED.value),
         }[session.state]
         statement = (
             update(GraceAccessSessionModel)
@@ -291,9 +335,18 @@ class SQLAlchemyGraceSessionStore:
             return _model_to_session(current_model)
 
         saved = replace(session, version=session.version + 1)
-        if session.state is GraceSessionState.RESTORING:
-            # RESTORING is a durable checkpoint before the external restore
-            # PATCH. It makes a crash after PATCH safely idempotent.
+        durable_external_checkpoint = session.state is GraceSessionState.RESTORING or (
+            session.state is GraceSessionState.ACTIVE
+            and (
+                session.allow_recovery_enabled_webhook
+                or session.traffic_reset_target is not None
+            )
+        )
+        if durable_external_checkpoint:
+            # RESTORING and the narrowly marked tariff-recovery transition are
+            # durable checkpoints before an external PATCH.  The latter must be
+            # visible so a concurrent user.enabled webhook is not suppressed as
+            # an ordinary Grace echo.
             await self._db.commit()
             await _acquire_database_lock(self._db, session.subscription_id)
             refreshed = await self._db.execute(
@@ -303,7 +356,7 @@ class SQLAlchemyGraceSessionStore:
             )
             current_model = refreshed.scalar_one_or_none()
             if current_model is None:
-                raise GraceSnapshotError(f'Grace session {session.id} disappeared during restore checkpoint')
+                raise GraceSnapshotError(f'Grace session {session.id} disappeared during external checkpoint')
             return _model_to_session(current_model)
         return saved
 
@@ -337,7 +390,7 @@ class SQLAlchemyGraceSessionStore:
 
 
 class SQLAlchemyGraceBillingGateway:
-    """Read canonical subscription data without changing it."""
+    """Read canonical billing and confirm one verified reset recovery."""
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -352,6 +405,38 @@ class SQLAlchemyGraceBillingGateway:
         subscription = result.scalar_one_or_none()
         if subscription is None or subscription.user is None:
             return None
+        return _subscription_to_billing(subscription)
+
+    async def mark_active_after_traffic_reset(
+        self,
+        expected: GraceBillingState,
+    ) -> GraceBillingState | None:
+        result = await self._db.execute(
+            select(Subscription)
+            .execution_options(populate_existing=True)
+            .options(selectinload(Subscription.user), selectinload(Subscription.tariff))
+            .where(Subscription.id == expected.subscription_id)
+        )
+        subscription = result.scalar_one_or_none()
+        if subscription is None or subscription.user is None:
+            return None
+        current = _subscription_to_billing(subscription)
+        if (
+            expected.end_at is None
+            or _as_utc(expected.end_at) <= datetime.now(UTC)
+            or not traffic_reset_billing_matches_target(
+                current,
+                expected,
+                GraceReason.LIMITED,
+            )
+        ):
+            return None
+        if subscription.status == SubscriptionStatus.LIMITED.value:
+            subscription.status = SubscriptionStatus.ACTIVE.value
+            subscription.grace_candidate_reason = None
+            subscription.grace_candidate_at = None
+            subscription.updated_at = datetime.now(UTC)
+            await self._db.flush((subscription,))
         return _subscription_to_billing(subscription)
 
 
@@ -516,11 +601,353 @@ class RemnawaveGracePanelGateway:
                 return GraceRestoreOutcome.CONFLICT
         raise GracePanelError('Remnawave restore PATCH could not be verified')
 
+    async def revoke_missing_billing(
+        self,
+        remnawave_id: int,
+        *,
+        expected_overlay: GracePanelOverlay,
+    ) -> None:
+        """Fail closed from an exact reset-owned state when billing vanished."""
+        from app.services.remnawave_service import remnawave_service
+
+        async with remnawave_service.get_api_client() as api:
+            current_user = await api.get_user_by_id(remnawave_id)
+            if current_user is None:
+                return
+            current = _panel_user_to_snapshot(current_user)
+            if _panel_matches_inactive_overlay(current, expected_overlay):
+                return
+            if not panel_matches_overlay(
+                current,
+                expected_overlay,
+                now=datetime.now(UTC),
+            ):
+                raise GracePanelTransitionConflict(
+                    'Remnawave changed outside the deleted tariff reset checkpoint'
+                )
+
+            disabled_user = await api.disable_user(remnawave_id)
+            if disabled_user is None:
+                disabled_user = await api.get_user_by_id(remnawave_id)
+            if disabled_user is None:
+                return
+            if not _panel_matches_inactive_overlay(
+                _panel_user_to_snapshot(disabled_user),
+                expected_overlay,
+            ):
+                raise GracePanelError(
+                    'Remnawave did not confirm revocation after canonical billing disappeared'
+                )
+
+    async def prepare_tariff_rebase(
+        self,
+        billing: GraceBillingState,
+        *,
+        expected_overlay: GracePanelOverlay,
+        expected_last_traffic_reset_at: datetime | None,
+    ) -> GracePanelSnapshot | None:
+        """Verify the exact overlay and apply only tariff metadata it does not own.
+
+        Traffic quota, expiry and routing remain byte-for-byte the original
+        Grace grant.  The device limit is safe to refresh immediately because
+        Grace never owns it; all fields are verified again after the PATCH.
+        """
+        from app.services.remnawave_service import remnawave_service
+
+        if not billing.remnawave_id:
+            return None
+        target = _build_billing_target(billing, now=datetime.now(UTC))
+
+        async with remnawave_service.get_api_client() as api:
+            current_user = await api.get_user_by_id(billing.remnawave_id)
+            if current_user is None:
+                return None
+            current = _panel_user_to_snapshot(current_user)
+            if not panel_matches_overlay(
+                current,
+                expected_overlay,
+                now=datetime.now(UTC),
+            ) or not _reset_generations_equal(
+                current.last_traffic_reset_at,
+                expected_last_traffic_reset_at,
+            ):
+                return None
+
+            verified_user = current_user
+            if not _panel_user_matches_device_limit(current_user, target):
+                if target.device_limit is None:
+                    return None
+                verified_user = await api.update_user(
+                    user_id=billing.remnawave_id,
+                    hwid_device_limit=target.device_limit,
+                )
+                if verified_user is None:
+                    verified_user = await api.get_user_by_id(billing.remnawave_id)
+                if verified_user is None:
+                    return None
+
+            verified = _panel_user_to_snapshot(verified_user)
+            if not panel_matches_overlay(
+                verified,
+                expected_overlay,
+                now=datetime.now(UTC),
+            ):
+                return None
+            if not _reset_generations_equal(
+                verified.last_traffic_reset_at,
+                expected_last_traffic_reset_at,
+            ):
+                return None
+            if not _panel_user_matches_device_limit(verified_user, target):
+                return None
+            return verified
+
+    async def apply_tariff_switch_traffic_reset(
+        self,
+        billing: GraceBillingState,
+        *,
+        reason: GraceReason,
+        expected_overlay: GracePanelOverlay,
+        expected_last_traffic_reset_at: datetime | None,
+        remaining_grace_bytes: int,
+    ) -> GraceTrafficResetResult:
+        """Reset usage without turning an absolute Grace limit into free quota.
+
+        The quota fence is applied before the irreversible reset.  A durable
+        core marker makes every phase retryable: an already changed reset
+        generation is accepted only from that exact fence or the exact final
+        canonical target.
+        """
+        from app.services.remnawave_service import remnawave_service
+
+        if not billing.remnawave_id:
+            raise GracePanelTransitionConflict(
+                'Canonical tariff reset target has no Remnawave user id'
+            )
+        now = datetime.now(UTC)
+        keeps_grace = not (
+            reason is GraceReason.LIMITED
+            and billing.end_at is not None
+            and _as_utc(billing.end_at) > now
+        )
+        fence_limit = max(1, remaining_grace_bytes)
+        reset_overlay = replace(
+            expected_overlay,
+            traffic_limit_bytes=fence_limit,
+        )
+        recovered_billing = replace(
+            billing,
+            status='active',
+            used_traffic_bytes=0,
+        )
+        recovered_target = _build_billing_target(recovered_billing, now=now)
+        expired_target = _build_billing_target(billing, now=now)
+
+        async with remnawave_service.get_api_client() as api:
+            current_user = await api.get_user_by_id(billing.remnawave_id)
+            if current_user is None:
+                raise GracePanelTransitionConflict(
+                    'Remnawave user disappeared during the configured tariff reset'
+                )
+            current = _panel_user_to_snapshot(current_user)
+            old_generation = _reset_generations_equal(
+                current.last_traffic_reset_at,
+                expected_last_traffic_reset_at,
+            )
+
+            if not old_generation and not keeps_grace and _panel_user_matches_target(
+                current_user,
+                recovered_target,
+            ):
+                return GraceTrafficResetResult(
+                    GraceTrafficResetOutcome.RECOVERED,
+                    current,
+                )
+
+            exhausted_target = replace(
+                expired_target,
+                status=PanelUserStatus.DISABLED,
+                expire_at=current.expire_at,
+                write_expire_at=False,
+            )
+            if (
+                not old_generation
+                and keeps_grace
+                and remaining_grace_bytes == 0
+                and _panel_user_matches_restored_disabled_target(current_user, exhausted_target)
+            ):
+                return GraceTrafficResetResult(
+                    GraceTrafficResetOutcome.EXHAUSTED,
+                    current,
+                )
+
+            fence_matches = panel_matches_overlay(
+                current,
+                reset_overlay,
+                now=now,
+            )
+            if old_generation:
+                source_matches = panel_matches_overlay(
+                    current,
+                    expected_overlay,
+                    now=now,
+                ) or fence_matches
+                if not source_matches:
+                    raise GracePanelTransitionConflict(
+                        'Remnawave changed before the configured tariff reset fence'
+                    )
+                if not fence_matches or not _panel_user_matches_device_limit(
+                    current_user,
+                    recovered_target,
+                ):
+                    fence_kwargs: dict[str, Any] = {
+                        'user_id': billing.remnawave_id,
+                        'traffic_limit_bytes': reset_overlay.traffic_limit_bytes,
+                        'active_internal_squads': list(reset_overlay.squad_uuids),
+                        'external_squad_uuid': reset_overlay.external_squad_uuid,
+                    }
+                    if recovered_target.device_limit is not None:
+                        fence_kwargs['hwid_device_limit'] = recovered_target.device_limit
+                    current_user = await api.update_user(**fence_kwargs)
+                    if current_user is None:
+                        current_user = await api.get_user_by_id(billing.remnawave_id)
+                    if current_user is None:
+                        raise GracePanelError(
+                            'Remnawave user disappeared after the tariff reset fence'
+                        )
+                    current = _panel_user_to_snapshot(current_user)
+                    if (
+                        not panel_matches_overlay(current, reset_overlay, now=now)
+                        or not _reset_generations_equal(
+                            current.last_traffic_reset_at,
+                            expected_last_traffic_reset_at,
+                        )
+                        or not _panel_user_matches_device_limit(
+                            current_user,
+                            recovered_target,
+                        )
+                    ):
+                        raise GracePanelError(
+                            'Remnawave did not confirm the tariff reset quota fence'
+                        )
+
+                reset_user = await api.reset_user_traffic(billing.remnawave_id)
+                if reset_user is None:
+                    reset_user = await api.get_user_by_id(billing.remnawave_id)
+                if reset_user is None:
+                    raise GracePanelError(
+                        'Remnawave user disappeared after the configured traffic reset'
+                    )
+                current_user = reset_user
+                current = _panel_user_to_snapshot(reset_user)
+                if (
+                    not current.traffic_is_known
+                    or current.used_traffic_bytes != 0
+                    or _reset_generations_equal(
+                        current.last_traffic_reset_at,
+                        expected_last_traffic_reset_at,
+                    )
+                ):
+                    raise GracePanelError(
+                        'Remnawave did not confirm a new zero-usage reset generation'
+                    )
+            elif not fence_matches:
+                raise GracePanelTransitionConflict(
+                    'Remnawave reset generation changed outside the persisted quota fence'
+                )
+
+            if not keeps_grace:
+                if not _panel_user_matches_target(current_user, recovered_target):
+                    current_user = await api.update_user(
+                        **_serialize_panel_target(
+                            billing.remnawave_id,
+                            recovered_target,
+                        )
+                    )
+                    if current_user is None:
+                        current_user = await api.get_user_by_id(billing.remnawave_id)
+                if current_user is None or not _panel_user_matches_target(
+                    current_user,
+                    recovered_target,
+                ):
+                    raise GracePanelError(
+                        'Remnawave did not confirm the active tariff after traffic reset'
+                    )
+                return GraceTrafficResetResult(
+                    GraceTrafficResetOutcome.RECOVERED,
+                    _panel_user_to_snapshot(current_user),
+                )
+
+            if remaining_grace_bytes == 0:
+                if not _panel_user_matches_restored_disabled_target(
+                    current_user,
+                    exhausted_target,
+                ):
+                    current_user = await _apply_restore_disabled_target(
+                        api,
+                        remnawave_id=billing.remnawave_id,
+                        target=exhausted_target,
+                        current_user=current_user,
+                    )
+                if current_user is None or not _panel_user_matches_restored_disabled_target(
+                    current_user,
+                    exhausted_target,
+                ):
+                    raise GracePanelError(
+                        'Remnawave did not confirm the exhausted Grace reset target'
+                    )
+                return GraceTrafficResetResult(
+                    GraceTrafficResetOutcome.EXHAUSTED,
+                    _panel_user_to_snapshot(current_user),
+                )
+
+            if (
+                not panel_matches_overlay(current, reset_overlay, now=now)
+                or not _panel_user_matches_device_limit(current_user, recovered_target)
+            ):
+                overlay_kwargs: dict[str, Any] = {
+                    'user_id': billing.remnawave_id,
+                    'status': PanelUserStatus.ACTIVE,
+                    'expire_at': reset_overlay.expire_at,
+                    'traffic_limit_bytes': reset_overlay.traffic_limit_bytes,
+                    'active_internal_squads': list(reset_overlay.squad_uuids),
+                    'external_squad_uuid': reset_overlay.external_squad_uuid,
+                }
+                if recovered_target.device_limit is not None:
+                    overlay_kwargs['hwid_device_limit'] = recovered_target.device_limit
+                current_user = await api.update_user(**overlay_kwargs)
+                if current_user is None:
+                    current_user = await api.get_user_by_id(billing.remnawave_id)
+                if current_user is None:
+                    raise GracePanelError(
+                        'Remnawave user disappeared while continuing Grace after reset'
+                    )
+                current = _panel_user_to_snapshot(current_user)
+            if (
+                not panel_matches_overlay(current, reset_overlay, now=now)
+                or _reset_generations_equal(
+                    current.last_traffic_reset_at,
+                    expected_last_traffic_reset_at,
+                )
+                or not _panel_user_matches_device_limit(current_user, recovered_target)
+            ):
+                raise GracePanelError(
+                    'Remnawave did not confirm the continued Grace overlay after reset'
+                )
+            return GraceTrafficResetResult(
+                GraceTrafficResetOutcome.CONTINUED,
+                current,
+                overlay=reset_overlay,
+            )
+
     async def apply_billing_state(
         self,
         billing: GraceBillingState,
         *,
         expected_overlay: GracePanelOverlay,
+        expected_restored_snapshot: GracePanelSnapshot | None = None,
+        require_overlay_source: bool = False,
+        expected_last_traffic_reset_at: datetime | None = None,
     ) -> None:
         from app.services.remnawave_service import remnawave_service
 
@@ -548,12 +975,20 @@ class RemnawaveGracePanelGateway:
                     if updated_device is not None and _panel_user_matches_target(updated_device, target):
                         return
                     raise GracePanelTransitionConflict('Remnawave did not confirm canonical LIMITED device limit')
-                if not _limited_transition_source_is_safe(
+                source_is_safe = _limited_transition_source_is_safe(
                     current,
                     target,
                     expected_overlay,
                     now=now,
-                ):
+                )
+                if expected_restored_snapshot is not None:
+                    source_is_safe = source_is_safe or _limited_source_matches_previous_restore(
+                        current,
+                        expected_restored_snapshot,
+                        expected_overlay,
+                        now=now,
+                    )
+                if not source_is_safe:
                     raise GracePanelTransitionConflict(
                         'Remnawave changed outside grace; canonical LIMITED state was not applied'
                     )
@@ -595,6 +1030,41 @@ class RemnawaveGracePanelGateway:
                         current_user=current_user,
                     )
             else:
+                if require_overlay_source:
+                    current_user = await api.get_user_by_id(billing.remnawave_id)
+                    if current_user is None:
+                        raise GracePanelTransitionConflict(
+                            'Canonical Remnawave user disappeared during tariff recovery'
+                        )
+                    current = _panel_user_to_snapshot(current_user)
+                    if _panel_matches_target(current, target):
+                        if _panel_user_matches_device_limit(current_user, target):
+                            return
+                        updated_device = await api.update_user(
+                            user_id=billing.remnawave_id,
+                            hwid_device_limit=target.device_limit,
+                        )
+                        if updated_device is None:
+                            updated_device = await api.get_user_by_id(billing.remnawave_id)
+                        if updated_device is not None and _panel_user_matches_target(
+                            updated_device,
+                            target,
+                        ):
+                            return
+                        raise GracePanelTransitionConflict(
+                            'Remnawave did not confirm recovered tariff device limit'
+                        )
+                    if not panel_matches_overlay(
+                        current,
+                        expected_overlay,
+                        now=now,
+                    ) or not _reset_generations_equal(
+                        current.last_traffic_reset_at,
+                        expected_last_traffic_reset_at,
+                    ):
+                        raise GracePanelTransitionConflict(
+                            'Remnawave changed outside grace during tariff recovery'
+                        )
                 updated = await api.update_user(**_serialize_panel_target(billing.remnawave_id, target))
         if target.status is PanelUserStatus.DISABLED:
             target_matches = updated is not None and (
@@ -1192,6 +1662,59 @@ async def apply_recovered_grace_update_locked(
     return True, updated
 
 
+async def apply_grace_tariff_switch_reset_locked(
+    db: AsyncSession,
+    subscription_id: int,
+    *,
+    source: str,
+) -> bool:
+    """Run the configured tariff reset while the caller holds the Grace lock."""
+    if grace_access_runtime.mode not in {GraceAccessMode.ACTIVE, GraceAccessMode.DRAIN}:
+        return False
+
+    store = SQLAlchemyGraceSessionStore(db, subscription_id=subscription_id)
+    if await store.get_open(subscription_id) is None:
+        return False
+    core = GraceAccessService(
+        store=store,
+        panel=RemnawaveGracePanelGateway(),
+        billing=SQLAlchemyGraceBillingGateway(db),
+        policy=_build_policy(),
+    )
+    action = await core.apply_tariff_switch_traffic_reset(subscription_id)
+    if action is None:
+        raise GracePanelTransitionConflict(
+            'Open Grace session does not match the configured tariff-switch reset intent'
+        )
+    logger.info(
+        'Grace-aware tariff-switch traffic reset completed',
+        subscription_id=subscription_id,
+        source=source,
+        action=action,
+    )
+    return True
+
+
+async def apply_grace_tariff_switch_reset(
+    subscription_id: int,
+    *,
+    source: str,
+) -> bool:
+    """Acquire Grace locks and run the same reset for standalone admin syncs."""
+    if grace_access_runtime.mode not in {GraceAccessMode.ACTIVE, GraceAccessMode.DRAIN}:
+        return False
+    async with grace_access_runtime._locks.hold(subscription_id):
+        async with AsyncSessionLocal() as db:
+            await lock_grace_sensitive_panel_updates(db, (subscription_id,))
+            handled = await apply_grace_tariff_switch_reset_locked(
+                db,
+                subscription_id,
+                source=source,
+            )
+            await db.commit()
+            return handled
+
+
 @asynccontextmanager
 async def grace_sensitive_panel_update(subscription_id: int):
     """Hold a grace lock and expose billing state read only after lock acquisition.
@@ -1650,6 +2173,7 @@ def _build_policy() -> GraceAccessPolicy:
         daily_enabled=settings.GRACE_ACCESS_DAILY_ENABLED,
         free_enabled=settings.GRACE_ACCESS_FREE_ENABLED,
         reconcile_batch_size=settings.GRACE_ACCESS_RECONCILE_BATCH_SIZE,
+        reset_traffic_on_tariff_switch=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
     )
 
 
@@ -1708,6 +2232,8 @@ def _subscription_to_billing(subscription: Subscription) -> GraceBillingState:
         grace_suppressed_until=(
             _as_utc(subscription.grace_suppressed_until) if subscription.grace_suppressed_until else None
         ),
+        tariff_id=subscription.tariff_id,
+        tariff_id_known=True,
     )
 
 
@@ -1856,6 +2382,31 @@ def _limited_transition_source_is_safe(
         current,
         expected_overlay,
         now=now,
+    )
+
+
+def _limited_source_matches_previous_restore(
+    current: GracePanelSnapshot,
+    previous_snapshot: GracePanelSnapshot,
+    expected_overlay: GracePanelOverlay,
+    *,
+    now: datetime,
+) -> bool:
+    """Accept only an exact state produced by the immediately preceding restore."""
+    if not _reset_generations_equal(
+        current.last_traffic_reset_at,
+        previous_snapshot.last_traffic_reset_at,
+    ):
+        return False
+    if current.used_traffic_bytes < previous_snapshot.used_traffic_bytes:
+        return False
+    previous_target = _build_restore_target(previous_snapshot, now=now)
+    if previous_target.status is not PanelUserStatus.LIMITED:
+        return False
+    return _panel_matches_target(current, previous_target) or _panel_matches_limited_intermediate(
+        current,
+        previous_target,
+        expected_overlay,
     )
 
 
@@ -2260,7 +2811,7 @@ def _session_values(session: GraceAccessSession) -> dict[str, Any]:
         'snapshot_version': _SNAPSHOT_VERSION,
         'billing_before': _billing_to_json(session.billing_before),
         'panel_before': _panel_to_json(session.panel_before),
-        'overlay': _overlay_to_json(session.overlay),
+        'overlay': _session_overlay_to_json(session),
         'started_at': _as_utc(session.started_at),
         'grace_until': _as_utc(session.grace_until),
         'updated_at': _as_utc(session.updated_at),
@@ -2295,6 +2846,27 @@ def _model_to_session(model: GraceAccessSessionModel) -> GraceAccessSession:
         completed_at=_as_utc(model.completed_at) if model.completed_at else None,
         last_error=model.last_error,
         version=model.version,
+        incident_aliases=_incident_aliases_from_overlay_json(model.overlay),
+        limited_lineage_tail=_limited_lineage_tail_from_overlay_json(model.overlay),
+        allow_recovery_enabled_webhook=_allow_recovery_enabled_from_overlay_json(model.overlay),
+        traffic_reset_target=_traffic_reset_target_from_overlay_json(model.overlay),
+        traffic_reset_remaining_bytes=_traffic_reset_remaining_from_overlay_json(model.overlay),
+        traffic_reset_started_at=_traffic_reset_started_at_from_overlay_json(model.overlay),
+        traffic_reset_finished_at=_traffic_reset_finished_at_from_overlay_json(model.overlay),
+    )
+
+
+def _panel_matches_inactive_overlay(
+    snapshot: GracePanelSnapshot,
+    expected_overlay: GracePanelOverlay,
+) -> bool:
+    """Match an exact reset-owned state whose status already denies access."""
+    return (
+        _normalize(snapshot.status) in {'disabled', 'expired'}
+        and _optional_datetimes_equal(snapshot.expire_at, expected_overlay.expire_at)
+        and snapshot.traffic_limit_bytes == expected_overlay.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
+        and snapshot.external_squad_uuid == expected_overlay.external_squad_uuid
     )
 
 
@@ -2314,6 +2886,8 @@ def _billing_to_json(value: GraceBillingState) -> dict[str, Any]:
         'is_free_tariff': value.is_free_tariff,
         'user_status': value.user_status,
         'grace_suppressed_until': _datetime_to_json(value.grace_suppressed_until),
+        'tariff_id': value.tariff_id,
+        'tariff_id_known': value.tariff_id_known,
     }
 
 
@@ -2336,6 +2910,8 @@ def _billing_from_json(raw: Any) -> GraceBillingState:
         is_free_tariff=bool(data.get('is_free_tariff', False)),
         user_status=str(data.get('user_status', 'active')),
         grace_suppressed_until=_datetime_from_json(data.get('grace_suppressed_until')),
+        tariff_id=_optional_integer(data.get('tariff_id')),
+        tariff_id_known=bool(data.get('tariff_id_known', False)),
     )
 
 
@@ -2382,6 +2958,69 @@ def _overlay_to_json(value: GracePanelOverlay) -> dict[str, Any]:
         'squad_uuids': list(value.squad_uuids),
         'external_squad_uuid': value.external_squad_uuid,
     }
+
+
+def _session_overlay_to_json(session: GraceAccessSession) -> dict[str, Any]:
+    data = _overlay_to_json(session.overlay)
+    if session.incident_aliases:
+        data['_incident_aliases'] = list(session.incident_aliases)
+    if session.limited_lineage_tail is not None:
+        data['_limited_lineage_tail'] = _billing_to_json(session.limited_lineage_tail)
+    if session.allow_recovery_enabled_webhook:
+        data['_allow_recovery_enabled_webhook'] = True
+    if session.traffic_reset_target is not None:
+        data['_traffic_reset_target'] = _billing_to_json(session.traffic_reset_target)
+        if session.traffic_reset_remaining_bytes is None:
+            raise GraceSnapshotError('traffic reset target requires remaining byte count')
+    if session.traffic_reset_remaining_bytes is not None:
+        data['_traffic_reset_remaining_bytes'] = session.traffic_reset_remaining_bytes
+    if session.traffic_reset_started_at is not None:
+        data['_traffic_reset_started_at'] = _datetime_to_json(session.traffic_reset_started_at)
+    if session.traffic_reset_finished_at is not None:
+        data['_traffic_reset_finished_at'] = _datetime_to_json(session.traffic_reset_finished_at)
+    return data
+
+
+def _incident_aliases_from_overlay_json(raw: Any) -> tuple[str, ...]:
+    data = _mapping(raw, 'overlay')
+    return _string_tuple(data.get('_incident_aliases'))
+
+
+def _limited_lineage_tail_from_overlay_json(raw: Any) -> GraceBillingState | None:
+    data = _mapping(raw, 'overlay')
+    tail = data.get('_limited_lineage_tail')
+    return _billing_from_json(tail) if tail is not None else None
+
+
+def _allow_recovery_enabled_from_overlay_json(raw: Any) -> bool:
+    data = _mapping(raw, 'overlay')
+    return bool(data.get('_allow_recovery_enabled_webhook', False))
+
+
+def _traffic_reset_target_from_overlay_json(raw: Any) -> GraceBillingState | None:
+    data = _mapping(raw, 'overlay')
+    target = data.get('_traffic_reset_target')
+    return _billing_from_json(target) if target is not None else None
+
+
+def _traffic_reset_remaining_from_overlay_json(raw: Any) -> int | None:
+    data = _mapping(raw, 'overlay')
+    value = data.get('_traffic_reset_remaining_bytes')
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise GraceSnapshotError('_traffic_reset_remaining_bytes must be a non-negative integer')
+    return value
+
+
+def _traffic_reset_started_at_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_traffic_reset_started_at'))
+
+
+def _traffic_reset_finished_at_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_traffic_reset_finished_at'))
 
 
 def _overlay_from_json(raw: Any) -> GracePanelOverlay:
@@ -2490,6 +3129,13 @@ def _optional_datetimes_equal(left: datetime | None, right: datetime | None) -> 
     if left is None or right is None:
         return left is right
     return abs((_as_utc(left) - _as_utc(right)).total_seconds()) <= 2
+
+
+def _reset_generations_equal(left: datetime | None, right: datetime | None) -> bool:
+    """Compare reset generations exactly so two rapid resets stay distinct."""
+    if left is None or right is None:
+        return left is right
+    return _as_utc(left) == _as_utc(right)
 
 
 def _as_utc(value: datetime) -> datetime:

@@ -529,6 +529,7 @@ async def switch_tariff(
                 reset_traffic=should_reset_traffic,
                 reset_reason='смена тарифа',
                 sync_squads=True,
+                tariff_switch_reset=True,
             )
         else:
             await subscription_service.create_remnawave_user(
@@ -536,6 +537,7 @@ async def switch_tariff(
                 subscription,
                 reset_traffic=should_reset_traffic,
                 reset_reason='смена тарифа',
+                tariff_switch_reset=True,
             )
     except Exception as e:
         logger.error('Failed to sync tariff switch with RemnaWave', error=e)
