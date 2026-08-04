@@ -38,9 +38,13 @@ class _Mark:
         return lambda function: function
 
     def parametrize(self, argnames, argvalues):
-        names = (argnames,) if isinstance(argnames, str) and ',' not in argnames else tuple(
-            name.strip() for name in argnames.split(',')
-        ) if isinstance(argnames, str) else tuple(argnames)
+        names = (
+            (argnames,)
+            if isinstance(argnames, str) and ',' not in argnames
+            else tuple(name.strip() for name in argnames.split(','))
+            if isinstance(argnames, str)
+            else tuple(argnames)
+        )
 
         def decorator(function):
             @functools.wraps(function)

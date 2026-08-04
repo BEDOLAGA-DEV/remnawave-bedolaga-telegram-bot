@@ -337,10 +337,7 @@ class SQLAlchemyGraceSessionStore:
         saved = replace(session, version=session.version + 1)
         durable_external_checkpoint = session.state is GraceSessionState.RESTORING or (
             session.state is GraceSessionState.ACTIVE
-            and (
-                session.allow_recovery_enabled_webhook
-                or session.traffic_reset_target is not None
-            )
+            and (session.allow_recovery_enabled_webhook or session.traffic_reset_target is not None)
         )
         if durable_external_checkpoint:
             # RESTORING and the narrowly marked tariff-recovery transition are
@@ -622,9 +619,7 @@ class RemnawaveGracePanelGateway:
                 expected_overlay,
                 now=datetime.now(UTC),
             ):
-                raise GracePanelTransitionConflict(
-                    'Remnawave changed outside the deleted tariff reset checkpoint'
-                )
+                raise GracePanelTransitionConflict('Remnawave changed outside the deleted tariff reset checkpoint')
 
             disabled_user = await api.disable_user(remnawave_id)
             if disabled_user is None:
@@ -635,9 +630,7 @@ class RemnawaveGracePanelGateway:
                 _panel_user_to_snapshot(disabled_user),
                 expected_overlay,
             ):
-                raise GracePanelError(
-                    'Remnawave did not confirm revocation after canonical billing disappeared'
-                )
+                raise GracePanelError('Remnawave did not confirm revocation after canonical billing disappeared')
 
     async def prepare_tariff_rebase(
         self,
@@ -721,14 +714,10 @@ class RemnawaveGracePanelGateway:
         from app.services.remnawave_service import remnawave_service
 
         if not billing.remnawave_id:
-            raise GracePanelTransitionConflict(
-                'Canonical tariff reset target has no Remnawave user id'
-            )
+            raise GracePanelTransitionConflict('Canonical tariff reset target has no Remnawave user id')
         now = datetime.now(UTC)
         keeps_grace = not (
-            reason is GraceReason.LIMITED
-            and billing.end_at is not None
-            and _as_utc(billing.end_at) > now
+            reason is GraceReason.LIMITED and billing.end_at is not None and _as_utc(billing.end_at) > now
         )
         fence_limit = max(1, remaining_grace_bytes)
         reset_overlay = replace(
@@ -746,18 +735,20 @@ class RemnawaveGracePanelGateway:
         async with remnawave_service.get_api_client() as api:
             current_user = await api.get_user_by_id(billing.remnawave_id)
             if current_user is None:
-                raise GracePanelTransitionConflict(
-                    'Remnawave user disappeared during the configured tariff reset'
-                )
+                raise GracePanelTransitionConflict('Remnawave user disappeared during the configured tariff reset')
             current = _panel_user_to_snapshot(current_user)
             old_generation = _reset_generations_equal(
                 current.last_traffic_reset_at,
                 expected_last_traffic_reset_at,
             )
 
-            if not old_generation and not keeps_grace and _panel_user_matches_target(
-                current_user,
-                recovered_target,
+            if (
+                not old_generation
+                and not keeps_grace
+                and _panel_user_matches_target(
+                    current_user,
+                    recovered_target,
+                )
             ):
                 return GraceTrafficResetResult(
                     GraceTrafficResetOutcome.RECOVERED,
@@ -787,15 +778,16 @@ class RemnawaveGracePanelGateway:
                 now=now,
             )
             if old_generation:
-                source_matches = panel_matches_overlay(
-                    current,
-                    expected_overlay,
-                    now=now,
-                ) or fence_matches
-                if not source_matches:
-                    raise GracePanelTransitionConflict(
-                        'Remnawave changed before the configured tariff reset fence'
+                source_matches = (
+                    panel_matches_overlay(
+                        current,
+                        expected_overlay,
+                        now=now,
                     )
+                    or fence_matches
+                )
+                if not source_matches:
+                    raise GracePanelTransitionConflict('Remnawave changed before the configured tariff reset fence')
                 if not fence_matches or not _panel_user_matches_device_limit(
                     current_user,
                     recovered_target,
@@ -812,9 +804,7 @@ class RemnawaveGracePanelGateway:
                     if current_user is None:
                         current_user = await api.get_user_by_id(billing.remnawave_id)
                     if current_user is None:
-                        raise GracePanelError(
-                            'Remnawave user disappeared after the tariff reset fence'
-                        )
+                        raise GracePanelError('Remnawave user disappeared after the tariff reset fence')
                     current = _panel_user_to_snapshot(current_user)
                     if (
                         not panel_matches_overlay(current, reset_overlay, now=now)
@@ -827,17 +817,13 @@ class RemnawaveGracePanelGateway:
                             recovered_target,
                         )
                     ):
-                        raise GracePanelError(
-                            'Remnawave did not confirm the tariff reset quota fence'
-                        )
+                        raise GracePanelError('Remnawave did not confirm the tariff reset quota fence')
 
                 reset_user = await api.reset_user_traffic(billing.remnawave_id)
                 if reset_user is None:
                     reset_user = await api.get_user_by_id(billing.remnawave_id)
                 if reset_user is None:
-                    raise GracePanelError(
-                        'Remnawave user disappeared after the configured traffic reset'
-                    )
+                    raise GracePanelError('Remnawave user disappeared after the configured traffic reset')
                 current_user = reset_user
                 current = _panel_user_to_snapshot(reset_user)
                 if (
@@ -848,9 +834,7 @@ class RemnawaveGracePanelGateway:
                         expected_last_traffic_reset_at,
                     )
                 ):
-                    raise GracePanelError(
-                        'Remnawave did not confirm a new zero-usage reset generation'
-                    )
+                    raise GracePanelError('Remnawave did not confirm a new zero-usage reset generation')
             elif not fence_matches:
                 raise GracePanelTransitionConflict(
                     'Remnawave reset generation changed outside the persisted quota fence'
@@ -870,9 +854,7 @@ class RemnawaveGracePanelGateway:
                     current_user,
                     recovered_target,
                 ):
-                    raise GracePanelError(
-                        'Remnawave did not confirm the active tariff after traffic reset'
-                    )
+                    raise GracePanelError('Remnawave did not confirm the active tariff after traffic reset')
                 return GraceTrafficResetResult(
                     GraceTrafficResetOutcome.RECOVERED,
                     _panel_user_to_snapshot(current_user),
@@ -893,17 +875,14 @@ class RemnawaveGracePanelGateway:
                     current_user,
                     exhausted_target,
                 ):
-                    raise GracePanelError(
-                        'Remnawave did not confirm the exhausted Grace reset target'
-                    )
+                    raise GracePanelError('Remnawave did not confirm the exhausted Grace reset target')
                 return GraceTrafficResetResult(
                     GraceTrafficResetOutcome.EXHAUSTED,
                     _panel_user_to_snapshot(current_user),
                 )
 
-            if (
-                not panel_matches_overlay(current, reset_overlay, now=now)
-                or not _panel_user_matches_device_limit(current_user, recovered_target)
+            if not panel_matches_overlay(current, reset_overlay, now=now) or not _panel_user_matches_device_limit(
+                current_user, recovered_target
             ):
                 overlay_kwargs: dict[str, Any] = {
                     'user_id': billing.remnawave_id,
@@ -919,9 +898,7 @@ class RemnawaveGracePanelGateway:
                 if current_user is None:
                     current_user = await api.get_user_by_id(billing.remnawave_id)
                 if current_user is None:
-                    raise GracePanelError(
-                        'Remnawave user disappeared while continuing Grace after reset'
-                    )
+                    raise GracePanelError('Remnawave user disappeared while continuing Grace after reset')
                 current = _panel_user_to_snapshot(current_user)
             if (
                 not panel_matches_overlay(current, reset_overlay, now=now)
@@ -931,9 +908,7 @@ class RemnawaveGracePanelGateway:
                 )
                 or not _panel_user_matches_device_limit(current_user, recovered_target)
             ):
-                raise GracePanelError(
-                    'Remnawave did not confirm the continued Grace overlay after reset'
-                )
+                raise GracePanelError('Remnawave did not confirm the continued Grace overlay after reset')
             return GraceTrafficResetResult(
                 GraceTrafficResetOutcome.CONTINUED,
                 current,
@@ -1051,9 +1026,7 @@ class RemnawaveGracePanelGateway:
                             target,
                         ):
                             return
-                        raise GracePanelTransitionConflict(
-                            'Remnawave did not confirm recovered tariff device limit'
-                        )
+                        raise GracePanelTransitionConflict('Remnawave did not confirm recovered tariff device limit')
                     if not panel_matches_overlay(
                         current,
                         expected_overlay,
@@ -1062,9 +1035,7 @@ class RemnawaveGracePanelGateway:
                         current.last_traffic_reset_at,
                         expected_last_traffic_reset_at,
                     ):
-                        raise GracePanelTransitionConflict(
-                            'Remnawave changed outside grace during tariff recovery'
-                        )
+                        raise GracePanelTransitionConflict('Remnawave changed outside grace during tariff recovery')
                 updated = await api.update_user(**_serialize_panel_target(billing.remnawave_id, target))
         if target.status is PanelUserStatus.DISABLED:
             target_matches = updated is not None and (

@@ -10,7 +10,6 @@ import pytest
 import app.services.grace_access_runtime as grace_runtime
 import app.services.subscription_service as subscription_service_module
 from app.config import Settings
-from app.services.subscription_service import SubscriptionService
 
 
 def _user(*, remnawave_id: int = 101) -> SimpleNamespace:
@@ -65,7 +64,7 @@ def _api() -> AsyncMock:
 
 def _install(
     monkeypatch: pytest.MonkeyPatch,
-    service: SubscriptionService,
+    service: subscription_service_module.SubscriptionService,
     api: AsyncMock,
     user: SimpleNamespace,
     *,
@@ -99,7 +98,7 @@ def _install(
 async def test_open_grace_reset_intent_delegates_to_locked_grace_transition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = SubscriptionService()
+    service = subscription_service_module.SubscriptionService()
     api = _api()
     db = _db()
     subscription = _subscription()
@@ -129,7 +128,7 @@ async def test_open_grace_reset_intent_delegates_to_locked_grace_transition(
 async def test_open_grace_without_reset_intent_keeps_metadata_only_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = SubscriptionService()
+    service = subscription_service_module.SubscriptionService()
     api = _api()
     db = _db()
     subscription = _subscription()
@@ -146,7 +145,7 @@ async def test_open_grace_without_reset_intent_keeps_metadata_only_path(
 async def test_open_grace_generic_reset_does_not_enter_tariff_switch_state_machine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = SubscriptionService()
+    service = subscription_service_module.SubscriptionService()
     api = _api()
     db = _db()
     subscription = _subscription()
@@ -169,7 +168,7 @@ async def test_open_grace_generic_reset_does_not_enter_tariff_switch_state_machi
 async def test_open_grace_multi_tariff_uses_subscription_panel_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = SubscriptionService()
+    service = subscription_service_module.SubscriptionService()
     api = _api()
     db = _db()
     subscription = _subscription(remnawave_id=202)

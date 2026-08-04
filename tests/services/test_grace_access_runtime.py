@@ -1452,9 +1452,7 @@ async def test_apply_limited_billing_rejects_stale_restore_proof_after_reset_or_
             traffic_limit_bytes=previous.traffic_limit_bytes,
             squad_uuids=squad_uuids,
             external_squad_uuid=(
-                previous.external_squad_uuid
-                if status is UserStatus.LIMITED
-                else overlay.external_squad_uuid
+                previous.external_squad_uuid if status is UserStatus.LIMITED else overlay.external_squad_uuid
             ),
         )
     )

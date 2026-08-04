@@ -238,9 +238,10 @@ class FakePanelGateway:
     ) -> GracePanelSnapshot | None:
         self.prepared_tariff_rebases.append(billing)
         status = str(self.snapshot.status).strip().lower().rsplit('.', maxsplit=1)[-1]
-        expiry_matches = self.snapshot.expire_at is not None and abs(
-            (self.snapshot.expire_at - expected_overlay.expire_at).total_seconds()
-        ) <= 2
+        expiry_matches = (
+            self.snapshot.expire_at is not None
+            and abs((self.snapshot.expire_at - expected_overlay.expire_at).total_seconds()) <= 2
+        )
         if not (
             status in {'active', 'limited'}
             and expiry_matches
@@ -973,9 +974,7 @@ async def test_configured_limited_tariff_switch_reset_completes_grace() -> None:
         'updatedAt': completed.updated_at.isoformat(),
         'expireAt': completed.overlay.expire_at.isoformat(),
         'trafficLimitBytes': completed.traffic_reset_remaining_bytes,
-        'activeInternalSquads': [
-            {'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids
-        ],
+        'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
         'externalSquadUuid': completed.overlay.external_squad_uuid,
     }
     assert (
@@ -990,9 +989,7 @@ async def test_configured_limited_tariff_switch_reset_completes_grace() -> None:
         **fence_echo,
         'expireAt': switched.end_at.isoformat(),
         'trafficLimitBytes': switched.traffic_limit_bytes,
-        'activeInternalSquads': [
-            {'uuid': squad_uuid} for squad_uuid in switched.squad_uuids
-        ],
+        'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in switched.squad_uuids],
         'externalSquadUuid': switched.external_squad_uuid,
     }
     assert (
@@ -1060,21 +1057,25 @@ async def test_deleted_billing_after_reset_effect_is_revoked_from_checkpoint() -
         'updatedAt': completed.traffic_reset_started_at.isoformat(),
         'expireAt': completed.overlay.expire_at.isoformat(),
         'trafficLimitBytes': completed.traffic_reset_remaining_bytes,
-        'activeInternalSquads': [
-            {'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids
-        ],
+        'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
         'externalSquadUuid': completed.overlay.external_squad_uuid,
     }
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.enabled',
-        reset_echo,
-    ) is True
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.traffic_reset',
-        reset_echo,
-    ) is True
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.enabled',
+            reset_echo,
+        )
+        is True
+    )
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.traffic_reset',
+            reset_echo,
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio
@@ -1300,11 +1301,14 @@ async def test_limited_tariff_recovery_allows_its_enabled_webhook_while_panel_tr
 
     assert pending.unchanged == 1
     assert store.only_session().allow_recovery_enabled_webhook is True
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.enabled',
-        {},
-    ) is False
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.enabled',
+            {},
+        )
+        is False
+    )
 
     completed = await service.reconcile()
     assert completed.paid == 1
@@ -1393,17 +1397,23 @@ async def test_completed_limited_lineage_blocks_tariff_switch_but_allows_later_t
     clock.advance(timedelta(days=3, seconds=1))
     assert (await service.reconcile()).timed_out == 1
     completed = store.only_session()
-    assert tariff_rebase_lineage_blocks_new_grant(
-        replace(billing, traffic_limit_bytes=0),
-        completed,
-    ) is False
-    assert tariff_rebase_lineage_blocks_new_grant(
-        billing,
-        replace(
+    assert (
+        tariff_rebase_lineage_blocks_new_grant(
+            replace(billing, traffic_limit_bytes=0),
             completed,
-            limited_lineage_tail=replace(billing, traffic_limit_bytes=0),
-        ),
-    ) is True
+        )
+        is False
+    )
+    assert (
+        tariff_rebase_lineage_blocks_new_grant(
+            billing,
+            replace(
+                completed,
+                limited_lineage_tail=replace(billing, traffic_limit_bytes=0),
+            ),
+        )
+        is True
+    )
 
     switched = replace(
         billing,
@@ -1646,54 +1656,73 @@ async def test_continued_reset_fence_echo_is_suppressed_after_later_payment() ->
         'updatedAt': fence_updated_at.isoformat(),
         'expireAt': completed.overlay.expire_at.isoformat(),
         'trafficLimitBytes': completed.overlay.traffic_limit_bytes,
-        'activeInternalSquads': [
-            {'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids
-        ],
+        'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
         'externalSquadUuid': completed.overlay.external_squad_uuid,
     }
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.modified',
-        fence_echo,
-    ) is True
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.enabled',
-        fence_echo,
-    ) is True
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.traffic_reset',
-        fence_echo,
-    ) is True
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.modified',
+            fence_echo,
+        )
+        is True
+    )
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.enabled',
+            fence_echo,
+        )
+        is True
+    )
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.traffic_reset',
+            fence_echo,
+        )
+        is True
+    )
     sparse_reset_echo = {
         'id': completed.remnawave_id,
         'updatedAt': fence_updated_at.isoformat(),
     }
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.enabled',
-        sparse_reset_echo,
-    ) is True
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.traffic_reset',
-        sparse_reset_echo,
-    ) is True
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.enabled',
-        {},
-    ) is False
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.enabled',
+            sparse_reset_echo,
+        )
+        is True
+    )
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.traffic_reset',
+            sparse_reset_echo,
+        )
+        is True
+    )
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.enabled',
+            {},
+        )
+        is False
+    )
     unrelated_reset_echo = {
         **sparse_reset_echo,
         'id': OTHER_PANEL_ID,
     }
-    assert await service.should_suppress_webhook(
-        billing.subscription_id,
-        'user.enabled',
-        unrelated_reset_echo,
-    ) is False
+    assert (
+        await service.should_suppress_webhook(
+            billing.subscription_id,
+            'user.enabled',
+            unrelated_reset_echo,
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -1888,11 +1917,7 @@ async def test_tariff_change_during_restore_overwrites_stale_snapshot_with_fresh
         session: GraceAccessSession,
     ) -> GraceAccessSession:
         nonlocal restoring_metadata_checkpoint_seen
-        if (
-            limited
-            and session.state is GraceSessionState.RESTORING
-            and session.limited_lineage_tail == changed
-        ):
+        if limited and session.state is GraceSessionState.RESTORING and session.limited_lineage_tail == changed:
             restoring_metadata_checkpoint_seen = True
             billing_gateway.state = replace(changed, tariff_id=3)
         return await original_save(session)
@@ -1940,11 +1965,7 @@ async def test_revocation_during_restore_wins_over_stale_snapshot(timing: str) -
     await service.start_if_eligible(billing, GraceReason.LIMITED)
     revoked = replace(billing, status='disabled')
     clock.advance(timedelta(days=3, seconds=1))
-    billing_gateway.queued_states = (
-        [billing, revoked]
-        if timing == 'before_restore'
-        else [billing, billing, revoked]
-    )
+    billing_gateway.queued_states = [billing, revoked] if timing == 'before_restore' else [billing, billing, revoked]
 
     result = await service.reconcile()
 
