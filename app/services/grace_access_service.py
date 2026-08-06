@@ -2233,7 +2233,17 @@ def webhook_matches_overlay_event(
     if set(_extract_squad_uuids(payload.get('activeInternalSquads'))) != set(overlay.squad_uuids):
         return False
 
-    return payload.get('externalSquadUuid') == overlay.external_squad_uuid
+    if payload.get('externalSquadUuid') != overlay.external_squad_uuid:
+        return False
+    strategy = payload.get('trafficLimitStrategy')
+    if strategy is not None and _normalize_status(strategy) != _normalize_status(overlay.traffic_limit_strategy or ''):
+        return False
+    reset_at = payload.get('lastTrafficResetAt')
+    if reset_at is not None:
+        parsed_reset_at = _parse_datetime(reset_at)
+        if not parsed_reset_at or not _datetimes_equal(parsed_reset_at, overlay.expected_last_traffic_reset_at):
+            return False
+    return True
 
 
 def webhook_matches_overlay(payload: Mapping[str, Any], overlay: GracePanelOverlay) -> bool:
@@ -2262,6 +2272,19 @@ def webhook_matches_overlay(payload: Mapping[str, Any], overlay: GracePanelOverl
     if 'activeInternalSquads' in payload:
         payload_squads = _extract_squad_uuids(payload.get('activeInternalSquads'))
         if set(payload_squads) != set(overlay.squad_uuids):
+            return False
+        markers += 1
+
+    strategy = payload.get('trafficLimitStrategy')
+    if strategy is not None:
+        if _normalize_status(strategy) != _normalize_status(overlay.traffic_limit_strategy or ''):
+            return False
+        markers += 1
+
+    reset_at = payload.get('lastTrafficResetAt')
+    if reset_at is not None:
+        parsed_reset_at = _parse_datetime(reset_at)
+        if not parsed_reset_at or not _datetimes_equal(parsed_reset_at, overlay.expected_last_traffic_reset_at):
             return False
         markers += 1
 
