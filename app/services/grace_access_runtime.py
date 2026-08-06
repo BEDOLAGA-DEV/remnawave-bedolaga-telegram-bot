@@ -1551,10 +1551,6 @@ class GraceAccessRuntime:
 
 async def get_open_grace_subscription_ids(db: AsyncSession) -> set[int]:
     """One-query guard shared by both directions of full synchronization."""
-    if grace_access_runtime.mode in (GraceAccessMode.DISABLED, GraceAccessMode.OBSERVE):
-        # Non-mutating grace: оверлеи не поддерживаются — синк идёт как до фичи,
-        # без лишнего запроса на каждый webhook/цикл синхронизации.
-        return set()
     result = await db.execute(
         select(GraceAccessSessionModel.subscription_id).where(GraceAccessSessionModel.state.in_(_OPEN_STATES))
     )
@@ -1572,11 +1568,6 @@ async def lock_grace_sensitive_panel_updates(
     and then commit or roll back, otherwise the check and PATCH are not atomic
     with respect to grace.
     """
-    if grace_access_runtime.mode in (GraceAccessMode.DISABLED, GraceAccessMode.OBSERVE):
-        # Non-mutating grace: локи не берём и оверлеи не защищаем — вызывающие
-        # идут прямым панельным путём, как до фичи. Остаточные открытые сессии
-        # в этих режимах отрапортованы CRITICAL-логом на старте runtime.
-        return set()
     normalized_ids = tuple(sorted({int(value) for value in subscription_ids}))
     if not normalized_ids:
         return set()
@@ -1613,9 +1604,6 @@ async def apply_recovered_grace_update_locked(
     the session update are committed. ``false`` and ``observe`` remain strictly
     non-mutating; ``drain`` may finish an already-open session.
     """
-    if grace_access_runtime.mode not in {GraceAccessMode.ACTIVE, GraceAccessMode.DRAIN}:
-        return False, None
-
     core = _build_core(db, subscription_id=subscription_id)
     if not await core.payment_has_recovered(subscription_id):
         return False, None
@@ -1791,12 +1779,6 @@ async def update_panel_user_grace_safe(
     expiry, traffic and squad fields are deferred so the reconciler can keep
     the overlay or restore the newest canonical billing state safely.
     """
-    if grace_access_runtime.mode in (GraceAccessMode.DISABLED, GraceAccessMode.OBSERVE):
-        # Non-mutating grace: обычный панельный апдейт без guard-сессии и локов —
-        # поведение и стоимость как до фичи. Оверлеи в этих режимах не защищаются:
-        # рутинный синк приводит панель к каноническому биллингу (остаточные
-        # открытые сессии отрапортованы CRITICAL-логом на старте).
-        return await api.update_user(**update_kwargs)
     async with grace_sensitive_panel_update(subscription_id) as lease:
         if lease.subscription is None:
             raise GracePanelError(f'Subscription {subscription_id} disappeared before its Remnawave update')
@@ -1904,9 +1886,6 @@ async def create_panel_user_grace_safe(
     **create_kwargs: Any,
 ) -> Any:
     """Create a panel user only while the subscription cannot have an overlay."""
-    if grace_access_runtime.mode in (GraceAccessMode.DISABLED, GraceAccessMode.OBSERVE):
-        # Non-mutating grace: оверлеев не существует/не защищаются — создаём напрямую.
-        return await _adopt_or_create(api, adopt_short_uuid, create_kwargs)
     async with grace_sensitive_panel_update(subscription_id) as lease:
         if lease.subscription is None:
             raise GracePanelError(f'Subscription {subscription_id} disappeared before Remnawave user creation')
@@ -1970,14 +1949,6 @@ async def set_panel_user_enabled_state_grace_safe(
     ``IS NULL`` — то есть совпадение со ВСЕМИ неслинкованными подписками.
     """
     panel_user_id = coerce_panel_user_id(remnawave_id)
-    if grace_access_runtime.mode in (GraceAccessMode.DISABLED, GraceAccessMode.OBSERVE):
-        # Non-mutating grace: не трогаем ни БД, ни suppression-маркеры —
-        # поведение панельного enable/disable как до фичи. Остаточные открытые
-        # сессии в этих режимах уже отрапортованы CRITICAL-логом на старте.
-        if enabled:
-            return await api.enable_user(panel_user_id)
-        return await api.disable_user(panel_user_id)
-
     if db is not None:
         action_result, deferred_disable_error = await _set_panel_user_enabled_state_locked(
             db, api, panel_user_id, enabled=enabled
