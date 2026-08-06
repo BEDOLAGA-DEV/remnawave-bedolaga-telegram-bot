@@ -9,6 +9,10 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.auth.registration_access import (
+    evaluate_public_registration,
+    raise_for_registration_decision,
+)
 from app.cabinet.dependencies import get_cabinet_db
 from app.cabinet.ip_utils import get_client_ip
 from app.cabinet.utils.locale import DEFAULT_LOCALE, resolve_locale_text
@@ -18,14 +22,17 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user import get_user_by_email
 from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff
 from app.services.guest_purchase_service import (
+    GIFT_TOKEN_MIN_PREFIX_LENGTH,
     GuestPurchaseError,
     _find_or_create_user,
     activate_purchase as activate_guest_purchase,
     create_purchase,
+    evaluate_guest_purchase_registration,
     validate_and_calculate,
 )
 from app.services.payment_method_config_service import _get_method_defaults
 from app.services.payment_service import PaymentService
+from app.services.registration_access_service import RegistrationChannel
 from app.utils.cache import RateLimitCache, cache
 
 
@@ -294,7 +301,7 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
         if bot_username:
             # Telegram start params are length-limited; use a token prefix.
             # The bot handler resolves gifts by prefix (start.py:149).
-            bot_claim_link = f'https://t.me/{bot_username}?start=GIFT_{purchase.token[:12]}'
+            bot_claim_link = f'https://t.me/{bot_username}?start=GIFT_{purchase.token[:GIFT_TOKEN_MIN_PREFIX_LENGTH]}'
 
     return PurchaseStatusResponse(
         status=purchase.status,
@@ -591,6 +598,18 @@ async def claim_gift(
     if purchase.user_id is not None and (existing_user is None or purchase.user_id != existing_user.id):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='This gift has already been claimed')
 
+    # Public web claim cannot create or revive an account while invite-only is
+    # enabled. The typed email is not proof of an administrative identity.
+    decision = await evaluate_public_registration(
+        db,
+        channel=RegistrationChannel.LANDING_GIFT_CLAIM,
+        existing_user=existing_user,
+        email=body.email,
+        email_verified=False,
+        verified_admin=False,
+    )
+    raise_for_registration_decision(decision)
+
     # Guards passed — now create/finalize the account the gift binds to.
     user, _is_new = await _find_or_create_user(db, 'email', body.email, purchase=purchase, tariff_id=purchase.tariff_id)
 
@@ -802,6 +821,18 @@ async def create_landing_purchase(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'Amount exceeds the maximum ({settings.format_price(max_amount)}) for this payment method',
         )
+
+    # A non-gift landing purchase would create or revive the recipient after
+    # payment. Enforce the current policy before creating any payment record;
+    # fulfillment repeats the check immediately before mutating User.
+    if not body.is_gift:
+        _, decision = await evaluate_guest_purchase_registration(
+            db,
+            channel=RegistrationChannel.LANDING_PURCHASE,
+            contact_type=body.contact_type,
+            contact_value=body.contact_value,
+        )
+        raise_for_registration_decision(decision)
 
     # Create purchase record (no commit yet — wait for payment creation)
     purchase = await create_purchase(

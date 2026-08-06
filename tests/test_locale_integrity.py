@@ -116,3 +116,15 @@ def test_t_calls_with_static_default_exist_in_ru(locales):
         'texts.t(key, static_default) для ключа, отсутствующего в ru.json '
         '(все языки получают дефолт) — добавьте ключ во все локали:\n' + '\n'.join(sorted(offenders)[:25])
     )
+
+
+@pytest.mark.parametrize(
+    'key',
+    [
+        'registration_invite_required',
+        'registration_check_unavailable',
+        'registration_contact_support',
+    ],
+)
+def test_invite_only_keys_exist_in_every_locale(locales, key):
+    assert all(key in locales[lang] for lang in LANGS)

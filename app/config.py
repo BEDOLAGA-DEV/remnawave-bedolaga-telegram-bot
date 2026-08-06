@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     ADMIN_IDS: str = ''
     ADMIN_EMAILS: str = ''  # Comma-separated admin emails for email-only users
 
+    # Closed public registration. Existing users keep normal access.
+    INVITE_ONLY_ENABLED: bool = False
+    INVITE_ONLY_ALLOW_GIFT_LINKS: bool = True
+
     # Test email account for development/testing (bypasses email verification and SMTP)
     TEST_EMAIL: str = ''  # e.g., test@example.com
     TEST_EMAIL_PASSWORD: str = ''  # Password for test account
