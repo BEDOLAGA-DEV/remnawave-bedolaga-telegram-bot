@@ -2615,7 +2615,9 @@ class GraceAccessSessionModel(Base):
     # Панельная идентичность сессии (Remnawave 3.0.0: числовой id). Nullable на
     # время бэкфила: колонку нельзя добавить сразу NOT NULL на живой таблице, а
     # флип делается отдельной ревизией после проверки нулей.
-    remnawave_id = Column(BigInteger, nullable=False, index=True)
+    # Runtime/migration 0105 require a positive id; nullable remains in the
+    # ORM model so the pre-0105 backfill can still load and repair legacy rows.
+    remnawave_id = Column(BigInteger, nullable=True, index=True)
     # Ослаблено до nullable в 0104: панель 3.0.0 не отдаёт uuid, поэтому новые
     # сессии его физически не могут заполнить. Историческое поле.
     remnawave_uuid = Column(String(255), nullable=True)

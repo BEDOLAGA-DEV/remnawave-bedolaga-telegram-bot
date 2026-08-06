@@ -512,7 +512,10 @@ class RemnawaveGracePanelGateway:
             strategy_snapshot = _panel_user_to_snapshot(strategy_updated)
             if (
                 _normalize(strategy_snapshot.status) == 'disabled'
-                or strategy_snapshot.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value
+                or (
+                    hasattr(strategy_updated, 'traffic_limit_strategy')
+                    and strategy_snapshot.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value
+                )
                 or not _reset_generations_equal(
                     strategy_snapshot.last_traffic_reset_at,
                     overlay.expected_last_traffic_reset_at,
@@ -2542,6 +2545,9 @@ def _serialize_grace_panel_patch(
 
 
 async def _validate_grace_squads(api: Any, squad_uuids: Sequence[str]) -> None:
+    if not hasattr(api, 'get_internal_squad_by_uuid') or not hasattr(api, 'get_internal_squad_accessible_nodes'):
+        logger.warning('Remnawave client does not expose squad validation endpoints; skipping online squad check')
+        return
     for raw_uuid in squad_uuids:
         try:
             canonical_uuid = str(UUID(str(raw_uuid))).lower()
