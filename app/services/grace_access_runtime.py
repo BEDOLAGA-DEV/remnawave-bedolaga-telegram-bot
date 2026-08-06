@@ -72,14 +72,15 @@ _OPEN_STATES = (
     GraceSessionState.ACTIVE.value,
     GraceSessionState.RESTORING.value,
 )
-_SNAPSHOT_VERSION = 3
+_SNAPSHOT_VERSION = 4
 # Version 3 stores the numeric Remnawave 3.0.0 identity.  Version 2 rows are
 # still read: the backfill adds the numeric key *next to* the historical uuid
 # instead of replacing it, and a session that predates the panel upgrade must
 # stay reconcilable.  Refusing v2 here would make `_model_to_session` raise for
 # every such row, `list_open` would drop them from the batch, and their overlay
 # would never be rolled back — a permanently open door with no error report.
-_SUPPORTED_SNAPSHOT_VERSIONS = frozenset({2, _SNAPSHOT_VERSION})
+_SUPPORTED_SNAPSHOT_VERSIONS = frozenset({2, 3, _SNAPSHOT_VERSION})
+_TRAFFIC_LIMIT_STRATEGIES = frozenset({'NO_RESET', 'DAY', 'WEEK', 'MONTH', 'MONTH_ROLLING'})
 _POSTGRES_LOCK_NAMESPACE = 1_196_572_995
 _POSTGRES_GLOBAL_PANEL_LOCK_ID = 0
 _GRACE_EXPIRE_AT_SAFETY_MARGIN = timedelta(seconds=60)
@@ -445,8 +446,10 @@ class _PanelTarget:
     traffic_limit_bytes: int
     squad_uuids: tuple[str, ...]
     external_squad_uuid: str | None
+    traffic_limit_strategy: str | None = None
     device_limit: int | None = None
     write_expire_at: bool = True
+    write_traffic_limit_strategy: bool = True
 
 
 class RemnawaveGracePanelGateway:
@@ -2192,6 +2195,8 @@ async def _acquire_database_lock(db: AsyncSession, subscription_id: int) -> None
 def _subscription_to_billing(subscription: Subscription) -> GraceBillingState:
     user = subscription.user
     tariff = subscription.tariff
+    from app.services.subscription_service import get_traffic_reset_strategy
+
     remnawave_id = subscription.remnawave_id if settings.is_multi_tariff_enabled() else user.remnawave_id
     traffic_limit_gb = max(0, int(subscription.traffic_limit_gb or 0))
     traffic_used_gb = max(0.0, float(subscription.traffic_used_gb or 0.0))
@@ -2204,6 +2209,7 @@ def _subscription_to_billing(subscription: Subscription) -> GraceBillingState:
         used_traffic_bytes=int(traffic_used_gb * 1024**3),
         device_limit=subscription.device_limit,
         squad_uuids=_string_tuple(subscription.connected_squads),
+        traffic_limit_strategy=get_traffic_reset_strategy(tariff).value,
         external_squad_uuid=(tariff.external_squad_uuid if tariff else None),
         is_trial=bool(subscription.is_trial or subscription.status == SubscriptionStatus.TRIAL.value),
         is_daily=bool(tariff and tariff.is_daily),
@@ -2230,6 +2236,7 @@ def _panel_user_to_snapshot(panel_user: Any) -> GracePanelSnapshot:
         external_squad_uuid=panel_user.external_squad_uuid,
         traffic_is_known=panel_user.user_traffic is not None,
         last_traffic_reset_at=(_as_utc(panel_user.last_traffic_reset_at) if panel_user.last_traffic_reset_at else None),
+        traffic_limit_strategy=_strategy_value(getattr(panel_user, 'traffic_limit_strategy', None)),
     )
 
 
@@ -2244,6 +2251,7 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
             traffic_limit_bytes=snapshot.traffic_limit_bytes,
             squad_uuids=snapshot.squad_uuids,
             external_squad_uuid=snapshot.external_squad_uuid,
+            traffic_limit_strategy=snapshot.traffic_limit_strategy,
             write_expire_at=False,
         )
     if status == 'disabled' or expire_at <= now:
@@ -2253,6 +2261,7 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
             traffic_limit_bytes=snapshot.traffic_limit_bytes,
             squad_uuids=snapshot.squad_uuids,
             external_squad_uuid=snapshot.external_squad_uuid,
+            traffic_limit_strategy=snapshot.traffic_limit_strategy,
             write_expire_at=status == 'disabled' and expire_at > safe_expire_after,
         )
     if status == 'limited':
@@ -2265,6 +2274,7 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
         traffic_limit_bytes=snapshot.traffic_limit_bytes,
         squad_uuids=snapshot.squad_uuids,
         external_squad_uuid=snapshot.external_squad_uuid,
+        traffic_limit_strategy=snapshot.traffic_limit_strategy,
     )
 
 
@@ -2288,6 +2298,7 @@ def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _Pane
         traffic_limit_bytes=billing.traffic_limit_bytes,
         squad_uuids=billing.squad_uuids,
         external_squad_uuid=billing.external_squad_uuid,
+        traffic_limit_strategy=billing.traffic_limit_strategy,
         device_limit=billing.device_limit,
         write_expire_at=write_expire_at,
     )
@@ -2921,6 +2932,7 @@ def _billing_to_json(value: GraceBillingState) -> dict[str, Any]:
         'used_traffic_bytes': value.used_traffic_bytes,
         'device_limit': value.device_limit,
         'squad_uuids': list(value.squad_uuids),
+        'traffic_limit_strategy': value.traffic_limit_strategy,
         'external_squad_uuid': value.external_squad_uuid,
         'is_trial': value.is_trial,
         'is_daily': value.is_daily,
@@ -2945,6 +2957,7 @@ def _billing_from_json(raw: Any) -> GraceBillingState:
         used_traffic_bytes=_integer(data, 'used_traffic_bytes'),
         device_limit=_optional_integer(data.get('device_limit')),
         squad_uuids=_string_tuple(data.get('squad_uuids')),
+        traffic_limit_strategy=_strategy_value(data.get('traffic_limit_strategy')),
         external_squad_uuid=_optional_string(data.get('external_squad_uuid')),
         is_trial=bool(data.get('is_trial', False)),
         is_daily=bool(data.get('is_daily', False)),
@@ -2964,6 +2977,7 @@ def _panel_to_json(value: GracePanelSnapshot) -> dict[str, Any]:
         'traffic_limit_bytes': value.traffic_limit_bytes,
         'used_traffic_bytes': value.used_traffic_bytes,
         'squad_uuids': list(value.squad_uuids),
+        'traffic_limit_strategy': value.traffic_limit_strategy,
         'external_squad_uuid': value.external_squad_uuid,
         'traffic_is_known': value.traffic_is_known,
         'last_traffic_reset_at': _datetime_to_json(value.last_traffic_reset_at),
@@ -2988,6 +3002,7 @@ def _panel_from_json(raw: Any, *, fallback_remnawave_id: int | None = None) -> G
         external_squad_uuid=_optional_string(data.get('external_squad_uuid')),
         traffic_is_known=bool(data.get('traffic_is_known', True)),
         last_traffic_reset_at=_datetime_from_json(data.get('last_traffic_reset_at')),
+        traffic_limit_strategy=_strategy_value(data.get('traffic_limit_strategy')),
     )
 
 
@@ -2997,6 +3012,8 @@ def _overlay_to_json(value: GracePanelOverlay) -> dict[str, Any]:
         'expire_at': _datetime_to_json(value.expire_at),
         'traffic_limit_bytes': value.traffic_limit_bytes,
         'squad_uuids': list(value.squad_uuids),
+        'traffic_limit_strategy': value.traffic_limit_strategy,
+        'expected_last_traffic_reset_at': _datetime_to_json(value.expected_last_traffic_reset_at),
         'external_squad_uuid': value.external_squad_uuid,
     }
 
@@ -3074,6 +3091,8 @@ def _overlay_from_json(raw: Any) -> GracePanelOverlay:
         expire_at=expire_at,
         traffic_limit_bytes=_integer(data, 'traffic_limit_bytes'),
         squad_uuids=_string_tuple(data.get('squad_uuids')),
+        traffic_limit_strategy=_strategy_value(data.get('traffic_limit_strategy')),
+        expected_last_traffic_reset_at=_datetime_from_json(data.get('expected_last_traffic_reset_at')),
         external_squad_uuid=_optional_string(data.get('external_squad_uuid')),
     )
 
@@ -3183,6 +3202,18 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _strategy_value(value: object) -> str | None:
+    if value is None:
+        return None
+    raw = getattr(value, 'value', value)
+    if not isinstance(raw, str):
+        raise GraceSnapshotError(f'Invalid traffic limit strategy value: {value!r}')
+    normalized = raw.strip().upper()
+    if normalized not in _TRAFFIC_LIMIT_STRATEGIES:
+        raise GraceSnapshotError(f'Unsupported traffic limit strategy: {raw!r}')
+    return normalized
 
 
 def _normalize(value: object) -> str:

@@ -25,6 +25,10 @@ from app.services.grace_access_runtime import (
     _build_billing_target,
     _build_restore_target,
     _model_to_session,
+    _overlay_from_json,
+    _overlay_to_json,
+    _panel_from_json,
+    _panel_to_json,
     _PanelTarget,
     _serialize_panel_target,
     _session_to_model,
@@ -299,6 +303,39 @@ def test_grace_billing_json_round_trip_preserves_tariff_identity_and_legacy_defa
 
     real_null_tariff = replace(billing, tariff_id=None, tariff_id_known=True)
     assert _billing_from_json(_billing_to_json(real_null_tariff)) == real_null_tariff
+
+
+def test_grace_snapshot_v4_round_trip_preserves_reset_strategy_and_generation() -> None:
+    snapshot = replace(
+        make_limited_snapshot(),
+        traffic_limit_strategy='MONTH',
+        last_traffic_reset_at=NOW - timedelta(hours=2),
+    )
+    overlay = replace(
+        make_overlay(),
+        traffic_limit_strategy='NO_RESET',
+        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+    )
+
+    assert _panel_from_json(_panel_to_json(snapshot)) == snapshot
+    assert _overlay_from_json(_overlay_to_json(overlay)) == overlay
+
+
+def test_legacy_snapshot_without_strategy_keeps_explicit_unknown_value() -> None:
+    panel = _panel_to_json(make_limited_snapshot())
+    panel.pop('traffic_limit_strategy')
+
+    restored = _panel_from_json(panel)
+
+    assert restored.traffic_limit_strategy is None
+
+
+def test_unknown_reset_strategy_is_rejected_in_snapshot() -> None:
+    panel = _panel_to_json(make_limited_snapshot())
+    panel['traffic_limit_strategy'] = 'YEAR'
+
+    with pytest.raises(GraceSnapshotError, match='Unsupported traffic limit strategy'):
+        _panel_from_json(panel)
 
 
 def test_grace_session_json_round_trip_preserves_incident_aliases() -> None:

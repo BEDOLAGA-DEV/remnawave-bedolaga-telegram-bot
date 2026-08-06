@@ -154,6 +154,10 @@ class GraceBillingState:
     used_traffic_bytes: int
     device_limit: int | None
     squad_uuids: tuple[str, ...]
+    # Remnawave traffic reset strategy. ``None`` is reserved for legacy
+    # snapshots that predate the strategy field and must be hydrated from the
+    # live panel before any mutation.
+    traffic_limit_strategy: str | None = None
     external_squad_uuid: str | None = None
     is_trial: bool = False
     is_daily: bool = False
@@ -184,6 +188,8 @@ class GracePanelSnapshot:
     external_squad_uuid: str | None = None
     traffic_is_known: bool = True
     last_traffic_reset_at: datetime | None = None
+    # ``None`` is an explicit legacy marker for v2/v3 snapshots only.
+    traffic_limit_strategy: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +201,8 @@ class GracePanelOverlay:
     traffic_limit_bytes: int
     squad_uuids: tuple[str, ...]
     external_squad_uuid: str | None = None
+    traffic_limit_strategy: str | None = None
+    expected_last_traffic_reset_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2026,6 +2034,8 @@ def build_panel_overlay(
         expire_at=_as_utc(now) + policy.duration,
         traffic_limit_bytes=temporary_limit,
         squad_uuids=(policy.squad_for(reason),),
+        traffic_limit_strategy='NO_RESET',
+        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
         # External squads can provide unrestricted access independently of the
         # internal Telegram-only squad, so grace must temporarily detach them.
         external_squad_uuid=None,
