@@ -1007,11 +1007,25 @@ class GraceAccessService:
                     billing,
                     expected_overlay=session.overlay,
                 )
-                await self._complete(
-                    session,
-                    GraceCompletionReason.CONFLICT,
-                    last_error='Unexpected active Remnawave state was replaced by canonical billing',
-                )
+                verified_panel = await self._panel.read_snapshot(session.remnawave_id)
+                from app.services.grace_access_runtime import _build_billing_target, _panel_matches_target
+
+                canonical_target = _build_billing_target(billing, now=now)
+                if verified_panel is not None and _panel_matches_target(verified_panel, canonical_target):
+                    await self._complete(
+                        session,
+                        GraceCompletionReason.CONFLICT,
+                        last_error='Unexpected active Remnawave state was replaced by canonical billing',
+                    )
+                else:
+                    await self._store.save(
+                        replace(
+                            session,
+                            state=GraceSessionState.RESTORING,
+                            updated_at=_as_utc(self._clock()),
+                            last_error='Unexpected ACTIVE remains different from canonical billing; restore is pending',
+                        )
+                    )
                 return GraceCompletionReason.CONFLICT.value
 
             await self._complete(
