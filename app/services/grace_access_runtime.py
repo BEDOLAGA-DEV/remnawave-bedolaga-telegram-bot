@@ -130,7 +130,9 @@ async def _repair_missing_panel_id(db: AsyncSession, model: GraceAccessSessionMo
     Возвращает True, если идентичность восстановлена.
     """
     if model.remnawave_id is not None:
-        return False
+        if int(model.remnawave_id) > 0:
+            return False
+        model.remnawave_id = None
 
     panel_id = (
         await db.execute(select(Subscription.remnawave_id).where(Subscription.id == model.subscription_id))
@@ -146,7 +148,7 @@ async def _repair_missing_panel_id(db: AsyncSession, model: GraceAccessSessionMo
             )
         ).scalar_one_or_none()
 
-    if panel_id is None:
+    if panel_id is None or int(panel_id) <= 0:
         return False
 
     model.remnawave_id = int(panel_id)
@@ -262,6 +264,8 @@ class SQLAlchemyGraceSessionStore:
         sessions: list[GraceAccessSession] = []
         for model in result.scalars().all():
             try:
+                if model.remnawave_id is None or int(model.remnawave_id) <= 0:
+                    await _repair_missing_panel_id(self._db, model)
                 sessions.append(_model_to_session(model))
             except Exception:
                 logger.exception(
@@ -2983,6 +2987,8 @@ def _session_values(session: GraceAccessSession) -> dict[str, Any]:
     # ``remnawave_uuid`` is deliberately absent: a new row cannot know a uuid the
     # panel no longer returns, and an UPDATE that omits the key keeps whatever
     # historical value a pre-3.0.0 row still carries for auditing.
+    if session.remnawave_id is None or int(session.remnawave_id) <= 0:
+        raise GraceSnapshotError('Grace session requires a positive Remnawave numeric id')
     return {
         'subscription_id': session.subscription_id,
         'remnawave_id': session.remnawave_id,
