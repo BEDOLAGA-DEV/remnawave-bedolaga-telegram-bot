@@ -1365,7 +1365,7 @@ class GraceAccessRuntime:
     async def force_restore_all(self) -> GraceReconcileResult:
         """Immediately restore every open session; used by the emergency CLI."""
         aggregate = GraceReconcileResult()
-        while True:
+        for _pass in range(10):
             ids = await self._all_open_subscription_ids()
             if not ids:
                 return aggregate
@@ -1384,10 +1384,21 @@ class GraceAccessRuntime:
                     )
                     result = GraceReconcileResult(inspected=1, errors=1)
                 aggregate = _merge_reconcile_results(aggregate, result)
-                if result.drained or result.paid or result.revoked or result.timed_out or result.conflicts:
+                if (
+                    result.drained
+                    or result.paid
+                    or result.revoked
+                    or result.timed_out
+                    or result.conflicts
+                    or result.repaired
+                ):
                     progress = True
             if not progress:
-                return aggregate
+                break
+        remaining = await self.open_count()
+        if remaining:
+            logger.error('Emergency Grace restore stopped after ten passes with open sessions', open_sessions=remaining)
+        return aggregate
 
     async def open_count(self) -> int:
         async with AsyncSessionLocal() as db:
