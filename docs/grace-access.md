@@ -8,6 +8,8 @@
 
 Перед выдачей проверяются canonical UUID Grace-сквада, её существование и доступные nodes. Трафиковый лимит ограничен safe integer до `2^53-1`, чтобы не потерять точность в JSON/Remnawave.
 
+Миграция `0105` делает `grace_access_sessions.remnawave_id` `NOT NULL` и добавляет `CHECK remnawave_id > 0`. Если проверка находит `NULL`/неположительные ID, она останавливается до ограничений: сначала запустите `make backfill-remnawave-ids`, затем `make backfill-remnawave-ids-apply`.
+
 Grace-доступ временно оставляет клиенту только специальный Remnawave-сквад, через который должен работать Telegram. Он предназначен для двух случаев:
 
 - `expired` — закончилось время подписки;
