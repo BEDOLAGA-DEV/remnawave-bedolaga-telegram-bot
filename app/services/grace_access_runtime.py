@@ -82,6 +82,7 @@ _SNAPSHOT_VERSION = 4
 # would never be rolled back — a permanently open door with no error report.
 _SUPPORTED_SNAPSHOT_VERSIONS = frozenset({2, 3, _SNAPSHOT_VERSION})
 _TRAFFIC_LIMIT_STRATEGIES = frozenset({'NO_RESET', 'DAY', 'WEEK', 'MONTH', 'MONTH_ROLLING'})
+_MAX_SAFE_PANEL_INTEGER = 2**53 - 1
 _POSTGRES_LOCK_NAMESPACE = 1_196_572_995
 _POSTGRES_GLOBAL_PANEL_LOCK_ID = 0
 _GRACE_EXPIRE_AT_SAFETY_MARGIN = timedelta(seconds=60)
@@ -477,6 +478,7 @@ class RemnawaveGracePanelGateway:
         from app.services.remnawave_service import remnawave_service
 
         async with remnawave_service.get_api_client() as api:
+            await _validate_grace_squads(api, overlay.squad_uuids)
             # Detach an external squad in a standalone preflight PATCH.  The API
             # client may retry A039 without externalSquadUuid; doing this before
             # ACTIVE/expiry changes guarantees such a retry cannot accidentally
@@ -2503,6 +2505,15 @@ def _serialize_grace_panel_patch(
         raise GracePanelError(f'Unsupported Grace panel status {status!r}')
 
     kwargs = dict(base_kwargs or {})
+    traffic_limit = kwargs.get('traffic_limit_bytes')
+    if traffic_limit is not None:
+        try:
+            traffic_limit = int(traffic_limit)
+        except (TypeError, ValueError) as error:
+            raise GracePanelError('Grace traffic limit must be an integer') from error
+        if traffic_limit < 0 or traffic_limit > _MAX_SAFE_PANEL_INTEGER:
+            raise GracePanelError('Grace traffic limit exceeds the Remnawave safe integer range')
+        kwargs['traffic_limit_bytes'] = traffic_limit
     # A caller-provided value must never bypass the Grace status/date policy.
     kwargs.pop('status', None)
     kwargs.pop('expire_at', None)
@@ -2528,6 +2539,22 @@ def _serialize_grace_panel_patch(
             kwargs['expire_at'] = expire_at_utc
 
     return kwargs
+
+
+async def _validate_grace_squads(api: Any, squad_uuids: Sequence[str]) -> None:
+    for raw_uuid in squad_uuids:
+        try:
+            canonical_uuid = str(UUID(str(raw_uuid))).lower()
+        except (ValueError, TypeError) as error:
+            raise GracePanelError(f'Grace squad UUID is invalid: {raw_uuid!r}') from error
+        if canonical_uuid != str(raw_uuid).lower():
+            raise GracePanelError(f'Grace squad UUID is not canonical: {raw_uuid!r}')
+        squad = await api.get_internal_squad_by_uuid(canonical_uuid)
+        if squad is None:
+            raise GracePanelError(f'Grace squad does not exist in Remnawave: {canonical_uuid}')
+        nodes = await api.get_internal_squad_accessible_nodes(canonical_uuid)
+        if not nodes:
+            raise GracePanelError(f'Grace squad has no accessible nodes in Remnawave: {canonical_uuid}')
 
 
 def _panel_matches_limited_intermediate(
