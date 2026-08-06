@@ -2143,6 +2143,11 @@ def panel_matches_overlay(
         and snapshot.traffic_limit_bytes == overlay.traffic_limit_bytes
         and set(snapshot.squad_uuids) == set(overlay.squad_uuids)
         and snapshot.external_squad_uuid == overlay.external_squad_uuid
+        and (
+            overlay.traffic_limit_strategy is None
+            or snapshot.traffic_limit_strategy is None
+            or snapshot.traffic_limit_strategy == overlay.traffic_limit_strategy
+        )
     )
 
 
@@ -2164,6 +2169,11 @@ def panel_is_safe_pending_source(
         and _datetimes_equal(current.expire_at, before.expire_at)
         and current.traffic_limit_bytes == before.traffic_limit_bytes
         and set(current.squad_uuids) == set(before.squad_uuids)
+        and (
+            before.traffic_limit_strategy is None
+            or current.traffic_limit_strategy is None
+            or current.traffic_limit_strategy == before.traffic_limit_strategy
+        )
     )
     return unchanged_except_external and current.external_squad_uuid in {
         before.external_squad_uuid,

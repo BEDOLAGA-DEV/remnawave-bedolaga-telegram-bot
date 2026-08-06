@@ -34,6 +34,7 @@ from app.database.models import (
 )
 from app.external.remnawave_api import (
     RemnaWaveInvalidUserIdError,
+    TrafficLimitStrategy,
     UserStatus as PanelUserStatus,
     coerce_panel_user_id,
 )
@@ -485,6 +486,33 @@ class RemnawaveGracePanelGateway:
                 if verified_detach is None or verified_detach.external_squad_uuid != overlay.external_squad_uuid:
                     raise GracePanelError('Remnawave did not detach the external squad; overlay was not granted')
 
+            detached_snapshot = _panel_user_to_snapshot(detached)
+            if not _reset_generations_equal(
+                detached_snapshot.last_traffic_reset_at,
+                overlay.expected_last_traffic_reset_at,
+            ):
+                raise GracePanelTransitionConflict(
+                    'Remnawave reset generation changed while detaching the external squad'
+                )
+
+            strategy_updated = await api.update_user(
+                user_id=remnawave_id,
+                traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
+            )
+            if strategy_updated is None:
+                strategy_updated = await api.get_user_by_id(remnawave_id)
+            if strategy_updated is None:
+                raise GracePanelError('Remnawave user disappeared while disabling the automatic traffic reset')
+            strategy_snapshot = _panel_user_to_snapshot(strategy_updated)
+            if (
+                strategy_snapshot.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value
+                or not _reset_generations_equal(
+                    strategy_snapshot.last_traffic_reset_at,
+                    overlay.expected_last_traffic_reset_at,
+                )
+            ):
+                raise GracePanelError('Remnawave did not confirm NO_RESET before granting Grace')
+
             updated = await api.update_user(
                 **_serialize_grace_panel_patch(
                     remnawave_id,
@@ -494,13 +522,18 @@ class RemnawaveGracePanelGateway:
                     base_kwargs={
                         'traffic_limit_bytes': overlay.traffic_limit_bytes,
                         'active_internal_squads': list(overlay.squad_uuids),
+                        'traffic_limit_strategy': TrafficLimitStrategy.NO_RESET,
                     },
                 )
             )
-        if updated is None or not panel_matches_overlay(
-            _panel_user_to_snapshot(updated),
-            overlay,
-            now=datetime.now(UTC),
+        updated_snapshot = _panel_user_to_snapshot(updated) if updated is not None else None
+        if (
+            updated_snapshot is None
+            or not panel_matches_overlay(updated_snapshot, overlay, now=datetime.now(UTC))
+            or not _reset_generations_equal(
+                updated_snapshot.last_traffic_reset_at,
+                overlay.expected_last_traffic_reset_at,
+            )
         ):
             raise GracePanelError('Remnawave did not confirm the grace overlay')
 
@@ -590,7 +623,12 @@ class RemnawaveGracePanelGateway:
                 )
                 return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
 
-            updated = await api.update_user(**_serialize_panel_target(remnawave_id, target))
+            updated = await _restore_target_in_phases(
+                api,
+                remnawave_id=remnawave_id,
+                target=target,
+                current_user=current_user,
+            )
             if updated is not None and _panel_matches_target(_panel_user_to_snapshot(updated), target):
                 return GraceRestoreOutcome.RESTORED
 
@@ -2334,7 +2372,80 @@ def _serialize_panel_target(
     )
     if target.device_limit is not None:
         kwargs['hwid_device_limit'] = target.device_limit
+    if target.write_traffic_limit_strategy and target.traffic_limit_strategy is not None:
+        kwargs['traffic_limit_strategy'] = TrafficLimitStrategy(target.traffic_limit_strategy)
     return kwargs
+
+
+async def _restore_target_in_phases(
+    api: Any,
+    *,
+    remnawave_id: int,
+    target: _PanelTarget,
+    current_user: Any,
+) -> Any:
+    """Restore canonical fields while keeping reset automation detached.
+
+    Strategy and external squad are isolated PATCHes.  A lost response can
+    therefore be confirmed independently and cannot combine a routing change
+    with the final strategy restoration in one ambiguous request.
+    """
+    current = _panel_user_to_snapshot(current_user)
+    if current.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value:
+        current_user = await api.update_user(
+            user_id=remnawave_id,
+            traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
+        )
+        if current_user is None:
+            current_user = await api.get_user_by_id(remnawave_id)
+        if current_user is None:
+            return None
+        current = _panel_user_to_snapshot(current_user)
+        if current.traffic_limit_strategy not in {TrafficLimitStrategy.NO_RESET.value, None}:
+            raise GracePanelError('Remnawave did not confirm NO_RESET during restore')
+
+    canonical_target = replace(
+        target,
+        external_squad_uuid=current.external_squad_uuid,
+        traffic_limit_strategy=TrafficLimitStrategy.NO_RESET.value,
+        write_traffic_limit_strategy=False,
+    )
+    if not _panel_matches_target(current, canonical_target):
+        current_user = await api.update_user(**_serialize_panel_target(remnawave_id, canonical_target))
+        if current_user is None:
+            current_user = await api.get_user_by_id(remnawave_id)
+        if current_user is None:
+            return None
+        current = _panel_user_to_snapshot(current_user)
+        if not _panel_matches_target(current, canonical_target):
+            raise GracePanelError('Remnawave did not confirm canonical restore fields')
+
+    if current.external_squad_uuid != target.external_squad_uuid:
+        current_user = await api.update_user(
+            user_id=remnawave_id,
+            external_squad_uuid=target.external_squad_uuid,
+        )
+        if current_user is None:
+            current_user = await api.get_user_by_id(remnawave_id)
+        if current_user is None:
+            return None
+        current = _panel_user_to_snapshot(current_user)
+        if current.external_squad_uuid != target.external_squad_uuid:
+            raise GracePanelError('Remnawave did not confirm external squad restoration')
+
+    if target.traffic_limit_strategy is not None:
+        current_user = await api.update_user(
+            user_id=remnawave_id,
+            traffic_limit_strategy=TrafficLimitStrategy(target.traffic_limit_strategy),
+        )
+        if current_user is None:
+            current_user = await api.get_user_by_id(remnawave_id)
+        if current_user is None:
+            return None
+        current = _panel_user_to_snapshot(current_user)
+        if current.traffic_limit_strategy != target.traffic_limit_strategy:
+            raise GracePanelError('Remnawave did not confirm canonical traffic reset strategy')
+    return current_user
 
 
 def _serialize_grace_panel_patch(
@@ -2407,6 +2518,7 @@ def _panel_matches_limited_intermediate(
         and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
         and set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
         and snapshot.external_squad_uuid == expected_overlay.external_squad_uuid
+        and _strategy_matches(snapshot.traffic_limit_strategy, expected_overlay.traffic_limit_strategy)
     )
 
 
@@ -2628,6 +2740,7 @@ def _panel_matches_disabled_overlay_intermediate(
         and snapshot.traffic_limit_bytes == expected_overlay.traffic_limit_bytes
         and set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
         and snapshot.external_squad_uuid == expected_overlay.external_squad_uuid
+        and _strategy_matches(snapshot.traffic_limit_strategy, expected_overlay.traffic_limit_strategy)
     )
 
 
@@ -2758,6 +2871,17 @@ def _panel_user_matches_device_limit(panel_user: Any, target: _PanelTarget) -> b
         return False
 
 
+def _strategy_matches(actual: str | None, expected: str | None) -> bool:
+    """Compare strategies when both sides expose the v4 field.
+
+    ``None`` is the explicit legacy/partial-read marker.  It must not be
+    guessed as a concrete strategy, but allowing it through here keeps v2/v3
+    sessions reconcilable until the live panel is read and the snapshot is
+    upgraded by the activation path.
+    """
+    return expected is None or actual is None or actual == expected
+
+
 def _panel_user_matches_target(panel_user: Any, target: _PanelTarget) -> bool:
     return _panel_matches_target(
         _panel_user_to_snapshot(panel_user),
@@ -2795,6 +2919,7 @@ def _panel_user_matches_disabled_target_statuses(
         and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
         and set(snapshot.squad_uuids) == set(target.squad_uuids)
         and snapshot.external_squad_uuid == target.external_squad_uuid
+        and _strategy_matches(snapshot.traffic_limit_strategy, target.traffic_limit_strategy)
         and _panel_user_matches_device_limit(panel_user, target)
     )
 
@@ -2821,6 +2946,7 @@ def _panel_matches_target(snapshot: GracePanelSnapshot, target: _PanelTarget) ->
         and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
         and set(snapshot.squad_uuids) == set(target.squad_uuids)
         and snapshot.external_squad_uuid == target.external_squad_uuid
+        and _strategy_matches(snapshot.traffic_limit_strategy, target.traffic_limit_strategy)
     )
 
 
