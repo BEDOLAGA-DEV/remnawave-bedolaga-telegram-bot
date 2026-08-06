@@ -82,6 +82,7 @@ _SNAPSHOT_VERSION = 3
 _SUPPORTED_SNAPSHOT_VERSIONS = frozenset({2, _SNAPSHOT_VERSION})
 _POSTGRES_LOCK_NAMESPACE = 1_196_572_995
 _POSTGRES_GLOBAL_PANEL_LOCK_ID = 0
+_GRACE_EXPIRE_AT_SAFETY_MARGIN = timedelta(seconds=60)
 
 
 class GraceSnapshotError(ValueError):
@@ -482,11 +483,16 @@ class RemnawaveGracePanelGateway:
                     raise GracePanelError('Remnawave did not detach the external squad; overlay was not granted')
 
             updated = await api.update_user(
-                user_id=remnawave_id,
-                status=PanelUserStatus.ACTIVE,
-                expire_at=_as_utc(overlay.expire_at),
-                traffic_limit_bytes=overlay.traffic_limit_bytes,
-                active_internal_squads=list(overlay.squad_uuids),
+                **_serialize_grace_panel_patch(
+                    remnawave_id,
+                    status=PanelUserStatus.ACTIVE,
+                    expire_at=overlay.expire_at,
+                    write_expire_at=True,
+                    base_kwargs={
+                        'traffic_limit_bytes': overlay.traffic_limit_bytes,
+                        'active_internal_squads': list(overlay.squad_uuids),
+                    },
+                )
             )
         if updated is None or not panel_matches_overlay(
             _panel_user_to_snapshot(updated),
@@ -884,14 +890,17 @@ class RemnawaveGracePanelGateway:
             if not panel_matches_overlay(current, reset_overlay, now=now) or not _panel_user_matches_device_limit(
                 current_user, recovered_target
             ):
-                overlay_kwargs: dict[str, Any] = {
-                    'user_id': billing.remnawave_id,
-                    'status': PanelUserStatus.ACTIVE,
-                    'expire_at': reset_overlay.expire_at,
-                    'traffic_limit_bytes': reset_overlay.traffic_limit_bytes,
-                    'active_internal_squads': list(reset_overlay.squad_uuids),
-                    'external_squad_uuid': reset_overlay.external_squad_uuid,
-                }
+                overlay_kwargs: dict[str, Any] = _serialize_grace_panel_patch(
+                    billing.remnawave_id,
+                    status=PanelUserStatus.ACTIVE,
+                    expire_at=reset_overlay.expire_at,
+                    write_expire_at=True,
+                    base_kwargs={
+                        'traffic_limit_bytes': reset_overlay.traffic_limit_bytes,
+                        'active_internal_squads': list(reset_overlay.squad_uuids),
+                        'external_squad_uuid': reset_overlay.external_squad_uuid,
+                    },
+                )
                 if recovered_target.device_limit is not None:
                     overlay_kwargs['hwid_device_limit'] = recovered_target.device_limit
                 current_user = await api.update_user(**overlay_kwargs)
@@ -2227,6 +2236,7 @@ def _panel_user_to_snapshot(panel_user: Any) -> GracePanelSnapshot:
 def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _PanelTarget:
     status = _normalize(snapshot.status)
     expire_at = _as_utc(snapshot.expire_at) if snapshot.expire_at else now
+    safe_expire_after = _as_utc(now) + _GRACE_EXPIRE_AT_SAFETY_MARGIN
     if status == 'expired':
         return _PanelTarget(
             status=PanelUserStatus.EXPIRED,
@@ -2243,7 +2253,7 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
             traffic_limit_bytes=snapshot.traffic_limit_bytes,
             squad_uuids=snapshot.squad_uuids,
             external_squad_uuid=snapshot.external_squad_uuid,
-            write_expire_at=status == 'disabled' and expire_at > now,
+            write_expire_at=status == 'disabled' and expire_at > safe_expire_after,
         )
     if status == 'limited':
         panel_status = PanelUserStatus.LIMITED
@@ -2262,6 +2272,7 @@ def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _Pane
     status = _normalize(billing.status)
     user_active = _normalize(billing.user_status) == DatabaseUserStatus.ACTIVE.value
     expire_at = _as_utc(billing.end_at) if billing.end_at else now
+    safe_expire_after = _as_utc(now) + _GRACE_EXPIRE_AT_SAFETY_MARGIN
     if user_active and status in {'active', 'trial'} and expire_at > now:
         panel_status = PanelUserStatus.ACTIVE
         write_expire_at = True
@@ -2270,7 +2281,7 @@ def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _Pane
         write_expire_at = True
     else:
         panel_status = PanelUserStatus.DISABLED
-        write_expire_at = expire_at > now
+        write_expire_at = expire_at > safe_expire_after
     return _PanelTarget(
         status=panel_status,
         expire_at=expire_at,
@@ -2294,27 +2305,80 @@ def _serialize_panel_target(
     target: _PanelTarget,
     *,
     base_kwargs: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build a writable Remnawave payload without sending derived statuses."""
-    kwargs = dict(base_kwargs or {})
-    kwargs.pop('status', None)
-    kwargs.pop('expire_at', None)
-    kwargs.update(
-        user_id=remnawave_id,
-        traffic_limit_bytes=target.traffic_limit_bytes,
-        active_internal_squads=list(target.squad_uuids),
-        external_squad_uuid=target.external_squad_uuid,
+    kwargs = _serialize_grace_panel_patch(
+        remnawave_id,
+        status=target.status,
+        expire_at=target.expire_at,
+        write_expire_at=target.write_expire_at,
+        base_kwargs={
+            **dict(base_kwargs or {}),
+            'traffic_limit_bytes': target.traffic_limit_bytes,
+            'active_internal_squads': list(target.squad_uuids),
+            'external_squad_uuid': target.external_squad_uuid,
+        },
+        now=now,
     )
-    if target.write_expire_at and target.status is not PanelUserStatus.EXPIRED:
-        if target.expire_at is None:
-            raise GracePanelError('Writable Grace panel target is missing expire_at')
-        kwargs['expire_at'] = target.expire_at
-    if target.status in {PanelUserStatus.ACTIVE, PanelUserStatus.DISABLED}:
-        kwargs['status'] = target.status
-    elif target.status not in {PanelUserStatus.LIMITED, PanelUserStatus.EXPIRED}:
-        raise GracePanelError(f'Unsupported canonical panel status {target.status!r}')
     if target.device_limit is not None:
         kwargs['hwid_device_limit'] = target.device_limit
+    return kwargs
+
+
+def _serialize_grace_panel_patch(
+    remnawave_id: int,
+    *,
+    status: PanelUserStatus,
+    expire_at: datetime | None = None,
+    write_expire_at: bool = False,
+    base_kwargs: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build a Grace-owned PATCH and enforce Remnawave writable invariants.
+
+    Remnawave rejects an elapsed ``expireAt``. A deadline that is only barely
+    in the future is equally unsafe because it can elapse in the request queue
+    or because the bot and panel clocks differ. ACTIVE/LIMITED transitions are
+    therefore aborted before any PATCH is sent; a fail-closed DISABLED update
+    may proceed without rewriting the unsafe deadline.
+    """
+    normalized_status = _normalize(status)
+    writable_status: PanelUserStatus | None
+    if normalized_status == 'active':
+        writable_status = PanelUserStatus.ACTIVE
+    elif normalized_status == 'disabled':
+        writable_status = PanelUserStatus.DISABLED
+    elif normalized_status in {'limited', 'expired'}:
+        writable_status = None
+    else:
+        raise GracePanelError(f'Unsupported Grace panel status {status!r}')
+
+    kwargs = dict(base_kwargs or {})
+    # A caller-provided value must never bypass the Grace status/date policy.
+    kwargs.pop('status', None)
+    kwargs.pop('expire_at', None)
+    kwargs['user_id'] = remnawave_id
+
+    if writable_status is not None:
+        kwargs['status'] = writable_status
+
+    if write_expire_at and normalized_status != 'expired':
+        if expire_at is None:
+            raise GracePanelError('Writable Grace panel target is missing expire_at')
+        if expire_at.tzinfo is None or expire_at.utcoffset() is None:
+            raise GracePanelError('Grace expire_at must be timezone-aware')
+        reference_now = now or datetime.now(UTC)
+        if reference_now.tzinfo is None or reference_now.utcoffset() is None:
+            raise GracePanelError('Grace expiration reference time must be timezone-aware')
+        expire_at_utc = expire_at.astimezone(UTC)
+        safe_after = reference_now.astimezone(UTC) + _GRACE_EXPIRE_AT_SAFETY_MARGIN
+        if expire_at_utc <= safe_after:
+            if normalized_status != 'disabled':
+                raise GracePanelError('Grace expire_at is not safely in the future; Remnawave PATCH was not sent')
+        else:
+            kwargs['expire_at'] = expire_at_utc
+
     return kwargs
 
 
@@ -2492,13 +2556,17 @@ async def _apply_limited_target(
         target,
         expected_overlay,
     ) or not _panel_user_matches_device_limit(current_user, target):
-        phase_a_kwargs: dict[str, Any] = {
-            'user_id': remnawave_id,
-            'expire_at': target.expire_at,
-            'traffic_limit_bytes': target.traffic_limit_bytes,
-            'active_internal_squads': list(expected_overlay.squad_uuids),
-            'external_squad_uuid': expected_overlay.external_squad_uuid,
-        }
+        phase_a_kwargs: dict[str, Any] = _serialize_grace_panel_patch(
+            remnawave_id,
+            status=target.status,
+            expire_at=target.expire_at,
+            write_expire_at=True,
+            base_kwargs={
+                'traffic_limit_bytes': target.traffic_limit_bytes,
+                'active_internal_squads': list(expected_overlay.squad_uuids),
+                'external_squad_uuid': expected_overlay.external_squad_uuid,
+            },
+        )
         if target.device_limit is not None:
             phase_a_kwargs['hwid_device_limit'] = target.device_limit
         phase_a_user = await api.update_user(**phase_a_kwargs)
@@ -2615,8 +2683,10 @@ async def _apply_restore_disabled_target(
     if current_status == 'active':
         try:
             disabled_user = await api.update_user(
-                user_id=remnawave_id,
-                status=PanelUserStatus.DISABLED,
+                **_serialize_grace_panel_patch(
+                    remnawave_id,
+                    status=PanelUserStatus.DISABLED,
+                )
             )
         except asyncio.CancelledError:
             raise

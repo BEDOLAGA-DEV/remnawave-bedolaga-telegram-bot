@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -16,6 +16,7 @@ from app.external.remnawave_api import (
     coerce_panel_user_id,
 )
 from app.services.grace_access_runtime import (
+    GracePanelError,
     GraceSnapshotError,
     RemnawaveGracePanelGateway,
     SQLAlchemyGraceSessionStore,
@@ -1242,6 +1243,70 @@ def test_panel_target_serializer_removes_derived_statuses(
     # Панель 3.0.0 адресуется числовым id; ключ uuid схема PATCH срезает молча.
     assert payload['user_id'] == PANEL_ID
     assert 'uuid' not in payload
+
+
+@pytest.mark.parametrize('seconds_until_expiry', [-300, 0, 59, 60])
+def test_panel_target_serializer_rejects_active_expiry_inside_safety_margin(
+    seconds_until_expiry: int,
+) -> None:
+    target = _PanelTarget(
+        status=UserStatus.ACTIVE,
+        expire_at=NOW + timedelta(seconds=seconds_until_expiry),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    with pytest.raises(GracePanelError, match='not safely in the future'):
+        _serialize_panel_target(PANEL_ID, target, now=NOW)
+
+
+@pytest.mark.parametrize('seconds_until_expiry', [-300, 0, 59, 60])
+def test_panel_target_serializer_omits_unsafe_expiry_for_disabled_target(
+    seconds_until_expiry: int,
+) -> None:
+    target = _PanelTarget(
+        status=UserStatus.DISABLED,
+        expire_at=NOW + timedelta(seconds=seconds_until_expiry),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    payload = _serialize_panel_target(PANEL_ID, target, now=NOW)
+
+    assert payload['status'] is UserStatus.DISABLED
+    assert 'expire_at' not in payload
+
+
+def test_panel_target_serializer_normalizes_safe_expiry_to_utc() -> None:
+    expected_expiry = NOW + timedelta(minutes=2)
+    source_timezone = timezone(timedelta(hours=3))
+    target = _PanelTarget(
+        status=UserStatus.ACTIVE,
+        expire_at=expected_expiry.astimezone(source_timezone),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    payload = _serialize_panel_target(PANEL_ID, target, now=NOW)
+
+    assert payload['expire_at'] == expected_expiry
+    assert payload['expire_at'].tzinfo is UTC
+
+
+def test_panel_target_serializer_rejects_naive_expiry() -> None:
+    target = _PanelTarget(
+        status=UserStatus.ACTIVE,
+        expire_at=(NOW + timedelta(minutes=2)).replace(tzinfo=None),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    with pytest.raises(GracePanelError, match='timezone-aware'):
+        _serialize_panel_target(PANEL_ID, target, now=NOW)
 
 
 @pytest.mark.asyncio
