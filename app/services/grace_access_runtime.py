@@ -1141,6 +1141,37 @@ class GraceAccessRuntime:
     def mode(self) -> GraceAccessMode:
         return self._mode
 
+    @property
+    def grant_ready(self) -> bool:
+        """Whether new Grace grants may be created."""
+        return self._mode is GraceAccessMode.ACTIVE
+
+    @property
+    def reconciler_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    @property
+    def protection_ready(self) -> bool:
+        """Whether existing sessions have a live guard/reconciliation path."""
+        return self.reconciler_running
+
+    async def health(self) -> dict[str, Any]:
+        open_sessions = await self.open_count()
+        reason = None
+        if open_sessions and not self.protection_ready:
+            reason = 'есть открытые Grace-сессии, но reconciler не запущен'
+        elif self._mode is GraceAccessMode.OBSERVE:
+            reason = 'режим OBSERVE: новые выдачи запрещены'
+        elif self._mode is GraceAccessMode.DISABLED:
+            reason = 'режим DISABLED: новые выдачи и reconciler остановлены'
+        return {
+            'grant_ready': self.grant_ready,
+            'protection_ready': self.protection_ready or open_sessions == 0,
+            'reconciler_running': self.reconciler_running,
+            'open_sessions': open_sessions,
+            'reason': reason,
+        }
+
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
             return
