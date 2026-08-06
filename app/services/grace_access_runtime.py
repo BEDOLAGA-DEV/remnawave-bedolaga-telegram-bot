@@ -1140,6 +1140,7 @@ class GraceAccessRuntime:
         self._mode = GraceAccessMode.DISABLED
         self._open_offset = 0
         self._candidate_offset = 0
+        self._candidate_cursor = 0
 
     @property
     def mode(self) -> GraceAccessMode:
@@ -1464,8 +1465,10 @@ class GraceAccessRuntime:
                 .where(
                     User.status == DatabaseUserStatus.ACTIVE.value,
                     or_(expired_recently, marked_candidate),
+                    Subscription.id > self._candidate_cursor,
                 )
-                .order_by(Subscription.updated_at.asc(), Subscription.id.asc())
+                .order_by(Subscription.id.asc())
+                .limit(batch_size)
             )
             subscriptions = (await db.execute(query)).scalars().all()
 
@@ -1490,13 +1493,11 @@ class GraceAccessRuntime:
                     if state in _OPEN_STATES:
                         open_subscription_ids.add(int(sub_id))
 
-        if len(subscriptions) <= batch_size:
-            self._candidate_offset = 0
-            scan_subscriptions = subscriptions
+        if subscriptions:
+            self._candidate_cursor = int(subscriptions[-1].id)
         else:
-            start = self._candidate_offset % len(subscriptions)
-            scan_subscriptions = subscriptions[start:] + subscriptions[:start]
-            self._candidate_offset = (start + batch_size) % len(subscriptions)
+            self._candidate_cursor = 0
+        scan_subscriptions = subscriptions
 
         candidates: list[tuple[int, GraceReason]] = []
         for subscription in scan_subscriptions:
