@@ -876,11 +876,14 @@ async def test_limited_tariff_switch_rebases_active_grace_and_restores_latest_ta
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     reset_at = now - timedelta(days=10)
     clock = MutableClock(now)
-    billing = make_billing(
-        status='limited',
-        end_at=now + timedelta(days=20),
-        traffic_limit_bytes=10 * GIB,
-        used_traffic_bytes=10 * GIB,
+    billing = replace(
+        make_billing(
+            status='limited',
+            end_at=now + timedelta(days=20),
+            traffic_limit_bytes=10 * GIB,
+            used_traffic_bytes=10 * GIB,
+        ),
+        traffic_limit_strategy='MONTH',
     )
     snapshot = replace(
         make_snapshot(
@@ -890,6 +893,7 @@ async def test_limited_tariff_switch_rebases_active_grace_and_restores_latest_ta
         ),
         status='LIMITED',
         last_traffic_reset_at=reset_at,
+        traffic_limit_strategy=billing.traffic_limit_strategy,
     )
     service, store, panel, billing_gateway = make_service(
         billing=billing,
@@ -908,6 +912,7 @@ async def test_limited_tariff_switch_rebases_active_grace_and_restores_latest_ta
         device_limit=4,
         squad_uuids=(NEW_TARIFF_SQUAD,),
         external_squad_uuid=NEW_EXTERNAL_SQUAD,
+        traffic_limit_strategy='DAY',
     )
     billing_gateway.state = changed_billing
     panel.snapshot = replace(
@@ -931,6 +936,7 @@ async def test_limited_tariff_switch_rebases_active_grace_and_restores_latest_ta
     assert rebased.panel_before.traffic_limit_bytes == changed_billing.traffic_limit_bytes
     assert rebased.panel_before.squad_uuids == changed_billing.squad_uuids
     assert rebased.panel_before.external_squad_uuid == changed_billing.external_squad_uuid
+    assert rebased.panel_before.traffic_limit_strategy == changed_billing.traffic_limit_strategy
     assert panel.applied_billing == []
     assert len(panel.applied_overlays) == 1
     assert panel.snapshot.expire_at == original.overlay.expire_at
@@ -1575,11 +1581,14 @@ async def test_configured_expired_tariff_reset_preserves_remaining_grace() -> No
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     reset_at = now - timedelta(days=10)
     clock = MutableClock(now)
-    billing = make_billing(
-        status='expired',
-        end_at=now - timedelta(days=1),
-        traffic_limit_bytes=10 * GIB,
-        used_traffic_bytes=10 * GIB,
+    billing = replace(
+        make_billing(
+            status='expired',
+            end_at=now - timedelta(days=1),
+            traffic_limit_bytes=10 * GIB,
+            used_traffic_bytes=10 * GIB,
+        ),
+        traffic_limit_strategy='MONTH',
     )
     snapshot = replace(
         make_snapshot(
@@ -1589,6 +1598,7 @@ async def test_configured_expired_tariff_reset_preserves_remaining_grace() -> No
         ),
         status='EXPIRED',
         last_traffic_reset_at=reset_at,
+        traffic_limit_strategy=billing.traffic_limit_strategy,
     )
     service, store, panel, billing_gateway = make_service(
         billing=billing,
@@ -1610,6 +1620,7 @@ async def test_configured_expired_tariff_reset_preserves_remaining_grace() -> No
         used_traffic_bytes=0,
         squad_uuids=(NEW_TARIFF_SQUAD,),
         external_squad_uuid=NEW_EXTERNAL_SQUAD,
+        traffic_limit_strategy='DAY',
     )
     billing_gateway.state = switched
 
@@ -1630,6 +1641,7 @@ async def test_configured_expired_tariff_reset_preserves_remaining_grace() -> No
     assert continued.billing_before == switched
     assert continued.panel_before.traffic_limit_bytes == switched.traffic_limit_bytes
     assert continued.panel_before.squad_uuids == switched.squad_uuids
+    assert continued.panel_before.traffic_limit_strategy == switched.traffic_limit_strategy
     assert continued.panel_before.last_traffic_reset_at != reset_at
     assert continued.overlay.expected_last_traffic_reset_at == continued.panel_before.last_traffic_reset_at
     assert continued.traffic_reset_target is None

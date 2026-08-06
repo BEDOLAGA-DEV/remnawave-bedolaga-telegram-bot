@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NoReturn
 from uuid import UUID
 
 import structlog
@@ -94,6 +94,10 @@ class GraceSnapshotError(ValueError):
 
 class GracePanelError(RuntimeError):
     """Remnawave did not apply or verify a requested controlled state."""
+
+
+class _GraceExternalResetRevoked(RuntimeError):
+    """An unexpected reset generation was detected and access was revoked."""
 
 
 class GraceAccessDeletionBlocked(RuntimeError):
@@ -559,6 +563,7 @@ class RemnawaveGracePanelGateway:
 
         now = datetime.now(UTC)
         target = _build_restore_target(snapshot, now=now)
+        limited_proof_target = _build_limited_restore_proof_target(snapshot)
 
         async with remnawave_service.get_api_client() as api:
             # Only an explicit 404 reaches this as None.  A malformed local
@@ -583,7 +588,35 @@ class RemnawaveGracePanelGateway:
                 )
             if target.status is PanelUserStatus.DISABLED and not target.write_expire_at:
                 target = replace(target, expire_at=current.expire_at)
-            if target.status is PanelUserStatus.DISABLED:
+            if limited_proof_target is not None:
+                try:
+                    current_user = await _guard_limited_reset_generation(
+                        api,
+                        remnawave_id=remnawave_id,
+                        current_user=current_user,
+                        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+                    )
+                except _GraceExternalResetRevoked:
+                    return GraceRestoreOutcome.RESTORED
+                current = _panel_user_to_snapshot(current_user)
+                if _panel_is_unsafe_active_limited_phase(
+                    current,
+                    limited_proof_target,
+                    expected_overlay,
+                ):
+                    try:
+                        await _revoke_limited_restore_access(
+                            api,
+                            remnawave_id=remnawave_id,
+                            confirmation_error=(
+                                'Remnawave did not confirm fail-closed revocation of an unsafe ACTIVE LIMITED restore'
+                            ),
+                        )
+                    except _GraceExternalResetRevoked:
+                        return GraceRestoreOutcome.RESTORED
+            if target.status is PanelUserStatus.LIMITED:
+                already_matches = _panel_matches_target_with_exact_strategy(current, target)
+            elif target.status is PanelUserStatus.DISABLED:
                 already_matches = _panel_user_matches_restored_disabled_target(current_user, target)
             else:
                 already_matches = _panel_matches_target(current, target)
@@ -594,6 +627,10 @@ class RemnawaveGracePanelGateway:
                 and _panel_matches_disabled_overlay_intermediate(current, expected_overlay)
             )
             if target.status is PanelUserStatus.LIMITED:
+                if target.traffic_limit_strategy is None:
+                    raise GracePanelTransitionPending(
+                        'Original LIMITED traffic reset strategy is unknown; restore remains protected'
+                    )
                 if not _limited_transition_source_is_safe(
                     current,
                     target,
@@ -601,13 +638,19 @@ class RemnawaveGracePanelGateway:
                     now=now,
                 ):
                     return GraceRestoreOutcome.CONFLICT
-                updated = await _apply_limited_target(
-                    api,
-                    remnawave_id=remnawave_id,
-                    target=target,
-                    expected_overlay=expected_overlay,
-                    current_user=current_user,
-                )
+                try:
+                    updated = await _apply_limited_target(
+                        api,
+                        remnawave_id=remnawave_id,
+                        target=target,
+                        expected_overlay=expected_overlay,
+                        current_user=current_user,
+                        previous_target=None,
+                        now=now,
+                        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+                    )
+                except _GraceExternalResetRevoked:
+                    return GraceRestoreOutcome.RESTORED
                 return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
             if (
                 not panel_matches_overlay(
@@ -1047,43 +1090,111 @@ class RemnawaveGracePanelGateway:
                 current_user = await api.get_user_by_id(billing.remnawave_id)
                 if current_user is None:
                     raise GracePanelTransitionConflict('Canonical Remnawave user disappeared during LIMITED restore')
+                limited_reset_generation = (
+                    expected_last_traffic_reset_at
+                    if expected_last_traffic_reset_at is not None
+                    else (
+                        expected_restored_snapshot.last_traffic_reset_at
+                        if expected_restored_snapshot is not None
+                        else expected_overlay.expected_last_traffic_reset_at
+                    )
+                )
+                try:
+                    current_user = await _guard_limited_reset_generation(
+                        api,
+                        remnawave_id=billing.remnawave_id,
+                        current_user=current_user,
+                        expected_last_traffic_reset_at=limited_reset_generation,
+                    )
+                except _GraceExternalResetRevoked:
+                    return
                 current = _panel_user_to_snapshot(current_user)
-                if _panel_matches_target(current, target):
+                if target.traffic_limit_strategy is None:
+                    raise GracePanelTransitionPending(
+                        'Canonical LIMITED traffic reset strategy is unknown; restore remains protected'
+                    )
+                if _panel_matches_target_with_exact_strategy(current, target):
                     if _panel_user_matches_device_limit(current_user, target):
                         return
-                    updated_device = await api.update_user(
+                    await api.update_user(
                         user_id=billing.remnawave_id,
                         hwid_device_limit=target.device_limit,
                     )
-                    if updated_device is None:
-                        updated_device = await api.get_user_by_id(billing.remnawave_id)
-                    if updated_device is not None and _panel_user_matches_target(updated_device, target):
+                    try:
+                        updated_device = await _read_limited_restore_user(
+                            api,
+                            remnawave_id=billing.remnawave_id,
+                            expected_last_traffic_reset_at=limited_reset_generation,
+                        )
+                    except _GraceExternalResetRevoked:
                         return
-                    raise GracePanelTransitionConflict('Remnawave did not confirm canonical LIMITED device limit')
+                    if _panel_user_matches_target_with_exact_strategy(updated_device, target):
+                        return
+                    try:
+                        await _raise_limited_phase_pending_or_revoke(
+                            api,
+                            remnawave_id=billing.remnawave_id,
+                            current_user=updated_device,
+                            expected_overlay=expected_overlay,
+                            message='Remnawave did not confirm canonical LIMITED device limit',
+                        )
+                    except _GraceExternalResetRevoked:
+                        return
                 source_is_safe = _limited_transition_source_is_safe(
                     current,
                     target,
                     expected_overlay,
                     now=now,
                 )
+                previous_target: _PanelTarget | None = None
                 if expected_restored_snapshot is not None:
+                    previous_target = _build_limited_restore_proof_target(expected_restored_snapshot)
                     source_is_safe = source_is_safe or _limited_source_matches_previous_restore(
                         current,
                         expected_restored_snapshot,
                         expected_overlay,
-                        now=now,
                     )
+                unsafe_active_phase = _panel_is_unsafe_active_limited_phase(
+                    current,
+                    target,
+                    expected_overlay,
+                ) or (
+                    previous_target is not None
+                    and previous_target.status is PanelUserStatus.LIMITED
+                    and _panel_is_unsafe_active_limited_phase(
+                        current,
+                        previous_target,
+                        expected_overlay,
+                    )
+                )
+                if unsafe_active_phase:
+                    try:
+                        await _revoke_limited_restore_access(
+                            api,
+                            remnawave_id=billing.remnawave_id,
+                            confirmation_error=(
+                                'Remnawave did not confirm fail-closed revocation of an unsafe ACTIVE LIMITED restore'
+                            ),
+                        )
+                    except _GraceExternalResetRevoked:
+                        return
                 if not source_is_safe:
                     raise GracePanelTransitionConflict(
                         'Remnawave changed outside grace; canonical LIMITED state was not applied'
                     )
-                updated = await _apply_limited_target(
-                    api,
-                    remnawave_id=billing.remnawave_id,
-                    target=target,
-                    expected_overlay=expected_overlay,
-                    current_user=current_user,
-                )
+                try:
+                    updated = await _apply_limited_target(
+                        api,
+                        remnawave_id=billing.remnawave_id,
+                        target=target,
+                        expected_overlay=expected_overlay,
+                        current_user=current_user,
+                        previous_target=previous_target,
+                        now=now,
+                        expected_last_traffic_reset_at=limited_reset_generation,
+                    )
+                except _GraceExternalResetRevoked:
+                    return
             elif target.status is PanelUserStatus.DISABLED:
                 current_user = await api.get_user_by_id(billing.remnawave_id)
                 if current_user is None:
@@ -1152,6 +1263,11 @@ class RemnawaveGracePanelGateway:
                 _panel_user_matches_disabled_target_exact(updated, target)
                 if explicit_disabled
                 else _panel_user_matches_restored_disabled_target(updated, target)
+            )
+        elif target.status is PanelUserStatus.LIMITED:
+            target_matches = updated is not None and _panel_user_matches_target_with_exact_strategy(
+                updated,
+                target,
             )
         else:
             target_matches = updated is not None and _panel_user_matches_target(updated, target)
@@ -2397,6 +2513,20 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
     )
 
 
+def _build_limited_restore_proof_target(snapshot: GracePanelSnapshot) -> _PanelTarget | None:
+    """Build a stable crash-resume proof without reclassifying elapsed LIMITED."""
+    if _normalize(snapshot.status) != 'limited' or snapshot.expire_at is None:
+        return None
+    return _PanelTarget(
+        status=PanelUserStatus.LIMITED,
+        expire_at=_as_utc(snapshot.expire_at),
+        traffic_limit_bytes=snapshot.traffic_limit_bytes,
+        squad_uuids=snapshot.squad_uuids,
+        external_squad_uuid=snapshot.external_squad_uuid,
+        traffic_limit_strategy=snapshot.traffic_limit_strategy,
+    )
+
+
 def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _PanelTarget:
     status = _normalize(billing.status)
     user_active = _normalize(billing.user_status) == DatabaseUserStatus.ACTIVE.value
@@ -2613,21 +2743,117 @@ async def _validate_grace_squads(api: Any, squad_uuids: Sequence[str]) -> None:
             raise GracePanelError(f'Grace squad has no accessible nodes in Remnawave: {canonical_uuid}')
 
 
-def _panel_matches_limited_intermediate(
+def _panel_matches_limited_restore_phase(
     snapshot: GracePanelSnapshot,
     target: _PanelTarget,
-    expected_overlay: GracePanelOverlay,
     *,
-    statuses: frozenset[str] = frozenset({'active', 'limited'}),
+    squad_uuids: tuple[str, ...],
+    external_squad_uuid: str | None,
+    statuses: frozenset[str],
 ) -> bool:
+    """Match one exact LIMITED restore phase while reset automation is detached."""
     return (
         _normalize(snapshot.status) in statuses
         and snapshot.expire_at is not None
+        and target.expire_at is not None
         and abs((_as_utc(snapshot.expire_at) - _as_utc(target.expire_at)).total_seconds()) <= 2
         and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
-        and set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
+        and set(snapshot.squad_uuids) == set(squad_uuids)
+        and snapshot.external_squad_uuid == external_squad_uuid
+        and snapshot.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET.value
+    )
+
+
+def _panel_matches_limited_canonical_phase(
+    snapshot: GracePanelSnapshot,
+    target: _PanelTarget,
+    *,
+    statuses: frozenset[str],
+) -> bool:
+    return (
+        target.traffic_limit_strategy is not None
+        and _normalize(snapshot.status) in statuses
+        and snapshot.expire_at is not None
+        and target.expire_at is not None
+        and abs((_as_utc(snapshot.expire_at) - _as_utc(target.expire_at)).total_seconds()) <= 2
+        and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(target.squad_uuids)
+        and snapshot.external_squad_uuid == target.external_squad_uuid
+        and snapshot.traffic_limit_strategy == target.traffic_limit_strategy
+    )
+
+
+def _panel_has_protected_limited_routing(
+    snapshot: GracePanelSnapshot,
+    expected_overlay: GracePanelOverlay,
+) -> bool:
+    return (
+        set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
         and snapshot.external_squad_uuid == expected_overlay.external_squad_uuid
-        and _strategy_matches(snapshot.traffic_limit_strategy, expected_overlay.traffic_limit_strategy)
+        and snapshot.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET.value
+    )
+
+
+def _panel_is_unsafe_active_limited_phase(
+    snapshot: GracePanelSnapshot,
+    target: _PanelTarget,
+    expected_overlay: GracePanelOverlay,
+) -> bool:
+    """Recognize an ACTIVE crash residue after LIMITED routing started restoring."""
+    if (
+        _normalize(snapshot.status) != 'active'
+        or snapshot.expire_at is None
+        or target.expire_at is None
+        or abs((_as_utc(snapshot.expire_at) - _as_utc(target.expire_at)).total_seconds()) > 2
+        or snapshot.traffic_limit_bytes != target.traffic_limit_bytes
+        or snapshot.traffic_limit_strategy not in {TrafficLimitStrategy.NO_RESET.value, target.traffic_limit_strategy}
+    ):
+        return False
+    routing_is_restore_phase = (
+        set(snapshot.squad_uuids) == set(target.squad_uuids)
+        or set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
+    ) and snapshot.external_squad_uuid in {expected_overlay.external_squad_uuid, target.external_squad_uuid}
+    return routing_is_restore_phase and not _panel_has_protected_limited_routing(
+        snapshot,
+        expected_overlay,
+    )
+
+
+def _panel_matches_any_limited_target_phase(
+    snapshot: GracePanelSnapshot,
+    target: _PanelTarget,
+    expected_overlay: GracePanelOverlay,
+) -> bool:
+    return any(
+        (
+            _panel_matches_limited_restore_phase(
+                snapshot,
+                target,
+                squad_uuids=expected_overlay.squad_uuids,
+                external_squad_uuid=expected_overlay.external_squad_uuid,
+                statuses=frozenset({'active', 'limited', 'expired'}),
+            ),
+            _panel_matches_limited_restore_phase(
+                snapshot,
+                target,
+                squad_uuids=target.squad_uuids,
+                external_squad_uuid=expected_overlay.external_squad_uuid,
+                statuses=frozenset({'limited'}),
+            ),
+            _panel_matches_limited_restore_phase(
+                snapshot,
+                target,
+                squad_uuids=target.squad_uuids,
+                external_squad_uuid=target.external_squad_uuid,
+                statuses=frozenset({'limited'}),
+            ),
+            _panel_matches_limited_canonical_phase(
+                snapshot,
+                target,
+                statuses=frozenset({'limited', 'expired'}),
+            ),
+            _panel_matches_target_with_exact_strategy(snapshot, target),
+        )
     )
 
 
@@ -2638,17 +2864,55 @@ def _limited_transition_source_is_safe(
     *,
     now: datetime,
 ) -> bool:
-    if _panel_matches_limited_intermediate(current, target, expected_overlay):
+    if _panel_matches_target_with_exact_strategy(current, target):
+        return True
+    if _panel_matches_limited_canonical_phase(
+        current,
+        target,
+        statuses=frozenset({'limited', 'expired'}),
+    ):
+        return True
+
+    if _panel_matches_limited_restore_phase(
+        current,
+        target,
+        squad_uuids=expected_overlay.squad_uuids,
+        external_squad_uuid=expected_overlay.external_squad_uuid,
+        statuses=frozenset({'active', 'limited', 'expired'}),
+    ):
+        return True
+    if _panel_matches_limited_restore_phase(
+        current,
+        target,
+        squad_uuids=target.squad_uuids,
+        external_squad_uuid=expected_overlay.external_squad_uuid,
+        statuses=frozenset({'limited'}),
+    ):
+        return True
+    if _panel_matches_limited_restore_phase(
+        current,
+        target,
+        squad_uuids=target.squad_uuids,
+        external_squad_uuid=target.external_squad_uuid,
+        statuses=frozenset({'limited'}),
+    ):
         return True
 
     current_status = _normalize(current.status)
     overlay_status_is_safe = current_status in {'active', 'limited'} or (
         current_status == 'expired' and _as_utc(now) >= _as_utc(expected_overlay.expire_at)
     )
-    return overlay_status_is_safe and panel_matches_overlay(
-        current,
-        expected_overlay,
-        now=now,
+    strategy_is_safe = current.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET.value or (
+        expected_overlay.traffic_limit_strategy is None
+    )
+    return (
+        overlay_status_is_safe
+        and strategy_is_safe
+        and panel_matches_overlay(
+            current,
+            expected_overlay,
+            now=now,
+        )
     )
 
 
@@ -2656,8 +2920,6 @@ def _limited_source_matches_previous_restore(
     current: GracePanelSnapshot,
     previous_snapshot: GracePanelSnapshot,
     expected_overlay: GracePanelOverlay,
-    *,
-    now: datetime,
 ) -> bool:
     """Accept only an exact state produced by the immediately preceding restore."""
     if not _reset_generations_equal(
@@ -2667,13 +2929,40 @@ def _limited_source_matches_previous_restore(
         return False
     if current.used_traffic_bytes < previous_snapshot.used_traffic_bytes:
         return False
-    previous_target = _build_restore_target(previous_snapshot, now=now)
-    if previous_target.status is not PanelUserStatus.LIMITED:
+    previous_target = _build_limited_restore_proof_target(previous_snapshot)
+    if previous_target is None:
         return False
-    return _panel_matches_target(current, previous_target) or _panel_matches_limited_intermediate(
+    inactive_or_limited = frozenset({'limited', 'expired'})
+    if _panel_matches_limited_canonical_phase(
         current,
         previous_target,
-        expected_overlay,
+        statuses=inactive_or_limited,
+    ):
+        return True
+    return any(
+        (
+            _panel_matches_limited_restore_phase(
+                current,
+                previous_target,
+                squad_uuids=previous_target.squad_uuids,
+                external_squad_uuid=previous_target.external_squad_uuid,
+                statuses=inactive_or_limited,
+            ),
+            _panel_matches_limited_restore_phase(
+                current,
+                previous_target,
+                squad_uuids=expected_overlay.squad_uuids,
+                external_squad_uuid=previous_target.external_squad_uuid,
+                statuses=inactive_or_limited,
+            ),
+            _panel_matches_limited_restore_phase(
+                current,
+                previous_target,
+                squad_uuids=expected_overlay.squad_uuids,
+                external_squad_uuid=expected_overlay.external_squad_uuid,
+                statuses=frozenset({'active', 'limited', 'expired'}),
+            ),
+        )
     )
 
 
@@ -2773,6 +3062,97 @@ async def _restore_expired_target(
     return GraceRestoreOutcome.CONFLICT
 
 
+async def _revoke_limited_restore_access(
+    api: Any,
+    *,
+    remnawave_id: int,
+    confirmation_error: str,
+) -> NoReturn:
+    """Disable and confirm a LIMITED restore that can no longer continue safely."""
+    try:
+        await api.disable_user(remnawave_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        verified_user = await api.get_user_by_id(remnawave_id)
+        if verified_user is None or _normalize(verified_user.status) in {'disabled', 'expired'}:
+            raise _GraceExternalResetRevoked from None
+        raise
+
+    verified_user = await api.get_user_by_id(remnawave_id)
+    if verified_user is None or _normalize(verified_user.status) in {'disabled', 'expired'}:
+        raise _GraceExternalResetRevoked
+    raise GracePanelError(confirmation_error)
+
+
+async def _guard_limited_reset_generation(
+    api: Any,
+    *,
+    remnawave_id: int,
+    current_user: Any,
+    expected_last_traffic_reset_at: datetime | None,
+) -> Any:
+    """Fail closed if reset generation changes during a LIMITED restore."""
+    current = _panel_user_to_snapshot(current_user)
+    if _reset_generations_equal(
+        current.last_traffic_reset_at,
+        expected_last_traffic_reset_at,
+    ):
+        return current_user
+    if _normalize(current.status) in {'disabled', 'expired'}:
+        raise _GraceExternalResetRevoked
+    await _revoke_limited_restore_access(
+        api,
+        remnawave_id=remnawave_id,
+        confirmation_error='Remnawave did not confirm fail-closed revocation after an external traffic reset',
+    )
+    raise AssertionError('unreachable')
+
+
+async def _raise_limited_phase_pending_or_revoke(
+    api: Any,
+    *,
+    remnawave_id: int,
+    current_user: Any,
+    expected_overlay: GracePanelOverlay,
+    message: str,
+) -> NoReturn:
+    """Keep protected ACTIVE/LIMITED pending, but revoke an unsafe ACTIVE phase."""
+    current = _panel_user_to_snapshot(current_user)
+    current_status = _normalize(current.status)
+    if current_status == 'disabled':
+        raise _GraceExternalResetRevoked
+    if current_status == 'expired':
+        raise GracePanelTransitionPending(message)
+    if current_status == 'active' and not _panel_has_protected_limited_routing(
+        current,
+        expected_overlay,
+    ):
+        await _revoke_limited_restore_access(
+            api,
+            remnawave_id=remnawave_id,
+            confirmation_error='Remnawave did not confirm fail-closed revocation of unsafe ACTIVE LIMITED restore',
+        )
+    raise GracePanelTransitionPending(message)
+
+
+async def _read_limited_restore_user(
+    api: Any,
+    *,
+    remnawave_id: int,
+    expected_last_traffic_reset_at: datetime | None,
+) -> Any:
+    current_user = await api.get_user_by_id(remnawave_id)
+    if current_user is None:
+        raise _GraceExternalResetRevoked
+    return await _guard_limited_reset_generation(
+        api,
+        remnawave_id=remnawave_id,
+        current_user=current_user,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+    )
+
+
 async def _apply_limited_target(
     api: Any,
     *,
@@ -2780,14 +3160,136 @@ async def _apply_limited_target(
     target: _PanelTarget,
     expected_overlay: GracePanelOverlay,
     current_user: Any,
+    previous_target: _PanelTarget | None,
+    now: datetime,
+    expected_last_traffic_reset_at: datetime | None,
 ) -> Any | None:
-    """Restore a derived LIMITED target without exposing canonical routing early."""
-    intermediate = _panel_user_to_snapshot(current_user)
-    if not _panel_matches_limited_intermediate(
-        intermediate,
+    """Restore LIMITED in crash-safe phases and restore strategy last."""
+    if target.traffic_limit_strategy is None:
+        raise GracePanelTransitionPending(
+            'Canonical LIMITED traffic reset strategy is unknown; restore remains protected'
+        )
+
+    current_user = await _guard_limited_reset_generation(
+        api,
+        remnawave_id=remnawave_id,
+        current_user=current_user,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+    )
+    current = _panel_user_to_snapshot(current_user)
+    if not _panel_matches_any_limited_target_phase(current, target, expected_overlay):
+        # Validate before previous-target normalization mutates strategy or
+        # routing. The payload itself is rebuilt immediately before phase A so
+        # its 60-second expiry check cannot become stale across network calls.
+        _serialize_grace_panel_patch(
+            remnawave_id,
+            status=target.status,
+            expire_at=target.expire_at,
+            write_expire_at=True,
+            base_kwargs={
+                'traffic_limit_bytes': target.traffic_limit_bytes,
+            },
+        )
+    normalized_previous = False
+    if previous_target is not None and not _limited_transition_source_is_safe(
+        current,
         target,
         expected_overlay,
-    ) or not _panel_user_matches_device_limit(current_user, target):
+        now=now,
+    ):
+        current_user = await _normalize_previous_limited_restore_to_overlay(
+            api,
+            remnawave_id=remnawave_id,
+            previous_target=previous_target,
+            expected_overlay=expected_overlay,
+            current_user=current_user,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        if current_user is None:
+            return None
+        current = _panel_user_to_snapshot(current_user)
+        normalized_previous = True
+
+    if current.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value:
+        if expected_overlay.traffic_limit_strategy is not None or not panel_matches_overlay(
+            current,
+            expected_overlay,
+            now=now,
+        ):
+            return None
+        await api.update_user(
+            user_id=remnawave_id,
+            traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if current.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value or not panel_matches_overlay(
+            current, expected_overlay, now=now
+        ):
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm NO_RESET before canonical LIMITED restore',
+            )
+
+    def overlay_phase(*, statuses: frozenset[str]) -> bool:
+        return _panel_matches_limited_restore_phase(
+            current,
+            target,
+            squad_uuids=expected_overlay.squad_uuids,
+            external_squad_uuid=expected_overlay.external_squad_uuid,
+            statuses=statuses,
+        )
+
+    def internal_phase() -> bool:
+        return _panel_matches_limited_restore_phase(
+            current,
+            target,
+            squad_uuids=target.squad_uuids,
+            external_squad_uuid=expected_overlay.external_squad_uuid,
+            statuses=frozenset({'limited'}),
+        )
+
+    def external_phase() -> bool:
+        return _panel_matches_limited_restore_phase(
+            current,
+            target,
+            squad_uuids=target.squad_uuids,
+            external_squad_uuid=target.external_squad_uuid,
+            statuses=frozenset({'limited'}),
+        )
+
+    if overlay_phase(statuses=frozenset({'expired'})) or _panel_matches_limited_canonical_phase(
+        current,
+        target,
+        statuses=frozenset({'expired'}),
+    ):
+        raise GracePanelTransitionPending(
+            'Remnawave has not derived LIMITED from the safely restored future quota fields'
+        )
+
+    if not (
+        overlay_phase(statuses=frozenset({'active', 'limited'}))
+        or internal_phase()
+        or external_phase()
+        or _panel_matches_target_with_exact_strategy(current, target)
+    ):
+        source_is_exact_overlay = (
+            panel_matches_overlay(
+                current,
+                expected_overlay,
+                now=now,
+            )
+            and current.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET.value
+        )
+        if not source_is_exact_overlay and not normalized_previous:
+            return None
         phase_a_kwargs: dict[str, Any] = _serialize_grace_panel_patch(
             remnawave_id,
             status=target.status,
@@ -2795,48 +3297,247 @@ async def _apply_limited_target(
             write_expire_at=True,
             base_kwargs={
                 'traffic_limit_bytes': target.traffic_limit_bytes,
-                'active_internal_squads': list(expected_overlay.squad_uuids),
-                'external_squad_uuid': expected_overlay.external_squad_uuid,
             },
         )
         if target.device_limit is not None:
             phase_a_kwargs['hwid_device_limit'] = target.device_limit
-        phase_a_user = await api.update_user(**phase_a_kwargs)
-        if phase_a_user is None:
-            phase_a_user = await api.get_user_by_id(remnawave_id)
-        if phase_a_user is None:
-            return None
-        intermediate = _panel_user_to_snapshot(phase_a_user)
-        if not _panel_user_matches_device_limit(phase_a_user, target):
-            return None
+        await api.update_user(**phase_a_kwargs)
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not overlay_phase(statuses=frozenset({'active', 'limited'})):
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm canonical LIMITED quota fields',
+            )
 
-    if _panel_matches_limited_intermediate(
-        intermediate,
-        target,
-        expected_overlay,
-        statuses=frozenset({'active'}),
-    ):
-        raise GracePanelTransitionPending('Remnawave has not derived LIMITED after applying canonical quota fields')
-    if not _panel_matches_limited_intermediate(
-        intermediate,
-        target,
-        expected_overlay,
-        statuses=frozenset({'limited'}),
-    ):
-        return None
+    if not _panel_user_matches_device_limit(current_user, target):
+        if target.device_limit is None:
+            return None
+        await api.update_user(
+            user_id=remnawave_id,
+            hwid_device_limit=target.device_limit,
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not (
+            overlay_phase(statuses=frozenset({'active', 'limited'}))
+            or internal_phase()
+            or external_phase()
+            or _panel_matches_target_with_exact_strategy(current, target)
+        ):
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm canonical LIMITED device limit',
+            )
 
-    phase_b_user = await api.update_user(
-        user_id=remnawave_id,
-        active_internal_squads=list(target.squad_uuids),
-        external_squad_uuid=target.external_squad_uuid,
+    if overlay_phase(statuses=frozenset({'active'})):
+        await _raise_limited_phase_pending_or_revoke(
+            api,
+            remnawave_id=remnawave_id,
+            current_user=current_user,
+            expected_overlay=expected_overlay,
+            message='Remnawave has not derived LIMITED after applying canonical quota fields',
+        )
+
+    if not (internal_phase() or external_phase() or _panel_matches_target_with_exact_strategy(current, target)):
+        if not overlay_phase(statuses=frozenset({'limited'})):
+            return None
+        await api.update_user(
+            user_id=remnawave_id,
+            active_internal_squads=list(target.squad_uuids),
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not internal_phase():
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm canonical LIMITED internal squads',
+            )
+
+    if not (external_phase() or _panel_matches_target_with_exact_strategy(current, target)):
+        if not internal_phase():
+            return None
+        await api.update_user(
+            user_id=remnawave_id,
+            external_squad_uuid=target.external_squad_uuid,
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not external_phase():
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm canonical LIMITED external squad',
+            )
+
+    if current.traffic_limit_strategy != target.traffic_limit_strategy:
+        if not external_phase():
+            return None
+        await api.update_user(
+            user_id=remnawave_id,
+            traffic_limit_strategy=TrafficLimitStrategy(target.traffic_limit_strategy),
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not _panel_matches_target_with_exact_strategy(current, target):
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm canonical LIMITED traffic reset strategy',
+            )
+
+    verified_user = await _read_limited_restore_user(
+        api,
+        remnawave_id=remnawave_id,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
     )
-    if phase_b_user is not None and _panel_user_matches_target(phase_b_user, target):
-        return phase_b_user
-
-    verified_user = await api.get_user_by_id(remnawave_id)
-    if verified_user is not None and _panel_user_matches_target(verified_user, target):
+    if _panel_user_matches_target_with_exact_strategy(
+        verified_user,
+        target,
+    ):
         return verified_user
+    await _raise_limited_phase_pending_or_revoke(
+        api,
+        remnawave_id=remnawave_id,
+        current_user=verified_user,
+        expected_overlay=expected_overlay,
+        message='Remnawave did not confirm the final canonical LIMITED state',
+    )
     return None
+
+
+async def _normalize_previous_limited_restore_to_overlay(
+    api: Any,
+    *,
+    remnawave_id: int,
+    previous_target: _PanelTarget,
+    expected_overlay: GracePanelOverlay,
+    current_user: Any,
+    expected_last_traffic_reset_at: datetime | None,
+) -> Any | None:
+    """Return a previous canonical LIMITED target to protected Grace routing."""
+    current = _panel_user_to_snapshot(current_user)
+
+    if current.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value:
+        squads_before = current.squad_uuids
+        external_before = current.external_squad_uuid
+        statuses = (
+            frozenset({'active', 'limited', 'expired'})
+            if set(squads_before) == set(expected_overlay.squad_uuids)
+            and external_before == expected_overlay.external_squad_uuid
+            else frozenset({'limited', 'expired'})
+        )
+        await api.update_user(
+            user_id=remnawave_id,
+            traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not _panel_matches_limited_restore_phase(
+            current,
+            previous_target,
+            squad_uuids=squads_before,
+            external_squad_uuid=external_before,
+            statuses=statuses,
+        ):
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm NO_RESET while rebasing LIMITED restore',
+            )
+
+    if set(current.squad_uuids) != set(expected_overlay.squad_uuids):
+        external_before = current.external_squad_uuid
+        await api.update_user(
+            user_id=remnawave_id,
+            active_internal_squads=list(expected_overlay.squad_uuids),
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not _panel_matches_limited_restore_phase(
+            current,
+            previous_target,
+            squad_uuids=expected_overlay.squad_uuids,
+            external_squad_uuid=external_before,
+            statuses=frozenset({'limited', 'expired'}),
+        ):
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm protected internal squads while rebasing LIMITED restore',
+            )
+
+    if current.external_squad_uuid != expected_overlay.external_squad_uuid:
+        await api.update_user(
+            user_id=remnawave_id,
+            external_squad_uuid=expected_overlay.external_squad_uuid,
+        )
+        current_user = await _read_limited_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not _panel_matches_limited_restore_phase(
+            current,
+            previous_target,
+            squad_uuids=expected_overlay.squad_uuids,
+            external_squad_uuid=expected_overlay.external_squad_uuid,
+            statuses=frozenset({'active', 'limited', 'expired'}),
+        ):
+            await _raise_limited_phase_pending_or_revoke(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_overlay=expected_overlay,
+                message='Remnawave did not confirm protected external squad while rebasing LIMITED restore',
+            )
+    return current_user
 
 
 def _panel_matches_disabled_overlay_intermediate(
@@ -2993,6 +3694,27 @@ def _strategy_matches(actual: str | None, expected: str | None) -> bool:
 
 def _panel_user_matches_target(panel_user: Any, target: _PanelTarget) -> bool:
     return _panel_matches_target(
+        _panel_user_to_snapshot(panel_user),
+        target,
+    ) and _panel_user_matches_device_limit(panel_user, target)
+
+
+def _panel_matches_target_with_exact_strategy(
+    snapshot: GracePanelSnapshot,
+    target: _PanelTarget,
+) -> bool:
+    return (
+        target.traffic_limit_strategy is not None
+        and snapshot.traffic_limit_strategy == target.traffic_limit_strategy
+        and _panel_matches_target(snapshot, target)
+    )
+
+
+def _panel_user_matches_target_with_exact_strategy(
+    panel_user: Any,
+    target: _PanelTarget,
+) -> bool:
+    return _panel_matches_target_with_exact_strategy(
         _panel_user_to_snapshot(panel_user),
         target,
     ) and _panel_user_matches_device_limit(panel_user, target)
