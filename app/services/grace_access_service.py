@@ -457,6 +457,26 @@ class GraceAccessService:
                 billing.subscription_id,
                 lineage_key,
             )
+            if lineage_session is None:
+                # A panel upgrade may make lastTrafficResetAt available after
+                # an older session was stored with the explicit ``unknown``
+                # generation. Reuse that durable lineage instead of minting a
+                # second quota merely because the key became more precise.
+                recent_sessions = await self._store.list_recent_completed(
+                    billing.subscription_id,
+                    limit=32,
+                )
+                for candidate in recent_sessions:
+                    candidate_tail = candidate.limited_lineage_tail or candidate.billing_before
+                    if (
+                        candidate.reason is GraceReason.LIMITED
+                        and candidate_tail.remnawave_id == billing.remnawave_id
+                        and candidate.panel_before.last_traffic_reset_at is None
+                        and panel_snapshot.last_traffic_reset_at is not None
+                        and candidate_tail.end_at == billing.end_at
+                    ):
+                        lineage_session = candidate
+                        break
             if lineage_session and tariff_rebase_lineage_blocks_new_grant(
                 billing,
                 lineage_session,
@@ -1774,8 +1794,6 @@ def tariff_rebase_lineage_blocks_new_grant(
     """Block tariff-derived LIMITED repeats while preserving traffic purchases."""
     before = previous.limited_lineage_tail or previous.billing_before
     if previous.reason is not GraceReason.LIMITED:
-        return False
-    if previous.completion_reason is GraceCompletionReason.PAID:
         return False
     if current.remnawave_id != previous.remnawave_id:
         return False
