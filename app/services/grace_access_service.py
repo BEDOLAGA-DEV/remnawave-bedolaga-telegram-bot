@@ -679,11 +679,9 @@ class GraceAccessService:
                 if latest_session is None:
                     result = replace(result, unchanged=result.unchanged + 1)
                     continue
-                await self._complete(
+                await self._keep_restoring_after_conflict(
                     latest_session,
-                    GraceCompletionReason.CONFLICT,
                     last_error=_error_text(error),
-                    retain_traffic_reset_proof=latest_session.traffic_reset_target is not None,
                 )
                 result = replace(result, conflicts=result.conflicts + 1)
                 continue
@@ -820,6 +818,11 @@ class GraceAccessService:
             now=now,
         )
         if not overlay_is_already_applied and not panel_status_matches_reason(current_panel.status, session.reason):
+            if _normalize_status(current_panel.status) == 'active':
+                return await self._keep_restoring_after_conflict(
+                    session,
+                    last_error=('Unexpected ACTIVE remains different from canonical billing; restore is pending'),
+                )
             return await self._complete(
                 session,
                 GraceCompletionReason.CONFLICT,
@@ -1687,12 +1690,11 @@ class GraceAccessService:
             return fresh_completion
 
         if outcome is GraceRestoreOutcome.CONFLICT:
-            completed = await self._complete(
+            restoring = await self._keep_restoring_after_conflict(
                 restoring_session,
-                GraceCompletionReason.CONFLICT,
                 last_error='Remnawave state changed outside grace; automatic restore was not applied',
             )
-            return GraceCompletionReason.CONFLICT.value, completed
+            return GraceCompletionReason.CONFLICT.value, restoring
 
         completed = await self._complete(restoring_session, completion_reason)
         return completion_reason.value, completed
@@ -1726,6 +1728,25 @@ class GraceAccessService:
             traffic_reset_finished_at=(session.traffic_reset_finished_at if retain_reset_proof else None),
         )
         return await self._store.save(completed_session)
+
+    async def _keep_restoring_after_conflict(
+        self,
+        session: GraceAccessSession,
+        *,
+        last_error: str,
+    ) -> GraceAccessSession:
+        """Keep the durable guard alive until unsafe panel access is resolved."""
+        now = _as_utc(self._clock())
+        restoring_session = replace(
+            session,
+            state=GraceSessionState.RESTORING,
+            completion_reason=None,
+            completed_at=None,
+            updated_at=now,
+            last_error=last_error,
+            allow_recovery_enabled_webhook=False,
+        )
+        return await self._store.save(restoring_session)
 
     async def _remember_error(self, subscription_id: int, error: Exception) -> None:
         session = await self._store.get_open(subscription_id)

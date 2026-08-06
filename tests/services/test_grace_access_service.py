@@ -613,6 +613,33 @@ async def test_pending_retry_accepts_only_known_external_squad_detach_intermedia
 
 
 @pytest.mark.asyncio
+async def test_pending_unexpected_active_keeps_protection_open_without_reapplying_overlay() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
+    service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    panel.fail_overlay_attempts = 1
+
+    with pytest.raises(RuntimeError, match='temporary panel error'):
+        await service.start_if_eligible(billing, GraceReason.EXPIRED)
+
+    panel.snapshot = replace(
+        panel.snapshot,
+        status='ACTIVE',
+        expire_at=now + timedelta(days=30),
+    )
+    result = await service.reconcile()
+
+    assert result.conflicts == 1
+    assert panel.applied_overlays == []
+    restoring = store.only_session()
+    assert restoring.state is GraceSessionState.RESTORING
+    assert restoring.completion_reason is None
+    assert restoring.completed_at is None
+
+
+@pytest.mark.asyncio
 async def test_pending_retry_never_reenables_an_unexpected_manual_panel_state() -> None:
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     clock = MutableClock(now)
@@ -2375,7 +2402,7 @@ async def test_limited_canonical_change_waits_without_error_then_completes() -> 
 
 
 @pytest.mark.asyncio
-async def test_limited_transition_conflict_completes_without_retry_error() -> None:
+async def test_limited_transition_conflict_keeps_protection_open() -> None:
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     clock = MutableClock(now)
     billing = make_billing(
@@ -2408,10 +2435,11 @@ async def test_limited_transition_conflict_completes_without_retry_error() -> No
 
     assert result.conflicts == 1
     assert result.errors == 0
-    completed = store.only_session()
-    assert completed.state is GraceSessionState.COMPLETED
-    assert completed.completion_reason is GraceCompletionReason.CONFLICT
-    assert completed.last_error == 'GracePanelTransitionConflict: panel state changed outside grace'
+    restoring = store.only_session()
+    assert restoring.state is GraceSessionState.RESTORING
+    assert restoring.completion_reason is None
+    assert restoring.completed_at is None
+    assert restoring.last_error == 'GracePanelTransitionConflict: panel state changed outside grace'
     assert panel.applied_billing == [changed_billing]
     assert panel.applied_billing_overlays == [started.session.overlay]
 
@@ -3085,7 +3113,7 @@ async def test_manual_panel_change_is_terminal_conflict_and_never_reapplied() ->
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     clock = MutableClock(now)
     billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
-    snapshot = make_snapshot(expire_at=billing.end_at)
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
     service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
     await service.start_if_eligible(billing, GraceReason.EXPIRED)
     panel.snapshot = replace(panel.snapshot, status='DISABLED', squad_uuids=(REGULAR_SQUAD,))
@@ -3104,7 +3132,7 @@ async def test_unexpected_active_panel_state_fails_closed_to_billing() -> None:
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     clock = MutableClock(now)
     billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
-    snapshot = make_snapshot(expire_at=billing.end_at)
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
     service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
     await service.start_if_eligible(billing, GraceReason.EXPIRED)
     panel.snapshot = replace(
@@ -3118,16 +3146,19 @@ async def test_unexpected_active_panel_state_fails_closed_to_billing() -> None:
 
     assert result.conflicts == 1
     assert panel.applied_billing == [billing]
-    assert store.only_session().state is GraceSessionState.COMPLETED
-    assert store.only_session().completion_reason is GraceCompletionReason.CONFLICT
+    restoring = store.only_session()
+    assert restoring.state is GraceSessionState.RESTORING
+    assert restoring.completion_reason is None
+    assert restoring.completed_at is None
+    assert restoring.last_error == ('Unexpected ACTIVE remains different from canonical billing; restore is pending')
 
 
 @pytest.mark.asyncio
-async def test_restore_conflict_is_terminal_instead_of_blocking_drain_forever() -> None:
+async def test_restore_conflict_keeps_protection_open_until_panel_is_safe() -> None:
     now = datetime(2026, 7, 15, 12, tzinfo=UTC)
     clock = MutableClock(now)
     billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
-    snapshot = make_snapshot(expire_at=billing.end_at)
+    snapshot = replace(make_snapshot(expire_at=billing.end_at), status='EXPIRED')
     service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
     await service.start_if_eligible(billing, GraceReason.EXPIRED)
     panel.restore_outcome = GraceRestoreOutcome.CONFLICT
@@ -3136,8 +3167,19 @@ async def test_restore_conflict_is_terminal_instead_of_blocking_drain_forever() 
     result = await service.reconcile()
 
     assert result.conflicts == 1
-    assert store.only_session().state is GraceSessionState.COMPLETED
-    assert store.only_session().last_error is not None
+    restoring = store.only_session()
+    assert restoring.state is GraceSessionState.RESTORING
+    assert restoring.completion_reason is None
+    assert restoring.completed_at is None
+    assert restoring.last_error is not None
+
+    panel.restore_outcome = GraceRestoreOutcome.RESTORED
+    recovered = await service.reconcile()
+
+    assert recovered.timed_out == 1
+    completed = store.only_session()
+    assert completed.state is GraceSessionState.COMPLETED
+    assert completed.completion_reason is GraceCompletionReason.TIMEOUT
 
 
 @pytest.mark.asyncio
