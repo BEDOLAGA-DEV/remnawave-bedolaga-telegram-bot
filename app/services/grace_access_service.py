@@ -799,6 +799,14 @@ class GraceAccessService:
             session.overlay,
             now=now,
         )
+        if not overlay_is_already_applied and not panel_status_matches_reason(current_panel.status, session.reason):
+            return await self._complete(
+                session,
+                GraceCompletionReason.CONFLICT,
+                last_error=(
+                    'Grace source status no longer matches the incident; manual DISABLED state was not enabled'
+                ),
+            )
         if not overlay_is_already_applied and not panel_is_safe_pending_source(
             current_panel,
             session.panel_before,
@@ -2008,7 +2016,7 @@ def billing_is_revoked(billing: GraceBillingState) -> bool:
 def panel_status_matches_reason(status: str, reason: GraceReason) -> bool:
     normalized = _normalize_status(status)
     if reason is GraceReason.EXPIRED:
-        return normalized in {'expired', 'disabled', 'limited'}
+        return normalized == 'expired'
     return normalized == 'limited'
 
 

@@ -505,7 +505,8 @@ class RemnawaveGracePanelGateway:
                 raise GracePanelError('Remnawave user disappeared while disabling the automatic traffic reset')
             strategy_snapshot = _panel_user_to_snapshot(strategy_updated)
             if (
-                strategy_snapshot.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value
+                _normalize(strategy_snapshot.status) == 'disabled'
+                or strategy_snapshot.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value
                 or not _reset_generations_equal(
                     strategy_snapshot.last_traffic_reset_at,
                     overlay.expected_last_traffic_reset_at,
