@@ -689,6 +689,56 @@ class RemnawaveGracePanelGateway:
             ):
                 raise GracePanelError('Remnawave did not confirm revocation after canonical billing disappeared')
 
+    async def fail_closed_external_reset(
+        self,
+        remnawave_id: int,
+        *,
+        expected_overlay: GracePanelOverlay,
+        expected_last_traffic_reset_at: datetime | None,
+        observed_last_traffic_reset_at: datetime | None,
+    ) -> GraceRestoreOutcome:
+        """Disable an exact Grace overlay after a newly observed reset generation."""
+        from app.services.remnawave_service import remnawave_service
+
+        async with remnawave_service.get_api_client() as api:
+            current_user = await api.get_user_by_id(remnawave_id)
+            if current_user is None:
+                return GraceRestoreOutcome.ALREADY_RESTORED
+
+            current = _panel_user_to_snapshot(current_user)
+            if not _reset_generations_equal(
+                current.last_traffic_reset_at,
+                observed_last_traffic_reset_at,
+            ) or _reset_generations_equal(
+                current.last_traffic_reset_at,
+                expected_last_traffic_reset_at,
+            ):
+                return GraceRestoreOutcome.CONFLICT
+
+            if _normalize(current.status) in {'disabled', 'expired'}:
+                return GraceRestoreOutcome.ALREADY_RESTORED
+
+            if not panel_matches_overlay(
+                current,
+                expected_overlay,
+                now=datetime.now(UTC),
+            ) or (
+                expected_overlay.traffic_limit_strategy is not None
+                and current.traffic_limit_strategy != expected_overlay.traffic_limit_strategy
+            ):
+                return GraceRestoreOutcome.CONFLICT
+
+            await api.disable_user(remnawave_id)
+            verified_user = await api.get_user_by_id(remnawave_id)
+            if verified_user is None:
+                return GraceRestoreOutcome.RESTORED
+            if _normalize(_panel_user_to_snapshot(verified_user).status) in {
+                'disabled',
+                'expired',
+            }:
+                return GraceRestoreOutcome.RESTORED
+            return GraceRestoreOutcome.CONFLICT
+
     async def prepare_tariff_rebase(
         self,
         billing: GraceBillingState,

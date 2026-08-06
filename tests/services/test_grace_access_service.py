@@ -148,6 +148,8 @@ class FakePanelGateway:
         self.restore_outcome = GraceRestoreOutcome.RESTORED
         self.restore_force_flags: list[bool] = []
         self.missing_billing_revocations: list[GracePanelOverlay] = []
+        self.external_reset_outcome = GraceRestoreOutcome.RESTORED
+        self.external_reset_revocations: list[tuple[GracePanelOverlay, datetime | None, datetime | None]] = []
         self.restore_state_probe: Any = None
         self.observed_restore_states: list[GraceSessionState] = []
         self.prepared_tariff_rebases: list[GraceBillingState] = []
@@ -210,6 +212,26 @@ class FakePanelGateway:
         assert remnawave_id == self.snapshot.remnawave_id
         self.missing_billing_revocations.append(expected_overlay)
         self.snapshot = replace(self.snapshot, status='DISABLED')
+
+    async def fail_closed_external_reset(
+        self,
+        remnawave_id: int,
+        *,
+        expected_overlay: GracePanelOverlay,
+        expected_last_traffic_reset_at: datetime | None,
+        observed_last_traffic_reset_at: datetime | None,
+    ) -> GraceRestoreOutcome:
+        assert remnawave_id == self.snapshot.remnawave_id
+        self.external_reset_revocations.append(
+            (
+                expected_overlay,
+                expected_last_traffic_reset_at,
+                observed_last_traffic_reset_at,
+            )
+        )
+        if self.external_reset_outcome is not GraceRestoreOutcome.CONFLICT:
+            self.snapshot = replace(self.snapshot, status='DISABLED')
+        return self.external_reset_outcome
 
     async def apply_billing_state(
         self,
@@ -1609,8 +1631,14 @@ async def test_configured_expired_tariff_reset_preserves_remaining_grace() -> No
     assert continued.panel_before.traffic_limit_bytes == switched.traffic_limit_bytes
     assert continued.panel_before.squad_uuids == switched.squad_uuids
     assert continued.panel_before.last_traffic_reset_at != reset_at
+    assert continued.overlay.expected_last_traffic_reset_at == continued.panel_before.last_traffic_reset_at
     assert continued.traffic_reset_target is None
     assert continued.traffic_reset_remaining_bytes == 3 * GIB // 4
+
+    stable = await service.reconcile()
+
+    assert stable.unchanged == 1
+    assert panel.external_reset_revocations == []
 
     clock.advance(timedelta(days=3, seconds=1))
     timed_out = await service.reconcile()
@@ -3180,6 +3208,87 @@ async def test_restore_conflict_keeps_protection_open_until_panel_is_safe() -> N
     completed = store.only_session()
     assert completed.state is GraceSessionState.COMPLETED
     assert completed.completion_reason is GraceCompletionReason.TIMEOUT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'original_generation',
+    [datetime(2026, 6, 15, 12, tzinfo=UTC), None],
+)
+async def test_external_reset_generation_is_revoked_fail_closed(
+    original_generation: datetime | None,
+) -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
+    snapshot = replace(
+        make_snapshot(expire_at=billing.end_at),
+        status='EXPIRED',
+        last_traffic_reset_at=original_generation,
+    )
+    service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    started = await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert started.session is not None
+    observed_generation = now + timedelta(seconds=1)
+    panel.snapshot = replace(panel.snapshot, last_traffic_reset_at=observed_generation)
+
+    result = await service.reconcile()
+
+    assert result.conflicts == 1
+    assert panel.external_reset_revocations == [(started.session.overlay, original_generation, observed_generation)]
+    completed = store.only_session()
+    assert completed.state is GraceSessionState.COMPLETED
+    assert completed.completion_reason is GraceCompletionReason.CONFLICT
+    assert completed.last_error is not None
+    assert 'access was revoked fail-closed' in completed.last_error
+
+
+@pytest.mark.asyncio
+async def test_external_reset_without_confirmed_revocation_keeps_protection_open() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    original_generation = now - timedelta(days=30)
+    billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
+    snapshot = replace(
+        make_snapshot(expire_at=billing.end_at),
+        status='EXPIRED',
+        last_traffic_reset_at=original_generation,
+    )
+    service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    panel.snapshot = replace(panel.snapshot, last_traffic_reset_at=now)
+    panel.external_reset_outcome = GraceRestoreOutcome.CONFLICT
+
+    result = await service.reconcile()
+
+    assert result.conflicts == 1
+    restoring = store.only_session()
+    assert restoring.state is GraceSessionState.RESTORING
+    assert restoring.completion_reason is None
+    assert restoring.completed_at is None
+    assert restoring.last_error is not None
+    assert 'revocation is not confirmed' in restoring.last_error
+
+
+@pytest.mark.asyncio
+async def test_unchanged_reset_generation_does_not_trigger_fail_closed_revocation() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    original_generation = now - timedelta(days=30)
+    billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
+    snapshot = replace(
+        make_snapshot(expire_at=billing.end_at),
+        status='EXPIRED',
+        last_traffic_reset_at=original_generation,
+    )
+    service, store, panel, _ = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    await service.start_if_eligible(billing, GraceReason.EXPIRED)
+
+    result = await service.reconcile()
+
+    assert result.unchanged == 1
+    assert panel.external_reset_revocations == []
+    assert store.only_session().state is GraceSessionState.ACTIVE
 
 
 @pytest.mark.asyncio

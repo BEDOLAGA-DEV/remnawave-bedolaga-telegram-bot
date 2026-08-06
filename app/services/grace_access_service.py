@@ -331,6 +331,15 @@ class GracePanelGateway(Protocol):
         expected_overlay: GracePanelOverlay,
     ) -> None: ...
 
+    async def fail_closed_external_reset(
+        self,
+        remnawave_id: int,
+        *,
+        expected_overlay: GracePanelOverlay,
+        expected_last_traffic_reset_at: datetime | None,
+        observed_last_traffic_reset_at: datetime | None,
+    ) -> GraceRestoreOutcome: ...
+
     async def apply_billing_state(
         self,
         billing: GraceBillingState,
@@ -1017,6 +1026,31 @@ class GraceAccessService:
             if current_panel is None:
                 await self._complete(session, GraceCompletionReason.CONFLICT)
                 return GraceCompletionReason.CONFLICT.value
+            expected_reset_generation = session.panel_before.last_traffic_reset_at
+            observed_reset_generation = current_panel.last_traffic_reset_at
+            if session.traffic_reset_target is None and not _reset_generations_equal(
+                observed_reset_generation,
+                expected_reset_generation,
+            ):
+                outcome = await self._panel.fail_closed_external_reset(
+                    session.remnawave_id,
+                    expected_overlay=session.overlay,
+                    expected_last_traffic_reset_at=expected_reset_generation,
+                    observed_last_traffic_reset_at=observed_reset_generation,
+                )
+                error_message = 'External Remnawave traffic reset generation changed during Grace access'
+                if outcome is GraceRestoreOutcome.CONFLICT:
+                    await self._keep_restoring_after_conflict(
+                        session,
+                        last_error=f'{error_message}; fail-closed revocation is not confirmed',
+                    )
+                    return GraceCompletionReason.CONFLICT.value
+                await self._complete(
+                    session,
+                    GraceCompletionReason.CONFLICT,
+                    last_error=f'{error_message}; access was revoked fail-closed',
+                )
+                return GraceCompletionReason.CONFLICT.value
             if panel_matches_overlay(current_panel, session.overlay, now=now):
                 return 'unchanged'
 
@@ -1246,11 +1280,15 @@ class GraceAccessService:
             external_squad_uuid=target.external_squad_uuid,
             last_traffic_reset_at=reset_result.panel.last_traffic_reset_at,
         )
+        continued_overlay = replace(
+            reset_result.overlay,
+            expected_last_traffic_reset_at=reset_result.panel.last_traffic_reset_at,
+        )
         continued = replace(
             session,
             billing_before=target,
             panel_before=rebased_panel,
-            overlay=reset_result.overlay,
+            overlay=continued_overlay,
             incident_aliases=aliases,
             limited_lineage_tail=(target if session.reason is GraceReason.LIMITED else None),
             allow_recovery_enabled_webhook=False,

@@ -77,6 +77,7 @@ class FakeRemnawaveApi:
         self.fail_update_call_numbers: set[int] = set()
         self.reset_calls: list[int] = []
         self.fail_reset_after_effect = 0
+        self.disable_updates_status = True
 
     async def get_user_by_id(self, user_id: int) -> SimpleNamespace | None:
         # Как и настоящий клиент: непригодный локальный идентификатор — это
@@ -113,7 +114,8 @@ class FakeRemnawaveApi:
         panel_user_id = coerce_panel_user_id(user_id)
         self.disable_calls.append(panel_user_id)
         assert panel_user_id == self.user.id
-        self.user.status = UserStatus.DISABLED
+        if self.disable_updates_status:
+            self.user.status = UserStatus.DISABLED
         return self.user
 
     async def reset_user_traffic(self, user_id: int) -> SimpleNamespace:
@@ -848,6 +850,137 @@ async def test_missing_billing_revocation_preserves_unrelated_panel_change(
         )
 
     assert api.disable_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('overlay_strategy', ['NO_RESET', None])
+async def test_external_reset_revocation_requires_exact_changed_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    overlay_strategy: str | None,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    observed_generation = NOW + timedelta(seconds=1)
+    overlay = replace(
+        make_overlay(),
+        traffic_limit_strategy=overlay_strategy,
+        expected_last_traffic_reset_at=expected_generation,
+    )
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = observed_generation
+    user.traffic_limit_strategy = 'NO_RESET'
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert api.disable_calls == [PANEL_ID]
+    assert api.reads == [PANEL_ID, PANEL_ID]
+    assert user.status is UserStatus.DISABLED
+
+
+@pytest.mark.asyncio
+async def test_external_reset_revocation_rejects_stale_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    initially_observed_generation = NOW + timedelta(seconds=1)
+    concurrently_observed_generation = NOW + timedelta(seconds=2)
+    overlay = replace(make_overlay(), traffic_limit_strategy='NO_RESET')
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = concurrently_observed_generation
+    user.traffic_limit_strategy = 'NO_RESET'
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=initially_observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.CONFLICT
+    assert api.disable_calls == []
+
+
+@pytest.mark.asyncio
+async def test_external_reset_revocation_rejects_changed_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    observed_generation = NOW + timedelta(seconds=1)
+    overlay = replace(make_overlay(), traffic_limit_strategy='NO_RESET')
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = observed_generation
+    user.traffic_limit_strategy = 'MONTH'
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.CONFLICT
+    assert api.disable_calls == []
+
+
+@pytest.mark.asyncio
+async def test_external_reset_revocation_requires_confirmation_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    observed_generation = NOW + timedelta(seconds=1)
+    overlay = replace(make_overlay(), traffic_limit_strategy='NO_RESET')
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = observed_generation
+    user.traffic_limit_strategy = 'NO_RESET'
+    api = FakeRemnawaveApi(user)
+    api.disable_updates_status = False
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.CONFLICT
+    assert api.disable_calls == [PANEL_ID]
+    assert api.reads == [PANEL_ID, PANEL_ID]
 
 
 @pytest.mark.asyncio
