@@ -27,6 +27,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 _RESTORE_ECHO_TIMESTAMP_TOLERANCE = timedelta(minutes=1)
+_MUTATION_ECHO_MAX_WINDOW = timedelta(minutes=5)
 _COMPLETED_EXPIRED_ECHO_DEDUPE_TTL = timedelta(minutes=30)
 
 
@@ -83,6 +84,8 @@ class GraceRestoreOutcome(StrEnum):
     RESTORED = 'restored'
     ALREADY_RESTORED = 'already_restored'
     CONFLICT = 'conflict'
+    EXTERNAL_RESET_REVOKED = 'external_reset_revoked'
+    FAIL_CLOSED_REVOKED = 'fail_closed_revoked'
 
 
 class GraceTrafficResetOutcome(StrEnum):
@@ -256,6 +259,40 @@ class GraceAccessSession:
     # Upper bound of the reset operation. It is deliberately independent from
     # Grace completion, which may happen minutes or days later.
     traffic_reset_finished_at: datetime | None = None
+    # Generation immediately before the persisted reset intent.  The rebased
+    # panel snapshot stores the new generation, so delayed quota-fence echoes
+    # need this separate exact fingerprint.
+    traffic_reset_previous_generation: datetime | None = None
+    # Exact usage from the pre-reset panel read. It cannot be reconstructed
+    # from remaining bytes once usage has exceeded the temporary quota.
+    traffic_reset_previous_used_bytes: int | None = None
+    # Generation confirmed by the post-reset GET. This is distinct from the
+    # pre-reset generation used by user.enabled and quota-fence echoes.
+    traffic_reset_result_generation: datetime | None = None
+    # Narrow causal windows for delayed Remnawave user.modified echoes. They are
+    # persisted separately from the potentially multi-day Grace lifetime.
+    activation_started_at: datetime | None = None
+    activation_finished_at: datetime | None = None
+    restore_started_at: datetime | None = None
+    restore_finished_at: datetime | None = None
+    # Distinguish natural timeout restoration (which only waits for EXPIRED)
+    # from an explicit drain/revoke path that deliberately writes DISABLED.
+    # Webhook suppression must never infer this intent from a broad status set.
+    restore_force_disable: bool = False
+    # Terminal intent selected before the first restore PATCH. It survives a
+    # crash so a later ordinary reconcile cannot turn an early drain/revoke
+    # into a natural timeout path or report the wrong completion reason.
+    restore_completion_reason: GraceCompletionReason | None = None
+    # A v2/v3 row may be observed only after a newer worker has already written
+    # NO_RESET. In that case the original strategy cannot be reconstructed from
+    # the panel. The fresh canonical strategy is persisted only as a safe
+    # convergence target; this marker forbids continuing the Grace grant or
+    # restoring the rest of the stale snapshot.
+    legacy_strategy_fallback: bool = False
+    # Keep the source version until legacy metadata has been resolved and
+    # durably checkpointed.  Otherwise an unrelated error save would silently
+    # turn a v2/v3 row into a v4 row that still contains unknown strategy data.
+    snapshot_version: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +324,12 @@ class GraceReconcileResult:
     errors: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _GraceMetadataHydration:
+    session: GraceAccessSession
+    checkpointed: bool = False
+
+
 class GraceSessionStore(Protocol):
     """Persistence adapter implemented in the next integration step."""
 
@@ -305,6 +348,10 @@ class GraceSessionStore(Protocol):
 
     async def save(self, session: GraceAccessSession) -> GraceAccessSession: ...
 
+    async def checkpoint(self, session: GraceAccessSession) -> GraceAccessSession:
+        """Persist metadata before the next external panel mutation."""
+        ...
+
     async def list_open(self, *, limit: int) -> Sequence[GraceAccessSession]: ...
 
 
@@ -313,7 +360,13 @@ class GracePanelGateway(Protocol):
 
     async def read_snapshot(self, remnawave_id: int) -> GracePanelSnapshot | None: ...
 
-    async def apply_overlay(self, remnawave_id: int, overlay: GracePanelOverlay) -> None: ...
+    async def apply_overlay(
+        self,
+        remnawave_id: int,
+        overlay: GracePanelOverlay,
+        *,
+        expected_source: GracePanelSnapshot,
+    ) -> None: ...
 
     async def restore_snapshot(
         self,
@@ -735,59 +788,219 @@ class GraceAccessService:
     ) -> bool:
         """Return whether a panel event is a provable grace-owned panel echo."""
         normalized_event = event_name.strip().lower()
-        session = await self._store.get_open(subscription_id)
+        if normalized_event == 'user.disabled':
+            # An administrative disable must always reach canonical billing.
+            return False
 
-        if session is None:
+        session = await self._store.get_open(subscription_id)
+        sessions: Sequence[GraceAccessSession]
+        if session is not None:
+            sessions = (session,)
+        else:
             if normalized_event not in {
                 'user.modified',
                 'user.enabled',
+                'user.expired',
+                'user.limited',
                 'user.traffic_reset',
             }:
                 return False
-            completed_sessions = await self._store.list_recent_completed(
-                subscription_id,
-                limit=8,
-            )
-            if normalized_event == 'user.modified':
-                return any(
-                    webhook_matches_expired_restore(payload, completed_session)
-                    or webhook_matches_traffic_reset_intermediate(
-                        payload,
-                        completed_session,
-                    )
-                    for completed_session in completed_sessions
-                )
-            return any(
-                webhook_matches_traffic_reset_signal(payload, completed_session)
-                for completed_session in completed_sessions
-            )
+            sessions = await self._store.list_recent_completed(subscription_id, limit=8)
 
-        # A real administrative disable must always win.  We deliberately let
-        # restore-generated ``user.disabled`` pass too: changing EXPIRED to
-        # DISABLED is less dangerous than hiding a real revocation and later
-        # re-enabling it.
-        if normalized_event == 'user.disabled':
-            return False
+        if normalized_event == 'user.enabled' and session is not None and session.allow_recovery_enabled_webhook:
+            fresh_billing = await self._billing.get_subscription(subscription_id)
+            if fresh_billing is not None and webhook_matches_billing_recovery(payload, fresh_billing):
+                return False
 
-        # Ordinary user.modified events are handled field-by-field by the
-        # webhook service.  A strictly matching restore echo is suppressed here
-        # to close the race where RESTORING becomes COMPLETED between the guard
-        # and that field-level masking query.
-        if normalized_event == 'user.modified':
-            return session.state is GraceSessionState.RESTORING and webhook_matches_expired_restore(
+        for candidate in sessions:
+            if normalized_event == 'user.modified' and (
+                webhook_matches_activation_modified(payload, candidate)
+                or webhook_matches_expired_restore(payload, candidate, event_name=normalized_event)
+                or webhook_matches_limited_restore(payload, candidate, event_name=normalized_event)
+                or webhook_matches_traffic_reset_intermediate(payload, candidate)
+            ):
+                return True
+            if normalized_event == 'user.enabled' and (
+                webhook_matches_activation_enabled(payload, candidate)
+                or webhook_matches_limited_restore(payload, candidate, event_name=normalized_event)
+                or webhook_matches_traffic_reset_enabled(payload, candidate)
+            ):
+                return True
+            if normalized_event == 'user.traffic_reset' and webhook_matches_traffic_reset_completed(
                 payload,
+                candidate,
+            ):
+                return True
+            if normalized_event in {'user.expired', 'user.limited'} and (
+                webhook_matches_overlay_event(payload, candidate, normalized_event)
+                or webhook_matches_expired_restore(payload, candidate, event_name=normalized_event)
+                or webhook_matches_limited_restore(payload, candidate, event_name=normalized_event)
+            ):
+                return True
+        return False
+
+    async def _hydrate_legacy_metadata(
+        self,
+        session: GraceAccessSession,
+        billing: GraceBillingState | None,
+        *,
+        current_panel: GracePanelSnapshot | None = None,
+    ) -> _GraceMetadataHydration:
+        """Resolve v2/v3 strategy metadata before any new panel mutation.
+
+        The reset generation was already captured in ``panel_before`` by the
+        legacy implementation, so it is copied from that durable value rather
+        than adopted from a later live read.  The original strategy is accepted
+        only from an exact known legacy phase.  If a newer process already
+        changed it to NO_RESET before persisting the original, canonical billing
+        is used as an explicit fail-closed restore target and Grace is not
+        continued.
+        """
+        if not session_needs_metadata_hydration(session):
+            return _GraceMetadataHydration(session)
+
+        live = current_panel or await self._panel.read_snapshot(session.remnawave_id)
+        if live is None:
+            return _GraceMetadataHydration(session)
+        if live.remnawave_id != session.remnawave_id:
+            raise GracePanelTransitionConflict('Legacy Grace metadata belongs to another Remnawave user')
+        canonical_completion_reason: GraceCompletionReason | None = None
+        if billing is not None:
+            if billing_has_recovered(session, billing):
+                canonical_completion_reason = GraceCompletionReason.PAID
+            elif billing_is_revoked(billing):
+                canonical_completion_reason = GraceCompletionReason.REVOKED
+        if canonical_completion_reason is not None and billing is not None:
+            from app.services.grace_access_runtime import _build_billing_target, _panel_matches_target
+
+            canonical_target = _build_billing_target(billing, now=_as_utc(self._clock()))
+            if _panel_matches_target(live, canonical_target):
+                # Recovery/revocation PATCH already reached Remnawave before the
+                # old Grace row was closed. Let the ordinary canonical branch
+                # finish it; hydration must not strand the row merely because
+                # the panel is no longer a legacy phase.
+                return _GraceMetadataHydration(session)
+        if not _reset_generations_equal(
+            live.last_traffic_reset_at,
+            session.panel_before.last_traffic_reset_at,
+        ):
+            # A paid/recovered canonical state must never authenticate itself as
+            # a Grace phase merely because it is the latest panel observation.
+            # The caller will converge it through apply_billing_state using the
+            # persisted overlay CAS proof. Any unrelated panel state remains a
+            # conflict and is never disabled here.
+            if not panel_is_legacy_hydration_source(live, session):
+                raise GracePanelTransitionConflict('Reset generation changed outside every exact legacy Grace phase')
+            observed_overlay = _overlay_from_observed_panel(live)
+            if canonical_completion_reason is not None and billing is not None:
+                await self._panel.apply_billing_state(
+                    billing,
+                    expected_overlay=observed_overlay,
+                    expected_last_traffic_reset_at=live.last_traffic_reset_at,
+                )
+                completed = await self._complete(session, canonical_completion_reason)
+                return _GraceMetadataHydration(completed)
+            outcome = await self._panel.fail_closed_external_reset(
+                session.remnawave_id,
+                expected_overlay=observed_overlay,
+                expected_last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+                observed_last_traffic_reset_at=live.last_traffic_reset_at,
+            )
+            message = 'External Remnawave traffic reset happened before legacy Grace metadata hydration'
+            if outcome is GraceRestoreOutcome.CONFLICT:
+                restoring = await self._keep_restoring_after_conflict(
+                    session,
+                    last_error=f'{message}; fail-closed revocation is not confirmed',
+                )
+                return _GraceMetadataHydration(restoring)
+            completed = await self._complete(
                 session,
+                GraceCompletionReason.CONFLICT,
+                last_error=f'{message}; access was revoked fail-closed',
+            )
+            return _GraceMetadataHydration(completed)
+        if not panel_is_legacy_hydration_source(live, session):
+            raise GracePanelTransitionConflict(
+                'Remnawave state is not an exact legacy Grace phase; strategy was not adopted'
             )
 
-        if normalized_event == 'user.enabled' and session.allow_recovery_enabled_webhook:
-            return False
+        live_strategy = _concrete_strategy(live.traffic_limit_strategy)
+        if live_strategy is None:
+            raise GracePanelTransitionPending('Remnawave did not return a concrete strategy for legacy Grace hydration')
 
-        # These transitions are expected consequences of enabling/consuming/
-        # expiring the temporary overlay. Billing remains authoritative; a real
-        # manual panel change is still preserved because reconciliation never
-        # re-applies a mismatching overlay. Payload completeness varies between
-        # Remnawave releases, so these cannot rely on optional fields.
-        return normalized_event in {'user.enabled', 'user.expired', 'user.limited'}
+        original_strategy = _concrete_strategy(session.panel_before.traffic_limit_strategy)
+        canonical_fallback_required = session.legacy_strategy_fallback
+        if original_strategy is None:
+            if live_strategy != 'NO_RESET':
+                original_strategy = live_strategy
+            elif (
+                billing is not None
+                and billing.remnawave_id == session.remnawave_id
+                and _concrete_strategy(billing.traffic_limit_strategy) is not None
+            ):
+                # NO_RESET is an irreversible ambiguity here: it may be the
+                # phase written by a crashed newer worker.  Never record it as
+                # the original.  A fresh billing strategy is authoritative only
+                # as a canonical convergence target, so this session must close.
+                original_strategy = _concrete_strategy(billing.traffic_limit_strategy)
+                canonical_fallback_required = True
+            else:
+                # Without a canonical strategy for this exact panel user there
+                # is no safe restore target. Revoke the precisely observed
+                # legacy phase and leave no ACTIVE/LIMITED access behind.
+                await self._panel.revoke_missing_billing(
+                    session.remnawave_id,
+                    expected_overlay=_overlay_from_observed_panel(live),
+                )
+                completed = await self._complete(
+                    session,
+                    GraceCompletionReason.CONFLICT,
+                    last_error='Legacy Grace strategy is unknown and canonical billing cannot identify it',
+                )
+                return _GraceMetadataHydration(completed)
+        elif live_strategy not in {original_strategy, 'NO_RESET'}:
+            raise GracePanelTransitionConflict('Remnawave strategy changed outside the persisted Grace phases')
+
+        hydrated_billing = session.billing_before
+        if (
+            hydrated_billing.traffic_limit_strategy is None
+            and billing is not None
+            and billing_still_matches_session(session, billing)
+            and _concrete_strategy(billing.traffic_limit_strategy) is not None
+        ):
+            hydrated_billing = replace(
+                hydrated_billing,
+                traffic_limit_strategy=_concrete_strategy(billing.traffic_limit_strategy),
+            )
+
+        hydrated = replace(
+            session,
+            billing_before=hydrated_billing,
+            panel_before=replace(
+                session.panel_before,
+                traffic_limit_strategy=original_strategy,
+            ),
+            overlay=replace(
+                session.overlay,
+                traffic_limit_strategy='NO_RESET',
+                expected_last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+            ),
+            snapshot_version=4,
+            legacy_strategy_fallback=canonical_fallback_required,
+            updated_at=_as_utc(self._clock()),
+            last_error=(
+                'Legacy original strategy was unavailable; canonical strategy restore is required'
+                if canonical_fallback_required
+                else None
+            ),
+        )
+        hydrated = await self._store.checkpoint(hydrated)
+        if hydrated.state is GraceSessionState.COMPLETED:
+            return _GraceMetadataHydration(hydrated)
+        # checkpoint() commits and reacquires the subscription lock. Every
+        # billing/panel read above is now stale by definition. The caller must
+        # restart from the returned CAS winner before any external mutation.
+        return _GraceMetadataHydration(hydrated, checkpointed=True)
 
     async def _activate_pending(self, session: GraceAccessSession) -> GraceAccessSession:
         now = _as_utc(self._clock())
@@ -821,12 +1034,43 @@ class GraceAccessService:
                 last_error='Remnawave user disappeared before pending grace could be activated',
             )
 
+        hydration = await self._hydrate_legacy_metadata(
+            session,
+            latest_billing,
+            current_panel=current_panel,
+        )
+        session = hydration.session
+        if session.state is GraceSessionState.COMPLETED:
+            return session
+        if hydration.checkpointed:
+            if session.state is not GraceSessionState.PENDING:
+                # checkpoint() commits and reacquires the lock. A concurrent
+                # worker may already have won RESTORING/ACTIVE/COMPLETED; never
+                # run an activation PATCH from that winner.
+                return session
+            if session_needs_metadata_hydration(session):
+                raise GracePanelTransitionPending('Legacy Grace metadata checkpoint lost its optimistic CAS race')
+            # checkpoint() released/reacquired the database lock. Restart every
+            # eligibility and panel predicate from fresh state before a PATCH.
+            return await self._activate_pending(session)
+        if session.legacy_strategy_fallback:
+            _, completed = await self._restore_and_complete(
+                session,
+                GraceCompletionReason.CONFLICT,
+            )
+            return completed
+
         overlay_is_already_applied = panel_matches_overlay(
             current_panel,
             session.overlay,
             now=now,
         )
-        if not overlay_is_already_applied and not panel_status_matches_reason(current_panel.status, session.reason):
+        legacy_overlay_phase = panel_matches_legacy_overlay(current_panel, session)
+        if (
+            not overlay_is_already_applied
+            and not legacy_overlay_phase
+            and not panel_status_matches_reason(current_panel.status, session.reason)
+        ):
             if _normalize_status(current_panel.status) == 'active':
                 return await self._keep_restoring_after_conflict(
                     session,
@@ -839,10 +1083,14 @@ class GraceAccessService:
                     'Grace source status no longer matches the incident; manual DISABLED state was not enabled'
                 ),
             )
-        if not overlay_is_already_applied and not panel_is_safe_pending_source(
-            current_panel,
-            session.panel_before,
-            session.overlay,
+        if (
+            not overlay_is_already_applied
+            and not legacy_overlay_phase
+            and not panel_is_safe_pending_source(
+                current_panel,
+                session.panel_before,
+                session.overlay,
+            )
         ):
             # A retry is allowed only from the original snapshot, the exact
             # overlay, or the one known intermediate produced by our external
@@ -870,8 +1118,32 @@ class GraceAccessService:
             )
 
         if not overlay_is_already_applied:
+            activation_attempt_expired = bool(
+                session.activation_started_at is not None
+                and now >= _as_utc(session.activation_started_at) + _MUTATION_ECHO_MAX_WINDOW
+            )
+            if session.activation_started_at is None or activation_attempt_expired:
+                checkpointed = await self._store.checkpoint(
+                    replace(
+                        session,
+                        activation_started_at=_as_utc(self._clock()),
+                        activation_finished_at=None,
+                        updated_at=_as_utc(self._clock()),
+                    )
+                )
+                if checkpointed.state is not GraceSessionState.PENDING:
+                    return checkpointed
+                if checkpointed.activation_started_at is None:
+                    raise GracePanelTransitionPending('Grace activation checkpoint lost its optimistic CAS race')
+                # The checkpoint released the lock. Repeat every source and
+                # billing predicate before the first panel PATCH.
+                return await self._activate_pending(checkpointed)
             try:
-                await self._panel.apply_overlay(session.remnawave_id, session.overlay)
+                await self._panel.apply_overlay(
+                    session.remnawave_id,
+                    session.overlay,
+                    expected_source=session.panel_before,
+                )
             except Exception as error:
                 failed_session = replace(
                     session,
@@ -880,6 +1152,18 @@ class GraceAccessService:
                 )
                 await self._store.save(failed_session)
                 raise
+            session = replace(
+                session,
+                activation_finished_at=_as_utc(self._clock()),
+            )
+        elif session.activation_started_at is not None and session.activation_finished_at is None:
+            # Crash recovery can observe the exact final overlay after the API
+            # mutation but before the ACTIVE save. Bound the proof window to the
+            # durable attempt and finish it without issuing another PATCH.
+            session = replace(
+                session,
+                activation_finished_at=_as_utc(self._clock()),
+            )
 
         latest_billing = await self._billing.get_subscription(session.subscription_id)
         if latest_billing and billing_has_recovered(session, latest_billing):
@@ -919,6 +1203,14 @@ class GraceAccessService:
         force_restore: bool,
     ) -> str:
         billing = await self._billing.get_subscription(session.subscription_id)
+        hydration = await self._hydrate_legacy_metadata(session, billing)
+        session = hydration.session
+        if session.state is GraceSessionState.COMPLETED:
+            return (session.completion_reason or GraceCompletionReason.CONFLICT).value
+        if hydration.checkpointed:
+            # The checkpoint deliberately committed/relocked. A later pass must
+            # re-read billing and panel before doing any external mutation.
+            return 'repaired'
         if session.traffic_reset_target is not None and billing is not None:
             reset_action = await self._try_tariff_switch_traffic_reset(
                 session,
@@ -1006,6 +1298,29 @@ class GraceAccessService:
             action, _ = await self._restore_and_complete(session, GraceCompletionReason.CONFLICT)
             return action
 
+        if session.legacy_strategy_fallback:
+            # The original v2/v3 strategy was already lost behind NO_RESET.
+            # A proven tariff switch above may safely establish a fresh restore
+            # point. With otherwise unchanged billing, canonical convergence is
+            # the only safe action and the stale Grace grant must close.
+            if billing.remnawave_id != session.remnawave_id:
+                await self._panel.revoke_missing_billing(
+                    session.remnawave_id,
+                    expected_overlay=session.overlay,
+                )
+            else:
+                await self._panel.apply_billing_state(
+                    billing,
+                    expected_overlay=session.overlay,
+                    expected_last_traffic_reset_at=session.panel_before.last_traffic_reset_at,
+                )
+            await self._complete(
+                session,
+                GraceCompletionReason.CONFLICT,
+                last_error='Legacy Grace strategy was recovered only from canonical billing',
+            )
+            return GraceCompletionReason.CONFLICT.value
+
         if session.state is GraceSessionState.PENDING:
             if activate_pending and not force_restore and now < _as_utc(session.grace_until):
                 activated_session = await self._activate_pending(session)
@@ -1026,6 +1341,13 @@ class GraceAccessService:
             if current_panel is None:
                 await self._complete(session, GraceCompletionReason.CONFLICT)
                 return GraceCompletionReason.CONFLICT.value
+            if panel_matches_legacy_overlay(current_panel, session):
+                await self._panel.apply_overlay(
+                    session.remnawave_id,
+                    session.overlay,
+                    expected_source=session.panel_before,
+                )
+                return 'repaired'
             expected_reset_generation = session.panel_before.last_traffic_reset_at
             observed_reset_generation = current_panel.last_traffic_reset_at
             if session.traffic_reset_target is None and not _reset_generations_equal(
@@ -1144,6 +1466,9 @@ class GraceAccessService:
                 session,
                 traffic_reset_target=billing,
                 traffic_reset_remaining_bytes=remaining_bytes,
+                traffic_reset_previous_generation=session.panel_before.last_traffic_reset_at,
+                traffic_reset_previous_used_bytes=current_panel.used_traffic_bytes,
+                traffic_reset_result_generation=None,
                 traffic_reset_started_at=now,
                 traffic_reset_finished_at=None,
                 allow_recovery_enabled_webhook=session.reason is GraceReason.LIMITED,
@@ -1194,6 +1519,7 @@ class GraceAccessService:
                 session,
                 traffic_reset_started_at=(session.traffic_reset_started_at or session.updated_at),
                 traffic_reset_finished_at=reset_finished_at,
+                traffic_reset_result_generation=reset_result.panel.last_traffic_reset_at,
                 updated_at=_as_utc(self._clock()),
             )
         )
@@ -1345,7 +1671,13 @@ class GraceAccessService:
             current_panel.last_traffic_reset_at,
             session.panel_before.last_traffic_reset_at,
         )
-        if reset_generation_changed and session.traffic_reset_finished_at is None:
+        if reset_generation_changed and (
+            session.traffic_reset_finished_at is None
+            or not _reset_generations_equal(
+                session.traffic_reset_result_generation,
+                current_panel.last_traffic_reset_at,
+            )
+        ):
             session = await self._store.save(
                 replace(
                     session,
@@ -1354,6 +1686,7 @@ class GraceAccessService:
                         observed_at=current_panel.last_traffic_reset_at,
                         now=now,
                     ),
+                    traffic_reset_result_generation=current_panel.last_traffic_reset_at,
                     updated_at=now,
                 )
             )
@@ -1582,6 +1915,7 @@ class GraceAccessService:
             incident_aliases=aliases,
             limited_lineage_tail=billing,
             allow_recovery_enabled_webhook=False,
+            legacy_strategy_fallback=False,
             updated_at=now,
             last_error=None,
         )
@@ -1688,12 +2022,27 @@ class GraceAccessService:
         completion_reason: GraceCompletionReason,
     ) -> tuple[str, GraceAccessSession]:
         now = _as_utc(self._clock())
+        effective_completion_reason = session.restore_completion_reason or completion_reason
+        if (
+            effective_completion_reason is GraceCompletionReason.TIMEOUT
+            and completion_reason is not GraceCompletionReason.TIMEOUT
+        ):
+            # Emergency restore-all/drain is a monotonic escalation. It may
+            # force a natural TIMEOUT restore to DISABLED, while a later normal
+            # reconcile must never downgrade an already forced terminal intent.
+            effective_completion_reason = completion_reason
         # Refresh the durable checkpoint before every external restore attempt.
         # Besides crash recovery, this timestamps the narrow window in which a
         # full user.modified payload can be proven to be our own restore echo.
         restoring_session = replace(
             session,
             state=GraceSessionState.RESTORING,
+            restore_started_at=now,
+            restore_finished_at=None,
+            restore_force_disable=(
+                session.restore_force_disable or effective_completion_reason is not GraceCompletionReason.TIMEOUT
+            ),
+            restore_completion_reason=effective_completion_reason,
             updated_at=now,
             last_error=None,
         )
@@ -1715,14 +2064,24 @@ class GraceAccessService:
             restoring_session.remnawave_id,
             restoring_session.panel_before,
             restoring_session.overlay,
-            force_disable=completion_reason is not GraceCompletionReason.TIMEOUT,
+            force_disable=restoring_session.restore_force_disable,
         )
+
+        post_restore_session = restoring_session
+        if outcome in {
+            GraceRestoreOutcome.RESTORED,
+            GraceRestoreOutcome.ALREADY_RESTORED,
+        }:
+            post_restore_session = replace(
+                restoring_session,
+                restore_finished_at=_as_utc(self._clock()),
+            )
 
         # Payment may land after the pre-restore check.  Paid billing always wins
         # over an old snapshot, even if the restore PATCH has already succeeded.
         latest_billing = await self._billing.get_subscription(session.subscription_id)
         fresh_completion = await self._complete_for_fresh_billing_change(
-            restoring_session,
+            post_restore_session,
             latest_billing,
             expected_restored_snapshot=restoring_session.panel_before,
         )
@@ -1736,8 +2095,24 @@ class GraceAccessService:
             )
             return GraceCompletionReason.CONFLICT.value, restoring
 
-        completed = await self._complete(restoring_session, completion_reason)
-        return completion_reason.value, completed
+        if outcome is GraceRestoreOutcome.EXTERNAL_RESET_REVOKED:
+            completed = await self._complete(
+                restoring_session,
+                GraceCompletionReason.CONFLICT,
+                last_error='External Remnawave traffic reset was detected; access was revoked fail-closed',
+            )
+            return GraceCompletionReason.CONFLICT.value, completed
+
+        if outcome is GraceRestoreOutcome.FAIL_CLOSED_REVOKED:
+            completed = await self._complete(
+                restoring_session,
+                GraceCompletionReason.CONFLICT,
+                last_error='Unsafe Remnawave restore phase was revoked fail-closed',
+            )
+            return GraceCompletionReason.CONFLICT.value, completed
+
+        completed = await self._complete(post_restore_session, effective_completion_reason)
+        return effective_completion_reason.value, completed
 
     async def _complete(
         self,
@@ -1766,6 +2141,13 @@ class GraceAccessService:
                 (session.traffic_reset_started_at or session.updated_at) if retain_reset_proof else None
             ),
             traffic_reset_finished_at=(session.traffic_reset_finished_at if retain_reset_proof else None),
+            traffic_reset_previous_generation=(
+                session.traffic_reset_previous_generation if retain_reset_proof else None
+            ),
+            traffic_reset_previous_used_bytes=(
+                session.traffic_reset_previous_used_bytes if retain_reset_proof else None
+            ),
+            traffic_reset_result_generation=(session.traffic_reset_result_generation if retain_reset_proof else None),
         )
         return await self._store.save(completed_session)
 
@@ -1965,6 +2347,7 @@ def traffic_reset_billing_matches_target(
         and current.device_limit == target.device_limit
         and set(current.squad_uuids) == set(target.squad_uuids)
         and current.external_squad_uuid == target.external_squad_uuid
+        and current.traffic_limit_strategy == target.traffic_limit_strategy
         and current.is_trial == target.is_trial
         and current.is_daily == target.is_daily
         and current.is_free_tariff == target.is_free_tariff
@@ -2045,11 +2428,15 @@ def billing_still_matches_session(
     if not _datetimes_equal(current.end_at, before.end_at):
         return False
     tariff_matches = not before.tariff_id_known or not current.tariff_id_known or current.tariff_id == before.tariff_id
+    strategy_matches = (
+        before.traffic_limit_strategy is None or current.traffic_limit_strategy == before.traffic_limit_strategy
+    )
     return (
         current.traffic_limit_bytes == before.traffic_limit_bytes
         and current.device_limit == before.device_limit
         and set(current.squad_uuids) == set(before.squad_uuids)
         and current.external_squad_uuid == before.external_squad_uuid
+        and strategy_matches
         and current.is_trial == before.is_trial
         and current.is_daily == before.is_daily
         and current.is_free_tariff == before.is_free_tariff
@@ -2201,6 +2588,8 @@ def traffic_reset_checkpoint_source_overlay(
             traffic_limit_bytes=checkpoint_target.traffic_limit_bytes,
             squad_uuids=checkpoint_target.squad_uuids,
             external_squad_uuid=checkpoint_target.external_squad_uuid,
+            traffic_limit_strategy=current.traffic_limit_strategy,
+            expected_last_traffic_reset_at=current.last_traffic_reset_at,
         )
 
     if (
@@ -2220,6 +2609,8 @@ def traffic_reset_checkpoint_source_overlay(
             traffic_limit_bytes=checkpoint_target.traffic_limit_bytes,
             squad_uuids=checkpoint_target.squad_uuids,
             external_squad_uuid=checkpoint_target.external_squad_uuid,
+            traffic_limit_strategy=current.traffic_limit_strategy,
+            expected_last_traffic_reset_at=current.last_traffic_reset_at,
         )
     return None
 
@@ -2244,10 +2635,11 @@ def panel_matches_overlay(
         and snapshot.traffic_limit_bytes == overlay.traffic_limit_bytes
         and set(snapshot.squad_uuids) == set(overlay.squad_uuids)
         and snapshot.external_squad_uuid == overlay.external_squad_uuid
-        and (
-            overlay.traffic_limit_strategy is None
-            or snapshot.traffic_limit_strategy is None
-            or snapshot.traffic_limit_strategy == overlay.traffic_limit_strategy
+        and overlay.traffic_limit_strategy is not None
+        and snapshot.traffic_limit_strategy == overlay.traffic_limit_strategy
+        and _reset_generations_equal(
+            snapshot.last_traffic_reset_at,
+            overlay.expected_last_traffic_reset_at,
         )
     )
 
@@ -2260,126 +2652,478 @@ def panel_is_safe_pending_source(
     """Recognize only states that this PENDING activation could have produced.
 
     Used traffic is intentionally ignored because it is monotonic accounting
-    data.  The sole accepted partial state is an otherwise unchanged original
-    snapshot whose external squad has already been detached by the gateway's
-    preflight PATCH.
+    data.  Exact original, external-detached and NO_RESET-confirmed states are
+    the only accepted pre-final phases.
     """
-    unchanged_except_external = (
+    if before.traffic_limit_strategy is None or overlay.traffic_limit_strategy != 'NO_RESET':
+        return False
+    unchanged_core = (
         current.remnawave_id == before.remnawave_id
         and _normalize_status(current.status) == _normalize_status(before.status)
         and _datetimes_equal(current.expire_at, before.expire_at)
         and current.traffic_limit_bytes == before.traffic_limit_bytes
         and set(current.squad_uuids) == set(before.squad_uuids)
-        and (
-            before.traffic_limit_strategy is None
-            or current.traffic_limit_strategy is None
-            or current.traffic_limit_strategy == before.traffic_limit_strategy
+        and _reset_generations_equal(
+            current.last_traffic_reset_at,
+            overlay.expected_last_traffic_reset_at,
         )
     )
-    return unchanged_except_external and current.external_squad_uuid in {
-        before.external_squad_uuid,
-        overlay.external_squad_uuid,
-    }
+    if not unchanged_core:
+        return False
+    original_phase = (
+        current.external_squad_uuid == before.external_squad_uuid
+        and current.traffic_limit_strategy == before.traffic_limit_strategy
+    )
+    detached_phase = (
+        current.external_squad_uuid == overlay.external_squad_uuid
+        and current.traffic_limit_strategy == before.traffic_limit_strategy
+    )
+    no_reset_phase = (
+        current.external_squad_uuid == overlay.external_squad_uuid
+        and current.traffic_limit_strategy == overlay.traffic_limit_strategy
+    )
+    return original_phase or detached_phase or no_reset_phase
+
+
+def session_needs_metadata_hydration(session: GraceAccessSession) -> bool:
+    return (
+        session.snapshot_version < 4
+        or session.panel_before.traffic_limit_strategy is None
+        or session.overlay.traffic_limit_strategy != 'NO_RESET'
+        or not _reset_generations_equal(
+            session.overlay.expected_last_traffic_reset_at,
+            session.panel_before.last_traffic_reset_at,
+        )
+    )
+
+
+def _overlay_from_observed_panel(snapshot: GracePanelSnapshot) -> GracePanelOverlay:
+    """Build an exact CAS fingerprint for fail-closed legacy recovery."""
+    if snapshot.expire_at is None:
+        raise GracePanelTransitionConflict('Remnawave omitted expireAt from a legacy Grace phase')
+    strategy = _concrete_strategy(snapshot.traffic_limit_strategy)
+    if strategy is None:
+        raise GracePanelTransitionConflict('Remnawave omitted traffic strategy from a legacy Grace phase')
+    return GracePanelOverlay(
+        status=str(snapshot.status),
+        expire_at=snapshot.expire_at,
+        traffic_limit_bytes=snapshot.traffic_limit_bytes,
+        squad_uuids=snapshot.squad_uuids,
+        external_squad_uuid=snapshot.external_squad_uuid,
+        traffic_limit_strategy=strategy,
+        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+    )
+
+
+def panel_matches_legacy_overlay(
+    snapshot: GracePanelSnapshot,
+    session: GraceAccessSession,
+) -> bool:
+    """Match an old overlay that predates Grace-owned NO_RESET protection."""
+    original_strategy = session.panel_before.traffic_limit_strategy
+    if original_strategy is None or snapshot.traffic_limit_strategy != original_strategy:
+        return False
+    allowed_statuses = {'active', 'limited', 'expired'}
+    if session.state is GraceSessionState.RESTORING:
+        allowed_statuses.add('disabled')
+    return (
+        snapshot.remnawave_id == session.remnawave_id
+        and _normalize_status(snapshot.status) in allowed_statuses
+        and _datetimes_equal(snapshot.expire_at, session.overlay.expire_at)
+        and snapshot.traffic_limit_bytes == session.overlay.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(session.overlay.squad_uuids)
+        and snapshot.external_squad_uuid == session.overlay.external_squad_uuid
+        and _reset_generations_equal(
+            snapshot.last_traffic_reset_at,
+            session.panel_before.last_traffic_reset_at,
+        )
+    )
+
+
+def panel_is_legacy_hydration_source(
+    current: GracePanelSnapshot,
+    session: GraceAccessSession,
+) -> bool:
+    """Recognize exact states emitted by the pre-v4 or phased implementation."""
+    before = session.panel_before
+    overlay = session.overlay
+    if current.remnawave_id != session.remnawave_id:
+        return False
+
+    before_statuses = {_normalize_status(before.status)}
+    if session.state is GraceSessionState.RESTORING:
+        if _normalize_status(before.status) in {'expired', 'disabled'}:
+            before_statuses.update({'expired', 'disabled'})
+        elif _normalize_status(before.status) == 'limited':
+            before_statuses.update({'limited', 'expired'})
+    before_phase = (
+        _normalize_status(current.status) in before_statuses
+        and _datetimes_equal(current.expire_at, before.expire_at)
+        and current.traffic_limit_bytes == before.traffic_limit_bytes
+        and set(current.squad_uuids) == set(before.squad_uuids)
+        and current.external_squad_uuid
+        in {
+            before.external_squad_uuid,
+            overlay.external_squad_uuid,
+        }
+    )
+
+    overlay_statuses = {'active', 'limited', 'expired'}
+    if session.state is GraceSessionState.RESTORING:
+        overlay_statuses.add('disabled')
+    overlay_phase = (
+        _normalize_status(current.status) in overlay_statuses
+        and _datetimes_equal(current.expire_at, overlay.expire_at)
+        and current.traffic_limit_bytes == overlay.traffic_limit_bytes
+        and set(current.squad_uuids) == set(overlay.squad_uuids)
+        and current.external_squad_uuid == overlay.external_squad_uuid
+    )
+    return before_phase or overlay_phase
+
+
+def _concrete_strategy(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().upper()
+    if normalized in {'NO_RESET', 'DAY', 'WEEK', 'MONTH', 'MONTH_ROLLING'}:
+        return normalized
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class _WebhookPanelState:
+    remnawave_id: int
+    status: str
+    expire_at: datetime
+    traffic_limit_bytes: int
+    traffic_limit_strategy: str
+    squad_uuids: tuple[str, ...]
+    external_squad_uuid: str | None
+    last_traffic_reset_at: datetime | None
+    updated_at: datetime
+    used_traffic_bytes: int
+    device_limit: int | None
+
+
+def _parse_webhook_panel_state(payload: Mapping[str, Any]) -> _WebhookPanelState | None:
+    """Parse the mandatory Remnawave 3.2.1 user-event snapshot."""
+    required = (
+        'id',
+        'status',
+        'expireAt',
+        'trafficLimitBytes',
+        'trafficLimitStrategy',
+        'activeInternalSquads',
+        'externalSquadUuid',
+        'lastTrafficResetAt',
+        'updatedAt',
+        'hwidDeviceLimit',
+        'userTraffic',
+    )
+    values: dict[str, Any] = {}
+    for key in required:
+        present, value = _webhook_payload_value(payload, key)
+        if not present:
+            return None
+        values[key] = value
+
+    expire_at = _parse_datetime(values['expireAt'])
+    updated_at = _parse_datetime(values['updatedAt'])
+    strategy = _concrete_strategy(str(values['trafficLimitStrategy']))
+    squads = values['activeInternalSquads']
+    user_traffic = values['userTraffic']
+    if expire_at is None or updated_at is None or strategy is None:
+        return None
+    if not isinstance(squads, list) or not isinstance(user_traffic, Mapping):
+        return None
+    reset_raw = values['lastTrafficResetAt']
+    reset_at = _parse_datetime(reset_raw) if reset_raw is not None else None
+    if reset_raw is not None and reset_at is None:
+        return None
+    try:
+        remnawave_id = int(values['id'])
+        traffic_limit_bytes = int(values['trafficLimitBytes'])
+        used_traffic_bytes = int(user_traffic['usedTrafficBytes'])
+        raw_device_limit = values['hwidDeviceLimit']
+        device_limit = int(raw_device_limit) if raw_device_limit is not None else None
+    except (KeyError, TypeError, ValueError):
+        return None
+    external = values['externalSquadUuid']
+    if external is not None and not isinstance(external, str):
+        return None
+    return _WebhookPanelState(
+        remnawave_id=remnawave_id,
+        status=_normalize_status(values['status']),
+        expire_at=expire_at,
+        traffic_limit_bytes=traffic_limit_bytes,
+        traffic_limit_strategy=strategy,
+        squad_uuids=_extract_squad_uuids(squads),
+        external_squad_uuid=external,
+        last_traffic_reset_at=reset_at,
+        updated_at=updated_at,
+        used_traffic_bytes=used_traffic_bytes,
+        device_limit=device_limit,
+    )
+
+
+def _timestamp_matches_mutation_window(
+    updated_at: datetime,
+    *,
+    started_at: datetime | None,
+    finished_at: datetime | None,
+) -> bool:
+    if started_at is None:
+        return False
+    start = _as_utc(started_at)
+    finish = (
+        _as_utc(finished_at)
+        if finished_at is not None
+        else min(
+            _utc_now(),
+            start + _MUTATION_ECHO_MAX_WINDOW,
+        )
+    )
+    lower = start - _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    upper = finish + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    return lower <= _as_utc(updated_at) <= upper
+
+
+def _activation_echo_timestamp_matches(state: _WebhookPanelState, session: GraceAccessSession) -> bool:
+    if session.activation_started_at is None:
+        return False
+    if session.activation_finished_at is None and session.state is not GraceSessionState.PENDING:
+        # A durable intent proves an in-flight PENDING attempt, not that a
+        # worker which already closed/moved the row ever reached Remnawave.
+        return False
+    bounded_finish = (
+        min(
+            _as_utc(session.activation_finished_at),
+            _as_utc(session.activation_started_at) + _MUTATION_ECHO_MAX_WINDOW,
+        )
+        if session.activation_finished_at is not None
+        else None
+    )
+    return _timestamp_matches_mutation_window(
+        state.updated_at,
+        started_at=session.activation_started_at,
+        finished_at=bounded_finish,
+    )
+
+
+def _restore_state_timestamp_matches(state: _WebhookPanelState, session: GraceAccessSession) -> bool:
+    return _timestamp_matches_mutation_window(
+        state.updated_at,
+        started_at=session.restore_started_at,
+        finished_at=session.restore_finished_at,
+    )
+
+
+def _overlay_lifecycle_timestamp_matches(state: _WebhookPanelState, session: GraceAccessSession) -> bool:
+    lower = _as_utc(session.started_at) - _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    if session.state is GraceSessionState.COMPLETED:
+        if session.completed_at is None:
+            return False
+        upper = _as_utc(session.completed_at) + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    else:
+        upper = _utc_now() + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
+    return lower <= state.updated_at <= upper
+
+
+def _webhook_device_matches_session(state: _WebhookPanelState, session: GraceAccessSession) -> bool:
+    return state.device_limit == session.billing_before.device_limit
+
+
+def _webhook_state_matches_overlay(
+    state: _WebhookPanelState,
+    session: GraceAccessSession,
+    *,
+    statuses: set[str],
+) -> bool:
+    overlay = session.overlay
+    return (
+        state.remnawave_id == session.remnawave_id
+        and state.status in statuses
+        and _datetimes_equal(state.expire_at, overlay.expire_at)
+        and state.traffic_limit_bytes == overlay.traffic_limit_bytes
+        and state.traffic_limit_strategy == overlay.traffic_limit_strategy
+        and set(state.squad_uuids) == set(overlay.squad_uuids)
+        and state.external_squad_uuid == overlay.external_squad_uuid
+        and _reset_generations_equal(
+            state.last_traffic_reset_at,
+            overlay.expected_last_traffic_reset_at,
+        )
+        and _webhook_device_matches_session(state, session)
+    )
 
 
 def webhook_matches_overlay_event(
     payload: Mapping[str, Any],
-    overlay: GracePanelOverlay,
+    session: GraceAccessSession,
     event_name: str,
 ) -> bool:
-    """Require strong overlay markers before hiding a status webhook."""
-    status = _normalize_status(payload.get('status', ''))
-    expected_statuses = {
+    """Match a complete lifecycle echo of the exact Grace overlay."""
+    expected_status = {'user.expired': {'expired'}, 'user.limited': {'limited'}}.get(event_name)
+    if expected_status is None:
+        return False
+    state = _parse_webhook_panel_state(payload)
+    if state is None or not _webhook_state_matches_overlay(state, session, statuses=expected_status):
+        return False
+    if event_name == 'user.expired':
+        return abs((state.updated_at - _as_utc(session.overlay.expire_at)).total_seconds()) <= (
+            _RESTORE_ECHO_TIMESTAMP_TOLERANCE.total_seconds()
+        )
+    return (
+        _overlay_lifecycle_timestamp_matches(state, session)
+        and session.overlay.traffic_limit_bytes > 0
+        and state.used_traffic_bytes >= session.overlay.traffic_limit_bytes
+    )
+
+
+def webhook_matches_activation_modified(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+) -> bool:
+    """Match detach, NO_RESET or final-overlay user.modified echoes."""
+    state = _parse_webhook_panel_state(payload)
+    if state is None or not _activation_echo_timestamp_matches(state, session):
+        return False
+    if _webhook_state_matches_overlay(
+        state,
+        session,
+        statuses={'active'},
+    ):
+        return True
+    before = session.panel_before
+    source_core = (
+        state.remnawave_id == session.remnawave_id
+        and state.status == _normalize_status(before.status)
+        and _datetimes_equal(state.expire_at, before.expire_at)
+        and state.traffic_limit_bytes == before.traffic_limit_bytes
+        and set(state.squad_uuids) == set(before.squad_uuids)
+        and state.external_squad_uuid == session.overlay.external_squad_uuid
+        and _reset_generations_equal(
+            state.last_traffic_reset_at,
+            session.overlay.expected_last_traffic_reset_at,
+        )
+    )
+    return (
+        source_core
+        and _webhook_device_matches_session(state, session)
+        and state.traffic_limit_strategy
+        in {
+            before.traffic_limit_strategy,
+            session.overlay.traffic_limit_strategy,
+        }
+    )
+
+
+def webhook_matches_activation_enabled(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+) -> bool:
+    """Match only the final ACTIVE overlay emitted by Grace activation."""
+    state = _parse_webhook_panel_state(payload)
+    return bool(
+        state is not None
+        and _activation_echo_timestamp_matches(state, session)
+        and _webhook_state_matches_overlay(state, session, statuses={'active'})
+    )
+
+
+def webhook_matches_limited_restore(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+    *,
+    event_name: str = 'user.modified',
+) -> bool:
+    """Match one exact phase of the LIMITED reverse transition."""
+    if session.reason is not GraceReason.LIMITED or session.state not in {
+        GraceSessionState.RESTORING,
+        GraceSessionState.COMPLETED,
+    }:
+        return False
+    state = _parse_webhook_panel_state(payload)
+    if state is None or not _restore_state_timestamp_matches(state, session):
+        return False
+    expected_lifecycle_status = {
+        'user.modified': {'active', 'limited'},
         'user.enabled': {'active'},
-        'user.expired': {'expired', 'disabled'},
         'user.limited': {'limited'},
+        'user.expired': {'expired'},
+    }.get(event_name)
+    if expected_lifecycle_status is None or state.status not in expected_lifecycle_status:
+        return False
+    if state.remnawave_id != session.remnawave_id or not _reset_generations_equal(
+        state.last_traffic_reset_at,
+        session.panel_before.last_traffic_reset_at,
+    ):
+        return False
+
+    before = session.panel_before
+    if before.expire_at is None:
+        return False
+    canonical_core = (
+        _datetimes_equal(
+            state.expire_at,
+            before.expire_at,
+        )
+        and state.traffic_limit_bytes == before.traffic_limit_bytes
+    )
+    if not canonical_core or not _webhook_device_matches_session(state, session):
+        return False
+
+    no_reset = session.overlay.traffic_limit_strategy
+    first_phase = (frozenset(session.overlay.squad_uuids), session.overlay.external_squad_uuid, no_reset)
+    phases = {
+        first_phase,
+        (frozenset(before.squad_uuids), session.overlay.external_squad_uuid, no_reset),
+        (frozenset(before.squad_uuids), before.external_squad_uuid, no_reset),
+        (frozenset(before.squad_uuids), before.external_squad_uuid, before.traffic_limit_strategy),
     }
-    if status not in expected_statuses.get(event_name, set()):
+    phase = (frozenset(state.squad_uuids), state.external_squad_uuid, state.traffic_limit_strategy)
+    if phase not in phases:
         return False
+    if event_name == 'user.modified':
+        return state.status == 'limited' or (state.status == 'active' and phase == first_phase)
+    if event_name == 'user.enabled':
+        return state.status == 'active' and phase == first_phase
+    if event_name == 'user.limited':
+        return state.status == 'limited' and phase == first_phase
+    return state.status == 'expired' and phase == first_phase
 
-    expire_at = _parse_datetime(payload.get('expireAt'))
-    if not expire_at or abs((expire_at - _as_utc(overlay.expire_at)).total_seconds()) > 2:
+
+def webhook_matches_billing_recovery(
+    payload: Mapping[str, Any],
+    billing: GraceBillingState,
+) -> bool:
+    """Allow user.enabled only for the exact fresh canonical billing target."""
+    state = _parse_webhook_panel_state(payload)
+    if (
+        state is None
+        or billing.remnawave_id is None
+        or billing.end_at is None
+        or billing.traffic_limit_strategy is None
+    ):
         return False
-
-    try:
-        if int(payload.get('trafficLimitBytes')) != overlay.traffic_limit_bytes:
-            return False
-    except (TypeError, ValueError):
-        return False
-
-    if 'activeInternalSquads' not in payload:
-        return False
-    if set(_extract_squad_uuids(payload.get('activeInternalSquads'))) != set(overlay.squad_uuids):
-        return False
-
-    if payload.get('externalSquadUuid') != overlay.external_squad_uuid:
-        return False
-    strategy = payload.get('trafficLimitStrategy')
-    if strategy is not None and _normalize_status(strategy) != _normalize_status(overlay.traffic_limit_strategy or ''):
-        return False
-    reset_at = payload.get('lastTrafficResetAt')
-    if reset_at is not None:
-        parsed_reset_at = _parse_datetime(reset_at)
-        if not parsed_reset_at or not _datetimes_equal(parsed_reset_at, overlay.expected_last_traffic_reset_at):
-            return False
-    return True
-
-
-def webhook_matches_overlay(payload: Mapping[str, Any], overlay: GracePanelOverlay) -> bool:
-    """Strictly match a user.modified echo without hiding unrelated updates."""
-    status = payload.get('status')
-    if status is not None and _normalize_status(status) != 'active':
-        return False
-
-    markers = 0
-    expire_at = payload.get('expireAt')
-    if expire_at is not None:
-        parsed_expire_at = _parse_datetime(expire_at)
-        if not parsed_expire_at or abs((parsed_expire_at - _as_utc(overlay.expire_at)).total_seconds()) > 2:
-            return False
-        markers += 1
-
-    traffic_limit = payload.get('trafficLimitBytes')
-    if traffic_limit is not None:
-        try:
-            if int(traffic_limit) != overlay.traffic_limit_bytes:
-                return False
-        except (TypeError, ValueError):
-            return False
-        markers += 1
-
-    if 'activeInternalSquads' in payload:
-        payload_squads = _extract_squad_uuids(payload.get('activeInternalSquads'))
-        if set(payload_squads) != set(overlay.squad_uuids):
-            return False
-        markers += 1
-
-    strategy = payload.get('trafficLimitStrategy')
-    if strategy is not None:
-        if _normalize_status(strategy) != _normalize_status(overlay.traffic_limit_strategy or ''):
-            return False
-        markers += 1
-
-    reset_at = payload.get('lastTrafficResetAt')
-    if reset_at is not None:
-        parsed_reset_at = _parse_datetime(reset_at)
-        if not parsed_reset_at or not _datetimes_equal(parsed_reset_at, overlay.expected_last_traffic_reset_at):
-            return False
-        markers += 1
-
-    return markers > 0
+    return (
+        state.remnawave_id == billing.remnawave_id
+        and state.status == 'active'
+        and _datetimes_equal(state.expire_at, billing.end_at)
+        and state.traffic_limit_bytes == billing.traffic_limit_bytes
+        and state.traffic_limit_strategy == billing.traffic_limit_strategy
+        and set(state.squad_uuids) == set(billing.squad_uuids)
+        and state.external_squad_uuid == billing.external_squad_uuid
+        and (billing.device_limit is None or state.device_limit == billing.device_limit)
+    )
 
 
 def webhook_matches_expired_restore(
     payload: Mapping[str, Any],
     session: GraceAccessSession,
+    *,
+    event_name: str = 'user.modified',
 ) -> bool:
-    """Strictly identify either user.modified phase of an EXPIRED restore.
-
-    The restore checkpoint timestamp plus every Grace-owned field from
-    Remnawave's full-user webhook model distinguishes both the status-only
-    fail-closed phase and the canonical field phase from later manual updates.
-    """
+    """Match only an ordered EXPIRED/DISABLED restore phase."""
     if not _session_can_match_expired_restore(session):
         return False
     if session.state is GraceSessionState.COMPLETED and session.completion_reason not in {
@@ -2390,62 +3134,56 @@ def webhook_matches_expired_restore(
     }:
         return False
 
-    id_present, payload_id = _webhook_payload_value(payload, 'id')
-    try:
-        identity_matches = id_present and int(payload_id) == session.remnawave_id
-    except (TypeError, ValueError):
-        identity_matches = False
-    if not identity_matches:
+    state = _parse_webhook_panel_state(payload)
+    modified_statuses = {'disabled', 'expired'} if session.restore_force_disable else {'expired'}
+    expected_statuses = {'user.modified': modified_statuses, 'user.expired': {'expired'}}.get(event_name)
+    if (
+        state is None
+        or expected_statuses is None
+        or state.status not in expected_statuses
+        or state.remnawave_id != session.remnawave_id
+        or not _restore_state_timestamp_matches(state, session)
+        or not _reset_generations_equal(
+            state.last_traffic_reset_at,
+            session.panel_before.last_traffic_reset_at,
+        )
+        or not _webhook_device_matches_session(state, session)
+    ):
         return False
 
-    updated_present, raw_updated_at = _webhook_payload_value(payload, 'updatedAt')
-    updated_at = _parse_datetime(raw_updated_at) if updated_present else None
-    if not _restore_echo_timestamp_matches(updated_at, session):
-        return False
-
-    status_present, raw_status = _webhook_payload_value(payload, 'status')
-    if not status_present:
-        return False
-    normalized_status = _normalize_status(raw_status)
-
-    expire_present, raw_expire_at = _webhook_payload_value(payload, 'expireAt')
-    expire_at = _parse_datetime(raw_expire_at) if expire_present else None
-    if not expire_present or expire_at is None:
-        return False
-    overlay_expiry_matches = _datetimes_equal(expire_at, session.overlay.expire_at)
-    before_status = _normalize_status(session.panel_before.status)
-    canonical_expiry_matches = overlay_expiry_matches or (
-        before_status == 'disabled'
-        and session.panel_before.expire_at is not None
-        and _datetimes_equal(expire_at, session.panel_before.expire_at)
+    before = session.panel_before
+    expiry_known = _datetimes_equal(state.expire_at, session.overlay.expire_at) or _datetimes_equal(
+        state.expire_at,
+        before.expire_at,
     )
-
-    limit_present, raw_limit = _webhook_payload_value(payload, 'trafficLimitBytes')
-    squads_present, raw_squads = _webhook_payload_value(payload, 'activeInternalSquads')
-    external_present, external_squad_uuid = _webhook_payload_value(payload, 'externalSquadUuid')
-    if not limit_present or not squads_present or not external_present:
+    if not expiry_known:
         return False
-    try:
-        traffic_limit_bytes = int(raw_limit)
-    except (TypeError, ValueError):
-        return False
-    squad_uuids = set(_extract_squad_uuids(raw_squads))
 
-    canonical_phase_matches = (
-        canonical_expiry_matches
-        and normalized_status in _expected_expired_restore_statuses(session)
-        and traffic_limit_bytes == session.panel_before.traffic_limit_bytes
-        and squad_uuids == set(session.panel_before.squad_uuids)
-        and external_squad_uuid == session.panel_before.external_squad_uuid
+    overlay_phase = (
+        _datetimes_equal(state.expire_at, session.overlay.expire_at)
+        and state.traffic_limit_bytes == session.overlay.traffic_limit_bytes
+        and frozenset(state.squad_uuids) == frozenset(session.overlay.squad_uuids)
+        and state.external_squad_uuid == session.overlay.external_squad_uuid
+        and state.traffic_limit_strategy == session.overlay.traffic_limit_strategy
     )
-    disabled_overlay_phase_matches = (
-        overlay_expiry_matches
-        and normalized_status == 'disabled'
-        and traffic_limit_bytes == session.overlay.traffic_limit_bytes
-        and squad_uuids == set(session.overlay.squad_uuids)
-        and external_squad_uuid == session.overlay.external_squad_uuid
+    canonical_core = state.traffic_limit_bytes == before.traffic_limit_bytes and frozenset(
+        state.squad_uuids
+    ) == frozenset(before.squad_uuids)
+    ordered_canonical_phase = canonical_core and (
+        (
+            state.external_squad_uuid == session.overlay.external_squad_uuid
+            and state.traffic_limit_strategy == session.overlay.traffic_limit_strategy
+        )
+        or (
+            state.external_squad_uuid == before.external_squad_uuid
+            and state.traffic_limit_strategy == session.overlay.traffic_limit_strategy
+        )
+        or (
+            state.external_squad_uuid == before.external_squad_uuid
+            and state.traffic_limit_strategy == before.traffic_limit_strategy
+        )
     )
-    return canonical_phase_matches or disabled_overlay_phase_matches
+    return overlay_phase or ordered_canonical_phase
 
 
 def webhook_matches_traffic_reset_intermediate(
@@ -2462,88 +3200,112 @@ def webhook_matches_traffic_reset_intermediate(
     if not _traffic_reset_webhook_identity_matches(payload, session):
         return False
 
-    status_present, raw_status = _webhook_payload_value(payload, 'status')
-    expire_present, raw_expire_at = _webhook_payload_value(payload, 'expireAt')
-    limit_present, raw_limit = _webhook_payload_value(payload, 'trafficLimitBytes')
-    squads_present, raw_squads = _webhook_payload_value(payload, 'activeInternalSquads')
-    external_present, external_squad_uuid = _webhook_payload_value(payload, 'externalSquadUuid')
-    if not all(
-        (
-            status_present,
-            expire_present,
-            limit_present,
-            squads_present,
-            external_present,
-        )
-    ):
+    state = _parse_webhook_panel_state(payload)
+    if state is None:
         return False
 
-    expire_at = _parse_datetime(raw_expire_at)
-    try:
-        traffic_limit_bytes = int(raw_limit)
-    except (TypeError, ValueError):
-        return False
-    if expire_at is None:
-        return False
-
-    expected_statuses = {'active', 'limited'}
-    if _as_utc(session.completed_at or session.updated_at) >= _as_utc(session.overlay.expire_at):
-        expected_statuses.update({'expired', 'disabled'})
     return (
-        _normalize_status(raw_status) in expected_statuses
-        and _datetimes_equal(expire_at, session.overlay.expire_at)
-        and traffic_limit_bytes == max(1, session.traffic_reset_remaining_bytes)
-        and set(_extract_squad_uuids(raw_squads)) == set(session.overlay.squad_uuids)
-        and external_squad_uuid == session.overlay.external_squad_uuid
+        state.status in {'active', 'limited'}
+        and _datetimes_equal(state.expire_at, session.overlay.expire_at)
+        and state.traffic_limit_bytes == max(1, session.traffic_reset_remaining_bytes)
+        and state.traffic_limit_strategy == session.overlay.traffic_limit_strategy
+        and set(state.squad_uuids) == set(session.overlay.squad_uuids)
+        and state.external_squad_uuid == session.overlay.external_squad_uuid
+        and _reset_generations_equal(
+            state.last_traffic_reset_at,
+            session.traffic_reset_previous_generation,
+        )
+        and state.used_traffic_bytes == session.traffic_reset_previous_used_bytes
+        and _traffic_reset_device_matches(state, session)
     )
 
 
-def webhook_matches_traffic_reset_signal(
+def webhook_matches_traffic_reset_enabled(
     payload: Mapping[str, Any],
     session: GraceAccessSession,
 ) -> bool:
-    """Match a reset-generated enabled/traffic-reset event with sparse fields."""
+    """Match LIMITED reset's pre-reset user.enabled snapshot."""
     if not _traffic_reset_webhook_identity_matches(payload, session):
         return False
 
-    status_present, raw_status = _webhook_payload_value(payload, 'status')
-    if status_present and _normalize_status(raw_status) != 'active':
+    state = _parse_webhook_panel_state(payload)
+    if state is None or session.reason is not GraceReason.LIMITED:
         return False
-
-    expire_present, raw_expire_at = _webhook_payload_value(payload, 'expireAt')
-    if expire_present:
-        expire_at = _parse_datetime(raw_expire_at)
-        if expire_at is None or not _datetimes_equal(
-            expire_at,
-            session.overlay.expire_at,
-        ):
-            return False
-
-    limit_present, raw_limit = _webhook_payload_value(payload, 'trafficLimitBytes')
-    if limit_present:
-        try:
-            traffic_limit_bytes = int(raw_limit)
-        except (TypeError, ValueError):
-            return False
-        if traffic_limit_bytes != max(1, session.traffic_reset_remaining_bytes or 0):
-            return False
-
-    squads_present, raw_squads = _webhook_payload_value(payload, 'activeInternalSquads')
-    if squads_present and set(_extract_squad_uuids(raw_squads)) != set(session.overlay.squad_uuids):
-        return False
-
-    external_present, external_squad_uuid = _webhook_payload_value(
-        payload,
-        'externalSquadUuid',
+    return (
+        state.status == 'active'
+        and _datetimes_equal(state.expire_at, session.overlay.expire_at)
+        and state.traffic_limit_bytes == max(1, session.traffic_reset_remaining_bytes or 0)
+        and state.traffic_limit_strategy == session.overlay.traffic_limit_strategy
+        and set(state.squad_uuids) == set(session.overlay.squad_uuids)
+        and state.external_squad_uuid == session.overlay.external_squad_uuid
+        and _reset_generations_equal(
+            state.last_traffic_reset_at,
+            session.traffic_reset_previous_generation,
+        )
+        and state.used_traffic_bytes == session.traffic_reset_previous_used_bytes
+        and _traffic_reset_device_matches(state, session)
     )
-    return not external_present or (external_squad_uuid == session.overlay.external_squad_uuid)
+
+
+def webhook_matches_traffic_reset_completed(
+    payload: Mapping[str, Any],
+    session: GraceAccessSession,
+) -> bool:
+    """Match the post-reset user.traffic_reset snapshot."""
+    if not _traffic_reset_webhook_identity_matches(payload, session):
+        return False
+    state = _parse_webhook_panel_state(payload)
+    if state is None:
+        return False
+    if session.traffic_reset_result_generation is not None:
+        generation_matches = _reset_generations_equal(
+            state.last_traffic_reset_at,
+            session.traffic_reset_result_generation,
+        )
+    else:
+        # The reset call is irreversible and its webhook may race the first
+        # post-reset checkpoint. A new non-null generation plus the exact
+        # persisted quota fence and zero usage is sufficient proof of that
+        # in-flight intent; no second reset is inferred from it.
+        generation_matches = (
+            session.traffic_reset_target is not None
+            and state.last_traffic_reset_at is not None
+            and not _reset_generations_equal(
+                state.last_traffic_reset_at,
+                session.traffic_reset_previous_generation,
+            )
+        )
+    return (
+        state.status == 'active'
+        and _datetimes_equal(state.expire_at, session.overlay.expire_at)
+        and state.traffic_limit_bytes == max(1, session.traffic_reset_remaining_bytes or 0)
+        and state.traffic_limit_strategy == session.overlay.traffic_limit_strategy
+        and set(state.squad_uuids) == set(session.overlay.squad_uuids)
+        and state.external_squad_uuid == session.overlay.external_squad_uuid
+        and generation_matches
+        and state.used_traffic_bytes == 0
+        and _traffic_reset_device_matches(state, session)
+    )
+
+
+def _traffic_reset_device_matches(state: _WebhookPanelState, session: GraceAccessSession) -> bool:
+    target = session.traffic_reset_target or session.billing_before
+    return state.device_limit == target.device_limit
 
 
 def _traffic_reset_webhook_identity_matches(
     payload: Mapping[str, Any],
     session: GraceAccessSession,
 ) -> bool:
-    if session.state is not GraceSessionState.COMPLETED or session.traffic_reset_remaining_bytes is None:
+    if (
+        session.state
+        not in {
+            GraceSessionState.ACTIVE,
+            GraceSessionState.RESTORING,
+            GraceSessionState.COMPLETED,
+        }
+        or session.traffic_reset_remaining_bytes is None
+    ):
         return False
     id_present, payload_id = _webhook_payload_value(payload, 'id')
     try:
@@ -2569,53 +3331,19 @@ def _session_can_match_expired_restore(session: GraceAccessSession) -> bool:
     )
 
 
-def _expected_expired_restore_statuses(session: GraceAccessSession) -> frozenset[str]:
-    before_status = _normalize_status(session.panel_before.status)
-    if session.state is GraceSessionState.RESTORING:
-        # RESTORING is persisted before either a natural EXPIRED restore or a
-        # forced DISABLED drain. The completion reason is not durable yet, so
-        # accept both only inside the strict full-field/timestamp fingerprint.
-        return frozenset({'disabled', 'expired'})
-    if session.completion_reason is GraceCompletionReason.DRAINED:
-        # A force drain may run before the watchdog (generic DISABLED restore)
-        # or after it has already derived EXPIRED (field-only restore).
-        return frozenset({'disabled', 'expired'})
-    if before_status == 'disabled':
-        # A field-only restore deliberately keeps a watchdog-derived EXPIRED
-        # rather than emitting user.disabled for an already expired user.
-        return frozenset({'disabled', 'expired'})
-    if before_status != 'expired':
-        return frozenset({'disabled', 'expired'})
-    return frozenset({'expired'})
-
-
-def _restore_echo_timestamp_matches(
-    panel_updated_at: datetime | None,
-    session: GraceAccessSession,
-) -> bool:
-    if panel_updated_at is None:
-        return False
-    lower_bound = _as_utc(session.updated_at) - _RESTORE_ECHO_TIMESTAMP_TOLERANCE
-    upper_reference = session.completed_at or session.updated_at
-    upper_bound = _as_utc(upper_reference) + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
-    normalized_updated_at = _as_utc(panel_updated_at)
-    return lower_bound <= normalized_updated_at <= upper_bound
-
-
 def _traffic_reset_echo_timestamp_matches(
     panel_updated_at: datetime | None,
     session: GraceAccessSession,
 ) -> bool:
-    if (
-        panel_updated_at is None
-        or session.traffic_reset_started_at is None
-        or session.traffic_reset_finished_at is None
-    ):
+    if panel_updated_at is None or session.traffic_reset_started_at is None:
         return False
-    lower_bound = _as_utc(session.traffic_reset_started_at) - _RESTORE_ECHO_TIMESTAMP_TOLERANCE
-    upper_bound = _as_utc(session.traffic_reset_finished_at) + _RESTORE_ECHO_TIMESTAMP_TOLERANCE
-    normalized_updated_at = _as_utc(panel_updated_at)
-    return lower_bound <= normalized_updated_at <= upper_bound
+    if session.state is GraceSessionState.COMPLETED and session.traffic_reset_finished_at is None:
+        return False
+    return _timestamp_matches_mutation_window(
+        panel_updated_at,
+        started_at=session.traffic_reset_started_at,
+        finished_at=session.traffic_reset_finished_at,
+    )
 
 
 def _webhook_payload_value(payload: Mapping[str, Any], key: str) -> tuple[bool, Any]:

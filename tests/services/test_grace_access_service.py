@@ -109,6 +109,9 @@ class MemoryGraceStore:
         self.sessions[session.id] = session
         return session
 
+    async def checkpoint(self, session: GraceAccessSession) -> GraceAccessSession:
+        return await self.save(session)
+
     async def list_open(self, *, limit: int) -> list[GraceAccessSession]:
         sessions = [session for session in self.sessions.values() if session.state is not GraceSessionState.COMPLETED]
         return sessions[:limit]
@@ -163,7 +166,14 @@ class FakePanelGateway:
             return None
         return self.snapshot
 
-    async def apply_overlay(self, remnawave_id: int, overlay: GracePanelOverlay) -> None:
+    async def apply_overlay(
+        self,
+        remnawave_id: int,
+        overlay: GracePanelOverlay,
+        *,
+        expected_source: GracePanelSnapshot,
+    ) -> None:
+        assert expected_source.remnawave_id == remnawave_id
         if self.fail_overlay_attempts > 0:
             self.fail_overlay_attempts -= 1
             raise RuntimeError('temporary panel error')
@@ -178,6 +188,7 @@ class FakePanelGateway:
             external_squad_uuid=overlay.external_squad_uuid,
             traffic_is_known=self.snapshot.traffic_is_known,
             last_traffic_reset_at=self.snapshot.last_traffic_reset_at,
+            traffic_limit_strategy=overlay.traffic_limit_strategy,
         )
 
     async def restore_snapshot(
@@ -395,6 +406,7 @@ def make_billing(
         used_traffic_bytes=used_traffic_bytes,
         device_limit=2,
         squad_uuids=(REGULAR_SQUAD,),
+        traffic_limit_strategy='MONTH',
         tariff_id=tariff_id,
         tariff_id_known=tariff_id_known,
     )
@@ -413,6 +425,7 @@ def make_snapshot(
         traffic_limit_bytes=traffic_limit_bytes,
         used_traffic_bytes=used_traffic_bytes,
         squad_uuids=(REGULAR_SQUAD,),
+        traffic_limit_strategy='MONTH',
     )
 
 
@@ -427,14 +440,23 @@ def make_policy(**changes) -> GraceAccessPolicy:
 
 
 def make_restore_modified_echo(session: GraceAccessSession) -> dict[str, object]:
+    echo_at = session.restore_finished_at or session.restore_started_at or session.updated_at
     return {
         'id': session.remnawave_id,
         'status': 'EXPIRED',
-        'updatedAt': (session.completed_at or session.updated_at).isoformat(),
+        'updatedAt': echo_at.isoformat(),
         'expireAt': session.overlay.expire_at.isoformat(),
         'trafficLimitBytes': session.panel_before.traffic_limit_bytes,
+        'trafficLimitStrategy': session.panel_before.traffic_limit_strategy,
         'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in session.panel_before.squad_uuids],
         'externalSquadUuid': session.panel_before.external_squad_uuid,
+        'lastTrafficResetAt': (
+            session.panel_before.last_traffic_reset_at.isoformat()
+            if session.panel_before.last_traffic_reset_at is not None
+            else None
+        ),
+        'hwidDeviceLimit': session.billing_before.device_limit,
+        'userTraffic': {'usedTrafficBytes': session.panel_before.used_traffic_bytes},
     }
 
 
@@ -1029,8 +1051,12 @@ async def test_configured_limited_tariff_switch_reset_completes_grace() -> None:
         'updatedAt': completed.updated_at.isoformat(),
         'expireAt': completed.overlay.expire_at.isoformat(),
         'trafficLimitBytes': completed.traffic_reset_remaining_bytes,
+        'trafficLimitStrategy': completed.overlay.traffic_limit_strategy,
         'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
         'externalSquadUuid': completed.overlay.external_squad_uuid,
+        'lastTrafficResetAt': completed.traffic_reset_previous_generation,
+        'hwidDeviceLimit': completed.billing_before.device_limit,
+        'userTraffic': {'usedTrafficBytes': completed.traffic_reset_previous_used_bytes},
     }
     assert (
         await service.should_suppress_webhook(
@@ -1106,23 +1132,32 @@ async def test_deleted_billing_after_reset_effect_is_revoked_from_checkpoint() -
     assert completed.completion_reason is GraceCompletionReason.REVOKED
     assert completed.traffic_reset_target == switched
     assert completed.traffic_reset_started_at is not None
-    reset_echo = {
+    enabled_echo = {
         'id': completed.remnawave_id,
         'status': 'ACTIVE',
         'updatedAt': completed.traffic_reset_started_at.isoformat(),
         'expireAt': completed.overlay.expire_at.isoformat(),
         'trafficLimitBytes': completed.traffic_reset_remaining_bytes,
+        'trafficLimitStrategy': completed.overlay.traffic_limit_strategy,
         'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
         'externalSquadUuid': completed.overlay.external_squad_uuid,
+        'lastTrafficResetAt': completed.traffic_reset_previous_generation,
+        'hwidDeviceLimit': completed.traffic_reset_target.device_limit,
+        'userTraffic': {'usedTrafficBytes': completed.traffic_reset_previous_used_bytes},
     }
     assert (
         await service.should_suppress_webhook(
             billing.subscription_id,
             'user.enabled',
-            reset_echo,
+            enabled_echo,
         )
         is True
     )
+    reset_echo = {
+        **enabled_echo,
+        'lastTrafficResetAt': completed.traffic_reset_result_generation,
+        'userTraffic': {'usedTrafficBytes': 0},
+    }
     assert (
         await service.should_suppress_webhook(
             billing.subscription_id,
@@ -1723,8 +1758,12 @@ async def test_continued_reset_fence_echo_is_suppressed_after_later_payment() ->
         'updatedAt': fence_updated_at.isoformat(),
         'expireAt': completed.overlay.expire_at.isoformat(),
         'trafficLimitBytes': completed.overlay.traffic_limit_bytes,
+        'trafficLimitStrategy': completed.overlay.traffic_limit_strategy,
         'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
         'externalSquadUuid': completed.overlay.external_squad_uuid,
+        'lastTrafficResetAt': completed.traffic_reset_previous_generation,
+        'hwidDeviceLimit': completed.billing_before.device_limit,
+        'userTraffic': {'usedTrafficBytes': completed.traffic_reset_previous_used_bytes},
     }
     assert (
         await service.should_suppress_webhook(
@@ -1734,6 +1773,11 @@ async def test_continued_reset_fence_echo_is_suppressed_after_later_payment() ->
         )
         is True
     )
+    reset_echo = {
+        **fence_echo,
+        'lastTrafficResetAt': completed.traffic_reset_result_generation,
+        'userTraffic': {'usedTrafficBytes': 0},
+    }
     assert (
         await service.should_suppress_webhook(
             billing.subscription_id,
@@ -1742,11 +1786,12 @@ async def test_continued_reset_fence_echo_is_suppressed_after_later_payment() ->
         )
         is True
     )
+    assert await service.should_suppress_webhook(billing.subscription_id, 'user.enabled', reset_echo) is False
     assert (
         await service.should_suppress_webhook(
             billing.subscription_id,
             'user.traffic_reset',
-            fence_echo,
+            reset_echo,
         )
         is True
     )
@@ -1760,7 +1805,7 @@ async def test_continued_reset_fence_echo_is_suppressed_after_later_payment() ->
             'user.enabled',
             sparse_reset_echo,
         )
-        is True
+        is False
     )
     assert (
         await service.should_suppress_webhook(
@@ -1768,7 +1813,7 @@ async def test_continued_reset_fence_echo_is_suppressed_after_later_payment() ->
             'user.traffic_reset',
             sparse_reset_echo,
         )
-        is True
+        is False
     )
     assert (
         await service.should_suppress_webhook(
@@ -2496,10 +2541,17 @@ async def test_webhook_suppression_matches_only_grace_echo() -> None:
     overlay = started.session.overlay
 
     grace_echo = {
+        'id': started.session.remnawave_id,
         'status': 'ACTIVE',
+        'updatedAt': started.session.updated_at.isoformat(),
         'expireAt': overlay.expire_at.isoformat(),
         'trafficLimitBytes': overlay.traffic_limit_bytes,
+        'trafficLimitStrategy': overlay.traffic_limit_strategy,
         'activeInternalSquads': [{'uuid': EXPIRED_SQUAD}],
+        'externalSquadUuid': overlay.external_squad_uuid,
+        'lastTrafficResetAt': overlay.expected_last_traffic_reset_at,
+        'hwidDeviceLimit': billing.device_limit,
+        'userTraffic': {'usedTrafficBytes': snapshot.used_traffic_bytes},
     }
     real_update = {
         'status': 'ACTIVE',
@@ -2508,9 +2560,11 @@ async def test_webhook_suppression_matches_only_grace_echo() -> None:
         'activeInternalSquads': [{'uuid': REGULAR_SQUAD}],
     }
 
-    assert await service.should_suppress_webhook(42, 'user.modified', grace_echo) is False
+    assert await service.should_suppress_webhook(42, 'user.modified', grace_echo) is True
     assert await service.should_suppress_webhook(42, 'user.modified', real_update) is False
-    assert await service.should_suppress_webhook(42, 'user.enabled', {}) is True
+    assert await service.should_suppress_webhook(42, 'user.enabled', {}) is False
+    # The final activation PATCH can emit user.enabled. Its complete overlay
+    # snapshot and durable mutation window distinguish it from an admin enable.
     assert await service.should_suppress_webhook(42, 'user.enabled', grace_echo) is True
     assert await service.should_suppress_webhook(42, 'user.disabled', grace_echo) is False
 
@@ -2533,6 +2587,7 @@ async def test_exact_restore_modified_echo_is_suppressed_while_session_is_open()
     restoring = replace(
         started.session,
         state=GraceSessionState.RESTORING,
+        restore_started_at=clock(),
         updated_at=clock(),
     )
     await store.save(restoring)
@@ -2586,6 +2641,8 @@ async def test_force_restore_echo_accepts_disabled_status_after_grace_deadline()
     restoring = replace(
         started.session,
         state=GraceSessionState.RESTORING,
+        restore_started_at=clock(),
+        restore_force_disable=True,
         updated_at=clock(),
     )
     await store.save(restoring)
@@ -2596,6 +2653,7 @@ async def test_force_restore_echo_accepts_disabled_status_after_grace_deadline()
     disabled_overlay_echo = {
         **disabled_echo,
         'trafficLimitBytes': restoring.overlay.traffic_limit_bytes,
+        'trafficLimitStrategy': restoring.overlay.traffic_limit_strategy,
         'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in restoring.overlay.squad_uuids],
         'externalSquadUuid': restoring.overlay.external_squad_uuid,
     }
@@ -2793,17 +2851,15 @@ async def test_completed_expired_grace_deduplicates_overlay_expiry_but_allows_ne
         **make_restore_modified_echo(completed),
         'status': 'DISABLED',
         'trafficLimitBytes': completed.overlay.traffic_limit_bytes,
+        'trafficLimitStrategy': completed.overlay.traffic_limit_strategy,
         'activeInternalSquads': [{'uuid': squad_uuid} for squad_uuid in completed.overlay.squad_uuids],
         'externalSquadUuid': completed.overlay.external_squad_uuid,
     }
-    assert (
-        await service.should_suppress_webhook(
-            billing.subscription_id,
-            'user.modified',
-            disabled_overlay_echo,
-        )
-        is True
-    )
+    assert await service.should_suppress_webhook(
+        billing.subscription_id,
+        'user.modified',
+        disabled_overlay_echo,
+    ) is (completion_reason is GraceCompletionReason.DRAINED)
 
     duplicate = await service.start_if_eligible(overlay_expiry, GraceReason.EXPIRED)
 

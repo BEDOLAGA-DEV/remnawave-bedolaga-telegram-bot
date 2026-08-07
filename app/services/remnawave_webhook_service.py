@@ -380,18 +380,29 @@ class RemnaWaveWebhookService:
             )
             return False
 
-        if subscription and await grace_access_runtime.should_suppress_webhook(
-            subscription.id,
-            event_name,
-            data,
-            db=db,
-        ):
-            logger.info(
-                'RemnaWave webhook suppressed as a grace overlay echo',
-                event_name=event_name,
-                subscription_id=subscription.id,
-            )
-            return True
+        grace_was_open = False
+        if subscription:
+            if event_name == 'user.modified':
+                grace_was_open = subscription.id in await get_open_grace_subscription_ids(db)
+            if await grace_access_runtime.should_suppress_webhook(
+                subscription.id,
+                event_name,
+                data,
+                db=db,
+            ):
+                logger.info(
+                    'RemnaWave webhook suppressed as a grace overlay echo',
+                    event_name=event_name,
+                    subscription_id=subscription.id,
+                )
+                return True
+            if event_name == 'user.modified':
+                # Carry the pre-classification guard into the handler.  A
+                # concurrent completion must not make the same user.modified
+                # payload start writing temporary Grace fields into billing.
+                # Always overwrite the private key instead of trusting a field
+                # supplied by the webhook payload itself.
+                data = {**data, '_grace_guard_was_open': grace_was_open}
 
         user_id = user.id
         try:
@@ -1310,7 +1321,9 @@ class RemnaWaveWebhookService:
             return
 
         changed = False
-        grace_open = subscription.id in await get_open_grace_subscription_ids(db)
+        grace_open = bool(data.get('_grace_guard_was_open')) or (
+            subscription.id in await get_open_grace_subscription_ids(db)
+        )
 
         # Sync traffic limit
         traffic_limit_bytes = data.get('trafficLimitBytes')

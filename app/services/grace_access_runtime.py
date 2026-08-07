@@ -97,6 +97,10 @@ class GracePanelError(RuntimeError):
 
 
 class _GraceExternalResetRevoked(RuntimeError):
+    """An unsafe restore phase was detected and access was revoked."""
+
+
+class _GraceResetGenerationRevoked(_GraceExternalResetRevoked):
     """An unexpected reset generation was detected and access was revoked."""
 
 
@@ -369,6 +373,28 @@ class SQLAlchemyGraceSessionStore:
             return _model_to_session(current_model)
         return saved
 
+    async def checkpoint(self, session: GraceAccessSession) -> GraceAccessSession:
+        """Make a pre-mutation metadata update visible to crash recovery."""
+        saved = await self.save(session)
+        already_durable = session.state is GraceSessionState.RESTORING or (
+            session.state is GraceSessionState.ACTIVE
+            and (session.allow_recovery_enabled_webhook or session.traffic_reset_target is not None)
+        )
+        if already_durable:
+            return saved
+
+        await self._db.commit()
+        await _acquire_database_lock(self._db, session.subscription_id)
+        refreshed = await self._db.execute(
+            select(GraceAccessSessionModel)
+            .execution_options(populate_existing=True)
+            .where(GraceAccessSessionModel.id == session.id)
+        )
+        current_model = refreshed.scalar_one_or_none()
+        if current_model is None:
+            raise GraceSnapshotError(f'Grace session {session.id} disappeared during metadata checkpoint')
+        return _model_to_session(current_model)
+
     async def list_open(self, *, limit: int) -> Sequence[GraceAccessSession]:
         query = select(GraceAccessSessionModel).where(GraceAccessSessionModel.state.in_(_OPEN_STATES))
         if self._subscription_id is not None:
@@ -478,56 +504,114 @@ class RemnawaveGracePanelGateway:
             return None
         return _panel_user_to_snapshot(panel_user)
 
-    async def apply_overlay(self, remnawave_id: int, overlay: GracePanelOverlay) -> None:
+    async def apply_overlay(
+        self,
+        remnawave_id: int,
+        overlay: GracePanelOverlay,
+        *,
+        expected_source: GracePanelSnapshot,
+    ) -> None:
         from app.services.remnawave_service import remnawave_service
 
+        if expected_source.traffic_limit_strategy is None:
+            raise GracePanelTransitionPending(
+                'Original traffic reset strategy must be hydrated before Grace activation'
+            )
         async with remnawave_service.get_api_client() as api:
             await _validate_grace_squads(api, overlay.squad_uuids)
+            current_user = await api.get_user_by_id(remnawave_id)
+            if current_user is None:
+                raise GracePanelTransitionConflict('Remnawave user disappeared before Grace activation')
+            current = _panel_user_to_snapshot(current_user)
+            phase = _match_activation_phase(current, expected_source, overlay)
+            if phase == 'overlay':
+                return
+            if phase is None:
+                await _raise_activation_phase_conflict(
+                    api,
+                    remnawave_id=remnawave_id,
+                    current_user=current_user,
+                    message='Remnawave changed before Grace activation',
+                )
+
+            if phase == 'legacy_overlay':
+                await api.update_user(
+                    user_id=remnawave_id,
+                    traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
+                )
+                current_user = await api.get_user_by_id(remnawave_id)
+                if current_user is None:
+                    raise GracePanelTransitionConflict(
+                        'Remnawave user disappeared while protecting a legacy Grace overlay'
+                    )
+                current = _panel_user_to_snapshot(current_user)
+                if not panel_matches_overlay(current, overlay, now=datetime.now(UTC)):
+                    await _raise_activation_phase_conflict(
+                        api,
+                        remnawave_id=remnawave_id,
+                        current_user=current_user,
+                        message='Remnawave did not confirm NO_RESET for the legacy Grace overlay',
+                    )
+                return
+
             # Detach an external squad in a standalone preflight PATCH.  The API
             # client may retry A039 without externalSquadUuid; doing this before
             # ACTIVE/expiry changes guarantees such a retry cannot accidentally
             # grant unrestricted access.
-            detached = await api.update_user(
-                user_id=remnawave_id,
-                external_squad_uuid=overlay.external_squad_uuid,
-            )
-            if detached.external_squad_uuid != overlay.external_squad_uuid:
-                verified_detach = await api.get_user_by_id(remnawave_id)
-                if verified_detach is None or verified_detach.external_squad_uuid != overlay.external_squad_uuid:
-                    raise GracePanelError('Remnawave did not detach the external squad; overlay was not granted')
+            if phase == 'original':
+                await api.update_user(
+                    user_id=remnawave_id,
+                    external_squad_uuid=overlay.external_squad_uuid,
+                )
+                current_user = await api.get_user_by_id(remnawave_id)
+                if current_user is None:
+                    raise GracePanelTransitionConflict('Remnawave user disappeared while detaching the external squad')
+                current = _panel_user_to_snapshot(current_user)
+                phase = _match_activation_phase(current, expected_source, overlay)
+                if phase not in {'detached', 'no_reset'}:
+                    await _raise_activation_phase_conflict(
+                        api,
+                        remnawave_id=remnawave_id,
+                        current_user=current_user,
+                        message='Remnawave did not confirm the external-squad detach phase',
+                    )
 
-            detached_snapshot = _panel_user_to_snapshot(detached)
-            if not _reset_generations_equal(
-                detached_snapshot.last_traffic_reset_at,
-                overlay.expected_last_traffic_reset_at,
-            ):
-                raise GracePanelTransitionConflict(
-                    'Remnawave reset generation changed while detaching the external squad'
+            if phase == 'detached':
+                await api.update_user(
+                    user_id=remnawave_id,
+                    traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
+                )
+                current_user = await api.get_user_by_id(remnawave_id)
+                if current_user is None:
+                    raise GracePanelTransitionConflict(
+                        'Remnawave user disappeared while disabling automatic traffic reset'
+                    )
+                current = _panel_user_to_snapshot(current_user)
+                phase = _match_activation_phase(current, expected_source, overlay)
+                if phase != 'no_reset':
+                    await _raise_activation_phase_conflict(
+                        api,
+                        remnawave_id=remnawave_id,
+                        current_user=current_user,
+                        message='Remnawave did not confirm NO_RESET before granting Grace',
+                    )
+
+            # A fresh read immediately before the only access-granting PATCH
+            # prevents a DISABLED/manual ACTIVE transition observed between
+            # earlier phases from being overwritten by status=ACTIVE.
+            current_user = await api.get_user_by_id(remnawave_id)
+            if current_user is None:
+                raise GracePanelTransitionConflict('Remnawave user disappeared before the final Grace PATCH')
+            current = _panel_user_to_snapshot(current_user)
+            if _match_activation_phase(current, expected_source, overlay) != 'no_reset':
+                await _raise_activation_phase_conflict(
+                    api,
+                    remnawave_id=remnawave_id,
+                    current_user=current_user,
+                    message='Remnawave source status changed before the final Grace PATCH',
                 )
 
-            strategy_updated = await api.update_user(
-                user_id=remnawave_id,
-                traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
-            )
-            if strategy_updated is None:
-                strategy_updated = await api.get_user_by_id(remnawave_id)
-            if strategy_updated is None:
-                raise GracePanelError('Remnawave user disappeared while disabling the automatic traffic reset')
-            strategy_snapshot = _panel_user_to_snapshot(strategy_updated)
-            if (
-                _normalize(strategy_snapshot.status) == 'disabled'
-                or (
-                    hasattr(strategy_updated, 'traffic_limit_strategy')
-                    and strategy_snapshot.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value
-                )
-                or not _reset_generations_equal(
-                    strategy_snapshot.last_traffic_reset_at,
-                    overlay.expected_last_traffic_reset_at,
-                )
-            ):
-                raise GracePanelError('Remnawave did not confirm NO_RESET before granting Grace')
-
-            updated = await api.update_user(
+            await api.update_user(
                 **_serialize_grace_panel_patch(
                     remnawave_id,
                     status=PanelUserStatus.ACTIVE,
@@ -540,16 +624,17 @@ class RemnawaveGracePanelGateway:
                     },
                 )
             )
-        updated_snapshot = _panel_user_to_snapshot(updated) if updated is not None else None
-        if (
-            updated_snapshot is None
-            or not panel_matches_overlay(updated_snapshot, overlay, now=datetime.now(UTC))
-            or not _reset_generations_equal(
-                updated_snapshot.last_traffic_reset_at,
-                overlay.expected_last_traffic_reset_at,
-            )
-        ):
-            raise GracePanelError('Remnawave did not confirm the grace overlay')
+            verified_user = await api.get_user_by_id(remnawave_id)
+            if verified_user is None:
+                raise GracePanelTransitionConflict('Remnawave user disappeared after the final Grace PATCH')
+            verified = _panel_user_to_snapshot(verified_user)
+            if not panel_matches_overlay(verified, overlay, now=datetime.now(UTC)):
+                await _raise_activation_phase_conflict(
+                    api,
+                    remnawave_id=remnawave_id,
+                    current_user=verified_user,
+                    message='Remnawave did not confirm the final Grace overlay',
+                )
 
     async def restore_snapshot(
         self,
@@ -574,19 +659,39 @@ class RemnawaveGracePanelGateway:
                 # A deleted panel user has no access left to revoke.
                 return GraceRestoreOutcome.ALREADY_RESTORED
 
-            current = _panel_user_to_snapshot(current_user)
-            if target.status is PanelUserStatus.EXPIRED:
-                return await _restore_expired_target(
+            try:
+                current_user = await _guard_limited_reset_generation(
                     api,
                     remnawave_id=remnawave_id,
-                    target=target,
+                    current_user=current_user,
+                    expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+                )
+            except _GraceResetGenerationRevoked:
+                return GraceRestoreOutcome.EXTERNAL_RESET_REVOKED
+
+            current = _panel_user_to_snapshot(current_user)
+            if target.status is PanelUserStatus.EXPIRED:
+                try:
+                    return await _restore_expired_target(
+                        api,
+                        remnawave_id=remnawave_id,
+                        target=target,
+                        snapshot=snapshot,
+                        expected_overlay=expected_overlay,
+                        current_user=current_user,
+                        now=now,
+                        force_disable=force_disable,
+                        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+                    )
+                except _GraceResetGenerationRevoked:
+                    return GraceRestoreOutcome.EXTERNAL_RESET_REVOKED
+            if target.status is PanelUserStatus.DISABLED and not target.write_expire_at:
+                if not _expiry_matches_restore_proof(
+                    current.expire_at,
                     snapshot=snapshot,
                     expected_overlay=expected_overlay,
-                    current_user=current_user,
-                    now=now,
-                    force_disable=force_disable,
-                )
-            if target.status is PanelUserStatus.DISABLED and not target.write_expire_at:
+                ):
+                    return GraceRestoreOutcome.CONFLICT
                 target = replace(target, expire_at=current.expire_at)
             if limited_proof_target is not None:
                 try:
@@ -596,8 +701,8 @@ class RemnawaveGracePanelGateway:
                         current_user=current_user,
                         expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
                     )
-                except _GraceExternalResetRevoked:
-                    return GraceRestoreOutcome.RESTORED
+                except _GraceResetGenerationRevoked:
+                    return GraceRestoreOutcome.EXTERNAL_RESET_REVOKED
                 current = _panel_user_to_snapshot(current_user)
                 if _panel_is_unsafe_active_limited_phase(
                     current,
@@ -613,7 +718,7 @@ class RemnawaveGracePanelGateway:
                             ),
                         )
                     except _GraceExternalResetRevoked:
-                        return GraceRestoreOutcome.RESTORED
+                        return GraceRestoreOutcome.FAIL_CLOSED_REVOKED
             if target.status is PanelUserStatus.LIMITED:
                 already_matches = _panel_matches_target_with_exact_strategy(current, target)
             elif target.status is PanelUserStatus.DISABLED:
@@ -625,6 +730,14 @@ class RemnawaveGracePanelGateway:
             disabled_overlay_intermediate = (
                 target.status is PanelUserStatus.DISABLED
                 and _panel_matches_disabled_overlay_intermediate(current, expected_overlay)
+            )
+            known_inactive_restore_phase = (
+                target.status is PanelUserStatus.DISABLED
+                and _panel_matches_known_inactive_restore_fields(
+                    current,
+                    target,
+                    expected_overlay=expected_overlay,
+                )
             )
             if target.status is PanelUserStatus.LIMITED:
                 if target.traffic_limit_strategy is None:
@@ -649,8 +762,10 @@ class RemnawaveGracePanelGateway:
                         now=now,
                         expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
                     )
+                except _GraceResetGenerationRevoked:
+                    return GraceRestoreOutcome.EXTERNAL_RESET_REVOKED
                 except _GraceExternalResetRevoked:
-                    return GraceRestoreOutcome.RESTORED
+                    return GraceRestoreOutcome.FAIL_CLOSED_REVOKED
                 return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
             if (
                 not panel_matches_overlay(
@@ -664,16 +779,25 @@ class RemnawaveGracePanelGateway:
                     expected_overlay,
                 )
                 and not disabled_overlay_intermediate
+                and not known_inactive_restore_phase
             ):
                 return GraceRestoreOutcome.CONFLICT
 
             if target.status is PanelUserStatus.DISABLED:
-                updated = await _apply_restore_disabled_target(
-                    api,
-                    remnawave_id=remnawave_id,
-                    target=target,
-                    current_user=current_user,
-                )
+                try:
+                    updated = await _apply_restore_disabled_target(
+                        api,
+                        remnawave_id=remnawave_id,
+                        target=target,
+                        current_user=current_user,
+                        guard_reset_generation=True,
+                        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+                        allowed_expire_ats=(snapshot.expire_at, expected_overlay.expire_at),
+                    )
+                except _GraceResetGenerationRevoked:
+                    return GraceRestoreOutcome.EXTERNAL_RESET_REVOKED
+                except _GraceExternalResetRevoked:
+                    return GraceRestoreOutcome.FAIL_CLOSED_REVOKED
                 return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
 
             updated = await _restore_target_in_phases(
@@ -763,7 +887,10 @@ class RemnawaveGracePanelGateway:
 
             if not panel_matches_overlay(
                 current,
-                expected_overlay,
+                replace(
+                    expected_overlay,
+                    expected_last_traffic_reset_at=observed_last_traffic_reset_at,
+                ),
                 now=datetime.now(UTC),
             ) or (
                 expected_overlay.traffic_limit_strategy is not None
@@ -1309,6 +1436,8 @@ class GraceAccessRuntime:
         self._stop_event = asyncio.Event()
         self._locks = _KeyedLocks()
         self._mode = GraceAccessMode.DISABLED
+        self._policy = _build_protection_policy()
+        self._degraded_reason: str | None = None
         self._open_offset = 0
         self._candidate_offset = 0
         self._candidate_cursor = 0
@@ -1336,10 +1465,16 @@ class GraceAccessRuntime:
         reason = None
         if open_sessions and not self.protection_ready:
             reason = 'есть открытые Grace-сессии, но reconciler не запущен'
+        elif self._degraded_reason:
+            reason = self._degraded_reason
         elif self._mode is GraceAccessMode.OBSERVE:
             reason = 'режим OBSERVE: новые выдачи запрещены'
         elif self._mode is GraceAccessMode.DISABLED:
-            reason = 'режим DISABLED: новые выдачи и reconciler остановлены'
+            reason = (
+                'режим DISABLED: новые выдачи запрещены; открытые сессии защищаются'
+                if open_sessions
+                else 'режим DISABLED: новые выдачи запрещены'
+            )
         return {
             'grant_ready': self.grant_ready,
             'protection_ready': self.protection_ready or open_sessions == 0,
@@ -1356,6 +1491,9 @@ class GraceAccessRuntime:
         # both succeeded.  A failed startup must never leave ACTIVE without a
         # reconciliation task.
         self._mode = GraceAccessMode.DISABLED
+        self._policy = _build_protection_policy()
+        self._degraded_reason = None
+        open_count = await self.open_count()
         try:
             requested_mode = GraceAccessMode.parse(settings.GRACE_ACCESS_MODE)
             if requested_mode is not GraceAccessMode.DISABLED:
@@ -1364,13 +1502,19 @@ class GraceAccessRuntime:
                 _build_policy()
             if requested_mode is GraceAccessMode.ACTIVE:
                 _validate_active_configuration()
-            open_count = await self.open_count()
-        except Exception:
+            self._policy = _build_policy()
+        except Exception as error:
             self._mode = GraceAccessMode.DISABLED
-            self._task = None
-            self._stop_event.set()
-            logger.critical('Grace startup failed; grace ingress remains disabled')
-            raise
+            self._degraded_reason = f'ошибка конфигурации Grace: {type(error).__name__}: {error}'
+            logger.critical(
+                'Grace grants are disabled because configuration validation failed',
+                error=str(error),
+                open_sessions=open_count,
+            )
+            if open_count:
+                self._stop_event = asyncio.Event()
+                self._task = asyncio.create_task(self._run_loop(), name='grace-access-runtime')
+            return
 
         if requested_mode in {GraceAccessMode.DISABLED, GraceAccessMode.OBSERVE} and open_count:
             logger.critical(
@@ -1381,7 +1525,8 @@ class GraceAccessRuntime:
 
         if requested_mode is GraceAccessMode.DISABLED:
             logger.info('Grace access is disabled', mode=requested_mode.value)
-            return
+            if not open_count:
+                return
 
         self._mode = requested_mode
         self._stop_event = asyncio.Event()
@@ -1424,7 +1569,7 @@ class GraceAccessRuntime:
         if self._mode is GraceAccessMode.OBSERVE:
             async with AsyncSessionLocal() as db:
                 billing = await SQLAlchemyGraceBillingGateway(db).get_subscription(subscription_id)
-            eligible = bool(billing and billing_is_eligible(billing, reason, _build_policy()))
+            eligible = bool(billing and billing_is_eligible(billing, reason, self._policy))
             logger.info(
                 'Grace candidate observed',
                 subscription_id=subscription_id,
@@ -1443,7 +1588,11 @@ class GraceAccessRuntime:
                     if billing is None:
                         return GraceStartResult(GraceStartDecision.NOT_ELIGIBLE)
                     try:
-                        result = await _build_core(db, subscription_id=subscription_id).start_if_eligible(
+                        result = await _build_core(
+                            db,
+                            subscription_id=subscription_id,
+                            policy=self._policy,
+                        ).start_if_eligible(
                             billing,
                             reason,
                         )
@@ -1491,16 +1640,12 @@ class GraceAccessRuntime:
         *,
         db: AsyncSession | None = None,
     ) -> bool:
-        if self._mode in (GraceAccessMode.DISABLED, GraceAccessMode.OBSERVE):
-            # Non-mutating grace: оверлеев нет, эхо подавлять нечего — и не
-            # тратим запрос к БД на каждый входящий webhook.
-            return False
         try:
             if db is not None:
-                core = _build_core(db, subscription_id=subscription_id)
+                core = _build_core(db, subscription_id=subscription_id, policy=self._policy)
                 return await core.should_suppress_webhook(subscription_id, event_name, payload)
             async with AsyncSessionLocal() as own_db:
-                core = _build_core(own_db, subscription_id=subscription_id)
+                core = _build_core(own_db, subscription_id=subscription_id, policy=self._policy)
                 return await core.should_suppress_webhook(subscription_id, event_name, payload)
         except Exception:
             logger.exception(
@@ -1508,31 +1653,18 @@ class GraceAccessRuntime:
                 subscription_id=subscription_id,
                 event_name=event_name,
             )
-            # Generic status echoes are unsafe to apply while a persisted open
-            # row exists, even if its JSON snapshot is corrupt.
-            normalized_event = event_name.strip().lower()
-            if normalized_event == 'user.disabled':
-                return False
-            if normalized_event in {'user.enabled', 'user.expired', 'user.limited'}:
-                try:
-                    if db is not None:
-                        return subscription_id in await get_open_grace_subscription_ids(db)
-                    async with AsyncSessionLocal() as own_db:
-                        return subscription_id in await get_open_grace_subscription_ids(own_db)
-                except Exception:
-                    logger.exception('Grace webhook fallback guard also failed')
+            # A DB/parser failure cannot prove that the event belongs to a
+            # persisted Grace mutation phase. Never turn that failure into a
+            # wildcard lifecycle matcher.
             return False
 
     async def run_once(self) -> None:
-        if self._mode is GraceAccessMode.DISABLED:
-            return
-        if self._mode is GraceAccessMode.OBSERVE:
-            await self._discover_candidates(observe_only=True)
-            return
-
-        await self._reconcile_open(drain=self._mode is GraceAccessMode.DRAIN)
+        # Protection of durable rows is independent from grant mode.
+        await self._reconcile_open(drain=self._mode is not GraceAccessMode.ACTIVE)
         if self._mode is GraceAccessMode.ACTIVE:
             await self._discover_candidates(observe_only=False)
+        elif self._mode is GraceAccessMode.OBSERVE:
+            await self._discover_candidates(observe_only=True)
 
     async def force_restore_all(self) -> GraceReconcileResult:
         """Immediately restore every open session; used by the emergency CLI."""
@@ -1609,7 +1741,7 @@ class GraceAccessRuntime:
     async def _recent_candidate_ids(self) -> list[tuple[int, GraceReason]]:
         now = datetime.now(UTC)
         cutoff = now - timedelta(minutes=settings.GRACE_ACCESS_CANDIDATE_LOOKBACK_MINUTES)
-        batch_size = settings.GRACE_ACCESS_RECONCILE_BATCH_SIZE
+        batch_size = self._policy.reconcile_batch_size
         policy = _build_policy()
 
         expired_recently = and_(
@@ -1759,7 +1891,7 @@ class GraceAccessRuntime:
         async with self._locks.hold(subscription_id):
             async with AsyncSessionLocal() as db:
                 await _acquire_database_lock(db, subscription_id)
-                core = _build_core(db, subscription_id=subscription_id)
+                core = _build_core(db, subscription_id=subscription_id, policy=self._policy)
                 result = (
                     await core.drain(limit=1, force_restore=force_restore) if drain else await core.reconcile(limit=1)
                 )
@@ -2364,12 +2496,17 @@ async def ensure_no_open_grace_for_users(db: AsyncSession, user_ids: Sequence[in
     await ensure_no_open_grace_for_subscriptions(db, tuple(int(value) for value in result.scalars().all()))
 
 
-def _build_core(db: AsyncSession, *, subscription_id: int | None = None) -> GraceAccessService:
+def _build_core(
+    db: AsyncSession,
+    *,
+    subscription_id: int | None = None,
+    policy: GraceAccessPolicy | None = None,
+) -> GraceAccessService:
     return GraceAccessService(
         store=SQLAlchemyGraceSessionStore(db, subscription_id=subscription_id),
         panel=RemnawaveGracePanelGateway(),
         billing=SQLAlchemyGraceBillingGateway(db),
-        policy=_build_policy(),
+        policy=policy or _build_policy(),
     )
 
 
@@ -2385,6 +2522,21 @@ def _build_policy() -> GraceAccessPolicy:
         free_enabled=settings.GRACE_ACCESS_FREE_ENABLED,
         reconcile_batch_size=settings.GRACE_ACCESS_RECONCILE_BATCH_SIZE,
         reset_traffic_on_tariff_switch=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+    )
+
+
+def _build_protection_policy() -> GraceAccessPolicy:
+    """Fail-closed policy used only to reconcile already durable sessions."""
+    return GraceAccessPolicy(
+        duration=timedelta(hours=1),
+        expired_squad_uuid='',
+        limited_squad_uuid='',
+        traffic_bytes=0,
+        trial_enabled=False,
+        daily_enabled=False,
+        free_enabled=False,
+        reconcile_batch_size=200,
+        reset_traffic_on_tariff_switch=False,
     )
 
 
@@ -2551,6 +2703,83 @@ def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _Pane
         device_limit=billing.device_limit,
         write_expire_at=write_expire_at,
     )
+
+
+def _match_activation_phase(
+    current: GracePanelSnapshot,
+    expected_source: GracePanelSnapshot,
+    overlay: GracePanelOverlay,
+) -> str | None:
+    """Return one exact, crash-resumable activation phase."""
+    if not _reset_generations_equal(
+        current.last_traffic_reset_at,
+        overlay.expected_last_traffic_reset_at,
+    ):
+        return None
+    if panel_matches_overlay(current, overlay, now=datetime.now(UTC)):
+        return 'overlay'
+
+    source_strategy = expected_source.traffic_limit_strategy
+    if source_strategy is None:
+        return None
+    legacy_overlay = (
+        current.remnawave_id == expected_source.remnawave_id
+        and _normalize(current.status) in {'active', 'limited', 'expired'}
+        and _optional_datetimes_equal(current.expire_at, overlay.expire_at)
+        and current.traffic_limit_bytes == overlay.traffic_limit_bytes
+        and set(current.squad_uuids) == set(overlay.squad_uuids)
+        and current.external_squad_uuid == overlay.external_squad_uuid
+        and current.traffic_limit_strategy == source_strategy
+    )
+    if legacy_overlay:
+        return 'legacy_overlay'
+
+    source_core = (
+        current.remnawave_id == expected_source.remnawave_id
+        and _normalize(current.status) == _normalize(expected_source.status)
+        and _optional_datetimes_equal(current.expire_at, expected_source.expire_at)
+        and current.traffic_limit_bytes == expected_source.traffic_limit_bytes
+        and set(current.squad_uuids) == set(expected_source.squad_uuids)
+    )
+    if not source_core:
+        return None
+    if current.external_squad_uuid == overlay.external_squad_uuid:
+        if current.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET.value:
+            return 'no_reset'
+        if current.traffic_limit_strategy == source_strategy:
+            return 'detached'
+    if (
+        current.external_squad_uuid == expected_source.external_squad_uuid
+        and current.traffic_limit_strategy == source_strategy
+    ):
+        return 'original'
+    return None
+
+
+async def _raise_activation_phase_conflict(
+    api: Any,
+    *,
+    remnawave_id: int,
+    current_user: Any,
+    message: str,
+) -> NoReturn:
+    """Abort activation and revoke an unexpected ACTIVE state fail-closed."""
+    current = _panel_user_to_snapshot(current_user)
+    if _normalize(current.status) == 'active':
+        # An exact final/legacy overlay is handled before this helper.  Any
+        # other ACTIVE state contradicts the EXPIRED/LIMITED source and must not
+        # survive a failed activation retry.
+        try:
+            await api.disable_user(remnawave_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        verified_user = await api.get_user_by_id(remnawave_id)
+        if verified_user is not None and _normalize(getattr(verified_user, 'status', None)) == 'active':
+            raise GracePanelError(f'{message}; fail-closed revocation was not confirmed')
+        message = f'{message}; unexpected ACTIVE access was revoked'
+    raise GracePanelTransitionConflict(message)
 
 
 def _billing_requires_explicit_disabled(billing: GraceBillingState) -> bool:
@@ -2976,15 +3205,19 @@ async def _restore_expired_target(
     current_user: Any,
     now: datetime,
     force_disable: bool,
+    expected_last_traffic_reset_at: datetime | None,
 ) -> GraceRestoreOutcome:
     """Restore an EXPIRED snapshot without writing status or expiration time."""
     current = _panel_user_to_snapshot(current_user)
+    if not _expiry_matches_restore_proof(
+        current.expire_at,
+        snapshot=snapshot,
+        expected_overlay=expected_overlay,
+    ):
+        return GraceRestoreOutcome.CONFLICT
     preserved_target = replace(target, expire_at=current.expire_at)
-    retained_expiry_is_known = _optional_datetimes_equal(current.expire_at, snapshot.expire_at) or (
-        current.expire_at is not None
-        and abs((_as_utc(current.expire_at) - _as_utc(expected_overlay.expire_at)).total_seconds()) <= 2
-    )
-    if retained_expiry_is_known and _panel_matches_target(current, preserved_target):
+    allowed_expire_ats = (snapshot.expire_at, expected_overlay.expire_at)
+    if _panel_matches_target(current, preserved_target):
         return GraceRestoreOutcome.ALREADY_RESTORED
 
     current_status = _normalize(current.status)
@@ -2993,11 +3226,7 @@ async def _restore_expired_target(
         status=PanelUserStatus.DISABLED,
         write_expire_at=False,
     )
-    if (
-        retained_expiry_is_known
-        and current_status == 'disabled'
-        and _panel_matches_target(current, restored_disabled_target)
-    ):
+    if current_status == 'disabled' and _panel_matches_target(current, restored_disabled_target):
         # Idempotent recovery after an early-drain PATCH reached Remnawave but
         # the process stopped before the Grace completion commit.
         return GraceRestoreOutcome.ALREADY_RESTORED
@@ -3011,6 +3240,9 @@ async def _restore_expired_target(
             remnawave_id=remnawave_id,
             target=restored_disabled_target,
             current_user=current_user,
+            guard_reset_generation=True,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
         )
         return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
 
@@ -3019,6 +3251,36 @@ async def _restore_expired_target(
         expected_overlay,
         now=now,
     )
+    known_inactive_phase = _panel_matches_known_inactive_restore_fields(
+        current,
+        preserved_target,
+        expected_overlay=expected_overlay,
+    )
+    if current_status == 'disabled' and known_inactive_phase:
+        updated = await _apply_restore_disabled_target(
+            api,
+            remnawave_id=remnawave_id,
+            target=restored_disabled_target,
+            current_user=current_user,
+            guard_reset_generation=True,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
+        )
+        return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
+    if current_status == 'active' and not overlay_matches and known_inactive_phase:
+        # A concurrent enable between inactive restore phases can expose the
+        # already restored canonical routing. Revoke it immediately, then
+        # continue from the exact disabled partial state on the next phase.
+        updated = await _apply_restore_disabled_target(
+            api,
+            remnawave_id=remnawave_id,
+            target=restored_disabled_target,
+            current_user=current_user,
+            guard_reset_generation=True,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
+        )
+        return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
     if current_status in {'active', 'limited'}:
         if not overlay_matches:
             return GraceRestoreOutcome.CONFLICT
@@ -3036,6 +3298,9 @@ async def _restore_expired_target(
             remnawave_id=remnawave_id,
             target=restored_disabled_target,
             current_user=current_user,
+            guard_reset_generation=True,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
         )
         return GraceRestoreOutcome.RESTORED if updated is not None else GraceRestoreOutcome.CONFLICT
 
@@ -3043,19 +3308,28 @@ async def _restore_expired_target(
         # DISABLED is an external/manual revocation here, not the derived status
         # expected from a naturally elapsed Grace overlay.
         return GraceRestoreOutcome.CONFLICT
-    if not overlay_matches and not panel_is_safe_pending_source(
-        current,
-        snapshot,
-        expected_overlay,
+    if (
+        not overlay_matches
+        and not panel_is_safe_pending_source(
+            current,
+            snapshot,
+            expected_overlay,
+        )
+        and not known_inactive_phase
     ):
         return GraceRestoreOutcome.CONFLICT
 
-    updated = await api.update_user(**_serialize_panel_target(remnawave_id, preserved_target))
-    if updated is not None and _panel_matches_target(_panel_user_to_snapshot(updated), preserved_target):
-        return GraceRestoreOutcome.RESTORED
-    verified_user = await api.get_user_by_id(remnawave_id)
-    if verified_user is not None and _panel_matches_target(
-        _panel_user_to_snapshot(verified_user),
+    updated = await _apply_inactive_target_fields_in_phases(
+        api,
+        remnawave_id=remnawave_id,
+        target=preserved_target,
+        current_user=current_user,
+        guard_reset_generation=True,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        allowed_expire_ats=allowed_expire_ats,
+    )
+    if updated is not None and _panel_matches_target(
+        _panel_user_to_snapshot(updated),
         preserved_target,
     ):
         return GraceRestoreOutcome.RESTORED
@@ -3100,12 +3374,15 @@ async def _guard_limited_reset_generation(
     ):
         return current_user
     if _normalize(current.status) in {'disabled', 'expired'}:
-        raise _GraceExternalResetRevoked
-    await _revoke_limited_restore_access(
-        api,
-        remnawave_id=remnawave_id,
-        confirmation_error='Remnawave did not confirm fail-closed revocation after an external traffic reset',
-    )
+        raise _GraceResetGenerationRevoked
+    try:
+        await _revoke_limited_restore_access(
+            api,
+            remnawave_id=remnawave_id,
+            confirmation_error='Remnawave did not confirm fail-closed revocation after an external traffic reset',
+        )
+    except _GraceExternalResetRevoked as error:
+        raise _GraceResetGenerationRevoked from error
     raise AssertionError('unreachable')
 
 
@@ -3579,9 +3856,9 @@ async def _apply_canonical_disabled_target(
             if disabled_user is None or _normalize(getattr(disabled_user, 'status', None)) != 'disabled':
                 raise
 
-        if disabled_user is None or _normalize(getattr(disabled_user, 'status', None)) != 'disabled':
-            disabled_user = await api.get_user_by_id(remnawave_id)
-
+        # Never trust a mutation response as the source for the next phase: a
+        # concurrent enable may already have happened after that response.
+        disabled_user = await api.get_user_by_id(remnawave_id)
         if disabled_user is None or _normalize(getattr(disabled_user, 'status', None)) != 'disabled':
             return None
 
@@ -3589,6 +3866,7 @@ async def _apply_canonical_disabled_target(
         api,
         remnawave_id=remnawave_id,
         target=target,
+        current_user=disabled_user,
         base_kwargs=base_kwargs,
     )
     if updated is not None and _panel_user_matches_disabled_target_exact(updated, target):
@@ -3603,12 +3881,24 @@ async def _apply_restore_disabled_target(
     target: _PanelTarget,
     current_user: Any,
     base_kwargs: Mapping[str, Any] | None = None,
+    guard_reset_generation: bool = False,
+    expected_last_traffic_reset_at: datetime | None = None,
+    allowed_expire_ats: tuple[datetime | None, ...] | None = None,
 ) -> Any | None:
     """Restore a fail-closed status without emitting a canonical user.disabled."""
     if target.status is not PanelUserStatus.DISABLED:
         raise GracePanelError('Restore-disabled helper received a non-DISABLED status')
 
+    if guard_reset_generation:
+        current_user = await _guard_limited_reset_generation(
+            api,
+            remnawave_id=remnawave_id,
+            current_user=current_user,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
     current_status = _normalize(getattr(current_user, 'status', None))
+    if current_status != 'active' and not _inactive_expiry_is_allowed(current_user, allowed_expire_ats):
+        raise GracePanelTransitionConflict('Remnawave expireAt changed outside inactive restore phases')
     if current_status == 'limited':
         # Generic PATCH cannot force LIMITED -> DISABLED in Remnawave 2.8.
         # Keep the already access-safe state and retry after the watchdog derives
@@ -3628,10 +3918,16 @@ async def _apply_restore_disabled_target(
             disabled_user = await api.get_user_by_id(remnawave_id)
             if disabled_user is None or _normalize(getattr(disabled_user, 'status', None)) != 'disabled':
                 raise
-        if disabled_user is None or _normalize(getattr(disabled_user, 'status', None)) != 'disabled':
-            disabled_user = await api.get_user_by_id(remnawave_id)
+        disabled_user = await api.get_user_by_id(remnawave_id)
         if disabled_user is None:
             return None
+        if guard_reset_generation:
+            disabled_user = await _guard_limited_reset_generation(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=disabled_user,
+                expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            )
         current_status = _normalize(getattr(disabled_user, 'status', None))
         if current_status != 'disabled':
             if current_status in {'active', 'limited', 'expired'}:
@@ -3645,7 +3941,11 @@ async def _apply_restore_disabled_target(
         api,
         remnawave_id=remnawave_id,
         target=target,
+        current_user=current_user,
         base_kwargs=base_kwargs,
+        guard_reset_generation=guard_reset_generation,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        allowed_expire_ats=allowed_expire_ats,
     )
     if updated is not None and _panel_user_matches_restored_disabled_target(updated, target):
         return updated
@@ -3657,18 +3957,283 @@ async def _patch_disabled_target_fields(
     *,
     remnawave_id: int,
     target: _PanelTarget,
+    current_user: Any,
     base_kwargs: Mapping[str, Any] | None = None,
+    guard_reset_generation: bool = False,
+    expected_last_traffic_reset_at: datetime | None = None,
+    allowed_expire_ats: tuple[datetime | None, ...] | None = None,
 ) -> Any | None:
-    field_kwargs = _serialize_panel_target(
-        remnawave_id,
-        target,
+    return await _apply_inactive_target_fields_in_phases(
+        api,
+        remnawave_id=remnawave_id,
+        target=target,
+        current_user=current_user,
         base_kwargs=base_kwargs,
+        guard_reset_generation=guard_reset_generation,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        allowed_expire_ats=allowed_expire_ats,
     )
-    field_kwargs.pop('status', None)
-    updated = await api.update_user(**field_kwargs)
-    if updated is None:
-        updated = await api.get_user_by_id(remnawave_id)
-    return updated
+
+
+def _inactive_target_status_matches(snapshot: GracePanelSnapshot, target: _PanelTarget) -> bool:
+    status = _normalize(snapshot.status)
+    if target.status is PanelUserStatus.EXPIRED:
+        return status == 'expired'
+    return status in {'disabled', 'expired'}
+
+
+def _panel_matches_inactive_core(
+    panel_user: Any,
+    target: _PanelTarget,
+) -> bool:
+    snapshot = _panel_user_to_snapshot(panel_user)
+    return (
+        _inactive_target_status_matches(snapshot, target)
+        and _optional_datetimes_equal(snapshot.expire_at, target.expire_at)
+        and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(target.squad_uuids)
+        and _panel_user_matches_device_limit(panel_user, target)
+    )
+
+
+def _panel_matches_known_inactive_restore_fields(
+    snapshot: GracePanelSnapshot,
+    target: _PanelTarget,
+    *,
+    expected_overlay: GracePanelOverlay,
+) -> bool:
+    """Recognize exact overlay/canonical field combinations, ignoring status."""
+    expiry_known = _optional_datetimes_equal(snapshot.expire_at, target.expire_at) or _optional_datetimes_equal(
+        snapshot.expire_at,
+        expected_overlay.expire_at,
+    )
+    overlay_core = (
+        _optional_datetimes_equal(snapshot.expire_at, expected_overlay.expire_at)
+        and snapshot.traffic_limit_bytes == expected_overlay.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
+    )
+    canonical_core = (
+        expiry_known
+        and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(target.squad_uuids)
+    )
+    routing_known = snapshot.external_squad_uuid in {
+        expected_overlay.external_squad_uuid,
+        target.external_squad_uuid,
+    }
+    strategy_known = snapshot.traffic_limit_strategy in {
+        expected_overlay.traffic_limit_strategy,
+        target.traffic_limit_strategy,
+        TrafficLimitStrategy.NO_RESET.value,
+    }
+    return (overlay_core or canonical_core) and routing_known and strategy_known
+
+
+def _expiry_matches_restore_proof(
+    expire_at: datetime | None,
+    *,
+    snapshot: GracePanelSnapshot,
+    expected_overlay: GracePanelOverlay,
+) -> bool:
+    """Accept only one of the two expiries durably owned by this session."""
+    return _optional_datetimes_equal(expire_at, snapshot.expire_at) or _optional_datetimes_equal(
+        expire_at,
+        expected_overlay.expire_at,
+    )
+
+
+def _inactive_expiry_is_allowed(
+    panel_user: Any,
+    allowed_expire_ats: tuple[datetime | None, ...] | None,
+) -> bool:
+    if allowed_expire_ats is None:
+        return True
+    current_expire_at = _panel_user_to_snapshot(panel_user).expire_at
+    return any(
+        _optional_datetimes_equal(current_expire_at, expected_expire_at) for expected_expire_at in allowed_expire_ats
+    )
+
+
+async def _ensure_inactive_restore_user(
+    api: Any,
+    *,
+    remnawave_id: int,
+    current_user: Any,
+    guard_reset_generation: bool = False,
+    expected_last_traffic_reset_at: datetime | None = None,
+    allowed_expire_ats: tuple[datetime | None, ...] | None = None,
+) -> Any:
+    """Confirm an access-safe status after every inactive restore phase."""
+    if guard_reset_generation:
+        current_user = await _guard_limited_reset_generation(
+            api,
+            remnawave_id=remnawave_id,
+            current_user=current_user,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        )
+    status = _normalize(getattr(current_user, 'status', None))
+    if status == 'active':
+        try:
+            await api.update_user(
+                **_serialize_grace_panel_patch(
+                    remnawave_id,
+                    status=PanelUserStatus.DISABLED,
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        current_user = await api.get_user_by_id(remnawave_id)
+        if current_user is None:
+            raise GracePanelTransitionConflict('Remnawave user disappeared during fail-closed restore')
+        if guard_reset_generation:
+            current_user = await _guard_limited_reset_generation(
+                api,
+                remnawave_id=remnawave_id,
+                current_user=current_user,
+                expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            )
+        status = _normalize(getattr(current_user, 'status', None))
+    if not _inactive_expiry_is_allowed(current_user, allowed_expire_ats):
+        raise GracePanelTransitionConflict('Remnawave expireAt changed outside inactive restore phases')
+    if status == 'limited':
+        raise GracePanelTransitionPending('Remnawave LIMITED remains access-safe during inactive restore')
+    if status not in {'disabled', 'expired'}:
+        raise GracePanelTransitionConflict('Remnawave did not confirm an inactive restore status')
+    return current_user
+
+
+async def _read_inactive_restore_user(
+    api: Any,
+    *,
+    remnawave_id: int,
+    guard_reset_generation: bool = False,
+    expected_last_traffic_reset_at: datetime | None = None,
+    allowed_expire_ats: tuple[datetime | None, ...] | None = None,
+) -> Any:
+    current_user = await api.get_user_by_id(remnawave_id)
+    if current_user is None:
+        raise GracePanelTransitionConflict('Remnawave user disappeared between inactive restore phases')
+    return await _ensure_inactive_restore_user(
+        api,
+        remnawave_id=remnawave_id,
+        current_user=current_user,
+        guard_reset_generation=guard_reset_generation,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        allowed_expire_ats=allowed_expire_ats,
+    )
+
+
+async def _apply_inactive_target_fields_in_phases(
+    api: Any,
+    *,
+    remnawave_id: int,
+    target: _PanelTarget,
+    current_user: Any,
+    base_kwargs: Mapping[str, Any] | None = None,
+    guard_reset_generation: bool = False,
+    expected_last_traffic_reset_at: datetime | None = None,
+    allowed_expire_ats: tuple[datetime | None, ...] | None = None,
+) -> Any | None:
+    """Restore inactive fields, external squad and strategy as isolated phases."""
+    current_user = await _ensure_inactive_restore_user(
+        api,
+        remnawave_id=remnawave_id,
+        current_user=current_user,
+        guard_reset_generation=guard_reset_generation,
+        expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+        allowed_expire_ats=allowed_expire_ats,
+    )
+    current = _panel_user_to_snapshot(current_user)
+    final_matches = _panel_matches_target(current, target) and _panel_user_matches_device_limit(
+        current_user,
+        target,
+    )
+    if final_matches:
+        return current_user
+
+    if (
+        target.traffic_limit_strategy is not None
+        and current.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value
+    ):
+        await api.update_user(
+            user_id=remnawave_id,
+            traffic_limit_strategy=TrafficLimitStrategy.NO_RESET,
+        )
+        current_user = await _read_inactive_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            guard_reset_generation=guard_reset_generation,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if current.traffic_limit_strategy != TrafficLimitStrategy.NO_RESET.value:
+            raise GracePanelTransitionPending('Remnawave did not confirm NO_RESET during inactive restore')
+
+    if not _panel_matches_inactive_core(current_user, target):
+        core_kwargs = _serialize_panel_target(
+            remnawave_id,
+            replace(
+                target,
+                external_squad_uuid=current.external_squad_uuid,
+                traffic_limit_strategy=TrafficLimitStrategy.NO_RESET.value,
+                write_traffic_limit_strategy=False,
+            ),
+            base_kwargs=base_kwargs,
+        )
+        core_kwargs.pop('status', None)
+        core_kwargs.pop('external_squad_uuid', None)
+        core_kwargs.pop('traffic_limit_strategy', None)
+        await api.update_user(**core_kwargs)
+        current_user = await _read_inactive_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            guard_reset_generation=guard_reset_generation,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if not _panel_matches_inactive_core(current_user, target):
+            raise GracePanelTransitionPending('Remnawave did not confirm canonical inactive fields')
+
+    if current.external_squad_uuid != target.external_squad_uuid:
+        await api.update_user(
+            user_id=remnawave_id,
+            external_squad_uuid=target.external_squad_uuid,
+        )
+        current_user = await _read_inactive_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            guard_reset_generation=guard_reset_generation,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
+        )
+        current = _panel_user_to_snapshot(current_user)
+        if (
+            not _panel_matches_inactive_core(current_user, target)
+            or current.external_squad_uuid != target.external_squad_uuid
+        ):
+            raise GracePanelTransitionPending('Remnawave did not confirm inactive external squad')
+
+    if target.traffic_limit_strategy is not None and current.traffic_limit_strategy != target.traffic_limit_strategy:
+        await api.update_user(
+            user_id=remnawave_id,
+            traffic_limit_strategy=TrafficLimitStrategy(target.traffic_limit_strategy),
+        )
+        current_user = await _read_inactive_restore_user(
+            api,
+            remnawave_id=remnawave_id,
+            guard_reset_generation=guard_reset_generation,
+            expected_last_traffic_reset_at=expected_last_traffic_reset_at,
+            allowed_expire_ats=allowed_expire_ats,
+        )
+        current = _panel_user_to_snapshot(current_user)
+
+    if _panel_matches_target(current, target) and _panel_user_matches_device_limit(current_user, target):
+        return current_user
+    raise GracePanelTransitionPending('Remnawave did not confirm the final inactive restore target')
 
 
 def _panel_user_matches_device_limit(panel_user: Any, target: _PanelTarget) -> bool:
@@ -3682,14 +4247,8 @@ def _panel_user_matches_device_limit(panel_user: Any, target: _PanelTarget) -> b
 
 
 def _strategy_matches(actual: str | None, expected: str | None) -> bool:
-    """Compare strategies when both sides expose the v4 field.
-
-    ``None`` is the explicit legacy/partial-read marker.  It must not be
-    guessed as a concrete strategy, but allowing it through here keeps v2/v3
-    sessions reconcilable until the live panel is read and the snapshot is
-    upgraded by the activation path.
-    """
-    return expected is None or actual is None or actual == expected
+    """Skip an intentionally unknown restore target, otherwise compare exactly."""
+    return expected is None or actual == expected
 
 
 def _panel_user_matches_target(panel_user: Any, target: _PanelTarget) -> bool:
@@ -3819,7 +4378,7 @@ def _session_values(session: GraceAccessSession) -> dict[str, Any]:
         'reason': session.reason.value,
         'incident_key': session.incident_key,
         'state': session.state.value,
-        'snapshot_version': _SNAPSHOT_VERSION,
+        'snapshot_version': session.snapshot_version,
         'billing_before': _billing_to_json(session.billing_before),
         'panel_before': _panel_to_json(session.panel_before),
         'overlay': _session_overlay_to_json(session),
@@ -3864,6 +4423,17 @@ def _model_to_session(model: GraceAccessSessionModel) -> GraceAccessSession:
         traffic_reset_remaining_bytes=_traffic_reset_remaining_from_overlay_json(model.overlay),
         traffic_reset_started_at=_traffic_reset_started_at_from_overlay_json(model.overlay),
         traffic_reset_finished_at=_traffic_reset_finished_at_from_overlay_json(model.overlay),
+        traffic_reset_previous_generation=_traffic_reset_previous_generation_from_overlay_json(model.overlay),
+        traffic_reset_previous_used_bytes=_traffic_reset_previous_used_from_overlay_json(model.overlay),
+        traffic_reset_result_generation=_traffic_reset_result_generation_from_overlay_json(model.overlay),
+        activation_started_at=_activation_started_at_from_overlay_json(model.overlay),
+        activation_finished_at=_activation_finished_at_from_overlay_json(model.overlay),
+        restore_started_at=_restore_started_at_from_overlay_json(model.overlay),
+        restore_finished_at=_restore_finished_at_from_overlay_json(model.overlay),
+        restore_force_disable=_restore_force_disable_from_overlay_json(model.overlay),
+        restore_completion_reason=_restore_completion_reason_from_overlay_json(model.overlay),
+        legacy_strategy_fallback=_legacy_strategy_fallback_from_overlay_json(model.overlay),
+        snapshot_version=model.snapshot_version,
     )
 
 
@@ -3995,6 +4565,28 @@ def _session_overlay_to_json(session: GraceAccessSession) -> dict[str, Any]:
         data['_traffic_reset_started_at'] = _datetime_to_json(session.traffic_reset_started_at)
     if session.traffic_reset_finished_at is not None:
         data['_traffic_reset_finished_at'] = _datetime_to_json(session.traffic_reset_finished_at)
+    if session.traffic_reset_previous_generation is not None:
+        data['_traffic_reset_previous_generation'] = _datetime_to_json(session.traffic_reset_previous_generation)
+    if session.traffic_reset_previous_used_bytes is not None:
+        if session.traffic_reset_previous_used_bytes < 0:
+            raise GraceSnapshotError('_traffic_reset_previous_used_bytes must be non-negative')
+        data['_traffic_reset_previous_used_bytes'] = session.traffic_reset_previous_used_bytes
+    if session.traffic_reset_result_generation is not None:
+        data['_traffic_reset_result_generation'] = _datetime_to_json(session.traffic_reset_result_generation)
+    if session.activation_started_at is not None:
+        data['_activation_started_at'] = _datetime_to_json(session.activation_started_at)
+    if session.activation_finished_at is not None:
+        data['_activation_finished_at'] = _datetime_to_json(session.activation_finished_at)
+    if session.restore_started_at is not None:
+        data['_restore_started_at'] = _datetime_to_json(session.restore_started_at)
+    if session.restore_finished_at is not None:
+        data['_restore_finished_at'] = _datetime_to_json(session.restore_finished_at)
+    if session.restore_force_disable:
+        data['_restore_force_disable'] = True
+    if session.restore_completion_reason is not None:
+        data['_restore_completion_reason'] = session.restore_completion_reason.value
+    if session.legacy_strategy_fallback:
+        data['_legacy_strategy_fallback'] = True
     return data
 
 
@@ -4038,6 +4630,67 @@ def _traffic_reset_started_at_from_overlay_json(raw: Any) -> datetime | None:
 def _traffic_reset_finished_at_from_overlay_json(raw: Any) -> datetime | None:
     data = _mapping(raw, 'overlay')
     return _datetime_from_json(data.get('_traffic_reset_finished_at'))
+
+
+def _traffic_reset_previous_generation_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_traffic_reset_previous_generation'))
+
+
+def _traffic_reset_previous_used_from_overlay_json(raw: Any) -> int | None:
+    data = _mapping(raw, 'overlay')
+    value = data.get('_traffic_reset_previous_used_bytes')
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise GraceSnapshotError('_traffic_reset_previous_used_bytes must be a non-negative integer')
+    return value
+
+
+def _traffic_reset_result_generation_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_traffic_reset_result_generation'))
+
+
+def _activation_started_at_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_activation_started_at'))
+
+
+def _activation_finished_at_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_activation_finished_at'))
+
+
+def _restore_started_at_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_restore_started_at'))
+
+
+def _restore_finished_at_from_overlay_json(raw: Any) -> datetime | None:
+    data = _mapping(raw, 'overlay')
+    return _datetime_from_json(data.get('_restore_finished_at'))
+
+
+def _restore_force_disable_from_overlay_json(raw: Any) -> bool:
+    data = _mapping(raw, 'overlay')
+    return bool(data.get('_restore_force_disable', False))
+
+
+def _restore_completion_reason_from_overlay_json(raw: Any) -> GraceCompletionReason | None:
+    data = _mapping(raw, 'overlay')
+    value = data.get('_restore_completion_reason')
+    if value is None:
+        return None
+    try:
+        return GraceCompletionReason(str(value))
+    except ValueError as error:
+        raise GraceSnapshotError('Unsupported _restore_completion_reason') from error
+
+
+def _legacy_strategy_fallback_from_overlay_json(raw: Any) -> bool:
+    data = _mapping(raw, 'overlay')
+    return bool(data.get('_legacy_strategy_fallback', False))
 
 
 def _overlay_from_json(raw: Any) -> GracePanelOverlay:

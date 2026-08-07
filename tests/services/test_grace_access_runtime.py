@@ -30,6 +30,7 @@ from app.services.grace_access_runtime import (
     _overlay_to_json,
     _panel_from_json,
     _panel_to_json,
+    _panel_user_to_snapshot,
     _PanelTarget,
     _serialize_panel_target,
     _session_to_model,
@@ -385,6 +386,16 @@ def test_grace_session_json_round_trip_preserves_incident_aliases() -> None:
         traffic_reset_remaining_bytes=GIB // 2,
         traffic_reset_started_at=NOW,
         traffic_reset_finished_at=NOW + timedelta(seconds=1),
+        traffic_reset_previous_generation=NOW - timedelta(days=1),
+        traffic_reset_previous_used_bytes=10 * GIB,
+        traffic_reset_result_generation=NOW,
+        activation_started_at=NOW,
+        activation_finished_at=NOW + timedelta(milliseconds=100),
+        restore_started_at=NOW + timedelta(days=1),
+        restore_finished_at=NOW + timedelta(days=1, seconds=1),
+        restore_force_disable=True,
+        restore_completion_reason=GraceCompletionReason.DRAINED,
+        legacy_strategy_fallback=True,
     )
 
     restored = _model_to_session(_session_to_model(session))
@@ -2319,18 +2330,22 @@ async def test_apply_overlay_detaches_external_squad_first_and_addresses_the_num
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     overlay = make_overlay()
-    api = FakeRemnawaveApi(
-        make_panel_user(
-            status=UserStatus.EXPIRED,
-            expire_at=NOW - timedelta(days=1),
-            traffic_limit_bytes=10 * GIB,
-            squad_uuids=(REGULAR_SQUAD,),
-            external_squad_uuid=EXTERNAL_SQUAD,
-        )
+    source_user = make_panel_user(
+        status=UserStatus.EXPIRED,
+        expire_at=NOW - timedelta(days=1),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+        traffic_limit_strategy='MONTH',
     )
+    api = FakeRemnawaveApi(source_user)
     install_fake_api(monkeypatch, api)
 
-    await RemnawaveGracePanelGateway().apply_overlay(PANEL_ID, overlay)
+    await RemnawaveGracePanelGateway().apply_overlay(
+        PANEL_ID,
+        overlay,
+        expected_source=_panel_user_to_snapshot(source_user),
+    )
 
     # Отцепление внешнего сквада — отдельный первый PATCH: ретрай A039 без
     # externalSquadUuid не должен случайно выдать неограниченный доступ.
@@ -2424,12 +2439,12 @@ def test_unsupported_snapshot_version_is_rejected_instead_of_guessed() -> None:
         _model_to_session(row)
 
 
-def test_saving_a_v2_row_upgrades_it_to_v4_without_erasing_the_historical_uuid() -> None:
+def test_saving_an_unresolved_v2_row_keeps_its_version_and_historical_uuid() -> None:
     session = _model_to_session(make_v2_session_row())
 
     values = _session_values(session)
 
-    assert values['snapshot_version'] == 4
+    assert values['snapshot_version'] == 2
     assert values['remnawave_id'] == PANEL_ID
     # UPDATE не должен трогать историческую колонку: новый код uuid не знает, и
     # запись None стёрла бы единственный аудиторский след доапгрейдной сессии.
