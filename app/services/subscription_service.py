@@ -415,6 +415,19 @@ class SubscriptionService:
         await db.flush((subscription, user))
         return adopted.id
 
+    async def adopt_panel_id_by_short_uuid(self, db: AsyncSession, subscription, user) -> int | None:
+        """Публичный вход в подхват по shortUuid — для путей мимо `update_remnawave_user`.
+
+        Хендлеры устройств читают `remnawave_id` и ходят в панель сами, поэтому
+        подхват внутри `update_remnawave_user` их не спасает: до прогона
+        `scripts/backfill_remnawave_ids.py` колонка пуста у всех доапгрейдных
+        строк, и «Управление устройствами» отвечало DEVICE_UUID_NOT_FOUND, ни разу
+        не спросив панель. Все проверки (занятость аккаунта соседней подпиской,
+        транзиентная ошибка панели, выбор строки-владельца по режиму тарификации)
+        остаются внутри `_adopt_panel_id_for_update` — здесь только режим.
+        """
+        return await self._adopt_panel_id_for_update(db, subscription, user, settings.is_multi_tariff_enabled())
+
     async def _create_or_update_remnawave_user_multi(
         self,
         api: RemnaWaveAPI,

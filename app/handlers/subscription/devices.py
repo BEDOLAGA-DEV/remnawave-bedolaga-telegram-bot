@@ -78,9 +78,40 @@ def _get_panel_user_id(subscription, db_user):
     return getattr(subscription, 'remnawave_id', None) or db_user.remnawave_id
 
 
+async def _resolve_panel_user_id(subscription, db_user, db=None):
+    """Панельный id для операций с устройствами, с подхватом по shortUuid.
+
+    `_get_panel_user_id` только читает колонку, а миграция 0104 её лишь ДОБАВЛЯЕТ:
+    заполняет одноразовый `scripts/backfill_remnawave_ids.py`. До его прогона — и
+    навсегда для строк, которые он честно оставил `unresolved`, — у доапгрейдных
+    строк там NULL, и любая операция с устройствами отваливалась, ни разу не
+    спросив панель: список отвечал алертом DEVICE_UUID_NOT_FOUND, счётчики — нулём.
+
+    `shortUuid` апгрейд на 3.0.0 пережил, поэтому числовой id восстанавливаем тем
+    же защищённым помощником, каким уже пользуются сброс трафика и
+    `update_remnawave_user`: он откажется, если аккаунт держит соседний тариф, и
+    не примет транзиентную ошибку панели за «аккаунта нет».
+    """
+    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    if panel_user_id or subscription is None or db is None:
+        return panel_user_id
+
+    try:
+        return await SubscriptionService().adopt_panel_id_by_short_uuid(db, subscription, db_user)
+    except Exception as error:
+        # Восстановление идентичности — вспомогательный шаг. Уронить из-за него
+        # просмотр устройств нельзя: пользователь получит 500 вместо списка.
+        logger.warning(
+            'Не удалось опознать панельного пользователя по short_uuid',
+            subscription_id=getattr(subscription, 'id', None),
+            error=str(error)[:200],
+        )
+        return None
+
+
 async def get_current_devices_detailed(db_user: User, subscription=None) -> dict:
     try:
-        panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+        panel_user_id = await _resolve_panel_user_id(subscription, db_user)
         if not panel_user_id:
             return {'count': 0, 'devices': []}
 
@@ -151,7 +182,7 @@ async def get_servers_display_names(squad_uuids: list[str]) -> str:
 
 async def get_current_devices_count(db_user: User, subscription=None) -> str:
     try:
-        panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+        panel_user_id = await _resolve_panel_user_id(subscription, db_user)
         if not panel_user_id:
             return '—'
 
@@ -467,7 +498,7 @@ async def confirm_change_devices(
 
     # Проверяем количество подключённых устройств для предупреждения
     devices_warning = ''
-    panel_user_id = _get_panel_user_id(subscription, db_user)
+    panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
     if new_devices_count < current_devices and panel_user_id:
         try:
             service = RemnaWaveService()
@@ -700,7 +731,7 @@ async def execute_change_devices(
         await subscription_service.update_remnawave_user(db, subscription)
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        panel_user_id = _get_panel_user_id(subscription, db_user)
+        panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
         if panel_user_id and subscription.status == 'active':
             await subscription_service.enable_remnawave_user(panel_user_id)
 
@@ -822,7 +853,7 @@ async def handle_device_management(
         )
         return
 
-    panel_user_id = _get_panel_user_id(subscription, db_user)
+    panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
     if not panel_user_id:
         await callback.answer(
             texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'),
@@ -960,7 +991,7 @@ async def handle_devices_page(callback: types.CallbackQuery, db_user: User, db: 
     page = int(callback.data.split('_')[2])
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
-    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
 
     try:
         from app.services.remnawave_service import RemnaWaveService
@@ -995,7 +1026,7 @@ async def start_device_rename(callback: types.CallbackQuery, db_user: User, db: 
     """
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
-    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
     if not panel_user_id:
         await callback.answer(
             texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'),
@@ -1146,7 +1177,7 @@ async def process_device_rename(message: types.Message, db_user: User, db: Async
         if sub_id:
             result = await db.execute(select(Subscription).where(Subscription.id == sub_id))
             subscription = result.scalar_one_or_none()
-        panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+        panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
         if not panel_user_id:
             return
         from app.services.remnawave_service import RemnaWaveService
@@ -1190,7 +1221,7 @@ async def cancel_device_rename(
     if sub_id:
         result = await db.execute(select(Subscription).where(Subscription.id == sub_id))
         subscription = result.scalar_one_or_none()
-    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
 
     if panel_user_id:
         try:
@@ -1217,7 +1248,7 @@ async def handle_single_device_reset(
 ):
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
-    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
     try:
         callback_parts = callback.data.split('_')
         if len(callback_parts) < 4:
@@ -1338,7 +1369,7 @@ async def handle_all_devices_reset_from_management(
 ):
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
-    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
 
     if not panel_user_id:
         await callback.answer(
@@ -1675,7 +1706,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         await subscription_service.update_remnawave_user(db, subscription)
 
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        panel_user_id = _get_panel_user_id(subscription, db_user)
+        panel_user_id = await _resolve_panel_user_id(subscription, db_user, db)
         if panel_user_id and subscription.status == 'active':
             await subscription_service.enable_remnawave_user(panel_user_id)
 

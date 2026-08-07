@@ -66,6 +66,48 @@ def _resolve_panel_user_id(subscription: Subscription | None, user: User) -> int
     return user.remnawave_id
 
 
+async def _resolve_panel_user_id_or_adopt(
+    subscription: Subscription | None, user: User, db: AsyncSession
+) -> int | None:
+    """`_resolve_panel_user_id` + подхват панельного id по shortUuid, если колонка пуста.
+
+    Миграция 0104 колонку `remnawave_id` только ДОБАВЛЯЕТ; заполняет её одноразовый
+    `scripts/backfill_remnawave_ids.py`. До его прогона — и навсегда для строк,
+    которые он честно оставил `unresolved`, — у доапгрейдных строк там NULL, и
+    устройства в кабинете отдавали пустой список либо 400 «Panel user not found»,
+    ни разу не спросив панель.
+
+    `shortUuid` апгрейд на 3.0.0 пережил, поэтому числовой id восстанавливаем тем же
+    защищённым помощником, что и бот с `update_remnawave_user`: он откажется, если
+    аккаунт держит соседняя подписка, и не примет транзиентную ошибку панели за
+    «аккаунта нет».
+    """
+    panel_user_id = _resolve_panel_user_id(subscription, user)
+    if panel_user_id or subscription is None:
+        return panel_user_id
+
+    try:
+        adopted = await SubscriptionService().adopt_panel_id_by_short_uuid(db, subscription, user)
+        if adopted:
+            # Коммитим здесь, а не полагаемся на вызывающего: `get_cabinet_db`
+            # сессию не коммитит, а `close()` откатит незакоммиченное — и
+            # опознанный id терялся бы, заставляя ходить в панель на каждый
+            # запрос. В боте этого не нужно: там сессию коммитит auth-мидлварь.
+            # Ничего постороннего не утечёт — все вызывающие резолвят панельный
+            # id раньше, чем меняют что-либо в БД.
+            await db.commit()
+        return adopted
+    except Exception as error:
+        # Восстановление идентичности — вспомогательный шаг: ронять из-за него
+        # ответ кабинета нельзя, вызывающий сам решит, что делать с None.
+        logger.warning(
+            'Failed to adopt panel user by short_uuid',
+            subscription_id=getattr(subscription, 'id', None),
+            error=str(error)[:200],
+        )
+        return None
+
+
 @router.post('/devices')
 async def purchase_devices_legacy(
     request: DevicePurchaseRequest,
@@ -907,7 +949,7 @@ async def get_devices(
             detail='No subscription found',
         )
 
-    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    _panel_user_id = await _resolve_panel_user_id_or_adopt(subscription, user, db)
     if not _panel_user_id:
         return {
             'devices': [],
@@ -1051,7 +1093,7 @@ async def delete_device(
             detail='No subscription found',
         )
 
-    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    _panel_user_id = await _resolve_panel_user_id_or_adopt(subscription, user, db)
     if not _panel_user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1105,7 +1147,7 @@ async def delete_all_devices(
             detail='No subscription found',
         )
 
-    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    _panel_user_id = await _resolve_panel_user_id_or_adopt(subscription, user, db)
     if not _panel_user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1224,7 +1266,7 @@ async def get_device_reduction_info(
 
     # Get connected devices count
     connected_devices_count = 0
-    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    _panel_user_id = await _resolve_panel_user_id_or_adopt(subscription, user, db)
     if _panel_user_id:
         try:
             service = RemnaWaveService()
@@ -1320,7 +1362,7 @@ async def reduce_devices(
     # Get connected devices and remove excess (last connected ones)
     connected_devices_count = 0
     devices_removed_count = 0
-    _panel_user_id = _resolve_panel_user_id(subscription, user)
+    _panel_user_id = await _resolve_panel_user_id_or_adopt(subscription, user, db)
     if _panel_user_id:
         try:
             service = RemnaWaveService()
