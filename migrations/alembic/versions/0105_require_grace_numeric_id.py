@@ -53,6 +53,7 @@ def upgrade() -> None:
             batch.create_check_constraint(_CHECK_NAME, 'remnawave_id > 0')
 
     inspector = sa.inspect(bind)
+    columns = _columns(inspector, 'grace_access_sessions')
     if columns['remnawave_id'].get('nullable', True):
         with op.batch_alter_table('grace_access_sessions') as batch:
             batch.alter_column(
