@@ -1037,6 +1037,12 @@ class Settings(BaseSettings):
     ETOPLATEZHI_CARD_ENABLED: bool = False
     ETOPLATEZHI_CARD_DISPLAY_NAME: str = 'Карта (Etoplatezhi)'
 
+    # Слать ли email об УСПЕШНОМ рекуррентном списании / автопродлении.
+    # По умолчанию выключено: успешное автосписание — ожидаемое событие,
+    # письмо лишь триггерит юзера (churn/chargeback). Письма о НЕУДАЧЕ
+    # автосписания шлются всегда — они требуют действия юзера.
+    RECURRING_SUCCESS_EMAIL_ENABLED: bool = False
+
     # Recurring (Card-on-File) charges via EtoPlatezhi Gate API.
     ETOPLATEZHI_RECURRENT_ENABLED: bool = False
     # When True, initial payments register a recurring (stored_card_type=3)

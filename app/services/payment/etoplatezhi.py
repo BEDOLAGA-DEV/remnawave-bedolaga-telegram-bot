@@ -777,7 +777,21 @@ class EtoplatezhiPaymentMixin:
         try:
             from app.services.payment.common import send_cart_notification_after_topup
 
-            await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
+            # Успешное РЕКУРРЕНТНОЕ пополнение — не слать email «баланс пополнен»
+            # (автосписание ожидаемо, письмо только триггерит юзера). Управляется
+            # RECURRING_SUCCESS_EMAIL_ENABLED; авто-действия (корзина/автопродление)
+            # выполняются в любом случае.
+            _is_recurrent_topup = (metadata.get('purpose') == 'recurrent_topup') or str(
+                payment.order_id or ''
+            ).startswith('recurrent_')
+            _notify_email = not _is_recurrent_topup or settings.RECURRING_SUCCESS_EMAIL_ENABLED
+            await send_cart_notification_after_topup(
+                user,
+                payment.amount_kopeks,
+                db,
+                getattr(self, 'bot', None),
+                notify_email=_notify_email,
+            )
         except Exception as error:
             logger.error(
                 'Ошибка при работе с сохраненной корзиной для пользователя',

@@ -1692,8 +1692,10 @@ class MonitoringService:
                                 await self._send_autopay_success_notification(
                                     user, charge_amount, autopay_period, subscription=subscription
                                 )
-                            elif not user.telegram_id:
-                                # Email-only user - use notification delivery service
+                            elif not user.telegram_id and settings.RECURRING_SUCCESS_EMAIL_ENABLED:
+                                # Email-only user: письмо об УСПЕШНОМ автопродлении
+                                # шлём только если явно включено — успешное
+                                # автосписание ожидаемо и не требует действий.
                                 await notification_delivery_service.notify_autopay_success(
                                     user=user,
                                     amount_kopeks=charge_amount,

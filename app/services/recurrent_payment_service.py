@@ -597,7 +597,13 @@ async def _process_single_subscription(
             except Exception as notify_error:
                 logger.warning('Ошибка уведомления об автоплатеже', notify_error=notify_error)
 
-        if not user.telegram_id and result.get('paid') and user.email and getattr(user, 'email_verified', False):
+        if (
+            settings.RECURRING_SUCCESS_EMAIL_ENABLED
+            and not user.telegram_id
+            and result.get('paid')
+            and user.email
+            and getattr(user, 'email_verified', False)
+        ):
             try:
                 from app.services.notification_delivery_service import (
                     NotificationType,
