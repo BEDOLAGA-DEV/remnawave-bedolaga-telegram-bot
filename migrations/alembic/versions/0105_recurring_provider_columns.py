@@ -15,11 +15,9 @@ The legacy ``yookassa_payment_method_id`` column is kept as an alias but is
 relaxed to NULLABLE — EtoPlatezhi saved cards carry a ``recurring_id`` in
 ``provider_token`` and have no YooKassa id.
 
-Merges the historical custom revisions 0095_recurring_provider_columns and
-0096_saved_method_code (including the EtoPlatezhi method_code backfill) into a
-single revision layered on top of the upstream ``0104`` head. Every step is
-inspector-guarded so it is safe to run against a schema created fresh via
-``Base.metadata.create_all`` (which already has the columns).
+Every step is inspector-guarded so it is safe to run against a schema
+created fresh via ``Base.metadata.create_all`` (which already has the
+columns) and safe to re-run.
 
 Revision ID: 0105
 Revises: 0104
