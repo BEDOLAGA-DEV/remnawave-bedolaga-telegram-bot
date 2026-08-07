@@ -203,6 +203,14 @@ async def get_payment_methods(
                 )
             options = formatted_options or None
 
+        requires_recurring_consent = False
+        if (
+            method_id == 'etoplatezhi'
+            and settings.ETOPLATEZHI_RECURRENT_ENABLED
+            and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+        ) or (method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False)):
+            requires_recurring_consent = True
+
         methods.append(
             PaymentMethodResponse(
                 id=method_id,
@@ -214,6 +222,7 @@ async def get_payment_methods(
                 options=options,
                 quick_amounts=method_data.get('quick_amounts') or [],
                 open_url_direct=bool(method_data.get('open_url_direct', False)),
+                requires_recurring_consent=requires_recurring_consent,
             )
         )
 
