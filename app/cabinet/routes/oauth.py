@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,7 @@ from ..auth.oauth_providers import (
     OAuthUserInfo,
     generate_oauth_state,
     get_provider,
+    resolve_oauth_redirect_uri,
     validate_oauth_state,
 )
 from ..dependencies import get_cabinet_db
@@ -106,9 +107,10 @@ async def get_oauth_providers():
 
 
 @router.get('/{provider}/authorize', response_model=OAuthAuthorizeResponse)
-async def get_oauth_authorize_url(provider: OAuthProviderName):
+async def get_oauth_authorize_url(provider: OAuthProviderName, http_request: Request):
     """Get authorization URL for an OAuth provider."""
-    oauth_provider = get_provider(provider)
+    redirect_uri = resolve_oauth_redirect_uri(http_request.headers.get('origin'))
+    oauth_provider = get_provider(provider, redirect_uri=redirect_uri)
     if not oauth_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -116,7 +118,8 @@ async def get_oauth_authorize_url(provider: OAuthProviderName):
         )
 
     # Generate extra state data (e.g., PKCE code_verifier for VK)
-    auth_extra = oauth_provider.prepare_auth_state()
+    auth_extra = oauth_provider.prepare_auth_state() or {}
+    auth_extra['oauth_redirect_uri'] = redirect_uri
     state = await generate_oauth_state(provider, extra_data=auth_extra or None)
     # Only pass URL-safe params (prefixed with _) to authorize URL; exclude secrets like code_verifier
     url_params = {k: v for k, v in auth_extra.items() if k.startswith('_')} if auth_extra else {}
@@ -148,8 +151,8 @@ async def oauth_callback(
             detail='OAuth state was initiated for account linking, not login',
         )
 
-    # 2. Get provider instance
-    oauth_provider = get_provider(provider)
+    # 2. Get provider instance (reuse redirect_uri chosen at authorize time)
+    oauth_provider = get_provider(provider, redirect_uri=state_data.get('oauth_redirect_uri'))
     if not oauth_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
