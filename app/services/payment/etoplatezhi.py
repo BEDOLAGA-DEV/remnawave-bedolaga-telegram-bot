@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -188,8 +189,16 @@ class EtoplatezhiPaymentMixin:
         # customer_id="None" и отклонение анти-фрод-системой EtoPlatezhi).
         if user_id is not None:
             tg_id = user_id
+            customer_id_value = str(user_id)
         else:
             tg_id = 'guest'
+            # Уникальный, но стабильный per-customer id. Раньше слали константу
+            # 'guest' на всех guest-платежах → ЭП схлопывал их в одного клиента
+            # и антифрод резал трафик. Хешируем email (стабилен для повторных).
+            if email:
+                customer_id_value = 'g' + hashlib.sha1(email.strip().lower().encode()).hexdigest()[:15]
+            else:
+                customer_id_value = f'guest-{uuid.uuid4().hex[:12]}'
 
         # Генерируем уникальный order_id с user_id для удобного поиска
         order_id = f'etp{tg_id}_{uuid.uuid4().hex[:6]}'
@@ -238,7 +247,7 @@ class EtoplatezhiPaymentMixin:
                 payment_id=order_id,
                 payment_amount=amount_kopeks,
                 payment_currency=currency,
-                customer_id=str(tg_id),
+                customer_id=customer_id_value,
                 description=description,
                 callback_url=webhook_url,
                 success_url=return_url or settings.ETOPLATEZHI_RETURN_URL,
