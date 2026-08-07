@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import re
 import runpy
@@ -35,6 +36,28 @@ class _Mark:
     @property
     def asyncio(self):
         return lambda function: function
+
+    def parametrize(self, argnames, argvalues):
+        names = (
+            (argnames,)
+            if isinstance(argnames, str) and ',' not in argnames
+            else tuple(name.strip() for name in argnames.split(','))
+            if isinstance(argnames, str)
+            else tuple(argnames)
+        )
+
+        def decorator(function):
+            @functools.wraps(function)
+            async def parametrized():
+                for values in argvalues:
+                    arguments = (values,) if len(names) == 1 else tuple(values)
+                    result = function(*arguments)
+                    if inspect.isawaitable(result):
+                        await result
+
+            return parametrized
+
+        return decorator
 
 
 pytest_stub = types.ModuleType('pytest')

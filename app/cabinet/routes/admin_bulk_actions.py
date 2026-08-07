@@ -347,6 +347,7 @@ async def _do_change_tariff(
             sub,
             reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
             reset_traffic_reason='смена тарифа (bulk action)',
+            tariff_switch_reset=True,
         )
     except Exception as e:
         logger.error('Failed to sync tariff switch with RemnaWave', user_id=user.id, error=e)

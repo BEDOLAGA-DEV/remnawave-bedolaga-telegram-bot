@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -11,20 +12,35 @@ import pytest
 from app.database.models import GraceAccessSessionModel
 from app.external.remnawave_api import (
     RemnaWaveInvalidUserIdError,
+    TrafficLimitStrategy,
     UserStatus,
     coerce_panel_user_id,
 )
 from app.services.grace_access_runtime import (
+    GracePanelError,
     GraceSnapshotError,
     RemnawaveGracePanelGateway,
+    SQLAlchemyGraceSessionStore,
+    _billing_from_json,
+    _billing_to_json,
+    _build_billing_target,
+    _build_restore_target,
     _model_to_session,
+    _overlay_from_json,
+    _overlay_to_json,
+    _panel_from_json,
+    _panel_to_json,
+    _panel_user_to_snapshot,
     _PanelTarget,
     _serialize_panel_target,
     _session_to_model,
     _session_values,
+    _subscription_to_billing,
 )
 from app.services.grace_access_service import (
+    GraceAccessSession,
     GraceBillingState,
+    GraceCompletionReason,
     GracePanelOverlay,
     GracePanelSnapshot,
     GracePanelTransitionConflict,
@@ -32,7 +48,10 @@ from app.services.grace_access_service import (
     GraceReason,
     GraceRestoreOutcome,
     GraceSessionState,
+    GraceTrafficResetOutcome,
+    build_tariff_rebase_lineage_key,
 )
+from tests.fixtures.sqlite_memory import memory_session
 
 
 GIB = 1024**3
@@ -55,6 +74,14 @@ class FakeRemnawaveApi:
         self.user = user
         self.updates: list[dict[str, Any]] = []
         self.reads: list[int] = []
+        self.disable_calls: list[int] = []
+        self.fail_update_attempts = 0
+        self.fail_update_call_numbers: set[int] = set()
+        self.reset_calls: list[int] = []
+        self.fail_reset_after_effect = 0
+        self.disable_updates_status = True
+        self.ignore_strategy_updates = False
+        self.reset_after_update_call_numbers: set[int] = set()
 
     async def get_user_by_id(self, user_id: int) -> SimpleNamespace | None:
         # Как и настоящий клиент: непригодный локальный идентификатор — это
@@ -68,6 +95,11 @@ class FakeRemnawaveApi:
         # а поля uuid схема запроса не содержит вовсе.
         panel_user_id = coerce_panel_user_id(user_id)
         self.updates.append({'user_id': panel_user_id, **kwargs})
+        if len(self.updates) in self.fail_update_call_numbers:
+            raise RuntimeError('temporary update failure')
+        if self.fail_update_attempts > 0:
+            self.fail_update_attempts -= 1
+            raise RuntimeError('temporary update failure')
         if status := kwargs.get('status'):
             self.user.status = status
         if 'expire_at' in kwargs:
@@ -80,6 +112,36 @@ class FakeRemnawaveApi:
             self.user.external_squad_uuid = kwargs['external_squad_uuid']
         if 'hwid_device_limit' in kwargs:
             self.user.hwid_device_limit = kwargs['hwid_device_limit']
+        if 'traffic_limit_strategy' in kwargs:
+            strategy = kwargs['traffic_limit_strategy']
+            if not self.ignore_strategy_updates:
+                self.user.traffic_limit_strategy = getattr(strategy, 'value', strategy)
+        if len(self.updates) in self.reset_after_update_call_numbers:
+            self.user.used_traffic_bytes = 0
+            self.user.user_traffic.used_traffic_bytes = 0
+            self.user.last_traffic_reset_at = NOW + timedelta(seconds=100 + len(self.updates))
+            self.user.status = UserStatus.ACTIVE
+        return self.user
+
+    async def disable_user(self, user_id: int) -> SimpleNamespace:
+        panel_user_id = coerce_panel_user_id(user_id)
+        self.disable_calls.append(panel_user_id)
+        assert panel_user_id == self.user.id
+        if self.disable_updates_status:
+            self.user.status = UserStatus.DISABLED
+        return self.user
+
+    async def reset_user_traffic(self, user_id: int) -> SimpleNamespace:
+        panel_user_id = coerce_panel_user_id(user_id)
+        self.reset_calls.append(panel_user_id)
+        assert panel_user_id == self.user.id
+        self.user.used_traffic_bytes = 0
+        self.user.user_traffic.used_traffic_bytes = 0
+        self.user.last_traffic_reset_at = NOW + timedelta(seconds=len(self.reset_calls))
+        self.user.status = UserStatus.ACTIVE
+        if self.fail_reset_after_effect > 0:
+            self.fail_reset_after_effect -= 1
+            raise RuntimeError('lost reset response')
         return self.user
 
 
@@ -90,6 +152,7 @@ def make_panel_user(
     traffic_limit_bytes: int,
     squad_uuids: tuple[str, ...],
     external_squad_uuid: str | None = None,
+    traffic_limit_strategy: str | None = 'NO_RESET',
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=PANEL_ID,
@@ -101,6 +164,7 @@ def make_panel_user(
         external_squad_uuid=external_squad_uuid,
         user_traffic=SimpleNamespace(used_traffic_bytes=10 * GIB),
         last_traffic_reset_at=None,
+        traffic_limit_strategy=traffic_limit_strategy,
         hwid_device_limit=2,
     )
 
@@ -111,6 +175,7 @@ def make_overlay() -> GracePanelOverlay:
         expire_at=NOW + timedelta(days=3),
         traffic_limit_bytes=11 * GIB,
         squad_uuids=(GRACE_SQUAD,),
+        traffic_limit_strategy='NO_RESET',
         external_squad_uuid=None,
     )
 
@@ -125,6 +190,7 @@ def make_limited_billing() -> GraceBillingState:
         used_traffic_bytes=10 * GIB,
         device_limit=4,
         squad_uuids=(REGULAR_SQUAD,),
+        traffic_limit_strategy='MONTH',
         external_squad_uuid=EXTERNAL_SQUAD,
     )
 
@@ -137,6 +203,7 @@ def make_limited_snapshot() -> GracePanelSnapshot:
         traffic_limit_bytes=10 * GIB,
         used_traffic_bytes=10 * GIB,
         squad_uuids=(REGULAR_SQUAD,),
+        traffic_limit_strategy='MONTH',
         external_squad_uuid=EXTERNAL_SQUAD,
     )
 
@@ -202,6 +269,28 @@ def make_v2_session_row(*, remnawave_id: int | None = PANEL_ID) -> GraceAccessSe
     )
 
 
+def make_expired_overlay() -> GracePanelOverlay:
+    return GracePanelOverlay(
+        status='ACTIVE',
+        expire_at=NOW - timedelta(minutes=1),
+        traffic_limit_bytes=11 * GIB,
+        squad_uuids=(GRACE_SQUAD,),
+        external_squad_uuid=None,
+    )
+
+
+def make_expired_snapshot() -> GracePanelSnapshot:
+    return GracePanelSnapshot(
+        remnawave_id=PANEL_ID,
+        status='EXPIRED',
+        expire_at=NOW - timedelta(days=7),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+
 def install_fake_api(monkeypatch: pytest.MonkeyPatch, api: FakeRemnawaveApi) -> None:
     from app.services.remnawave_service import remnawave_service
 
@@ -214,6 +303,1118 @@ def install_fake_api(monkeypatch: pytest.MonkeyPatch, api: FakeRemnawaveApi) -> 
 
 def assert_no_derived_status_writes(api: FakeRemnawaveApi) -> None:
     assert all(update.get('status') not in {UserStatus.LIMITED, UserStatus.EXPIRED} for update in api.updates)
+
+
+def test_grace_billing_json_round_trip_preserves_tariff_identity_and_legacy_default() -> None:
+    billing = replace(
+        make_limited_billing(),
+        tariff_id=7,
+        tariff_id_known=True,
+    )
+
+    assert _billing_from_json(_billing_to_json(billing)) == billing
+
+    legacy = _billing_to_json(billing)
+    legacy.pop('tariff_id')
+    legacy.pop('tariff_id_known')
+    restored_legacy = _billing_from_json(legacy)
+    assert restored_legacy.tariff_id is None
+    assert restored_legacy.tariff_id_known is False
+
+    real_null_tariff = replace(billing, tariff_id=None, tariff_id_known=True)
+    assert _billing_from_json(_billing_to_json(real_null_tariff)) == real_null_tariff
+
+
+def test_grace_snapshot_v4_round_trip_preserves_reset_strategy_and_generation() -> None:
+    snapshot = replace(
+        make_limited_snapshot(),
+        traffic_limit_strategy='MONTH',
+        last_traffic_reset_at=NOW - timedelta(hours=2),
+    )
+    overlay = replace(
+        make_overlay(),
+        traffic_limit_strategy='NO_RESET',
+        expected_last_traffic_reset_at=snapshot.last_traffic_reset_at,
+    )
+
+    assert _panel_from_json(_panel_to_json(snapshot)) == snapshot
+    assert _overlay_from_json(_overlay_to_json(overlay)) == overlay
+
+
+def test_legacy_snapshot_without_strategy_keeps_explicit_unknown_value() -> None:
+    panel = _panel_to_json(make_limited_snapshot())
+    panel.pop('traffic_limit_strategy')
+
+    restored = _panel_from_json(panel)
+
+    assert restored.traffic_limit_strategy is None
+
+
+def test_unknown_reset_strategy_is_rejected_in_snapshot() -> None:
+    panel = _panel_to_json(make_limited_snapshot())
+    panel['traffic_limit_strategy'] = 'YEAR'
+
+    with pytest.raises(GraceSnapshotError, match='Unsupported traffic limit strategy'):
+        _panel_from_json(panel)
+
+
+def test_grace_session_json_round_trip_preserves_incident_aliases() -> None:
+    billing = replace(make_limited_billing(), tariff_id=2, tariff_id_known=True)
+    snapshot = make_limited_snapshot()
+    overlay = make_overlay()
+    session = GraceAccessSession(
+        id='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        subscription_id=billing.subscription_id,
+        remnawave_id=PANEL_ID,
+        reason=GraceReason.LIMITED,
+        incident_key='limited:primary',
+        state=GraceSessionState.ACTIVE,
+        billing_before=billing,
+        panel_before=snapshot,
+        overlay=overlay,
+        started_at=NOW,
+        grace_until=overlay.expire_at,
+        updated_at=NOW,
+        incident_aliases=('limited:rebased', 'tariff-rebase:limited:lineage'),
+        limited_lineage_tail=billing,
+        allow_recovery_enabled_webhook=True,
+        traffic_reset_target=replace(
+            billing,
+            tariff_id=3,
+            used_traffic_bytes=0,
+        ),
+        traffic_reset_remaining_bytes=GIB // 2,
+        traffic_reset_started_at=NOW,
+        traffic_reset_finished_at=NOW + timedelta(seconds=1),
+        traffic_reset_previous_generation=NOW - timedelta(days=1),
+        traffic_reset_previous_used_bytes=10 * GIB,
+        traffic_reset_result_generation=NOW,
+        activation_started_at=NOW,
+        activation_finished_at=NOW + timedelta(milliseconds=100),
+        restore_started_at=NOW + timedelta(days=1),
+        restore_finished_at=NOW + timedelta(days=1, seconds=1),
+        restore_force_disable=True,
+        restore_completion_reason=GraceCompletionReason.DRAINED,
+        legacy_strategy_fallback=True,
+    )
+
+    restored = _model_to_session(_session_to_model(session))
+
+    assert restored == session
+    applied_fence_proof = replace(session, traffic_reset_target=None)
+    assert _model_to_session(_session_to_model(applied_fence_proof)) == applied_fence_proof
+
+
+def test_legacy_grace_session_without_tariff_or_lineage_metadata_still_loads() -> None:
+    billing = replace(make_limited_billing(), tariff_id=2, tariff_id_known=True)
+    overlay = make_overlay()
+    session = GraceAccessSession(
+        id='aaaaaaaa-bbbb-cccc-dddd-ffffffffffff',
+        subscription_id=billing.subscription_id,
+        remnawave_id=PANEL_ID,
+        reason=GraceReason.LIMITED,
+        incident_key='limited:legacy',
+        state=GraceSessionState.ACTIVE,
+        billing_before=billing,
+        panel_before=make_limited_snapshot(),
+        overlay=overlay,
+        started_at=NOW,
+        grace_until=overlay.expire_at,
+        updated_at=NOW,
+    )
+    model = _session_to_model(session)
+    model.billing_before = dict(model.billing_before)
+    model.billing_before.pop('tariff_id')
+    model.billing_before.pop('tariff_id_known')
+    model.overlay = dict(model.overlay)
+    model.overlay.pop('_incident_aliases', None)
+    model.overlay.pop('_limited_lineage_tail', None)
+    model.overlay.pop('_allow_recovery_enabled_webhook', None)
+    model.overlay.pop('_traffic_reset_target', None)
+    model.overlay.pop('_traffic_reset_remaining_bytes', None)
+    model.overlay.pop('_traffic_reset_started_at', None)
+    model.overlay.pop('_traffic_reset_finished_at', None)
+
+    restored = _model_to_session(model)
+
+    assert restored.billing_before.tariff_id is None
+    assert restored.billing_before.tariff_id_known is False
+    assert restored.incident_aliases == ()
+    assert restored.limited_lineage_tail is None
+    assert restored.allow_recovery_enabled_webhook is False
+    assert restored.traffic_reset_target is None
+    assert restored.traffic_reset_remaining_bytes is None
+    assert restored.traffic_reset_started_at is None
+    assert restored.traffic_reset_finished_at is None
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_store_finds_persisted_incident_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    billing = replace(make_limited_billing(), tariff_id=2, tariff_id_known=True)
+    overlay = make_overlay()
+    session = GraceAccessSession(
+        id='aaaaaaaa-bbbb-cccc-dddd-111111111111',
+        subscription_id=billing.subscription_id,
+        remnawave_id=PANEL_ID,
+        reason=GraceReason.LIMITED,
+        incident_key='limited:primary',
+        state=GraceSessionState.COMPLETED,
+        billing_before=billing,
+        panel_before=make_limited_snapshot(),
+        overlay=overlay,
+        started_at=NOW,
+        grace_until=overlay.expire_at,
+        updated_at=NOW,
+        completion_reason=GraceCompletionReason.TIMEOUT,
+        completed_at=NOW,
+        incident_aliases=('limited:rebased', 'tariff-rebase:limited:lineage'),
+        limited_lineage_tail=billing,
+    )
+
+    async with memory_session(monkeypatch, [GraceAccessSessionModel.__table__]) as db:
+        db.add(_session_to_model(session))
+        await db.commit()
+        store = SQLAlchemyGraceSessionStore(db)
+
+        primary = await store.get_by_incident(session.subscription_id, session.incident_key)
+        alias = await store.get_by_incident(session.subscription_id, 'limited:rebased')
+        missing = await store.get_by_incident(session.subscription_id, 'limited:new-reset')
+
+    assert primary is not None and primary.id == session.id
+    assert alias is not None and alias.id == session.id
+    assert alias.limited_lineage_tail == billing
+    assert missing is None
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_store_derives_lineage_for_legacy_limited_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_at = NOW - timedelta(days=10)
+    billing = replace(
+        make_limited_billing(),
+        tariff_id=None,
+        tariff_id_known=False,
+    )
+    snapshot = replace(make_limited_snapshot(), last_traffic_reset_at=reset_at)
+    overlay = make_overlay()
+    session = GraceAccessSession(
+        id='aaaaaaaa-bbbb-cccc-dddd-222222222222',
+        subscription_id=billing.subscription_id,
+        remnawave_id=PANEL_ID,
+        reason=GraceReason.LIMITED,
+        incident_key='limited:legacy-primary',
+        state=GraceSessionState.COMPLETED,
+        billing_before=billing,
+        panel_before=snapshot,
+        overlay=overlay,
+        started_at=NOW,
+        grace_until=overlay.expire_at,
+        updated_at=NOW,
+        completion_reason=GraceCompletionReason.CONFLICT,
+        completed_at=NOW,
+    )
+    lineage_key = build_tariff_rebase_lineage_key(
+        billing,
+        GraceReason.LIMITED,
+        last_traffic_reset_at=reset_at,
+    )
+
+    async with memory_session(monkeypatch, [GraceAccessSessionModel.__table__]) as db:
+        db.add(_session_to_model(session))
+        await db.commit()
+        restored = await SQLAlchemyGraceSessionStore(db).get_by_incident(
+            session.subscription_id,
+            lineage_key,
+        )
+
+    assert restored is not None and restored.id == session.id
+    assert restored.incident_aliases == ()
+    assert restored.limited_lineage_tail is None
+
+
+@pytest.mark.parametrize('tariff_id', [7, None])
+def test_subscription_to_billing_marks_live_tariff_identity_as_known(
+    monkeypatch: pytest.MonkeyPatch,
+    tariff_id: int | None,
+) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    subscription = SimpleNamespace(
+        id=42,
+        user=SimpleNamespace(remnawave_id=PANEL_ID, status='active'),
+        tariff=SimpleNamespace(
+            external_squad_uuid=EXTERNAL_SQUAD,
+            is_daily=False,
+            is_free=False,
+        ),
+        remnawave_id=None,
+        actual_status='limited',
+        end_date=NOW + timedelta(days=20),
+        traffic_limit_gb=10,
+        traffic_used_gb=10.0,
+        device_limit=2,
+        connected_squads=[REGULAR_SQUAD],
+        is_trial=False,
+        status='limited',
+        grace_suppressed_until=None,
+        tariff_id=tariff_id,
+    )
+
+    billing = _subscription_to_billing(subscription)
+
+    assert billing.tariff_id == tariff_id
+    assert billing.tariff_id_known is True
+
+
+@pytest.mark.asyncio
+async def test_prepare_tariff_rebase_changes_only_device_limit_and_verifies_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+    billing = replace(
+        make_limited_billing(),
+        tariff_id=2,
+        tariff_id_known=True,
+        device_limit=4,
+    )
+
+    prepared = await RemnawaveGracePanelGateway().prepare_tariff_rebase(
+        billing,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=None,
+    )
+
+    assert prepared is not None
+    assert api.updates == [{'user_id': PANEL_ID, 'hwid_device_limit': 4}]
+    assert user.expire_at == overlay.expire_at
+    assert user.traffic_limit_bytes == overlay.traffic_limit_bytes
+    assert tuple(item['uuid'] for item in user.active_internal_squads) == overlay.squad_uuids
+    assert user.external_squad_uuid == overlay.external_squad_uuid
+    assert_no_derived_status_writes(api)
+
+
+@pytest.mark.asyncio
+async def test_prepare_tariff_rebase_avoids_patch_when_device_limit_already_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+    )
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+    billing = replace(
+        make_limited_billing(),
+        tariff_id=2,
+        tariff_id_known=True,
+        device_limit=user.hwid_device_limit,
+    )
+
+    prepared = await RemnawaveGracePanelGateway().prepare_tariff_rebase(
+        billing,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=None,
+    )
+
+    assert prepared is not None
+    assert api.updates == []
+
+
+@pytest.mark.asyncio
+async def test_prepare_tariff_rebase_rejects_changed_traffic_reset_before_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+    )
+    user.last_traffic_reset_at = NOW
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    prepared = await RemnawaveGracePanelGateway().prepare_tariff_rebase(
+        replace(make_limited_billing(), tariff_id=2, tariff_id_known=True),
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=NOW - timedelta(days=1),
+    )
+
+    assert prepared is None
+    assert api.updates == []
+
+
+@pytest.mark.asyncio
+async def test_limited_tariff_reset_fences_quota_then_restores_canonical_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+    )
+    # A reset one second after the previous one is still a distinct generation.
+    user.last_traffic_reset_at = NOW
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+    billing = replace(
+        make_limited_billing(),
+        tariff_id=2,
+        tariff_id_known=True,
+        traffic_limit_bytes=5 * GIB,
+        used_traffic_bytes=0,
+    )
+
+    result = await RemnawaveGracePanelGateway().apply_tariff_switch_traffic_reset(
+        billing,
+        reason=GraceReason.LIMITED,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=NOW,
+        remaining_grace_bytes=GIB,
+    )
+
+    assert result.outcome is GraceTrafficResetOutcome.RECOVERED
+    assert api.reset_calls == [PANEL_ID]
+    assert api.updates[0]['traffic_limit_bytes'] == GIB
+    assert 'status' not in api.updates[0]
+    assert api.updates[-1]['status'] is UserStatus.ACTIVE
+    assert user.used_traffic_bytes == 0
+    assert user.traffic_limit_bytes == billing.traffic_limit_bytes
+    assert tuple(item['uuid'] for item in user.active_internal_squads) == billing.squad_uuids
+    assert_no_derived_status_writes(api)
+
+
+@pytest.mark.asyncio
+async def test_expired_tariff_reset_keeps_only_remaining_grace_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+    )
+    user.used_traffic_bytes = 10 * GIB + GIB // 4
+    user.user_traffic.used_traffic_bytes = user.used_traffic_bytes
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+    billing = replace(
+        make_limited_billing(),
+        status='expired',
+        end_at=NOW - timedelta(days=1),
+        tariff_id=2,
+        tariff_id_known=True,
+        traffic_limit_bytes=5 * GIB,
+        used_traffic_bytes=0,
+    )
+
+    result = await RemnawaveGracePanelGateway().apply_tariff_switch_traffic_reset(
+        billing,
+        reason=GraceReason.EXPIRED,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=None,
+        remaining_grace_bytes=3 * GIB // 4,
+    )
+
+    assert result.outcome is GraceTrafficResetOutcome.CONTINUED
+    assert result.overlay is not None
+    assert result.overlay.expire_at == overlay.expire_at
+    assert result.overlay.traffic_limit_bytes == 3 * GIB // 4
+    assert result.overlay.squad_uuids == overlay.squad_uuids
+    assert api.reset_calls == [PANEL_ID]
+    assert user.used_traffic_bytes == 0
+    assert user.traffic_limit_bytes == 3 * GIB // 4
+    assert tuple(item['uuid'] for item in user.active_internal_squads) == overlay.squad_uuids
+    assert_no_derived_status_writes(api)
+
+
+@pytest.mark.asyncio
+async def test_expired_tariff_reset_retry_recognizes_changed_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+    )
+    api = FakeRemnawaveApi(user)
+    api.fail_reset_after_effect = 1
+    install_fake_api(monkeypatch, api)
+    billing = replace(
+        make_limited_billing(),
+        status='expired',
+        end_at=NOW - timedelta(days=1),
+        tariff_id=2,
+        tariff_id_known=True,
+        traffic_limit_bytes=5 * GIB,
+        used_traffic_bytes=0,
+    )
+    gateway = RemnawaveGracePanelGateway()
+
+    with pytest.raises(RuntimeError, match='lost reset response'):
+        await gateway.apply_tariff_switch_traffic_reset(
+            billing,
+            reason=GraceReason.EXPIRED,
+            expected_overlay=overlay,
+            expected_last_traffic_reset_at=None,
+            remaining_grace_bytes=GIB,
+        )
+
+    result = await gateway.apply_tariff_switch_traffic_reset(
+        billing,
+        reason=GraceReason.EXPIRED,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=None,
+        remaining_grace_bytes=GIB,
+    )
+
+    assert result.outcome is GraceTrafficResetOutcome.CONTINUED
+    assert api.reset_calls == [PANEL_ID]
+
+
+@pytest.mark.asyncio
+async def test_zero_remaining_grace_never_becomes_unlimited_after_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.LIMITED,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+    )
+    user.used_traffic_bytes = overlay.traffic_limit_bytes
+    user.user_traffic.used_traffic_bytes = user.used_traffic_bytes
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+    billing = replace(
+        make_limited_billing(),
+        status='expired',
+        end_at=NOW - timedelta(days=1),
+        tariff_id=2,
+        tariff_id_known=True,
+        used_traffic_bytes=0,
+    )
+
+    result = await RemnawaveGracePanelGateway().apply_tariff_switch_traffic_reset(
+        billing,
+        reason=GraceReason.EXPIRED,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=None,
+        remaining_grace_bytes=0,
+    )
+
+    assert result.outcome is GraceTrafficResetOutcome.EXHAUSTED
+    assert api.reset_calls == [PANEL_ID]
+    assert all(update.get('traffic_limit_bytes') != 0 for update in api.updates[:-1])
+    assert user.status in {UserStatus.DISABLED, UserStatus.EXPIRED}
+    assert_no_derived_status_writes(api)
+
+
+@pytest.mark.asyncio
+async def test_missing_billing_revocation_disables_only_exact_reset_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().revoke_missing_billing(
+        PANEL_ID,
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == [PANEL_ID]
+    assert user.status is UserStatus.DISABLED
+
+
+@pytest.mark.asyncio
+async def test_missing_billing_revocation_preserves_unrelated_panel_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=(OTHER_SQUAD,),
+    )
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionConflict, match='outside'):
+        await RemnawaveGracePanelGateway().revoke_missing_billing(
+            PANEL_ID,
+            expected_overlay=overlay,
+        )
+
+    assert api.disable_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('overlay_strategy', ['NO_RESET', None])
+async def test_external_reset_revocation_requires_exact_changed_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    overlay_strategy: str | None,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    observed_generation = NOW + timedelta(seconds=1)
+    overlay = replace(
+        make_overlay(),
+        traffic_limit_strategy=overlay_strategy,
+        expected_last_traffic_reset_at=expected_generation,
+    )
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = observed_generation
+    user.traffic_limit_strategy = 'NO_RESET'
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert api.disable_calls == [PANEL_ID]
+    assert api.reads == [PANEL_ID, PANEL_ID]
+    assert user.status is UserStatus.DISABLED
+
+
+@pytest.mark.asyncio
+async def test_external_reset_revocation_rejects_stale_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    initially_observed_generation = NOW + timedelta(seconds=1)
+    concurrently_observed_generation = NOW + timedelta(seconds=2)
+    overlay = replace(make_overlay(), traffic_limit_strategy='NO_RESET')
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = concurrently_observed_generation
+    user.traffic_limit_strategy = 'NO_RESET'
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=initially_observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.CONFLICT
+    assert api.disable_calls == []
+
+
+@pytest.mark.asyncio
+async def test_external_reset_revocation_rejects_changed_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    observed_generation = NOW + timedelta(seconds=1)
+    overlay = replace(make_overlay(), traffic_limit_strategy='NO_RESET')
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = observed_generation
+    user.traffic_limit_strategy = 'MONTH'
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.CONFLICT
+    assert api.disable_calls == []
+
+
+@pytest.mark.asyncio
+async def test_external_reset_revocation_requires_confirmation_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_generation = NOW - timedelta(days=30)
+    observed_generation = NOW + timedelta(seconds=1)
+    overlay = replace(make_overlay(), traffic_limit_strategy='NO_RESET')
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=overlay.expire_at,
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+    )
+    user.last_traffic_reset_at = observed_generation
+    user.traffic_limit_strategy = 'NO_RESET'
+    api = FakeRemnawaveApi(user)
+    api.disable_updates_status = False
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().fail_closed_external_reset(
+        PANEL_ID,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=expected_generation,
+        observed_last_traffic_reset_at=observed_generation,
+    )
+
+    assert outcome is GraceRestoreOutcome.CONFLICT
+    assert api.disable_calls == [PANEL_ID]
+    assert api.reads == [PANEL_ID, PANEL_ID]
+
+
+@pytest.mark.asyncio
+async def test_tariff_recovery_applies_active_only_from_exact_overlay_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+            external_squad_uuid=overlay.external_squad_uuid,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+    recovered = replace(
+        make_limited_billing(),
+        status='active',
+        traffic_limit_bytes=20 * GIB,
+        tariff_id=2,
+        tariff_id_known=True,
+    )
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        recovered,
+        expected_overlay=overlay,
+        require_overlay_source=True,
+        expected_last_traffic_reset_at=None,
+    )
+
+    assert len(api.updates) == 1
+    assert api.updates[0]['status'] is UserStatus.ACTIVE
+    assert api.user.traffic_limit_bytes == recovered.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+
+
+@pytest.mark.asyncio
+async def test_tariff_recovery_rejects_active_patch_after_overlay_source_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=(OTHER_SQUAD,),
+            external_squad_uuid=overlay.external_squad_uuid,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionConflict, match='outside grace'):
+        await RemnawaveGracePanelGateway().apply_billing_state(
+            replace(
+                make_limited_billing(),
+                status='active',
+                traffic_limit_bytes=20 * GIB,
+                tariff_id=2,
+                tariff_id_known=True,
+            ),
+            expected_overlay=overlay,
+            require_overlay_source=True,
+            expected_last_traffic_reset_at=None,
+        )
+
+    assert api.updates == []
+
+
+@pytest.mark.asyncio
+async def test_restore_expired_snapshot_preserves_overlay_expiry_without_status_or_expire_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_expired_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.EXPIRED,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().restore_snapshot(
+        PANEL_ID,
+        snapshot,
+        overlay,
+    )
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert len(api.updates) == 1
+    assert 'status' not in api.updates[0]
+    assert 'expire_at' not in api.updates[0]
+    assert api.user.status is UserStatus.EXPIRED
+    assert api.user.expire_at == overlay.expire_at
+    assert api.user.traffic_limit_bytes == snapshot.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+
+
+@pytest.mark.asyncio
+async def test_restore_expired_snapshot_keeps_grace_routing_while_waiting_for_derived_expired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_expired_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionPending):
+        await RemnawaveGracePanelGateway().restore_snapshot(
+            PANEL_ID,
+            snapshot,
+            overlay,
+        )
+
+    assert api.updates == []
+    assert api.user.status is UserStatus.ACTIVE
+    assert api.user.expire_at == overlay.expire_at
+    assert api.user.active_internal_squads == [{'uuid': GRACE_SQUAD}]
+    assert api.user.external_squad_uuid is None
+
+
+@pytest.mark.asyncio
+async def test_force_restore_expired_snapshot_disables_then_restores_fields_idempotently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_expired_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+    gateway = RemnawaveGracePanelGateway()
+
+    first = await gateway.restore_snapshot(
+        PANEL_ID,
+        snapshot,
+        overlay,
+        force_disable=True,
+    )
+    second = await gateway.restore_snapshot(
+        PANEL_ID,
+        snapshot,
+        overlay,
+        force_disable=True,
+    )
+
+    assert first is GraceRestoreOutcome.RESTORED
+    assert second is GraceRestoreOutcome.ALREADY_RESTORED
+    assert api.disable_calls == []
+    assert len(api.updates) == 2
+    assert api.updates[0] == {
+        'user_id': PANEL_ID,
+        'status': UserStatus.DISABLED,
+    }
+    assert 'status' not in api.updates[1]
+    assert 'expire_at' not in api.updates[1]
+    assert api.user.status is UserStatus.DISABLED
+    assert api.user.expire_at == overlay.expire_at
+    assert api.user.traffic_limit_bytes == snapshot.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+
+
+@pytest.mark.asyncio
+async def test_force_restore_retries_exact_disabled_overlay_after_field_patch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_expired_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    api.fail_update_call_numbers = {2}
+    install_fake_api(monkeypatch, api)
+    gateway = RemnawaveGracePanelGateway()
+
+    with pytest.raises(RuntimeError, match='temporary update failure'):
+        await gateway.restore_snapshot(
+            PANEL_ID,
+            snapshot,
+            overlay,
+            force_disable=True,
+        )
+
+    assert api.user.status is UserStatus.DISABLED
+    assert api.user.active_internal_squads == [{'uuid': GRACE_SQUAD}]
+
+    outcome = await gateway.restore_snapshot(
+        PANEL_ID,
+        snapshot,
+        overlay,
+        force_disable=True,
+    )
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert api.disable_calls == []
+    assert api.updates[0] == {
+        'user_id': PANEL_ID,
+        'status': UserStatus.DISABLED,
+    }
+    assert all('status' not in update for update in api.updates[1:])
+    assert api.user.status is UserStatus.DISABLED
+    assert api.user.traffic_limit_bytes == snapshot.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+
+
+@pytest.mark.asyncio
+async def test_force_restore_does_not_emit_user_disabled_for_limited_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_expired_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.LIMITED,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionPending):
+        await RemnawaveGracePanelGateway().restore_snapshot(
+            PANEL_ID,
+            snapshot,
+            overlay,
+            force_disable=True,
+        )
+
+    assert api.disable_calls == []
+    assert api.updates == []
+    assert api.user.status is UserStatus.LIMITED
+    assert api.user.active_internal_squads == [{'uuid': GRACE_SQUAD}]
+
+
+@pytest.mark.asyncio
+async def test_restore_disabled_snapshot_restores_future_expiry_in_field_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    snapshot = replace(
+        make_expired_snapshot(),
+        status='DISABLED',
+        expire_at=NOW + timedelta(days=20),
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().restore_snapshot(
+        PANEL_ID,
+        snapshot,
+        overlay,
+    )
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert api.disable_calls == []
+    assert api.updates[0] == {
+        'user_id': PANEL_ID,
+        'status': UserStatus.DISABLED,
+    }
+    assert 'status' not in api.updates[1]
+    assert api.updates[1]['expire_at'] == snapshot.expire_at
+    assert api.user.status is UserStatus.DISABLED
+    assert api.user.expire_at == snapshot.expire_at
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+
+
+@pytest.mark.asyncio
+async def test_apply_disabled_billing_does_not_patch_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_expired_overlay()
+    billing = GraceBillingState(
+        subscription_id=42,
+        remnawave_id=PANEL_ID,
+        status='disabled',
+        end_at=NOW - timedelta(days=7),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=3 * GIB,
+        device_limit=4,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == [PANEL_ID]
+    assert len(api.updates) == 1
+    assert 'status' not in api.updates[0]
+    assert 'expire_at' not in api.updates[0]
+    assert api.user.expire_at == overlay.expire_at
+
+
+@pytest.mark.asyncio
+async def test_apply_expired_billing_uses_modified_phases_without_user_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_expired_overlay()
+    billing = GraceBillingState(
+        subscription_id=42,
+        remnawave_id=PANEL_ID,
+        status='expired',
+        end_at=NOW - timedelta(days=7),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=3 * GIB,
+        device_limit=4,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == []
+    assert api.updates[0] == {
+        'user_id': PANEL_ID,
+        'status': UserStatus.DISABLED,
+    }
+    assert 'status' not in api.updates[1]
+    assert 'expire_at' not in api.updates[1]
+    assert api.user.status is UserStatus.DISABLED
+    assert api.user.expire_at == overlay.expire_at
+    assert api.user.traffic_limit_bytes == billing.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+
+
+def test_disabled_targets_do_not_synthesize_one_minute_expiry() -> None:
+    now = NOW
+    expired_at = now - timedelta(days=7)
+    snapshot = make_expired_snapshot()
+    billing = GraceBillingState(
+        subscription_id=42,
+        remnawave_id=PANEL_ID,
+        status='disabled',
+        end_at=expired_at,
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=3 * GIB,
+        device_limit=4,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    restore_target = _build_restore_target(snapshot, now=now)
+    billing_target = _build_billing_target(billing, now=now)
+
+    assert restore_target.status is UserStatus.EXPIRED
+    assert billing_target.status is UserStatus.DISABLED
+    assert restore_target.expire_at == snapshot.expire_at
+    assert billing_target.expire_at == expired_at
+    assert restore_target.expire_at != now + timedelta(minutes=1)
+    assert billing_target.expire_at != now + timedelta(minutes=1)
 
 
 @pytest.mark.parametrize('derived_status', [UserStatus.LIMITED, UserStatus.EXPIRED])
@@ -240,6 +1441,70 @@ def test_panel_target_serializer_removes_derived_statuses(
     # Панель 3.0.0 адресуется числовым id; ключ uuid схема PATCH срезает молча.
     assert payload['user_id'] == PANEL_ID
     assert 'uuid' not in payload
+
+
+@pytest.mark.parametrize('seconds_until_expiry', [-300, 0, 59, 60])
+def test_panel_target_serializer_rejects_active_expiry_inside_safety_margin(
+    seconds_until_expiry: int,
+) -> None:
+    target = _PanelTarget(
+        status=UserStatus.ACTIVE,
+        expire_at=NOW + timedelta(seconds=seconds_until_expiry),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    with pytest.raises(GracePanelError, match='not safely in the future'):
+        _serialize_panel_target(PANEL_ID, target, now=NOW)
+
+
+@pytest.mark.parametrize('seconds_until_expiry', [-300, 0, 59, 60])
+def test_panel_target_serializer_omits_unsafe_expiry_for_disabled_target(
+    seconds_until_expiry: int,
+) -> None:
+    target = _PanelTarget(
+        status=UserStatus.DISABLED,
+        expire_at=NOW + timedelta(seconds=seconds_until_expiry),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    payload = _serialize_panel_target(PANEL_ID, target, now=NOW)
+
+    assert payload['status'] is UserStatus.DISABLED
+    assert 'expire_at' not in payload
+
+
+def test_panel_target_serializer_normalizes_safe_expiry_to_utc() -> None:
+    expected_expiry = NOW + timedelta(minutes=2)
+    source_timezone = timezone(timedelta(hours=3))
+    target = _PanelTarget(
+        status=UserStatus.ACTIVE,
+        expire_at=expected_expiry.astimezone(source_timezone),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    payload = _serialize_panel_target(PANEL_ID, target, now=NOW)
+
+    assert payload['expire_at'] == expected_expiry
+    assert payload['expire_at'].tzinfo is UTC
+
+
+def test_panel_target_serializer_rejects_naive_expiry() -> None:
+    target = _PanelTarget(
+        status=UserStatus.ACTIVE,
+        expire_at=(NOW + timedelta(minutes=2)).replace(tzinfo=None),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+    with pytest.raises(GracePanelError, match='timezone-aware'):
+        _serialize_panel_target(PANEL_ID, target, now=NOW)
 
 
 @pytest.mark.asyncio
@@ -270,6 +1535,282 @@ async def test_apply_limited_billing_restores_canonical_fields_without_writing_l
     assert api.user.hwid_device_limit == billing.device_limit
     assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
     assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+    assert api.user.traffic_limit_strategy == billing.traffic_limit_strategy
+    assert api.updates == [
+        {
+            'user_id': PANEL_ID,
+            'traffic_limit_bytes': billing.traffic_limit_bytes,
+            'expire_at': billing.end_at,
+            'hwid_device_limit': billing.device_limit,
+        },
+        {
+            'user_id': PANEL_ID,
+            'active_internal_squads': list(billing.squad_uuids),
+        },
+        {
+            'user_id': PANEL_ID,
+            'external_squad_uuid': billing.external_squad_uuid,
+        },
+        {
+            'user_id': PANEL_ID,
+            'traffic_limit_strategy': TrafficLimitStrategy.MONTH,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('squad_uuids', 'external_squad_uuid', 'strategy', 'remaining_fields'),
+    [
+        (
+            (GRACE_SQUAD,),
+            None,
+            'NO_RESET',
+            ['active_internal_squads', 'external_squad_uuid', 'traffic_limit_strategy'],
+        ),
+        (
+            (REGULAR_SQUAD,),
+            None,
+            'NO_RESET',
+            ['external_squad_uuid', 'traffic_limit_strategy'],
+        ),
+        (
+            (REGULAR_SQUAD,),
+            EXTERNAL_SQUAD,
+            'NO_RESET',
+            ['traffic_limit_strategy'],
+        ),
+        (
+            (REGULAR_SQUAD,),
+            EXTERNAL_SQUAD,
+            'MONTH',
+            [],
+        ),
+    ],
+)
+async def test_limited_restore_resumes_from_each_confirmed_phase(
+    monkeypatch: pytest.MonkeyPatch,
+    squad_uuids: tuple[str, ...],
+    external_squad_uuid: str | None,
+    strategy: str,
+    remaining_fields: list[str],
+) -> None:
+    billing = make_limited_billing()
+    user = make_panel_user(
+        status=UserStatus.LIMITED,
+        expire_at=billing.end_at,
+        traffic_limit_bytes=billing.traffic_limit_bytes,
+        squad_uuids=squad_uuids,
+        external_squad_uuid=external_squad_uuid,
+        traffic_limit_strategy=strategy,
+    )
+    user.hwid_device_limit = billing.device_limit
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=make_overlay(),
+    )
+
+    assert [next(key for key in update if key != 'user_id') for update in api.updates] == remaining_fields
+    assert api.user.traffic_limit_strategy == billing.traffic_limit_strategy
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+    assert_no_derived_status_writes(api)
+
+
+@pytest.mark.asyncio
+async def test_limited_restore_waits_when_canonical_strategy_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    billing = replace(make_limited_billing(), traffic_limit_strategy=None)
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.LIMITED,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+            external_squad_uuid=overlay.external_squad_uuid,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionPending, match='strategy is unknown'):
+        await RemnawaveGracePanelGateway().apply_billing_state(
+            billing,
+            expected_overlay=overlay,
+        )
+
+    assert api.updates == []
+
+
+@pytest.mark.asyncio
+async def test_limited_restore_does_not_trust_unapplied_strategy_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    billing = make_limited_billing()
+    user = make_panel_user(
+        status=UserStatus.LIMITED,
+        expire_at=billing.end_at,
+        traffic_limit_bytes=billing.traffic_limit_bytes,
+        squad_uuids=billing.squad_uuids,
+        external_squad_uuid=billing.external_squad_uuid,
+        traffic_limit_strategy='NO_RESET',
+    )
+    user.hwid_device_limit = billing.device_limit
+    api = FakeRemnawaveApi(user)
+    api.ignore_strategy_updates = True
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionPending, match='traffic reset strategy'):
+        await RemnawaveGracePanelGateway().apply_billing_state(
+            billing,
+            expected_overlay=make_overlay(),
+        )
+
+    assert api.updates == [
+        {
+            'user_id': PANEL_ID,
+            'traffic_limit_strategy': TrafficLimitStrategy.MONTH,
+        }
+    ]
+    assert api.user.traffic_limit_strategy == 'NO_RESET'
+    assert api.reads == [PANEL_ID, PANEL_ID]
+
+
+@pytest.mark.asyncio
+async def test_limited_restore_revokes_access_if_reset_generation_changes_between_phases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.LIMITED,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+            external_squad_uuid=overlay.external_squad_uuid,
+        )
+    )
+    api.reset_after_update_call_numbers.add(1)
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        make_limited_billing(),
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == [PANEL_ID]
+    assert api.user.status is UserStatus.DISABLED
+    assert len(api.updates) == 1
+    assert api.updates[0] == {
+        'user_id': PANEL_ID,
+        'traffic_limit_bytes': make_limited_billing().traffic_limit_bytes,
+        'expire_at': make_limited_billing().end_at,
+        'hwid_device_limit': make_limited_billing().device_limit,
+    }
+    assert api.user.active_internal_squads == [{'uuid': GRACE_SQUAD}]
+    assert api.user.external_squad_uuid is None
+    assert api.user.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET.value
+
+
+@pytest.mark.asyncio
+async def test_limited_restore_revokes_unsafe_active_crash_residue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    billing = make_limited_billing()
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=billing.end_at,
+        traffic_limit_bytes=billing.traffic_limit_bytes,
+        squad_uuids=billing.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+        traffic_limit_strategy='NO_RESET',
+    )
+    user.hwid_device_limit = billing.device_limit
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == [PANEL_ID]
+    assert api.user.status is UserStatus.DISABLED
+    assert api.updates == []
+
+
+@pytest.mark.asyncio
+async def test_limited_restore_resumes_confirmed_quota_phase_inside_expiry_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    billing = replace(
+        make_limited_billing(),
+        end_at=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.LIMITED,
+        expire_at=billing.end_at,
+        traffic_limit_bytes=billing.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+        traffic_limit_strategy='NO_RESET',
+    )
+    user.hwid_device_limit = billing.device_limit
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == []
+    assert api.user.status is UserStatus.LIMITED
+    assert api.user.traffic_limit_strategy == billing.traffic_limit_strategy
+    assert [next(key for key in update if key != 'user_id') for update in api.updates] == [
+        'active_internal_squads',
+        'external_squad_uuid',
+        'traffic_limit_strategy',
+    ]
+
+
+@pytest.mark.asyncio
+async def test_limited_restore_prefers_explicit_reset_checkpoint_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    billing = make_limited_billing()
+    fresh_generation = NOW
+    overlay = replace(
+        make_overlay(),
+        expected_last_traffic_reset_at=NOW - timedelta(days=1),
+    )
+    user = make_panel_user(
+        status=UserStatus.LIMITED,
+        expire_at=billing.end_at,
+        traffic_limit_bytes=billing.traffic_limit_bytes,
+        squad_uuids=billing.squad_uuids,
+        external_squad_uuid=billing.external_squad_uuid,
+        traffic_limit_strategy=billing.traffic_limit_strategy,
+    )
+    user.hwid_device_limit = billing.device_limit
+    user.last_traffic_reset_at = fresh_generation
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+        expected_last_traffic_reset_at=fresh_generation,
+    )
+
+    assert api.disable_calls == []
+    assert api.updates == []
 
 
 @pytest.mark.asyncio
@@ -306,6 +1847,271 @@ async def test_apply_limited_billing_keeps_grace_routing_until_panel_derives_lim
     assert_no_derived_status_writes(api)
     assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
     assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+    assert api.user.traffic_limit_strategy == billing.traffic_limit_strategy
+
+
+@pytest.mark.asyncio
+async def test_apply_limited_billing_accepts_exact_previous_restored_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = make_limited_snapshot()
+    overlay = make_overlay()
+    billing = replace(
+        make_limited_billing(),
+        traffic_limit_bytes=5 * GIB,
+        squad_uuids=(OTHER_SQUAD,),
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.LIMITED,
+            expire_at=previous.expire_at,
+            traffic_limit_bytes=previous.traffic_limit_bytes,
+            squad_uuids=previous.squad_uuids,
+            external_squad_uuid=previous.external_squad_uuid,
+            traffic_limit_strategy=previous.traffic_limit_strategy,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+        expected_restored_snapshot=previous,
+    )
+
+    assert_no_derived_status_writes(api)
+    assert api.user.status is UserStatus.LIMITED
+    assert api.user.traffic_limit_bytes == billing.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': OTHER_SQUAD}]
+    assert api.user.external_squad_uuid == billing.external_squad_uuid
+    assert [next(key for key in update if key != 'user_id') for update in api.updates] == [
+        'traffic_limit_strategy',
+        'active_internal_squads',
+        'external_squad_uuid',
+        'traffic_limit_bytes',
+        'active_internal_squads',
+        'external_squad_uuid',
+        'traffic_limit_strategy',
+    ]
+
+
+@pytest.mark.asyncio
+async def test_apply_limited_billing_accepts_previous_restore_intermediate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = make_limited_snapshot()
+    overlay = make_overlay()
+    billing = replace(
+        make_limited_billing(),
+        traffic_limit_bytes=5 * GIB,
+        squad_uuids=(OTHER_SQUAD,),
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=previous.expire_at,
+            traffic_limit_bytes=previous.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+            external_squad_uuid=overlay.external_squad_uuid,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+    gateway = RemnawaveGracePanelGateway()
+
+    with pytest.raises(GracePanelTransitionPending):
+        await gateway.apply_billing_state(
+            billing,
+            expected_overlay=overlay,
+            expected_restored_snapshot=previous,
+        )
+
+    assert_no_derived_status_writes(api)
+    assert api.user.status is UserStatus.ACTIVE
+    assert api.user.traffic_limit_bytes == billing.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': GRACE_SQUAD}]
+
+    api.user.status = UserStatus.LIMITED
+    await gateway.apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+        expected_restored_snapshot=previous,
+    )
+
+    assert_no_derived_status_writes(api)
+    assert api.user.active_internal_squads == [{'uuid': OTHER_SQUAD}]
+
+
+@pytest.mark.asyncio
+async def test_apply_limited_billing_resumes_elapsed_previous_restore_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = replace(
+        make_limited_snapshot(),
+        expire_at=NOW - timedelta(minutes=1),
+    )
+    overlay = make_overlay()
+    billing = replace(
+        make_limited_billing(),
+        traffic_limit_bytes=5 * GIB,
+        squad_uuids=(OTHER_SQUAD,),
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.EXPIRED,
+            expire_at=previous.expire_at,
+            traffic_limit_bytes=previous.traffic_limit_bytes,
+            squad_uuids=previous.squad_uuids,
+            external_squad_uuid=previous.external_squad_uuid,
+            traffic_limit_strategy=previous.traffic_limit_strategy,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+    gateway = RemnawaveGracePanelGateway()
+
+    with pytest.raises(GracePanelTransitionPending, match='LIMITED quota fields'):
+        await gateway.apply_billing_state(
+            billing,
+            expected_overlay=overlay,
+            expected_restored_snapshot=previous,
+        )
+
+    assert api.user.status is UserStatus.EXPIRED
+    assert api.user.expire_at == billing.end_at
+    assert api.user.traffic_limit_bytes == billing.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': GRACE_SQUAD}]
+    assert api.user.external_squad_uuid is None
+    assert api.user.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET.value
+
+    api.user.status = UserStatus.LIMITED
+    await gateway.apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+        expected_restored_snapshot=previous,
+    )
+
+    assert api.user.active_internal_squads == [{'uuid': OTHER_SQUAD}]
+    assert api.user.external_squad_uuid == billing.external_squad_uuid
+    assert api.user.traffic_limit_strategy == billing.traffic_limit_strategy
+
+
+@pytest.mark.asyncio
+async def test_apply_limited_billing_does_not_overwrite_manual_disabled_previous_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = make_limited_snapshot()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.DISABLED,
+            expire_at=previous.expire_at,
+            traffic_limit_bytes=previous.traffic_limit_bytes,
+            squad_uuids=previous.squad_uuids,
+            external_squad_uuid=previous.external_squad_uuid,
+            traffic_limit_strategy=previous.traffic_limit_strategy,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionConflict, match='changed outside grace'):
+        await RemnawaveGracePanelGateway().apply_billing_state(
+            replace(make_limited_billing(), traffic_limit_bytes=5 * GIB),
+            expected_overlay=make_overlay(),
+            expected_restored_snapshot=previous,
+        )
+
+    assert api.updates == []
+    assert api.disable_calls == []
+    assert api.user.status is UserStatus.DISABLED
+
+
+@pytest.mark.asyncio
+async def test_apply_limited_billing_rejects_manual_state_even_with_previous_restore_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    previous = make_limited_snapshot()
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=previous.expire_at,
+            traffic_limit_bytes=previous.traffic_limit_bytes,
+            squad_uuids=(OTHER_SQUAD,),
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionConflict, match='changed outside grace'):
+        await RemnawaveGracePanelGateway().apply_billing_state(
+            replace(make_limited_billing(), traffic_limit_bytes=5 * GIB),
+            expected_overlay=overlay,
+            expected_restored_snapshot=previous,
+        )
+
+    assert api.updates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('status', 'squad_uuids'),
+    [
+        (UserStatus.LIMITED, (REGULAR_SQUAD,)),
+        (UserStatus.ACTIVE, (GRACE_SQUAD,)),
+    ],
+)
+@pytest.mark.parametrize(
+    ('current_reset_at', 'current_used_traffic'),
+    [
+        (NOW, 10 * GIB),
+        (NOW - timedelta(days=10), 9 * GIB),
+    ],
+)
+async def test_apply_limited_billing_rejects_stale_restore_proof_after_reset_or_usage_drop(
+    monkeypatch: pytest.MonkeyPatch,
+    status: UserStatus,
+    squad_uuids: tuple[str, ...],
+    current_reset_at: datetime,
+    current_used_traffic: int,
+) -> None:
+    previous_reset_at = NOW - timedelta(days=10)
+    previous = replace(
+        make_limited_snapshot(),
+        last_traffic_reset_at=previous_reset_at,
+    )
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=status,
+            expire_at=previous.expire_at,
+            traffic_limit_bytes=previous.traffic_limit_bytes,
+            squad_uuids=squad_uuids,
+            external_squad_uuid=(
+                previous.external_squad_uuid if status is UserStatus.LIMITED else overlay.external_squad_uuid
+            ),
+        )
+    )
+    api.user.last_traffic_reset_at = current_reset_at
+    api.user.used_traffic_bytes = current_used_traffic
+    api.user.user_traffic.used_traffic_bytes = current_used_traffic
+    install_fake_api(monkeypatch, api)
+
+    operation = RemnawaveGracePanelGateway().apply_billing_state(
+        replace(
+            make_limited_billing(),
+            traffic_limit_bytes=5 * GIB,
+            squad_uuids=(OTHER_SQUAD,),
+        ),
+        expected_overlay=overlay,
+        expected_restored_snapshot=previous,
+    )
+    if current_reset_at != previous_reset_at:
+        await operation
+        assert api.disable_calls == [PANEL_ID]
+        assert api.user.status is UserStatus.DISABLED
+    else:
+        with pytest.raises(GracePanelTransitionConflict, match='changed outside grace'):
+            await operation
+        assert api.disable_calls == []
+
+    assert api.updates == []
 
 
 @pytest.mark.asyncio
@@ -342,6 +2148,39 @@ async def test_restore_limited_snapshot_recognizes_safe_active_intermediate(
     assert_no_derived_status_writes(api)
     assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
     assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+    assert api.user.traffic_limit_strategy == snapshot.traffic_limit_strategy
+
+
+@pytest.mark.asyncio
+async def test_restore_elapsed_limited_snapshot_revokes_unsafe_active_crash_residue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = replace(
+        make_limited_snapshot(),
+        expire_at=NOW - timedelta(minutes=1),
+    )
+    overlay = make_overlay()
+    user = make_panel_user(
+        status=UserStatus.ACTIVE,
+        expire_at=snapshot.expire_at,
+        traffic_limit_bytes=snapshot.traffic_limit_bytes,
+        squad_uuids=snapshot.squad_uuids,
+        external_squad_uuid=overlay.external_squad_uuid,
+        traffic_limit_strategy='NO_RESET',
+    )
+    api = FakeRemnawaveApi(user)
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().restore_snapshot(
+        PANEL_ID,
+        snapshot,
+        overlay,
+    )
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert api.disable_calls == [PANEL_ID]
+    assert api.user.status is UserStatus.DISABLED
+    assert api.updates == []
 
 
 @pytest.mark.asyncio
@@ -424,6 +2263,7 @@ async def test_apply_limited_billing_updates_device_limit_even_when_other_fields
             traffic_limit_bytes=billing.traffic_limit_bytes,
             squad_uuids=billing.squad_uuids,
             external_squad_uuid=billing.external_squad_uuid,
+            traffic_limit_strategy=billing.traffic_limit_strategy,
         )
     )
     install_fake_api(monkeypatch, api)
@@ -446,25 +2286,15 @@ async def test_apply_limited_billing_updates_device_limit_even_when_other_fields
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('billing_status', 'billing_end_at', 'expected_status'),
-    [
-        ('active', NOW + timedelta(days=20), UserStatus.ACTIVE),
-        ('disabled', NOW + timedelta(days=20), UserStatus.DISABLED),
-    ],
-)
-async def test_apply_non_derived_billing_status_remains_one_phase(
+async def test_apply_active_billing_status_remains_one_phase(
     monkeypatch: pytest.MonkeyPatch,
-    billing_status: str,
-    billing_end_at: datetime,
-    expected_status: UserStatus,
 ) -> None:
     overlay = make_overlay()
     billing = GraceBillingState(
         subscription_id=42,
         remnawave_id=PANEL_ID,
-        status=billing_status,
-        end_at=billing_end_at,
+        status='active',
+        end_at=NOW + timedelta(days=20),
         traffic_limit_bytes=10 * GIB,
         used_traffic_bytes=3 * GIB,
         device_limit=4,
@@ -487,8 +2317,9 @@ async def test_apply_non_derived_billing_status_remains_one_phase(
     )
 
     assert len(api.updates) == 1
-    assert api.updates[0]['status'] is expected_status
+    assert api.updates[0]['status'] is UserStatus.ACTIVE
     assert api.updates[0]['user_id'] == PANEL_ID
+    assert api.disable_calls == []
     assert_no_derived_status_writes(api)
     assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
     assert api.user.external_squad_uuid == EXTERNAL_SQUAD
@@ -499,24 +2330,32 @@ async def test_apply_overlay_detaches_external_squad_first_and_addresses_the_num
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     overlay = make_overlay()
-    api = FakeRemnawaveApi(
-        make_panel_user(
-            status=UserStatus.EXPIRED,
-            expire_at=NOW - timedelta(days=1),
-            traffic_limit_bytes=10 * GIB,
-            squad_uuids=(REGULAR_SQUAD,),
-            external_squad_uuid=EXTERNAL_SQUAD,
-        )
+    source_user = make_panel_user(
+        status=UserStatus.EXPIRED,
+        expire_at=NOW - timedelta(days=1),
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+        traffic_limit_strategy='MONTH',
     )
+    api = FakeRemnawaveApi(source_user)
     install_fake_api(monkeypatch, api)
 
-    await RemnawaveGracePanelGateway().apply_overlay(PANEL_ID, overlay)
+    await RemnawaveGracePanelGateway().apply_overlay(
+        PANEL_ID,
+        overlay,
+        expected_source=_panel_user_to_snapshot(source_user),
+    )
 
     # Отцепление внешнего сквада — отдельный первый PATCH: ретрай A039 без
     # externalSquadUuid не должен случайно выдать неограниченный доступ.
     assert api.updates[0] == {'user_id': PANEL_ID, 'external_squad_uuid': None}
-    assert [update['user_id'] for update in api.updates] == [PANEL_ID, PANEL_ID]
-    assert api.updates[1]['status'] is UserStatus.ACTIVE
+    assert [update['user_id'] for update in api.updates] == [PANEL_ID, PANEL_ID, PANEL_ID]
+    assert api.updates[1] == {
+        'user_id': PANEL_ID,
+        'traffic_limit_strategy': TrafficLimitStrategy.NO_RESET,
+    }
+    assert api.updates[2]['status'] is UserStatus.ACTIVE
     assert api.user.active_internal_squads == [{'uuid': GRACE_SQUAD}]
     assert api.user.external_squad_uuid is None
 
@@ -600,12 +2439,12 @@ def test_unsupported_snapshot_version_is_rejected_instead_of_guessed() -> None:
         _model_to_session(row)
 
 
-def test_saving_a_v2_row_upgrades_it_to_v3_without_erasing_the_historical_uuid() -> None:
+def test_saving_an_unresolved_v2_row_keeps_its_version_and_historical_uuid() -> None:
     session = _model_to_session(make_v2_session_row())
 
     values = _session_values(session)
 
-    assert values['snapshot_version'] == 3
+    assert values['snapshot_version'] == 2
     assert values['remnawave_id'] == PANEL_ID
     # UPDATE не должен трогать историческую колонку: новый код uuid не знает, и
     # запись None стёрла бы единственный аудиторский след доапгрейдной сессии.
@@ -784,3 +2623,84 @@ async def test_get_open_no_longer_explodes_on_a_session_without_panel_id(monkeyp
 
         assert session is not None
         assert session.remnawave_id == PANEL_ID
+
+
+@pytest.mark.asyncio
+async def test_apply_future_disabled_billing_uses_action_then_field_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    canonical_expire_at = NOW + timedelta(days=20)
+    billing = GraceBillingState(
+        subscription_id=42,
+        remnawave_id=PANEL_ID,
+        status='disabled',
+        end_at=canonical_expire_at,
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=3 * GIB,
+        device_limit=4,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == [PANEL_ID]
+    assert len(api.updates) == 1
+    assert 'status' not in api.updates[0]
+    assert api.updates[0]['expire_at'] == canonical_expire_at
+    assert api.user.status is UserStatus.DISABLED
+    assert api.user.expire_at == canonical_expire_at
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+
+
+@pytest.mark.asyncio
+async def test_apply_disabled_billing_from_limited_uses_disable_action_before_larger_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    overlay = make_overlay()
+    billing = GraceBillingState(
+        subscription_id=42,
+        remnawave_id=PANEL_ID,
+        status='disabled',
+        end_at=NOW - timedelta(days=1),
+        traffic_limit_bytes=20 * GIB,
+        used_traffic_bytes=11 * GIB,
+        device_limit=4,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.LIMITED,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    await RemnawaveGracePanelGateway().apply_billing_state(
+        billing,
+        expected_overlay=overlay,
+    )
+
+    assert api.disable_calls == [PANEL_ID]
+    assert len(api.updates) == 1
+    assert 'status' not in api.updates[0]
+    assert 'expire_at' not in api.updates[0]
+    assert api.user.status is UserStatus.DISABLED
+    assert api.user.traffic_limit_bytes == billing.traffic_limit_bytes

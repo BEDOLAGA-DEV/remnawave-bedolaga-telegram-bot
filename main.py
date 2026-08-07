@@ -461,8 +461,18 @@ async def main():
         ) as stage:
             try:
                 await grace_access_runtime.start()
-                stage.log(f'Режим: {grace_access_runtime.mode.value}')
+                health = await grace_access_runtime.health()
+                stage.log(
+                    f'Режим: {grace_access_runtime.mode.value}; '
+                    f'grant_ready={health["grant_ready"]}, protection_ready={health["protection_ready"]}, '
+                    f'reconciler_running={health["reconciler_running"]}, open_sessions={health["open_sessions"]}'
+                )
+                if health['open_sessions'] and not health['protection_ready']:
+                    raise RuntimeError(str(health['reason'] or 'Grace protection is not ready'))
             except Exception as e:
+                failed_health = await grace_access_runtime.health()
+                if failed_health['open_sessions'] and not failed_health['protection_ready']:
+                    raise
                 stage.warning(f'Grace-доступ безопасно отключён из-за ошибки конфигурации: {e}')
                 logger.error('Ошибка запуска grace-доступа; основной бот продолжает работу', error=e)
 

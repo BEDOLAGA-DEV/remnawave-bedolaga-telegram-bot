@@ -2592,6 +2592,10 @@ class GraceAccessSessionModel(Base):
             'version > 0',
             name='ck_grace_access_sessions_version',
         ),
+        CheckConstraint(
+            'remnawave_id > 0',
+            name='ck_grace_access_sessions_remnawave_id_positive',
+        ),
         Index(
             'uq_grace_access_sessions_one_open',
             'subscription_id',
@@ -2611,6 +2615,8 @@ class GraceAccessSessionModel(Base):
     # Панельная идентичность сессии (Remnawave 3.0.0: числовой id). Nullable на
     # время бэкфила: колонку нельзя добавить сразу NOT NULL на живой таблице, а
     # флип делается отдельной ревизией после проверки нулей.
+    # Runtime/migration 0105 require a positive id; nullable remains in the
+    # ORM model so the pre-0105 backfill can still load and repair legacy rows.
     remnawave_id = Column(BigInteger, nullable=True, index=True)
     # Ослаблено до nullable в 0104: панель 3.0.0 не отдаёт uuid, поэтому новые
     # сессии его физически не могут заполнить. Историческое поле.
