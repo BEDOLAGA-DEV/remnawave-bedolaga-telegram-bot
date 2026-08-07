@@ -33,6 +33,79 @@ ETOPLATEZHI_STATUS_MAP: dict[str, tuple[str, bool]] = {
 }
 
 
+_RECURRING_METHOD_CODE_MAP = {
+    'sberpay': 'sberpay',
+    'sbp': 'sbp-qr',
+    'card': 'card-partner',
+    'yoomoney': 'yoomoney-wallet',
+}
+
+
+def _recurring_method_code_from_payment(payment, payload):
+    """Resolve EtoPlatezhi recurring endpoint key from the payment method.
+
+    Reliable source is the original payment.payment_method (set at creation
+    from the forced method); callback terminal.method_code is a fallback.
+    Maps to the recurring endpoint key
+    (card-partner/sberpay/sbp-qr/yoomoney-wallet). Returns None when unknown.
+    Fixes NULL method_code -> card-partner default -> error 3061 for tokens
+    registered via a non-card method.
+    """
+    pm = (getattr(payment, 'payment_method', None) or '').lower()
+    code = _RECURRING_METHOD_CODE_MAP.get(pm)
+    if code:
+        return code
+    if isinstance(payload, dict):
+        terminal = payload.get('terminal')
+        if isinstance(terminal, dict):
+            raw = (terminal.get('method_code') or '').lower()
+            return _RECURRING_METHOD_CODE_MAP.get(raw) or (terminal.get('method_code') or None)
+    return None
+
+
+_REFUND_RAW_STATUSES = {'refunded', 'reversed', 'partially refunded'}
+_FULL_REFUND_STATUSES = {'refunded', 'reversed'}
+
+
+async def _revoke_access_on_refund(db, payment, etoplatezhi_status):
+    """Full refund/reversal -> disable Remnawave access + mark subscription
+    expired and stop autopay. Best-effort; never raises (webhook returns 200)."""
+    try:
+        from sqlalchemy import select
+
+        from app.database.crud.user import get_user_by_id
+        from app.database.models import Subscription
+        from app.services.subscription_service import SubscriptionService
+
+        user_id = getattr(payment, 'user_id', None)
+        if not user_id:
+            return
+        user = await get_user_by_id(db, user_id)
+        # Remnawave 3.0 identifies panel users by a numeric id (remnawave_id);
+        # disable_remnawave_user expects it. remnawave_uuid is legacy audit data.
+        panel_user_id = getattr(user, 'remnawave_id', None) if user else None
+        if panel_user_id:
+            await SubscriptionService().disable_remnawave_user(panel_user_id, db=db)
+        sub = (await db.execute(select(Subscription).where(Subscription.user_id == user_id))).scalars().first()
+        if sub is not None:
+            sub.status = 'expired'
+            sub.autopay_enabled = False
+            sub.updated_at = datetime.now(UTC)
+            await db.flush()
+        logger.warning(
+            'Etoplatezhi refund: access revoked',
+            order_id=getattr(payment, 'order_id', None),
+            user_id=user_id,
+            etoplatezhi_status=etoplatezhi_status,
+        )
+    except Exception as e:
+        logger.error(
+            'Etoplatezhi refund: revoke failed',
+            error=e,
+            order_id=getattr(payment, 'order_id', None),
+        )
+
+
 class EtoplatezhiPaymentMixin:
     """Mixin для работы с платежами Etoplatezhi."""
 
@@ -105,12 +178,24 @@ class EtoplatezhiPaymentMixin:
 
             lifetime = settings.ETOPLATEZHI_PAYMENT_LIFETIME_MINUTES
 
-            # Определяем force_payment_method по типу подметода
-            force_method = None
-            if payment_method_type == 'sbp':
-                force_method = 'sbp'
-            elif payment_method_type == 'card':
-                force_method = 'card'
+            # Определяем force_payment_method по типу подметода.
+            # Коды берутся из справочника ETO (ru_pm_codes.html). На нашем
+            # проекте активны: card-partner, sberpay, yoomoney-wallet, sbp-qr.
+            # Неизвестный / None тип → None (полный выбор метода на Payment Page).
+            force_method_map = {
+                'sbp': 'sbp-qr',
+                'card': 'card-partner',
+                'sberpay': 'sberpay',
+                'yoomoney': 'yoomoney-wallet',
+            }
+            force_method = force_method_map.get(payment_method_type or '')
+
+            # Если включены рекуррентные платежи EtoPlatezhi и они обязательны —
+            # регистрируем карту в этой же транзакции (stored_card_type=3). После
+            # успешного callback сохраняем recurring.id в saved_payment_methods.
+            register_recurring = bool(
+                settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+            )
 
             # Строим URL для редиректа на платёжную страницу
             payment_url = etoplatezhi_service.build_payment_url(
@@ -126,6 +211,7 @@ class EtoplatezhiPaymentMixin:
                 force_payment_method=force_method,
                 customer_email=email,
                 language_code=language,
+                register_recurring=register_recurring,
             )
 
             logger.info(
@@ -226,8 +312,11 @@ class EtoplatezhiPaymentMixin:
                 return False
             payment = locked
 
-            # Проверка дублирования (re-check from locked row)
-            if payment.is_paid:
+            # Проверка дублирования (re-check from locked row).
+            # Exception: refund/reversal postbacks arrive AFTER the payment is
+            # paid — must NOT short-circuit them, else refunds never revoke
+            # access. Refund statuses fall through to _revoke_access_on_refund.
+            if payment.is_paid and etoplatezhi_status not in _REFUND_RAW_STATUSES:
                 logger.info('Etoplatezhi callback: платеж уже обработан', order_id=payment.order_id)
                 return True
 
@@ -243,12 +332,19 @@ class EtoplatezhiPaymentMixin:
             # Извлекаем сумму из callback: payment.sum.amount (в минорных единицах)
             sum_data = payment_data.get('sum', {})
 
+            # Сохраняем operation (code+message = причина деклайна) и recurring.
+            # Раньше выкидывались -> в БД был голый {"status":"error"} без причины.
+            operation_data = payload.get('operation') or {}
             callback_payload = {
                 'etoplatezhi_payment_id': etoplatezhi_payment_id,
                 'status': etoplatezhi_status,
                 'sum': sum_data,
                 'customer': payload.get('customer'),
                 'project_id': payload.get('project_id'),
+                'operation': operation_data,
+                'recurring': payload.get('recurring'),
+                'decline_code': operation_data.get('code'),
+                'decline_message': operation_data.get('message'),
             }
 
             # Проверка суммы ДО обновления статуса
@@ -283,6 +379,12 @@ class EtoplatezhiPaymentMixin:
                 payment.callback_payload = callback_payload
                 payment.updated_at = datetime.now(UTC)
                 await db.flush()
+
+                # Persist saved card for recurring charges if the platform
+                # included a ``recurring`` block in the callback (i.e. the
+                # initial payment was registered with stored_card_type=3).
+                await self._save_etoplatezhi_recurring_card(db, payment, payload)
+
                 return await self._finalize_etoplatezhi_payment(db, payment, trigger='webhook')
 
             # Для не-success статусов можно безопасно коммитить
@@ -294,11 +396,137 @@ class EtoplatezhiPaymentMixin:
                 callback_payload=callback_payload,
             )
 
+            # Full refund / reversal -> revoke the user's access immediately.
+            if etoplatezhi_status in _FULL_REFUND_STATUSES:
+                await _revoke_access_on_refund(db, payment, etoplatezhi_status)
+
             return True
 
         except Exception as e:
             logger.exception('Etoplatezhi callback: ошибка обработки', error=e)
             return False
+
+    async def _save_etoplatezhi_recurring_card(
+        self,
+        db: AsyncSession,
+        payment: Any,
+        payload: dict[str, Any],
+    ) -> None:
+        """Если в callback'е есть ``recurring`` → создаём saved-card запись.
+
+        Вызывается только после успешного платежа. Промахи логируются,
+        но не валят основную обработку платежа.
+        """
+        if not settings.ETOPLATEZHI_RECURRENT_ENABLED:
+            return
+
+        recurring = payload.get('recurring') if isinstance(payload, dict) else None
+        if not isinstance(recurring, dict):
+            return
+        recurring_id = recurring.get('id')
+        if recurring_id in (None, ''):
+            return
+
+        user_id = getattr(payment, 'user_id', None)
+        if not user_id:
+            # Guest landing flow: user is created later in fulfill_purchase.
+            # Stash the recurring + account block in payment.metadata_json so the
+            # guest fulfillment step can pick it up and create the saved card
+            # once user_id is resolved.
+            try:
+                existing_metadata = payment.metadata_json or {}
+                if not isinstance(existing_metadata, dict):
+                    existing_metadata = {}
+                existing_metadata['recurring'] = recurring
+                existing_metadata['account'] = payload.get('account') if isinstance(payload, dict) else None
+                _mc = _recurring_method_code_from_payment(payment, payload)
+                if _mc:
+                    existing_metadata['method_code'] = _mc
+                payment.metadata_json = existing_metadata
+                await db.flush()
+                logger.info(
+                    'Etoplatezhi: recurring data сохранён в metadata для guest платежа — карта создастся в fulfill',
+                    order_id=getattr(payment, 'order_id', None),
+                    recurring_id=recurring_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    'Etoplatezhi: не удалось сохранить recurring data в metadata',
+                    order_id=getattr(payment, 'order_id', None),
+                    error=e,
+                )
+            return
+
+        account = payload.get('account') if isinstance(payload, dict) else None
+        if not isinstance(account, dict):
+            account = {}
+
+        # EtoPlatezhi has distinct recurring endpoints per payment method —
+        # resolve the endpoint key from payment.payment_method so the recurring
+        # provider can route (card-partner / sberpay / sbp-qr / yoomoney-wallet).
+        method_code = _recurring_method_code_from_payment(payment, payload)
+
+        number = account.get('number') or ''
+        card_first6 = number[:6] if len(number) >= 6 else None
+        card_last4 = number[-4:] if len(number) >= 4 else None
+        card_type = (account.get('type') or '').lower() or None
+        expiry_month = account.get('expiry_month')
+        expiry_year = account.get('expiry_year')
+        card_holder = account.get('card_holder')
+
+        title = None
+        if card_last4:
+            type_label = (card_type or 'card').capitalize()
+            title = f'{type_label} *{card_last4}'
+        elif card_holder:
+            title = str(card_holder)
+
+        valid_thru_raw = recurring.get('valid_thru')
+        valid_thru = None
+        if isinstance(valid_thru_raw, str) and valid_thru_raw:
+            try:
+                valid_thru = datetime.fromisoformat(valid_thru_raw.replace('Z', '+00:00'))
+            except ValueError:
+                valid_thru = None
+
+        from app.database.crud.saved_payment_method import create_saved_payment_method
+
+        try:
+            # commit=False keeps the FOR UPDATE lock on the payment row held by
+            # the caller (process_etoplatezhi_callback) until _finalize_etoplatezhi_payment
+            # issues its single commit. Otherwise a concurrent webhook delivery
+            # could reprocess the same payment between save_card and finalize.
+            saved = await create_saved_payment_method(
+                db=db,
+                user_id=user_id,
+                provider='etoplatezhi',
+                provider_token=str(recurring_id),
+                method_type='bank_card',
+                card_first6=card_first6,
+                card_last4=card_last4,
+                card_type=card_type,
+                card_expiry_month=str(expiry_month) if expiry_month is not None else None,
+                card_expiry_year=str(expiry_year) if expiry_year is not None else None,
+                title=title,
+                valid_thru=valid_thru,
+                method_code=method_code,
+                commit=False,
+            )
+            if saved:
+                logger.info(
+                    'Etoplatezhi: карта сохранена для рекуррентных платежей',
+                    saved_method_id=saved.id,
+                    user_id=user_id,
+                    recurring_id=str(recurring_id),
+                    card_last4=card_last4,
+                )
+        except Exception as e:  # pragma: no cover - safety net
+            logger.warning(
+                'Etoplatezhi: не удалось сохранить карту для рекуррентных платежей',
+                user_id=user_id,
+                recurring_id=str(recurring_id),
+                error=e,
+            )
 
     async def _finalize_etoplatezhi_payment(
         self,
