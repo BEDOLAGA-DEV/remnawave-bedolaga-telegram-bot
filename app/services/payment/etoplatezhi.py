@@ -74,19 +74,46 @@ async def _revoke_access_on_refund(db, payment, etoplatezhi_status):
         from sqlalchemy import select
 
         from app.database.crud.user import get_user_by_id
-        from app.database.models import Subscription
+        from app.database.models import Subscription, SubscriptionStatus
         from app.services.subscription_service import SubscriptionService
 
         user_id = getattr(payment, 'user_id', None)
         if not user_id:
             return
         user = await get_user_by_id(db, user_id)
+
+        # The etoplatezhi payment has no direct subscription linkage (it's a
+        # balance topup), so target the most-recent ACTIVE subscription; fall
+        # back to the most-recent subscription of any status.
+        sub = (
+            await db.execute(
+                select(Subscription)
+                .where(
+                    Subscription.user_id == user_id,
+                    Subscription.status == SubscriptionStatus.ACTIVE.value,
+                )
+                .order_by(Subscription.created_at.desc())
+            )
+        ).scalars().first()
+        if sub is None:
+            sub = (
+                await db.execute(
+                    select(Subscription)
+                    .where(Subscription.user_id == user_id)
+                    .order_by(Subscription.created_at.desc())
+                )
+            ).scalars().first()
+
         # Remnawave 3.0 identifies panel users by a numeric id (remnawave_id);
-        # disable_remnawave_user expects it. remnawave_uuid is legacy audit data.
-        panel_user_id = getattr(user, 'remnawave_id', None) if user else None
+        # disable_remnawave_user expects it. In multi-tariff mode the panel id
+        # lives on the subscription; single-tariff keeps it on the user.
+        if settings.is_multi_tariff_enabled() and sub is not None:
+            panel_user_id = getattr(sub, 'remnawave_id', None)
+        else:
+            panel_user_id = getattr(user, 'remnawave_id', None) if user else None
         if panel_user_id:
             await SubscriptionService().disable_remnawave_user(panel_user_id, db=db)
-        sub = (await db.execute(select(Subscription).where(Subscription.user_id == user_id))).scalars().first()
+
         if sub is not None:
             sub.status = 'expired'
             sub.autopay_enabled = False
@@ -566,6 +593,31 @@ class EtoplatezhiPaymentMixin:
             provider_name='etoplatezhi',
         )
         if guest_result is not None:
+            # Backlink etoplatezhi_payments.user_id from the (now-fulfilled)
+            # guest_purchase. The webhook created the eto row with user_id=NULL
+            # because at Payment Page time we don't know the buyer; after guest
+            # fulfillment the user exists. Without this link the row is invisible
+            # in /admin/payments AND refund-revoke early-returns on guest refunds.
+            try:
+                from sqlalchemy import select
+
+                from app.database.models import GuestPurchase
+
+                _guest_user_id = (
+                    await db.execute(select(GuestPurchase.user_id).where(GuestPurchase.payment_id == payment.order_id))
+                ).scalar_one_or_none()
+                if _guest_user_id:
+                    await etoplatezhi_crud.link_etoplatezhi_payment_to_user(
+                        db,
+                        order_id=payment.order_id,
+                        user_id=int(_guest_user_id),
+                    )
+            except Exception as e:  # pragma: no cover - safety net
+                logger.warning(
+                    'Etoplatezhi: не удалось привязать user_id к платежу',
+                    order_id=payment.order_id,
+                    error=e,
+                )
             return True
 
         # Ensure paid fields are set (idempotent — caller may have already set them)

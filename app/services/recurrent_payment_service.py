@@ -227,6 +227,12 @@ async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:
                 ),
                 Subscription.autopay_enabled == True,
                 Subscription.is_trial == False,
+                # Layer 2 sanity-guard: подписка должна "пожить" хотя бы 12ч
+                # перед тем как мы начнём списывать через recurring карту.
+                # Защищает от каскада "юзер только что взял триал → дубль →
+                # extend_subscription flip is_trial=False → autopay сразу
+                # списывает". Кейс: 19₽ trial → 7 мин → 299₽ recurring.
+                Subscription.start_date <= current_time - timedelta(hours=12),
             )
         )
     )
@@ -256,10 +262,10 @@ async def _charge_etoplatezhi_card(
         set_etoplatezhi_payment_id_if_missing,
         update_etoplatezhi_payment_status,
     )
-    from app.services.payment.recurring.etoplatezhi_provider import EtoPlatezhiRecurringProvider
+    from app.services.payment.recurring import get_provider
 
-    provider = EtoPlatezhiRecurringProvider()
-    if not provider.is_enabled():
+    provider = get_provider('etoplatezhi')
+    if not provider or not provider.is_enabled():
         return 'failed'
 
     provider_token = saved_method.provider_token or saved_method.yookassa_payment_method_id
@@ -276,6 +282,16 @@ async def _charge_etoplatezhi_card(
     # пополнение молча потеряется.
     try:
         existing = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+        if existing and (existing.is_paid or (existing.status or '').lower() in {'success', 'paid'}):
+            # Restart/retry: детерминированный idem_key указывает на уже
+            # оплаченную запись — второй charge был бы дублем списания.
+            logger.info(
+                'Etoplatezhi рекуррент: платёж уже оплачен, пропускаем повторный charge',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                order_id=idem_key,
+            )
+            return 'created'
         if not existing:
             await create_etoplatezhi_payment(
                 db=db,
