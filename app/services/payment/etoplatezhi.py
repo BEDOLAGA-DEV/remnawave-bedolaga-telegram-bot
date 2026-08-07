@@ -86,23 +86,31 @@ async def _revoke_access_on_refund(db, payment, etoplatezhi_status):
         # balance topup), so target the most-recent ACTIVE subscription; fall
         # back to the most-recent subscription of any status.
         sub = (
-            await db.execute(
-                select(Subscription)
-                .where(
-                    Subscription.user_id == user_id,
-                    Subscription.status == SubscriptionStatus.ACTIVE.value,
-                )
-                .order_by(Subscription.created_at.desc())
-            )
-        ).scalars().first()
-        if sub is None:
-            sub = (
+            (
                 await db.execute(
                     select(Subscription)
-                    .where(Subscription.user_id == user_id)
+                    .where(
+                        Subscription.user_id == user_id,
+                        Subscription.status == SubscriptionStatus.ACTIVE.value,
+                    )
                     .order_by(Subscription.created_at.desc())
                 )
-            ).scalars().first()
+            )
+            .scalars()
+            .first()
+        )
+        if sub is None:
+            sub = (
+                (
+                    await db.execute(
+                        select(Subscription)
+                        .where(Subscription.user_id == user_id)
+                        .order_by(Subscription.created_at.desc())
+                    )
+                )
+                .scalars()
+                .first()
+            )
 
         # Remnawave 3.0 identifies panel users by a numeric id (remnawave_id);
         # disable_remnawave_user expects it. In multi-tariff mode the panel id
