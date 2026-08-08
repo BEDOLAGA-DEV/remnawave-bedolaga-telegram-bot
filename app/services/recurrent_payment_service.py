@@ -1,8 +1,10 @@
-"""Сервис рекуррентных автоплатежей через YooKassa.
+"""Сервис рекуррентных автоплатежей через сохранённые карты.
 
 Находит подписки с autopay, у которых недостаточно баланса для продления,
-и пополняет баланс с сохранённой карты. Существующий autopay в
-monitoring_service затем спишет баланс и продлит подписку.
+и пополняет баланс с сохранённой карты. Поставщик карты выбирается по
+``saved_payment_methods.provider`` — поддерживаются YooKassa и EtoPlatezhi.
+Существующий autopay в monitoring_service затем спишет баланс и продлит
+подписку.
 """
 
 from __future__ import annotations
@@ -81,11 +83,12 @@ async def process_recurrent_payments(db: AsyncSession, bot: Bot | None = None) -
     Returns:
         dict: Статистика обработки
     """
-    if not settings.YOOKASSA_RECURRENT_ENABLED:
-        return {'skipped': True, 'reason': 'recurrent_disabled'}
+    # Provider-agnostic gate: proceed if ANY recurring provider (YooKassa or
+    # EtoPlatezhi) is configured. Skip only when none can charge saved cards.
+    from app.services.payment.recurring import is_any_recurring_enabled
 
-    if not settings.YOOKASSA_ENABLED:
-        return {'skipped': True, 'reason': 'yookassa_disabled'}
+    if not is_any_recurring_enabled():
+        return {'skipped': True, 'reason': 'recurrent_disabled'}
 
     if not settings.ENABLE_AUTOPAY:
         return {'skipped': True, 'reason': 'autopay_disabled'}
@@ -224,10 +227,165 @@ async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:
                 ),
                 Subscription.autopay_enabled == True,
                 Subscription.is_trial == False,
+                # Layer 2 sanity-guard: подписка должна "пожить" хотя бы 12ч
+                # перед тем как мы начнём списывать через recurring карту.
+                # Защищает от каскада "юзер только что взял триал → дубль →
+                # extend_subscription flip is_trial=False → autopay сразу
+                # списывает". Кейс: 19₽ trial → 7 мин → 299₽ recurring.
+                Subscription.start_date <= current_time - timedelta(hours=12),
             )
         )
     )
     return list(result.scalars().all())
+
+
+async def _charge_etoplatezhi_card(
+    db: AsyncSession,
+    subscription: Subscription,
+    user: User,
+    bot: Bot | None,
+    saved_method,
+    *,
+    topup_amount_kopeks: int,
+    description: str,
+    metadata: dict,
+    idem_key: str,
+) -> str:
+    """Списать пополнение с сохранённой EtoPlatezhi-карты (recurring_id).
+
+    Возвращает 'created' при успешной инициации списания, иначе 'failed'
+    (вызывающий цикл пробует следующую карту).
+    """
+    from app.database.crud.etoplatezhi import (
+        create_etoplatezhi_payment,
+        get_etoplatezhi_payment_by_order_id,
+        set_etoplatezhi_payment_id_if_missing,
+        update_etoplatezhi_payment_status,
+    )
+    from app.services.payment.recurring import get_provider
+
+    provider = get_provider('etoplatezhi')
+    if not provider or not provider.is_enabled():
+        return 'failed'
+
+    provider_token = saved_method.provider_token or saved_method.yookassa_payment_method_id
+    if not provider_token:
+        return 'failed'
+
+    # Per-card method_code so the provider routes to the correct recurring
+    # endpoint (card-partner / sberpay / sbp-qr / yoomoney-wallet).
+    per_card_meta = dict(metadata)
+    per_card_meta['method_code'] = getattr(saved_method, 'method_code', None)
+
+    # Предсоздать pending-запись и закоммитить ДО charge: webhook ищет платёж
+    # по order_id из новой сессии — row должен быть виден до коллбека, иначе
+    # пополнение молча потеряется.
+    try:
+        existing = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+        if existing and (existing.is_paid or (existing.status or '').lower() in {'success', 'paid'}):
+            # Restart/retry: детерминированный idem_key указывает на уже
+            # оплаченную запись — второй charge был бы дублем списания.
+            logger.info(
+                'Etoplatezhi рекуррент: платёж уже оплачен, пропускаем повторный charge',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                order_id=idem_key,
+            )
+            return 'created'
+        if not existing:
+            await create_etoplatezhi_payment(
+                db=db,
+                user_id=user.id,
+                order_id=idem_key,
+                amount_kopeks=topup_amount_kopeks,
+                currency='RUB',
+                description=description,
+                payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
+                metadata_json=per_card_meta,
+            )
+    except Exception as e:
+        logger.warning(
+            'Не удалось предсоздать запись etoplatezhi, пропускаем карту',
+            user_id=user.id,
+            subscription_id=subscription.id,
+            error=e,
+        )
+        return 'failed'
+
+    charge = await provider.charge(
+        provider_token=str(provider_token),
+        amount_kopeks=topup_amount_kopeks,
+        description=description,
+        metadata=per_card_meta,
+        idempotency_key=idem_key,
+        user_id=user.id,
+    )
+
+    if not charge.success:
+        card_display = f'*{saved_method.card_last4}' if saved_method.card_last4 else ''
+        logger.warning(
+            'Не удалось списать с карты, пробуем следующую',
+            user_id=user.id,
+            subscription_id=subscription.id,
+            provider='etoplatezhi',
+            card_display=card_display,
+            error=charge.error_message,
+        )
+        try:
+            pending = await get_etoplatezhi_payment_by_order_id(db, idem_key)
+            if pending and pending.status == 'pending':
+                await update_etoplatezhi_payment_status(db, pending, status='failed')
+        except Exception as mark_error:
+            logger.warning('Не удалось пометить etoplatezhi платёж как failed', error=mark_error)
+        return 'failed'
+
+    # Дописываем provider_payment_id атомарным UPDATE — не трогает status/is_paid,
+    # которые мог уже выставить параллельный webhook.
+    if charge.provider_payment_id:
+        try:
+            await set_etoplatezhi_payment_id_if_missing(
+                db,
+                order_id=idem_key,
+                etoplatezhi_payment_id=str(charge.provider_payment_id),
+            )
+        except Exception as e:
+            logger.warning('Ошибка обновления etoplatezhi_payment_id', error=e)
+
+    logger.info(
+        'Рекуррентный автоплатёж создан',
+        user_id=user.id,
+        subscription_id=subscription.id,
+        provider='etoplatezhi',
+        amount_kopeks=topup_amount_kopeks,
+        provider_payment_id=charge.provider_payment_id,
+    )
+
+    # Списание инициировано; фактическое пополнение баланса и уведомление об
+    # успехе придут через webhook. Здесь — только best-effort лог/уведомление.
+    if bot and user.telegram_id:
+        try:
+            from app.localization.texts import get_texts
+
+            texts = get_texts(user.language)
+            raw = charge.raw or {}
+            if raw.get('paid'):
+                keyboard = _build_extend_keyboard(texts, subscription.id)
+                msg = texts.t(
+                    'RECURRENT_TOPUP_SUCCESS',
+                    '✅ <b>Автоплатёж выполнен</b>\n\nБаланс пополнен на {amount} для продления подписки.',
+                ).format(amount=settings.format_price(topup_amount_kopeks))
+                if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
+                    msg += f'\n📦 Тариф: «{subscription.tariff.name}»'
+                await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=msg,
+                    parse_mode='HTML',
+                    reply_markup=keyboard,
+                )
+        except Exception as notify_error:
+            logger.warning('Ошибка уведомления об автоплатеже', notify_error=notify_error)
+
+    return 'created'
 
 
 async def _process_single_subscription(
@@ -304,11 +462,10 @@ async def _process_single_subscription(
     topup_amount_kopeks = max(shortage, min_amount)
     topup_amount_rubles = topup_amount_kopeks / 100
 
-    # Создаём автоплатёж
+    # YooKassa-сервис может быть не сконфигурирован (например, включён только
+    # EtoPlatezhi recurrent). Проверяем это внутри цикла для yookassa-карт, не
+    # блокируя весь проход целиком.
     yookassa_service = payment_service.yookassa_service
-    if not yookassa_service or not yookassa_service.configured:
-        logger.warning('YooKassa сервис не сконфигурирован для рекуррентных платежей')
-        return 'skipped'
 
     description = settings.get_balance_payment_description(
         topup_amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
@@ -319,18 +476,48 @@ async def _process_single_subscription(
         'purpose': 'recurrent_topup',
         'subscription_id': str(subscription.id),
         'source': 'recurrent_payment_service',
+        'customer_email': getattr(user, 'email', None) or '',
     }
 
     # Перебираем все сохранённые карты пока не найдём рабочую
     today = datetime.now(UTC).strftime('%Y-%m-%d')
     for saved_method in saved_methods:
-        # Детерминированный ключ: при рестарте/повторе YooKassa вернёт тот же платёж
+        provider_name = getattr(saved_method, 'provider', None) or 'yookassa'
+        # Детерминированный ключ: при рестарте/повторе платформа вернёт тот же платёж
         idem_key = f'recurrent_{subscription.id}_{saved_method.id}_{today}'
+
+        # EtoPlatezhi — отдельный token-charge путь (saved card = recurring_id).
+        if provider_name == 'etoplatezhi':
+            outcome = await _charge_etoplatezhi_card(
+                db,
+                subscription,
+                user,
+                bot,
+                saved_method,
+                topup_amount_kopeks=topup_amount_kopeks,
+                description=description,
+                metadata=metadata,
+                idem_key=idem_key,
+            )
+            if outcome == 'created':
+                return 'created'
+            continue
+
+        # Неизвестный провайдер без локального charge-пути — пропускаем карту.
+        if provider_name != 'yookassa':
+            continue
+
+        # --- YooKassa path (без изменений) ---
+        if not yookassa_service or not yookassa_service.configured:
+            logger.warning('YooKassa сервис не сконфигурирован для рекуррентных платежей')
+            continue
+
+        provider_token = saved_method.provider_token or saved_method.yookassa_payment_method_id
         result = await yookassa_service.create_autopayment(
             amount=topup_amount_rubles,
             currency='RUB',
             description=description,
-            payment_method_id=saved_method.yookassa_payment_method_id,
+            payment_method_id=provider_token,
             metadata=metadata,
             idempotence_key=idem_key,
         )
@@ -341,7 +528,7 @@ async def _process_single_subscription(
                 'Не удалось списать с карты, пробуем следующую',
                 user_id=user.id,
                 subscription_id=subscription.id,
-                payment_method_id=saved_method.yookassa_payment_method_id,
+                payment_method_id=provider_token,
                 card_display=card_display,
             )
             continue
@@ -410,7 +597,13 @@ async def _process_single_subscription(
             except Exception as notify_error:
                 logger.warning('Ошибка уведомления об автоплатеже', notify_error=notify_error)
 
-        if not user.telegram_id and result.get('paid') and user.email and getattr(user, 'email_verified', False):
+        if (
+            settings.RECURRING_SUCCESS_EMAIL_ENABLED
+            and not user.telegram_id
+            and result.get('paid')
+            and user.email
+            and getattr(user, 'email_verified', False)
+        ):
             try:
                 from app.services.notification_delivery_service import (
                     NotificationType,

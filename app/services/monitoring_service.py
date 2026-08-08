@@ -370,12 +370,16 @@ class MonitoringService:
                 # экспайрятся до того, как autopay успеет их продлить
                 # Продление с баланса работает всегда, если у подписки autopay_enabled=True
                 await self._process_autopayments(db)
-                # Рекуррентные автоплатежи с карты: требуют ENABLE_AUTOPAY + YOOKASSA_RECURRENT_ENABLED
-                if settings.ENABLE_AUTOPAY and settings.YOOKASSA_RECURRENT_ENABLED:
+                # Рекуррентные автоплатежи с карты: ENABLE_AUTOPAY + любой включённый provider
+                # (YooKassa, EtoPlatezhi, …). Внутренний gate в process_recurrent_payments
+                # вернёт skip если ни один провайдер не активен.
+                if settings.ENABLE_AUTOPAY:
                     try:
+                        from app.services.payment.recurring import is_any_recurring_enabled
                         from app.services.recurrent_payment_service import process_recurrent_payments
 
-                        await process_recurrent_payments(db=db, bot=self.bot)
+                        if is_any_recurring_enabled():
+                            await process_recurrent_payments(db=db, bot=self.bot)
                     except Exception as recurrent_error:
                         logger.error(
                             'Ошибка рекуррентных автоплатежей',
@@ -1688,8 +1692,10 @@ class MonitoringService:
                                 await self._send_autopay_success_notification(
                                     user, charge_amount, autopay_period, subscription=subscription
                                 )
-                            elif not user.telegram_id:
-                                # Email-only user - use notification delivery service
+                            elif not user.telegram_id and settings.RECURRING_SUCCESS_EMAIL_ENABLED:
+                                # Email-only user: письмо об УСПЕШНОМ автопродлении
+                                # шлём только если явно включено — успешное
+                                # автосписание ожидаемо и не требует действий.
                                 await notification_delivery_service.notify_autopay_success(
                                     user=user,
                                     amount_kopeks=charge_amount,

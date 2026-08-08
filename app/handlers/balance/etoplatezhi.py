@@ -247,20 +247,46 @@ async def _start_etoplatezhi_topup_impl(
 
     keyboard = await get_topup_amount_keyboard(payment_method, db_user.language)
 
+    recurring_active = bool(settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED)
+    consent_block = ''
+    if recurring_active:
+        # Payment registers a card-on-file (stored_card_type=3) — RU law and
+        # acquirer rules require an explicit recurring-charges disclosure with
+        # links to the legal documents. Links point to the cabinet's public
+        # legal pages (/privacy, /offer, /recurrent-payments) when CABINET_URL
+        # is configured.
+        cabinet_base = (getattr(settings, 'CABINET_URL', '') or '').rstrip('/')
+        if cabinet_base:
+            consent_links = (
+                f'<a href="{cabinet_base}/privacy">политика</a>, '
+                f'<a href="{cabinet_base}/offer">оферта</a>, '
+                f'<a href="{cabinet_base}/recurrent-payments">соглашение о рекуррентах</a>.'
+            )
+        else:
+            consent_links = 'политика конфиденциальности, оферта и соглашение о рекуррентных платежах.'
+        consent_block = texts.t(
+            'ETOPLATEZHI_RECURRING_CONSENT',
+            '\n\n⚠️ <b>Внимание:</b> при оплате будет подключено автоматическое '
+            'продление подписки (рекуррентные платежи). '
+            'Продолжая, вы соглашаетесь с условиями: {links}',
+        ).format(links=consent_links)
+
     await callback.message.edit_text(
         texts.t(
             'ETOPLATEZHI_ENTER_AMOUNT',
             '\U0001f4b3 <b>Пополнение через {name}</b>\n\n'
             'Введите сумму пополнения в рублях.\n\n'
             'Минимум: {min_amount}\u20bd\n'
-            'Максимум: {max_amount}\u20bd',
+            'Максимум: {max_amount}\u20bd{consent}',
         ).format(
             name=display_name,
+            consent=consent_block,
             min_amount=min_amount,
             max_amount=f'{max_amount:,}'.replace(',', ' '),
         ),
         parse_mode='HTML',
         reply_markup=keyboard,
+        disable_web_page_preview=True,
     )
 
 

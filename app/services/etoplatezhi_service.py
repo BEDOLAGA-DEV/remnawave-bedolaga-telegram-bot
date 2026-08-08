@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import json
 from typing import Any
 from urllib.parse import urlencode
 
@@ -108,6 +109,7 @@ class EtoplatezhiService:
         force_payment_method: str | None = None,
         customer_email: str | None = None,
         language_code: str | None = None,
+        register_recurring: bool = False,
     ) -> str:
         """Строит URL для редиректа на платёжную страницу Etoplatezhi.
 
@@ -124,6 +126,11 @@ class EtoplatezhiService:
             force_payment_method: 'sbp' или 'card' для принудительного выбора.
             customer_email: Email покупателя.
             language_code: Язык интерфейса ('ru', 'en').
+            register_recurring: если True — добавляет Payment Page параметр
+                ``recurring={"register":true,"type":"U"}`` (автооплата,
+                merchant-initiated). EtoPlatezhi вернёт ``recurring.id`` в
+                callback'е об успешной оплате — он сохраняется как
+                ``provider_token`` в ``saved_payment_methods``.
 
         Returns:
             Полный URL с параметрами и подписью.
@@ -150,6 +157,15 @@ class EtoplatezhiService:
             params['customer_email'] = customer_email
         if language_code:
             params['language_code'] = language_code
+        if register_recurring:
+            # Payment Page принимает регистрацию повторяемых оплат через
+            # отдельный параметр ``recurring`` — JSON-строка (см.
+            # ru_pp_recurring.html). ``type=U`` означает "автооплата" —
+            # списания инициируются мерчантом (см.
+            # ru_gate__saved_cards_payments_type.html). После успешной
+            # оплаты ETO пришлёт ``recurring.id`` в webhook'е, который мы
+            # сохраним как ``provider_token`` в ``saved_payment_methods``.
+            params['recurring'] = json.dumps({'register': True, 'type': 'U'}, separators=(',', ':'))
 
         params['signature'] = self._sign(params)
 
@@ -160,7 +176,35 @@ class EtoplatezhiService:
             customer_id=customer_id,
         )
 
-        return f'{PAYMENT_PAGE_BASE_URL}?{urlencode(params)}'
+        return f'{PAYMENT_PAGE_BASE_URL}?{urlencode(self._flatten_url_params(params))}'
+
+    def _flatten_url_params(self, params: dict[str, Any]) -> list[tuple[str, Any]]:
+        """Flatten nested dicts into ``key[subkey]=value`` pairs for ``urlencode``.
+
+        EtoPlatezhi Payment Page accepts nested fields (``card``, ``customer``
+        etc.) in bracket notation. The default ``urlencode`` does not handle
+        nested dicts — it serialises them as ``key=<dict repr>`` which the
+        platform rejects with ``/error/invalid-initial-params``.
+        """
+        out: list[tuple[str, Any]] = []
+
+        def walk(value: Any, prefix: str) -> None:
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    next_prefix = f'{prefix}[{sub_key}]' if prefix else str(sub_key)
+                    walk(sub_value, next_prefix)
+            elif isinstance(value, list):
+                for idx, item in enumerate(value):
+                    next_prefix = f'{prefix}[{idx}]' if prefix else str(idx)
+                    walk(item, next_prefix)
+            elif isinstance(value, bool):
+                out.append((prefix, '1' if value else '0'))
+            elif value is not None:
+                out.append((prefix, value))
+
+        for key, value in params.items():
+            walk(value, str(key))
+        return out
 
     def verify_callback_signature(self, payload: dict[str, Any]) -> bool:
         """Верифицирует подпись в callback-е Etoplatezhi.

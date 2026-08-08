@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import EtoplatezhiPayment
@@ -118,6 +118,67 @@ async def update_etoplatezhi_payment_status(
         is_paid=payment.is_paid,
     )
     return payment
+
+
+async def link_etoplatezhi_payment_to_user(
+    db: AsyncSession,
+    *,
+    order_id: str,
+    user_id: int,
+) -> int:
+    """Атомарно прописать user_id, если ещё пуст.
+
+    Guest payments создаются с ``user_id=NULL`` (юзер ещё не известен на
+    момент Payment Page checkout). После guest_purchase fulfillment мы
+    знаем кому принадлежит row — линкуем, чтобы admin /admin/payments
+    показал её (там фильтр skip'ает payments без linked user).
+
+    Returns: число обновлённых строк (0 если user_id уже был).
+    """
+    result = await db.execute(
+        update(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id == order_id,
+            EtoplatezhiPayment.user_id.is_(None),
+        )
+        .values(
+            user_id=user_id,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
+async def set_etoplatezhi_payment_id_if_missing(
+    db: AsyncSession,
+    *,
+    order_id: str,
+    etoplatezhi_payment_id: str,
+) -> int:
+    """Атомарно дописать etoplatezhi_payment_id, если ещё пуст.
+
+    Делает один UPDATE без чтения row, поэтому НЕ может клобберить status
+    или is_paid, поставленные параллельным webhook handler'ом (тот может
+    в этот момент уже выставить status='success', is_paid=True). Webhook
+    race в charge-loop ↔ webhook теперь невозможен — этот helper не
+    касается status/is_paid вообще.
+
+    Returns: число обновлённых строк (0 если payment_id уже был дописан).
+    """
+    result = await db.execute(
+        update(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id == order_id,
+            EtoplatezhiPayment.etoplatezhi_payment_id.is_(None),
+        )
+        .values(
+            etoplatezhi_payment_id=etoplatezhi_payment_id,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
 
 
 async def get_pending_etoplatezhi_payments(db: AsyncSession, user_id: int) -> list[EtoplatezhiPayment]:

@@ -1037,6 +1037,19 @@ class Settings(BaseSettings):
     ETOPLATEZHI_CARD_ENABLED: bool = False
     ETOPLATEZHI_CARD_DISPLAY_NAME: str = 'Карта (Etoplatezhi)'
 
+    # Слать ли email об УСПЕШНОМ рекуррентном списании / автопродлении.
+    # По умолчанию выключено: успешное автосписание — ожидаемое событие,
+    # письмо лишь триггерит юзера (churn/chargeback). Письма о НЕУДАЧЕ
+    # автосписания шлются всегда — они требуют действия юзера.
+    RECURRING_SUCCESS_EMAIL_ENABLED: bool = False
+
+    # Recurring (Card-on-File) charges via EtoPlatezhi Gate API.
+    ETOPLATEZHI_RECURRENT_ENABLED: bool = False
+    # When True, initial payments register a recurring (stored_card_type=3)
+    # unconditionally; otherwise the platform / user is expected to opt in via
+    # the Payment Page.
+    ETOPLATEZHI_RECURRENT_REQUIRED: bool = False
+
     MAIN_MENU_MODE: str = 'default'  # 'default' | 'cabinet'
     # Rich-меню (Bot API 10.1): заголовки, таблица подписок, details-блоки, tg-time.
     # Требует telegram-bot-api с Bot API 10.1+; при недоступности бот сам откатывается
@@ -2975,6 +2988,10 @@ class Settings(BaseSettings):
 
     def get_etoplatezhi_card_display_name_html(self) -> str:
         return html.escape(self.get_etoplatezhi_card_display_name())
+
+    def is_etoplatezhi_recurrent_enabled(self) -> bool:
+        """True if EtoPlatezhi saved-card recurring charges are configured."""
+        return self.ETOPLATEZHI_RECURRENT_ENABLED and self.is_etoplatezhi_enabled()
 
     def is_kassa_ai_sbp_enabled(self) -> bool:
         return self.KASSA_AI_SBP_ENABLED and self.is_kassa_ai_enabled()
