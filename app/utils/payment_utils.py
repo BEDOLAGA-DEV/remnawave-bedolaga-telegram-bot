@@ -373,6 +373,30 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_etoplatezhi_sberpay_enabled():
+        sberpay_name = settings.get_etoplatezhi_sberpay_display_name()
+        methods.append(
+            {
+                'id': 'etoplatezhi_sberpay',
+                'name': sberpay_name,
+                'icon': '🟢',
+                'description': f'через {sberpay_name}',
+                'callback': 'topup_etoplatezhi_sberpay',
+            }
+        )
+
+    if settings.is_etoplatezhi_yoomoney_enabled():
+        yoomoney_name = settings.get_etoplatezhi_yoomoney_display_name()
+        methods.append(
+            {
+                'id': 'etoplatezhi_yoomoney',
+                'name': yoomoney_name,
+                'icon': '💜',
+                'description': f'через {yoomoney_name}',
+                'callback': 'topup_etoplatezhi_yoomoney',
+            }
+        )
+
     if (
         settings.is_etoplatezhi_enabled()
         and not settings.is_etoplatezhi_sbp_enabled()
