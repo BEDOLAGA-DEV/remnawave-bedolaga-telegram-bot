@@ -99,6 +99,7 @@ def upgrade() -> None:
                 UPDATE saved_payment_methods spm
                 SET method_code = CASE
                     WHEN ep.payment_method = 'card'     THEN 'card-partner'
+                    WHEN ep.payment_method = 'sbp'      THEN 'sbp-qr'
                     WHEN ep.payment_method = 'sberpay'  THEN 'sberpay'
                     WHEN ep.payment_method = 'yoomoney' THEN 'yoomoney-wallet'
                     ELSE NULL
