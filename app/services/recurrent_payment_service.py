@@ -452,6 +452,20 @@ async def _process_single_subscription(
     if days_until_expiry > days_before and subscription.status != SubscriptionStatus.EXPIRED.value:
         return 'skipped'
 
+    # Предыдущая попытка ещё не разрешилась — ждём вебхук, второй charge
+    # ушёл бы под новым payment_id (в ключе календарная дата) и списал дважды.
+    from app.database.crud.etoplatezhi import get_unresolved_recurrent_payment
+
+    unresolved = await get_unresolved_recurrent_payment(db, subscription.id)
+    if unresolved:
+        logger.info(
+            'Рекуррент: предыдущая попытка ещё в pending, пропускаем проход',
+            user_id=user.id,
+            subscription_id=subscription.id,
+            order_id=unresolved.order_id,
+        )
+        return 'skipped'
+
     # Нужно пополнить баланс — ищем сохранённую карту
     saved_methods = await get_active_payment_methods_by_user(db, user.id)
     if not saved_methods:

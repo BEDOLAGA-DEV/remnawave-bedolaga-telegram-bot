@@ -1,6 +1,6 @@
 """CRUD операции для платежей Etoplatezhi."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select, update
@@ -206,6 +206,35 @@ async def get_expired_pending_etoplatezhi_payments(
         )
     )
     return list(result.scalars().all())
+
+
+async def get_unresolved_recurrent_payment(
+    db: AsyncSession,
+    subscription_id: int,
+    *,
+    within_hours: int = 24,
+) -> EtoplatezhiPayment | None:
+    """Незавершённая (pending) попытка рекуррент-списания по подписке.
+
+    Ключ идемпотентности содержит календарную дату, поэтому после полуночи он
+    сменится и шлюз уже не схлопнет повтор по `payment_id`. Если предыдущая
+    попытка всё ещё висит в pending (вебхук задержался или потерялся), второй
+    charge стал бы дублем списания. Окно ограничено `within_hours`, чтобы
+    навсегда зависший pending не заблокировал продления.
+    """
+    since = datetime.now(UTC) - timedelta(hours=within_hours)
+    result = await db.execute(
+        select(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id.like(f'recurrent_{subscription_id}\\_%', escape='\\'),
+            EtoplatezhiPayment.status == 'pending',
+            EtoplatezhiPayment.is_paid == False,
+            EtoplatezhiPayment.created_at >= since,
+        )
+        .order_by(EtoplatezhiPayment.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def link_etoplatezhi_payment_to_transaction(
