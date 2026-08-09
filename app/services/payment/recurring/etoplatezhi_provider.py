@@ -45,7 +45,16 @@ _METHOD_ENDPOINTS: dict[str, str] = {
 
 def _build_recurring_endpoint(method_code: str | None) -> str:
     code = (method_code or DEFAULT_METHOD_CODE).strip()
-    return _METHOD_ENDPOINTS.get(code, _METHOD_ENDPOINTS[DEFAULT_METHOD_CODE])
+    endpoint = _METHOD_ENDPOINTS.get(code)
+    if endpoint is None:
+        # Тихий фолбэк на card-partner отправил бы, например, SBP-токен на
+        # карточный эндпоинт — отказ без внятной причины. Логируем явно.
+        logger.warning(
+            'Неизвестный method_code для рекуррента, используем card-partner',
+            method_code=code,
+        )
+        endpoint = _METHOD_ENDPOINTS[DEFAULT_METHOD_CODE]
+    return endpoint
 
 
 # Statuses returned by EtoPlatezhi for a successful charge initiation.
@@ -100,7 +109,15 @@ class EtoPlatezhiRecurringProvider(RecurringProvider):
                 error_message=f'EtoPlatezhi recurring_id must be numeric, got: {provider_token!r}',
             )
 
-        customer_id = str(metadata.get('user_telegram_id') or user_id or '0')
+        # Константный customer_id ЭП режет антифродом (как было на guest-чекауте),
+        # поэтому без идентификатора списание не начинаем.
+        customer_id = str(metadata.get('user_telegram_id') or user_id or '')
+        if not customer_id:
+            return ChargeResult(
+                success=False,
+                error_code='no_customer_id',
+                error_message='EtoPlatezhi recurring requires customer id (telegram_id or user_id)',
+            )
 
         # Use the supplied idempotency key as the EtoPlatezhi `payment_id` so
         # retries collapse on the gateway side. EtoPlatezhi requires the field

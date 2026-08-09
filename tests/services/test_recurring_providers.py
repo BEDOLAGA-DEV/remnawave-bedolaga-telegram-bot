@@ -251,6 +251,7 @@ async def test_etoplatezhi_provider_handles_declined_status(monkeypatch: pytest.
         description='Top-up',
         metadata={},
         idempotency_key='idem-4',
+        user_id=42,
     )
     assert result.success is False
     assert result.error_code == 'charge_declined'
@@ -272,6 +273,7 @@ async def test_etoplatezhi_provider_handles_http_error(monkeypatch: pytest.Monke
         description='Top-up',
         metadata={},
         idempotency_key='idem-5',
+        user_id=42,
     )
     assert result.success is False
     assert (result.error_code or '').startswith('http_5')
@@ -285,3 +287,24 @@ async def test_etoplatezhi_provider_handles_http_error(monkeypatch: pytest.Monke
 def test_recurring_provider_is_abstract() -> None:
     with pytest.raises(TypeError):
         RecurringProvider()  # type: ignore[abstract]
+
+
+@pytest.mark.anyio('asyncio')
+async def test_etoplatezhi_provider_requires_customer_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Без telegram_id и user_id списание не начинаем.
+
+    Раньше сюда подставлялась константа '0'. ЭП режет антифродом трафик с
+    неизменным customer_id — ровно этим мы потеряли часть guest-чекаута.
+    """
+    _configure_etoplatezhi(monkeypatch)
+
+    provider = EtoPlatezhiRecurringProvider()
+    result = await provider.charge(
+        provider_token='1079',
+        amount_kopeks=10000,
+        description='Top-up',
+        metadata={},
+        idempotency_key='idem-no-customer',
+    )
+    assert result.success is False
+    assert result.error_code == 'no_customer_id'
