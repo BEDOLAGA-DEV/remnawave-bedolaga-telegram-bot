@@ -208,6 +208,24 @@ async def get_expired_pending_etoplatezhi_payments(
     return list(result.scalars().all())
 
 
+async def get_recurrent_attempts(
+    db: AsyncSession,
+    order_ids: list[str],
+) -> list[EtoplatezhiPayment]:
+    """Строки уже сделанных попыток списания по перечисленным order_id.
+
+    Ключи попыток детерминированы и ограничены сверху, поэтому перечисляем их
+    явно — это дешевле и надёжнее LIKE, в котором пришлось бы экранировать `_`
+    внутри самого ключа.
+    """
+    if not order_ids:
+        return []
+    result = await db.execute(
+        select(EtoplatezhiPayment).where(EtoplatezhiPayment.order_id.in_(order_ids)).order_by(EtoplatezhiPayment.id)
+    )
+    return list(result.scalars().all())
+
+
 async def get_unresolved_recurrent_payment(
     db: AsyncSession,
     subscription_id: int,

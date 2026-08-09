@@ -239,6 +239,44 @@ async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:
     return list(result.scalars().all())
 
 
+# Сколько раз за сутки готовы стучаться по одной паре (подписка, карта).
+MAX_DAILY_CHARGE_ATTEMPTS = 3
+
+# Статусы строки платежа в нашей БД.
+_ROW_PAID_STATUSES = {'success', 'paid'}
+_ROW_INFLIGHT_STATUSES = {'pending'}
+
+
+def _attempt_order_ids(base_key: str) -> list[str]:
+    """Все возможные order_id попыток для одной пары (подписка, карта) за сутки."""
+    return [base_key] + [f'{base_key}r{n}' for n in range(2, MAX_DAILY_CHARGE_ATTEMPTS + 1)]
+
+
+def _next_attempt_key(base_key: str, rows: list) -> tuple[str | None, str]:
+    """С каким payment_id идти в шлюз. Второй элемент — причина отказа идти.
+
+    Причина важна вызывающему: `paid`/`inflight` означают «карта отработала,
+    остальные перебирать не надо», а `exhausted` — «по этой карте на сегодня
+    всё, но следующую попробовать стоит».
+
+    ЭП требует уникальный payment_id в рамках проекта и отбивает повтор кодом
+    3041 «Payment ID already exists», НЕ пытаясь списать деньги. Раньше мы
+    повторяли попытку с тем же ключом: живого списания не происходило, а статус
+    строки перезаписывался безликим `error` поверх настоящей причины отказа
+    (нет средств / карта заблокирована). Поэтому каждая новая попытка получает
+    собственный ключ и собственную строку.
+    """
+    if any(getattr(r, 'is_paid', False) or (r.status or '').lower() in _ROW_PAID_STATUSES for r in rows):
+        return None, 'paid'  # второй charge был бы дублем списания
+    if any((r.status or '').lower() in _ROW_INFLIGHT_STATUSES for r in rows):
+        return None, 'inflight'  # попытка ещё в полёте, ждём вебхук
+    if len(rows) >= MAX_DAILY_CHARGE_ATTEMPTS:
+        return None, 'exhausted'
+    if not rows:
+        return base_key, 'first'
+    return f'{base_key}r{len(rows) + 1}', 'retry'
+
+
 async def _charge_etoplatezhi_card(
     db: AsyncSession,
     subscription: Subscription,
@@ -259,6 +297,7 @@ async def _charge_etoplatezhi_card(
     from app.database.crud.etoplatezhi import (
         create_etoplatezhi_payment,
         get_etoplatezhi_payment_by_order_id,
+        get_recurrent_attempts,
         set_etoplatezhi_payment_id_if_missing,
         update_etoplatezhi_payment_status,
     )
@@ -281,28 +320,33 @@ async def _charge_etoplatezhi_card(
     # по order_id из новой сессии — row должен быть виден до коллбека, иначе
     # пополнение молча потеряется.
     try:
-        existing = await get_etoplatezhi_payment_by_order_id(db, idem_key)
-        if existing and (existing.is_paid or (existing.status or '').lower() in {'success', 'paid'}):
-            # Restart/retry: детерминированный idem_key указывает на уже
-            # оплаченную запись — второй charge был бы дублем списания.
+        attempts = await get_recurrent_attempts(db, _attempt_order_ids(idem_key))
+        attempt_key, reason = _next_attempt_key(idem_key, attempts)
+        if attempt_key is None:
             logger.info(
-                'Etoplatezhi рекуррент: платёж уже оплачен, пропускаем повторный charge',
+                'Etoplatezhi рекуррент: повторный charge не нужен',
                 user_id=user.id,
                 subscription_id=subscription.id,
-                order_id=idem_key,
+                base_order_id=idem_key,
+                reason=reason,
+                attempts=len(attempts),
+                statuses=[a.status for a in attempts],
             )
-            return 'created'
-        if not existing:
-            await create_etoplatezhi_payment(
-                db=db,
-                user_id=user.id,
-                order_id=idem_key,
-                amount_kopeks=topup_amount_kopeks,
-                currency='RUB',
-                description=description,
-                payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
-                metadata_json=per_card_meta,
-            )
+            # exhausted — по этой карте на сегодня всё, но следующую карту юзера
+            # попробовать стоит. paid/inflight — карта отработала, перебор стоп.
+            return 'failed' if reason == 'exhausted' else 'created'
+
+        idem_key = attempt_key
+        await create_etoplatezhi_payment(
+            db=db,
+            user_id=user.id,
+            order_id=idem_key,
+            amount_kopeks=topup_amount_kopeks,
+            currency='RUB',
+            description=description,
+            payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
+            metadata_json=per_card_meta,
+        )
     except Exception as e:
         logger.warning(
             'Не удалось предсоздать запись etoplatezhi, пропускаем карту',
