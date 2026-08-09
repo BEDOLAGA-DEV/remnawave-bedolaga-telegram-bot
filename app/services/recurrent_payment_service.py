@@ -16,6 +16,7 @@ import structlog
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -242,9 +243,24 @@ async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:
 # Сколько раз за сутки готовы стучаться по одной паре (подписка, карта).
 MAX_DAILY_CHARGE_ATTEMPTS = 3
 
-# Статусы строки платежа в нашей БД.
-_ROW_PAID_STATUSES = {'success', 'paid'}
+# Статусы строки платежа в нашей БД, при которых деньги уже двигались.
+# refunded/reversed попадают сюда намеренно: списание состоялось, и повторять
+# его нельзя, даже если сейчас is_paid=False.
+_ROW_SETTLED_STATUSES = {'success', 'paid', 'refunded', 'partially_refunded', 'reversed'}
 _ROW_INFLIGHT_STATUSES = {'pending'}
+
+# Исходы charge, при которых запрос мог дойти до шлюза и быть исполненным, а
+# ответ потерялся: таймаут, обрыв сети, 5xx. Раньше повтор шёл с тем же
+# payment_id и шлюз отбивал его кодом 3041 — двойного списания не случалось
+# by design. Теперь ключ у повтора свежий, поэтому такую строку нельзя
+# помечать терминальным `failed`: оставляем `pending`, и оба гарда держат её
+# до вебхука, а суточный ключ сам сменится на следующий день.
+_AMBIGUOUS_CHARGE_ERROR_CODES = {'http_error'}
+
+
+def _is_ambiguous_charge_failure(error_code: str | None) -> bool:
+    code = (error_code or '').lower()
+    return code in _AMBIGUOUS_CHARGE_ERROR_CODES or code.startswith('http_5')
 
 
 def _attempt_order_ids(base_key: str) -> list[str]:
@@ -266,15 +282,18 @@ def _next_attempt_key(base_key: str, rows: list) -> tuple[str | None, str]:
     (нет средств / карта заблокирована). Поэтому каждая новая попытка получает
     собственный ключ и собственную строку.
     """
-    if any(getattr(r, 'is_paid', False) or (r.status or '').lower() in _ROW_PAID_STATUSES for r in rows):
+    if any(getattr(r, 'is_paid', False) or (r.status or '').lower() in _ROW_SETTLED_STATUSES for r in rows):
         return None, 'paid'  # второй charge был бы дублем списания
     if any((r.status or '').lower() in _ROW_INFLIGHT_STATUSES for r in rows):
         return None, 'inflight'  # попытка ещё в полёте, ждём вебхук
-    if len(rows) >= MAX_DAILY_CHARGE_ATTEMPTS:
-        return None, 'exhausted'
-    if not rows:
-        return base_key, 'first'
-    return f'{base_key}r{len(rows) + 1}', 'retry'
+    used = {r.order_id for r in rows}
+    # Берём первый СВОБОДНЫЙ ключ, а не считаем по длине списка: если базовую
+    # строку удалили вручную, а r2 осталась, счёт по длине предложил бы занятый
+    # r2 и словил бы unique violation.
+    for candidate in _attempt_order_ids(base_key):
+        if candidate not in used:
+            return candidate, ('first' if candidate == base_key else 'retry')
+    return None, 'exhausted'
 
 
 async def _charge_etoplatezhi_card(
@@ -347,6 +366,18 @@ async def _charge_etoplatezhi_card(
             payment_method=getattr(saved_method, 'method_code', None) or 'card-partner',
             metadata_json=per_card_meta,
         )
+    except IntegrityError:
+        # Параллельный проход уже занял этот order_id — значит списание по этой
+        # паре уже инициировано. Откатываем, иначе сессия останется в
+        # PendingRollback и посыплется весь остаток прохода.
+        await db.rollback()
+        logger.info(
+            'Etoplatezhi рекуррент: order_id уже занят параллельным проходом',
+            user_id=user.id,
+            subscription_id=subscription.id,
+            order_id=idem_key,
+        )
+        return 'created'
     except Exception as e:
         logger.warning(
             'Не удалось предсоздать запись etoplatezhi, пропускаем карту',
@@ -375,6 +406,16 @@ async def _charge_etoplatezhi_card(
             card_display=card_display,
             error=charge.error_message,
         )
+        if _is_ambiguous_charge_failure(charge.error_code):
+            # Оставляем строку pending: не знаем, списались деньги или нет.
+            logger.warning(
+                'Неоднозначный отказ charge, строка остаётся pending до вебхука',
+                user_id=user.id,
+                subscription_id=subscription.id,
+                order_id=idem_key,
+                error_code=charge.error_code,
+            )
+            return 'created'
         try:
             pending = await get_etoplatezhi_payment_by_order_id(db, idem_key)
             if pending and pending.status == 'pending':

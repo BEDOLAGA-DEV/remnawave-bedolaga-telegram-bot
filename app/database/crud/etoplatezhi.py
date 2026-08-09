@@ -244,7 +244,7 @@ async def get_unresolved_recurrent_payment(
     result = await db.execute(
         select(EtoplatezhiPayment)
         .where(
-            EtoplatezhiPayment.order_id.like(f'recurrent_{subscription_id}\\_%', escape='\\'),
+            EtoplatezhiPayment.order_id.like(f'recurrent\\_{subscription_id}\\_%', escape='\\'),
             EtoplatezhiPayment.status == 'pending',
             EtoplatezhiPayment.is_paid == False,
             EtoplatezhiPayment.created_at >= since,
