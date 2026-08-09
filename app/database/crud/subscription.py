@@ -140,6 +140,31 @@ def resolve_tariff_purchase_device_limit(
     return resolved_limit
 
 
+async def apply_recurrent_tariff_charge(
+    db: AsyncSession,
+    subscription: Subscription,
+    tariff: Tariff,
+    days: int,
+) -> Subscription:
+    """Extend a recurrent subscription and convert a legacy classic row atomically."""
+    if subscription.tariff_id is not None:
+        subscription.extend_subscription(days)
+        return subscription
+
+    device_limit = resolve_tariff_purchase_device_limit(subscription, tariff)
+    connected_squads = list(tariff.allowed_squads or subscription.connected_squads or [])
+    return await extend_subscription(
+        db,
+        subscription,
+        days,
+        tariff_id=tariff.id,
+        traffic_limit_gb=tariff.traffic_limit_gb,
+        device_limit=device_limit,
+        connected_squads=connected_squads,
+        commit=False,
+    )
+
+
 def is_active_paid_subscription(subscription: Subscription | None) -> bool:
     """Return True if subscription is active, paid (non-trial), and not expired."""
     if not subscription:

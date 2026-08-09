@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from app.config import settings
-from app.database.crud.subscription import resolve_tariff_purchase_device_limit
+from app.database.crud.subscription import apply_recurrent_tariff_charge, resolve_tariff_purchase_device_limit
 from app.database.models import (
     PromoGroup,
     Subscription,
@@ -51,6 +51,36 @@ def test_real_tariff_switch_still_resets_devices_to_new_base(monkeypatch) -> Non
     another_tariff_subscription = SimpleNamespace(tariff_id=6, device_limit=3)
 
     assert resolve_tariff_purchase_device_limit(another_tariff_subscription, tariff) == 1
+
+
+async def test_recurrent_charge_converts_legacy_subscription_with_preserved_devices(monkeypatch) -> None:
+    from app.database.crud import subscription as subscription_crud
+
+    legacy_subscription = SimpleNamespace(
+        tariff_id=None,
+        device_limit=3,
+        connected_squads=['legacy-squad'],
+    )
+    tariff = SimpleNamespace(
+        id=7,
+        device_limit=1,
+        max_device_limit=5,
+        traffic_limit_gb=100,
+        allowed_squads=['tariff-squad'],
+    )
+    extend = AsyncMock(return_value=legacy_subscription)
+    monkeypatch.setattr(subscription_crud, 'extend_subscription', extend)
+
+    result = await apply_recurrent_tariff_charge(AsyncMock(), legacy_subscription, tariff, 30)
+
+    assert result is legacy_subscription
+    assert extend.await_args.kwargs == {
+        'tariff_id': 7,
+        'traffic_limit_gb': 100,
+        'device_limit': 3,
+        'connected_squads': ['tariff-squad'],
+        'commit': False,
+    }
 
 
 async def test_legacy_preview_prices_and_saves_preserved_devices(monkeypatch) -> None:

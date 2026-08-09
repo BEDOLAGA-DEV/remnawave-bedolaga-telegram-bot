@@ -255,13 +255,26 @@ async def _build_tariff_response(
             price_per_day = pricing_engine.apply_discount(price_per_day, custom_days_discount_percent)
 
     # Apply discount to device price if applicable
-    device_price = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else 0
+    device_price = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
     original_device_price = device_price
     device_discount_percent = 0
     if promo_group and device_price > 0:
         device_discount_percent = promo_group.get_discount_percent('devices', 30)
         if device_discount_percent > 0:
             device_price = pricing_engine.apply_discount(device_price, device_discount_percent)
+
+    # Daily cards have no period object from which the cabinet could read the
+    # add-on breakdown. Return the exact one-day charge, including preserved
+    # legacy devices and all discounts, in the existing daily-price fields.
+    if getattr(tariff, 'is_daily', False) and daily_price > 0:
+        daily_result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            1,
+            device_limit=actual_device_limit,
+            user=user,
+        )
+        daily_price = daily_result.final_total
+        original_daily_price = daily_result.original_total
 
     response: dict[str, Any] = {
         'id': tariff.id,
