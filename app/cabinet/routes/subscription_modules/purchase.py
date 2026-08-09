@@ -28,6 +28,7 @@ from app.database.crud.subscription import (
     extend_subscription,
     get_subscription_by_id_for_user,
     get_subscription_by_user_id,
+    resolve_tariff_purchase_device_limit,
     should_carry_trial_remaining_days,
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
@@ -145,10 +146,11 @@ async def _build_tariff_response(
     promo_group_name = promo_group.name if promo_group else None
 
     # Вычисляем доп. устройства для текущего тарифа (при продлении)
+    actual_device_limit = resolve_tariff_purchase_device_limit(subscription, tariff)
     extra_devices_count = 0
     extra_device_price_per_month = 0
-    if subscription and subscription.tariff_id == tariff.id:
-        extra_devices_count = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
+    if subscription and subscription.tariff_id in (None, tariff.id):
+        extra_devices_count = max(0, actual_device_limit - (tariff.device_limit or 0))
         if extra_devices_count > 0:
             extra_device_price_per_month = (
                 tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
@@ -260,11 +262,6 @@ async def _build_tariff_response(
         device_discount_percent = promo_group.get_discount_percent('devices', 30)
         if device_discount_percent > 0:
             device_price = pricing_engine.apply_discount(device_price, device_discount_percent)
-
-    # Показываем реальное количество устройств (с докупленными) для текущего тарифа
-    actual_device_limit = tariff.device_limit
-    if subscription and subscription.tariff_id == tariff.id:
-        actual_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
 
     response: dict[str, Any] = {
         'id': tariff.id,
@@ -777,18 +774,13 @@ async def purchase_tariff(
                 )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
-        device_limit = None
-        effective_device_limit = tariff.device_limit
-        if existing_subscription and existing_subscription.tariff_id == tariff.id:
-            device_limit = existing_subscription.device_limit
-            if (existing_subscription.device_limit or 0) > (tariff.device_limit or 0):
-                effective_device_limit = existing_subscription.device_limit
+        effective_device_limit = resolve_tariff_purchase_device_limit(existing_subscription, tariff)
 
         # Calculate price via PricingEngine (single source of truth)
         result = await pricing_engine.calculate_tariff_purchase_price(
             tariff,
             period_days,
-            device_limit=device_limit,
+            device_limit=effective_device_limit,
             custom_traffic_gb=custom_traffic_gb,
             user=user,
         )

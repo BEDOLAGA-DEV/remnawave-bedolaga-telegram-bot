@@ -105,6 +105,41 @@ def calc_device_limit_on_tariff_switch(
     return new_base
 
 
+def resolve_tariff_purchase_device_limit(
+    subscription: Subscription | None,
+    tariff: Tariff,
+) -> int:
+    """Resolve the device limit that must be priced and applied on purchase.
+
+    Renewals of the same tariff already preserve purchased devices.  A legacy
+    classic subscription has no ``tariff_id``, but its ``device_limit`` also
+    contains devices previously purchased by the user.  Treat that first
+    classic -> tariff purchase like a renewal and carry the limit over, while
+    keeping the existing reset-to-base behaviour for real tariff switches.
+
+    Legacy limits are capped by the target tariff's maximum (or by the global
+    maximum when the tariff has no explicit cap), so migration cannot create a
+    subscription that the selected tariff would not normally allow.
+    """
+    tariff_base = max(1, tariff.device_limit or 1)
+    if subscription is None:
+        return tariff_base
+
+    is_legacy_migration = subscription.tariff_id is None
+    is_same_tariff_renewal = subscription.tariff_id == tariff.id
+    if not (is_legacy_migration or is_same_tariff_renewal):
+        return tariff_base
+
+    resolved_limit = max(tariff_base, subscription.device_limit or tariff_base)
+    if not is_legacy_migration:
+        return resolved_limit
+
+    effective_max = tariff.max_device_limit or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
+    if effective_max:
+        resolved_limit = min(resolved_limit, effective_max)
+    return resolved_limit
+
+
 def is_active_paid_subscription(subscription: Subscription | None) -> bool:
     """Return True if subscription is active, paid (non-trial), and not expired."""
     if not subscription:
