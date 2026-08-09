@@ -401,6 +401,8 @@ def get_available_payment_methods() -> list[dict[str, str]]:
         settings.is_etoplatezhi_enabled()
         and not settings.is_etoplatezhi_sbp_enabled()
         and not settings.is_etoplatezhi_card_enabled()
+        and not settings.is_etoplatezhi_sberpay_enabled()
+        and not settings.is_etoplatezhi_yoomoney_enabled()
     ):
         etoplatezhi_name = settings.get_etoplatezhi_display_name()
         methods.append(
@@ -625,6 +627,10 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_etoplatezhi_sbp_enabled()
     if method_id == 'etoplatezhi_card':
         return settings.is_etoplatezhi_card_enabled()
+    if method_id == 'etoplatezhi_sberpay':
+        return settings.is_etoplatezhi_sberpay_enabled()
+    if method_id == 'etoplatezhi_yoomoney':
+        return settings.is_etoplatezhi_yoomoney_enabled()
     if method_id == 'antilopay':
         return settings.is_antilopay_enabled()
     if method_id == 'antilopay_sbp':
