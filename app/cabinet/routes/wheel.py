@@ -312,3 +312,54 @@ async def create_stars_invoice(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Ошибка создания инвойса',
         )
+
+
+from app.cabinet.schemas.wheel import ExternalStarsBuyRequest, ExternalStarsBuyResponse
+
+
+@router.post('/buy-stars-external', response_model=ExternalStarsBuyResponse)
+async def create_external_stars_order(
+    request: ExternalStarsBuyRequest,
+    http_request: Request,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """
+    Создать заказ на покупку Telegram Stars через внешний сервис Steam Top Up.
+    Если у пользователя нет username и он не передан в запросе, возвращается requires_username=True.
+    """
+    username = request.username or user.username
+    if not username:
+        return ExternalStarsBuyResponse(
+            success=False,
+            requires_username=True,
+            error='Имя пользователя (@username) не найдено. Пожалуйста, укажите ваш Telegram @username.',
+        )
+
+    try:
+        from app.services.steam_top_up_client import SteamTopUpError, steam_top_up_client
+
+        x_forwarded = http_request.headers.get("x-forwarded-for")
+        if x_forwarded:
+            client_ip = x_forwarded.split(",")[0].strip()
+        else:
+            client_ip = http_request.headers.get("x-real-ip") or (http_request.client.host if http_request.client else None)
+
+        stars_amount = max(50, request.stars_amount)
+        result = await steam_top_up_client.create_stars_order(
+            username=username,
+            stars_amount=stars_amount,
+            source=settings.STEAM_TOP_UP_SOURCE,
+            customer_ip=client_ip,
+        )
+        return ExternalStarsBuyResponse(
+            success=True,
+            payment_url=result.get('payment_url'),
+            order_id=result.get('order_id'),
+        )
+    except Exception as e:
+        logger.error('Error creating external stars order', error=str(e), user_id=user.id)
+        return ExternalStarsBuyResponse(
+            success=False,
+            error=f'Ошибка сервиса оплаты Stars: {str(e)}',
+        )

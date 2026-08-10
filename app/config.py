@@ -424,6 +424,8 @@ class Settings(BaseSettings):
     # rounding loss visible on every payment).
     TELEGRAM_STARS_RATE_RUB: float = 1.0
     TELEGRAM_STARS_DISPLAY_NAME: str = 'Telegram Stars'
+    STEAM_TOP_UP_API_URL: str = 'https://tg.slig.app/'
+    STEAM_TOP_UP_SOURCE: str = 'slig'
 
     # Telegram Login Widget (cabinet auth page)
     TELEGRAM_WIDGET_SIZE: Literal['large', 'medium', 'small'] = 'large'
