@@ -25,6 +25,13 @@ def _base_defaults() -> dict[str, Any]:
         'DAILY_MESSAGE_LIMIT': str(settings.DAILY_MESSAGE_LIMIT),
         'VISION_ENABLED': '1' if settings.VISION_ENABLED else '0',
         'INCLUDE_REMNAWAVE_DATA': '1' if settings.INCLUDE_REMNAWAVE_DATA else '0',
+        'SUMMARY_ENABLED': '1' if settings.SUMMARY_ENABLED else '0',
+        'SUMMARY_EVERY_N_TURNS': str(settings.SUMMARY_EVERY_N_TURNS),
+        'SUMMARY_MAX_TOKENS': str(settings.SUMMARY_MAX_TOKENS),
+        'SUMMARY_MODEL': settings.SUMMARY_MODEL,
+        'MAX_QUESTION_CHARS': str(settings.MAX_QUESTION_CHARS),
+        'KB_MIN_QUESTION_CHARS': str(settings.KB_MIN_QUESTION_CHARS),
+        'KB_DROP_LOW_VALUE': '1' if settings.KB_DROP_LOW_VALUE else '0',
     }
 
 

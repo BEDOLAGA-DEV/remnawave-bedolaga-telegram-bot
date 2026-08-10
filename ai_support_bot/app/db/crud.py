@@ -141,6 +141,47 @@ async def get_conversation_context(db: AsyncSession, conversation_id: int, limit
     return messages
 
 
+async def count_conversation_messages(db: AsyncSession, conversation_id: int) -> int:
+    result = await db.execute(
+        select(func.count(Message.id)).where(Message.conversation_id == conversation_id)
+    )
+    return int(result.scalar() or 0)
+
+
+async def get_messages_after_id(db: AsyncSession, conversation_id: int, after_id: int) -> list[Message]:
+    result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conversation_id, Message.id > (after_id or 0))
+        .order_by(Message.id.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def bump_user_turn(db: AsyncSession, conversation_id: int) -> int:
+    conversation = await db.get(Conversation, conversation_id)
+    if not conversation:
+        return 0
+    conversation.user_turns_since_summary = (conversation.user_turns_since_summary or 0) + 1
+    return conversation.user_turns_since_summary
+
+
+async def save_summary(
+    db: AsyncSession,
+    conversation_id: int,
+    summary: str,
+    message_count: int,
+    up_to_id: int,
+) -> None:
+    conversation = await db.get(Conversation, conversation_id)
+    if not conversation:
+        return
+    conversation.summary = summary
+    conversation.summarized_message_count = message_count
+    conversation.summarized_up_to_id = up_to_id
+    conversation.user_turns_since_summary = 0
+    conversation.summary_updated_at = datetime.now(timezone.utc)
+
+
 async def prune_messages(db: AsyncSession, keep_last: int) -> int:
     result = await db.execute(
         select(Message.id).order_by(Message.created_at.desc()).offset(keep_last)
@@ -222,6 +263,7 @@ async def list_conversations_summary(db: AsyncSession, limit: int = 50, offset: 
             'id': conv.id,
             'telegram_id': conv.telegram_id,
             'escalated': conv.escalated,
+            'summary': conv.summary or '',
             'created_at': conv.created_at.isoformat() if conv.created_at else '',
             'updated_at': conv.updated_at.isoformat() if conv.updated_at else '',
             'message_count': msg_count,

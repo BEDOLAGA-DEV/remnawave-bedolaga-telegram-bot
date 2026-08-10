@@ -181,12 +181,32 @@ def parse_knowledge_file(data: Any) -> tuple[list[dict[str, str]], int]:
     return [], 0
 
 
-def build_chunks(pairs: list[dict[str, str]], max_chars: int) -> list[dict[str, str]]:
+_NOISE_MARKERS = (
+    'реферал', 'сотрудничеств', 'инстаграм', 'инста ', 'рилс', 'охват', 'аудитори',
+    'канал', 'блогер', 'закрепля', 'промокод «', 'процент', 'выплат', 'партнёр', 'партнер',
+    'бро', 'братец', 'братан', 'красавчик', 'работаем', 'сработаемся', 'взаимно',
+)
+
+
+def _is_low_value(question: str, answer: str) -> bool:
+    q = question.lower()
+    a = answer.lower()
+    if len(answer) < 12:
+        return True
+    if len(question) < 4:
+        return True
+    hits = sum(1 for marker in _NOISE_MARKERS if marker in q or marker in a)
+    return hits >= 2
+
+
+def build_chunks(pairs: list[dict[str, str]], max_chars: int, drop_low_value: bool = True) -> list[dict[str, str]]:
     chunks: list[dict[str, str]] = []
     for pair in pairs:
         question = pair['question'].strip()
         answer = pair['answer'].strip()
         if not question or not answer:
+            continue
+        if drop_low_value and _is_low_value(question, answer):
             continue
         if len(answer) > max_chars:
             answer = answer[:max_chars].rstrip()

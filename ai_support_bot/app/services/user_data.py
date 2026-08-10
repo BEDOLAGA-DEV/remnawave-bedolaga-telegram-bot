@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import structlog
 from sqlalchemy import text
 
@@ -15,6 +17,27 @@ def _format_price(kopeks: int | None) -> str:
     return f'{value:.2f} ₽'
 
 
+def _as_datetime(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    return None
+
+
+def _days_left(end_date) -> int | None:
+    end = _as_datetime(end_date)
+    if end is None:
+        return None
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    delta = end - datetime.now(timezone.utc)
+    return int(delta.total_seconds() // 86400)
+
+
+def _fmt_date(value) -> str:
+    dt = _as_datetime(value)
+    return dt.strftime('%d.%m.%Y') if dt else str(value)
+
+
 async def build_user_context(telegram_id: int) -> str:
     lines: list[str] = [f'Telegram ID: {telegram_id}']
 
@@ -25,7 +48,10 @@ async def build_user_context(telegram_id: int) -> str:
             result = await session.execute(
                 text(
                     'SELECT id, username, first_name, last_name, language, balance_kopeks, '
-                    'has_had_paid_subscription, remnawave_uuid '
+                    'has_had_paid_subscription, has_made_first_topup, used_promocodes, '
+                    'referral_code, referred_by_id, promo_group_id, created_at, '
+                    'restriction_topup, restriction_subscription, restriction_reason, '
+                    'remnawave_uuid '
                     'FROM users WHERE telegram_id = :tid LIMIT 1'
                 ),
                 {'tid': telegram_id},
@@ -38,15 +64,59 @@ async def build_user_context(telegram_id: int) -> str:
                 ) or (user_row.get('username') or '')
                 if name:
                     lines.append(f'Имя: {name}')
+                if user_row.get('username'):
+                    lines.append(f'Username: @{user_row["username"]}')
                 lines.append(f'Язык: {user_row.get("language") or "ru"}')
                 lines.append(f'Баланс: {_format_price(user_row.get("balance_kopeks"))}')
-                lines.append(
-                    f'Была платная подписка: {"да" if user_row.get("has_had_paid_subscription") else "нет"}'
-                )
+                lines.append(f'Регистрация: {_fmt_date(user_row.get("created_at"))}')
+
+                status_flags = []
+                if user_row.get('has_had_paid_subscription'):
+                    status_flags.append('покупал платную подписку')
+                else:
+                    status_flags.append('платную подписку ещё не покупал')
+                if not user_row.get('has_made_first_topup'):
+                    status_flags.append('баланс ни разу не пополнял')
+                lines.append('Статус клиента: ' + ', '.join(status_flags))
+
+                if user_row.get('restriction_topup') or user_row.get('restriction_subscription'):
+                    limits = []
+                    if user_row.get('restriction_topup'):
+                        limits.append('запрет пополнения')
+                    if user_row.get('restriction_subscription'):
+                        limits.append('запрет продления/покупки')
+                    reason = user_row.get('restriction_reason')
+                    reason_str = f' (причина: {reason})' if reason else ''
+                    lines.append('Ограничения аккаунта: ' + ', '.join(limits) + reason_str)
+
+                promo_group_id = user_row.get('promo_group_id')
+                if promo_group_id:
+                    try:
+                        pg = await session.execute(
+                            text('SELECT name FROM promo_groups WHERE id = :pid LIMIT 1'),
+                            {'pid': promo_group_id},
+                        )
+                        pg_row = pg.mappings().first()
+                        if pg_row and pg_row.get('name'):
+                            lines.append(f'Промогруппа: {pg_row["name"]}')
+                    except Exception:
+                        pass
+
+                if user_row.get('referral_code'):
+                    try:
+                        ref = await session.execute(
+                            text('SELECT COUNT(*) AS c FROM users WHERE referred_by_id = :uid'),
+                            {'uid': user_row['id']},
+                        )
+                        ref_count = int(ref.mappings().first().get('c') or 0)
+                        lines.append(f'Рефералов приглашено: {ref_count}')
+                    except Exception:
+                        pass
 
                 subs = await session.execute(
                     text(
-                        'SELECT status, is_trial, end_date, traffic_limit_gb, device_limit, autopay_enabled, subscription_url '
+                        'SELECT status, is_trial, end_date, traffic_limit_gb, traffic_used_gb, '
+                        'device_limit, autopay_enabled, subscription_url '
                         'FROM subscriptions WHERE user_id = :uid ORDER BY created_at DESC LIMIT 5'
                     ),
                     {'uid': user_row['id']},
@@ -56,15 +126,19 @@ async def build_user_context(telegram_id: int) -> str:
                     lines.append('Подписки:')
                     for sub in sub_rows:
                         limit_gb = sub.get('traffic_limit_gb') or 0
-                        traffic = 'безлимит' if not limit_gb else f'{limit_gb} ГБ'
-                        end_date = sub.get('end_date')
-                        end_str = end_date.strftime('%d.%m.%Y') if hasattr(end_date, 'strftime') else str(end_date)
+                        used_gb = sub.get('traffic_used_gb') or 0
+                        traffic = 'безлимит' if not limit_gb else f'{used_gb:.1f}/{limit_gb} ГБ'
+                        end_str = _fmt_date(sub.get('end_date'))
+                        left = _days_left(sub.get('end_date'))
+                        left_str = ''
+                        if left is not None:
+                            left_str = f' (осталось {left} дн.)' if left >= 0 else f' (истекла {abs(left)} дн. назад)'
                         sub_url = sub.get('subscription_url')
                         url_str = f', ссылка={sub_url}' if sub_url else ''
                         lines.append(
                             f'  • статус={sub.get("status")}, '
                             f'триал={"да" if sub.get("is_trial") else "нет"}, '
-                            f'до {end_str}, трафик={traffic}, '
+                            f'до {end_str}{left_str}, трафик={traffic}, '
                             f'устройств={sub.get("device_limit")}, '
                             f'автоплатеж={"вкл" if sub.get("autopay_enabled") else "выкл"}{url_str}'
                         )
@@ -82,15 +156,14 @@ async def build_user_context(telegram_id: int) -> str:
                 if tx_rows:
                     lines.append('Последние операции:')
                     for row in tx_rows:
-                        created = row.get('created_at')
-                        created_str = created.strftime('%d.%m.%Y') if hasattr(created, 'strftime') else str(created)
+                        created_str = _fmt_date(row.get('created_at'))
                         description = (row.get('description') or '')[:60]
                         lines.append(
                             f'  • {created_str} {row.get("type")} '
                             f'{_format_price(row.get("amount_kopeks"))} — {description}'
                         )
             else:
-                lines.append('Пользователь не найден в основной базе.')
+                lines.append('Пользователь не найден в основной базе (возможно, ещё не запускал основного бота).')
         except Exception as error:
             logger.warning('Failed to read main DB user context', error=str(error))
         finally:

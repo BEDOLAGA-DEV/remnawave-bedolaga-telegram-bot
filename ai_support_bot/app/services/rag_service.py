@@ -46,7 +46,8 @@ class RAGService:
 
         pairs, message_count = parse_knowledge_file(parsed_data)
         chunk_max_chars = settings_store.get_int('CHUNK_MAX_CHARS') or 1200
-        candidate_chunks = build_chunks(pairs, chunk_max_chars)
+        drop_low_value = settings_store.get_bool('KB_DROP_LOW_VALUE')
+        candidate_chunks = build_chunks(pairs, chunk_max_chars, drop_low_value=drop_low_value)
         if not candidate_chunks:
             raise ValueError('В файле не найдено пар вопрос-ответ для базы знаний')
 

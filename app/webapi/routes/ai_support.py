@@ -183,6 +183,7 @@ class ConversationSummaryItem(BaseModel):
     id: int
     telegram_id: int
     escalated: bool
+    summary: str = ''
     created_at: str
     updated_at: str
     message_count: int

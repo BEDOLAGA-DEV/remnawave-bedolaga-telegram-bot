@@ -1,3 +1,4 @@
+import re
 import time
 
 import structlog
@@ -6,14 +7,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai_support_bot.app.db import crud
 from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.knowledge_parser import compute_content_hash
-from ai_support_bot.app.services.openai_client import OpenAIError, openai_client
+from ai_support_bot.app.services.openai_client import openai_client
 from ai_support_bot.app.services.rag_service import rag_service
+from ai_support_bot.app.services.summary_service import summary_service
 from ai_support_bot.app.services.user_data import build_user_context
 
 
 logger = structlog.get_logger(__name__)
 
 _ESCALATION_MARKER = '[[ESCALATE]]'
+
+_SMALLTALK_PATTERNS = (
+    r'привет\w*', r'здравств\w*', r'хай', r'hi', r'hello', r'yo', r'здаров\w*',
+    r'добр(ое|ый|ой)', r'утро', r'день', r'вечер', r'ночи',
+    r'спасибо\w*', r'благодар\w*', r'спс', r'пасиб\w*', r'сяб', r'мерси',
+    r'как', r'дела', r'ты', r'жизнь', r'настроение', r'сам', r'оно',
+    r'что', r'нового', r'делаешь', r'поживаешь',
+    r'ок\w*', r'окей', r'окай', r'k', r'понял\w*', r'ясно', r'хорошо', r'ладно',
+    r'отлично', r'супер', r'класс', r'здорово', r'круто', r'бомба',
+    r'пока', r'свидания', r'до', r'бб', r'споки', r'ага', r'угу', r'да', r'нет',
+    r'большое', r'огромное', r'тебе', r'вам', r'вас', r'тебя', r'всем', r'братан', r'бро', r'дружище', r'друг',
+    r'приятно', r'рад', r'взаимно', r'всё', r'все', r'работает', r'заработало', r'помогло',
+    r'красава', r'красавчик', r'молодец', r'топ', r'машина', r'человек',
+)
+_SMALLTALK_RE = re.compile(r'^(?:' + '|'.join(_SMALLTALK_PATTERNS) + r')$', re.IGNORECASE)
+_SMALLTALK_TOKEN_RE = re.compile(r"[a-zа-яё]+", re.IGNORECASE)
 
 
 class _ResponseCache:
@@ -39,40 +57,49 @@ class _ResponseCache:
 _response_cache = _ResponseCache()
 
 
-import re
-
-
 def convert_markdown_to_html(text: str) -> str:
     if not text:
         return text
-    # Convert **text** -> <b>text</b>
     text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-    # Convert __text__ -> <b>text</b>
     text = re.sub(r'__(.*?)__', r'<b>\1</b>', text)
-    # Convert *text* -> <i>text</i>
     text = re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'<i>\1</i>', text)
-    # Convert `code` -> <code>code</code>
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
     return text
 
 
+def _is_smalltalk(text: str) -> bool:
+    stripped = (text or '').strip()
+    if not stripped or len(stripped) > 45:
+        return False
+    tokens = _SMALLTALK_TOKEN_RE.findall(stripped)
+    if not tokens or len(tokens) > 6:
+        return False
+    return all(_SMALLTALK_RE.match(token) for token in tokens)
+
+
 class SupportAgent:
-    def _build_system_prompt(self, knowledge: list[dict], user_context: str) -> str:
+    def _build_system_prompt(self, knowledge: list[dict], user_context: str, summary: str | None) -> str:
         blocks = [
             settings_store.get('SYSTEM_PROMPT'),
-            'ПРАВИЛО ПРИВЕТСТВИЯ: Поздоровайся (например, "Здравствуйте!") ТОЛЬКО если это самое первое сообщение в диалоге или между сообщениями прошел большой перерыв. Если в истории сообщений ниже уже есть диалог с пользователем, НЕ здоровайся повторно в каждом ответе, а сразу отвечай на вопрос.',
-            'ПРАВИЛО БЕЗ ЛИШНИХ ВОПРОСОВ И НАВЯЗЧИВОСТИ: Отвечай строго по существу. Категорически НЕ добавляй в конце ответа риторические отбивки ("Чем еще помочь?", "Остались ли вопросы?", "Напишите, если возникнут сложности" и т.д.). Задавай уточняющие вопросы ТОЛЬКО тогда, когда без этой информации невозможно решить проблему.',
-            'ОБЯЗАТЕЛЬНОЕ ПРАВИЛО ФОРМАТИРОВАНИЯ: Используй ТОЛЬКО HTML-теги Telegram (<b>жирный</b>, <i>курсив</i>, <code>код</code>). Категорически запрещено использовать Markdown-разметку (**звёздочки**, __подчёркивания__ или ```).',
-            'КРИТИЧЕСКОЕ ПРАВИЛО БЕЗОПАСНОСТИ ССЫЛОК: Категорически запрещено брать, подставлять или выдумывать любые ссылки на подключение из раздела "Примеры прошлых обращений"! Все персональные ссылки пользователя берутся ИСКЛЮЧИТЕЛЬНО из раздела "Данные текущего пользователя" (поле "ссылка="). Если у пользователя в "Данных текущего пользователя" нет ссылки для запрашиваемого тарифа, вежливо объясни, что получить свою ссылку он может в боте в меню «Профиль» -> «Мои подключения», либо предложи позвать оператора.'
+            'ПРАВИЛО ПРИВЕТСТВИЯ: Здоровайся ТОЛЬКО в первом сообщении диалога или после долгого перерыва. '
+            'Если диалог уже идёт — не здоровайся повторно, сразу отвечай по сути.',
+            'ПРАВИЛО КРАТКОСТИ: Не добавляй в конце дежурных фраз («Чем ещё помочь?», «Остались вопросы?» и т.п.). '
+            'Уточняющий вопрос задавай, только если без него реально нельзя решить проблему — не более одного.',
+            'ПРАВИЛО БЕЗОПАСНОСТИ ССЫЛОК: Персональные ссылки на подключение бери ИСКЛЮЧИТЕЛЬНО из «Данные текущего '
+            'пользователя» (поле «ссылка=»). Ссылки из «Примеры прошлых обращений» — чужие, использовать запрещено. '
+            'Если ссылки нет в данных пользователя — подскажи взять её в боте: «Профиль» → «Мои подключения», либо предложи оператора.',
         ]
+
+        if summary:
+            blocks.append('Краткая сводка предыдущего диалога (контекст, учитывай при ответе):\n' + summary)
 
         if knowledge:
             examples = [
-                f'Пример {idx} (релевантность {item["score"]}):\n{item["content"]}'
+                f'Пример {idx}:\n{item["content"]}'
                 for idx, item in enumerate(knowledge, start=1)
             ]
             blocks.append(
-                'Примеры прошлых обращений и ответов поддержки (используй как образец):\n'
+                'Примеры прошлых обращений и ответов поддержки (образец тона и решений, НЕ факты о клиенте):\n'
                 + '\n\n'.join(examples)
             )
 
@@ -80,8 +107,8 @@ class SupportAgent:
             blocks.append('Данные текущего пользователя:\n' + user_context)
 
         blocks.append(
-            'Если вопрос требует ручного вмешательства оператора (возвраты денег, сложные '
-            f'технические проблемы, жалобы), добавь в конце ответа маркер {_ESCALATION_MARKER}.'
+            'Если вопрос требует ручного вмешательства оператора (возврат денег, изменение подписки, '
+            f'жалоба, сложная техническая проблема, которую не решить советом) — добавь в самом конце маркер {_ESCALATION_MARKER}.'
         )
         return '\n\n'.join(blocks)
 
@@ -89,12 +116,26 @@ class SupportAgent:
         self, db: AsyncSession, telegram_id: int, question: str, image_url: str | None = None
     ) -> dict:
         await settings_store.load()
-        knowledge = await rag_service.retrieve(db, question) if question.strip() else []
-        user_context = await build_user_context(telegram_id)
-        system_prompt = self._build_system_prompt(knowledge, user_context)
+
+        max_question_chars = settings_store.get_int('MAX_QUESTION_CHARS') or 1500
+        if len(question) > max_question_chars:
+            question = question[:max_question_chars].rstrip() + '…'
+
+        smalltalk = _is_smalltalk(question) and not image_url
+        kb_min_chars = settings_store.get_int('KB_MIN_QUESTION_CHARS') or 6
+
+        knowledge: list[dict] = []
+        if question.strip() and not smalltalk and len(question.strip()) >= kb_min_chars:
+            knowledge = await rag_service.retrieve(db, question)
+
+        user_context = '' if smalltalk else await build_user_context(telegram_id)
 
         conversation = await crud.get_or_create_conversation(db, telegram_id)
-        context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 8
+        summary = conversation.summary
+
+        system_prompt = self._build_system_prompt(knowledge, user_context, summary)
+
+        context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 6
         history = await crud.get_conversation_context(db, conversation.id, context_limit)
 
         messages: list[dict] = [{'role': 'system', 'content': system_prompt}]
@@ -125,9 +166,10 @@ class SupportAgent:
 
         cache_key = None
         cached_answer = None
-        if not image_url and question.strip():
+        cache_ttl = settings_store.get_int('RESPONSE_CACHE_TTL') or 900
+        if not image_url and question.strip() and not smalltalk:
             cache_key = f'{telegram_id}:{compute_content_hash(question.strip().lower().encode("utf-8"))}'
-            cached_answer = _response_cache.get(cache_key, ttl=900)
+            cached_answer = _response_cache.get(cache_key, ttl=cache_ttl)
 
         tokens_prompt = None
         tokens_completion = None
@@ -135,7 +177,7 @@ class SupportAgent:
             answer_text = cached_answer
             model_used = model
         else:
-            logger.info('Sending prompt to OpenAI', telegram_id=telegram_id, system_prompt=system_prompt, messages=messages)
+            logger.info('Sending prompt to OpenAI', telegram_id=telegram_id, smalltalk=smalltalk, kb=len(knowledge))
             result = await openai_client.chat_completion(
                 messages=messages, model=model, max_tokens=max_tokens, temperature=temperature
             )
@@ -173,6 +215,10 @@ class SupportAgent:
 
         if escalate:
             await crud.mark_escalated(db, conversation.id)
+
+        await crud.bump_user_turn(db, conversation.id)
+        await db.flush()
+        await summary_service.maybe_summarize(db, conversation)
 
         history_limit = settings_store.get_int('HISTORY_LIMIT') or 100
         await crud.prune_messages(db, history_limit)

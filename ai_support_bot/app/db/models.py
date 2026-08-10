@@ -62,6 +62,11 @@ class Conversation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
     escalated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summarized_message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    summarized_up_to_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    user_turns_since_summary: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
