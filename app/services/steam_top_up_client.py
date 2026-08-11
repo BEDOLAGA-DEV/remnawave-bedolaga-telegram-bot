@@ -9,9 +9,22 @@ class SteamTopUpError(Exception):
     pass
 
 
+def _format_network_error(exc: Exception) -> str:
+    err_msg = str(exc).strip()
+    exc_type = type(exc).__name__
+    if err_msg:
+        return f"{exc_type}: {err_msg}"
+    return exc_type
+
+
 class SteamTopUpClient:
     def __init__(self, base_url: str | None = None):
-        self.base_url = (base_url or settings.STEAM_TOP_UP_API_URL or 'https://tg.slig.app/').rstrip('/')
+        self._custom_base_url = base_url
+
+    @property
+    def base_url(self) -> str:
+        url = self._custom_base_url or getattr(settings, 'STEAM_TOP_UP_API_URL', None) or 'https://tg.slig.app/'
+        return url.rstrip('/')
 
     async def create_stars_order(
         self,
@@ -50,8 +63,9 @@ class SteamTopUpClient:
                     )
                 return response.json()
             except httpx.RequestError as exc:
-                logger.error("SteamTopUp network error", error=str(exc))
-                raise SteamTopUpError(f"Network error connecting to SteamTopUp: {exc}")
+                err_detail = _format_network_error(exc)
+                logger.error("SteamTopUp network error", error=err_detail, url=url)
+                raise SteamTopUpError(f"Network error connecting to SteamTopUp: {err_detail}")
 
     async def check_order_status(self, order_id: str) -> dict:
         """
@@ -67,7 +81,9 @@ class SteamTopUpClient:
                     )
                 return response.json()
             except httpx.RequestError as exc:
-                raise SteamTopUpError(f"Network error connecting to SteamTopUp: {exc}")
+                err_detail = _format_network_error(exc)
+                raise SteamTopUpError(f"Network error connecting to SteamTopUp: {err_detail}")
 
 
 steam_top_up_client = SteamTopUpClient()
+
