@@ -144,23 +144,7 @@ async def run_alembic_upgrade() -> None:
     db_state = await _detect_db_state()
 
     if db_state == 'managed':
-        async with engine.begin() as conn:
-            current_rev_result = await conn.execute(text("SELECT version_num FROM alembic_version"))
-            rev = current_rev_result.scalar()
-            # Revisions 0094-0101 were "hijacked" by old slig/production-patches custom migrations
-            # that did NOT create coupon_batches. If that table is missing we need to rewind
-            # alembic_version to 0093 so the real upstream 0094-0101 chain runs and creates it.
-            _hijacked_range = {f'{n:04d}' for n in range(94, 102)}  # '0094' .. '0101'
-            if rev in _hijacked_range:
-                has_coupon = await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table('coupon_batches'))
-                if not has_coupon:
-                    logger.warning(
-                        'Обнаружено некорректное состояние миграций: alembic_version=%s, '
-                        'но таблица coupon_batches отсутствует. '
-                        'Откат alembic_version до 0093 для повторного применения upstream-миграций.',
-                        rev
-                    )
-                    await conn.execute(text("UPDATE alembic_version SET version_num = '0093'"))
+        pass  # normal path — alembic upgrade head will run pending revisions
 
     if db_state == 'fresh':
         logger.warning('Обнаружена пустая БД — создание схемы из моделей + stamp head')
