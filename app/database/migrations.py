@@ -138,8 +138,23 @@ async def _ensure_runtime_schema_guards() -> None:
 async def run_alembic_upgrade() -> None:
     """Run ``alembic upgrade head``, handling fresh and legacy databases."""
     import asyncio
+    from sqlalchemy import text, inspect
+    from app.database.database import engine
 
     db_state = await _detect_db_state()
+
+    if db_state == 'managed':
+        async with engine.begin() as conn:
+            current_rev_result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+            rev = current_rev_result.scalar()
+            if rev in ('0094', '0095', '0096'):
+                has_coupon = await conn.run_sync(lambda sync_conn: inspect(sync_conn).has_table('coupon_batches'))
+                if not has_coupon:
+                    logger.warning(
+                        'Обнаружено некорректное состояние миграций (hijacked %s), откат alembic_version до 0093',
+                        rev
+                    )
+                    await conn.execute(text("UPDATE alembic_version SET version_num = '0093'"))
 
     if db_state == 'fresh':
         logger.warning('Обнаружена пустая БД — создание схемы из моделей + stamp head')
