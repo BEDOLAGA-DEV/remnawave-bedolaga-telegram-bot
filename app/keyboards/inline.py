@@ -2582,6 +2582,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 _create_btn(
                     text=texts.t('PAYMENT_VIA_SUPPORT', '🛠️ Через поддержку'),
                     callback_data='topup_support',
+                    method='support',
                 )
             ]
         )
