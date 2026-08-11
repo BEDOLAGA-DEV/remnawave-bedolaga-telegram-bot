@@ -1881,6 +1881,9 @@ class RemnaWaveService:
         from app.database.models import Subscription
 
         stats = {'created': 0, 'updated': 0, 'errors': 0, 'deleted': 0}
+        # Track (user_id, tariff_id) pairs already queued for INSERT in this sync run
+        # to prevent UniqueViolationError on uq_subscriptions_user_tariff_active
+        _pending_user_tariff: set[tuple[int, int | None]] = set()
         try:
             logger.info('🔄 [multi-tariff] Начинаем синхронизацию типа', sync_type=sync_type)
 
@@ -2015,6 +2018,56 @@ class RemnaWaveService:
                     if any(s.remnawave_uuid == panel_uuid for s in _user_subs):
                         continue
 
+                    # Compute matched_tariff_id early so we can dedup before creating
+                    # (full tariff computation happens below, but we need it for the guard)
+                    _early_tariff_id: int | None = None
+                    try:
+                        from app.database.crud.tariff import get_all_active_tariffs as _get_tariffs_early
+
+                        _early_squads = panel_user.get('activeInternalSquads', []) or []
+                        _early_squad_uuids = []
+                        if isinstance(_early_squads, list):
+                            for _sq in _early_squads:
+                                if isinstance(_sq, dict) and 'uuid' in _sq:
+                                    _early_squad_uuids.append(_sq['uuid'])
+                                elif isinstance(_sq, str):
+                                    _early_squad_uuids.append(_sq)
+                        _early_all_tariffs = await _get_tariffs_early(db)
+                        if _early_squad_uuids:
+                            for _t in _early_all_tariffs:
+                                if _t.allowed_squads and set(_early_squad_uuids).issubset(set(_t.allowed_squads)):
+                                    _early_tariff_id = _t.id
+                                    break
+                        if _early_tariff_id is None and _early_all_tariffs:
+                            _early_tariff_id = _early_all_tariffs[0].id
+                    except Exception:
+                        pass
+
+                    # Guard: skip if this (user_id, tariff_id) is already active in DB
+                    _ACTIVE_STATUSES = ('active', 'trial', 'limited')
+                    if _early_tariff_id is not None and any(
+                        s.tariff_id == _early_tariff_id and s.status in _ACTIVE_STATUSES
+                        for s in _user_subs
+                    ):
+                        logger.debug(
+                            '⏭️ [multi-tariff] Пропуск: активная подписка с этим тарифом уже есть в БД',
+                            user_id=_bot_user.id,
+                            tariff_id=_early_tariff_id,
+                            panel_uuid=panel_uuid,
+                        )
+                        continue
+
+                    # Guard: skip if already queued for INSERT in this sync run
+                    _pending_key = (_bot_user.id, _early_tariff_id)
+                    if _pending_key in _pending_user_tariff:
+                        logger.warning(
+                            '⏭️ [multi-tariff] Пропуск: дублирующаяся пара (user_id, tariff_id) в текущем синке',
+                            user_id=_bot_user.id,
+                            tariff_id=_early_tariff_id,
+                            panel_uuid=panel_uuid,
+                        )
+                        continue
+
                     try:
                         from app.database.crud.subscription import generate_unique_short_id
 
@@ -2041,33 +2094,8 @@ class RemnaWaveService:
 
                         _short_id = await generate_unique_short_id(db)
 
-                        # Attempt to match tariff by allowed_squads
-                        _matched_tariff_id = None
-                        try:
-                            from app.database.crud.tariff import get_all_active_tariffs
-
-                            _all_tariffs = await get_all_active_tariffs(db)
-                            if _squad_uuids:
-                                for _t in _all_tariffs:
-                                    if _t.allowed_squads and set(_squad_uuids).issubset(set(_t.allowed_squads)):
-                                        _matched_tariff_id = _t.id
-                                        break
-
-                            # Fallback: use first active tariff to prevent NULL tariff_id orphans
-                            if _matched_tariff_id is None and _all_tariffs:
-                                _matched_tariff_id = _all_tariffs[0].id
-                                logger.warning(
-                                    '⚠️ [multi-tariff] Тариф не найден по squad_uuid, используем fallback',
-                                    panel_uuid=panel_uuid,
-                                    squad_uuids=_squad_uuids,
-                                    fallback_tariff_id=_matched_tariff_id,
-                                )
-                        except Exception as tariff_err:
-                            logger.error(
-                                '❌ [multi-tariff] Ошибка при поиске тарифа',
-                                panel_uuid=panel_uuid,
-                                error=tariff_err,
-                            )
+                        # Re-use pre-computed tariff id (already resolved above for dedup guard)
+                        _matched_tariff_id = _early_tariff_id
 
                         new_sub = Subscription(
                             user_id=_bot_user.id,
@@ -2087,6 +2115,8 @@ class RemnaWaveService:
                         )
                         db.add(new_sub)
                         subs_by_uuid[panel_uuid] = new_sub
+                        # Register this (user_id, tariff_id) as pending to prevent duplicates
+                        _pending_user_tariff.add(_pending_key)
                         # Keep in-memory state consistent for subsequent iterations
                         if hasattr(_bot_user, 'subscriptions') and isinstance(_bot_user.subscriptions, list):
                             _bot_user.subscriptions.append(new_sub)
