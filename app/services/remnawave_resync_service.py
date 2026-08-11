@@ -65,10 +65,13 @@ async def resync_user_subscriptions_with_panel(
             )
 
         # Determine whether a panel user already exists for this subscription.
+        # Panel identity is the numeric `remnawave_id` since Remnawave 3.0.0.
+        # `is not None` rather than truthiness: getting this gate wrong does not
+        # raise, it creates a duplicate panel account on every single pass.
         if settings.is_multi_tariff_enabled():
-            panel_user_exists = bool(subscription.remnawave_uuid)
+            panel_user_exists = subscription.remnawave_id is not None
         else:
-            panel_user_exists = bool(user.remnawave_uuid)
+            panel_user_exists = user.remnawave_id is not None
 
         try:
             if panel_user_exists:

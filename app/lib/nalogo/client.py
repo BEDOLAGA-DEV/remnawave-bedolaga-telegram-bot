@@ -197,7 +197,7 @@ class Client:
 
         return ReceiptAPI(
             http_client=self.http_client,
-            base_endpoint=self.base_url,
+            base_endpoint=f'{self.base_url}/v1',
             user_inn=self._user_profile['inn'],
         )
 

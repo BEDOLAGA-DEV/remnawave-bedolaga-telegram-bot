@@ -40,6 +40,8 @@
 !tests/**
 !migrations/
 !migrations/**
+!scripts/
+!scripts/**
 !docs/
 !docs/**
 !assets/

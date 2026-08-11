@@ -20,10 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def _get_column_type(table: str, column: str) -> str | None:
     conn = op.get_bind()
     result = conn.execute(
-        sa.text(
-            "SELECT data_type FROM information_schema.columns "
-            "WHERE table_name = :table AND column_name = :column"
-        ),
+        sa.text('SELECT data_type FROM information_schema.columns WHERE table_name = :table AND column_name = :column'),
         {'table': table, 'column': column},
     )
     row = result.fetchone()
@@ -35,18 +32,12 @@ def upgrade() -> None:
     if col_type and col_type != 'jsonb':
         op.execute(
             sa.text(
-                "ALTER TABLE users "
-                "ALTER COLUMN notification_settings TYPE jsonb "
-                "USING notification_settings::jsonb"
+                'ALTER TABLE users ALTER COLUMN notification_settings TYPE jsonb USING notification_settings::jsonb'
             )
         )
 
 
 def downgrade() -> None:
     op.execute(
-        sa.text(
-            "ALTER TABLE users "
-            "ALTER COLUMN notification_settings TYPE json "
-            "USING notification_settings::json"
-        )
+        sa.text('ALTER TABLE users ALTER COLUMN notification_settings TYPE json USING notification_settings::json')
     )

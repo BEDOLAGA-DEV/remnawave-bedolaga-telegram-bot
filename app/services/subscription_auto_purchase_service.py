@@ -45,6 +45,54 @@ def _format_user_id(user: User) -> str:
     return str(user.telegram_id) if user.telegram_id else f'email:{user.id}'
 
 
+async def _notify_email_user_auto_purchase(
+    user: User,
+    subscription: Subscription | None,
+    tariff_name: str | None,
+    *,
+    renewed: bool,
+) -> None:
+    """Email/WS-уведомление об автопокупке для юзеров без Telegram (#2952).
+
+    Все user-уведомления в этом сервисе гейтятся ``if bot and user.telegram_id``
+    — email-юзеры (авторизация только по email) не узнавали о результате
+    автопокупки вообще. Мультиканальный роутер вызываем ТОЛЬКО для юзеров без
+    telegram_id: telegram-юзерам сообщение уже отправлено ботом напрямую, а
+    роутер сам проверяет email_verified и статус аккаунта. Сбои глотаем —
+    подписка уже оформлена, уведомление не должно ронять flow.
+    """
+    if user is None or getattr(user, 'telegram_id', None) or not getattr(user, 'email', None):
+        return
+    try:
+        from app.services.notification_delivery_service import (
+            NotificationType,
+            notification_delivery_service,
+        )
+
+        end_date = getattr(subscription, 'end_date', None)
+        end_date_str = end_date.strftime('%d.%m.%Y') if end_date else ''
+        await notification_delivery_service.send_notification(
+            user=user,
+            notification_type=(
+                NotificationType.SUBSCRIPTION_RENEWED if renewed else NotificationType.SUBSCRIPTION_ACTIVATED
+            ),
+            context={
+                'expires_at': end_date_str,
+                'new_expires_at': end_date_str,
+                'traffic_limit_gb': getattr(subscription, 'traffic_limit_gb', None),
+                'device_limit': getattr(subscription, 'device_limit', None),
+                'tariff_name': tariff_name or '',
+            },
+            bot=None,
+        )
+    except Exception as error:
+        logger.error(
+            'Не удалось отправить email-уведомление об автопокупке',
+            user_id=getattr(user, 'id', None),
+            error=error,
+        )
+
+
 @dataclass(slots=True)
 class AutoPurchaseContext:
     """Aggregated data prepared for automatic checkout processing."""
@@ -727,6 +775,10 @@ async def _auto_extend_subscription(
                 error=error,
             )
 
+    # Конвертация триала в платную — это первая активация, а не продление
+    # (email иначе получил бы «Подписка продлена» вместо «активирована», #2952).
+    await _notify_email_user_auto_purchase(user, updated_subscription, prepared.tariff_name, renewed=not was_trial)
+
     logger.info(
         '✅ Автопокупка: подписка продлена на дней для пользователя',
         period_days=prepared.period_days,
@@ -1093,6 +1145,11 @@ async def _auto_purchase_tariff(
                 error=error,
             )
 
+    # Триал→платный = первая активация, не продление (иначе email врёт «продлена»).
+    await _notify_email_user_auto_purchase(
+        user, subscription, tariff_name_for_label, renewed=bool(existing_subscription) and not was_trial_conversion
+    )
+
     logger.info(
         '✅ Автопокупка тарифа: подписка на тариф (дней) оформлена для пользователя',
         tariff_name=tariff.name,
@@ -1445,6 +1502,11 @@ async def _auto_purchase_daily_tariff(
                 error=error,
             )
 
+    # Триал→платный = первая активация, не продление (иначе email врёт «продлена»).
+    await _notify_email_user_auto_purchase(
+        user, subscription, tariff.name, renewed=bool(existing_subscription) and not was_trial_conversion
+    )
+
     logger.info(
         '✅ Автопокупка суточного тарифа: тариф активирован для пользователя',
         tariff_name=tariff.name,
@@ -1694,13 +1756,13 @@ async def _auto_add_devices(
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _panel_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else getattr(user, 'remnawave_uuid', None)
+        _panel_user_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id is not None
+            else getattr(user, 'remnawave_id', None)
         )
-        if _panel_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(_panel_uuid)
+        if _panel_user_id is not None and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(_panel_user_id)
     except Exception as error:
         logger.warning(
             '⚠️ Автопокупка устройств: не удалось обновить Remnawave для пользователя',
@@ -2050,13 +2112,13 @@ async def _auto_add_traffic(
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _panel_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else getattr(user, 'remnawave_uuid', None)
+        _panel_user_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id is not None
+            else getattr(user, 'remnawave_id', None)
         )
-        if _panel_uuid and subscription.status == 'active':
-            await subscription_service.enable_remnawave_user(_panel_uuid)
+        if _panel_user_id is not None and subscription.status == 'active':
+            await subscription_service.enable_remnawave_user(_panel_user_id)
     except Exception as error:
         logger.warning(
             '⚠️ Автопокупка трафика: не удалось обновить Remnawave для пользователя',
@@ -2535,6 +2597,8 @@ async def try_auto_extend_expired_after_topup(
                 error=error,
             )
 
+    await _notify_email_user_auto_purchase(user, updated_subscription, tariff_name_for_label, renewed=True)
+
     logger.info(
         '✅ Автопродление expired: подписка продлена для пользователя',
         period_days=period_days,
@@ -2797,7 +2861,15 @@ async def try_resume_disabled_daily_after_topup(
     # Sync with RemnaWave
     try:
         subscription_service = SubscriptionService()
-        if getattr(user, 'remnawave_uuid', None):
+        # Multi-tariff keeps panel identity on the subscription, not the user —
+        # gating on the user column alone made every daily resume take the
+        # create branch and spawn a duplicate panel account.
+        _has_panel_user = (
+            getattr(subscription, 'remnawave_id', None)
+            if settings.is_multi_tariff_enabled()
+            else getattr(user, 'remnawave_id', None)
+        ) is not None
+        if _has_panel_user:
             await subscription_service.update_remnawave_user(
                 db,
                 subscription,
@@ -2814,7 +2886,12 @@ async def try_resume_disabled_daily_after_topup(
             )
             # POST may ignore activeInternalSquads — follow up with PATCH
             await db.refresh(user)
-            if getattr(user, 'remnawave_uuid', None) and subscription.connected_squads:
+            _synced_panel_user_id = (
+                getattr(subscription, 'remnawave_id', None)
+                if settings.is_multi_tariff_enabled()
+                else getattr(user, 'remnawave_id', None)
+            )
+            if _synced_panel_user_id is not None and subscription.connected_squads:
                 try:
                     await subscription_service.update_remnawave_user(
                         db,
@@ -2913,6 +2990,8 @@ async def try_resume_disabled_daily_after_topup(
                 error=error,
             )
 
+    await _notify_email_user_auto_purchase(user, subscription, tariff.name, renewed=True)
+
     logger.info(
         '✅ Авто-возобновление daily: подписка возобновлена для пользователя',
         format_user_id=_format_user_id(user),
@@ -3000,9 +3079,13 @@ async def _process_single_cart(
         return False
 
     # Race condition guard (per-subscription): skip if THIS subscription was
-    # modified in the last 60 seconds (indicates a concurrent purchase just landed).
-    # When cart_sub_id is available we check the specific subscription's updated_at;
-    # otherwise fall back to the user-global last transaction check.
+    # modified in the last 60 seconds AND a SUBSCRIPTION_PAYMENT exists in the
+    # same window (indicates a concurrent purchase just landed).
+    # updated_at alone is insufficient: Column(onupdate=func.now()) bumps it on
+    # any row UPDATE (e.g. traffic sync when opening menu_subscription), which
+    # caused false skips after top-up. Requiring a recent payment narrows the
+    # condition so traffic-only bumps no longer block auto-purchase.
+    # When cart_sub_id is unavailable, fall back to the legacy user-global check.
     if cart_mode in ('extend', 'tariff_purchase', 'daily_tariff_purchase'):
         try:
             if cart_sub_id:
@@ -3014,13 +3097,29 @@ async def _process_single_cart(
                     and target_sub.updated_at
                     and (datetime.now(UTC) - target_sub.updated_at) < timedelta(seconds=60)
                 ):
-                    logger.info(
-                        'Автопокупка: пропускаем -- подписка обновлена секунд назад',
-                        format_user_id=_format_user_id(user),
-                        subscription_id=cart_sub_id,
-                        total_seconds=(datetime.now(UTC) - target_sub.updated_at).total_seconds(),
+                    # Confirm a real subscription payment (not just traffic sync).
+                    # limit>1: the top-up webhook may have just inserted a deposit
+                    # as the newest row.
+                    recent_transactions = await get_user_transactions(db, user.id, limit=10)
+                    recent_payment = next(
+                        (
+                            tx
+                            for tx in recent_transactions
+                            if tx.type == TransactionType.SUBSCRIPTION_PAYMENT.value
+                            and tx.created_at
+                            and (datetime.now(UTC) - tx.created_at) < timedelta(seconds=60)
+                        ),
+                        None,
                     )
-                    return False
+                    if recent_payment:
+                        logger.info(
+                            'Автопокупка: пропускаем -- подписка обновлена и есть SUBSCRIPTION_PAYMENT секунд назад',
+                            format_user_id=_format_user_id(user),
+                            subscription_id=cart_sub_id,
+                            updated_at_seconds=(datetime.now(UTC) - target_sub.updated_at).total_seconds(),
+                            payment_seconds=(datetime.now(UTC) - recent_payment.created_at).total_seconds(),
+                        )
+                        return False
             else:
                 recent_transactions = await get_user_transactions(db, user.id, limit=1)
                 if recent_transactions:

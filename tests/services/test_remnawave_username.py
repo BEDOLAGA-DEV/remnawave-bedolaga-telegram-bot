@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.config import settings
+from app.config import settings, transliterate_cyrillic
 
 
 # Note: эти тесты дёргают `format_remnawave_username` напрямую, поэтому
@@ -271,3 +271,55 @@ def test_skeleton_detector_uses_user_id_when_template_references_it(
     # And the rendered result must NOT be the user_<identifier> fallback shape,
     # which would have wiped the template's own structure.
     assert name.startswith('u_42')
+
+
+def test_cyrillic_full_name_is_transliterated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Issue #1659: кириллица в {full_name} должна транслитерироваться, а не выпадать.
+
+    Раньше «Шмель Тим 1234567890» схлопывался до «1234567890» — все кириллические
+    символы заменялись на подчёркивания и вычищались.
+    """
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_USERNAME_TEMPLATE', '{full_name} {telegram_id}', raising=False)
+
+    name = settings.format_remnawave_username(
+        full_name='Шмель Тим',
+        username=None,
+        telegram_id=1234567890,
+    )
+
+    assert name == 'Shmel_Tim_1234567890'
+
+
+def test_ascii_full_name_stays_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Латинские имена не должны меняться транслитерацией."""
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_USERNAME_TEMPLATE', '{full_name} {telegram_id}', raising=False)
+
+    name = settings.format_remnawave_username(
+        full_name='Ivan Nginx',
+        username=None,
+        telegram_id=423839580,
+    )
+
+    assert name == 'Ivan_Nginx_423839580'
+
+
+def test_transliterate_cyrillic_preserves_case_and_non_cyrillic() -> None:
+    assert transliterate_cyrillic('Щука Юля-2 x') == 'Shchuka Yulya-2 x'
+    assert transliterate_cyrillic('подъезд') == 'podezd'
+    assert transliterate_cyrillic('no cyrillic') == 'no cyrillic'
+
+
+def test_transliterated_long_cyrillic_name_respects_max_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Транслитерация удлиняет строку (щ → shch) — итог всё равно должен влезать в лимит."""
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_USERNAME_TEMPLATE', '{full_name} {telegram_id}', raising=False)
+
+    name = settings.format_remnawave_username(
+        full_name='Щедрощащущевский Вячеслав Александрович',
+        username=None,
+        telegram_id=1234567890,
+    )
+
+    assert settings.REMNAWAVE_USERNAME_MIN_LENGTH <= len(name) <= settings.REMNAWAVE_USERNAME_MAX_LENGTH
+    assert all(ch.isalnum() or ch in {'_', '-'} for ch in name)

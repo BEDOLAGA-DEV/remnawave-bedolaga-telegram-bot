@@ -19,7 +19,7 @@ from app.database.crud.subscription import (
     get_subscription_by_id_for_user,
 )
 from app.database.models import Subscription, SubscriptionStatus, User
-from app.localization.texts import get_texts
+from app.localization.texts import Texts, get_texts
 from app.services.subscription_service import SubscriptionService
 from app.keyboards.inline import build_back_button
 
@@ -65,7 +65,7 @@ def _format_subscription_line(sub, idx: int) -> str:
         traffic = f'{used}/{sub.traffic_limit_gb} ГБ'
 
     # Devices
-    devices = f'{sub.device_limit} устр.' if sub.device_limit else ''
+    devices = f'{Texts.format_device_limit(sub.device_limit)} устр.' if sub.device_limit is not None else ''
 
     # End date
     end_date = sub.end_date.strftime('%d.%m.%Y') if sub.end_date else '—'
@@ -275,7 +275,7 @@ async def show_subscription_detail(
         f'📋 <b>{tariff_name}</b>\n\n'
         f'Статус: {status}\n'
         f'<tg-emoji emoji-id="5931472654660800739">📊</tg-emoji> Трафик: {traffic}\n'
-        f'<tg-emoji emoji-id="5877318502947229960">💻</tg-emoji> Устройства: {subscription.device_limit}\n'
+        f'<tg-emoji emoji-id="5877318502947229960">💻</tg-emoji> Устройства: {Texts.format_device_limit(subscription.device_limit)}\n'
         f'<tg-emoji emoji-id="5967782394080530708">📅</tg-emoji> До: {end_date}\n'
     )
 
@@ -384,7 +384,7 @@ async def handle_subscription_devices(
         can_buy_devices = settings.is_devices_selection_enabled()
 
     texts = get_texts(db_user.language)
-    current_devices = subscription.device_limit or 0
+    current_devices = Texts.format_device_limit(subscription.device_limit)
     text = f'📱 <b>Устройства</b>\n\nТекущий лимит: {current_devices} устройств\n\nВыберите действие:'
 
     keyboard = []
@@ -500,16 +500,60 @@ async def handle_subscription_delete_execute(
         await callback.answer('Можно удалить только истекшую или отключённую подписку', show_alert=True)
         return
 
+    from app.services.grace_access_runtime import (
+        GraceAccessDeletionBlocked,
+        ensure_no_open_grace_for_subscriptions,
+    )
+
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))
+    except GraceAccessDeletionBlocked:
+        await callback.answer(
+            'Подписку нельзя удалить, пока действует временный доступ для продления.',
+            show_alert=True,
+        )
+        return
+
+    # Best-effort: stop Platega SBP autopay before the row disappears — the
+    # platega_subscriptions record CASCADE-deletes with it, so cancelling
+    # after the delete would find nothing to cancel on Platega's side.
+    # NOTE: this commits its own transaction internally, which releases the
+    # grace-guard's Postgres advisory lock acquired just above. It therefore
+    # runs BEFORE any irreversible panel/DB step, and the guard is
+    # re-acquired immediately below — closing that window before anything
+    # that can't be undone happens.
+    from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
+    from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
+    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+    try:
+        await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))
+    except GraceAccessDeletionBlocked:
+        await callback.answer(
+            'Подписку нельзя удалить, пока действует временный доступ для продления.',
+            show_alert=True,
+        )
+        return
+
     # Delete from RemnaWave panel (stops webhooks / phantom notifications)
-    if subscription.remnawave_uuid:
+    if subscription.remnawave_id:
         try:
             from app.services.remnawave_webhook_service import RemnaWaveWebhookService
 
             # Suppress the self-inflicted user.deleted webhook so its sibling-expiry
             # sweep never touches the user's other (still-active) subscriptions.
-            RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_uuids=[subscription.remnawave_uuid])
+            # Только по панельному id: `id` — обязательное поле UsersSchema в
+            # 3.0.0, поэтому этот уровень guard'а срабатывает всегда. Добавить
+            # сюда telegram_id значило бы на 5 минут заглушить user.deleted для
+            # ВСЕХ панельных аккаунтов этого пользователя — включая законное
+            # удаление соседней подписки оператором.
+            RemnaWaveWebhookService.mark_intentional_panel_deletion(
+                panel_user_ids=[subscription.remnawave_id],
+            )
             service = SubscriptionService()
-            await service.delete_remnawave_user(subscription.remnawave_uuid)
+            await service.delete_remnawave_user(subscription.remnawave_id)
         except Exception as e:
             logger.warning('Failed to delete RemnaWave user on subscription delete', error=e)
 

@@ -16,6 +16,7 @@ from app.database.crud.user import (
 )
 from app.database.models import User
 from app.services.partner_stats_service import PartnerStatsService
+from app.utils.text_search import contains_conditions
 from app.utils.user_utils import (
     get_detailed_referral_list,
     get_effective_referral_commission_percent,
@@ -56,13 +57,13 @@ router = APIRouter()
 
 
 def _apply_search_filter(query, search: str):
-    search_lower = f'%{search.lower()}%'
-    conditions = [
-        func.lower(User.username).like(search_lower),
-        func.lower(User.first_name).like(search_lower),
-        func.lower(User.last_name).like(search_lower),
-        func.lower(User.referral_code).like(search_lower),
-    ]
+    # lower() в SQL сворачивает регистр по локали базы: под `C` (наш docker-compose)
+    # кириллица не сворачивается, и «поз» не находил «Позитив».
+    # См. app/utils/text_search.py.
+    conditions = contains_conditions(
+        (User.username, User.first_name, User.last_name, User.referral_code),
+        search,
+    )
 
     if search.isdigit():
         conditions.append(User.telegram_id == int(search))

@@ -65,7 +65,15 @@ class AdminStates(StatesGroup):
     setting_promocode_uses = State()
     setting_promocode_expiry = State()
     setting_discount_hours = State()  # Для DISCOUNT: ввод срока действия скидки в часах
+    setting_promocode_combo_days = State()  # Для BALANCE_AND_DAYS: ввод дней подписки после суммы
     selecting_promo_group = State()
+
+    creating_coupon_batch_days = State()
+    creating_coupon_batch_count = State()
+    creating_coupon_batch_name = State()
+    creating_coupon_batch_price = State()
+    creating_coupon_batch_expiry = State()
+    creating_coupon_batch_per_user = State()
 
     creating_campaign_name = State()
     creating_campaign_start = State()
@@ -211,6 +219,9 @@ class AdminStates(StatesGroup):
     editing_tariff_promo_groups = State()
     editing_tariff_traffic_topup_packages = State()
     editing_tariff_max_topup_traffic = State()
+    editing_tariff_custom_traffic_price = State()
+    editing_tariff_custom_traffic_min = State()
+    editing_tariff_custom_traffic_max = State()
     editing_tariff_daily_price = State()
 
 

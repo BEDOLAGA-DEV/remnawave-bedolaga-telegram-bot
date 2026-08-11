@@ -39,7 +39,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     result = conn.execute(
         sa.text(
-            "SELECT 1 FROM information_schema.columns "
+            'SELECT 1 FROM information_schema.columns '
             "WHERE table_name = 'guest_purchases' AND column_name = 'retry_count'"
         )
     )
@@ -90,8 +90,6 @@ def downgrade() -> None:
             idx_name = f'ix_{table}_metadata_purchase_token'
             op.execute(sa.text(f'DROP INDEX CONCURRENTLY IF EXISTS {idx_name}'))
 
-        op.execute(
-            sa.text('DROP INDEX CONCURRENTLY IF EXISTS ix_cryptobot_payments_payload_purchase_token')
-        )
+        op.execute(sa.text('DROP INDEX CONCURRENTLY IF EXISTS ix_cryptobot_payments_payload_purchase_token'))
 
     op.drop_column('guest_purchases', 'retry_count')

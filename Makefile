@@ -44,6 +44,14 @@ fix: ## Исправить код (ruff check --fix + format)
 migrate: ## Применить миграции (alembic upgrade head)
 	uv run alembic upgrade head
 
+.PHONY: backfill-remnawave-ids
+backfill-remnawave-ids: ## Сухой прогон бэкфила панельных id (Remnawave 3.0.0)
+	uv run python -m scripts.backfill_remnawave_ids
+
+.PHONY: backfill-remnawave-ids-apply
+backfill-remnawave-ids-apply: ## Применить бэкфил панельных id (Remnawave 3.0.0)
+	uv run python -m scripts.backfill_remnawave_ids --apply
+
 .PHONY: migration
 migration: ## Создать миграцию (usage: make migration m="description")
 	uv run alembic revision --autogenerate -m "$(m)"

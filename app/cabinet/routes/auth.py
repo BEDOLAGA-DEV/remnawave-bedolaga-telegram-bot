@@ -30,6 +30,7 @@ from app.database.crud.user import (
     verify_and_apply_email_change,
 )
 from app.database.models import CabinetRefreshToken, User, UserStatus
+from app.services import legal_consent_service
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
 from app.services.rbac_bootstrap_service import (
@@ -198,6 +199,39 @@ async def _store_refresh_token(
     )
     await db.execute(stmt)
     await db.commit()
+
+
+async def _require_legal_consent(
+    db: AsyncSession,
+    *,
+    accepted: list[str] | None,
+    language: str,
+) -> list[str]:
+    """Проверить галочки «ознакомлен» ПЕРЕД созданием нового аккаунта.
+
+    Возвращает документы, согласие с которыми надо записать после создания юзера.
+    Если согласия не хватает — 428 со списком документов: экран логина по нему
+    рисует чекбоксы и повторяет запрос. Пустой список = гейт выключен или показывать
+    нечего, тогда регистрация идёт как раньше.
+    """
+    requirement = await legal_consent_service.get_requirement(db, language)
+    if not requirement.required:
+        return []
+
+    missing = legal_consent_service.missing_documents(requirement.documents, accepted)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail={
+                'code': 'legal_consent_required',
+                'message': 'Consent to the legal documents is required to create an account',
+                'documents': requirement.documents,
+                'missing': missing,
+                'prechecked': requirement.prechecked,
+            },
+        )
+
+    return requirement.documents
 
 
 async def _process_campaign_bonus(
@@ -384,8 +418,9 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
             return
 
         async with service.get_api_client() as api:
-            # Try to find user by email in panel
-            panel_users = await api.get_user_by_email(user.email)
+            # Try to find user by email in panel.
+            # 3.0.0 удалил GET /api/users/by-email — поиск живёт фильтром стрима.
+            panel_users = await api.find_users_by_email(user.email)
 
             if not panel_users:
                 logger.debug('No subscription found in panel for email', email=user.email)
@@ -399,48 +434,48 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
             panel_users_to_sync = panel_users if settings.is_multi_tariff_enabled() else panel_users[:1]
 
             for panel_user in panel_users_to_sync:
-                logger.info('Syncing panel subscription for email', email=user.email, uuid=panel_user.uuid)
+                logger.info('Syncing panel subscription for email', email=user.email, panel_user_id=panel_user.id)
 
-                # Check if another user already owns this remnawave_uuid
+                # Check if another user already owns this remnawave_id
                 if settings.is_multi_tariff_enabled():
                     from sqlalchemy import select as _select
 
                     from app.database.models import Subscription as _Subscription
 
                     _sub_result = await db.execute(
-                        _select(_Subscription).where(_Subscription.remnawave_uuid == panel_user.uuid)
+                        _select(_Subscription).where(_Subscription.remnawave_id == panel_user.id)
                     )
                     _existing_sub = _sub_result.scalar_one_or_none()
                     if _existing_sub and _existing_sub.user_id != user.id:
                         logger.warning(
-                            'Panel UUID already owned by another user subscription, skipping',
+                            'Panel user already owned by another user subscription, skipping',
                             email=user.email,
-                            panel_uuid=panel_user.uuid,
+                            panel_user_id=panel_user.id,
                             existing_owner_id=_existing_sub.user_id,
                         )
                         continue
                 else:
-                    from app.database.crud.user import get_user_by_remnawave_uuid
+                    from app.database.crud.user import get_user_by_remnawave_id
 
-                    existing_owner = await get_user_by_remnawave_uuid(db, panel_user.uuid)
+                    existing_owner = await get_user_by_remnawave_id(db, panel_user.id)
                     if existing_owner and existing_owner.id != user.id:
                         logger.warning(
-                            'Panel UUID already belongs to another user, skipping',
+                            'Panel user already belongs to another user, skipping',
                             email=user.email,
-                            panel_uuid=panel_user.uuid,
+                            panel_user_id=panel_user.id,
                             existing_owner_id=existing_owner.id,
                         )
                         continue
 
                 # Link user to panel (only in single-tariff mode)
                 if not settings.is_multi_tariff_enabled():
-                    user.remnawave_uuid = panel_user.uuid
+                    user.remnawave_id = panel_user.id
 
                 # Find existing subscription
                 if settings.is_multi_tariff_enabled():
                     active_subs = await get_active_subscriptions_by_user_id(db, user.id)
                     existing_sub = next(
-                        (s for s in active_subs if s.remnawave_uuid == panel_user.uuid),
+                        (s for s in active_subs if s.remnawave_id == panel_user.id),
                         None,
                     )
                 else:
@@ -473,14 +508,18 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                     existing_sub.status = sub_status.value
                     existing_sub.remnawave_short_uuid = panel_user.short_uuid
                     existing_sub.subscription_url = panel_user.subscription_url
-                    existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
+                    # Не затираем рабочую ссылку пустым значением: панель
+                    # отдаёт happ-ссылку не на всех путях, а потеря сохранённой
+                    # ломает кнопку подключения у живого клиента.
+                    if panel_user.happ_crypto_link:
+                        existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
                     existing_sub.connected_squads = connected_squads
                     existing_sub.device_limit = device_limit
                     existing_sub.is_trial = False
                     logger.info(
                         'Updated subscription for email user',
                         email=user.email,
-                        uuid=panel_user.uuid,
+                        panel_user_id=panel_user.id,
                     )
                 else:
                     from app.database.crud.subscription import generate_unique_short_id
@@ -494,7 +533,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                         traffic_used_gb=traffic_used_gb,
                         status=sub_status.value,
                         is_trial=False,
-                        remnawave_uuid=panel_user.uuid if settings.is_multi_tariff_enabled() else None,
+                        remnawave_id=panel_user.id if settings.is_multi_tariff_enabled() else None,
                         remnawave_short_id=_short_id,
                         remnawave_short_uuid=panel_user.short_uuid,
                         subscription_url=panel_user.subscription_url,
@@ -506,7 +545,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                     logger.info(
                         'Created subscription for email user',
                         email=user.email,
-                        uuid=panel_user.uuid,
+                        panel_user_id=panel_user.id,
                     )
 
             await db.commit()
@@ -599,7 +638,12 @@ async def auth_telegram(
             logger.warning('Failed to check pending referral', error=e)
 
     is_new_user = not user
+    consent_documents: list[str] = []
     if not user:
+        # Согласие проверяем ДО создания: иначе аккаунт уже есть, а галочки нет.
+        consent_documents = await _require_legal_consent(
+            db, accepted=request.accepted_legal_documents, language=tg_language or 'ru'
+        )
         # Create new user from Telegram initData
         logger.info('Creating new user from cabinet (initData): telegram_id', telegram_id=telegram_id)
         user = await create_user(
@@ -612,6 +656,9 @@ async def auth_telegram(
             referred_by_id=referrer_id,
         )
         logger.info('User created successfully: id=, telegram_id', user_id=user.id, telegram_id=user.telegram_id)
+        await legal_consent_service.record_consent(
+            db, user, consent_documents, source='cabinet_telegram', ip_address=client_ip
+        )
     else:
         # Update user info from initData (like bot middleware does)
         updated = False
@@ -786,7 +833,9 @@ async def auth_telegram_widget(
                 logger.warning('Failed to check pending referral (widget)', error=e)
 
     is_new_user = not user
+    consent_documents: list[str] = []
     if not user:
+        consent_documents = await _require_legal_consent(db, accepted=request.accepted_legal_documents, language='ru')
         # Create new user from Telegram data
         logger.info(
             'Creating new user from cabinet: telegram_id=, username', request_id=request.id, username=request.username
@@ -801,6 +850,9 @@ async def auth_telegram_widget(
             referred_by_id=referrer_id,
         )
         logger.info('User created successfully: id=, telegram_id', user_id=user.id, telegram_id=user.telegram_id)
+        await legal_consent_service.record_consent(
+            db, user, consent_documents, source='cabinet_telegram_widget', ip_address=client_ip
+        )
 
     if user.status != UserStatus.ACTIVE.value:
         raise HTTPException(
@@ -971,7 +1023,11 @@ async def auth_telegram_oidc(
                 logger.warning('Failed to check pending referral (oidc)', error=e)
 
     is_new_user = not user
+    consent_documents: list[str] = []
     if not user:
+        consent_documents = await _require_legal_consent(
+            db, accepted=request.accepted_legal_documents, language=language or 'ru'
+        )
         logger.info('Creating new user from cabinet OIDC', telegram_id=telegram_id, username=username)
         user = await create_user(
             db=db,
@@ -983,6 +1039,9 @@ async def auth_telegram_oidc(
             referred_by_id=referrer_id,
         )
         logger.info('User created successfully', user_id=user.id, telegram_id=user.telegram_id)
+        await legal_consent_service.record_consent(
+            db, user, consent_documents, source='cabinet_telegram_oidc', ip_address=client_ip
+        )
 
     if user.status != UserStatus.ACTIVE.value:
         raise HTTPException(
@@ -1373,6 +1432,11 @@ async def register_email_standalone(
                     referral_code=request.referral_code,
                 )
 
+    # Согласие проверяем ДО создания: иначе аккаунт уже есть, а галочки нет.
+    consent_documents = await _require_legal_consent(
+        db, accepted=request.accepted_legal_documents, language=request.language or 'ru'
+    )
+
     # Создать пользователя
     user = await create_user_by_email(
         db=db,
@@ -1381,6 +1445,9 @@ async def register_email_standalone(
         first_name=request.first_name,
         language=request.language,
         referred_by_id=referrer.id if referrer else None,
+    )
+    await legal_consent_service.record_consent(
+        db, user, consent_documents, source='cabinet_email', ip_address=client_ip
     )
 
     # Сохранить campaign_slug для обработки при верификации email

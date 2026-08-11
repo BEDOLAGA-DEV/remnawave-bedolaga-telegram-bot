@@ -7,16 +7,14 @@ from fastapi import HTTPException
 from app.config import settings
 
 
-def test_admin_legal_pages_routes_registered():
-    from app.cabinet.routes import router
-
-    paths = {route.path for route in router.routes}
-    assert '/cabinet/admin/legal-pages/privacy-policy' in paths
-    assert '/cabinet/admin/legal-pages/public-offer' in paths
-    assert '/cabinet/admin/legal-pages/rules' in paths
-    assert '/cabinet/admin/legal-pages/faq' in paths
-    assert '/cabinet/admin/legal-pages/faq/pages' in paths
-    assert '/cabinet/admin/legal-pages/faq/pages/{page_id}' in paths
+def test_admin_legal_pages_routes_registered(registered_paths):
+    assert '/cabinet/admin/legal-pages/privacy-policy' in registered_paths
+    assert '/cabinet/admin/legal-pages/public-offer' in registered_paths
+    assert '/cabinet/admin/legal-pages/recurrent-payments' in registered_paths
+    assert '/cabinet/admin/legal-pages/rules' in registered_paths
+    assert '/cabinet/admin/legal-pages/faq' in registered_paths
+    assert '/cabinet/admin/legal-pages/faq/pages' in registered_paths
+    assert '/cabinet/admin/legal-pages/faq/pages/{page_id}' in registered_paths
 
 
 def test_legal_responses_expose_env_lock_flag():

@@ -23,10 +23,10 @@ def _constraint_exists(table: str, constraint_name: str) -> bool:
     conn = op.get_bind()
     result = conn.execute(
         sa.text(
-            "SELECT 1 FROM information_schema.table_constraints "
-            "WHERE table_schema = current_schema() "
-            "AND table_name = :table "
-            "AND constraint_name = :name "
+            'SELECT 1 FROM information_schema.table_constraints '
+            'WHERE table_schema = current_schema() '
+            'AND table_name = :table '
+            'AND constraint_name = :name '
             "AND constraint_type = 'UNIQUE'"
         ),
         {'table': table, 'name': constraint_name},

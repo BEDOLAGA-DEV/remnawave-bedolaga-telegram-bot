@@ -49,6 +49,7 @@ def _make_subscription(reset_mode: str) -> SimpleNamespace:
         user_id=1,
         tariff_id=None,
         tariff=SimpleNamespace(traffic_reset_mode=reset_mode, name='t'),
+        remnawave_id=9001,
         remnawave_uuid='uuid-1',
         traffic_limit_gb=150,
         purchased_traffic_gb=50,

@@ -22,7 +22,11 @@ from app.database.crud.tariff import (
     update_tariff,
 )
 from app.database.models import Tariff, User
-from app.localization.texts import get_texts
+from app.handlers.admin.tariff_custom_traffic import (
+    format_custom_traffic_settings,
+    register_custom_traffic_handlers,
+)
+from app.localization.texts import Texts, get_texts
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
@@ -174,6 +178,14 @@ def get_tariff_view_keyboard(
     buttons.append(
         [
             InlineKeyboardButton(
+                text='⚙️ Произвольный трафик',
+                callback_data=f'admin_tariff_edit_custom_traffic:{tariff.id}',
+            ),
+        ]
+    )
+    buttons.append(
+        [
+            InlineKeyboardButton(
                 text='📈 Докупка трафика', callback_data=f'admin_tariff_edit_traffic_topup:{tariff.id}'
             ),
         ]
@@ -302,7 +314,8 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
     else:
         max_devices_display = '∞ (без лимита)'
 
-    # Форматируем докупку трафика
+    # Форматируем произвольный трафик и докупку трафика
+    custom_traffic_display = format_custom_traffic_settings(tariff)
     traffic_topup_display = _format_traffic_topup_packages(tariff)
 
     # Форматируем режим сброса трафика
@@ -329,11 +342,14 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
 
 <b>Параметры:</b>
 • Трафик: {traffic}
-• Устройств: {tariff.device_limit}
+• Устройств: {Texts.format_device_limit(tariff.device_limit)}
 • Макс. устройств: {max_devices_display}
 • Цена за доп. устройство: {device_price_display}
 • Триал: {trial_status}
 • Дней триала: {trial_days_display}
+
+<b>Произвольный трафик:</b>
+{custom_traffic_display}
 
 <b>Докупка трафика:</b>
 {traffic_topup_display}
@@ -2826,6 +2842,9 @@ async def set_traffic_reset_mode(
 
 def register_handlers(dp: Dispatcher):
     """Регистрирует обработчики для управления тарифами."""
+    # Произвольный трафик регистрируется до общего toggle-фильтра.
+    register_custom_traffic_handlers(dp)
+
     # Список тарифов
     dp.callback_query.register(show_tariffs_list, F.data == 'admin_tariffs')
     dp.callback_query.register(show_tariffs_page, F.data.startswith('admin_tariffs_page:'))
@@ -2839,6 +2858,7 @@ def register_handlers(dp: Dispatcher):
         & ~F.data.startswith('trf_sq:')
         & ~F.data.startswith('admin_tariff_toggle_promo:')
         & ~F.data.startswith('admin_tariff_toggle_traffic_topup:')
+        & ~F.data.startswith('admin_tariff_toggle_custom_traffic:')
         & ~F.data.startswith('admin_tariff_toggle_daily:'),
     )
     dp.callback_query.register(toggle_trial_tariff, F.data.startswith('admin_tariff_toggle_trial:'))

@@ -1,7 +1,8 @@
 import hashlib
 import json
+import os
 from dataclasses import dataclass
-from typing import Any, Optional, Union, get_args, get_origin
+from typing import Any, ClassVar, Optional, Union, get_args, get_origin
 
 import structlog
 from sqlalchemy import select
@@ -68,6 +69,12 @@ class ReadOnlySettingError(RuntimeError):
 
 
 class BotConfigurationService:
+    # Ключи, удалённые в ходе миграций. Строки в system_settings остаются, но
+    # больше ни на что не влияют — молчать об этом нельзя.
+    _RETIRED_SETTINGS: ClassVar[dict[str, str]] = {
+        'TRAFFIC_EXCLUDED_USER_UUIDS': 'TRAFFIC_EXCLUDED_USER_IDS (значения — числовые id панели, не UUID)',
+    }
+
     # SECURITY: keys that must NEVER be editable through the settings API. Beyond
     # the bot token, this covers admin IDENTITY and core AUTH secrets — a
     # delegated admin holding only `settings:edit` could otherwise add their own
@@ -146,6 +153,7 @@ class BotConfigurationService:
         'ANTILOPAY': '🦌 Antilopay',
         'ETOPLATEZHI': '💳 Etoplatezhi',
         'JUPITER': '🪐 Jupiter',
+        'CISPAY': '💳 CisPay',
         'DONUT': '🍩 Donut',
         'LAVA': '🌋 Lava',
         'YOOKASSA': '🟣 YooKassa',
@@ -216,6 +224,7 @@ class BotConfigurationService:
         'ANTILOPAY': 'Antilopay: lk.antilopay.com, оплата картой, СБП и SberPay.',
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
+        'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
         'LAVA': 'Lava Business: gate.lava.ru, оплата картой и СБП с HMAC-SHA256 и подтверждением через webhook.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
@@ -289,6 +298,10 @@ class BotConfigurationService:
         'DEFAULT_DEVICE_LIMIT': 'SUBSCRIPTIONS_CORE',
         'DEFAULT_TRAFFIC_LIMIT_GB': 'SUBSCRIPTIONS_CORE',
         'MAX_DEVICES_LIMIT': 'SUBSCRIPTIONS_CORE',
+        # Без явной привязки ключ уехал бы в автокатегорию «ALLOW» (категория берётся
+        # из первого слова), где его никто не найдёт: искать его будут рядом с
+        # MAX_DEVICES_LIMIT и PRICE_PER_DEVICE.
+        'ALLOW_DEVICES_BELOW_TARIFF_LIMIT': 'SUBSCRIPTIONS_CORE',
         'PRICE_PER_DEVICE': 'SUBSCRIPTIONS_CORE',
         'DEVICES_SELECTION_ENABLED': 'SUBSCRIPTIONS_CORE',
         'DEVICES_SELECTION_DISABLED_AMOUNT': 'SUBSCRIPTIONS_CORE',
@@ -326,6 +339,7 @@ class BotConfigurationService:
         'SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS': 'SUPPORT',
         'SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES': 'SUPPORT',
         'ADMIN_NOTIFICATIONS_ENABLED': 'ADMIN_NOTIFICATIONS',
+        'ADMIN_NOTIFICATIONS_RICH_ENABLED': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_CHAT_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
         'ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID': 'ADMIN_NOTIFICATIONS',
@@ -354,6 +368,17 @@ class BotConfigurationService:
         'SIMPLE_SUBSCRIPTION_TRAFFIC_GB': 'SIMPLE_SUBSCRIPTION',
         'SIMPLE_SUBSCRIPTION_SQUAD_UUID': 'SIMPLE_SUBSCRIPTION',
         'SUPPORT_TOPUP_ENABLED': 'PAYMENT',
+        # Ключи, начинающиеся с глагола, без явной привязки создают бессмысленную
+        # автокатегорию по первому слову («ACTIVATE», «BUY», «LOW»…), и настройка
+        # теряется: в такой раздел оператор не пойдёт.
+        'ACTIVATE_BUTTON_VISIBLE': 'CONNECT_BUTTON',
+        'ACTIVATE_BUTTON_TEXT': 'CONNECT_BUTTON',
+        'BUY_TRAFFIC_BUTTON_VISIBLE': 'INTERFACE',
+        'DISABLE_WEB_PAGE_PREVIEW': 'INTERFACE',
+        'ENABLE_AUTOPAY': 'AUTOPAY',
+        'DEFAULT_AUTOPAY_PERIOD_DAYS': 'AUTOPAY',
+        'RESET_DEVICES_ON_RENEWAL': 'SUBSCRIPTIONS_CORE',
+        'LOW_BALANCE_ALERT_EXPIRY_DAYS': 'NOTIFICATIONS',
         'ENABLE_NOTIFICATIONS': 'NOTIFICATIONS',
         'NOTIFICATION_RETRY_ATTEMPTS': 'NOTIFICATIONS',
         'NOTIFICATION_CACHE_HOURS': 'NOTIFICATIONS',
@@ -370,7 +395,7 @@ class BotConfigurationService:
         'TRAFFIC_DAILY_CHECK_TIME': 'MONITORING',
         'TRAFFIC_DAILY_THRESHOLD_GB': 'MONITORING',
         'TRAFFIC_IGNORED_NODES': 'MONITORING',
-        'TRAFFIC_EXCLUDED_USER_UUIDS': 'MONITORING',
+        'TRAFFIC_EXCLUDED_USER_IDS': 'MONITORING',
         'TRAFFIC_NOTIFICATION_COOLDOWN_MINUTES': 'MONITORING',
         'SUSPICIOUS_NOTIFICATIONS_TOPIC_ID': 'MONITORING',
         'TRAFFIC_CHECK_BATCH_SIZE': 'MONITORING',
@@ -379,6 +404,12 @@ class BotConfigurationService:
         'LOGO_FILE': 'INTERFACE_BRANDING',
         'HIDE_SUBSCRIPTION_LINK': 'INTERFACE_SUBSCRIPTION',
         'MAIN_MENU_MODE': 'INTERFACE',
+        'MAIN_MENU_RICH_ENABLED': 'INTERFACE',
+        'MAIN_MENU_RICH_EFFECT_ID': 'INTERFACE',
+        'MAIN_MENU_RICH_LOGO_URL': 'INTERFACE',
+        'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': 'INTERFACE',
+        'USER_ACTION_LOG_ENABLED': 'MONITORING',
+        'USER_ACTION_LOG_RETENTION_DAYS': 'MONITORING',
         'CABINET_BUTTON_STYLE': 'INTERFACE',
         'CONNECT_BUTTON_MODE': 'CONNECT_BUTTON',
         'MINIAPP_CUSTOM_URL': 'CONNECT_BUTTON',
@@ -406,6 +437,7 @@ class BotConfigurationService:
         'EMAIL_DATE_FORMAT': 'TIMEZONE',
         'PRIVACY_POLICY_DISPLAY_MODE': 'INFO_PAGES',
         'PUBLIC_OFFER_DISPLAY_MODE': 'INFO_PAGES',
+        'RECURRENT_PAYMENTS_DISPLAY_MODE': 'INFO_PAGES',
         'SERVICE_RULES_DISPLAY_MODE': 'INFO_PAGES',
         'FAQ_DISPLAY_MODE': 'INFO_PAGES',
     }
@@ -444,6 +476,7 @@ class BotConfigurationService:
         'ANTILOPAY_': 'ANTILOPAY',
         'ETOPLATEZHI_': 'ETOPLATEZHI',
         'JUPITER_': 'JUPITER',
+        'CISPAY_': 'CISPAY',
         'DONUT_': 'DONUT',
         'LAVA_': 'LAVA',
         'PLATEGA_': 'PLATEGA',
@@ -599,6 +632,11 @@ class BotConfigurationService:
             ChoiceOption('web', '🌐 Только веб'),
             ChoiceOption('both', '🔁 Бот и веб'),
         ],
+        'RECURRENT_PAYMENTS_DISPLAY_MODE': [
+            ChoiceOption('bot', '🤖 Только бот'),
+            ChoiceOption('web', '🌐 Только веб'),
+            ChoiceOption('both', '🔁 Бот и веб'),
+        ],
         'SERVICE_RULES_DISPLAY_MODE': [
             ChoiceOption('bot', '🤖 Только бот'),
             ChoiceOption('web', '🌐 Только веб'),
@@ -664,6 +702,93 @@ class BotConfigurationService:
             'format': 'Выберите сквад из списка или очистите значение.',
             'example': 'd4aa2b8c-9a36-4f31-93a2-6f07dad05fba',
             'warning': 'Убедитесь, что выбранный сквад активен и доступен для подписки.',
+        },
+        'MAIN_MENU_RICH_ENABLED': {
+            'description': (
+                'Rich-меню (Bot API 10.1): главное меню с заголовками, таблицей подписок, '
+                'сворачиваемыми блоками акций и датами в часовом поясе пользователя (tg-time).'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Требует telegram-bot-api с поддержкой Bot API 10.1 (официальный сервер поддерживает). '
+                'Если сервер не поддерживает rich-сообщения, бот сам вернётся к классическому меню до рестарта. '
+                'В rich-режиме главное меню отображается без логотипа (rich-сообщение не является фото), '
+                'а при включённом ENABLE_LOGO_MODE переходы меню и разделов пересоздают сообщение.'
+            ),
+            'dependencies': 'ENABLE_LOGO_MODE',
+        },
+        'MAIN_MENU_RICH_EFFECT_ID': {
+            'description': (
+                'Эффект сообщения (конфетти и т.п.) при отправке rich-меню новым сообщением. '
+                'Работает только в личных чатах и только при MAIN_MENU_RICH_ENABLED.'
+            ),
+            'format': 'Идентификатор эффекта Telegram или пустая строка (без эффекта).',
+            'example': '5046509860389126442',
+            'warning': (
+                'Известные id: 🎉 5046509860389126442, ❤️ 5044134455711629726, 🔥 5104841245755180586, '
+                '👍 5107584321108051014, 👎 5104858069142078462, 💩 5046589136895476101. '
+                'Если сервер отклонит эффект, бот отправит меню без него и отключит эффект до рестарта.'
+            ),
+            'dependencies': 'MAIN_MENU_RICH_ENABLED',
+        },
+        'MAIN_MENU_RICH_LOGO_URL': {
+            'description': (
+                'Публичный HTTPS-URL картинки-логотипа в шапке rich-меню. '
+                'Пусто — авто-режим: при заданном WEBHOOK_URL и существующем LOGO_FILE '
+                'логотип отдаётся эндпоинтом /cabinet/branding/bot-logo.'
+            ),
+            'format': 'HTTPS-URL картинки (png/jpg/webp) или пустая строка.',
+            'example': 'https://example.com/logo.png',
+            'warning': (
+                'URL должен быть доступен серверам Telegram. Если картинку скачать не удалось, '
+                'бот один раз повторит отправку без логотипа и отключит его до рестарта.'
+            ),
+            'dependencies': 'MAIN_MENU_RICH_ENABLED, WEBHOOK_URL, LOGO_FILE',
+        },
+        'ADMIN_NOTIFICATIONS_RICH_ENABLED': {
+            'description': (
+                'Rich-вид сообщений админ-чата (Bot API 10.1): заголовки и разделители у уведомлений, '
+                'таблица показателей в стартовом сообщении и отчётах, сворачиваемые трейсбеки '
+                'в error-отчётах (полный лог инлайн вместо .txt-файла).'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Требует telegram-bot-api с Bot API 10.1 (официальный сервер поддерживает). '
+                'При недоступности бот сам вернётся к классическому виду до рестарта.'
+            ),
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED',
+        },
+        'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': {
+            'description': (
+                'Сворачивать таблицу подписок rich-меню в раскрываемый блок, когда у пользователя '
+                'больше одной подписки (мультитарифный режим). Заголовок блока показывает счётчик.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': 'Действует только при MAIN_MENU_RICH_ENABLED и включённом мультитарифе.',
+            'dependencies': 'MAIN_MENU_RICH_ENABLED, MULTI_TARIFF_ENABLED',
+        },
+        'USER_ACTION_LOG_ENABLED': {
+            'description': (
+                'Лог действий пользователя: нажатия кнопок в боте и действия в кабинете. '
+                'Показывается на вкладке «Активность» в карточке юзера админ-кабинета.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': (
+                'Каждое нажатие кнопки — строка в button_click_logs. '
+                'Старые записи чистятся автоматически (USER_ACTION_LOG_RETENTION_DAYS).'
+            ),
+            'dependencies': 'USER_ACTION_LOG_RETENTION_DAYS',
+        },
+        'USER_ACTION_LOG_RETENTION_DAYS': {
+            'description': 'Сколько дней хранить записи лога действий пользователей (button_click_logs).',
+            'format': 'Целое число дней; 0 — не удалять.',
+            'example': '90',
+            'warning': 'Чистка выполняется раз в сутки циклом мониторинга.',
+            'dependencies': 'USER_ACTION_LOG_ENABLED',
         },
         'MULTI_TARIFF_ENABLED': {
             'description': (
@@ -1124,7 +1249,9 @@ class BotConfigurationService:
         if isinstance(value, bool):
             return None
         upper_key = key.upper()
-        if any(suffix in upper_key for suffix in ('PRICE', '_KOPEKS', 'AMOUNT')):
+        # Денежные ключи содержат PRICE или оканчиваются на _KOPEKS; голое AMOUNT
+        # не признак цены (DEVICES_SELECTION_DISABLED_AMOUNT — количество устройств).
+        if any(suffix in upper_key for suffix in ('PRICE', '_KOPEKS')):
             try:
                 return settings.format_price(int(value))
             except Exception:
@@ -1639,17 +1766,47 @@ class BotConfigurationService:
         return ''.join(reversed(result))
 
     @classmethod
-    async def initialize(cls) -> None:
+    async def initialize(cls, *, sync_web_api_token: bool = True) -> None:
+        """Загрузить настройки из БД в память.
+
+        `sync_web_api_token=False` — для одноразовых CLI: им нужны только
+        значения, а бутстрап токена веб-API пишет в БД, и холостой прогон
+        (который обещает «ничего не записано») перестал бы быть холостым.
+        """
         cls.initialize_definitions()
 
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(SystemSetting))
             rows = result.scalars().all()
 
+        # Тот же ключ мог остаться и в .env — pydantic-settings его молча
+        # игнорирует (`extra='ignore'`), и это как раз тот канал, которым
+        # пользуется большинство инсталляций: снятая переменная была
+        # задокументирована в .env.example.
+        for retired_key, replacement in cls._RETIRED_SETTINGS.items():
+            if (os.environ.get(retired_key) or '').strip():
+                logger.warning(
+                    'Переменная окружения больше не поддерживается и НЕ применена',
+                    key=retired_key,
+                    replacement=replacement,
+                )
+
         overrides: dict[str, str | None] = {}
         for row in rows:
             if row.key in cls._definitions:
                 overrides[row.key] = row.value
+            elif row.key in cls._RETIRED_SETTINGS and (row.value or '').strip():
+                # Строка настройки осталась от прежней версии и молча игнорируется —
+                # оператор считает, что настройка действует, а её нет. Для
+                # TRAFFIC_EXCLUDED_USER_UUIDS это особенно больно: список хранил
+                # UUID панельных юзеров, которых в 3.0.0 не существует, поэтому
+                # автоматически сконвертировать значения нельзя — нужно, чтобы
+                # человек заполнил новый ключ заново.
+                logger.warning(
+                    'Настройка из БД больше не поддерживается и НЕ применена',
+                    key=row.key,
+                    replacement=cls._RETIRED_SETTINGS[row.key],
+                )
 
         for key, raw_value in overrides.items():
             if cls._is_env_override(key):
@@ -1664,7 +1821,8 @@ class BotConfigurationService:
             cls._overrides_raw[key] = raw_value
             cls._apply_to_settings(key, parsed_value)
 
-        await cls._sync_default_web_api_token()
+        if sync_web_api_token:
+            await cls._sync_default_web_api_token()
 
         # После загрузки всех overrides (включая SALES_MODE) — пересчитать цены,
         # т.к. ensure_tariffs_synced мог загрузить тарифные цены до того как

@@ -379,7 +379,11 @@ async def start_scan(
                 'telegram_id': u.telegram_id,
                 'username': u.username,
                 'full_name': u.full_name,
-                'remnawave_uuid': u.remnawave_uuid,
+                # Панельная идентичность: числовой id пользователя и полный список
+                # id по подпискам (multi-tariff) — без него очистка панели пропустит
+                # все подписки, кроме одной.
+                'remnawave_id': u.remnawave_id,
+                'remnawave_ids': list(u.remnawave_ids or []),
             }
             for u in result.blocked_users
         ],
@@ -582,7 +586,10 @@ async def handle_confirm_action(
 
     await state.set_state(BlockedUsersStates.processing_cleanup)
 
-    # Преобразуем обратно в BlockCheckResult
+    # Преобразуем обратно в BlockCheckResult.
+    # remnawave_ids восстанавливаем обязательно: cleanup_blocked_users удаляет из
+    # панели именно по этому списку, и без него в multi-tariff переживут очистку
+    # все панельные юзеры, кроме одного.
     blocked_results = [
         BlockCheckResult(
             user_id=u['user_id'],
@@ -590,7 +597,8 @@ async def handle_confirm_action(
             username=u['username'],
             full_name=u['full_name'],
             status=None,  # type: ignore
-            remnawave_uuid=u['remnawave_uuid'],
+            remnawave_id=u.get('remnawave_id'),
+            remnawave_ids=list(u.get('remnawave_ids') or []),
         )
         for u in blocked_list
     ]

@@ -72,6 +72,12 @@ async def update_autopay(
         payment_service = PaymentService()
         await payment_service.cancel_user_antilopay_recurrents(db, user.id)
 
+    if request.enabled:
+        from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
+        from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+        await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+        await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
     return {
         'message': 'Autopay settings updated',
         'autopay_enabled': subscription.autopay_enabled,

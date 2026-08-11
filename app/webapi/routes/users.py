@@ -28,10 +28,14 @@ from app.database.crud.user import (
     update_user,
 )
 from app.database.models import PaymentMethod, PromoGroup, Subscription, User, UserStatus
+from app.services.manual_topup_service import ManualTopupKeyConflict, credit_manual_topup
 from app.services.subscription_service import SubscriptionService
+from app.utils.text_search import contains_conditions
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.users import (
+    BalanceDepositRequest,
+    BalanceDepositResponse,
     BalanceUpdateRequest,
     PromoGroupSummary,
     SubscriptionSummary,
@@ -119,13 +123,13 @@ def _serialize_user(user: User) -> UserResponse:
 
 
 def _apply_search_filter(query, search: str):
-    search_lower = f'%{search.lower()}%'
-    conditions = [
-        func.lower(User.username).like(search_lower),
-        func.lower(User.first_name).like(search_lower),
-        func.lower(User.last_name).like(search_lower),
-        func.lower(User.referral_code).like(search_lower),
-    ]
+    # lower() в SQL сворачивает регистр по локали базы: под `C` (наш docker-compose)
+    # кириллица не сворачивается, и «поз» не находил «Позитив».
+    # См. app/utils/text_search.py.
+    conditions = contains_conditions(
+        (User.username, User.first_name, User.last_name, User.referral_code),
+        search,
+    )
 
     if search.isdigit():
         numeric_search = int(search)
@@ -358,6 +362,106 @@ async def update_balance(
     return _serialize_user(found_user)
 
 
+def _open_bot() -> Any | None:
+    """Бот для уведомлений. None — уведомления пропускаем, деньги всё равно зачисляем."""
+    try:
+        from app.bot_factory import create_bot
+
+        return create_bot()
+    except Exception as error:
+        logger.error('Не удалось создать бота для уведомлений о пополнении', error=error)
+        return None
+
+
+@router.post('/{user_id}/deposit', response_model=BalanceDepositResponse)
+async def deposit_balance(
+    user_id: int,
+    payload: BalanceDepositRequest,
+    token: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+) -> BalanceDepositResponse:
+    """Ручное пополнение баланса — как настоящий платёж, но инициированное поддержкой.
+
+    В отличие от `POST /users/{id}/balance` (низкоуровневая корректировка числа) здесь:
+
+    * только зачисление, списать нельзя;
+    * `idempotency_key` — повтор запроса не начислит деньги дважды;
+    * запускается весь конвейер настоящего пополнения: реферальная комиссия,
+      уведомление пользователю, возобновление приостановленной суточной подписки,
+      автопокупка сохранённой корзины. Без этого «поддержка начислила вручную»
+      оставляло аккаунт в состоянии «деньги есть, подписка не работает»;
+    * сумма ограничена `WEB_API_MANUAL_DEPOSIT_MAX_KOPEKS`.
+
+    `user_id` — внутренний ID либо Telegram ID (как и в остальных `/users` эндпоинтах).
+    Кого именно пополнили, видно в ответе (`user_id` + `telegram_id`).
+    """
+    max_kopeks = settings.WEB_API_MANUAL_DEPOSIT_MAX_KOPEKS
+    if max_kopeks and payload.amount_kopeks > max_kopeks:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f'Amount {payload.amount_kopeks} exceeds the manual deposit limit of {max_kopeks} kopeks '
+            f'(raise WEB_API_MANUAL_DEPOSIT_MAX_KOPEKS or use POST /users/{{id}}/balance)',
+        )
+
+    found_user = await _get_user_by_id_or_telegram_id(db, user_id)
+    # Снимаем идентификаторы ДО начисления: в ветке гонки по ключу идемпотентности
+    # внутри делается rollback, а он экспирирует ORM-объект — обращение к атрибуту
+    # после этого ушло бы в ленивую подгрузку и упало бы MissingGreenlet.
+    resolved_id = found_user.id
+    resolved_telegram_id = found_user.telegram_id
+
+    bot = _open_bot()
+    try:
+        result = await credit_manual_topup(
+            db,
+            found_user,
+            amount_kopeks=payload.amount_kopeks,
+            description=payload.description or 'Ручное пополнение',
+            idempotency_key=payload.idempotency_key,
+            bot=bot,
+            notify_user=payload.notify_user,
+            apply_topup_bonuses=payload.apply_topup_bonuses,
+        )
+    except ManualTopupKeyConflict as conflict:
+        # Тот же ключ, но другая сумма или другой пользователь — ошибка вызывающего.
+        # Молчаливое «duplicate, ничего не начислено» агент прочитал бы как успех.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f'Idempotency key already used by transaction {conflict.transaction.id} '
+            f'(user {conflict.transaction.user_id}, {conflict.transaction.amount_kopeks} kopeks)',
+        ) from conflict
+    finally:
+        if bot is not None:
+            try:
+                await bot.session.close()
+            except Exception as error:
+                logger.warning('Не удалось закрыть сессию бота после пополнения', error=error)
+
+    logger.info(
+        'Ручное пополнение через API',
+        token_id=getattr(token, 'id', None),
+        token_name=getattr(token, 'name', None),
+        user_id=resolved_id,
+        telegram_id=resolved_telegram_id,
+        amount_kopeks=payload.amount_kopeks,
+        idempotency_key=payload.idempotency_key,
+        duplicate=result.duplicate,
+        transaction_id=result.transaction.id,
+    )
+
+    return BalanceDepositResponse(
+        success=True,
+        duplicate=result.duplicate,
+        user_id=resolved_id,
+        telegram_id=resolved_telegram_id,
+        transaction_id=result.transaction.id,
+        amount_kopeks=result.transaction.amount_kopeks,
+        old_balance_kopeks=result.old_balance_kopeks,
+        new_balance_kopeks=result.new_balance_kopeks,
+        new_balance_rubles=round(result.new_balance_kopeks / 100, 2),
+    )
+
+
 async def _get_user_by_id_or_telegram_id(db: AsyncSession, user_id: int) -> User:
     """Helper function to get user by ID or telegram_id"""
     user = await get_user_by_telegram_id(db, user_id)
@@ -574,13 +678,21 @@ async def delete_user_subscription(
     if not subscription:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'User has no subscription')
 
+    # Подписка деактивируется — СБП-автопродление Platega обязано быть отменено,
+    # иначе следующий push-коллбек продлит и заново включит её, а банк продолжит списывать.
+    from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
+    from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
+    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
     await deactivate_subscription(db, subscription)
 
-    # Деактивируем пользователя в RemnaWave, если есть UUID
-    remnawave_uuid = subscription.remnawave_uuid if settings.is_multi_tariff_enabled() else user.remnawave_uuid
-    if remnawave_uuid:
+    # Деактивируем пользователя в RemnaWave, если есть панельная идентичность
+    panel_user_id = subscription.remnawave_id if settings.is_multi_tariff_enabled() else user.remnawave_id
+    if panel_user_id:
         subscription_service = SubscriptionService()
-        await subscription_service.disable_remnawave_user(remnawave_uuid)
+        await subscription_service.disable_remnawave_user(panel_user_id)
 
     # Перезагружаем пользователя
     user = await get_user_by_id(db, user.id)

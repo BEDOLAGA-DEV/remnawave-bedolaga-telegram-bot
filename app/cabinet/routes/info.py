@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.rules import get_current_rules_content, get_rules_by_language
 from app.database.models import User
+from app.services import legal_consent_service
 from app.services.faq_service import FaqService
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.public_offer_service import PublicOfferService
+from app.services.recurrent_payments_service import RecurrentPaymentsService
 from app.utils.display_mode import is_visible_in_web
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
@@ -78,6 +80,13 @@ class PublicOfferResponse(BaseModel):
     updated_at: str | None = None
 
 
+class RecurrentPaymentsResponse(BaseModel):
+    """Recurring-payments terms document."""
+
+    content: str
+    updated_at: str | None = None
+
+
 class ServiceInfoResponse(BaseModel):
     """General service info."""
 
@@ -95,6 +104,7 @@ class SupportConfigResponse(BaseModel):
     support_type: str  # "tickets", "profile", "url", "both"
     support_url: str | None = None
     support_username: str | None = None
+    contact_is_telegram: bool = False
 
 
 class InfoVisibilityResponse(BaseModel):
@@ -102,6 +112,15 @@ class InfoVisibilityResponse(BaseModel):
     rules: bool
     privacy: bool
     offer: bool
+    recurrent: bool
+
+
+class LegalConsentConfigResponse(BaseModel):
+    """Что показать на экране первой авторизации нового пользователя."""
+
+    required: bool
+    prechecked: bool
+    documents: list[str]
 
 
 # ============ Routes ============
@@ -250,6 +269,34 @@ async def get_public_offer(
     )
 
 
+@router.get('/recurrent-payments', response_model=RecurrentPaymentsResponse)
+async def get_recurrent_payments(
+    language: str = Query('ru', min_length=2, max_length=10),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Get recurring-payments terms document."""
+    if not is_visible_in_web(settings.RECURRENT_PAYMENTS_DISPLAY_MODE):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Recurring-payments document is not available',
+        )
+    requested_lang = RecurrentPaymentsService.normalize_language(language)
+    document = await RecurrentPaymentsService.get_document(db, requested_lang, fallback=True)
+
+    if document and document.content:
+        updated_at = document.updated_at.isoformat() if document.updated_at else None
+        return RecurrentPaymentsResponse(content=document.content, updated_at=updated_at)
+
+    # Return default document if none found
+    return RecurrentPaymentsResponse(
+        content="""# Рекуррентные платежи
+
+Условия автоматических регулярных списаний.
+""",
+        updated_at=None,
+    )
+
+
 @router.get('/service', response_model=ServiceInfoResponse)
 async def get_service_info():
     """Get general service information."""
@@ -314,19 +361,31 @@ async def update_user_language(
 @router.get('/support-config', response_model=SupportConfigResponse)
 async def get_support_config():
     """Get support/tickets configuration for cabinet."""
-    # Use SUPPORT_SYSTEM_MODE setting (configurable from admin panel)
-    support_mode = settings.get_support_system_mode()  # returns: tickets, contact, or both
+    # Режим берём через сервис: он владеет persisted-значением (data/support_settings.json)
+    # и синхронизирует его в settings. Чтение settings напрямую отдало бы значение
+    # из .env, если сервис в этом процессе ещё ни разу не загружался.
+    from app.services.support_settings_service import SupportSettingsService
+
+    support_mode = SupportSettingsService.get_system_mode()  # returns: tickets, contact, or both
+
+    # SUPPORT_USERNAME принимает и @username, и произвольный URL (см.
+    # Settings.get_support_contact_url) — бот этим уже пользуется и вешает ссылку
+    # на кнопку «Связаться с поддержкой». Кабинет резолвит контакт тем же методом,
+    # чтобы внешний хелпдеск открывался одинаково в обеих поверхностях.
+    contact_url = settings.get_support_contact_url()
+    contact_is_telegram = settings.is_support_contact_telegram()
 
     # Map support mode to support type for frontend
     # - "tickets" mode -> tickets only, no contact
-    # - "contact" mode -> contact only (profile), no tickets
+    # - "contact" mode -> contact only, no tickets: "profile" для Telegram,
+    #   "url" для внешнего хелпдеска
     # - "both" mode -> tickets enabled, contact available as fallback
     if support_mode == 'tickets':
         tickets_enabled = True
         support_type = 'tickets'
     elif support_mode == 'contact':
         tickets_enabled = False
-        support_type = 'profile'
+        support_type = 'profile' if contact_is_telegram else 'url'
     else:  # both
         tickets_enabled = True
         support_type = 'both'
@@ -334,8 +393,29 @@ async def get_support_config():
     return SupportConfigResponse(
         tickets_enabled=tickets_enabled,
         support_type=support_type,
-        support_url=None,  # Cabinet doesn't use custom URLs
-        support_username=settings.SUPPORT_USERNAME,  # Always return for fallback
+        support_url=contact_url,
+        # Нормализованный вид (@user либо URL) — сырое значение могло бы прийти
+        # без схемы и клиент склеил бы из него битую t.me-ссылку.
+        support_username=settings.get_support_contact_display() or None,
+        contact_is_telegram=contact_is_telegram,
+    )
+
+
+@router.get('/legal-consent', response_model=LegalConsentConfigResponse)
+async def get_legal_consent_config(
+    language: str = Query('ru', min_length=2, max_length=10),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Нужны ли новому пользователю галочки «ознакомлен» и с чем именно.
+
+    Публичный: экран логина запрашивает это ДО авторизации. Возвращает только ключи
+    документов — тексты и ссылки на них у кабинета свои.
+    """
+    requirement = await legal_consent_service.get_requirement(db, language)
+    return LegalConsentConfigResponse(
+        required=requirement.required,
+        prechecked=requirement.prechecked,
+        documents=requirement.documents,
     )
 
 
@@ -346,4 +426,5 @@ async def get_info_visibility():
         rules=is_visible_in_web(settings.SERVICE_RULES_DISPLAY_MODE),
         privacy=is_visible_in_web(settings.PRIVACY_POLICY_DISPLAY_MODE),
         offer=is_visible_in_web(settings.PUBLIC_OFFER_DISPLAY_MODE),
+        recurrent=is_visible_in_web(settings.RECURRENT_PAYMENTS_DISPLAY_MODE),
     )

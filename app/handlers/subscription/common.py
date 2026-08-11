@@ -40,6 +40,18 @@ async def resolve_subscription_from_context(
     2. FSM state 'active_subscription_id' (set by my_subscriptions delegation)
     3. Single active subscription (auto-select)
     4. Legacy: db_user.subscription (single-tariff mode)
+
+    ⚠️ FOOTGUN (issue #3012): priority #1 trusts the LAST colon-segment as a
+    subscription_id. A handler reached by a callback shaped ``prefix:<int>`` where
+    that trailing int is NOT a subscription_id (a period, GB amount, device count,
+    days, tariff_id, page…) will resolve the WRONG subscription whenever that number
+    equals one of the user's OTHER subscription ids — and may renew/switch/charge it.
+    INVARIANT for callers: do NOT route a ``prefix:<non-sub-id-int>`` callback through
+    this resolver. Either put the real subscription_id as the trailing segment, use a
+    non-colon separator (``foo_5`` bypasses priority #1 → FSM), or parse the sub_id
+    explicitly and load via ``get_subscription_by_id_for_user``. The tariff
+    extend/switch flows were fixed this way; the rest of the codebase currently holds
+    this invariant (audited).
     """
     from app.database.crud.subscription import (
         get_active_subscriptions_by_user_id,
@@ -510,6 +522,11 @@ def resolve_button_url(
     if subscription_url:
         result = result.replace('{{SUBSCRIPTION_LINK}}', subscription_url)
     if crypto_link:
+        # {{HAPP_CRYPT*_LINK}} — это ПОЛНАЯ ссылка happ://crypt.../; если шаблон задан
+        # с префиксом (happ://crypt4/{{HAPP_CRYPT4_LINK}}), схлопываем его, чтобы не
+        # получить happ://crypt4/happ://crypt5/...
+        if crypto_link.lower().startswith('happ://'):
+            result = re.sub(r'happ://crypt\d+/(?=\{\{HAPP_CRYPT[34]_LINK\}\})', '', result, flags=re.IGNORECASE)
         result = result.replace('{{HAPP_CRYPT3_LINK}}', crypto_link)
         result = result.replace('{{HAPP_CRYPT4_LINK}}', crypto_link)
     return result
@@ -525,16 +542,23 @@ def create_deep_link(app: dict[str, Any], subscription_url: str) -> str | None:
     scheme = str(app.get('urlScheme', '')).strip()
     payload = subscription_url
 
-    if app.get('isNeedBase64Encoding'):
-        try:
-            payload = base64.b64encode(subscription_url.encode('utf-8')).decode('utf-8')
-        except Exception as exc:
-            logger.warning(
-                'Не удалось закодировать ссылку подписки в base64 для приложения', app=app.get('id'), exc=exc
-            )
-            payload = subscription_url
+    # В режиме happ_cryptolink сюда приходит уже полный happ://crypt.../ deep link
+    # (get_display_subscription_link отдаёт сохранённую crypt-ссылку). Приклеивать его
+    # к другой happ://-схеме нельзя — получится happ://crypt4/happ://crypt5/...;
+    # https-обёртки (редиректы) ниже по коду по-прежнему применяются.
+    if payload.lower().startswith('happ://') and scheme.lower().startswith('happ://'):
+        scheme_link = payload
+    else:
+        if app.get('isNeedBase64Encoding'):
+            try:
+                payload = base64.b64encode(subscription_url.encode('utf-8')).decode('utf-8')
+            except Exception as exc:
+                logger.warning(
+                    'Не удалось закодировать ссылку подписки в base64 для приложения', app=app.get('id'), exc=exc
+                )
+                payload = subscription_url
 
-    scheme_link = f'{scheme}{payload}' if scheme else None
+        scheme_link = f'{scheme}{payload}' if scheme else None
 
     template = settings.get_happ_cryptolink_redirect_template()
     redirect_link = build_redirect_link(scheme_link, template) if scheme_link and template else None

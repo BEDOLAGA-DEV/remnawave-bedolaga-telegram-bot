@@ -213,6 +213,9 @@ async def reply_to_ticket(
     message = await TicketMessageCRUD.add_message(
         db,
         ticket_id=ticket_id,
+        # Здесь остаётся id владельца: webapi аутентифицируется сервисным
+        # токеном (require_api_token), личности конкретного админа нет —
+        # в отличие от cabinet- и бот-путей, которые пишут id автора (#3029).
         user_id=ticket.user_id,
         message_text=final_message_text,
         is_from_admin=True,

@@ -105,6 +105,21 @@ async def preview_tariff_switch(
             detail='Already on this tariff',
         )
 
+    if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff is not None and current_tariff.is_free:
+        # A free (0₽) tariff has no paid value to prorate from — the prorated switch
+        # would quote the full new-tariff rate for the whole (often huge) free
+        # remainder AND carry those free days onto a paid tariff, violating
+        # TARIFF_SWITCH_RESET_FREE_DAYS. Route to the purchase flow instead
+        # (extend_subscription there resets the free remainder).
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'free_tariff_cannot_switch',
+                'message': 'Free-tariff subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
+        )
+
     # Check tariff availability for user's promo group
     # Use get_primary_promo_group() for correct promo group resolution
     promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
@@ -272,6 +287,19 @@ async def switch_tariff(
             detail='Already on this tariff',
         )
 
+    if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff is not None and current_tariff.is_free:
+        # Same guard as in preview: free (0₽) source tariffs must go through the
+        # purchase flow — prorated switching would charge for and carry the whole
+        # free remainder (TARIFF_SWITCH_RESET_FREE_DAYS).
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'free_tariff_cannot_switch',
+                'message': 'Free-tariff subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
+        )
+
     # Check tariff availability
     # Use get_primary_promo_group() for correct promo group resolution
     promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
@@ -420,7 +448,17 @@ async def switch_tariff(
 
     # Reset device limit to new tariff base (extra purchased devices are not carried over)
     from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+    from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
+    # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила бы
+    # списывать сумму СТАРОГО тарифа со старым каденсом. Отменяем привязку до
+    # мутаций — юзер переподключит СБП-автопродление под новый тариф (нужна
+    # новая банковская авторизация, молча пересоздать нельзя).
+    from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
+    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
     # Re-load subscription to avoid MissingGreenlet from expired lazy relationship
     # (subtract_user_balance re-selects User with populate_existing=True which expires relationships)
     await db.refresh(subscription)
@@ -480,9 +518,9 @@ async def switch_tariff(
     try:
         subscription_service = SubscriptionService()
         _has_panel = (
-            getattr(subscription, 'remnawave_uuid', None)
+            getattr(subscription, 'remnawave_id', None)
             if settings.is_multi_tariff_enabled()
-            else getattr(user, 'remnawave_uuid', None)
+            else getattr(user, 'remnawave_id', None)
         )
         if _has_panel:
             await subscription_service.update_remnawave_user(
@@ -511,18 +549,23 @@ async def switch_tariff(
 
     # Reset all devices on tariff switch
     devices_reset = False
-    _switch_uuid = (
-        subscription.remnawave_uuid
-        if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-        else user.remnawave_uuid
+    _switch_panel_user_id = (
+        subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+        else user.remnawave_id
     )
-    if _switch_uuid:
+    if _switch_panel_user_id:
         try:
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                await api.reset_user_devices(_switch_uuid)
-                devices_reset = True
-                logger.info('Reset all devices for user on tariff switch', user_id=user.id)
+                # 3.0.0: сброс делается одним delete-all и исключений наружу не
+                # бросает — сбой панели приходит как False, поэтому флаг ставим
+                # по результату, а не по «не упало».
+                devices_reset = await api.reset_user_devices(_switch_panel_user_id)
+                if devices_reset:
+                    logger.info('Reset all devices for user on tariff switch', user_id=user.id)
+                else:
+                    logger.error('Failed to reset devices on tariff switch', user_id=user.id)
         except Exception as e:
             logger.error('Failed to reset devices on tariff switch', error=e)
 

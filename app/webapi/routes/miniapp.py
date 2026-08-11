@@ -94,6 +94,7 @@ from app.services.tribute_service import TributeService
 from app.utils.currency_converter import currency_converter
 from app.utils.pricing_utils import (
     apply_percentage_discount,
+    calculate_price_per_month,
     calculate_prorated_price,
     format_period_description,
 )
@@ -2786,9 +2787,15 @@ async def _resolve_connected_servers(
     return connected_servers
 
 
-async def _load_devices_info(user: User) -> tuple[int, list[MiniAppDevice]]:
-    remnawave_uuid = getattr(user, 'remnawave_uuid', None)
-    if not remnawave_uuid:
+async def _load_devices_info(user: User, subscription=None) -> tuple[int, list[MiniAppDevice]]:
+    # Multi-tariff: каждая подписка — свой пользователь панели, поэтому берём
+    # id подписки в панели, а не общий user.remnawave_id (иначе показали бы устройства
+    # другого тарифа и лимит выглядел бы общим). Single-tariff: один пользователь.
+    if subscription is not None and settings.is_multi_tariff_enabled():
+        panel_user_id = getattr(subscription, 'remnawave_id', None)
+    else:
+        panel_user_id = getattr(user, 'remnawave_id', None)
+    if not panel_user_id:
         return 0, []
 
     try:
@@ -2802,7 +2809,7 @@ async def _load_devices_info(user: User) -> tuple[int, list[MiniAppDevice]]:
 
     try:
         async with service.get_api_client() as api:
-            response = await api.get_user_devices_all(remnawave_uuid)
+            response = await api.get_user_devices_all(panel_user_id)
     except RemnaWaveConfigurationError:
         logger.debug('RemnaWave configuration missing while loading devices')
         return 0, []
@@ -3381,7 +3388,7 @@ async def get_subscription_details(
         autopay_payload,
     )
 
-    devices_count, devices = await _load_devices_info(user)
+    devices_count, devices = await _load_devices_info(user, subscription)
 
     # Загружаем данные суточного тарифа
     is_daily_tariff = False
@@ -4367,8 +4374,12 @@ async def remove_connected_device(
             detail={'code': 'user_not_found', 'message': 'User not found'},
         )
 
-    remnawave_uuid = getattr(user, 'remnawave_uuid', None)
-    if not remnawave_uuid:
+    # NB: pre-existing — в multi-tariff панельная идентичность живёт на подписке, а не
+    # на User (ср. _load_devices_info), но запрос не несёт subscription_id, поэтому
+    # выбрать нужного панель-юзера не из чего и хендлер отдаёт 409. Поведение то же,
+    # что и до 3.0.0; починка требует расширения контракта миниаппа.
+    panel_user_id = getattr(user, 'remnawave_id', None)
+    if not panel_user_id:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={'code': 'remnawave_unavailable', 'message': 'RemnaWave user is not linked'},
@@ -4390,7 +4401,7 @@ async def remove_connected_device(
 
     try:
         async with service.get_api_client() as api:
-            success = await api.remove_device(remnawave_uuid, hwid)
+            success = await api.remove_device(panel_user_id, hwid)
     except RemnaWaveConfigurationError as error:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -4632,7 +4643,7 @@ async def _prepare_subscription_renewal_options(
         )
 
         months = max(1, period_days // 30)
-        per_month = pricing_result.final_total // months if months > 0 else pricing_result.final_total
+        per_month = calculate_price_per_month(pricing_result.final_total, period_days)
 
         label = format_period_description(
             period_days,
@@ -6099,6 +6110,20 @@ async def update_subscription_devices_endpoint(
         )
 
     # Enforce tariff max device limit
+    # По умолчанию ниже включённого в тариф опускать нельзя
+    # (ALLOW_DEVICES_BELOW_TARIFF_LIMIT=True возвращает прежний минимум 1).
+    from app.utils.subscription_utils import resolve_min_device_limit
+
+    min_device_limit = resolve_min_device_limit(tariff)
+    if new_devices < min_device_limit:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'devices_below_tariff',
+                'message': f'Нельзя уменьшить количество устройств ниже {min_device_limit} — столько включено в тариф',
+            },
+        )
+
     if tariff_max_device_limit and new_devices > tariff_max_device_limit:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -6311,7 +6336,7 @@ async def _build_tariff_model(
                 discount_percent = 0
 
             months = max(1, period_days // 30)
-            per_month = price_kopeks // months if months > 0 else price_kopeks
+            per_month = calculate_price_per_month(price_kopeks, period_days)
 
             periods.append(
                 MiniAppTariffPeriod(
@@ -6334,7 +6359,14 @@ async def _build_tariff_model(
     is_upgrade = None
     is_switch_free = None
 
-    if current_tariff and current_tariff.id != tariff.id:
+    if (
+        current_tariff
+        and current_tariff.id != tariff.id
+        # Для бесплатного (0₽) источника prorated-стоимость не показываем:
+        # переключение с него заблокировано (free_tariff_cannot_switch),
+        # пользователь идёт через обычную покупку по ценам периодов.
+        and not (settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff.is_free)
+    ):
         # PricingEngine обрабатывает все случаи: periodic↔periodic, daily→periodic, periodic→daily
         result = _calculate_tariff_switch(current_tariff, tariff, remaining_days, user=user)
         switch_cost_kopeks = result.upgrade_cost
@@ -6822,6 +6854,20 @@ async def preview_tariff_switch_endpoint(
             detail={'code': 'same_tariff', 'message': 'Already on this tariff'},
         )
 
+    if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff is not None and current_tariff.is_free:
+        # A free (0₽) tariff has no paid value to prorate from — the prorated switch
+        # would quote the full new-tariff rate for the whole (often huge) free
+        # remainder AND carry those free days onto a paid tariff, violating
+        # TARIFF_SWITCH_RESET_FREE_DAYS. Route to the purchase flow instead.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'free_tariff_cannot_switch',
+                'message': 'Free-tariff subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
+        )
+
     # Проверяем доступность тарифа для пользователя
     from app.services.pricing_engine import PricingEngine
 
@@ -6936,6 +6982,19 @@ async def switch_tariff_endpoint(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'same_tariff', 'message': 'Already on this tariff'},
+        )
+
+    if settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff is not None and current_tariff.is_free:
+        # Same guard as in preview: free (0₽) source tariffs must go through the
+        # purchase flow — prorated switching would charge for and carry the whole
+        # free remainder (TARIFF_SWITCH_RESET_FREE_DAYS).
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'free_tariff_cannot_switch',
+                'message': 'Free-tariff subscriptions cannot switch tariffs. Please purchase a tariff instead.',
+                'use_purchase_flow': True,
+            },
         )
 
     # Проверяем доступность тарифа
@@ -7304,13 +7363,13 @@ async def purchase_traffic_topup_endpoint(
         service = SubscriptionService()
         await service.update_remnawave_user(db, subscription)
         # Явно включаем пользователя на панели (PATCH может не снять LIMITED-статус)
-        _en_uuid = (
-            subscription.remnawave_uuid
-            if settings.is_multi_tariff_enabled() and subscription.remnawave_uuid
-            else getattr(user, 'remnawave_uuid', None)
+        _en_panel_user_id = (
+            subscription.remnawave_id
+            if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+            else getattr(user, 'remnawave_id', None)
         )
-        if _en_uuid and subscription.status == 'active':
-            await service.enable_remnawave_user(_en_uuid)
+        if _en_panel_user_id and subscription.status == 'active':
+            await service.enable_remnawave_user(_en_panel_user_id)
     except Exception as e:
         logger.error('Ошибка синхронизации с RemnaWave при докупке трафика', error=e)
         from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -7530,7 +7589,16 @@ async def toggle_daily_subscription_pause_endpoint(
         # Sync with RemnaWave
         try:
             service = SubscriptionService()
-            if getattr(user, 'remnawave_uuid', None):
+            # Гейт «обновлять или создавать» обязан смотреть на ту же идентичность,
+            # которой оперирует синк: в multi-tariff панель-юзер привязан к подписке,
+            # а User.remnawave_id не заполняется вовсе. Гейт только по User здесь
+            # означал бы новый панельный дубль на каждом возобновлении.
+            _panel_user_id = (
+                subscription.remnawave_id
+                if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+                else getattr(user, 'remnawave_id', None)
+            )
+            if _panel_user_id:
                 await service.update_remnawave_user(
                     db,
                     subscription,
@@ -7548,7 +7616,13 @@ async def toggle_daily_subscription_pause_endpoint(
                 # POST /api/users may ignore activeInternalSquads —
                 # follow up with PATCH to ensure internal squads are assigned
                 await db.refresh(user)
-                if getattr(user, 'remnawave_uuid', None) and subscription.connected_squads:
+                await db.refresh(subscription)
+                _created_panel_user_id = (
+                    subscription.remnawave_id
+                    if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+                    else getattr(user, 'remnawave_id', None)
+                )
+                if _created_panel_user_id and subscription.connected_squads:
                     try:
                         await service.update_remnawave_user(
                             db,

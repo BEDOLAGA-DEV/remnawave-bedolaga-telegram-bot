@@ -239,9 +239,9 @@ async def update_countries(
 
         subscription_service = SubscriptionService()
         _has_panel = (
-            getattr(subscription, 'remnawave_uuid', None)
+            getattr(subscription, 'remnawave_id', None)
             if settings.is_multi_tariff_enabled()
-            else getattr(user, 'remnawave_uuid', None)
+            else getattr(user, 'remnawave_id', None)
         )
         if _has_panel:
             await subscription_service.update_remnawave_user(db, subscription, sync_squads=True)

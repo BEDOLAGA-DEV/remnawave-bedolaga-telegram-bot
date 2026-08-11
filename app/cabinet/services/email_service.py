@@ -1,6 +1,9 @@
 """Email service for sending verification and password reset emails."""
 
+import re
 import smtplib
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate, make_msgid
@@ -54,6 +57,32 @@ class EmailService:
         """Check if SMTP is properly configured."""
         return settings.is_smtp_configured()
 
+    @staticmethod
+    def _html_to_plain_text(body_html: str) -> str:
+        """Грубая конвертация HTML в text/plain для multipart/alternative.
+
+        Блоки <style>/<script> удаляются ЦЕЛИКОМ до вырезания тегов: сами теги
+        регулярка убирала и раньше, а их содержимое (CSS/JS-правила) утекало в
+        текстовую версию письма перед основным текстом (#2974).
+
+        &amp; расшифровывается ПОСЛЕДНИМ: иначе "&amp;lt;" проходит двойную
+        расшифровку и превращается в "<" вместо "&lt;".
+        """
+        text = re.sub(r'<(style|script)\b[^>]*>.*?</\1\s*>', '', body_html, flags=re.DOTALL | re.IGNORECASE)
+        # Запасной проход для битого шаблона (кастомные письма из админки): открытый
+        # <style>/<script> без закрывающего тега иначе утёк бы телом CSS/JS в текст —
+        # срезаем висячий блок до конца ввода.
+        text = re.sub(r'<(style|script)\b[^>]*>.*', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = text.replace('&nbsp;', ' ')
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+        text = text.replace('&amp;', '&')
+        # После удаления блоков и тегов остаются простыни пустых строк —
+        # схлопываем, чтобы текст не начинался с десятков переносов.
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+        return text.strip()
+
     def _get_smtp_connection(self) -> smtplib.SMTP:
         """Create and return SMTP connection."""
         if self.use_ssl:
@@ -81,6 +110,7 @@ class EmailService:
         subject: str,
         body_html: str,
         body_text: str | None = None,
+        attachments: list[tuple[str, bytes, str]] | None = None,
     ) -> bool:
         """
         Send an email.
@@ -90,6 +120,7 @@ class EmailService:
             subject: Email subject
             body_html: HTML body content
             body_text: Plain text body (optional, generated from HTML if not provided)
+            attachments: Optional list of (filename, content, mimetype) tuples
 
         Returns:
             True if email was sent successfully, False otherwise
@@ -108,7 +139,10 @@ class EmailService:
         subject = subject.replace('\n', '').replace('\r', '')
 
         try:
-            msg = MIMEMultipart('alternative')
+            # С вложениями письмо становится multipart/mixed: внутри него
+            # обычная alternative-пара text/html плюс файлы.
+            alternative = MIMEMultipart('alternative')
+            msg = MIMEMultipart('mixed') if attachments else alternative
             msg['Subject'] = subject
             safe_from_name = self.from_name.replace('\n', '').replace('\r', '') if self.from_name else ''
             safe_from_email = sender_email.replace('\n', '').replace('\r', '')
@@ -119,20 +153,24 @@ class EmailService:
 
             # Plain text version
             if body_text is None:
-                # Simple HTML to text conversion
-                import re
-
-                body_text = re.sub(r'<[^>]+>', '', body_html)
-                body_text = body_text.replace('&nbsp;', ' ')
-                body_text = body_text.replace('&amp;', '&')
-                body_text = body_text.replace('&lt;', '<')
-                body_text = body_text.replace('&gt;', '>')
+                body_text = self._html_to_plain_text(body_html)
 
             part1 = MIMEText(body_text, 'plain', 'utf-8')
             part2 = MIMEText(body_html, 'html', 'utf-8')
 
-            msg.attach(part1)
-            msg.attach(part2)
+            alternative.attach(part1)
+            alternative.attach(part2)
+
+            if attachments:
+                msg.attach(alternative)
+                for filename, content, mimetype in attachments:
+                    maintype, _, subtype = (mimetype or 'application/octet-stream').partition('/')
+                    attachment_part = MIMEBase(maintype or 'application', subtype or 'octet-stream')
+                    attachment_part.set_payload(content)
+                    encoders.encode_base64(attachment_part)
+                    safe_filename = filename.replace('\n', '').replace('\r', '')
+                    attachment_part.add_header('Content-Disposition', 'attachment', filename=safe_filename)
+                    msg.attach(attachment_part)
 
             with self._get_smtp_connection() as smtp:
                 smtp.sendmail(safe_from_email, to_email, msg.as_string())

@@ -25,6 +25,75 @@ router = APIRouter(prefix='/media', tags=['Cabinet Media'])
 ALLOWED_MEDIA_TYPES = {'photo', 'video', 'document'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
+# Only these raster image types may be served INLINE from the cabinet origin.
+# Everything else — documents, SVG, HTML, XML, anything — is forced to download
+# as an opaque blob. User attachments are served from the app's own origin, so an
+# HTML/SVG file rendered inline would execute JS with access to the cabinet's
+# localStorage tokens (stored XSS → session/token theft).
+_SAFE_INLINE_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+
+# Active/scriptable content rejected at upload time (defense in depth — the
+# download endpoint already forces these to download, but refuse them at the door).
+_BLOCKED_UPLOAD_EXTENSIONS = (
+    '.html',
+    '.htm',
+    '.xhtml',
+    '.shtml',
+    '.mhtml',
+    '.svg',
+    '.xml',
+    '.js',
+    '.mjs',
+    '.htc',
+)
+_BLOCKED_UPLOAD_CONTENT_TYPES = {
+    'text/html',
+    'application/xhtml+xml',
+    'image/svg+xml',
+    'application/xml',
+    'text/xml',
+    'application/javascript',
+    'text/javascript',
+}
+
+
+def _sanitize_download_filename(filename: str) -> str:
+    """Strip path separators, quotes and control chars so a Telegram-supplied
+    filename cannot break out of the Content-Disposition header."""
+    name = filename.rsplit('/', 1)[-1].rsplit('\\', 1)[-1]
+    name = re.sub(r'[\r\n"\\]+', '', name)
+    return name[:128] or 'file'
+
+
+def _content_response_params(filename: str) -> tuple[str, dict[str, str]]:
+    """Decide the safe Content-Type / disposition / hardening headers for a download.
+
+    Renders only a strict allow-list of raster images inline; forces everything
+    else to download as application/octet-stream. Adds nosniff + a locked-down CSP
+    so a user file can never execute script in the cabinet origin.
+    """
+    guessed_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+    if guessed_type in _SAFE_INLINE_IMAGE_TYPES:
+        media_type = guessed_type
+        disposition = 'inline'
+    else:
+        media_type = 'application/octet-stream'
+        disposition = 'attachment'
+
+    safe_filename = _sanitize_download_filename(filename)
+    headers = {
+        'Content-Disposition': f'{disposition}; filename="{safe_filename}"',
+        # Private attachments must never be cached by shared proxies/CDNs.
+        'Cache-Control': 'private, no-store',
+        # Never let the browser MIME-sniff a blob back into HTML/JS.
+        'X-Content-Type-Options': 'nosniff',
+        # Belt-and-braces: even if a renderable type slipped through, sandbox it
+        # (no scripts, no network) so it can't touch the app origin.
+        'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; sandbox",
+    }
+    return media_type, headers
+
+
 # Telegram file_ids are opaque URL-safe base64 strings.
 _FILE_ID_RE = re.compile(r'^[A-Za-z0-9_-]{16,256}$')
 
@@ -133,6 +202,17 @@ async def upload_media(
                 detail='Invalid image type. Allowed: JPEG, PNG, GIF, WebP',
             )
 
+    # Reject active/scriptable content for ALL upload types (defense in depth).
+    # A user file is served from the cabinet origin, so HTML/SVG/JS must never be
+    # accepted — even though the download endpoint also forces them to download.
+    declared_type = (file.content_type or '').split(';')[0].strip().lower()
+    filename_lower = (file.filename or '').lower()
+    if declared_type in _BLOCKED_UPLOAD_CONTENT_TYPES or filename_lower.endswith(_BLOCKED_UPLOAD_EXTENSIONS):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='This file type is not allowed',
+        )
+
     target_chat_id = _resolve_target_chat_id()
     upload = BufferedInputFile(file_bytes, filename=file.filename or 'upload')
 
@@ -231,17 +311,9 @@ async def download_media(
         content = buffer.read() if hasattr(buffer, 'read') else bytes(buffer)
         filename = file.file_path.split('/')[-1]
 
-        media_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        media_type, headers = _content_response_params(filename)
 
-        return Response(
-            content=content,
-            media_type=media_type,
-            headers={
-                'Content-Disposition': f'inline; filename={filename}',
-                # Private attachments must never be cached by shared proxies/CDNs.
-                'Cache-Control': 'private, no-store',
-            },
-        )
+        return Response(content=content, media_type=media_type, headers=headers)
     except HTTPException:
         raise
     except Exception as error:

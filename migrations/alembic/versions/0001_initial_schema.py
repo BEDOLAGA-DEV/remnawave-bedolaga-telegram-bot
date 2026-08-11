@@ -35,6 +35,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     raise NotImplementedError(
-        'Downgrading the initial schema is not supported. '
-        'Restore from a database backup instead.'
+        'Downgrading the initial schema is not supported. Restore from a database backup instead.'
     )

@@ -42,6 +42,7 @@ def _get_actual_fk_name(connection, table: str, column: str) -> str | None:
     row = result.fetchone()
     return row[0] if row else None
 
+
 # (table, column, ondelete, fk_name)
 _FK_CHANGES: list[tuple[str, str, str, str]] = [
     ('yookassa_payments', 'user_id', 'CASCADE', 'yookassa_payments_user_id_fkey'),
@@ -188,10 +189,7 @@ def upgrade() -> None:
                 f'AND {column} NOT IN (SELECT id FROM users)'
             )
         else:
-            op.execute(
-                f'DELETE FROM {table} '
-                f'WHERE {column} NOT IN (SELECT id FROM users)'
-            )
+            op.execute(f'DELETE FROM {table} WHERE {column} NOT IN (SELECT id FROM users)')
 
     # Step 2: Drop old FK constraints and recreate with ON DELETE CASCADE/SET NULL
     for table, column, ondelete, fk_name in _FK_CHANGES:

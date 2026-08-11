@@ -7,7 +7,9 @@ The main subscription.py includes all sub-routers for backward compatibility.
 from .autopay import router as autopay_router
 from .daily import router as daily_router
 from .devices import router as devices_router
+from .lava_recurrent import router as lava_recurrent_router
 from .multi_tariff import router as multi_tariff_router
+from .platega_recurrent import router as platega_recurrent_router
 from .purchase import router as purchase_router
 from .renewal import router as renewal_router
 from .revoke import router as revoke_router
@@ -21,7 +23,9 @@ __all__ = [
     'autopay_router',
     'daily_router',
     'devices_router',
+    'lava_recurrent_router',
     'multi_tariff_router',
+    'platega_recurrent_router',
     'purchase_router',
     'renewal_router',
     'revoke_router',

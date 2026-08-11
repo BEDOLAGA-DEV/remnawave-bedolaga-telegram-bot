@@ -30,7 +30,7 @@ from app.keyboards.admin import (
     get_campaign_management_keyboard,
     get_confirmation_keyboard,
 )
-from app.localization.texts import get_texts
+from app.localization.texts import Texts, get_texts
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 
@@ -55,7 +55,7 @@ def _format_campaign_summary(campaign, texts) -> str:
         bonus_info = (
             f'📱 Пробная подписка: <b>{campaign.subscription_duration_days or 0} д.</b>\n'
             f'🌐 Трафик: <b>{traffic_text}</b>\n'
-            f'📱 Устройства: <b>{device_limit}</b>'
+            f'📱 Устройства: <b>{Texts.format_device_limit(device_limit)}</b>'
         )
     elif campaign.is_tariff_bonus:
         tariff_name = 'Не выбран'

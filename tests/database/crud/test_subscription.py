@@ -128,15 +128,16 @@ async def test_extend_subscription_default_converts_trial_on_purchase(monkeypatc
     assert result.is_trial is False  # genuine purchase converts the trial
 
 
-def _trial_sub(sub_id, user_id, panel_uuid):
+def _trial_sub(sub_id, user_id, panel_user_id):
     from types import SimpleNamespace
 
-    user = SimpleNamespace(id=user_id, remnawave_uuid=panel_uuid)
+    # После миграции на Remnawave 3.0.0 панельная идентичность — числовой remnawave_id.
+    user = SimpleNamespace(id=user_id, remnawave_id=panel_user_id)
     return SimpleNamespace(
         id=sub_id,
         user_id=user_id,
         user=user,
-        remnawave_uuid=panel_uuid,
+        remnawave_id=panel_user_id,
         subscription_servers=[],
         connected_squads=[],
     )
@@ -178,10 +179,10 @@ def _patch_reset_env(monkeypatch, *, subs, is_configured, delete_side_effect=Non
 async def test_reset_trials_deletes_panel_first_and_skips_panel_failures(monkeypatch):
     """#630055-trial: панель удаляется ПЕРВОЙ; если удалить в панели не удалось —
     строку в БД не трогаем (иначе orphan + воскрешение синком)."""
-    subs = [_trial_sub(1, 11, 'uuid-ok'), _trial_sub(2, 22, 'uuid-fail')]
+    subs = [_trial_sub(1, 11, 9001), _trial_sub(2, 22, 9002)]
 
-    def delete_side_effect(uuid):
-        if uuid == 'uuid-fail':
+    def delete_side_effect(panel_user_id):
+        if panel_user_id == 9002:
             raise RuntimeError('panel 500')
         return True
 
@@ -191,17 +192,40 @@ async def test_reset_trials_deletes_panel_first_and_skips_panel_failures(monkeyp
 
     count = await crud.reset_trials_for_users_without_paid_subscription(db)
 
-    # Панель дёрнули для обоих.
+    # Панель дёрнули для обоих, по числовому id (не по UUID).
     called = {c.args[0] for c in fake_api.delete_user.await_args_list}
-    assert called == {'uuid-ok', 'uuid-fail'}
+    assert called == {9001, 9002}
     # Сбросили только того, у кого панель реально удалилась.
+    assert count == 1
+    db.commit.assert_awaited()
+
+
+async def test_reset_trials_keeps_row_when_panel_id_is_unusable(monkeypatch):
+    """Непригодный локальный идентификатор (RemnaWaveInvalidUserIdError) — это битая
+    ссылка в БД бота, а НЕ «панель-юзера нет». Строку сносить нельзя: иначе можно
+    осиротить живого панельного юзера, которого мы просто не сумели адресовать."""
+    from app.external.remnawave_api import RemnaWaveInvalidUserIdError
+
+    subs = [_trial_sub(1, 11, 9001), _trial_sub(2, 22, 9002)]
+
+    def delete_side_effect(panel_user_id):
+        if panel_user_id == 9002:
+            raise RemnaWaveInvalidUserIdError('Invalid panel user id')
+        return True
+
+    crud, db, fake_api = _patch_reset_env(
+        monkeypatch, subs=subs, is_configured=True, delete_side_effect=delete_side_effect
+    )
+
+    count = await crud.reset_trials_for_users_without_paid_subscription(db)
+
     assert count == 1
     db.commit.assert_awaited()
 
 
 async def test_reset_trials_panel_not_configured_db_only(monkeypatch):
     """Панель не настроена → orphan'ить нечего, чистим только БД, без вызовов панели."""
-    subs = [_trial_sub(1, 11, 'uuid-a'), _trial_sub(2, 22, 'uuid-b')]
+    subs = [_trial_sub(1, 11, 9001), _trial_sub(2, 22, 9002)]
     crud, db, fake_api = _patch_reset_env(monkeypatch, subs=subs, is_configured=False)
 
     count = await crud.reset_trials_for_users_without_paid_subscription(db)
@@ -209,6 +233,14 @@ async def test_reset_trials_panel_not_configured_db_only(monkeypatch):
     fake_api.delete_user.assert_not_awaited()
     assert count == 2
     db.commit.assert_awaited()
+
+    # single-tariff: устаревшая панельная идентичность на User обнуляется, иначе синк
+    # по ней воскресит удалённого юзера.
+    from sqlalchemy.sql.dml import Update
+
+    updates = [call.args[0] for call in db.execute.await_args_list if isinstance(call.args[0], Update)]
+    assert len(updates) == 1
+    assert {column.name for column in updates[0]._values} == {'remnawave_id', 'remnawave_uuid'}
 
 
 def test_is_trial_already_used_gate():
@@ -233,3 +265,34 @@ def test_is_trial_already_used_gate():
     # не платил, PENDING-триал (повторная попытка оплаты) → можно
     pending_trial = Subscription(status=SubscriptionStatus.PENDING.value, is_trial=True)
     assert _user(False, pending_trial).is_trial_already_used() is False
+
+
+def test_subscription_property_ignores_pending_trial_draft():
+    """Незавершённый платный триал не должен подставляться как основная подписка.
+
+    Регрессия: после «Назад» с экрана оплаты платного триала в меню оставался
+    PENDING-черновик, и подписка выглядела купленной.
+    """
+    from app.database.models import Subscription, SubscriptionStatus, User
+
+    def _user(*subs):
+        u = User(has_had_paid_subscription=False)
+        u.subscriptions = list(subs)
+        return u
+
+    pending_trial = Subscription(status=SubscriptionStatus.PENDING.value, is_trial=True)
+    active = Subscription(status=SubscriptionStatus.ACTIVE.value, is_trial=False)
+    expired = Subscription(status=SubscriptionStatus.EXPIRED.value, is_trial=False)
+
+    # предикат
+    assert pending_trial.is_pending_trial is True
+    assert active.is_pending_trial is False
+    # PENDING-триал (не оплачен) как non-trial не считается
+    assert Subscription(status=SubscriptionStatus.PENDING.value, is_trial=False).is_pending_trial is False
+
+    # только незавершённый триал → «подписки нет»
+    assert _user(pending_trial).subscription is None
+    # активная подписка имеет приоритет
+    assert _user(active, pending_trial).subscription is active
+    # истёкшая подписка (для продления) показывается, черновик триала — нет
+    assert _user(pending_trial, expired).subscription is expired

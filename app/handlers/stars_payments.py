@@ -10,7 +10,7 @@ from app.config import settings
 from app.database.crud.user import get_user_by_telegram_id
 from app.external.telegram_stars import TelegramStarsService
 from app.localization.loader import DEFAULT_LANGUAGE
-from app.localization.texts import get_texts
+from app.localization.texts import Texts, get_texts
 from app.services.payment_service import PaymentService
 
 
@@ -343,7 +343,7 @@ async def _handle_trial_payment(
             f'🎉 <b>Пробная подписка активирована!</b>\n\n'
             f'⭐ Потрачено: {stars_amount} Stars\n'
             f'📅 Период: {settings.TRIAL_DURATION_DAYS} дней\n'
-            f'📱 Устройств: {subscription.device_limit}\n\n'
+            f'📱 Устройств: {Texts.format_device_limit(subscription.device_limit)}\n\n'
             f'Используйте меню для подключения к VPN.',
             parse_mode='HTML',
         )

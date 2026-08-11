@@ -16,6 +16,7 @@ from app.database.crud.server_squad import (
 from app.database.crud.subscription import (
     add_subscription_servers,
     create_paid_subscription,
+    should_carry_trial_remaining_days,
 )
 from app.database.crud.subscription_conversion import (
     create_subscription_conversion,
@@ -28,6 +29,7 @@ from app.services.subscription_service import SubscriptionService
 from app.utils.pricing_utils import (
     apply_percentage_discount,
     calculate_months_from_days,
+    calculate_price_per_month,
     format_period_description,
     validate_pricing_calculation,
 )
@@ -391,7 +393,7 @@ class MiniAppSubscriptionPurchaseService:
                 else None
             )
 
-            per_month_price = base_price // months if months else base_price
+            per_month_price = calculate_price_per_month(base_price, period_days)
             per_month_price_label = texts.format_price(per_month_price)
 
             traffic_config = self._build_traffic_config(
@@ -934,7 +936,7 @@ class MiniAppSubscriptionPurchaseService:
                 'Not enough funds on balance',
             )
 
-        per_month_price = pricing.final_total // pricing.months if pricing.months else pricing.final_total
+        per_month_price = calculate_price_per_month(pricing.final_total, pricing.selection.period.days)
 
         return {
             'total_price_kopeks': pricing.final_total,
@@ -1077,7 +1079,7 @@ class MiniAppSubscriptionPurchaseService:
             if subscription.is_trial:
                 was_trial_conversion = True
                 trial_duration = (now - subscription.start_date).days
-                if settings.TRIAL_ADD_REMAINING_DAYS_TO_PAID and subscription.end_date:
+                if should_carry_trial_remaining_days() and subscription.end_date:
                     remaining = subscription.end_date - now
                     if remaining.total_seconds() > 0:
                         bonus_period = remaining
@@ -1158,23 +1160,23 @@ class MiniAppSubscriptionPurchaseService:
         # Disable killed trials on RemnaWave panel
         for trial_sub in killed_trials:
             try:
-                _trial_uuid = trial_sub.remnawave_uuid or (
-                    getattr(user, 'remnawave_uuid', None) if not settings.is_multi_tariff_enabled() else None
-                )
-                if _trial_uuid:
-                    await subscription_service.disable_remnawave_user(_trial_uuid)
+                _trial_panel_id = trial_sub.remnawave_id
+                if _trial_panel_id is None and not settings.is_multi_tariff_enabled():
+                    _trial_panel_id = getattr(user, 'remnawave_id', None)
+                if _trial_panel_id is not None:
+                    await subscription_service.disable_remnawave_user(_trial_panel_id)
                 await decrement_subscription_server_counts(db, trial_sub)
             except Exception as trial_err:
                 logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
 
         try:
             # In multi-tariff mode, each subscription has its own panel user.
-            # A new subscription has no remnawave_uuid yet, so always CREATE.
-            # In single-tariff mode, reuse the user-level UUID if available.
+            # A new subscription has no remnawave_id yet, so always CREATE.
+            # In single-tariff mode, reuse the user-level panel id if available.
             if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_uuid
+                _should_create = subscription.remnawave_id is None
             else:
-                _should_create = not getattr(user, 'remnawave_uuid', None)
+                _should_create = getattr(user, 'remnawave_id', None) is None
 
             if _should_create:
                 await subscription_service.create_remnawave_user(
@@ -1198,7 +1200,7 @@ class MiniAppSubscriptionPurchaseService:
             remnawave_retry_queue.enqueue(
                 subscription_id=subscription.id,
                 user_id=user.id,
-                action='create' if not getattr(subscription, 'remnawave_uuid', None) else 'update',
+                action='create' if getattr(subscription, 'remnawave_id', None) is None else 'update',
             )
 
         transaction = await create_transaction(

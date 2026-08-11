@@ -5,6 +5,7 @@ Supports multiple languages: ru, en, zh, ua, fa
 """
 
 import html
+from functools import partial
 from typing import Any
 
 from app.config import settings
@@ -44,6 +45,9 @@ class EmailNotificationTemplates:
             NotificationType.SUBSCRIPTION_EXPIRED: self._subscription_expired_template,
             NotificationType.SUBSCRIPTION_RENEWED: self._subscription_renewed_template,
             NotificationType.SUBSCRIPTION_ACTIVATED: self._subscription_activated_template,
+            NotificationType.WINBACK_EXPIRED_1D: self._winback_expired_1d_template,
+            NotificationType.WINBACK_DISCOUNT: self._winback_discount_template,
+            NotificationType.WINBACK_TRIAL_ENDING: self._winback_trial_ending_template,
             NotificationType.AUTOPAY_SUCCESS: self._autopay_success_template,
             NotificationType.AUTOPAY_FAILED: self._autopay_failed_template,
             NotificationType.AUTOPAY_INSUFFICIENT_FUNDS: self._autopay_insufficient_funds_template,
@@ -60,6 +64,7 @@ class EmailNotificationTemplates:
             NotificationType.WITHDRAWAL_REJECTED: self._withdrawal_rejected_template,
             NotificationType.TRAFFIC_RESET: self._traffic_reset_template,
             NotificationType.PAYMENT_RECEIVED: self._payment_received_template,
+            NotificationType.PROMO_OFFER: self._promo_offer_template,
             NotificationType.EMAIL_VERIFICATION: self._email_verification_template,
             NotificationType.PASSWORD_RESET: self._password_reset_template,
             NotificationType.EMAIL_CHANGE_CODE: self._email_change_code_template,
@@ -68,6 +73,26 @@ class EmailNotificationTemplates:
             NotificationType.GUEST_GIFT_RECEIVED: self._guest_gift_received_template,
             NotificationType.GUEST_CABINET_CREDENTIALS: self._guest_cabinet_credentials_template,
         }
+
+        # WEBHOOK_* уведомления делят один generic-билдер: тип -> ключ копирайта.
+        webhook_email_kinds = {
+            NotificationType.WEBHOOK_SUB_EXPIRED: 'sub_expired',
+            NotificationType.WEBHOOK_SUB_DISABLED: 'sub_disabled',
+            NotificationType.WEBHOOK_SUB_ENABLED: 'sub_enabled',
+            NotificationType.WEBHOOK_SUB_LIMITED: 'sub_limited',
+            NotificationType.WEBHOOK_SUB_TRAFFIC_RESET: 'sub_traffic_reset',
+            NotificationType.WEBHOOK_SUB_DELETED: 'sub_deleted',
+            NotificationType.WEBHOOK_SUB_REVOKED: 'sub_revoked',
+            NotificationType.WEBHOOK_SUB_EXPIRING: 'sub_expiring',
+            NotificationType.WEBHOOK_SUB_FIRST_CONNECTED: 'sub_first_connected',
+            NotificationType.WEBHOOK_SUB_BANDWIDTH_THRESHOLD: 'sub_bandwidth_threshold',
+            NotificationType.WEBHOOK_USER_NOT_CONNECTED: 'user_not_connected',
+            NotificationType.WEBHOOK_DEVICE_ADDED: 'device_added',
+            NotificationType.WEBHOOK_DEVICE_DELETED: 'device_deleted',
+            NotificationType.WEBHOOK_TORRENT_DETECTED: 'torrent_detected',
+        }
+        for webhook_type, webhook_kind in webhook_email_kinds.items():
+            template_map[webhook_type] = partial(self._webhook_event_email, webhook_kind)
 
         template_func = template_map.get(notification_type)
         if not template_func:
@@ -520,6 +545,318 @@ class EmailNotificationTemplates:
             'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
         }
 
+    _WEBHOOK_EMAIL_COPY = {
+        'sub_expired': {
+            'zh': (
+                '订阅已到期',
+                '<p>您的 VPN 订阅已到期，访问已关闭。</p><p>请续订以恢复使用。</p>',
+            ),
+            'ua': (
+                'Підписка закінчилася',
+                '<p>Ваша VPN-підписка закінчилася — доступ вимкнено.</p><p>Продовжте підписку, щоб повернутися до сервісу.</p>',
+            ),
+            'ru': (
+                'Подписка закончилась',
+                '<p>Ваша VPN-подписка истекла — доступ отключён.</p><p>Продлите подписку, чтобы вернуться в сервис.</p>',
+            ),
+            'en': (
+                'Subscription expired',
+                '<p>Your VPN subscription has expired and access is off.</p><p>Renew it to get back online.</p>',
+            ),
+        },
+        'sub_disabled': {
+            'zh': (
+                '订阅已暂停',
+                '<p>您的订阅已被暂时停用。</p><p>请查看个人中心或联系客服。</p>',
+            ),
+            'ua': (
+                'Підписку призупинено',
+                '<p>Вашу підписку тимчасово вимкнено.</p><p>Перевірте особистий кабінет або напишіть у підтримку.</p>',
+            ),
+            'ru': (
+                'Подписка приостановлена',
+                '<p>Ваша подписка временно отключена.</p><p>Проверьте личный кабинет или напишите в поддержку.</p>',
+            ),
+            'en': (
+                'Subscription suspended',
+                '<p>Your subscription has been temporarily disabled.</p><p>Check your dashboard or contact support.</p>',
+            ),
+        },
+        'sub_enabled': {
+            'zh': (
+                '订阅已恢复',
+                '<p>VPN 访问已恢复，可以继续使用。</p>',
+            ),
+            'ua': (
+                'Підписка знову активна',
+                '<p>Доступ до VPN відновлено — можна користуватися.</p>',
+            ),
+            'ru': ('Подписка снова активна', '<p>Доступ к VPN восстановлен — можно пользоваться.</p>'),
+            'en': ('Subscription re-activated', '<p>Your VPN access has been restored.</p>'),
+        },
+        'sub_limited': {
+            'zh': (
+                '流量已达上限',
+                '<p>订阅流量已用完。</p><p>请购买流量或等待重置后继续使用。</p>',
+            ),
+            'ua': (
+                'Досягнуто ліміт трафіку',
+                '<p>Трафік за підпискою вичерпано.</p><p>Докупіть трафік або дочекайтеся скидання, щоб продовжити.</p>',
+            ),
+            'ru': (
+                'Достигнут лимит трафика',
+                '<p>Трафик по подписке исчерпан.</p><p>Докупите трафик или дождитесь сброса, чтобы продолжить.</p>',
+            ),
+            'en': (
+                'Traffic limit reached',
+                '<p>You have used up your subscription traffic.</p><p>Top up traffic or wait for the reset to continue.</p>',
+            ),
+        },
+        'sub_traffic_reset': {
+            'zh': (
+                '流量已重置',
+                '<p>流量计数已重置，限额再次可用。</p>',
+            ),
+            'ua': (
+                'Трафік оновлено',
+                '<p>Лічильник трафіку скинуто — ліміт знову доступний.</p>',
+            ),
+            'ru': ('Трафик обновлён', '<p>Счётчик трафика сброшен — лимит снова доступен.</p>'),
+            'en': ('Traffic reset', '<p>Your traffic counter has been reset — the limit is available again.</p>'),
+        },
+        'sub_deleted': {
+            'zh': (
+                '订阅已删除',
+                '<p>您的订阅已被删除。</p><p>如属误操作，请联系客服。</p>',
+            ),
+            'ua': (
+                'Підписку видалено',
+                '<p>Вашу підписку було видалено.</p><p>Якщо це помилка — напишіть у підтримку.</p>',
+            ),
+            'ru': (
+                'Подписка удалена',
+                '<p>Ваша подписка была удалена.</p><p>Если это ошибка — напишите в поддержку.</p>',
+            ),
+            'en': (
+                'Subscription deleted',
+                '<p>Your subscription has been deleted.</p><p>If this is a mistake, contact support.</p>',
+            ),
+        },
+        'sub_revoked': {
+            'zh': (
+                '订阅链接已更新',
+                '<p>您的订阅链接已重新签发。</p><p>请从个人中心导入新链接。</p>',
+            ),
+            'ua': (
+                'Посилання-підписку оновлено',
+                '<p>Ваше посилання-підписку було перевипущено.</p><p>Імпортуйте нове посилання з особистого кабінету.</p>',
+            ),
+            'ru': (
+                'Ссылка-подписка обновлена',
+                '<p>Ваша ссылка-подписка была перевыпущена.</p><p>Импортируйте новую ссылку из личного кабинета.</p>',
+            ),
+            'en': (
+                'Subscription link reissued',
+                '<p>Your subscription link has been reissued.</p><p>Import the new link from your dashboard.</p>',
+            ),
+        },
+        'sub_expiring': {
+            'ru': (
+                'Подписка скоро закончится',
+                '<p>Срок действия вашей VPN-подписки подходит к концу.</p><p>Продлите её заранее, чтобы не остаться без доступа.</p>',
+            ),
+            'en': (
+                'Subscription expiring soon',
+                '<p>Your VPN subscription is about to expire.</p><p>Renew it in advance to avoid losing access.</p>',
+            ),
+            'zh': (
+                '订阅即将到期',
+                '<p>您的 VPN 订阅即将到期。</p><p>请提前续订，以免失去访问。</p>',
+            ),
+            'ua': (
+                'Підписка скоро закінчиться',
+                '<p>Термін дії вашої VPN-підписки добігає кінця.</p><p>Продовжте її заздалегідь, щоб не залишитися без доступу.</p>',
+            ),
+        },
+        'sub_first_connected': {
+            'zh': (
+                '连接成功',
+                '<p>您已成功连接到 VPN，祝使用愉快！</p>',
+            ),
+            'ua': (
+                'Підключення встановлено',
+                '<p>Ви успішно підключилися до VPN. Приємного користування!</p>',
+            ),
+            'ru': ('Подключение установлено', '<p>Вы успешно подключились к VPN. Приятного пользования!</p>'),
+            'en': ('You are connected', '<p>You have successfully connected to the VPN. Enjoy!</p>'),
+        },
+        'sub_bandwidth_threshold': {
+            'zh': (
+                '流量即将用完',
+                '<p>您已使用大部分流量。</p><p>请及时购买流量，以免失去访问。</p>',
+            ),
+            'ua': (
+                'Трафік закінчується',
+                '<p>Ви використали більшу частину трафіку.</p><p>Докупіть трафік, щоб не залишитися без доступу.</p>',
+            ),
+            'ru': (
+                'Трафик на исходе',
+                '<p>Вы израсходовали большую часть трафика.</p><p>Докупите трафик, чтобы не остаться без доступа.</p>',
+            ),
+            'en': (
+                'Traffic running low',
+                '<p>You have used most of your traffic.</p><p>Top up to avoid losing access.</p>',
+            ),
+        },
+        'user_not_connected': {
+            'zh': (
+                '需要帮助连接 VPN 吗？',
+                '<p>您的订阅<strong>有效</strong>，但应用尚未配置，因此 VPN 无法使用。</p><p>只需 5 分钟：安装应用并导入订阅链接。如有问题，请联系客服。</p>',
+            ),
+            'ua': (
+                'Потрібна допомога з підключенням VPN?',
+                '<p>Ваша підписка <strong>активна</strong>, але застосунок ще не налаштовано — тому VPN не працює.</p><p>Це займає 5 хвилин: встановіть застосунок та імпортуйте посилання-підписку. Якщо щось не виходить — напишіть у підтримку, допоможемо.</p>',
+            ),
+            'ru': (
+                'Нужна помощь с подключением VPN?',
+                '<p>Ваша подписка <strong>активна</strong>, но приложение пока не настроено — поэтому VPN не работает.</p><p>Это занимает 5 минут: установите приложение и импортируйте ссылку-подписку. Если что-то не выходит — напишите в поддержку, поможем.</p>',
+            ),
+            'en': (
+                'Need help connecting your VPN?',
+                '<p>Your subscription is <strong>active</strong>, but the app is not set up yet — so the VPN is not working.</p><p>It takes 5 minutes: install the app and import your subscription link. If anything goes wrong, contact support.</p>',
+            ),
+        },
+        'device_added': {
+            'zh': (
+                '已连接新设备',
+                '<p>您的订阅新增了一台设备{device}。</p><p>如果不是您本人操作，请联系客服。</p>',
+            ),
+            'ua': (
+                'Підключено новий пристрій',
+                '<p>До вашої підписки додано пристрій{device}.</p><p>Якщо це були не ви — напишіть у підтримку.</p>',
+            ),
+            'ru': (
+                'Новое устройство подключено',
+                '<p>К вашей подписке добавлено устройство{device}.</p><p>Если это были не вы — напишите в поддержку.</p>',
+            ),
+            'en': (
+                'New device connected',
+                '<p>A device{device} was added to your subscription.</p><p>If this was not you, contact support.</p>',
+            ),
+        },
+        'device_deleted': {
+            'zh': (
+                '设备已断开',
+                '<p>设备{device}已从您的订阅解绑。</p>',
+            ),
+            'ua': (
+                'Пристрій відключено',
+                '<p>Пристрій{device} відв’язано від вашої підписки.</p>',
+            ),
+            'ru': ('Устройство отключено', '<p>Устройство{device} отвязано от вашей подписки.</p>'),
+            'en': ('Device removed', '<p>A device{device} was removed from your subscription.</p>'),
+        },
+        'torrent_detected': {
+            'zh': (
+                '检测到种子流量',
+                '<p>检测到 torrent 活动。</p><p>VPN 上已封锁此类流量，请使用常规应用。</p>',
+            ),
+            'ua': (
+                'Виявлено торент-трафік',
+                '<p>Зафіксовано torrent-активність.</p><p>У VPN її заблоковано — використовуйте звичайні застосунки.</p>',
+            ),
+            'ru': (
+                'Обнаружен торрент-трафик',
+                '<p>Зафиксирована torrent-активность.</p><p>На VPN она заблокирована — используйте обычные приложения.</p>',
+            ),
+            'en': (
+                'Torrent traffic detected',
+                '<p>Torrent activity was detected.</p><p>It is blocked on the VPN — please use regular apps.</p>',
+            ),
+        },
+    }
+
+    def _webhook_event_email(self, kind: str, language: str, context: dict[str, Any]) -> dict[str, str]:
+        """Generic email for Remnawave webhook notifications (email-only users).
+
+        Each WEBHOOK_* notification type routes through notification_delivery_service,
+        which sends email to email-only users — but these types had no email template,
+        so email was silently skipped. This covers all of them.
+        """
+        lang = language if language in ('ru', 'en', 'zh', 'ua') else 'ru'
+        copy = self._WEBHOOK_EMAIL_COPY.get(kind, self._WEBHOOK_EMAIL_COPY['user_not_connected'])
+        subject, body = copy.get(lang, copy['ru'])
+
+        device = str(context.get('device') or context.get('device_name') or '').strip()
+        device_suffix = f' — {html.escape(device)}' if device and device != '—' else ''
+        body = body.replace('{device}', device_suffix)
+
+        content = f'<h2>{subject}</h2><div class="highlight">{body}</div>{self._get_cabinet_button(language)}'
+        return {
+            'subject': subject,
+            'body_html': self._get_base_template(content, language),
+        }
+
+    def _winback_expired_1d_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        """Email: subscription lapsed 1 day ago (email-only users)."""
+        end_date = html.escape(str(context.get('end_date', '')))
+        subjects = {
+            'ru': 'Подписка закончилась',
+            'en': 'Your subscription has ended',
+            'zh': '订阅已结束',
+            'ua': 'Підписка закінчилася',
+        }
+        bodies = {
+            'ru': f'<h2>Подписка закончилась</h2><div class="highlight danger"><p>Ваша VPN-подписка истекла{f" ({end_date})" if end_date else ""} — доступ отключён.</p><p>Продлите подписку, чтобы вернуться в сервис.</p></div>{self._get_cabinet_button(language)}',
+            'en': f'<h2>Your subscription has ended</h2><div class="highlight danger"><p>Your VPN subscription has expired — access is off.</p><p>Renew it to get back online.</p></div>{self._get_cabinet_button(language)}',
+            'zh': f'<h2>订阅已结束</h2><div class="highlight danger"><p>您的 VPN 订阅已到期{f"（{end_date}）" if end_date else ""}，访问已关闭。</p><p>请续订以恢复使用。</p></div>{self._get_cabinet_button(language)}',
+            'ua': f'<h2>Підписка закінчилася</h2><div class="highlight danger"><p>Ваша VPN-підписка закінчилася{f" ({end_date})" if end_date else ""} — доступ вимкнено.</p><p>Продовжте підписку, щоб повернутися до сервісу.</p></div>{self._get_cabinet_button(language)}',
+        }
+        return {
+            'subject': subjects.get(language, subjects['ru']),
+            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+        }
+
+    def _winback_discount_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        """Email: winback discount offer (email-only users). Offer is already on the account."""
+        percent = context.get('percent', '')
+        expires_at = html.escape(str(context.get('expires_at', '')))
+        subjects = {
+            'ru': f'Скидка {percent}% на продление',
+            'en': f'{percent}% off your renewal',
+            'zh': f'续订享 {percent}% 折扣',
+            'ua': f'Знижка {percent}% на продовження',
+        }
+        bodies = {
+            'ru': f'<h2>Скидка {percent}% на продление</h2><div class="highlight"><p>Возвращайтесь со скидкой <strong>{percent}%</strong>{f" — действует до {expires_at}" if expires_at else ""}.</p><p>Скидка уже привязана к вашему аккаунту и суммируется с промогруппой — просто продлите подписку в кабинете.</p></div>{self._get_cabinet_button(language)}',
+            'en': f'<h2>{percent}% off your renewal</h2><div class="highlight"><p>Come back with a <strong>{percent}%</strong> discount{f", valid until {expires_at}" if expires_at else ""}.</p><p>The discount is already applied to your account and stacks with your promo group — just renew in the dashboard.</p></div>{self._get_cabinet_button(language)}',
+            'zh': f'<h2>续订享 {percent}% 折扣</h2><div class="highlight"><p>回来享受 <strong>{percent}%</strong> 折扣{f"（有效期至 {expires_at}）" if expires_at else ""}。</p><p>折扣已绑定到您的账户，并与促销组叠加 — 只需在个人中心续订即可。</p></div>{self._get_cabinet_button(language)}',
+            'ua': f'<h2>Знижка {percent}% на продовження</h2><div class="highlight"><p>Повертайтеся зі знижкою <strong>{percent}%</strong>{f" — діє до {expires_at}" if expires_at else ""}.</p><p>Знижка вже прив’язана до вашого акаунта й сумується з промогрупою — просто продовжте підписку в кабінеті.</p></div>{self._get_cabinet_button(language)}',
+        }
+        return {
+            'subject': subjects.get(language, subjects['ru']),
+            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+        }
+
+    def _winback_trial_ending_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        """Email: trial ending soon (email-only users)."""
+        subjects = {
+            'ru': 'Пробная подписка скоро закончится',
+            'en': 'Your trial is ending soon',
+            'zh': '试用即将结束',
+            'ua': 'Пробна підписка скоро закінчиться',
+        }
+        bodies = {
+            'ru': f'<h2>Пробная подписка скоро закончится</h2><div class="highlight warning"><p>Ваша тестовая подписка скоро истекает.</p><p>Оформите подписку, чтобы не остаться без VPN — конфиг и устройства сохранятся.</p></div>{self._get_cabinet_button(language)}',
+            'en': f'<h2>Your trial is ending soon</h2><div class="highlight warning"><p>Your trial subscription is about to expire.</p><p>Subscribe to keep your VPN — your config and devices stay.</p></div>{self._get_cabinet_button(language)}',
+            'zh': f'<h2>试用即将结束</h2><div class="highlight warning"><p>您的试用订阅即将到期。</p><p>订阅以继续使用 VPN — 配置和设备将保留。</p></div>{self._get_cabinet_button(language)}',
+            'ua': f'<h2>Пробна підписка скоро закінчиться</h2><div class="highlight warning"><p>Ваша тестова підписка скоро закінчується.</p><p>Оформіть підписку, щоб не залишитися без VPN — конфіг і пристрої збережуться.</p></div>{self._get_cabinet_button(language)}',
+        }
+        return {
+            'subject': subjects.get(language, subjects['ru']),
+            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+        }
+
     def _subscription_activated_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
         """Template for subscription activated notification."""
         expires_at = context.get('expires_at', '')
@@ -925,6 +1262,84 @@ class EmailNotificationTemplates:
                     {f'<p>Thanks to: {referral_name}</p>' if referral_name else ''}
                 </div>
                 <p>Keep inviting friends and earn more!</p>
+                {self._get_cabinet_button(language)}
+            """,
+        }
+
+        return {
+            'subject': subjects.get(language, subjects['ru']),
+            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+        }
+
+    def _promo_offer_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        """Template for personal promo offer notification.
+
+        ``message_html`` — уже отрендеренный текст предложения (Telegram-HTML:
+        b/i/code — валидный HTML-фрагмент, переносы строк заменены на <br>).
+        Пишется админом или собирается дефолтным билдером — доверенный контент,
+        не экранируем.
+        """
+        message_html = context.get('message_html', '')
+        valid_hours = int(context.get('valid_hours', 0) or 0)
+        discount_percent = int(context.get('discount_percent', 0) or 0)
+
+        if discount_percent > 0:
+            subjects = {
+                'ru': f'🎁 Персональное предложение: скидка {discount_percent}%',
+                'en': f'🎁 Personal offer: {discount_percent}% off',
+                'zh': f'🎁 专属优惠：{discount_percent}% 折扣',
+                'ua': f'🎁 Персональна пропозиція: знижка {discount_percent}%',
+            }
+        else:
+            subjects = {
+                'ru': '🎁 Персональное предложение',
+                'en': '🎁 Personal offer',
+                'zh': '🎁 专属优惠',
+                'ua': '🎁 Персональна пропозиція',
+            }
+
+        valid_lines = {
+            'ru': f'<p>⏰ Предложение действует <b>{valid_hours} ч.</b></p>' if valid_hours else '',
+            'en': f'<p>⏰ The offer is valid for <b>{valid_hours} h.</b></p>' if valid_hours else '',
+            'zh': f'<p>⏰ 优惠有效期 <b>{valid_hours} 小时</b></p>' if valid_hours else '',
+            'ua': f'<p>⏰ Пропозиція діє <b>{valid_hours} год.</b></p>' if valid_hours else '',
+        }
+
+        bodies = {
+            'ru': f"""
+                <h2>Персональное предложение</h2>
+                <div class="highlight">
+                    <p>{message_html}</p>
+                </div>
+                {valid_lines['ru']}
+                <p>Активировать предложение можно в личном кабинете.</p>
+                {self._get_cabinet_button(language)}
+            """,
+            'en': f"""
+                <h2>Personal Offer</h2>
+                <div class="highlight">
+                    <p>{message_html}</p>
+                </div>
+                {valid_lines['en']}
+                <p>You can activate the offer in your account.</p>
+                {self._get_cabinet_button(language)}
+            """,
+            'zh': f"""
+                <h2>专属优惠</h2>
+                <div class="highlight">
+                    <p>{message_html}</p>
+                </div>
+                {valid_lines['zh']}
+                <p>您可以在个人中心激活该优惠。</p>
+                {self._get_cabinet_button(language)}
+            """,
+            'ua': f"""
+                <h2>Персональна пропозиція</h2>
+                <div class="highlight">
+                    <p>{message_html}</p>
+                </div>
+                {valid_lines['ua']}
+                <p>Активувати пропозицію можна в особистому кабінеті.</p>
                 {self._get_cabinet_button(language)}
             """,
         }

@@ -192,6 +192,27 @@ def fixed_datetime() -> datetime:
     return datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
+@pytest.fixture(scope='session')
+def registered_paths() -> dict[str, set[str]]:
+    """Карта `путь -> {HTTP-методы}` кабинетного роутера, как их реально
+    обслуживает приложение.
+
+    Раньше тесты обходили ``router.routes`` и читали ``route.path`` напрямую.
+    Начиная со Starlette 1.x вложенные роутеры (``include_router``) хранятся
+    лениво как ``_IncludedRouter`` без атрибута ``path``, поэтому такой обход
+    ломается. Резолвим фактическую таблицу маршрутов через OpenAPI-схему
+    приложения — это устойчиво между версиями Starlette/FastAPI.
+    """
+    from fastapi import FastAPI
+
+    from app.cabinet.routes import router
+
+    app = FastAPI()
+    app.include_router(router)
+    schema = app.openapi()
+    return {path: {method.upper() for method in operations} for path, operations in schema.get('paths', {}).items()}
+
+
 # Auto-load fixture modules so tests don't need explicit imports.
 # Promocode/promo-group tests in tests/services/test_promocode_service.py,
 # tests/crud/test_promocode_crud.py, and tests/integration/test_promocode_promo_group_flow.py

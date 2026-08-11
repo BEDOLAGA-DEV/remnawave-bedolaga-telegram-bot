@@ -81,6 +81,9 @@ class CustomBroadcastButton(BaseModel):
     label: str = Field(..., min_length=1, max_length=64)
     action_type: Literal['callback', 'url'] = 'callback'
     action_value: str = Field(..., min_length=1, max_length=256)
+    # Telegram custom emoji, показываемый перед текстом кнопки (#3025).
+    # Идентификаторы custom emoji — числовые строки (Bot API custom_emoji_id).
+    icon_custom_emoji_id: str | None = Field(default=None, pattern=r'^\d{1,64}$')
 
     @field_validator('action_value')
     @classmethod

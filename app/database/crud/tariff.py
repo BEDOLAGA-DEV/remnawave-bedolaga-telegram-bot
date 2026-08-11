@@ -184,6 +184,8 @@ async def create_tariff(
     max_topup_traffic_gb: int = 0,
     is_daily: bool = False,
     daily_price_kopeks: int = 0,
+    # UUID продукта Lava для рекуррентных подписок
+    lava_product_id: str | None = None,
     # Произвольное количество дней
     custom_days_enabled: bool = False,
     price_per_day_kopeks: int = 0,
@@ -224,6 +226,7 @@ async def create_tariff(
         max_topup_traffic_gb=max(0, max_topup_traffic_gb),
         is_daily=is_daily,
         daily_price_kopeks=max(0, daily_price_kopeks),
+        lava_product_id=(lava_product_id or '').strip() or None,
         # Произвольное количество дней
         custom_days_enabled=custom_days_enabled,
         price_per_day_kopeks=max(0, price_per_day_kopeks),
@@ -294,6 +297,7 @@ async def update_tariff(
     max_topup_traffic_gb: int | None = None,
     is_daily: bool | None = None,
     daily_price_kopeks: int | None = None,
+    lava_product_id: str | None = None,
     # Произвольное количество дней
     custom_days_enabled: bool | None = None,
     price_per_day_kopeks: int | None = None,
@@ -355,6 +359,9 @@ async def update_tariff(
         tariff.is_daily = is_daily
     if daily_price_kopeks is not None:
         tariff.daily_price_kopeks = max(0, daily_price_kopeks)
+    if lava_product_id is not None:
+        # Пустая строка = отвязать тариф от продукта Lava
+        tariff.lava_product_id = lava_product_id.strip() or None
     # Произвольное количество дней
     if custom_days_enabled is not None:
         tariff.custom_days_enabled = custom_days_enabled

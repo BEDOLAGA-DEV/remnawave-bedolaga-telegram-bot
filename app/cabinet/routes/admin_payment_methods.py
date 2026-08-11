@@ -41,6 +41,7 @@ class PaymentMethodConfigResponse(BaseModel):
     is_enabled: bool
     display_name: str | None = None
     default_display_name: str
+    description: str | None = None
     sub_options: dict | None = None
     available_sub_options: list[SubOptionInfo] | None = None
     quick_amounts: list[int] | None = None
@@ -94,8 +95,10 @@ class PaymentMethodConfigUpdateRequest(BaseModel):
     promo_group_filter_mode: str | None = Field(default=None, pattern='^(all|selected)$')
     allowed_promo_group_ids: list[int] | None = None
     open_url_direct: bool | None = None
+    description: str | None = Field(default=None, description='Null to reset to default')
     # Allow explicitly resetting display_name to null
     reset_display_name: bool = False
+    reset_description: bool = False
     reset_min_amount: bool = False
     reset_max_amount: bool = False
 
@@ -129,6 +132,7 @@ def _enrich_config(config, defaults: dict) -> PaymentMethodConfigResponse:
         sort_order=config.sort_order,
         is_enabled=config.is_enabled,
         display_name=config.display_name,
+        description=config.description,
         default_display_name=method_def.get('default_display_name', config.method_id),
         sub_options=config.sub_options,
         available_sub_options=available_sub_options,
@@ -219,6 +223,11 @@ async def update_payment_method(
         data['display_name'] = None
     elif request.display_name is not None:
         data['display_name'] = request.display_name.strip() or None
+
+    if request.reset_description:
+        data['description'] = None
+    elif request.description is not None:
+        data['description'] = request.description.strip() or None
 
     if request.sub_options is not None:
         data['sub_options'] = request.sub_options

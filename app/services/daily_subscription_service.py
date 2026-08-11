@@ -103,6 +103,22 @@ class DailySubscriptionService:
 
         return stats
 
+    async def _reload_daily_subscription(self, db, subscription_id: int) -> Subscription:
+        """Пере-фетчит суточную подписку с eager-load user+tariff.
+
+        После ``db.commit()`` (expire_on_commit) eager-loaded связи ``user``/``tariff``
+        истекают; последующее обращение ``subscription.user``/``.tariff`` в async-сессии
+        уходит в lazy-load → ``MissingGreenlet``. Пере-фетч с selectinload восстанавливает
+        связи на объекте, чтобы _process_single_charge и его нотификации читали их
+        безопасно (см. ERROR REPORT: MissingGreenlet в process_auto_resume).
+        """
+        result = await db.execute(
+            select(Subscription)
+            .options(selectinload(Subscription.user), selectinload(Subscription.tariff))
+            .where(Subscription.id == subscription_id)
+        )
+        return result.scalar_one()
+
     async def _process_single_charge(self, db, subscription) -> str:
         """
         Обрабатывает списание для одной подписки.
@@ -229,8 +245,9 @@ class DailySubscriptionService:
                         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
                     if squads:
                         subscription.connected_squads = squads
+                        _sub_id = subscription.id
                         await db.commit()
-                        await db.refresh(subscription)
+                        subscription = await self._reload_daily_subscription(db, _sub_id)
             except Exception as sq_err:
                 logger.warning('Не удалось восстановить connected_squads', error=sq_err)
 
@@ -240,10 +257,10 @@ class DailySubscriptionService:
 
                 subscription_service = SubscriptionService()
                 _has_panel_user = (
-                    getattr(subscription, 'remnawave_uuid', None)
+                    getattr(subscription, 'remnawave_id', None)
                     if settings.is_multi_tariff_enabled()
-                    else getattr(user, 'remnawave_uuid', None)
-                )
+                    else getattr(user, 'remnawave_id', None)
+                ) is not None
                 if _has_panel_user:
                     await subscription_service.update_remnawave_user(
                         db,
@@ -261,12 +278,12 @@ class DailySubscriptionService:
                     )
                     # POST может игнорировать activeInternalSquads — отправляем PATCH
                     await db.refresh(user)
-                    _sync_uuid = (
-                        getattr(subscription, 'remnawave_uuid', None)
+                    _sync_panel_user_id = (
+                        getattr(subscription, 'remnawave_id', None)
                         if settings.is_multi_tariff_enabled()
-                        else getattr(user, 'remnawave_uuid', None)
+                        else getattr(user, 'remnawave_id', None)
                     )
-                    if _sync_uuid and subscription.connected_squads:
+                    if _sync_panel_user_id is not None and subscription.connected_squads:
                         try:
                             await subscription_service.update_remnawave_user(
                                 db,
@@ -683,16 +700,16 @@ class DailySubscriptionService:
 
         service = SubscriptionService()
         if settings.is_multi_tariff_enabled():
-            uuid = getattr(subscription, 'remnawave_uuid', None)
+            panel_user_id = getattr(subscription, 'remnawave_id', None)
         else:
             user = await get_user_by_id(db, subscription.user_id)
-            uuid = getattr(user, 'remnawave_uuid', None) if user else None
-        if not uuid:
+            panel_user_id = getattr(user, 'remnawave_id', None) if user else None
+        if panel_user_id is None:
             return None
 
         try:
             async with service.get_api_client() as api:
-                panel_user = await api.get_user_by_uuid(uuid)
+                panel_user = await api.get_user_by_id(panel_user_id)
         except Exception as exc:
             logger.warning(
                 'Не удалось получить used из панели для выравнивания докупки — применим понижение со страховкой',
@@ -754,9 +771,10 @@ class DailySubscriptionService:
                             # чтобы _process_single_charge корректно его обновил при списании.
                             # Если списание упадёт, подписка останется без last_daily_charge_at
                             # и будет подхвачена на следующем цикле.
+                            _sub_id = subscription.id
                             subscription.status = SubscriptionStatus.ACTIVE.value
                             await db.commit()
-                            await db.refresh(subscription)
+                            subscription = await self._reload_daily_subscription(db, _sub_id)
 
                             logger.info(
                                 '✅ Суточная подписка возобновлена (DISABLED→ACTIVE, баланс пополнен)',
@@ -787,9 +805,10 @@ class DailySubscriptionService:
                     for subscription in expired_subs:
                         try:
                             # Восстанавливаем в ACTIVE — charge обновит end_date и last_daily_charge_at
+                            _sub_id = subscription.id
                             subscription.status = SubscriptionStatus.ACTIVE.value
                             await db.commit()
-                            await db.refresh(subscription)
+                            subscription = await self._reload_daily_subscription(db, _sub_id)
 
                             logger.warning(
                                 '🔄 Суточная подписка восстановлена (EXPIRED→ACTIVE, ошибочный expire)',

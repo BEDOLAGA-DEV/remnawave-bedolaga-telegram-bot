@@ -91,6 +91,60 @@ class BalanceUpdateRequest(BaseModel):
     create_transaction: bool = True
 
 
+class BalanceDepositRequest(BaseModel):
+    """Ручное пополнение баланса. Рассчитано на автоматизацию (агент поддержки)."""
+
+    amount_kopeks: int = Field(
+        ...,
+        gt=0,
+        le=100_000_000,
+        description='Сумма пополнения в копейках. Только положительная: эндпоинт умеет лишь зачислять.',
+    )
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description=(
+            'Ключ идемпотентности (номер тикета, uuid попытки). Повторный запрос с тем же ключом '
+            'не начислит деньги второй раз и вернёт исходный результат с duplicate=true. '
+            'Обязателен по-хорошему для любой автоматической интеграции: без него сетевой таймаут '
+            'и ретрай приведут к двойному начислению.'
+        ),
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=500,
+        description='Описание транзакции. Видно пользователю в истории операций.',
+    )
+    notify_user: bool = Field(
+        default=True,
+        description='Отправить пользователю уведомление о пополнении (Telegram или email).',
+    )
+    apply_topup_bonuses: bool = Field(
+        default=True,
+        description=(
+            'Запустить те же авто-действия, что и настоящий платёж: реферальная комиссия, '
+            'отметка первого пополнения, возобновление приостановленной суточной подписки, '
+            'автопокупка сохранённой корзины. Выключайте, только если нужно именно «просто деньги».'
+        ),
+    )
+
+
+class BalanceDepositResponse(BaseModel):
+    success: bool
+    duplicate: bool = Field(
+        ...,
+        description='true — запрос с таким idempotency_key уже был обработан, баланс не менялся.',
+    )
+    user_id: int
+    telegram_id: int | None = None
+    transaction_id: int
+    amount_kopeks: int = Field(..., description='Сумма проведённой транзакции.')
+    old_balance_kopeks: int
+    new_balance_kopeks: int
+    new_balance_rubles: float
+
+
 class UserSubscriptionCreateRequest(BaseModel):
     """Схема для создания подписки через users API (user_id берется из URL)"""
 

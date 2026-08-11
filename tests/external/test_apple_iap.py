@@ -1053,9 +1053,16 @@ class TestAppleIAPRouting:
         assert settings.APPLE_IAP_WEBHOOK_PATH not in paths
 
     def test_apple_iap_only_router_exposes_only_apple_iap_paths(self) -> None:
+        # Starlette 1.x хранит include_router лениво (_IncludedRouter без
+        # .path), поэтому таблицу маршрутов резолвим через OpenAPI-схему —
+        # тот же приём, что registered_paths в tests/conftest.py.
+        from fastapi import FastAPI
+
         from app.cabinet.apple_iap import apple_iap_only_router
 
-        paths = {route.path for route in apple_iap_only_router.routes}
+        app = FastAPI()
+        app.include_router(apple_iap_only_router)
+        paths = set(app.openapi().get('paths', {}))
 
         assert '/cabinet/apple-iap/account-token' in paths
         assert '/cabinet/apple-purchase' in paths
@@ -1073,7 +1080,7 @@ class TestAppleIAPRouting:
         app = FastAPI()
         app.include_router(apple_iap_only_router)
 
-        paths = {route.path for route in app.routes}
+        paths = set(app.openapi().get('paths', {}))
 
         assert '/cabinet/apple-iap/account-token' in paths
         assert '/cabinet/apple-purchase' in paths

@@ -53,6 +53,7 @@ class TariffListItem(BaseModel):
     is_trial_available: bool
     is_daily: bool = False
     daily_price_kopeks: int = 0
+    lava_product_id: str | None = None
     allow_traffic_topup: bool = True
     show_in_gift: bool = True
     traffic_limit_gb: int
@@ -111,6 +112,7 @@ class TariffDetailResponse(BaseModel):
     # Дневной тариф
     is_daily: bool = False
     daily_price_kopeks: int = 0
+    lava_product_id: str | None = None
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
@@ -169,6 +171,8 @@ class TariffCreateRequest(BaseModel):
     # Дневной тариф
     is_daily: bool = False
     daily_price_kopeks: int = Field(0, ge=0)
+    # UUID продукта Lava для рекуррентных подписок (цена/период заданы в кабинете Lava)
+    lava_product_id: str | None = Field(None, max_length=255)
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
@@ -210,6 +214,7 @@ class TariffUpdateRequest(BaseModel):
     # Дневной тариф
     is_daily: bool | None = None
     daily_price_kopeks: int | None = Field(None, ge=0)
+    lava_product_id: str | None = Field(None, max_length=255)
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave

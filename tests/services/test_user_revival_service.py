@@ -42,6 +42,9 @@ class _FakeUser:
         # We track these to assert the revival is NON-destructive.
         self.referral_code = kwargs.get('referral_code', 'INV-XYZ')
         self.referred_by_id = kwargs.get('referred_by_id', 7)
+        # 3.0.0: панельная привязка живёт в числовом remnawave_id. Легаси-колонку
+        # держим рядом, чтобы «не затёрли» проверялось для обеих.
+        self.remnawave_id = kwargs.get('remnawave_id', 777)
         self.remnawave_uuid = kwargs.get('remnawave_uuid', 'panel-uuid-abc')
 
 
@@ -76,7 +79,10 @@ async def test_revive_preserves_balance_and_referral_state(db: AsyncMock) -> Non
     assert user.balance_kopeks == 99999, 'balance must not be zeroed on cabinet revival'
     assert user.referral_code == 'KEEP-ME', 'referral_code must not be regenerated on cabinet revival'
     assert user.referred_by_id == 11, 'referrer attribution must survive cabinet revival'
-    assert user.remnawave_uuid == 'panel-uuid-abc', 'panel UUID must not be cleared'
+    # Ревайв обязан сохранить привязку к панели: обнулив её, кабинет отправил бы
+    # вернувшегося юзера в ветку «создать нового» — дубль поверх живого аккаунта.
+    assert user.remnawave_id == 777, 'panel id must not be cleared on cabinet revival'
+    assert user.remnawave_uuid == 'panel-uuid-abc', 'legacy panel UUID must not be cleared either'
 
 
 @pytest.mark.asyncio

@@ -259,7 +259,7 @@ async def get_ticket_settings(
         sla_minutes=settings.SUPPORT_TICKET_SLA_MINUTES,
         sla_check_interval_seconds=settings.SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS,
         sla_reminder_cooldown_minutes=settings.SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES,
-        support_system_mode=settings.get_support_system_mode(),
+        support_system_mode=SupportSettingsService.get_system_mode(),
         cabinet_user_notifications_enabled=SupportSettingsService.get_cabinet_user_notifications_enabled(),
         cabinet_admin_notifications_enabled=SupportSettingsService.get_cabinet_admin_notifications_enabled(),
     )
@@ -351,7 +351,7 @@ async def update_ticket_settings(
         sla_minutes=settings.SUPPORT_TICKET_SLA_MINUTES,
         sla_check_interval_seconds=settings.SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS,
         sla_reminder_cooldown_minutes=settings.SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES,
-        support_system_mode=settings.get_support_system_mode(),
+        support_system_mode=SupportSettingsService.get_system_mode(),
         cabinet_user_notifications_enabled=SupportSettingsService.get_cabinet_user_notifications_enabled(),
         cabinet_admin_notifications_enabled=SupportSettingsService.get_cabinet_admin_notifications_enabled(),
     )
@@ -483,7 +483,12 @@ async def reply_to_ticket(
 
     message = TicketMessage(
         ticket_id=ticket.id,
-        user_id=ticket.user_id,
+        # Автор сообщения — реально ответивший админ, а не владелец тикета:
+        # иначе при нескольких сотрудниках поддержки невозможно установить,
+        # кто отвечал (#3029). Бот-путь (handlers/admin/tickets.py) пишет id
+        # админа с самого начала — выравниваем семантику. Отображение стороны
+        # сообщения везде идёт по is_from_admin, а не по user_id.
+        user_id=admin.id,
         message_text=request.message,
         is_from_admin=True,
         has_media=has_media,
@@ -501,6 +506,26 @@ async def reply_to_ticket(
 
     await db.commit()
     await db.refresh(message)
+
+    # Feed the mobile support socket bridge (event_emitter -> support_ws).
+    try:
+        from app.services.event_emitter import event_emitter
+
+        await event_emitter.emit(
+            'ticket.message_added',
+            {
+                'ticket_id': ticket.id,
+                'message_id': message.id,
+                'user_id': admin.id,
+                'is_from_admin': True,
+                'message_text': (request.message or '')[:200],
+                'has_media': has_media,
+                'status': ticket.status,
+            },
+            db=db,
+        )
+    except Exception as error:
+        logger.warning('Failed to emit ticket.message_added (admin) from cabinet', error=error)
 
     # Try to notify user via Telegram
     try:

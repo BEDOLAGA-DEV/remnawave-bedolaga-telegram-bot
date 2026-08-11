@@ -32,11 +32,7 @@ def upgrade() -> None:
         sa.Column('color', sa.String(20), nullable=False, server_default='#00e5a0'),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
-    op.execute(
-        sa.text(
-            "CREATE UNIQUE INDEX ix_news_categories_name_lower ON news_categories (lower(name))"
-        )
-    )
+    op.execute(sa.text('CREATE UNIQUE INDEX ix_news_categories_name_lower ON news_categories (lower(name))'))
 
     # --- news_tags ---
     op.create_table(
@@ -46,11 +42,7 @@ def upgrade() -> None:
         sa.Column('color', sa.String(20), nullable=False, server_default='#94a3b8'),
         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
-    op.execute(
-        sa.text(
-            "CREATE UNIQUE INDEX ix_news_tags_name_lower ON news_tags (lower(name))"
-        )
-    )
+    op.execute(sa.text('CREATE UNIQUE INDEX ix_news_tags_name_lower ON news_tags (lower(name))'))
 
     # --- FK columns on news_articles ---
     op.add_column('news_articles', sa.Column('category_id', sa.Integer(), nullable=True))
@@ -80,37 +72,37 @@ def upgrade() -> None:
     # --- Backfill: seed categories from existing article data ---
     op.execute(
         sa.text(
-            "INSERT INTO news_categories (name, color) "
-            "SELECT DISTINCT category, category_color FROM news_articles "
+            'INSERT INTO news_categories (name, color) '
+            'SELECT DISTINCT category, category_color FROM news_articles '
             "WHERE category IS NOT NULL AND category != '' "
-            "ON CONFLICT DO NOTHING"
+            'ON CONFLICT DO NOTHING'
         )
     )
 
     # --- Backfill: seed tags from existing article data ---
     op.execute(
         sa.text(
-            "INSERT INTO news_tags (name) "
-            "SELECT DISTINCT tag FROM news_articles "
+            'INSERT INTO news_tags (name) '
+            'SELECT DISTINCT tag FROM news_articles '
             "WHERE tag IS NOT NULL AND tag != '' "
-            "ON CONFLICT DO NOTHING"
+            'ON CONFLICT DO NOTHING'
         )
     )
 
     # --- Populate FK columns ---
     op.execute(
         sa.text(
-            "UPDATE news_articles SET category_id = nc.id "
-            "FROM news_categories nc "
-            "WHERE lower(news_articles.category) = lower(nc.name) "
+            'UPDATE news_articles SET category_id = nc.id '
+            'FROM news_categories nc '
+            'WHERE lower(news_articles.category) = lower(nc.name) '
             "AND news_articles.category IS NOT NULL AND news_articles.category != ''"
         )
     )
     op.execute(
         sa.text(
-            "UPDATE news_articles SET tag_id = nt.id "
-            "FROM news_tags nt "
-            "WHERE lower(news_articles.tag) = lower(nt.name) "
+            'UPDATE news_articles SET tag_id = nt.id '
+            'FROM news_tags nt '
+            'WHERE lower(news_articles.tag) = lower(nt.name) '
             "AND news_articles.tag IS NOT NULL AND news_articles.tag != ''"
         )
     )

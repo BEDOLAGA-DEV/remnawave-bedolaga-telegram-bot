@@ -86,13 +86,16 @@ class StageHandle:
         self._explicit_status = True
 
     def warning(self, message: str) -> None:
-        self.status_icon = '⚠️'
+        # Статусные значки — только из однозначно широких (East Asian Wide) эмодзи:
+        # пары «нейтральный символ + VS16» (⚠️, ⏭️) терминалы рисуют широким глифом,
+        # продвигая курсор на одну клетку — глиф наезжает на пробел и ломает рамку резюме.
+        self.status_icon = '❗'
         self.status_label = 'Предупреждение'
         self.message = message
         self._explicit_status = True
 
     def skip(self, message: str) -> None:
-        self.status_icon = '⏭️'
+        self.status_icon = '⏩'
         self.status_label = 'Пропущено'
         self.message = message
         self._explicit_status = True

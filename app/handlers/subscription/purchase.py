@@ -14,6 +14,7 @@ from app.database.crud.subscription import (
     create_paid_subscription,
     create_pending_trial_subscription,
     create_trial_subscription,
+    should_carry_trial_remaining_days,
 )
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
@@ -36,7 +37,7 @@ from app.keyboards.inline import (
     get_updated_subscription_settings_keyboard,
     build_back_button
 )
-from app.localization.texts import get_texts
+from app.localization.texts import Texts, get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveConfigurationError
@@ -119,6 +120,9 @@ from app.utils.timezone import format_local_datetime
 
 from .autopay import (
     handle_autopay_menu,
+    handle_sbp_recurring_cancel,
+    handle_sbp_recurring_enable,
+    handle_sbp_recurring_menu,
     handle_subscription_cancel,
     handle_subscription_config_back,
     set_autopay_days,
@@ -308,21 +312,20 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
 
     if show_devices:
         try:
-            _device_uuid = (
-                getattr(subscription, 'remnawave_uuid', None)
+            _device_panel_id = (
+                getattr(subscription, 'remnawave_id', None)
                 if settings.is_multi_tariff_enabled() and subscription
                 else None
-            ) or db_user.remnawave_uuid
-            if _device_uuid:
+            ) or db_user.remnawave_id
+            if _device_panel_id:
                 from app.services.remnawave_service import RemnaWaveService
 
                 service = RemnaWaveService()
 
                 async with service.get_api_client() as api:
-                    response = await api._make_request('GET', f'/api/hwid/devices/{_device_uuid}')
+                    devices_info = await api.get_user_devices(_device_panel_id)
 
-                    if response and 'response' in response:
-                        devices_info = response['response']
+                    if isinstance(devices_info, dict):
                         devices_count = devices_info.get('total', 0)
                         devices_list = devices_info.get('devices', [])
                         devices_used_str = str(devices_count)
@@ -364,7 +367,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                     f'<b>📦 {html.escape(tariff.name)}</b>',
                     f'Тип: {tariff_type_str}',
                     f'Трафик: {tariff.traffic_limit_gb} ГБ' if tariff.traffic_limit_gb > 0 else 'Трафик: ∞ Безлимит',
-                    f'Устройства: {tariff.device_limit}',
+                    f'Устройства: {Texts.format_device_limit(tariff.device_limit)}',
                 ]
 
                 if is_daily:
@@ -475,7 +478,7 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             '',
         )
 
-    device_limit_display = str(subscription.device_limit)
+    device_limit_display = Texts.format_device_limit(subscription.device_limit)
 
     message = message_template.format(
         full_name=html.escape(db_user.full_name or ''),
@@ -1719,7 +1722,7 @@ async def handle_extend_subscription(
     ]
 
     if settings.is_devices_selection_enabled():
-        renewal_lines.append(f'📱 Устройств: {subscription.device_limit}')
+        renewal_lines.append(f'📱 Устройств: {Texts.format_device_limit(subscription.device_limit)}')
 
     renewal_lines.extend(
         [
@@ -2369,7 +2372,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
 
                 trial_duration = (current_time - existing_subscription.start_date).days
 
-                if settings.TRIAL_ADD_REMAINING_DAYS_TO_PAID and existing_subscription.end_date:
+                if should_carry_trial_remaining_days() and existing_subscription.end_date:
                     remaining_trial_delta = existing_subscription.end_date - current_time
                     if remaining_trial_delta.total_seconds() > 0:
                         bonus_period = remaining_trial_delta
@@ -2502,9 +2505,9 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
         subscription_service = SubscriptionService()
         # При покупке подписки ВСЕГДА сбрасываем трафик в панели
         if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_uuid
+            _should_create = not subscription.remnawave_id
         else:
-            _should_create = not getattr(db_user, 'remnawave_uuid', None)
+            _should_create = not getattr(db_user, 'remnawave_id', None)
 
         if _should_create:
             remnawave_user = await subscription_service.create_remnawave_user(
@@ -2801,7 +2804,7 @@ async def handle_subscription_settings(callback: types.CallbackQuery, db_user: U
             '',
         )
 
-    devices_limit_display = str(subscription.device_limit)
+    devices_limit_display = Texts.format_device_limit(subscription.device_limit)
 
     settings_text = settings_template.format(
         countries_count=len(subscription.connected_squads or []),
@@ -2974,7 +2977,15 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            if getattr(db_user, 'remnawave_uuid', None):
+            # В multi-tariff панельная идентичность живёт на подписке, а
+            # User.remnawave_id не заполняется вовсе. Гейт только по User здесь
+            # означал бы новый панельный дубль на каждом возобновлении.
+            _panel_user_id = (
+                subscription.remnawave_id
+                if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+                else getattr(db_user, 'remnawave_id', None)
+            )
+            if _panel_user_id:
                 await subscription_service.update_remnawave_user(
                     db,
                     subscription,
@@ -2991,7 +3002,12 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
                 )
                 # POST может игнорировать activeInternalSquads — отправляем PATCH
                 await db.refresh(db_user)
-                if getattr(db_user, 'remnawave_uuid', None) and subscription.connected_squads:
+                _panel_user_id = (
+                    subscription.remnawave_id
+                    if settings.is_multi_tariff_enabled() and subscription.remnawave_id
+                    else getattr(db_user, 'remnawave_id', None)
+                )
+                if _panel_user_id and subscription.connected_squads:
                     try:
                         await subscription_service.update_remnawave_user(
                             db,
@@ -3071,7 +3087,14 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
 
     user_balance_kopeks = getattr(db_user, 'balance_kopeks', 0) or 0
     if user_balance_kopeks < trial_price_kopeks:
-        await callback.answer(texts.t('INSUFFICIENT_BALANCE', '❌ Недостаточно средств на балансе'), show_alert=True)
+        topup_needed_kopeks = trial_price_kopeks - user_balance_kopeks
+        await callback.answer(
+            texts.t(
+                'INSUFFICIENT_BALANCE',
+                '❌ Недостаточно средств на балансе. Пополните баланс на {amount} и попробуйте снова.',
+            ).format(amount=settings.format_price(topup_needed_kopeks)),
+            show_alert=True,
+        )
         return
 
     # Списываем с баланса
@@ -3933,6 +3956,12 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(show_autopay_days, F.data == 'autopay_set_days')
 
     dp.callback_query.register(show_autopay_period, F.data == 'autopay_set_period')
+
+    dp.callback_query.register(handle_sbp_recurring_menu, F.data == 'sbp_recurring_menu')
+
+    dp.callback_query.register(handle_sbp_recurring_enable, F.data == 'sbp_recurring_enable')
+
+    dp.callback_query.register(handle_sbp_recurring_cancel, F.data == 'sbp_recurring_cancel')
 
     dp.callback_query.register(handle_subscription_config_back, F.data == 'subscription_config_back')
 

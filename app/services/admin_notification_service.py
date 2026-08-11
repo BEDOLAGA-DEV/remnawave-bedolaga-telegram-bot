@@ -14,8 +14,8 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from sqlalchemy import select
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy import inspect as sa_inspect, select
+from sqlalchemy.exc import MissingGreenlet, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -34,6 +34,7 @@ from app.database.models import (
     User,
 )
 from app.utils.message_patch import caption_exceeds_telegram_limit
+from app.utils.rich_admin import classic_admin_html_to_rich, try_send_rich_admin_message
 from app.utils.timezone import format_local_datetime
 
 
@@ -74,6 +75,29 @@ class NotificationCategory(StrEnum):
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _loaded_relationship(instance: object, name: str) -> Any:
+    """Значение связи, только если она УЖЕ загружена; иначе None и никакого IO.
+
+    ``getattr(obj, name, None)`` для этого не годится: у незагруженной связи
+    async-сессия не отдаёт None, а лезет в базу — и падает MissingGreenlet, потому
+    что default у getattr срабатывает лишь на AttributeError.
+
+    Ровно на этом падало уведомление о регистрации по рекламной кампании:
+    apply_campaign_bonus перечитывает пользователя через ``db.refresh(user)``
+    (сам по себе — фикс прошлого MissingGreenlet), а refresh сбрасывает ранее
+    загруженные связи, включая promo_group.
+    """
+    try:
+        state = sa_inspect(instance)
+    except NoInspectionAvailable:
+        # Не ORM-объект (тестовые фейки, SimpleNamespace) — обычный доступ безопасен.
+        return getattr(instance, name, None)
+
+    if name in state.unloaded:
+        return None
+    return state.dict.get(name)
 
 
 class AdminNotificationService:
@@ -126,10 +150,17 @@ class AdminNotificationService:
             return f'ID {referred_by_id}'
 
     async def _get_user_promo_group(self, db: AsyncSession, user: User) -> PromoGroup | None:
-        if getattr(user, 'promo_group', None):
-            return user.promo_group
+        promo_group = _loaded_relationship(user, 'promo_group')
+        if promo_group:
+            return promo_group
 
-        if not user.promo_group_id:
+        try:
+            promo_group_id = user.promo_group_id
+        except Exception:
+            # Инстанс отвязан от сессии или протух — колонка тоже ушла бы в ленивую
+            # подгрузку. Берём последнее известное значение из __dict__.
+            promo_group_id = user.__dict__.get('promo_group_id')
+        if not promo_group_id:
             return None
 
         try:
@@ -138,16 +169,17 @@ class AdminNotificationService:
             # relationship might not be available — fallback to direct fetch
             pass
 
-        if getattr(user, 'promo_group', None):
-            return user.promo_group
+        promo_group = _loaded_relationship(user, 'promo_group')
+        if promo_group:
+            return promo_group
 
         try:
-            return await get_promo_group_by_id(db, user.promo_group_id)
+            return await get_promo_group_by_id(db, promo_group_id)
         except Exception as e:
             logger.error(
                 'Ошибка загрузки промогруппы пользователя',
-                promo_group_id=user.promo_group_id,
-                telegram_id=user.telegram_id,
+                promo_group_id=promo_group_id,
+                telegram_id=user.__dict__.get('telegram_id'),
                 e=e,
             )
             return None
@@ -304,6 +336,7 @@ class AdminNotificationService:
             PromoCodeType.TRIAL_SUBSCRIPTION.value: '🎁 Триал подписка',
             PromoCodeType.PROMO_GROUP.value: '👥 Промогруппа',
             PromoCodeType.DISCOUNT.value: '💸 Скидка',
+            PromoCodeType.BALANCE_AND_DAYS.value: '💰📅 Баланс + дни подписки',
         }
 
         if not promo_type:
@@ -1472,13 +1505,27 @@ class AdminNotificationService:
             logger.debug('Уведомление подавлено (категория отключена)', category=category.value)
             return False
 
+        thread_id = self._resolve_topic_id(category)
+
+        # Rich-вид (Bot API 10.1): заголовок, разделители, footer с tg-time.
+        # При недоступности/ошибке молча продолжаем классическим путём ниже
+        # (там ретраи и обработка flood control).
+        try:
+            rich_html = classic_admin_html_to_rich(text)
+            if await try_send_rich_admin_message(
+                self.bot, self.chat_id, rich_html, thread_id=thread_id, reply_markup=reply_markup
+            ):
+                logger.info('Rich-уведомление отправлено в чат', chat_id=self.chat_id, category=category)
+                return True
+        except Exception as rich_error:
+            logger.warning('Сбой rich-рендера админ-уведомления', error=str(rich_error))
+
         message_kwargs: dict[str, Any] = {
             'chat_id': self.chat_id,
             'text': text,
             'parse_mode': 'HTML',
             'disable_web_page_preview': True,
         }
-        thread_id = self._resolve_topic_id(category)
         if thread_id:
             message_kwargs['message_thread_id'] = thread_id
         if reply_markup is not None:
@@ -1692,6 +1739,7 @@ class AdminNotificationService:
             'cloudpayments': f'💳 {settings.get_cloudpayments_display_name()}',
             'freekassa': f'💳 {settings.get_freekassa_display_name()}',
             'kassa_ai': f'💳 {settings.get_kassa_ai_display_name()}',
+            'cispay': f'💳 {settings.get_cispay_display_name()}',
             'manual': '🛠️ Вручную (админ)',
             'balance': '💰 С баланса',
         }

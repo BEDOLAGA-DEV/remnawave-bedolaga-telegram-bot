@@ -51,8 +51,7 @@ def upgrade() -> None:
     if dialect_name == 'postgresql':
         with op.get_context().autocommit_block():
             op.execute(
-                f'CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX_NAME} '
-                'ON users (referred_by_id, has_made_first_topup)'
+                f'CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX_NAME} ON users (referred_by_id, has_made_first_topup)'
             )
     else:
         op.create_index(

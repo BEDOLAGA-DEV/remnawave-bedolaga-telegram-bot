@@ -1,3 +1,4 @@
+import html
 import traceback
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -12,6 +13,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.config import settings
 from app.services.startup_notification_service import _get_error_recommendations
+from app.utils.rich_admin import RICH_TEXT_LIMIT, rich_footer_now, rich_traceback_details, try_send_rich_admin_message
 from app.utils.timezone import format_local_datetime
 
 
@@ -201,6 +203,37 @@ class ErrorStatisticsMiddleware(BaseMiddleware):
             self.error_counts[key] = 0
 
 
+def _build_rich_error_report(now: datetime, error_type: str, context: str) -> str | None:
+    """Rich-отчёт об ошибках: шапка + сворачиваемые трейсбеки всех ошибок буфера.
+
+    None — отчёт не влезает в лимит rich-сообщения (классический путь отправит
+    его .txt-файлом без потерь).
+    """
+    blocks = [
+        '<h6>⚠️ Ошибка во время работы</h6><hr/>',
+        f'<p><b>Тип:</b> <code>{html.escape(error_type)}</code> · <b>Ошибок в отчёте:</b> {len(_error_buffer)}</p>',
+    ]
+    if context:
+        blocks.append(f'<p><b>Контекст:</b> {context}</p>')
+
+    recommendations = _get_error_recommendations(_error_buffer[-1][1] if _error_buffer else '')
+    if recommendations:
+        blocks.append(f'<blockquote>{recommendations}</blockquote>')
+
+    # Последняя (свежая) ошибка — развёрнута, остальные из буфера — свёрнуты
+    for index, (err_type, err_msg, err_tb) in enumerate(reversed(_error_buffer)):
+        summary = f'📋 {err_type}: {err_msg[:80]}' if err_msg else f'📋 {err_type}'
+        blocks.append(rich_traceback_details(summary, err_tb, open_by_default=index == 0))
+
+    blocks.append('<hr/>')
+    blocks.append(rich_footer_now())
+
+    rich_html = ''.join(blocks)
+    if len(rich_html) > RICH_TEXT_LIMIT:
+        return None
+    return rich_html
+
+
 async def send_error_to_admin_chat(
     bot: Bot, error: Exception, context: str = '', tb_override: str | None = None
 ) -> bool:
@@ -247,6 +280,33 @@ async def send_error_to_admin_chat(
 
     _last_error_notification = now
 
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text='💬 Сообщить разработчику',
+                    url=DEVELOPER_CONTACT_URL,
+                ),
+            ],
+        ]
+    )
+
+    # Rich-вид (Bot API 10.1): трейсбеки инлайн в сворачиваемых блоках с
+    # подсветкой — лимит rich-сообщения 32768 символов против 1024 у caption,
+    # так что .txt-файл не нужен. При недоступности/переполнении — классический
+    # путь с файлом ниже.
+    try:
+        rich_html = _build_rich_error_report(now, error_type, context)
+        if rich_html and await try_send_rich_admin_message(
+            bot, chat_id, rich_html, thread_id=topic_id, reply_markup=keyboard
+        ):
+            _error_buffer.clear()
+            logger.info('Rich-уведомление об ошибке отправлено в чат', chat_id=chat_id)
+            return True
+    except Exception as rich_error:
+        # warning + строка: error-уровень отсюда сам бы ушёл в этот конвейер
+        logger.warning('Сбой rich-рендера отчёта об ошибке', error=str(rich_error))
+
     try:
         timestamp = format_local_datetime(now, DATETIME_FORMAT)
         separator = '=' * REPORT_SEPARATOR_WIDTH
@@ -287,7 +347,7 @@ async def send_error_to_admin_chat(
         message_text = (
             f'<b>Remnawave Bedolaga Bot</b>\n\n'
             f'⚠️ Ошибка во время работы\n\n'
-            f'<b>Тип:</b> <code>{error_type}</code>\n'
+            f'<b>Тип:</b> <code>{html.escape(error_type)}</code>\n'
             f'<b>Ошибок в отчёте:</b> {errors_count}\n'
         )
         if context:
@@ -299,17 +359,6 @@ async def send_error_to_admin_chat(
             message_text += f'\n{recommendations}\n'
 
         message_text += f'\n<i>{timestamp}</i>'
-
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text='💬 Сообщить разработчику',
-                        url=DEVELOPER_CONTACT_URL,
-                    ),
-                ],
-            ]
-        )
 
         message_kwargs: dict = {
             'chat_id': chat_id,

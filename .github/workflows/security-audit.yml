@@ -1,0 +1,38 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  schedule:
+    - cron: "31 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit (зависимости)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Sync dependencies (locked)
+        run: uv sync --frozen
+
+      # Аудит установленного окружения по базе OSV/PyPI Advisory.
+      # Пока non-blocking: сообщаем, но не валим пайплайн. Убрать
+      # continue-on-error, когда разгребём долги по зависимостям.
+      - name: Run pip-audit
+        continue-on-error: true
+        run: uv run --with pip-audit pip-audit --progress-spinner off
