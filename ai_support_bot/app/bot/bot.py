@@ -15,8 +15,14 @@ from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db import crud
 from ai_support_bot.app.db.database import AsyncSessionLocal
 from ai_support_bot.app.services import settings_store
-from ai_support_bot.app.services.agent import support_agent
+from ai_support_bot.app.services.agent import support_agent, _is_smalltalk
 from ai_support_bot.app.services.openai_client import OpenAIError
+
+_SMALLTALK_REPLIES = [
+    'Всё отлично, спасибо! 😊 Чем могу помочь?',
+    'Хорошо, благодарю! Если есть вопрос — пишите, помогу.',
+    'Всё хорошо! Готов помочь, если что-то нужно. 🙂',
+]
 
 logger = structlog.get_logger(__name__)
 
@@ -140,6 +146,13 @@ async def handle_message(message: Message) -> None:
         await message.answer('Пожалуйста, опишите вопрос текстом или пришлите скриншот.')
         return
 
+    # Fast-path: smalltalk ("Как дела?", "Привет", etc.) — respond locally,
+    # never call OpenAI so the LLM can't hallucinate VPN instructions.
+    if _is_smalltalk(question) and not image_url:
+        import random
+        await message.answer(random.choice(_SMALLTALK_REPLIES))
+        return
+
     await settings_store.load()
     daily_limit = settings_store.get_int('DAILY_MESSAGE_LIMIT')
     if daily_limit > 0:
@@ -174,6 +187,12 @@ async def handle_message(message: Message) -> None:
             f'<b>Вопрос:</b> {question or "[изображение]"}\n\n'
             f'<b>Сформированный проект ответа ИИ:</b>\n{answer}'
         )
+        # First deliver the answer to the user, THEN notify admins.
+        # Previously the bot did `return` before answering, leaving the user silent.
+        try:
+            await message.answer(answer, parse_mode='HTML')
+        except Exception:
+            await message.answer(answer.replace('<', '&lt;').replace('>', '&gt;'))
         await _notify_admins(bot, notify_text)
         return
 
