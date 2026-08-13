@@ -95,10 +95,8 @@ async def _handle_daily_limit(
     used_today: int,
     limit: int,
 ) -> None:
-    """Save the message, notify admins, and (once per day) tell the user about the limit."""
+    """Save the message and notify admins quietly without answering the user."""
     bot = message.bot
-    day_key = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    notify_key = (telegram_id, day_key)
 
     async with AsyncSessionLocal() as db:
         conversation = await crud.get_or_create_conversation(db, telegram_id)
@@ -123,13 +121,6 @@ async def _handle_daily_limit(
     )
     await _notify_admins(bot, notify_text)
     logger.info('Daily AI support limit reached', telegram_id=telegram_id, used=used_today, limit=limit)
-
-    if notify_key not in _limit_user_notified:
-        _limit_user_notified.add(notify_key)
-        await message.answer(
-            '⏳ Дневной лимит обращений к ИИ-поддержке исчерпан. '
-            'Ваш вопрос передан операторам — они ответят вручную.'
-        )
 
 
 async def handle_message(message: Message) -> None:

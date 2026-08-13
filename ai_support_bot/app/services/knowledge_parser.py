@@ -81,6 +81,22 @@ def _normalize_message(raw: dict[str, Any]) -> dict[str, Any] | None:
     return {'from': from_name, 'is_support': _is_support(from_name), 'text': text}
 
 
+_STUB_PATTERNS = (
+    'здравствуйте', 'добрый день', 'добрый вечер', 'доброе утро', 'привет', 'приветствую',
+    'минутку', 'секунду', 'секундочку', 'ожидайте', 'щас', 'сейчас', 'один момент', 'одну секунду'
+)
+
+
+def _is_stub_answer(text: str) -> bool:
+    cleaned = _clean(text).lower()
+    if len(cleaned) < 25:
+        return True
+    for pattern in _STUB_PATTERNS:
+        cleaned = cleaned.replace(pattern, '')
+    cleaned = cleaned.strip('!.,? \n\r')
+    return len(cleaned) < 15
+
+
 def _build_qa_pairs(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     pairs: list[dict[str, str]] = []
     pending_questions: list[str] = []
@@ -88,23 +104,24 @@ def _build_qa_pairs(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
 
     def flush() -> None:
         if pending_questions and pending_answers:
-            pairs.append(
-                {
-                    'question': _clean('\n'.join(pending_questions)),
-                    'answer': _clean('\n'.join(pending_answers)),
-                }
-            )
+            q_text = _clean('\n'.join(pending_questions))
+            a_text = _clean('\n'.join(pending_answers))
+            if q_text and a_text and not _is_stub_answer(a_text):
+                pairs.append({'question': q_text, 'answer': a_text})
 
     prev_is_support: bool | None = None
     for message in messages:
         is_support = message['is_support']
         text = message['text']
         if not is_support:
-            if prev_is_support:
+            current_answer = '\n'.join(pending_answers)
+            if prev_is_support and pending_answers and not _is_stub_answer(current_answer):
                 flush()
                 pending_questions = []
                 pending_answers = []
-            pending_questions.append(text)
+
+            if len(_clean(text)) >= 2 or not pending_questions:
+                pending_questions.append(text)
         else:
             pending_answers.append(text)
         prev_is_support = is_support
@@ -191,9 +208,9 @@ _NOISE_MARKERS = (
 def _is_low_value(question: str, answer: str) -> bool:
     q = question.lower()
     a = answer.lower()
-    if len(answer) < 12:
+    if _is_stub_answer(answer):
         return True
-    if len(question) < 4:
+    if len(question.strip()) < 4:
         return True
     hits = sum(1 for marker in _NOISE_MARKERS if marker in q or marker in a)
     return hits >= 2
