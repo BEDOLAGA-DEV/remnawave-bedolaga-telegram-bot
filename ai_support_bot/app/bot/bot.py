@@ -18,11 +18,50 @@ from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.agent import support_agent, _is_smalltalk
 from ai_support_bot.app.services.openai_client import OpenAIError
 
-_SMALLTALK_REPLIES = [
-    'Всё отлично, спасибо! 😊 Чем могу помочь?',
-    'Хорошо, благодарю! Если есть вопрос — пишите, помогу.',
-    'Всё хорошо! Готов помочь, если что-то нужно. 🙂',
+import random
+import re
+
+_GREETING_PATTERNS = [r'привет\w*', r'здравств\w*', r'хай', r'hi', r'hello', r'добр(ое|ый|ой)', r'утро', r'день', r'вечер']
+_THANKS_PATTERNS = [r'спасибо\w*', r'благодар\w*', r'спс', r'пасиб\w*', r'сяб', r'мерси']
+_ACK_PATTERNS = [r'понял\w*', r'ясно', r'хорошо', r'ок\w*', r'окей', r'ладно', r'отлично', r'супер', r'класс', r'круто', r'ага', r'угу', r'помогло', r'заработало', r'принято']
+
+_GREETING_REPLIES = [
+    'Здравствуйте! Чем могу помочь по сервису? 🙂',
+    'Приветствую! Опишите ваш вопрос, постараюсь помочь. 🙌',
+    'Здравствуйте! Задавайте вопрос, я на связи. 🙂',
 ]
+
+_THANKS_REPLIES = [
+    'Пожалуйста! Рад был помочь. 😊',
+    'Всегда пожалуйста! Если возникнут вопросы — обращайтесь. 🤝',
+    'Пожалуйста! Рад, что всё получилось. ✨',
+]
+
+_ACK_REPLIES = [
+    'Отлично! Обращайтесь, если появятся вопросы. 👍',
+    'Хорошо! Рад был помочь. 🤝',
+    'Понял вас! Всегда на связи, если что-то понадобится. 🙂',
+]
+
+_GENERAL_SMALLTALK_REPLIES = [
+    'Всё отлично, спасибо! Готов помочь с вопросами по VPN. 🙂',
+    'Всё хорошо! Чем могу помочь?',
+]
+
+
+def get_smalltalk_reply(question: str) -> str:
+    q = (question or '').lower().strip()
+
+    if any(re.search(p, q, re.IGNORECASE) for p in _THANKS_PATTERNS):
+        return random.choice(_THANKS_REPLIES)
+
+    if any(re.search(p, q, re.IGNORECASE) for p in _ACK_PATTERNS):
+        return random.choice(_ACK_REPLIES)
+
+    if any(re.search(p, q, re.IGNORECASE) for p in _GREETING_PATTERNS):
+        return random.choice(_GREETING_REPLIES)
+
+    return random.choice(_GENERAL_SMALLTALK_REPLIES)
 
 logger = structlog.get_logger(__name__)
 
@@ -140,8 +179,7 @@ async def handle_message(message: Message) -> None:
     # Fast-path: smalltalk ("Как дела?", "Привет", etc.) — respond locally,
     # never call OpenAI so the LLM can't hallucinate VPN instructions.
     if _is_smalltalk(question) and not image_url:
-        import random
-        await message.answer(random.choice(_SMALLTALK_REPLIES))
+        await message.answer(get_smalltalk_reply(question))
         return
 
     await settings_store.load()
