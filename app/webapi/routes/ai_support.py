@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Security, UploadFile,
 from pydantic import BaseModel
 
 from ai_support_bot.app.db import crud
-from ai_support_bot.app.db.database import AsyncSessionLocal
+from ai_support_bot.app.db.database import AsyncSessionLocal, ensure_ready
 from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.openai_client import OpenAIError
 from ai_support_bot.app.services.rag_service import rag_service
@@ -129,6 +129,7 @@ async def upload_knowledge_file(
     _: Any = Security(require_api_token),
 ) -> dict[str, Any]:
     """Загрузить JSON файл в базу знаний ИИ-бота."""
+    await ensure_ready()
     raw_bytes = await file.read()
     try:
         parsed = json.loads(raw_bytes.decode('utf-8'))
@@ -162,6 +163,7 @@ async def toggle_knowledge_source(
         new_active = not source.is_active
         await crud.set_source_active(db, source_id, new_active)
 
+    rag_service.invalidate_cache()
     return {'status': 'ok', 'source_id': source_id, 'is_active': new_active}
 
 
@@ -176,6 +178,7 @@ async def delete_knowledge_source(
         if not success:
             raise HTTPException(status.HTTP_404_NOT_FOUND, 'Источник знаний не найден')
 
+    rag_service.invalidate_cache()
     return {'status': 'ok', 'deleted_source_id': source_id}
 
 

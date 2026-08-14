@@ -69,6 +69,7 @@ async def test_rolling_summary_triggers_every_n_turns(monkeypatch, tmp_path):
     from importlib import reload
     from ai_support_bot.app.core import config as config_mod
     config_mod.get_settings.cache_clear()
+    monkeypatch.setattr(config_mod, 'settings', config_mod.get_settings())
     from ai_support_bot.app.db import database as database_mod
     reload(database_mod)
     from ai_support_bot.app.db import crud

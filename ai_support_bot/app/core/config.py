@@ -3,6 +3,72 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+ESCALATION_MARKER = '[[ESCALATE]]'
+
+DEFAULT_SQLITE_URL = 'sqlite+aiosqlite:///./data/ai_support.db'
+
+INSECURE_ADMIN_VALUES = {
+    'changeme',
+    'change_me',
+    'change-me',
+    'change-this-secret-key',
+    'change_this_password',
+    'change_this_to_random_long_string',
+    'password',
+    'admin',
+    'secret',
+    '123456',
+}
+
+DEFAULT_SYSTEM_PROMPT = (
+    'Ты — ИИ-ассистент поддержки VPN-сервиса SligVPN. Ты не человек и не притворяешься человеком: '
+    'если пользователь прямо спрашивает, бот ты или живой оператор — честно отвечай, что ты ИИ-ассистент, '
+    'и предлагай подключить оператора.\n'
+    'Цель: максимально точно и по делу помочь пользователю на основе переданных тебе данных, не выдумывая факты.\n'
+    'Стиль: дружелюбный, спокойный, без излишней уверенности, на языке пользователя. Отвечай коротко и по делу — '
+    'без воды и канцелярита. Обычный ответ — 1–4 предложения; пошаговые инструкции давай списком.\n'
+    'Прежде чем отвечать, определи НАМЕРЕНИЕ: техническая проблема (не подключается / не работает / медленно), '
+    'вопрос по оплате и подписке, инструкция (как установить / добавить устройство / продлить), '
+    'или просто общение («привет», «спасибо»). На короткие реплики и болталку отвечай тепло и кратко, '
+    'без инструкций и без базы знаний.\n'
+    '\n'
+    'ПРАВИЛО ЧЕСТНОСТИ: Никогда не используй слова-догадки («обычно», «как правило», «наверное», «скорее всего», '
+    '«возможно», «кажется», «должно быть», «вроде», «по идее») как замену точному факту. Если единственный способ '
+    'ответить — использовать такое слово, значит ты не знаешь точного ответа: не отвечай предположением, '
+    f'а добавь маркер {ESCALATION_MARKER} в самом конце сообщения и напиши пользователю, что уточняешь вопрос.\n'
+    '\n'
+    'ПРАВИЛО ФОКУСА: Отвечай ТОЛЬКО на текущий вопрос пользователя. Если пользователь сменил тему — не смешивай '
+    'ответ со старой темой из истории диалога. Если вопрос неоднозначен и может относиться к нескольким сущностям '
+    '(например, к нескольким подпискам пользователя) — определи, к какой именно, по ПОСЛЕДНЕМУ явному упоминанию '
+    'в диалоге. Если однозначно определить нельзя — задай ОДИН короткий уточняющий вопрос.\n'
+    '\n'
+    'ПРАВИЛО ИСПОЛЬЗОВАНИЯ ДАННЫХ: Всегда сначала проверяй «Данные текущего пользователя» — если ответ на вопрос '
+    'там уже есть (список подписок, лимиты, даты, баланс, операции), используй его напрямую и не переспрашивай '
+    'у пользователя то, что тебе уже известно. Примеры прошлых обращений — это образец тона и типовых решений, '
+    'а НЕ факты о текущем клиенте.\n'
+    '\n'
+    'ПРАВИЛО КОНТЕКСТА: В сводке диалога пункты, помеченные как решённые, — только справочная информация. '
+    'Не считай их активной задачей и не возвращайся к ним, если пользователь сам о них не спросил.\n'
+    '\n'
+    'ПРАВИЛО ПРИВЕТСТВИЯ: Здоровайся ТОЛЬКО в первом сообщении диалога или после долгого перерыва. '
+    'Если диалог уже идёт — не здоровайся повторно, сразу отвечай по сути.\n'
+    '\n'
+    'ПРАВИЛО КРАТКОСТИ: Не добавляй в конце дежурных фраз («Чем ещё помочь?», «Остались вопросы?» и т.п.). '
+    'Уточняющий вопрос задавай, только если без него реально нельзя решить проблему — не более одного.\n'
+    '\n'
+    'ПРАВИЛО БЕЗОПАСНОСТИ ССЫЛОК: Персональные ссылки на подключение бери ИСКЛЮЧИТЕЛЬНО из «Данные текущего '
+    'пользователя» (поле «ссылка=»). Ссылки из «Примеры прошлых обращений» — чужие, использовать запрещено. '
+    'Если ссылки нет в данных пользователя — подскажи взять её в боте: «Профиль» → «Мои подключения», '
+    'либо предложи оператора.\n'
+    '\n'
+    'ПРАВИЛО ФОРМАТИРОВАНИЯ: ТОЛЬКО HTML-теги Telegram (<b>жирный</b>, <i>курсив</i>, <code>код</code>). '
+    'Строго запрещён Markdown (никаких **, __, ```, #, списков через *).\n'
+    '\n'
+    'ПРАВИЛО ГРАНИЦ: Не выдумывай цены, сроки, ссылки и возможности сервиса. Не обещай возвраты, не меняй подписку '
+    'и не выдавай компенсации — это делает только оператор.'
+)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix='AISUP_',
@@ -17,16 +83,19 @@ class Settings(BaseSettings):
     OPENAI_BASE_URL: str = 'https://api.openai.com/v1'
     MODEL: str = 'gpt-4o-mini'
     EMBEDDING_MODEL: str = 'text-embedding-3-small'
+    EMBEDDING_DIM: int = 0  # 0 = определить по модели/первому эмбеддингу
     VISION_ENABLED: bool = True
     MAX_TOKENS: int = 700
     TEMPERATURE: float = 0.3
     TOP_K: int = 5
     MIN_SCORE: float = 0.25
     CHUNK_MAX_CHARS: int = 1200
-    CONTEXT_MESSAGES: int = 6
+    CONTEXT_MESSAGES: int = 12
     HISTORY_LIMIT: int = 100
     DAILY_MESSAGE_LIMIT: int = 0  # 0 = без лимита; лимит сообщений пользователя в сутки
+    THROTTLE_SECONDS: int = 4  # 0 = без троттлинга; минимальный интервал между сообщениями пользователя
     RESPONSE_CACHE_TTL: int = 900
+    EMBEDDING_CACHE_TTL: int = 3600
 
     SUMMARY_ENABLED: bool = True
     SUMMARY_EVERY_N_TURNS: int = 3  # каждые N сообщений пользователя — пересобрать сводку диалога
@@ -35,8 +104,14 @@ class Settings(BaseSettings):
     MAX_QUESTION_CHARS: int = 1500  # обрезка слишком длинных сообщений пользователя (экономия токенов)
     KB_MIN_QUESTION_CHARS: int = 6  # не искать в базе знаний по коротким репликам («ок», «спасибо»)
     KB_DROP_LOW_VALUE: bool = True  # отсеивать при загрузке базы знаний мусорные пары (болталка, реклама, партнёрка)
+    RETRIEVAL_CONTEXT_MESSAGES: int = 2  # сколько последних сообщений добавлять в поисковый запрос к базе знаний
+    HEDGE_ESCALATION: bool = True  # эскалировать, если модель отвечает догадками без опоры на базу знаний
+    ESCALATION_USER_NOTICE: str = 'Уточняю этот вопрос у оператора, подождите, пожалуйста.'
+    PGVECTOR_ENABLED: bool = True  # использовать pgvector для поиска, если БД — PostgreSQL
+    ALERT_ADMINS_ON_FAILURE: bool = True  # уведомлять админов о сбоях чтения основной БД
+    ALERT_THROTTLE_SECONDS: int = 900
 
-    DATABASE_URL: str = 'sqlite+aiosqlite:///./data/ai_support.db'
+    DATABASE_URL: str = DEFAULT_SQLITE_URL
     MAIN_DATABASE_URL: str = ''
 
     INCLUDE_REMNAWAVE_DATA: bool = True
@@ -45,31 +120,18 @@ class Settings(BaseSettings):
 
     ADMIN_HOST: str = '0.0.0.0'
     ADMIN_PORT: int = 8090
-    ADMIN_USERNAME: str = 'admin'
-    ADMIN_PASSWORD: str = 'changeme'
-    ADMIN_SECRET_KEY: str = 'change-this-secret-key'
+    ADMIN_USERNAME: str = ''
+    ADMIN_PASSWORD: str = ''
+    ADMIN_SECRET_KEY: str = ''
 
-    SYSTEM_PROMPT: str = (
-        'Ты — живой оператор поддержки VPN-сервиса. Твоя цель — самостоятельно решить проблему '
-        'пользователя, чтобы ему не пришлось ждать живого оператора.\n'
-        'Стиль: дружелюбный, уверенный, человеческий, на языке пользователя. Отвечай коротко и по делу — '
-        'без воды и канцелярита. Обычный ответ — 1–4 предложения; пошаговые инструкции давай списком.\n'
-        'Прежде чем отвечать, пойми НАМЕРЕНИЕ: техническая проблема (не подключается / не работает / медленно), '
-        'вопрос по оплате и подписке, инструкция (как установить / добавить устройство / продлить), '
-        'или просто общение («привет», «как дела», «спасибо»). На короткие реплики и болталку отвечай тепло, '
-        'кратко и по-человечески, без инструкций и без базы знаний.\n'
-        'Всегда опирайся на «Данные текущего пользователя» (подписка, баланс, оплаты) — это твой главный источник '
-        'фактов о клиенте. Примеры прошлых обращений используй как образец тона и типовых решений, а не как факты о '
-        'конкретном пользователе.\n'
-        'Форматирование: ТОЛЬКО HTML-теги Telegram (<b>жирный</b>, <i>курсив</i>, <code>код</code>). '
-        'Строго запрещён Markdown (никаких **, __, ```, #, спискок через *).\n'
-        'Не выдумывай факты, цены, сроки и ссылки. Если данных не хватает — задай ОДИН уточняющий вопрос '
-        'или предложи позвать оператора. Не обещай возвраты и не меняй подписку сам — это делает оператор.'
-    )
+    SYSTEM_PROMPT: str = DEFAULT_SYSTEM_PROMPT
 
     @property
     def effective_database_url(self) -> str:
         if self.DATABASE_URL and 'sqlite' in self.DATABASE_URL:
+            if self.DATABASE_URL.strip() != DEFAULT_SQLITE_URL:
+                return self.DATABASE_URL.strip()
+
             import os
             if os.path.exists('/app/data'):
                 return 'sqlite+aiosqlite:////app/data/ai_support.db'
@@ -167,6 +229,57 @@ class Settings(BaseSettings):
     @property
     def remnawave_enabled(self) -> bool:
         return bool(self.INCLUDE_REMNAWAVE_DATA and self.REMNAWAVE_API_URL and self.REMNAWAVE_API_TOKEN)
+
+    @property
+    def admin_panel_configured(self) -> bool:
+        return bool(self.ADMIN_PASSWORD.strip() or self.ADMIN_SECRET_KEY.strip() or self.ADMIN_USERNAME.strip())
+
+    @property
+    def embedding_dim(self) -> int:
+        if self.EMBEDDING_DIM > 0:
+            return self.EMBEDDING_DIM
+        known = {
+            'text-embedding-3-small': 1536,
+            'text-embedding-3-large': 3072,
+            'text-embedding-ada-002': 1536,
+        }
+        return known.get((self.EMBEDDING_MODEL or '').strip(), 1536)
+
+    def security_problems(self) -> list[str]:
+        problems: list[str] = []
+        if not self.admin_panel_configured:
+            return problems
+
+        username = self.ADMIN_USERNAME.strip()
+        password = self.ADMIN_PASSWORD.strip()
+        secret = self.ADMIN_SECRET_KEY.strip()
+
+        if not username:
+            problems.append('AISUP_ADMIN_USERNAME не задан')
+        if not password:
+            problems.append('AISUP_ADMIN_PASSWORD не задан')
+        elif password.lower() in INSECURE_ADMIN_VALUES:
+            problems.append('AISUP_ADMIN_PASSWORD использует небезопасное значение по умолчанию')
+        elif len(password) < 10:
+            problems.append('AISUP_ADMIN_PASSWORD короче 10 символов')
+
+        if not secret:
+            problems.append('AISUP_ADMIN_SECRET_KEY не задан')
+        elif secret.lower() in INSECURE_ADMIN_VALUES:
+            problems.append('AISUP_ADMIN_SECRET_KEY использует небезопасное значение по умолчанию')
+        elif len(secret) < 32:
+            problems.append('AISUP_ADMIN_SECRET_KEY короче 32 символов')
+
+        return problems
+
+    def assert_secure(self) -> None:
+        problems = self.security_problems()
+        if problems:
+            raise RuntimeError(
+                'Небезопасная конфигурация админки ИИ-поддержки: '
+                + '; '.join(problems)
+                + '. Задайте значения в .env или уберите переменные AISUP_ADMIN_* полностью.'
+            )
 
 
 @lru_cache

@@ -4,6 +4,7 @@ import time
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_support_bot.app.core.config import ESCALATION_MARKER
 from ai_support_bot.app.db import crud
 from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.knowledge_parser import compute_content_hash
@@ -15,7 +16,7 @@ from ai_support_bot.app.services.user_data import build_user_context
 
 logger = structlog.get_logger(__name__)
 
-_ESCALATION_MARKER = '[[ESCALATE]]'
+_ESCALATION_MARKER = ESCALATION_MARKER
 
 _SMALLTALK_PATTERNS = (
     r'привет\w*', r'здравств\w*', r'хай', r'hi', r'hello', r'yo', r'здаров\w*',
@@ -32,6 +33,33 @@ _SMALLTALK_PATTERNS = (
 )
 _SMALLTALK_RE = re.compile(r'^(?:' + '|'.join(_SMALLTALK_PATTERNS) + r')$', re.IGNORECASE)
 _SMALLTALK_TOKEN_RE = re.compile(r"[a-zа-яё]+", re.IGNORECASE)
+
+_HEDGE_PATTERNS = (
+    r'обычно',
+    r'как правило',
+    r'наверн\w*',
+    r'скорее всего',
+    r'вероятно',
+    r'возможно',
+    r'кажется',
+    r'должно быть',
+    r'по идее',
+    r'вроде\b',
+    r'предполага\w+',
+    r'не уверен\w*',
+    r'ориентировочно',
+    r'примерно так',
+    r'может быть',
+)
+_HEDGE_RE = re.compile(r'(?:' + '|'.join(_HEDGE_PATTERNS) + r')', re.IGNORECASE)
+
+_FACTUAL_PATTERNS = (
+    r'\bцен\w*', r'\bстоим\w*', r'\bстоит\b', r'\bтариф\w*', r'\bруб\w*', r'\bскидк\w*',
+    r'\bсрок\w*', r'\bдней\b', r'\bдата\b', r'\bкогда\b', r'\bсколько\b',
+    r'\bлимит\w*', r'\bустройств\w*', r'\bтрафик\w*', r'\bгб\b',
+    r'\bвозврат\w*', r'\bоплат\w*', r'\bплатеж\w*', r'\bплатёж\w*', r'\bподписк\w*', r'\bбаланс\w*',
+)
+_FACTUAL_RE = re.compile(r'(?:' + '|'.join(_FACTUAL_PATTERNS) + r')', re.IGNORECASE)
 
 
 class _ResponseCache:
@@ -77,21 +105,57 @@ def _is_smalltalk(text: str) -> bool:
     return all(_SMALLTALK_RE.match(token) for token in tokens)
 
 
+def has_escalation_marker(answer_text: str) -> bool:
+    """Marker counts only at the very end of the answer, so users can't trigger it mid-text."""
+    if not answer_text:
+        return False
+    tail = answer_text.rstrip().rstrip('.!?)»"\'' + ' ')
+    return tail.endswith(_ESCALATION_MARKER)
+
+
+def strip_escalation_marker(answer_text: str) -> str:
+    return (answer_text or '').replace(_ESCALATION_MARKER, '').strip()
+
+
+def _role_label(role: str) -> str:
+    return 'assistant' if role == 'assistant' else 'user'
+
+
+def build_retrieval_query(question: str, history: list, summary: str | None, recent_count: int = 2) -> str:
+    """Contextualize short follow-ups ("а для неё как?") before embedding the search query."""
+    parts: list[str] = []
+
+    if summary:
+        parts.append(f'Контекст: {summary.strip()}')
+
+    recent = history[-recent_count:] if (history and recent_count > 0) else []
+    for item in recent:
+        content = (getattr(item, 'content', '') or '').strip()
+        if not content:
+            continue
+        parts.append(f'{_role_label(getattr(item, "role", "user"))}: {content[:400]}')
+
+    parts.append(f'Текущий вопрос: {question.strip()}')
+    return '\n'.join(parts)
+
+
+def looks_hedged(answer_text: str, question: str, knowledge_used: int) -> bool:
+    """True when the model answered a factual question with guess words and no knowledge backing."""
+    if not answer_text or knowledge_used:
+        return False
+    if not _FACTUAL_RE.search(question or ''):
+        return False
+    return bool(_HEDGE_RE.search(answer_text))
+
+
 class SupportAgent:
     def _build_system_prompt(self, knowledge: list[dict], user_context: str, summary: str | None) -> str:
-        blocks = [
-            settings_store.get('SYSTEM_PROMPT'),
-            'ПРАВИЛО ПРИВЕТСТВИЯ: Здоровайся ТОЛЬКО в первом сообщении диалога или после долгого перерыва. '
-            'Если диалог уже идёт — не здоровайся повторно, сразу отвечай по сути.',
-            'ПРАВИЛО КРАТКОСТИ: Не добавляй в конце дежурных фраз («Чем ещё помочь?», «Остались вопросы?» и т.п.). '
-            'Уточняющий вопрос задавай, только если без него реально нельзя решить проблему — не более одного.',
-            'ПРАВИЛО БЕЗОПАСНОСТИ ССЫЛОК: Персональные ссылки на подключение бери ИСКЛЮЧИТЕЛЬНО из «Данные текущего '
-            'пользователя» (поле «ссылка=»). Ссылки из «Примеры прошлых обращений» — чужие, использовать запрещено. '
-            'Если ссылки нет в данных пользователя — подскажи взять её в боте: «Профиль» → «Мои подключения», либо предложи оператора.',
-        ]
+        blocks = [settings_store.get('SYSTEM_PROMPT')]
 
         if summary:
-            blocks.append('Краткая сводка предыдущего диалога (контекст, учитывай при ответе):\n' + summary)
+            blocks.append(
+                'Краткая сводка предыдущего диалога (справочный контекст, не активная задача):\n' + summary
+            )
 
         if knowledge:
             examples = [
@@ -102,13 +166,20 @@ class SupportAgent:
                 'Примеры прошлых обращений и ответов поддержки (образец тона и решений, НЕ факты о клиенте):\n'
                 + '\n\n'.join(examples)
             )
+        else:
+            blocks.append(
+                'База знаний не дала релевантных примеров по этому вопросу. Опирайся только на «Данные текущего '
+                'пользователя» и общеизвестные шаги. Если фактов не хватает — не гадай, эскалируй.'
+            )
 
         if user_context:
             blocks.append('Данные текущего пользователя:\n' + user_context)
 
         blocks.append(
-            'Если вопрос требует ручного вмешательства оператора (возврат денег, изменение подписки, '
-            f'жалоба, сложная техническая проблема, которую не решить советом) — добавь в самом конце маркер {_ESCALATION_MARKER}.'
+            'ПРАВИЛО ЭСКАЛАЦИИ: Если вопрос требует ручного вмешательства оператора (возврат денег, изменение '
+            'подписки, жалоба, сложная техническая проблема, которую не решить советом) ИЛИ ты не знаешь точного '
+            f'ответа — добавь в самом конце сообщения маркер {_ESCALATION_MARKER}. Маркер ставится строго последним '
+            'символами ответа и нигде больше. Пользователю при этом напиши коротко, что вопрос уточняется.'
         )
         return '\n\n'.join(blocks)
 
@@ -124,19 +195,21 @@ class SupportAgent:
         smalltalk = _is_smalltalk(question) and not image_url
         kb_min_chars = settings_store.get_int('KB_MIN_QUESTION_CHARS') or 6
 
-        knowledge: list[dict] = []
-        if question.strip() and not smalltalk and len(question.strip()) >= kb_min_chars:
-            knowledge = await rag_service.retrieve(db, question)
-
-        user_context = '' if smalltalk else await build_user_context(telegram_id)
-
         conversation = await crud.get_or_create_conversation(db, telegram_id)
         summary = conversation.summary
 
-        system_prompt = self._build_system_prompt(knowledge, user_context, summary)
-
-        context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 6
+        context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 12
         history = await crud.get_conversation_context(db, conversation.id, context_limit)
+
+        knowledge: list[dict] = []
+        if question.strip() and not smalltalk and len(question.strip()) >= kb_min_chars:
+            recent_count = settings_store.get_int('RETRIEVAL_CONTEXT_MESSAGES')
+            retrieval_query = build_retrieval_query(question, history, summary, recent_count=recent_count)
+            knowledge = await rag_service.retrieve(db, retrieval_query)
+
+        user_context = '' if smalltalk else await build_user_context(telegram_id)
+
+        system_prompt = self._build_system_prompt(knowledge, user_context, summary)
 
         messages: list[dict] = [{'role': 'system', 'content': system_prompt}]
         for item in history:
@@ -167,7 +240,7 @@ class SupportAgent:
         cache_key = None
         cached_answer = None
         cache_ttl = settings_store.get_int('RESPONSE_CACHE_TTL') or 900
-        if not image_url and question.strip() and not smalltalk:
+        if not image_url and question.strip() and not smalltalk and not history:
             cache_key = f'{telegram_id}:{compute_content_hash(question.strip().lower().encode("utf-8"))}'
             cached_answer = _response_cache.get(cache_key, ttl=cache_ttl)
 
@@ -188,8 +261,18 @@ class SupportAgent:
             if cache_key and answer_text:
                 _response_cache.set(cache_key, answer_text)
 
-        escalate = _ESCALATION_MARKER in answer_text
-        answer_text = answer_text.replace(_ESCALATION_MARKER, '').strip()
+        escalate = has_escalation_marker(answer_text)
+        answer_text = strip_escalation_marker(answer_text)
+
+        hedged = False
+        if not escalate and settings_store.get_bool('HEDGE_ESCALATION'):
+            hedged = looks_hedged(answer_text, question, len(knowledge))
+            if hedged:
+                escalate = True
+                notice = settings_store.get('ESCALATION_USER_NOTICE')
+                answer_text = notice or 'Уточняю этот вопрос у оператора, подождите, пожалуйста.'
+                logger.info('Hedged answer replaced with escalation notice', telegram_id=telegram_id)
+
         answer_text = convert_markdown_to_html(answer_text)
 
         await crud.add_message(
@@ -227,6 +310,7 @@ class SupportAgent:
         return {
             'answer': answer_text,
             'escalate': escalate,
+            'hedged': hedged,
             'knowledge_used': len(knowledge),
             'model': model_used,
         }

@@ -23,6 +23,9 @@ def _base_defaults() -> dict[str, Any]:
         'CONTEXT_MESSAGES': str(settings.CONTEXT_MESSAGES),
         'HISTORY_LIMIT': str(settings.HISTORY_LIMIT),
         'DAILY_MESSAGE_LIMIT': str(settings.DAILY_MESSAGE_LIMIT),
+        'THROTTLE_SECONDS': str(settings.THROTTLE_SECONDS),
+        'RESPONSE_CACHE_TTL': str(settings.RESPONSE_CACHE_TTL),
+        'EMBEDDING_CACHE_TTL': str(settings.EMBEDDING_CACHE_TTL),
         'VISION_ENABLED': '1' if settings.VISION_ENABLED else '0',
         'INCLUDE_REMNAWAVE_DATA': '1' if settings.INCLUDE_REMNAWAVE_DATA else '0',
         'SUMMARY_ENABLED': '1' if settings.SUMMARY_ENABLED else '0',
@@ -32,6 +35,12 @@ def _base_defaults() -> dict[str, Any]:
         'MAX_QUESTION_CHARS': str(settings.MAX_QUESTION_CHARS),
         'KB_MIN_QUESTION_CHARS': str(settings.KB_MIN_QUESTION_CHARS),
         'KB_DROP_LOW_VALUE': '1' if settings.KB_DROP_LOW_VALUE else '0',
+        'RETRIEVAL_CONTEXT_MESSAGES': str(settings.RETRIEVAL_CONTEXT_MESSAGES),
+        'HEDGE_ESCALATION': '1' if settings.HEDGE_ESCALATION else '0',
+        'ESCALATION_USER_NOTICE': settings.ESCALATION_USER_NOTICE,
+        'PGVECTOR_ENABLED': '1' if settings.PGVECTOR_ENABLED else '0',
+        'ALERT_ADMINS_ON_FAILURE': '1' if settings.ALERT_ADMINS_ON_FAILURE else '0',
+        'ALERT_THROTTLE_SECONDS': str(settings.ALERT_THROTTLE_SECONDS),
     }
 
 

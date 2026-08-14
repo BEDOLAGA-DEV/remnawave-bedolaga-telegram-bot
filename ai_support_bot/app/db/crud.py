@@ -133,7 +133,7 @@ async def get_conversation_context(db: AsyncSession, conversation_id: int, limit
     result = await db.execute(
         select(Message)
         .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc())
+        .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(limit)
     )
     messages = list(result.scalars().all())
@@ -184,7 +184,7 @@ async def save_summary(
 
 async def prune_messages(db: AsyncSession, keep_last: int) -> int:
     result = await db.execute(
-        select(Message.id).order_by(Message.created_at.desc()).offset(keep_last)
+        select(Message.id).order_by(Message.created_at.desc(), Message.id.desc()).offset(keep_last)
     )
     stale_ids = [row[0] for row in result.all()]
     if not stale_ids:
@@ -206,7 +206,7 @@ async def list_recent_messages(
     query = select(Message)
     if telegram_id is not None:
         query = query.where(Message.telegram_id == telegram_id)
-    query = query.order_by(Message.created_at.desc()).limit(limit).offset(offset)
+    query = query.order_by(Message.created_at.desc(), Message.id.desc()).limit(limit).offset(offset)
     result = await db.execute(query)
     messages = list(result.scalars().all())
     if telegram_id is not None:

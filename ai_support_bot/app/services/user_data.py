@@ -6,6 +6,7 @@ from sqlalchemy import text
 from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db.database import get_main_session
 from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services.alerting import alert_admins
 from ai_support_bot.app.services.remnawave import get_remnawave_stats
 
 
@@ -115,7 +116,7 @@ async def build_user_context(telegram_id: int) -> str:
 
                 subs = await session.execute(
                     text(
-                        'SELECT status, is_trial, end_date, traffic_limit_gb, traffic_used_gb, '
+                        'SELECT id, status, is_trial, end_date, traffic_limit_gb, traffic_used_gb, '
                         'device_limit, autopay_enabled, subscription_url '
                         'FROM subscriptions WHERE user_id = :uid ORDER BY created_at DESC LIMIT 5'
                     ),
@@ -123,8 +124,14 @@ async def build_user_context(telegram_id: int) -> str:
                 )
                 sub_rows = subs.mappings().all()
                 if sub_rows:
+                    if len(sub_rows) > 1:
+                        lines.append(
+                            f'Внимание: у пользователя {len(sub_rows)} подписки. Если вопрос про подписку '
+                            'и не ясно, о какой речь — определи по последнему упоминанию в диалоге, '
+                            'иначе задай ОДИН уточняющий вопрос.'
+                        )
                     lines.append('Подписки:')
-                    for sub in sub_rows:
+                    for index, sub in enumerate(sub_rows, start=1):
                         limit_gb = sub.get('traffic_limit_gb') or 0
                         used_gb = sub.get('traffic_used_gb') or 0
                         traffic = 'безлимит' if not limit_gb else f'{used_gb:.1f}/{limit_gb} ГБ'
@@ -136,7 +143,8 @@ async def build_user_context(telegram_id: int) -> str:
                         sub_url = sub.get('subscription_url')
                         url_str = f', ссылка={sub_url}' if sub_url else ''
                         lines.append(
-                            f'  • статус={sub.get("status")}, '
+                            f'  • подписка №{index} (id={sub.get("id")}), '
+                            f'статус={sub.get("status")}, '
                             f'триал={"да" if sub.get("is_trial") else "нет"}, '
                             f'до {end_str}{left_str}, трафик={traffic}, '
                             f'устройств={sub.get("device_limit")}, '
@@ -165,7 +173,16 @@ async def build_user_context(telegram_id: int) -> str:
             else:
                 lines.append('Пользователь не найден в основной базе (возможно, ещё не запускал основного бота).')
         except Exception as error:
-            logger.warning('Failed to read main DB user context', error=str(error))
+            lines.append(
+                'ВНИМАНИЕ: данные пользователя из основной базы недоступны. '
+                'Не утверждай ничего о подписках, балансе и платежах — уточни у пользователя '
+                'или передай вопрос оператору.'
+            )
+            await alert_admins(
+                'main_db_user_context',
+                'не читаются данные пользователя из основной БД',
+                f'{type(error).__name__}: {error}',
+            )
         finally:
             await session.close()
 

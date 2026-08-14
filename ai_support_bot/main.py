@@ -5,6 +5,7 @@ import structlog
 
 from ai_support_bot.app.bot.bot import run_bot
 from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db import database
 from ai_support_bot.app.db.database import init_db
 from ai_support_bot.app.services import settings_store
 
@@ -22,6 +23,8 @@ logger = structlog.get_logger(__name__)
 
 
 async def main() -> None:
+    settings.assert_secure()
+
     await init_db()
     await settings_store.load()
     logger.info(
@@ -29,6 +32,7 @@ async def main() -> None:
         model=settings_store.get('MODEL'),
         main_db=settings.main_db_enabled,
         remnawave=settings.remnawave_enabled,
+        pgvector=database.pgvector_ready,
     )
 
     await run_bot()
