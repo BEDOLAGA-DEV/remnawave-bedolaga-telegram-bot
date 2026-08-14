@@ -111,21 +111,6 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
             return
 
         stars_amount = TelegramStarsService.calculate_stars_from_rubles(amount_rubles)
-        stars_rate = settings.get_stars_rate()
-
-        payment_service = PaymentService(message.bot)
-        invoice_link = await payment_service.create_stars_invoice(
-            amount_kopeks=amount_kopeks,
-            description=f'Пополнение баланса на {texts.format_price(amount_kopeks)}',
-            payload=f'balance_{db_user.id}_{amount_kopeks}',
-        )
-
-        keyboard = types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text='⭐ Оплатить', url=invoice_link)],
-                [build_back_button(texts, 'balance_topup')],
-            ]
-        )
 
         state_data = await state.get_data()
 
@@ -143,14 +128,19 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
             except Exception as delete_error:  # pragma: no cover - диагностический лог
                 logger.warning('Не удалось удалить сообщение с запросом суммы Stars', delete_error=delete_error)
 
-        invoice_message = await message.answer(
-            f'⭐ <b>Оплата через Telegram Stars</b>\n\n'
-            f'💰 Сумма: {texts.format_price(amount_kopeks)}\n'
-            f'⭐ К оплате: {stars_amount} звезд\n'
-            f'📊 Курс: {stars_rate}₽ за звезду\n\n'
-            f'Нажмите кнопку ниже для оплаты:',
-            reply_markup=keyboard,
-            parse_mode='HTML',
+        invoice_message = await message.bot.send_invoice(
+            chat_id=message.chat.id,
+            title='⭐ Пополнение баланса',
+            description=f'Пополнение баланса на {texts.format_price(amount_kopeks)} ({stars_amount} ⭐)',
+            payload=f'balance_{db_user.id}_{amount_kopeks}',
+            provider_token='',
+            currency='XTR',
+            prices=[types.LabeledPrice(label='Пополнение баланса', amount=stars_amount)],
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [build_back_button(texts, 'balance_topup')],
+                ]
+            ),
         )
 
         await state.update_data(
