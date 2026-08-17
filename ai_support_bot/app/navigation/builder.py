@@ -49,19 +49,20 @@ def _build_static_nodes(
         label = _clean_label(locale.get(locale_key, '')) if locale_key else ''
         title = label or item['title']
 
+        explicit_bot_label = item.get('bot_label')
         node = NavNode(
             id=node_id,
             title=title,
             parent_id=parent_id,
-            bot_label=label or (item['title'] if item.get('bot_callback') else None),
+            bot_label=explicit_bot_label or label or (item['title'] if item.get('bot_callback') else None),
             bot_callback=item.get('bot_callback'),
-            web_label=label or item['title'] if item.get('web_path') else None,
+            web_label=item.get('web_label') or label or (item['title'] if item.get('web_path') else None),
             web_path=item.get('web_path'),
             hint=item.get('hint', ''),
             keywords=tuple(item.get('keywords', ())),
             source='locale' if label else 'blueprint',
         )
-        if not item.get('bot_callback'):
+        if not item.get('bot_callback') and not explicit_bot_label:
             node.bot_label = None
 
         node.children = _build_static_nodes(item.get('children', []), locale, node_id, index)

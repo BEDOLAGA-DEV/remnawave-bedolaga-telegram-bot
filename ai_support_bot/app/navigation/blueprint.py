@@ -34,6 +34,7 @@ BLUEPRINT: list[dict[str, Any]] = [
                     {
                         'id': 'subscription_detail',
                         'title': '[Выберите подписку]',
+                        'bot_label': '[Выберите подписку]',
                         'bot_callback': None,
                         'web_path': '/subscription',
                         'hint': 'Выбор конкретной активной или истекшей подписки из списка для управления.',
