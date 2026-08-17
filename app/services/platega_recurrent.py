@@ -28,18 +28,17 @@ def resolve_platega_interval(period_days: int, is_daily: bool) -> tuple[int, int
     """Возвращает (interval, charge_days) для подписки Platega.
 
     Platega умеет только day/week/month/year (count=1). Каденс выводится из
-    числа дней тарифа; неровные периоды приклеиваются к месяцу по 30-дневной
-    цене (см. спеку §3). charge_days задаёт и сумму, и шаг продления.
+    числа дней тарифа; charge_days задаёт и сумму, и шаг продления.
     """
-    if is_daily:
+    if is_daily or period_days <= 1:
         return INTERVAL_DAY, 1
-    if period_days == 7:
-        return INTERVAL_WEEK, 7
+    if 6 <= period_days <= 14:
+        return INTERVAL_WEEK, period_days
     if 28 <= period_days <= 31:
         return INTERVAL_MONTH, period_days
     if 350 <= period_days <= 380:
         return INTERVAL_YEAR, period_days
-    return INTERVAL_MONTH, 30
+    return INTERVAL_MONTH, period_days
 
 
 def platega_reconcile_decision(

@@ -435,6 +435,37 @@ class PlategaPaymentMixin:
             )
             return
 
+        is_guest_fulfillment = False
+        # Если подписка от гостевой покупки — привязываем созданного пользователя и подписку
+        if record.subscription_id is None:
+            from app.database.crud.landing import get_purchase_by_token
+            from app.database.crud.platega import get_platega_payment_by_transaction_id
+            from app.database.crud.subscription import get_subscription_by_user_id
+            from app.services.payment.common import try_fulfill_guest_purchase
+
+            purchase_token = None
+            platega_pm = await get_platega_payment_by_transaction_id(db, platega_id)
+            if platega_pm:
+                purchase_token = platega_pm.payload or (platega_pm.metadata_json or {}).get('purchase_token')
+
+            if purchase_token:
+                await try_fulfill_guest_purchase(
+                    db,
+                    metadata={'purpose': 'guest_purchase', 'purchase_token': purchase_token},
+                    payment_amount_kopeks=record.amount_kopeks,
+                    provider_payment_id=record.platega_subscription_id,
+                    provider_name='platega',
+                    skip_amount_check=True,
+                )
+                guest_purchase = await get_purchase_by_token(db, purchase_token)
+                if guest_purchase and guest_purchase.user_id:
+                    record.user_id = guest_purchase.user_id
+                    sub = await get_subscription_by_user_id(db, guest_purchase.user_id)
+                    if sub:
+                        record.subscription_id = sub.id
+                        is_guest_fulfillment = True
+                        await db.commit()
+
         if status == pr.SUB_ACTIVATED:
             record.status = 'ACTIVE'
             await db.commit()
@@ -487,12 +518,8 @@ class PlategaPaymentMixin:
 
             from app.database.crud.transaction import create_transaction
 
-            subscription = await db.get(Subscription, record.subscription_id)
+            subscription = await db.get(Subscription, record.subscription_id) if record.subscription_id else None
             if subscription is None:
-                # Не отмечаем charge_id/счётчики — реального продления не было,
-                # репортить успех нельзя. Практически недостижимо (CASCADE FK на
-                # subscription_id сносит и саму запись record), но на случай гонки
-                # молча притворяться успехом хуже, чем залогировать и выйти.
                 logger.error(
                     'Platega subscription callback: Subscription не найдена для продления',
                     subscription_id=record.subscription_id,
@@ -500,7 +527,10 @@ class PlategaPaymentMixin:
                 )
                 return
 
-            subscription.extend_subscription(record.charge_days)
+            # Для первого платежа гостя fulfill_purchase уже выдал исходный период.
+            # Продлеваем подписку во всех остальных случаях.
+            if not is_guest_fulfillment:
+                subscription.extend_subscription(record.charge_days)
 
             # Списание по локально ОТМЕНЁННОЙ записи = удалённая отмена не
             # прошла (сбой Platega в момент cancel). Деньги взяты — продлеваем

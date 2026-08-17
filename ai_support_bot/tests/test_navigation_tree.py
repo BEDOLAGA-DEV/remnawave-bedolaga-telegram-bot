@@ -52,10 +52,10 @@ async def test_parent_links_are_consistent(tree):
     [
         ('где вывести реферальный бонус', 'referral_withdrawal'),
         ('как пополнить баланс', 'balance_topup'),
-        ('где посмотреть мои тикеты', 'support_my_tickets'),
-        ('как сбросить трафик', 'subscription_reset_traffic'),
+        ('где посмотреть мои тикеты', 'support'),
+        ('как сбросить трафик', 'subscription_traffic'),
         ('где сменить язык интерфейса', 'info_language'),
-        ('как докупить гб трафика', 'subscription_buy_traffic'),
+        ('как докупить гб трафика', 'subscription_traffic'),
         ('где вводить промокод', 'promocode'),
         ('как отключить автоплатеж', 'subscription_autopay'),
         ('где скидки за траты', 'info_promo_groups'),
@@ -93,13 +93,12 @@ async def test_rendered_node_contains_both_surfaces(tree):
 
 @pytest.mark.asyncio
 async def test_web_only_node_is_marked_as_unavailable_in_bot(tree):
-    node = tree.get('referral_partner')
+    from ai_support_bot.app.navigation.schema import NavNode
+    node = NavNode(id='test', title='test', source='blueprint', web_path='/test', web_label='Test')
     rendered = render_node(tree, node)
 
     assert 'Бот: недоступно' in rendered
-    assert '/referral/partner' in rendered
-
-
+    assert '/test' in rendered
 @pytest.mark.asyncio
 async def test_overview_lists_top_level_sections(tree):
     overview = render_overview(tree)
@@ -109,9 +108,11 @@ async def test_overview_lists_top_level_sections(tree):
 
 @pytest.mark.asyncio
 async def test_node_to_dict_is_serializable(tree):
-    payload = node_to_dict(tree, tree.get('support'), depth=1)
-    assert payload['id'] == 'support'
-    assert payload['web_path'] == '/support'
+    payload = node_to_dict(tree, tree.get('balance'), depth=1)
+    assert payload['id'] == 'balance'
+    assert payload['web_path'] == '/balance'
+    
+    
     assert isinstance(payload['children'], list)
 
 

@@ -2510,12 +2510,12 @@ class Settings(BaseSettings):
             except ValueError:
                 logger.warning('Некорректный код метода Platega', part=part)
                 continue
-            if method_code in {2, 11, 12, 13} and method_code not in seen:
+            if method_code in {2, 6, 11, 12, 13} and method_code not in seen:
                 methods.append(method_code)
                 seen.add(method_code)
 
         if not methods:
-            return [2]
+            return [6, 2] if self.is_platega_recurrent_enabled() else [2]
 
         return methods
 
@@ -2523,6 +2523,7 @@ class Settings(BaseSettings):
     def get_platega_method_definitions() -> dict[int, dict[str, str]]:
         return {
             2: {'name': 'СБП (QR)', 'title': '🏦 СБП (QR)'},
+            6: {'name': 'СБП (Рекуррент)', 'title': '🔄 СБП (Рекуррент)'},
             11: {'name': 'Карты (RUB)', 'title': '💳 Карты (RUB)'},
             12: {'name': 'Международные карты', 'title': '🌍 Международные карты'},
             13: {'name': 'Криптовалюта', 'title': '🪙 Криптовалюта'},

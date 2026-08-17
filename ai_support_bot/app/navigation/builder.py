@@ -20,6 +20,22 @@ _PLACEHOLDER_RE = re.compile(r'\{[^{}]*\}')
 _TAG_RE = re.compile(r'<[^>]+>')
 _MENU_LAYOUT_KEY = 'menu_layout_config'
 _MAX_DYNAMIC_NODES = 60
+_EMOJI_RE = re.compile(
+    '['
+    '\U0001F600-\U0001F64F'
+    '\U0001F300-\U0001F5FF'
+    '\U0001F680-\U0001F6FF'
+    '\U0001F1E0-\U0001F1FF'
+    '\U00002700-\U000027BF'
+    '\U00002600-\U000026FF'
+    '\U0001F900-\U0001F9FF'
+    '\U0001FA70-\U0001FAFF'
+    '\U00002300-\U000023FF'
+    '\U0000200D'
+    '\U0000FE0F'
+    ']+',
+    flags=re.UNICODE,
+)
 
 
 def _clean_label(value: Any) -> str:
@@ -27,6 +43,7 @@ def _clean_label(value: Any) -> str:
         return ''
     cleaned = _TAG_RE.sub('', value)
     cleaned = _PLACEHOLDER_RE.sub('', cleaned)
+    cleaned = _EMOJI_RE.sub('', cleaned)
     cleaned = cleaned.replace('\n', ' ')
     return ' '.join(cleaned.split()).strip()
 
@@ -47,16 +64,18 @@ def _build_static_nodes(
         node_id = item['id']
         locale_key = item.get('locale_key') or ''
         label = _clean_label(locale.get(locale_key, '')) if locale_key else ''
-        title = label or item['title']
+        raw_title = item['title']
+        clean_raw = _clean_label(raw_title)
+        title = label or clean_raw
 
-        explicit_bot_label = item.get('bot_label')
+        explicit_bot_label = _clean_label(item['bot_label']) if item.get('bot_label') else None
         node = NavNode(
             id=node_id,
             title=title,
             parent_id=parent_id,
-            bot_label=explicit_bot_label or label or (item['title'] if item.get('bot_callback') else None),
+            bot_label=explicit_bot_label or label or (clean_raw if item.get('bot_callback') else None),
             bot_callback=item.get('bot_callback'),
-            web_label=item.get('web_label') or label or (item['title'] if item.get('web_path') else None),
+            web_label=_clean_label(item['web_label']) if item.get('web_label') else (label or (clean_raw if item.get('web_path') else None)),
             web_path=item.get('web_path'),
             hint=item.get('hint', ''),
             keywords=tuple(item.get('keywords', ())),

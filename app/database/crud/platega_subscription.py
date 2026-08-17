@@ -19,8 +19,8 @@ _ACTIVE_STATUSES = ('PENDING', 'ACTIVE', 'PAST_DUE')
 async def create_platega_subscription(
     db: AsyncSession,
     *,
-    user_id: int,
-    subscription_id: int,
+    user_id: int | None = None,
+    subscription_id: int | None = None,
     tariff_id: int | None,
     interval: int,
     charge_days: int,

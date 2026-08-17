@@ -1009,6 +1009,17 @@ class PaymentService(
                 logger.warning('Platega is not enabled, cannot create guest payment')
                 return None
 
+            is_recurrent_method = (
+                payment_method in (
+                    'platega',
+                    'platega_recurrent',
+                    'platega_sbp_recurrent',
+                    'platega_6',
+                )
+                or payment_method.endswith('_recurrent')
+                or settings.is_platega_recurrent_enabled()
+            )
+
             # Extract method code: "platega_2" -> 2, "platega" -> first active method
             method_code: int | None = None
             if '_' in payment_method:
@@ -1017,6 +1028,80 @@ class PaymentService(
                     method_code = int(suffix)
                 except ValueError:
                     pass
+
+            if method_code == 6 or is_recurrent_method:
+                import uuid
+                from app.database.crud import platega_subscription as sub_crud
+                from app.database.crud.landing import get_purchase_by_token
+                from app.database.crud.platega import create_platega_payment as create_platega_payment_record
+                from app.database.crud.tariff import get_tariff_by_id
+                from app.services.platega_recurrent import resolve_platega_interval
+
+                guest_purchase = await get_purchase_by_token(db, purchase_token)
+                period_days = guest_purchase.period_days if guest_purchase else 30
+                tariff = await get_tariff_by_id(db, guest_purchase.tariff_id) if guest_purchase else None
+                is_daily = bool(getattr(tariff, 'is_daily', False)) if tariff else False
+
+                interval, charge_days = resolve_platega_interval(period_days, is_daily)
+
+                try:
+                    response = await self.platega_service.create_subscription(
+                        amount=amount_kopeks / 100,
+                        currency=settings.PLATEGA_CURRENCY,
+                        interval=interval,
+                        description=description,
+                    )
+                except Exception as platega_err:
+                    logger.error('Failed to create Platega subscription for guest payment', error=str(platega_err))
+                    return None
+
+                transaction_id = (response or {}).get('transactionId')
+                if not transaction_id:
+                    logger.error('Platega did not return transactionId for guest subscription')
+                    return None
+
+                redirect_url = PlategaService.parse_redirect_url(response)
+                correlation_id = uuid.uuid4().hex
+
+                guest_metadata_recurrent = dict(guest_metadata)
+                guest_metadata_recurrent['is_recurrent'] = True
+                guest_metadata_recurrent['platega_subscription_id'] = transaction_id
+
+                payment = await create_platega_payment_record(
+                    db=db,
+                    user_id=None,
+                    amount_kopeks=amount_kopeks,
+                    currency=settings.PLATEGA_CURRENCY,
+                    description=description,
+                    status='PENDING',
+                    payment_method_code=6,
+                    correlation_id=correlation_id,
+                    platega_transaction_id=transaction_id,
+                    redirect_url=redirect_url,
+                    return_url=return_url,
+                    failed_url=None,
+                    payload=purchase_token,
+                    metadata=guest_metadata_recurrent,
+                )
+
+                await sub_crud.create_platega_subscription(
+                    db,
+                    user_id=None,
+                    subscription_id=None,
+                    tariff_id=guest_purchase.tariff_id if guest_purchase else None,
+                    interval=interval,
+                    charge_days=charge_days,
+                    amount_kopeks=amount_kopeks,
+                    redirect_url=redirect_url,
+                    platega_subscription_id=transaction_id,
+                    status='PENDING',
+                )
+
+                return {
+                    'payment_url': redirect_url,
+                    'payment_id': correlation_id,
+                    'provider': 'platega',
+                }
 
             if method_code is None:
                 active_methods = settings.get_platega_active_methods()

@@ -694,8 +694,8 @@ class PlategaSubscription(Base):
     __tablename__ = 'platega_subscriptions'
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=True, index=True)
     tariff_id = Column(Integer, ForeignKey('tariffs.id'), nullable=True)
 
     platega_subscription_id = Column(String(255), unique=True, nullable=True, index=True)
