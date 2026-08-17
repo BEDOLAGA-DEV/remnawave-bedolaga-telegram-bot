@@ -117,6 +117,9 @@ _SECTION_TO_NODE_ID: dict[str, str] = {
     'info': 'info',
     'admin': 'admin',
     'language': 'info_language',
+    'promocode': 'promocode',
+    'contests': 'contests',
+    'profile': 'profile',
 }
 _BUTTON_STYLES_KEY = 'CABINET_BUTTON_STYLES'
 
