@@ -108,6 +108,51 @@ def _apply_menu_layout(tree_index: dict[str, NavNode], raw_config: str | None, l
     return applied
 
 
+_SECTION_TO_NODE_ID: dict[str, str] = {
+    'home': 'main_menu',
+    'subscription': 'subscription',
+    'balance': 'balance',
+    'referral': 'referral',
+    'support': 'support',
+    'info': 'info',
+    'admin': 'admin',
+    'language': 'info_language',
+}
+_BUTTON_STYLES_KEY = 'CABINET_BUTTON_STYLES'
+
+
+def _apply_button_styles(tree_index: dict[str, NavNode], raw_config: str | None, language: str) -> int:
+    if not raw_config:
+        return 0
+    try:
+        data = json.loads(raw_config)
+    except (TypeError, ValueError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+
+    applied = 0
+    for section, cfg in data.items():
+        if not isinstance(cfg, dict):
+            continue
+        node_id = _SECTION_TO_NODE_ID.get(section)
+        node = tree_index.get(node_id) if node_id else None
+        if node is None:
+            continue
+        labels = cfg.get('labels')
+        if not isinstance(labels, dict):
+            continue
+        raw_label = labels.get(language) or labels.get('ru') or labels.get('en')
+        label = _clean_label(raw_label)
+        if not label:
+            continue
+        node.bot_label = label
+        node.title = label
+        node.source = 'button_styles'
+        applied += 1
+    return applied
+
+
 def _attach_dynamic(parent: NavNode, node: NavNode, index: dict[str, NavNode]) -> None:
     if node.id in index:
         return
@@ -132,6 +177,17 @@ async def _load_db_layer(tree_index: dict[str, NavNode], language: str) -> list[
                 used.append('menu_layout_config')
         except Exception as error:
             logger.warning('Menu layout config unavailable', error=str(error))
+
+        try:
+            result = await session.execute(
+                text('SELECT value FROM system_settings WHERE key = :key LIMIT 1'),
+                {'key': _BUTTON_STYLES_KEY},
+            )
+            row = result.mappings().first()
+            if row and _apply_button_styles(tree_index, row.get('value'), language):
+                used.append('button_styles')
+        except Exception as error:
+            logger.warning('Button styles unavailable', error=str(error))
 
         main_menu = tree_index.get('main_menu')
         if main_menu is not None:
