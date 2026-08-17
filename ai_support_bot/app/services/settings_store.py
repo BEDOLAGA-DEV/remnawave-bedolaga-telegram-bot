@@ -41,6 +41,17 @@ def _base_defaults() -> dict[str, Any]:
         'PGVECTOR_ENABLED': '1' if settings.PGVECTOR_ENABLED else '0',
         'ALERT_ADMINS_ON_FAILURE': '1' if settings.ALERT_ADMINS_ON_FAILURE else '0',
         'ALERT_THROTTLE_SECONDS': str(settings.ALERT_THROTTLE_SECONDS),
+        'NAVIGATION_ENABLED': '1' if settings.NAVIGATION_ENABLED else '0',
+        'NAVIGATION_LANGUAGES': settings.NAVIGATION_LANGUAGES,
+        'NAVIGATION_TTL': str(settings.NAVIGATION_TTL),
+        'NAVIGATION_TOP_K': str(settings.NAVIGATION_TOP_K),
+        'NAVIGATION_DEPTH': str(settings.NAVIGATION_DEPTH),
+        'NAVIGATION_MAX_CHILDREN': str(settings.NAVIGATION_MAX_CHILDREN),
+        'NAVIGATION_MAX_CHARS': str(settings.NAVIGATION_MAX_CHARS),
+        'NAVIGATION_MIN_QUESTION_CHARS': str(settings.NAVIGATION_MIN_QUESTION_CHARS),
+        'SERVICE_CATALOG_ENABLED': '1' if settings.SERVICE_CATALOG_ENABLED else '0',
+        'SERVICE_CATALOG_TTL': str(settings.SERVICE_CATALOG_TTL),
+        'SERVICE_CATALOG_MAX_CHARS': str(settings.SERVICE_CATALOG_MAX_CHARS),
     }
 
 

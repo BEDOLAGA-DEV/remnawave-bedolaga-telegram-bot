@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_support_bot.app.core.config import ESCALATION_MARKER
 from ai_support_bot.app.db import crud
+from ai_support_bot.app.navigation import tool as navigation_tool
 from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.knowledge_parser import compute_content_hash
 from ai_support_bot.app.services.openai_client import openai_client
 from ai_support_bot.app.services.rag_service import rag_service
+from ai_support_bot.app.services.service_catalog import build_service_catalog, build_user_offers
 from ai_support_bot.app.services.summary_service import summary_service
-from ai_support_bot.app.services.user_data import build_user_context
+from ai_support_bot.app.services.user_data import build_user_context, resolve_user_language
 
 
 logger = structlog.get_logger(__name__)
@@ -139,6 +141,23 @@ def build_retrieval_query(question: str, history: list, summary: str | None, rec
     return '\n'.join(parts)
 
 
+def build_nav_query(question: str, history: list, summary: str | None, recent_count: int = 1) -> str:
+    """Short follow-ups ("а где это в кабинете?") need the previous turn to resolve the section."""
+    parts: list[str] = []
+
+    if len((question or '').strip()) < 25:
+        recent = history[-recent_count:] if (history and recent_count > 0) else []
+        for item in recent:
+            content = (getattr(item, 'content', '') or '').strip()
+            if content:
+                parts.append(content[:200])
+        if not recent and summary:
+            parts.append(summary.strip()[:200])
+
+    parts.append((question or '').strip())
+    return '\n'.join(part for part in parts if part)
+
+
 def looks_hedged(answer_text: str, question: str, knowledge_used: int) -> bool:
     """True when the model answered a factual question with guess words and no knowledge backing."""
     if not answer_text or knowledge_used:
@@ -149,13 +168,26 @@ def looks_hedged(answer_text: str, question: str, knowledge_used: int) -> bool:
 
 
 class SupportAgent:
-    def _build_system_prompt(self, knowledge: list[dict], user_context: str, summary: str | None) -> str:
+    def _build_system_prompt(
+        self,
+        knowledge: list[dict],
+        user_context: str,
+        summary: str | None,
+        navigation: str = '',
+        catalog: str = '',
+    ) -> str:
         blocks = [settings_store.get('SYSTEM_PROMPT')]
 
         if summary:
             blocks.append(
                 'Краткая сводка предыдущего диалога (справочный контекст, не активная задача):\n' + summary
             )
+
+        if navigation:
+            blocks.append(navigation)
+
+        if catalog:
+            blocks.append(catalog)
 
         if knowledge:
             examples = [
@@ -183,6 +215,58 @@ class SupportAgent:
         )
         return '\n\n'.join(blocks)
 
+    async def _build_navigation_block(
+        self, telegram_id: int, question: str, history: list, summary: str | None
+    ) -> str:
+        if not settings_store.get_bool('NAVIGATION_ENABLED'):
+            return ''
+
+        min_chars = settings_store.get_int('NAVIGATION_MIN_QUESTION_CHARS') or 6
+        stripped = (question or '').strip()
+        if len(stripped) < min_chars:
+            return ''
+
+        query = build_nav_query(stripped, history, summary)
+        language = await resolve_user_language(telegram_id)
+
+        try:
+            return await navigation_tool.build_prompt_block(
+                query,
+                language=language,
+                limit=settings_store.get_int('NAVIGATION_TOP_K') or 3,
+                depth=settings_store.get_int('NAVIGATION_DEPTH') or 2,
+                max_children=settings_store.get_int('NAVIGATION_MAX_CHILDREN') or 8,
+                max_chars=settings_store.get_int('NAVIGATION_MAX_CHARS') or 1400,
+                ttl_seconds=settings_store.get_int('NAVIGATION_TTL'),
+            )
+        except Exception as error:
+            logger.warning('Navigation block skipped', telegram_id=telegram_id, error=str(error))
+            return ''
+
+    async def _build_catalog_block(self, telegram_id: int) -> str:
+        if not settings_store.get_bool('SERVICE_CATALOG_ENABLED'):
+            return ''
+
+        try:
+            catalog = await build_service_catalog()
+            offers = await build_user_offers(telegram_id)
+        except Exception as error:
+            logger.warning('Service catalog block skipped', telegram_id=telegram_id, error=str(error))
+            return ''
+
+        body = '\n'.join(part for part in (catalog, offers) if part)
+        if not body:
+            return ''
+
+        max_chars = settings_store.get_int('SERVICE_CATALOG_MAX_CHARS') or 1600
+        if max_chars > 0 and len(body) > max_chars:
+            body = body[:max_chars].rstrip() + '\n  …'
+
+        return (
+            'Актуальные условия сервиса из базы (единственный достоверный источник цен, тарифов, '
+            'промокодов и скидок):\n' + body
+        )
+
     async def generate_answer(
         self, db: AsyncSession, telegram_id: int, question: str, image_url: str | None = None
     ) -> dict:
@@ -209,7 +293,15 @@ class SupportAgent:
 
         user_context = '' if smalltalk else await build_user_context(telegram_id)
 
-        system_prompt = self._build_system_prompt(knowledge, user_context, summary)
+        navigation_block = ''
+        catalog_block = ''
+        if not smalltalk:
+            navigation_block = await self._build_navigation_block(telegram_id, question, history, summary)
+            catalog_block = await self._build_catalog_block(telegram_id)
+
+        system_prompt = self._build_system_prompt(
+            knowledge, user_context, summary, navigation=navigation_block, catalog=catalog_block
+        )
 
         messages: list[dict] = [{'role': 'system', 'content': system_prompt}]
         for item in history:

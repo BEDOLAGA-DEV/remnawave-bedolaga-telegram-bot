@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 
 import structlog
@@ -11,6 +12,39 @@ from ai_support_bot.app.services.remnawave import get_remnawave_stats
 
 
 logger = structlog.get_logger(__name__)
+
+
+_LANGUAGE_CACHE_TTL = 600
+_language_cache: dict[int, tuple[float, str]] = {}
+
+
+async def resolve_user_language(telegram_id: int, default: str = 'ru') -> str:
+    cached = _language_cache.get(telegram_id)
+    if cached and (time.time() - cached[0]) < _LANGUAGE_CACHE_TTL:
+        return cached[1]
+
+    session = await get_main_session()
+    if session is None:
+        return default
+
+    language = default
+    try:
+        result = await session.execute(
+            text('SELECT language FROM users WHERE telegram_id = :tid LIMIT 1'),
+            {'tid': telegram_id},
+        )
+        row = result.mappings().first()
+        if row and row.get('language'):
+            language = str(row['language']).strip().lower() or default
+    except Exception as error:
+        logger.warning('User language lookup failed', error=str(error))
+    finally:
+        await session.close()
+
+    if len(_language_cache) > 5000:
+        _language_cache.clear()
+    _language_cache[telegram_id] = (time.time(), language)
+    return language
 
 
 def _format_price(kopeks: int | None) -> str:
