@@ -281,7 +281,7 @@ async def _collect() -> str:
 
     blocks: list[list[str]] = []
     try:
-        for loader in (_load_tariffs, _load_promocodes, _load_promo_groups, _load_offer_templates):
+        for loader in (_load_tariffs, _load_promo_groups, _load_offer_templates):
             try:
                 blocks.append(await loader(session))
             except Exception as error:
