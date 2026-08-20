@@ -17,8 +17,9 @@ if str(ROOT_DIR) not in sys.path:
 import app.database.crud.wata as wata_crud_module
 import app.services.payment_service as payment_service_module
 from app.config import settings
+from app.services.payment.wata import _extract_transaction_id
 from app.services.payment_service import PaymentService
-from app.services.wata_service import WataService
+from app.services.wata_service import WataAPIError, WataService
 
 
 @pytest.fixture
@@ -396,3 +397,212 @@ async def test_process_wata_webhook_returns_false_when_payment_missing(
     processed = await service.process_wata_webhook(db, payload)
 
     assert processed is False
+
+
+class StubWataStatusService:
+    """Stub covering the three WATA calls used by ``get_wata_payment_status``."""
+
+    def __init__(
+        self,
+        *,
+        link: dict[str, Any] | None = None,
+        transaction: dict[str, Any] | None = None,
+        search_items: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.link = link
+        self.transaction = transaction
+        self.search_items = search_items or []
+        self.link_calls: list[str] = []
+        self.transaction_calls: list[str] = []
+        self.search_calls: list[dict[str, Any]] = []
+
+    async def get_payment_link(self, payment_link_id: str) -> dict[str, Any]:
+        self.link_calls.append(payment_link_id)
+        if self.link is None:
+            raise WataAPIError('link expired')
+        return self.link
+
+    async def get_transaction(self, transaction_id: str) -> dict[str, Any]:
+        self.transaction_calls.append(transaction_id)
+        if self.transaction is None:
+            raise WataAPIError('no such transaction')
+        return self.transaction
+
+    async def search_transactions(self, **kwargs: Any) -> dict[str, Any]:
+        self.search_calls.append(kwargs)
+        return {'items': list(self.search_items)}
+
+
+def _patch_status_lookups(
+    monkeypatch: pytest.MonkeyPatch,
+    payment: DummyWataPayment,
+) -> None:
+    async def fake_get_by_id(_db: Any, _payment_id: int) -> DummyWataPayment:
+        return payment
+
+    async def fake_update_status(
+        _db: Any,
+        *,
+        payment: DummyWataPayment,
+        **kwargs: Any,
+    ) -> DummyWataPayment:
+        if 'status' in kwargs:
+            payment.status = kwargs['status']
+        if 'metadata' in kwargs:
+            payment.metadata_json = kwargs['metadata']
+        return payment
+
+    async def fake_lock(_db: Any, _payment_id: int) -> DummyWataPayment:
+        return payment
+
+    monkeypatch.setattr(payment_service_module, 'get_wata_payment_by_id', fake_get_by_id, raising=False)
+    monkeypatch.setattr(payment_service_module, 'update_wata_payment_status', fake_update_status, raising=False)
+    monkeypatch.setattr(wata_crud_module, 'get_wata_payment_by_id_for_update', fake_lock, raising=False)
+
+
+@pytest.mark.anyio('asyncio')
+async def test_search_transactions_uses_v2_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = WataService(base_url='https://api.wata.pro/api/h2h', access_token='token')
+    recorded: dict[str, Any] = {}
+
+    async def fake_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        recorded['method'] = method
+        recorded['path'] = path
+        recorded['params'] = kwargs.get('params')
+        return {'items': []}
+
+    monkeypatch.setattr(service, '_request', fake_request, raising=False)
+
+    await service.search_transactions(
+        order_id='order-123',
+        payment_link_id='link-123',
+        status='Paid',
+        limit=5,
+    )
+
+    assert recorded['method'] == 'GET'
+    assert recorded['path'].endswith('/v2/transactions')
+    assert service._build_url(recorded['path']) == 'https://api.wata.pro/api/h2h/v2/transactions'
+    assert recorded['params']['orderId'] == 'order-123'
+    assert recorded['params']['paymentLinkId'] == 'link-123'
+    assert recorded['params']['statuses'] == 'Paid'
+
+
+@pytest.mark.anyio('asyncio')
+async def test_get_wata_payment_status_credits_when_link_is_opened(monkeypatch: pytest.MonkeyPatch) -> None:
+    payment = DummyWataPayment()
+    stub = StubWataStatusService(
+        link={'id': payment.payment_link_id, 'status': 'Opened'},
+        search_items=[
+            {
+                'id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'status': 'Paid',
+                'paymentTime': '2026-08-20T10:15:00Z',
+            }
+        ],
+    )
+    service = _make_service(None)
+    service.wata_service = stub
+    db = DummySession()
+
+    _patch_status_lookups(monkeypatch, payment)
+
+    finalized: list[dict[str, Any]] = []
+
+    async def fake_finalize(_db: Any, payment_arg: DummyWataPayment, payload: dict[str, Any]) -> DummyWataPayment:
+        finalized.append(payload)
+        payment_arg.is_paid = True
+        payment_arg.status = 'Paid'
+        return payment_arg
+
+    monkeypatch.setattr(service, '_finalize_wata_payment', fake_finalize, raising=False)
+
+    result = await service.get_wata_payment_status(db, payment.id)
+
+    assert result is not None
+    assert stub.search_calls, 'transaction search must run even when the link is still Opened'
+    assert finalized, 'payment with a Paid transaction must be finalized'
+    assert payment.is_paid is True
+    assert result['is_paid'] is True
+
+
+@pytest.mark.anyio('asyncio')
+async def test_get_wata_payment_status_ignores_pending_transaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    payment = DummyWataPayment()
+    stub = StubWataStatusService(
+        link={'id': payment.payment_link_id, 'status': 'Opened'},
+        search_items=[
+            {
+                'id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'status': 'Pending',
+                'paymentTime': '2026-08-20T10:15:00Z',
+            }
+        ],
+    )
+    service = _make_service(None)
+    service.wata_service = stub
+    db = DummySession()
+
+    _patch_status_lookups(monkeypatch, payment)
+
+    async def fail_finalize(*_: Any, **__: Any) -> None:
+        pytest.fail('_finalize_wata_payment should not be called for a Pending transaction')
+
+    monkeypatch.setattr(service, '_finalize_wata_payment', fail_finalize, raising=False)
+
+    result = await service.get_wata_payment_status(db, payment.id)
+
+    assert result is not None
+    assert payment.is_paid is False
+    assert result['is_paid'] is False
+
+
+@pytest.mark.anyio('asyncio')
+async def test_get_wata_payment_status_rejects_zero_payment_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    payment = DummyWataPayment()
+    stub = StubWataStatusService(
+        link={'id': payment.payment_link_id, 'status': 'Opened'},
+        search_items=[
+            {
+                'id': 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'status': 'Paid',
+                'paymentTime': '0001-01-01T00:00:00Z',
+            }
+        ],
+    )
+    service = _make_service(None)
+    service.wata_service = stub
+    db = DummySession()
+
+    _patch_status_lookups(monkeypatch, payment)
+
+    async def fail_finalize(*_: Any, **__: Any) -> None:
+        pytest.fail('_finalize_wata_payment must not be called for a zero paymentTime')
+
+    monkeypatch.setattr(service, '_finalize_wata_payment', fail_finalize, raising=False)
+
+    result = await service.get_wata_payment_status(db, payment.id)
+
+    assert result is not None
+    assert payment.is_paid is False
+    assert result['is_paid'] is False
+
+
+def test_extract_transaction_id_ignores_payment_link_id() -> None:
+    payment = DummyWataPayment()
+    remote_link = {
+        'id': '11111111-2222-3333-4444-555555555555',
+        'status': 'Opened',
+    }
+
+    assert _extract_transaction_id(payment, remote_link) is None
+
+
+def test_extract_transaction_id_accepts_explicit_transaction_field() -> None:
+    payment = DummyWataPayment()
+    remote_link = {
+        'id': '11111111-2222-3333-4444-555555555555',
+        'transactionId': '99999999-8888-7777-6666-555555555555',
+    }
+
+    assert _extract_transaction_id(payment, remote_link) == '99999999-8888-7777-6666-555555555555'

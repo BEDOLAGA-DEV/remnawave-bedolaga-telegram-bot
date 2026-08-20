@@ -62,16 +62,19 @@ class WataService:
     @staticmethod
     def _parse_retry_after(response: aiohttp.ClientResponse, response_text: str) -> float:
         """Extract retry delay from Retry-After header or response body."""
+        # Нижняя граница 1 секунда: WATA замечена за ответами Retry-After: 0,
+        # без пола обе повторные попытки уходили мгновенно и лимит выгорал
+        # меньше чем за секунду, так и не дождавшись снятия 429.
         retry_after = response.headers.get('Retry-After')
         if retry_after:
             try:
-                return float(retry_after)
+                return max(1.0, float(retry_after))
             except (ValueError, TypeError):
                 pass
 
         match = re.search(r'[Rr]etry after (\d+)', response_text)
         if match:
-            return float(match.group(1))
+            return max(1.0, float(match.group(1)))
 
         return 45.0
 
@@ -252,7 +255,7 @@ class WataService:
         logger.debug(
             'Ищем WATA транзакции: order_id payment_link_id', order_id=order_id, payment_link_id=payment_link_id
         )
-        return await self._request('GET', '/transactions', params=params)
+        return await self._request('GET', '/v2/transactions', params=params)
 
     async def get_transaction(self, transaction_id: str) -> dict[str, Any]:
         logger.debug('Получаем WATA транзакцию', transaction_id=transaction_id)

@@ -19,7 +19,7 @@ from app.utils.user_utils import format_referrer_info
 def _extract_transaction_id(payment: Any, remote_link: dict[str, Any] | None = None) -> str | None:
     """Try to find the remote WATA transaction identifier from stored payloads."""
 
-    def _from_mapping(mapping: Any) -> str | None:
+    def _from_mapping(mapping: Any, keys: tuple[str, ...] = ('id', 'transaction_id', 'transactionId')) -> str | None:
         if isinstance(mapping, str):
             try:
                 import json
@@ -29,7 +29,7 @@ def _extract_transaction_id(payment: Any, remote_link: dict[str, Any] | None = N
                 return None
         if not isinstance(mapping, dict):
             return None
-        for key in ('id', 'transaction_id', 'transactionId'):
+        for key in keys:
             value = mapping.get(key)
             if not value:
                 continue
@@ -55,7 +55,10 @@ def _extract_transaction_id(payment: Any, remote_link: dict[str, Any] | None = N
         if candidate:
             return candidate
 
-    candidate = _from_mapping(remote_link)
+    # У ссылки собственный id из ДРУГОГО пространства идентификаторов, чем у транзакции:
+    # запрос /transactions/{link_id} гарантированно вернёт 404. Поэтому из remote_link
+    # берём только явные поля транзакции и никогда — её собственный 'id'.
+    candidate = _from_mapping(remote_link, ('transaction_id', 'transactionId'))
     if candidate:
         return candidate
 
@@ -320,41 +323,41 @@ class WataPaymentMixin:
                 )
                 payment = await payment_module.get_wata_payment_by_id(db, local_payment_id)
 
-            remote_status_normalized = (remote_status or '').lower()
-            if remote_status_normalized in {'closed', 'paid'} and not payment.is_paid:
-                transaction_id = _extract_transaction_id(payment, remote_link)
-                if transaction_id:
-                    try:
-                        transaction_payload = await self.wata_service.get_transaction(  # type: ignore[union-attr]
-                            transaction_id
-                        )
-                    except WataAPIError as error:
-                        logger.error('Ошибка получения WATA транзакции', transaction_id=transaction_id, error=error)
-                    except Exception as error:  # pragma: no cover - safety net
-                        logger.exception(
-                            'Непредвиденная ошибка при запросе WATA транзакции',
-                            transaction_id=transaction_id,
-                            error=error,
-                        )
-                if not transaction_payload:
-                    try:
-                        tx_response = await self.wata_service.search_transactions(  # type: ignore[union-attr]
-                            order_id=payment.order_id,
-                            payment_link_id=payment.payment_link_id,
-                            status='Paid',
-                            limit=5,
-                        )
-                        items = tx_response.get('items') or []
-                        for item in items:
-                            if (item or {}).get('status') == 'Paid':
-                                transaction_payload = item
-                                break
-                    except WataAPIError as error:
-                        logger.error(
-                            'Ошибка поиска WATA транзакций', payment_link_id=payment.payment_link_id, error=error
-                        )
-                    except Exception as error:  # pragma: no cover - safety net
-                        logger.exception('Непредвиденная ошибка при поиске WATA транзакции', error=error)
+        # Поиск транзакции выполняется независимо от статуса ссылки и от того, удалось ли
+        # её вообще получить: ссылка может оставаться Opened у уже оплаченного заказа,
+        # а у истёкшей ссылки get_payment_link падает и remote_link остаётся None.
+        if not payment.is_paid and getattr(self, 'wata_service', None):
+            transaction_id = _extract_transaction_id(payment, remote_link)
+            if transaction_id:
+                try:
+                    transaction_payload = await self.wata_service.get_transaction(  # type: ignore[union-attr]
+                        transaction_id
+                    )
+                except WataAPIError as error:
+                    logger.error('Ошибка получения WATA транзакции', transaction_id=transaction_id, error=error)
+                except Exception as error:  # pragma: no cover - safety net
+                    logger.exception(
+                        'Непредвиденная ошибка при запросе WATA транзакции',
+                        transaction_id=transaction_id,
+                        error=error,
+                    )
+            if not transaction_payload:
+                try:
+                    tx_response = await self.wata_service.search_transactions(  # type: ignore[union-attr]
+                        order_id=payment.order_id,
+                        payment_link_id=payment.payment_link_id,
+                        status='Paid',
+                        limit=5,
+                    )
+                    items = tx_response.get('items') or []
+                    for item in items:
+                        if (item or {}).get('status') == 'Paid':
+                            transaction_payload = item
+                            break
+                except WataAPIError as error:
+                    logger.error('Ошибка поиска WATA транзакций', payment_link_id=payment.payment_link_id, error=error)
+                except Exception as error:  # pragma: no cover - safety net
+                    logger.exception('Непредвиденная ошибка при поиске WATA транзакции', error=error)
 
         if not transaction_payload and not payment.is_paid and getattr(self, 'wata_service', None):
             fallback_transaction_id = transaction_id or _extract_transaction_id(payment)
@@ -383,18 +386,31 @@ class WataPaymentMixin:
                 if raw_status:
                     normalized_status = str(raw_status).lower()
             if normalized_status == 'paid':
-                # Lock payment row before finalization to prevent concurrent double-processing
-                wata_crud = import_module('app.database.crud.wata')
-                locked = await wata_crud.get_wata_payment_by_id_for_update(db, payment.id)
-                if not locked:
-                    logger.error('WATA status check: не удалось заблокировать платёж', payment_id=payment.id)
-                elif locked.is_paid:
-                    # Another concurrent handler already processed — skip
-                    logger.info('WATA платеж уже оплачен после блокировки', payment_link_id=locked.payment_link_id)
-                    payment = locked
+                # У незавершённых («замороженных») транзакций WATA отдаёт статус Paid,
+                # но paymentTime остаётся нулевым 0001-01-01T00:00:00Z — денег ещё нет.
+                # Зачисляем только при настоящем времени оплаты.
+                raw_payment_time = transaction_payload.get('paymentTime')
+                parsed_payment_time = WataService._parse_datetime(raw_payment_time)
+                if parsed_payment_time is None or parsed_payment_time.year <= 1:
+                    logger.warning(
+                        'WATA транзакция Paid без реального времени оплаты — зачисление пропущено',
+                        order_id=getattr(payment, 'order_id', None),
+                        payment_link_id=getattr(payment, 'payment_link_id', None),
+                        payment_time=raw_payment_time,
+                    )
                 else:
-                    payment = locked
-                    payment = await self._finalize_wata_payment(db, payment, transaction_payload)
+                    # Lock payment row before finalization to prevent concurrent double-processing
+                    wata_crud = import_module('app.database.crud.wata')
+                    locked = await wata_crud.get_wata_payment_by_id_for_update(db, payment.id)
+                    if not locked:
+                        logger.error('WATA status check: не удалось заблокировать платёж', payment_id=payment.id)
+                    elif locked.is_paid:
+                        # Another concurrent handler already processed — skip
+                        logger.info('WATA платеж уже оплачен после блокировки', payment_link_id=locked.payment_link_id)
+                        payment = locked
+                    else:
+                        payment = locked
+                        payment = await self._finalize_wata_payment(db, payment, transaction_payload)
             else:
                 logger.debug(
                     'WATA транзакция в статусе , повторная обработка не требуется',
