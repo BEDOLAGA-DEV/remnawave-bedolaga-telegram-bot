@@ -673,6 +673,7 @@ async def _auto_extend_subscription(
             reset_traffic=should_reset_traffic,
             reset_reason='смена тарифа' if is_tariff_change else 'продление подписки',
             sync_squads=True,
+            tariff_switch_reset=is_tariff_change,
         )
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error(
