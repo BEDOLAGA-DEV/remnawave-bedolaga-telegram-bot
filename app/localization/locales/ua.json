@@ -2142,5 +2142,8 @@
   "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ Автопродовження Lava скасовано.",
   "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ Підписку продовжено автосписанням Lava.",
   "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ Не вдалося списати оплату за автопродовженням Lava.",
-  "LAVA_RECURRING_PAY_BUTTON": "💳 Сплатити"
+  "LAVA_RECURRING_PAY_BUTTON": "💳 Сплатити",
+  "registration_invite_required": "🔒 Реєстрація доступна лише за запрошенням.\n\nСкористайтеся дійсним посиланням-запрошенням або зверніться до підтримки.",
+  "registration_check_unavailable": "Не вдалося перевірити запрошення. Спробуйте пізніше або зверніться до підтримки.",
+  "registration_contact_support": "💬 Звернутися до підтримки"
 }

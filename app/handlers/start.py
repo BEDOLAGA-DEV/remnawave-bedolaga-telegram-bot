@@ -19,7 +19,8 @@ from app.database.crud.campaign import (
 )
 from app.database.crud.subscription import decrement_subscription_server_counts
 from app.database.crud.user import (
-    create_user,
+    create_user_no_commit,
+    emit_user_created_event,
     find_phantom_user_by_username,
     get_user_by_referral_code,
     get_user_by_telegram_id,
@@ -62,6 +63,15 @@ from app.services.referral_service import (
     save_pending_campaign,
     save_pending_referral,
 )
+from app.services.registration_access_service import (
+    RegistrationAccessContext,
+    RegistrationAccessDecision,
+    RegistrationAccessReason,
+    RegistrationAccessService,
+    RegistrationChannel,
+    VerifiedRegistrationIdentity,
+)
+from app.services.registration_invite_service import RegistrationInviteService
 from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
@@ -72,6 +82,144 @@ from app.utils.user_utils import generate_unique_referral_code
 
 
 logger = structlog.get_logger(__name__)
+
+
+_registration_invite_service = RegistrationInviteService()
+_registration_access_service = RegistrationAccessService(invite_validator=_registration_invite_service)
+
+
+def _registration_invite_payload(data: dict[str, Any], start_parameter: str | None = None) -> str | None:
+    explicit = data.get('registration_invite_payload')
+    if explicit:
+        return str(explicit)
+    if start_parameter:
+        return start_parameter
+    gift_token = data.get('pending_gift_token')
+    if gift_token:
+        return f'GIFT_{gift_token}'
+    pending = data.get('pending_start_payload')
+    if pending:
+        return str(pending)
+    referral = data.get('referral_code')
+    if referral:
+        return str(referral)
+    return None
+
+
+async def _evaluate_telegram_registration_access(
+    db: AsyncSession,
+    telegram_user: Any,
+    *,
+    existing_user: Any = None,
+    start_parameter: str | None,
+    lock_limited: bool,
+    identity_user_id: int | None = None,
+) -> RegistrationAccessDecision:
+    identity = VerifiedRegistrationIdentity(
+        user_id=identity_user_id if identity_user_id is not None else getattr(existing_user, 'id', None),
+        telegram_id=telegram_user.id,
+        verified_admin=settings.is_admin(telegram_user.id),
+    )
+    return await _registration_access_service.evaluate(
+        db,
+        RegistrationAccessContext(
+            channel=RegistrationChannel.TELEGRAM_START,
+            identity=identity,
+            existing_user=existing_user,
+            start_parameter=start_parameter,
+            lock_limited_invite=lock_limited,
+        ),
+    )
+
+
+def _registration_denial_text(texts: Any, decision: RegistrationAccessDecision) -> str:
+    if decision.reason is RegistrationAccessReason.CHECK_UNAVAILABLE:
+        return texts.t(
+            'registration_check_unavailable',
+            'Не удалось проверить приглашение. Повторите попытку позже или обратитесь в поддержку.',
+        )
+    if decision.reason is RegistrationAccessReason.BLOCKED:
+        return texts.t('ACCESS_DENIED')
+    return texts.t(
+        'registration_invite_required',
+        '🔒 Регистрация доступна только по приглашению.\n\n'
+        'Используйте действительную пригласительную ссылку или обратитесь в поддержку.',
+    )
+
+
+async def _answer_registration_denial(
+    answer_func: Callable[..., Any],
+    texts: Any,
+    decision: RegistrationAccessDecision,
+) -> None:
+    support_url = settings.get_support_contact_url()
+    reply_markup = None
+    if support_url:
+        reply_markup = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('registration_contact_support'),
+                        url=support_url,
+                    )
+                ]
+            ]
+        )
+    await answer_func(_registration_denial_text(texts, decision), reply_markup=reply_markup)
+
+
+async def _create_user_with_registration_invite(
+    db: AsyncSession,
+    *,
+    decision: RegistrationAccessDecision,
+    telegram_id: int,
+    username: str | None,
+    first_name: str | None,
+    last_name: str | None,
+    language: str,
+    referred_by_id: int | None,
+    referral_code: str,
+):
+    try:
+        user = await create_user_no_commit(
+            db=db,
+            telegram_id=telegram_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            language=language,
+            referred_by_id=referred_by_id,
+            referral_code=referral_code,
+        )
+        await _registration_invite_service.bind_locked_gift(db, evidence=decision.evidence, user=user)
+        await db.commit()
+        await db.refresh(user)
+    except Exception:
+        await db.rollback()
+        raise
+    await emit_user_created_event(db, user)
+    return user
+
+
+async def _prepare_telegram_completion_access(
+    db: AsyncSession,
+    telegram_user: Any,
+    *,
+    state_data: dict[str, Any],
+    existing_user: Any = None,
+) -> tuple[RegistrationAccessDecision, Any]:
+    phantom = None
+    if existing_user is None and getattr(telegram_user, 'username', None):
+        phantom = await find_phantom_user_by_username(db, telegram_user.username)
+    decision = await _evaluate_telegram_registration_access(
+        db,
+        telegram_user,
+        existing_user=existing_user,
+        start_parameter=_registration_invite_payload(state_data),
+        lock_limited=True,
+        identity_user_id=getattr(phantom, 'id', None),
+    )
+    return decision, phantom
 
 
 _SUBID_DELIMITER = '_subid_'
@@ -229,32 +377,12 @@ async def _activate_pending_gift_after_registration(
         if not gift_token:
             return
 
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
-
         from app.services.guest_purchase_service import (
-            GIFT_TOKEN_MIN_PREFIX_LENGTH,
             activate_purchase as svc_activate,
+            get_claimable_gift_for_update,
         )
 
-        # Support both full token and prefix-based lookup (Telegram truncates the token by
-        # the GIFT_/giftclaim_ prefix length). Require a long minimum prefix so a short,
-        # guessable value can't claim an arbitrary gift via startswith().
-        if len(gift_token) >= 64:
-            token_filter = GuestPurchase.token == gift_token
-        elif len(gift_token) >= GIFT_TOKEN_MIN_PREFIX_LENGTH:
-            token_filter = GuestPurchase.token.startswith(gift_token)
-        else:
-            logger.warning('Gift deep link token too short for prefix lookup', token_length=len(gift_token))
-            return
-
-        gift_result = await db.execute(
-            select(GuestPurchase)
-            .options(selectinload(GuestPurchase.tariff))
-            .where(token_filter, GuestPurchase.is_gift.is_(True))
-            .with_for_update()
-        )
-        gift_purchase = gift_result.scalars().first()
+        gift_purchase = await get_claimable_gift_for_update(db, gift_token)
 
         if not gift_purchase or not gift_purchase.is_gift:
             logger.warning('Gift not found for deep link token', token_prefix=gift_token[:5])
@@ -1078,6 +1206,30 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
 
     if state_needs_update:
         await state.set_data(data)
+
+    access_user = db_user or await get_user_by_telegram_id(db, message.from_user.id)
+    access_decision = await _evaluate_telegram_registration_access(
+        db,
+        message.from_user,
+        existing_user=access_user,
+        start_parameter=start_parameter,
+        lock_limited=False,
+    )
+    if not access_decision.allowed:
+        language = getattr(access_user, 'language', None) or data.get('language', DEFAULT_LANGUAGE)
+        await _answer_registration_denial(message.answer, get_texts(language), access_decision)
+        await state.clear()
+        return
+    if (
+        access_decision.reason
+        in {
+            RegistrationAccessReason.INVITE_GRANTED,
+            RegistrationAccessReason.VERIFIED_ADMIN,
+        }
+        and start_parameter
+    ):
+        await state.update_data(registration_invite_payload=start_parameter)
+        data['registration_invite_payload'] = start_parameter
 
     # Handle gift code deep links: /start GIFT_{token} (or giftclaim_{token} alias)
     if start_parameter and (start_parameter.startswith('GIFT_') or start_parameter.startswith('giftclaim_')):
@@ -2112,6 +2264,16 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
     language = data.get('language', DEFAULT_LANGUAGE)
     texts = get_texts(language)
 
+    access_decision, phantom = await _prepare_telegram_completion_access(
+        db,
+        callback.from_user,
+        state_data=data,
+        existing_user=existing_user,
+    )
+    if not access_decision.allowed:
+        await _answer_registration_denial(callback.message.answer, texts, access_decision)
+        return
+
     referrer_id = data.get('referrer_id')
     if not referrer_id and data.get('referral_code'):
         referrer = await get_user_by_referral_code(db, data['referral_code'])
@@ -2123,6 +2285,10 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
         # Prevent self-referral when partner re-registers via own campaign link
         safe_referrer_id = referrer_id if referrer_id != existing_user.id else None
+
+        await _registration_invite_service.bind_locked_gift(db, evidence=access_decision.evidence, user=existing_user)
+
+        await _registration_invite_service.bind_locked_gift(db, evidence=access_decision.evidence, user=existing_user)
 
         if existing_user.balance_kopeks > 0:
             logger.warning(
@@ -2151,12 +2317,8 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
     elif not existing_user:
         # Check for phantom user created by guest purchase (gift by @username)
-        phantom = (
-            await find_phantom_user_by_username(db, callback.from_user.username)
-            if callback.from_user.username
-            else None
-        )
         if phantom:
+            await _registration_invite_service.bind_locked_gift(db, evidence=access_decision.evidence, user=phantom)
             claimed, user = await claim_phantom(
                 db,
                 phantom,
@@ -2196,8 +2358,9 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
 
             referral_code = await generate_unique_referral_code(db, callback.from_user.id)
 
-            user = await create_user(
-                db=db,
+            user = await _create_user_with_registration_invite(
+                db,
+                decision=access_decision,
                 telegram_id=callback.from_user.id,
                 username=callback.from_user.username,
                 first_name=callback.from_user.first_name,
@@ -2209,6 +2372,7 @@ async def complete_registration_from_callback(callback: types.CallbackQuery, sta
             await db.refresh(user, ['subscriptions'])
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=callback.from_user.id)
+        await _registration_invite_service.bind_locked_gift(db, evidence=access_decision.evidence, user=existing_user)
         existing_user.status = UserStatus.ACTIVE.value
         existing_user.language = language
         if referrer_id and referrer_id != existing_user.id and not existing_user.referred_by_id:
@@ -2444,6 +2608,16 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
     language = data.get('language', DEFAULT_LANGUAGE)
     texts = get_texts(language)
 
+    access_decision, phantom = await _prepare_telegram_completion_access(
+        db,
+        message.from_user,
+        state_data=data,
+        existing_user=existing_user,
+    )
+    if not access_decision.allowed:
+        await _answer_registration_denial(message.answer, texts, access_decision)
+        return
+
     referrer_id = data.get('referrer_id')
     if not referrer_id and data.get('referral_code'):
         referrer = await get_user_by_referral_code(db, data['referral_code'])
@@ -2483,10 +2657,8 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
     elif not existing_user:
         # Check for phantom user created by guest purchase (gift by @username)
-        phantom = (
-            await find_phantom_user_by_username(db, message.from_user.username) if message.from_user.username else None
-        )
         if phantom:
+            await _registration_invite_service.bind_locked_gift(db, evidence=access_decision.evidence, user=phantom)
             claimed, user = await claim_phantom(
                 db,
                 phantom,
@@ -2526,8 +2698,9 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
 
             referral_code = await generate_unique_referral_code(db, message.from_user.id)
 
-            user = await create_user(
-                db=db,
+            user = await _create_user_with_registration_invite(
+                db,
+                decision=access_decision,
                 telegram_id=message.from_user.id,
                 username=message.from_user.username,
                 first_name=message.from_user.first_name,
@@ -2539,6 +2712,7 @@ async def complete_registration(message: types.Message, state: FSMContext, db: A
             await db.refresh(user, ['subscriptions'])
     else:
         logger.info('🔄 Обновляем существующего пользователя', from_user_id=message.from_user.id)
+        await _registration_invite_service.bind_locked_gift(db, evidence=access_decision.evidence, user=existing_user)
         existing_user.status = UserStatus.ACTIVE.value
         existing_user.language = language
         if referrer_id and referrer_id != existing_user.id and not existing_user.referred_by_id:
@@ -2853,6 +3027,8 @@ async def required_sub_channel_check(
 
         # Подписка подтверждена - теперь удаляем payload и обрабатываем его
         if pending_start_payload:
+            # Preserve the original evidence until the final pre-write gate.
+            state_data['registration_invite_payload'] = pending_start_payload
             # Удаляем из FSM state
             state_data.pop('pending_start_payload', None)
 
@@ -3007,161 +3183,19 @@ async def required_sub_channel_check(
 
             if settings.SKIP_RULES_ACCEPT:
                 if settings.SKIP_REFERRAL_CODE or state_data.get('referral_code') or state_data.get('referrer_id'):
-                    from app.utils.user_utils import generate_unique_referral_code
-
-                    # Проверяем реферальный код из ссылки или партнёра кампании
-                    referrer_id = state_data.get('referrer_id')
-                    if not referrer_id:
-                        ref_code_from_link = state_data.get('referral_code')
-                        if ref_code_from_link:
-                            referrer = await get_user_by_referral_code(db, ref_code_from_link)
-                            if referrer:
-                                referrer_id = referrer.id
-                                logger.info('✅ CHANNEL CHECK: Реферер найден из ссылки', referrer_id=referrer.id)
-
-                    # Check for phantom user created by guest purchase (gift by @username)
-                    phantom = (
-                        await find_phantom_user_by_username(db, query.from_user.username)
-                        if query.from_user.username
-                        else None
-                    )
-                    if phantom:
-                        claimed, user = await claim_phantom(
-                            db,
-                            phantom,
-                            telegram_id=query.from_user.id,
-                            username=query.from_user.username,
-                            first_name=query.from_user.first_name,
-                            last_name=query.from_user.last_name,
-                            language=language,
-                            referrer_id=referrer_id,
-                        )
-                        if not claimed and user:
-                            # Phantom claim failed (IntegrityError — user with this telegram_id already exists).
-                            # Merge phantom's data into the existing user via full account merge service.
-                            if phantom.id != user.id:
-                                try:
-                                    await db.refresh(phantom, ['subscriptions'])
-                                    await _merge_phantom_into_active_user(db, phantom, user)
-                                    await db.commit()
-                                except Exception:
-                                    await db.rollback()
-                                    logger.exception(
-                                        'Failed to merge phantom into existing user during registration',
-                                        phantom_id=phantom.id,
-                                        active_user_id=user.id,
-                                    )
-                            await db.refresh(user, ['subscriptions'])
-                        elif not claimed:
-                            logger.critical(
-                                'Phantom claim failed with no fallback user, proceeding to normal registration',
-                                telegram_id=query.from_user.id,
-                                phantom_user_id=phantom.id,
-                            )
-                            phantom = None
-
-                    if not phantom:
-                        referral_code = await generate_unique_referral_code(db, query.from_user.id)
-
-                        user = await create_user(
-                            db=db,
-                            telegram_id=query.from_user.id,
-                            username=query.from_user.username,
-                            first_name=query.from_user.first_name,
-                            last_name=query.from_user.last_name,
-                            language=language,
-                            referral_code=referral_code,
-                            referred_by_id=referrer_id,
-                        )
-                        await db.refresh(user, ['subscriptions'])
-
-                    # ИСПРАВЛЕНИЕ БАГА: Очищаем pending_start_payload из state после создания пользователя
-                    state_data.pop('pending_start_payload', None)
-                    await state.set_data(state_data)
-                    logger.info('✅ CHANNEL CHECK: pending_start_payload удален из state после создания пользователя')
-
-                    # Обрабатываем реферальную регистрацию
-                    if referrer_id and referrer_id != user.id:
-                        try:
-                            await process_referral_registration(db, user.id, referrer_id, bot)
-                            logger.info('✅ CHANNEL CHECK: Реферальная регистрация обработана для', user_id=user.id)
-                        except Exception as e:
-                            logger.error('Ошибка при обработке реферальной регистрации', error=e)
-
-                    # Применяем бонус рекламной кампании (record_campaign_registration)
-                    campaign_message = await _apply_campaign_bonus_if_needed(db, user, state_data, texts, bot=bot)
-                    try:
-                        await db.refresh(user)
-                    except Exception as refresh_error:
-                        logger.error(
-                            'Ошибка обновления данных пользователя после бонуса кампании',
-                            telegram_id=user.telegram_id,
-                            refresh_error=refresh_error,
-                        )
-                    try:
-                        await db.refresh(user, ['subscriptions'])
-                    except Exception as refresh_sub_error:
-                        logger.error(
-                            'Ошибка обновления подписки после бонуса кампании',
-                            telegram_id=user.telegram_id,
-                            refresh_sub_error=refresh_sub_error,
-                        )
-                    if campaign_message:
-                        try:
-                            await bot.send_message(
-                                chat_id=query.from_user.id,
-                                text=campaign_message,
-                            )
-                        except Exception as e:
-                            logger.error('Ошибка отправки сообщения о бонусе кампании', error=e)
-
-                    # Показываем главное меню после создания пользователя
-                    # Uses primary subscription (multi-tariff compatible via property)
-                    has_active_subscription, subscription_is_active = _calculate_subscription_flags(user.subscription)
-
-                    is_admin = settings.is_admin(user.telegram_id)
-                    is_moderator = (not is_admin) and SupportSettingsService.is_moderator(user.telegram_id)
-
-                    custom_buttons = await MainMenuButtonService.get_buttons_for_user(
-                        db,
-                        is_admin=is_admin,
-                        has_active_subscription=has_active_subscription,
-                        subscription_is_active=subscription_is_active,
-                    )
-
-                    keyboard = await get_main_menu_keyboard_async(
-                        db=db,
-                        user=user,
-                        language=user.language,
-                        is_admin=is_admin,
-                        has_had_paid_subscription=user.has_had_paid_subscription,
-                        has_active_subscription=has_active_subscription,
-                        subscription_is_active=subscription_is_active,
-                        balance_kopeks=user.balance_kopeks,
-                        subscription=user.subscription,  # Uses primary subscription (multi-tariff compatible via property)
-                        is_moderator=is_moderator,
-                        custom_buttons=custom_buttons,
-                    )
-
-                    pinned_message = await get_active_pinned_message(db)
-                    if pinned_message and pinned_message.send_before_menu:
-                        await _send_pinned_message(bot, db, user, pinned_message)
-
-                    if not await try_send_rich_main_menu(bot, query.from_user.id, user, texts, db, keyboard):
-                        menu_text = await get_main_menu_text(user, texts, db)
-                        await send_menu_with_media(bot, query.from_user.id, menu_text, keyboard, db)
-                    if pinned_message and not pinned_message.send_before_menu:
-                        await _send_pinned_message(bot, db, user, pinned_message)
-                else:
-                    await bot.send_message(
-                        chat_id=query.from_user.id,
-                        text=texts.t(
-                            'REFERRAL_CODE_QUESTION',
-                            "У вас есть реферальный код? Введите его или нажмите 'Пропустить'",
-                        ),
-                        reply_markup=get_referral_code_keyboard(language),
-                    )
-                    await state.set_state(RegistrationStates.waiting_for_referral_code)
+                    # Delegate to the canonical completion path. It rechecks the
+                    # invitation immediately before any create/revive/phantom mutation.
+                    await complete_registration_from_callback(query, state, db)
+                    return None
+                await bot.send_message(
+                    chat_id=query.from_user.id,
+                    text=texts.t(
+                        'REFERRAL_CODE_QUESTION',
+                        "У вас есть реферальный код? Введите его или нажмите 'Пропустить'",
+                    ),
+                    reply_markup=get_referral_code_keyboard(language),
+                )
+                await state.set_state(RegistrationStates.waiting_for_referral_code)
             else:
                 rules_text = await get_rules(language)
 

@@ -2142,5 +2142,8 @@
   "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ تمدید خودکار Lava لغو شد.",
   "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ اشتراک با کسر خودکار Lava تمدید شد.",
   "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ کسر وجه تمدید خودکار Lava ناموفق بود.",
-  "LAVA_RECURRING_PAY_BUTTON": "💳 پرداخت"
+  "LAVA_RECURRING_PAY_BUTTON": "💳 پرداخت",
+  "registration_invite_required": "🔒 ثبت‌نام فقط با دعوت‌نامه امکان‌پذیر است.\n\nاز یک پیوند دعوت معتبر استفاده کنید یا با پشتیبانی تماس بگیرید.",
+  "registration_check_unavailable": "بررسی دعوت‌نامه ممکن نشد. بعداً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید.",
+  "registration_contact_support": "💬 تماس با پشتیبانی"
 }

@@ -372,6 +372,28 @@ async def create_user_no_commit(
     return user
 
 
+async def emit_user_created_event(db: AsyncSession, user: User) -> None:
+    """Emit the best-effort post-commit user.created event for a persisted user."""
+    try:
+        from app.services.event_emitter import event_emitter
+
+        await event_emitter.emit(
+            'user.created',
+            {
+                'user_id': user.id,
+                'telegram_id': user.telegram_id,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'referral_code': user.referral_code,
+                'referred_by_id': user.referred_by_id,
+            },
+            db=db,
+        )
+    except Exception as error:
+        logger.warning('Failed to emit user.created event', error=error)
+
+
 def _violated_constraint(exc: IntegrityError) -> str:
     """Return the violated DB constraint name for an IntegrityError.
 
@@ -451,26 +473,7 @@ async def create_user(
                 '✅ Создан пользователь с реферальным кодом', telegram_id=telegram_id, referral_code=referral_code
             )
 
-            # Отправляем событие о создании пользователя
-            try:
-                from app.services.event_emitter import event_emitter
-
-                await event_emitter.emit(
-                    'user.created',
-                    {
-                        'user_id': user.id,
-                        'telegram_id': user.telegram_id,
-                        'username': user.username,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
-                        'referral_code': user.referral_code,
-                        'referred_by_id': user.referred_by_id,
-                    },
-                    db=db,
-                )
-            except Exception as error:
-                logger.warning('Failed to emit user.created event', error=error)
-
+            await emit_user_created_event(db, user)
             return user
 
         except IntegrityError as exc:
