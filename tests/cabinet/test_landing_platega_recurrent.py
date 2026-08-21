@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from tests.services.test_platega_subscription_callbacks import _memory_session
 
+from app.config import settings
 from app.database.models import GuestPurchase, GuestPurchaseStatus, Subscription, User
 from app.database.crud.landing import create_guest_purchase
 from app.database.crud.tariff import create_tariff
@@ -132,6 +133,10 @@ async def test_guest_purchase_platega_recurrent_flow(monkeypatch):
 @pytest.mark.asyncio
 async def test_guest_purchase_all_tariffs_platega_recurrent(monkeypatch):
     """Verify that any tariff period (e.g. 7, 30, 90 days) with default 'platega' method creates a recurrent subscription."""
+    monkeypatch.setattr(settings, 'PLATEGA_ENABLED', True)
+    monkeypatch.setattr(settings, 'PLATEGA_RECURRENT_ENABLED', True)
+    monkeypatch.setattr(settings, 'PLATEGA_MERCHANT_ID', 'test_merchant')
+    monkeypatch.setattr(settings, 'PLATEGA_SECRET', 'test_secret')
     async with _memory_session(monkeypatch) as db:
         from app.database.models import Base, GuestPurchase, LandingPage, Tariff, PlategaPayment, PromoGroup, User, Subscription, Transaction, tariff_promo_groups
         async with db.bind.begin() as conn:

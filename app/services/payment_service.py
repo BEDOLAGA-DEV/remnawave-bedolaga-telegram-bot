@@ -1016,6 +1016,7 @@ class PaymentService(
                     'platega_6',
                 )
                 or payment_method.endswith('_recurrent')
+                or (payment_method == 'platega' and settings.is_platega_recurrent_enabled())
             )
 
             # Extract method code: "platega_2" -> 2, "platega" -> first active method

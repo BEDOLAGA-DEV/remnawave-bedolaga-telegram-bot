@@ -1856,6 +1856,8 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 m_code = int(code_str)
                 if m_code == 2:
                     return 'СБП'
+                elif m_code == 6:
+                    return 'СБП (Подписка)'
                 elif m_code == 11:
                     return 'Банковская карта'
                 elif m_code == 12:
@@ -1884,7 +1886,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             m_lower = method.lower()
             if m_lower == 'stars':
                 resolved_emoji_id = '4983746717313664194'
-            elif 'sbp_qr' in m_lower or 'sbp' in m_lower or m_lower == 'pal24' or m_lower == 'platega_m2':
+            elif 'sbp_qr' in m_lower or 'sbp' in m_lower or m_lower == 'pal24' or m_lower in ('platega_m2', 'platega_m6'):
                 resolved_emoji_id = '5217837965547427903'
             elif 'heleket' in m_lower or 'cryptobot' in m_lower or m_lower == 'platega_m13':
                 resolved_emoji_id = '5355123515672510607'
@@ -2002,7 +2004,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             for method_code in settings.get_platega_active_methods():
                 title = settings.get_platega_method_display_title(method_code)
                 icon_emoji_id = None
-                if method_code == 2:
+                if method_code in (2, 6):
                     icon_emoji_id = '5217837965547427903'
                 elif method_code == 12:
                     icon_emoji_id = '5357274199071146437'
@@ -2576,17 +2578,6 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
-    if settings.is_support_topup_enabled():
-        keyboard.append(
-            [
-                _create_btn(
-                    text=texts.t('PAYMENT_VIA_SUPPORT', '🛠️ Через поддержку'),
-                    callback_data='topup_support',
-                    method='support',
-                )
-            ]
-        )
-
     if not keyboard:
         keyboard.append(
             [
@@ -2596,7 +2587,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                 )
             ]
         )
-    elif not has_direct_payment_methods and settings.is_support_topup_enabled():
+    elif not has_direct_payment_methods:
         keyboard.insert(
             0,
             [
@@ -2635,6 +2626,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         'etoplatezhi_sbp': 10,
         'jupiter_sbp': 10,
         'donut_sbp': 10,
+        'donut_sbp_qr': 10,
         'donut_sbp_qr': 10,
         'lava_sbp': 10,
 
@@ -2680,8 +2672,8 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         'tribute': 60,
         'mulenpay': 60,
 
-        # Support (70)
-        'support': 70,
+        # Recurrent / Subscription (70)
+        'platega_m6': 70,
     }
 
     def _get_row_priority(row) -> int:
@@ -2707,6 +2699,8 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
                     m_code = int(code_str)
                     if m_code == 2:
                         return 10
+                    elif m_code == 6:
+                        return 70
                     elif m_code == 11:
                         return 20
                     elif m_code == 12:
