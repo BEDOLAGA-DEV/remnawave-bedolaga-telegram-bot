@@ -83,15 +83,25 @@ class PlategaPaymentMixin:
         effective_failed_url = failed_url or settings.get_platega_failed_url()
 
         try:
-            response = await service.create_payment(
-                payment_method=payment_method_code,
-                amount=amount_value,
-                currency=settings.PLATEGA_CURRENCY,
-                description=description,
-                return_url=effective_return_url,
-                failed_url=effective_failed_url,
-                payload=payload_token,
-            )
+            if payment_method_code == 6:
+                from app.services.platega_recurrent import INTERVAL_MONTH
+
+                response = await service.create_subscription(
+                    amount=amount_value,
+                    currency=settings.PLATEGA_CURRENCY,
+                    interval=INTERVAL_MONTH,
+                    description=description,
+                )
+            else:
+                response = await service.create_payment(
+                    payment_method=payment_method_code,
+                    amount=amount_value,
+                    currency=settings.PLATEGA_CURRENCY,
+                    description=description,
+                    return_url=effective_return_url,
+                    failed_url=effective_failed_url,
+                    payload=payload_token,
+                )
         except Exception as error:  # pragma: no cover - network errors
             logger.exception('Ошибка Platega при создании платежа', error=error)
             return None
@@ -130,6 +140,22 @@ class PlategaPaymentMixin:
             metadata=metadata,
             expires_at=expires_at,
         )
+        if payment_method_code == 6 and transaction_id:
+            from app.database.crud import platega_subscription as sub_crud
+            from app.services.platega_recurrent import INTERVAL_MONTH
+
+            await sub_crud.create_platega_subscription(
+                db,
+                user_id=user_id,
+                subscription_id=None,
+                tariff_id=None,
+                interval=INTERVAL_MONTH,
+                charge_days=30,
+                amount_kopeks=amount_kopeks,
+                redirect_url=redirect_url,
+                platega_subscription_id=transaction_id,
+                status='PENDING',
+            )
 
         logger.info(
             'Создан Platega платеж для пользователя (метод , сумма ₽)',
