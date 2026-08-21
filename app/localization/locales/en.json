@@ -2142,5 +2142,8 @@
   "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ Lava auto-renewal has been cancelled.",
   "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ Subscription renewed by Lava auto-payment.",
   "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ Lava auto-renewal payment failed.",
-  "LAVA_RECURRING_PAY_BUTTON": "💳 Pay"
+  "LAVA_RECURRING_PAY_BUTTON": "💳 Pay",
+  "registration_invite_required": "🔒 Registration is available by invitation only.\n\nUse a valid invitation link or contact support.",
+  "registration_check_unavailable": "We could not verify the invitation. Try again later or contact support.",
+  "registration_contact_support": "💬 Contact support"
 }

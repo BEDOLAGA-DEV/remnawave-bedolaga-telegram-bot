@@ -2142,5 +2142,8 @@
   "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ 已取消 Lava 自动续订。",
   "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ 订阅已通过 Lava 自动扣款续订。",
   "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ Lava 自动续订扣款失败。",
-  "LAVA_RECURRING_PAY_BUTTON": "💳 支付"
+  "LAVA_RECURRING_PAY_BUTTON": "💳 支付",
+  "registration_invite_required": "🔒 仅可通过邀请注册。\n\n请使用有效的邀请链接，或联系支持团队。",
+  "registration_check_unavailable": "暂时无法验证邀请。请稍后重试或联系支持团队。",
+  "registration_contact_support": "💬 联系支持"
 }

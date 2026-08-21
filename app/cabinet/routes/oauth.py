@@ -7,6 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.auth.registration_access import (
+    evaluate_public_registration,
+    raise_for_registration_decision,
+)
 from app.config import settings
 from app.database.crud.user import (
     create_user_by_oauth,
@@ -16,6 +20,12 @@ from app.database.crud.user import (
     set_user_oauth_provider_id,
 )
 from app.database.models import User, UserStatus
+from app.services.rbac_bootstrap_service import (
+    TRUSTED_EMAIL_VERIFICATION_SOURCES,
+    is_user_admin_by_env,
+    normalize_admin_email,
+)
+from app.services.registration_access_service import RegistrationAccessReason, RegistrationChannel
 from app.services.user_revival_service import revive_deleted_user
 
 from ..auth.oauth_providers import (
@@ -34,6 +44,46 @@ from .auth import _create_auth_response, _process_campaign_bonus, _store_refresh
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/auth/oauth', tags=['Cabinet OAuth'])
+
+
+def _oauth_current_proof_is_admin(provider: str, user_info: OAuthUserInfo) -> bool:
+    if not user_info.email or not user_info.email_verified:
+        return False
+    if f'oauth_{provider}' not in TRUSTED_EMAIL_VERIFICATION_SOURCES:
+        return False
+    email = normalize_admin_email(user_info.email)
+    return email in {normalize_admin_email(value) for value in settings.get_admin_emails()}
+
+
+async def _gate_oauth_identity(
+    db: AsyncSession,
+    *,
+    provider: str,
+    user_info: OAuthUserInfo,
+    user: User | None,
+    exact_provider_match: bool = False,
+):
+    verified_admin = (
+        is_user_admin_by_env(user).is_admin
+        if exact_provider_match and user is not None
+        else _oauth_current_proof_is_admin(provider, user_info)
+    )
+    decision = await evaluate_public_registration(
+        db,
+        channel=RegistrationChannel.CABINET_OAUTH,
+        existing_user=user,
+        email=user_info.email,
+        email_verified=bool(user_info.email_verified),
+        verified_admin=verified_admin,
+    )
+    raise_for_registration_decision(decision)
+    if user is not None and user.status != UserStatus.ACTIVE.value:
+        if user.status == UserStatus.DELETED.value:
+            await revive_deleted_user(db, user, source=f'oauth_{provider}_invite_gate')
+        elif decision.reason is RegistrationAccessReason.VERIFIED_ADMIN:
+            user.status = UserStatus.ACTIVE.value
+            user.updated_at = datetime.now(UTC)
+    return decision
 
 
 async def _finalize_oauth_login(
@@ -189,14 +239,14 @@ async def oauth_callback(
     # 5. Find user by provider ID
     user = await get_user_by_oauth_provider(db, provider, user_info.provider_id)
     if user:
-        # If the previously-linked account was soft-deleted for
-        # inactivity, the OAuth provider's signed JWT/userinfo is enough
-        # identity proof to revive: same provider_id == same human.
-        # Without revival we'd let DELETED-status linger and the cabinet
-        # dependencies guard would 403 right after login.
         was_deleted = user.status == UserStatus.DELETED.value
-        if was_deleted:
-            await revive_deleted_user(db, user, source=f'oauth_{provider}_provider_id')
+        await _gate_oauth_identity(
+            db,
+            provider=provider,
+            user_info=user_info,
+            user=user,
+            exact_provider_match=True,
+        )
         logger.info('OAuth login for existing user', provider=provider, user_id=user.id, revived=was_deleted)
         return await _finalize_oauth_login(db, user, provider, request.campaign_slug, request.referral_code)
 
@@ -238,8 +288,13 @@ async def oauth_callback(
             # rather than letting the OAuth flow fall through and
             # silently create a duplicate account.
             was_deleted = user.status == UserStatus.DELETED.value
-            if was_deleted:
-                await revive_deleted_user(db, user, source=f'oauth_{provider}_email_merge')
+            await _gate_oauth_identity(
+                db,
+                provider=provider,
+                user_info=user_info,
+                user=user,
+                exact_provider_match=False,
+            )
             await set_user_oauth_provider_id(db, user, provider, user_info.provider_id)
             logger.info(
                 'OAuth provider linked to existing email user',
@@ -248,6 +303,14 @@ async def oauth_callback(
                 revived=was_deleted,
             )
             return await _finalize_oauth_login(db, user, provider, request.campaign_slug, request.referral_code)
+
+    await _gate_oauth_identity(
+        db,
+        provider=provider,
+        user_info=user_info,
+        user=None,
+        exact_provider_match=False,
+    )
 
     # 7. Resolve referral code for new user
     referrer_id = None

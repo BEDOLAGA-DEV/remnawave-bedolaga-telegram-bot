@@ -2142,5 +2142,8 @@
   "LAVA_RECURRING_NOTIFY_CANCELLED": "ℹ️ Автопродление Lava отменено.",
   "LAVA_RECURRING_NOTIFY_CONFIRMED": "✅ Подписка продлена автосписанием Lava.",
   "LAVA_RECURRING_NOTIFY_FAILED": "⚠️ Не удалось списать оплату по автопродлению Lava.",
-  "LAVA_RECURRING_PAY_BUTTON": "💳 Оплатить"
+  "LAVA_RECURRING_PAY_BUTTON": "💳 Оплатить",
+  "registration_invite_required": "🔒 Регистрация доступна только по приглашению.\n\nИспользуйте действительную пригласительную ссылку или обратитесь в поддержку.",
+  "registration_check_unavailable": "Не удалось проверить приглашение. Повторите попытку позже или обратитесь в поддержку.",
+  "registration_contact_support": "💬 Связаться с поддержкой"
 }

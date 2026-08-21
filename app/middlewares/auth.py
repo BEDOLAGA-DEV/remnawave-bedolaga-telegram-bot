@@ -22,6 +22,12 @@ from app.utils.validators import sanitize_telegram_name
 logger = structlog.get_logger(__name__)
 
 
+def _is_blocked_non_admin(user: Any) -> bool:
+    from app.database.models import UserStatus
+
+    return user.status == UserStatus.BLOCKED.value and not settings.is_admin(user.telegram_id)
+
+
 async def _refresh_remnawave_description(remnawave_id: int, description: str, telegram_id: int) -> None:
     try:
         remnawave_service = RemnaWaveService()
@@ -98,7 +104,7 @@ class AuthMiddleware(BaseMiddleware):
                     return None
                 from app.database.models import UserStatus
 
-                if db_user.status == UserStatus.BLOCKED.value:
+                if _is_blocked_non_admin(db_user):
                     if isinstance(event, Message):
                         await event.answer('🚫 Ваш аккаунт заблокирован администратором.')
                     elif isinstance(event, CallbackQuery):
