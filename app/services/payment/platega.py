@@ -485,9 +485,28 @@ class PlategaPaymentMixin:
                     record.user_id = guest_purchase.user_id
                     sub = await get_subscription_by_user_id(db, guest_purchase.user_id)
                     if sub:
+                        existing_sub = await sub_crud.get_active_platega_subscription_by_subscription(db, sub.id)
+                        if existing_sub and existing_sub.id != record.id:
+                            logger.info(
+                                'Cancelling existing active Platega subscription before linking new one from guest purchase',
+                                old_sub_id=existing_sub.id,
+                                new_sub_id=record.id,
+                                subscription_id=sub.id,
+                            )
+                            existing_sub.status = 'CANCELLED'
+                            await db.flush()
                         record.subscription_id = sub.id
                         is_guest_fulfillment = True
-                        await db.commit()
+                        try:
+                            await db.commit()
+                        except Exception as commit_err:
+                            logger.error(
+                                'Error committing guest purchase subscription link',
+                                platega_subscription_id=platega_id,
+                                error=commit_err,
+                            )
+                            await db.rollback()
+                            return
 
         if status == pr.SUB_ACTIVATED:
             record.status = 'ACTIVE'
@@ -543,6 +562,32 @@ class PlategaPaymentMixin:
 
             subscription = await db.get(Subscription, record.subscription_id) if record.subscription_id else None
             if subscription is None:
+                if record.user_id:
+                    from app.database.crud.user import get_user_by_id
+                    user = await get_user_by_id(db, record.user_id)
+                    if user:
+                        user.balance_kopeks = (user.balance_kopeks or 0) + record.amount_kopeks
+                        await create_transaction(
+                            db=db,
+                            user_id=user.id,
+                            amount_kopeks=record.amount_kopeks,
+                            type=TransactionType.DEPOSIT,
+                            payment_method=PaymentMethod.PLATEGA,
+                            description=f'Пополнение баланса (Подписка СБП Platega #{record.id})',
+                            external_id=charge_id,
+                        )
+                        record.last_charge_external_id = charge_id
+                        record.status = 'ACTIVE'
+                        record.last_charge_at = datetime.now(UTC)
+                        record.charges_success += 1
+                        record.next_charge_at = _parse_next_charge(payload.get('NextChargeAt'))
+                        await db.commit()
+                        logger.info(
+                            'Platega balance topup subscription charged successfully',
+                            user_id=user.id,
+                            amount=record.amount_rubles,
+                        )
+                        return
                 logger.error(
                     'Platega subscription callback: Subscription не найдена для продления',
                     subscription_id=record.subscription_id,
