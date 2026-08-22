@@ -65,6 +65,7 @@ from app.handlers.admin import (
 from app.handlers.channel_member import register_handlers as register_channel_member_handlers
 from app.handlers.gift_activation import register_handlers as register_gift_activation_handlers
 from app.handlers.stars_payments import register_stars_handlers
+from app.handlers.subscription import register_gift_handlers
 from app.middlewares.auth import AuthMiddleware
 from app.middlewares.blacklist import BlacklistMiddleware
 from app.middlewares.button_stats import ButtonStatsMiddleware
@@ -183,6 +184,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     start.register_handlers(dp)
     menu.register_handlers(dp)
     subscription.register_handlers(dp)
+    register_gift_handlers(dp)
     balance.register_balance_handlers(dp)
     promocode.register_handlers(dp)
     referral.register_handlers(dp)

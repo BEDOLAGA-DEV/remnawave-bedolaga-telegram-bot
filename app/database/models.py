@@ -4496,6 +4496,7 @@ class GuestPurchase(Base):
         Index('ix_guest_purchases_user_gift_status', 'user_id', 'is_gift', 'status'),
         Index('ix_guest_purchases_status_paid_at', 'status', 'paid_at'),
         Index('ix_guest_purchases_buyer_user_id', 'buyer_user_id'),
+        Index('ux_guest_purchases_idempotency_key', 'idempotency_key', unique=True),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -4504,7 +4505,9 @@ class GuestPurchase(Base):
     contact_type = Column(String(20), nullable=False)  # 'email' or 'telegram'
     contact_value = Column(String(255), nullable=False)
     is_gift = Column(Boolean, nullable=False, default=False)
-    source = Column(String(20), nullable=False, default='landing', server_default='landing')  # 'landing' or 'cabinet'
+    source = Column(
+        String(20), nullable=False, default='landing', server_default='landing'
+    )  # 'landing', 'cabinet', 'bot'
     buyer_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     gift_recipient_type = Column(String(20), nullable=True)
     gift_recipient_value = Column(String(255), nullable=True)
@@ -4536,6 +4539,9 @@ class GuestPurchase(Base):
     # Оплату подтверждает вебхук платёжки, где куки и сессии покупателя уже
     # нет, поэтому источник атрибуции хранится в самой покупке.
     campaign_slug = Column(String(64), nullable=True)
+    # Идемпотентность покупки (checkout id / idempotency key). Уникальный
+    # индекс ux_guest_purchases_idempotency_key предотвращает повторные списания.
+    idempotency_key = Column(String(64), nullable=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
     tariff = relationship('Tariff', lazy='selectin')
@@ -4543,8 +4549,7 @@ class GuestPurchase(Base):
     buyer = relationship('User', foreign_keys=[buyer_user_id], lazy='selectin')
 
     def __repr__(self) -> str:
-        token_prefix = self.token[:5] if self.token else '?'
-        return f"<GuestPurchase token='{token_prefix}...' status='{self.status}'>"
+        return f"<GuestPurchase id={self.id} status='{self.status}'>"
 
 
 class NewsArticle(Base):

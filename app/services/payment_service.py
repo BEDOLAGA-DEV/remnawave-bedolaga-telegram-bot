@@ -1443,7 +1443,7 @@ class PaymentService(
                 logger.info(
                     'Created Stars invoice for guest purchase',
                     stars_amount=stars_amount,
-                    purchase_token_prefix=purchase_token[:5],
+                    token_length=len(purchase_token),
                 )
                 return {
                     'payment_url': invoice_url,
@@ -1459,6 +1459,6 @@ class PaymentService(
         logger.warning(
             'Guest payment requested for unsupported provider',
             payment_method=payment_method,
-            purchase_token_prefix=purchase_token[:5],
+            token_length=len(purchase_token),
         )
         return None

@@ -714,6 +714,7 @@ async def replace_subscription(
     device_limit: int,
     connected_squads: list[str],
     is_trial: bool,
+    tariff_id: int | None = None,
     autopay_enabled: bool | None = None,
     autopay_days_before: int | None = None,
     update_server_counters: bool = False,
@@ -750,6 +751,8 @@ async def replace_subscription(
     new_autopay_enabled = subscription.autopay_enabled if autopay_enabled is None else autopay_enabled
     new_autopay_days_before = subscription.autopay_days_before if autopay_days_before is None else autopay_days_before
 
+    if tariff_id is not None:
+        subscription.tariff_id = tariff_id
     subscription.status = SubscriptionStatus.ACTIVE.value
     subscription.is_trial = is_trial
     subscription.start_date = current_time

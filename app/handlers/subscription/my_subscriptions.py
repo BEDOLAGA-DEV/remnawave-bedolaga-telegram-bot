@@ -78,7 +78,9 @@ def _format_subscription_line(sub, idx: int) -> str:
     return '\n'.join(parts)
 
 
-def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.InlineKeyboardMarkup:
+def _build_subscriptions_keyboard(
+    subscriptions: list, language: str, gift_enabled: bool = False
+) -> types.InlineKeyboardMarkup:
     """Build inline keyboard with per-subscription management buttons."""
     buttons = []
     for idx, sub in enumerate(subscriptions, 1):
@@ -100,6 +102,15 @@ def _build_subscriptions_keyboard(subscriptions: list, language: str) -> types.I
             types.InlineKeyboardButton(text=f'➕ {buy_text}', callback_data='menu_buy'),
         ]
     )
+    if gift_enabled:
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('GIFT_SUBSCRIPTION_BUTTON', '🎁 Подарить подписку'),
+                    callback_data='subscription_gift',
+                )
+            ]
+        )
     # Back button
     buttons.append(
         [
@@ -159,23 +170,33 @@ async def show_my_subscriptions(
         # Fallback to legacy single subscription view
         return
 
+    texts = get_texts(db_user.language)
+    gift_enabled = True
     subscriptions = await get_all_subscriptions_by_user_id(db, db_user.id)
 
     if not subscriptions:
         text = '📋 <b>Мои подписки</b>\n\nУ вас нет подписок.'
-        keyboard = types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text='🛒 Купить подписку', callback_data='menu_buy')],
-                [types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')],
-            ]
-        )
+        buttons = [
+            [types.InlineKeyboardButton(text='🛒 Купить подписку', callback_data='menu_buy')],
+        ]
+        if gift_enabled:
+            buttons.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('GIFT_SUBSCRIPTION_BUTTON', '🎁 Подарить подписку'),
+                        callback_data='subscription_gift',
+                    )
+                ]
+            )
+        buttons.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
     else:
         lines = ['📋 <b>Мои подписки</b>\n']
         for idx, sub in enumerate(subscriptions, 1):
             lines.append(_format_subscription_line(sub, idx))
             lines.append('')  # empty line between subscriptions
         text = '\n'.join(lines)
-        keyboard = _build_subscriptions_keyboard(subscriptions, db_user.language)
+        keyboard = _build_subscriptions_keyboard(subscriptions, db_user.language, gift_enabled=gift_enabled)
 
     if callback.message:
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')

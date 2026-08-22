@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.config import settings
+from app.config import Settings, settings
 
 
 def test_default_stars_rate_is_one_ruble_per_star() -> None:
@@ -31,9 +31,10 @@ def test_default_stars_rate_is_one_ruble_per_star() -> None:
     Higher → users get under-credited (the original 1.3-default bug:
     150 ₽ top-up credited as 149.50 ₽).
     """
-    assert settings.TELEGRAM_STARS_RATE_RUB == 1.0, (
+    default_rate = Settings.model_fields['TELEGRAM_STARS_RATE_RUB'].default
+    assert default_rate == 1.0, (
         f'Default TELEGRAM_STARS_RATE_RUB must be 1.0 to match Telegram cash-out and '
-        f'round-trip losslessly. Got {settings.TELEGRAM_STARS_RATE_RUB!r}.'
+        f'round-trip losslessly. Got {default_rate!r}.'
     )
 
 

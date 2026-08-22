@@ -396,7 +396,7 @@ async def _handle_guest_purchase_payment(
                     'Stars amount mismatch for guest purchase',
                     paid_stars=stars_amount,
                     expected_stars=expected_stars,
-                    purchase_token_prefix=purchase_token[:5],
+                    purchase_id=existing.id,
                 )
                 await message.answer('❌ Сумма оплаты не совпадает с ожидаемой.')
                 return
@@ -431,7 +431,7 @@ async def _handle_guest_purchase_payment(
                 '✅ Guest purchase fulfilled via Stars',
                 user_id=user.id,
                 stars_amount=stars_amount,
-                purchase_token_prefix=purchase_token[:5],
+                purchase_id=existing.id if existing else None,
             )
         else:
             logger.error('try_fulfill_guest_purchase returned None for Stars gift', payload=payload)

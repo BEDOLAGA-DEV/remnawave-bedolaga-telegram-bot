@@ -17,16 +17,25 @@ from app.database.crud.landing import get_active_landing_by_slug, get_purchase_b
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user import get_user_by_email
 from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff
+from app.services.gift_claim_service import (
+    GiftClaimAlreadyOwnedError,
+    GiftClaimNotActivatableError,
+    GiftClaimNotFoundError,
+    GiftClaimSelfActivationError,
+    claim_gift_for_user,
+)
 from app.services.guest_purchase_service import (
     GuestPurchaseError,
     _find_or_create_user,
-    activate_purchase as activate_guest_purchase,
     create_purchase,
     validate_and_calculate,
 )
 from app.services.payment_method_config_service import _get_method_defaults
 from app.services.payment_service import PaymentService
 from app.utils.cache import RateLimitCache, cache
+from app.utils.gift_links import (
+    build_gift_claim_artifacts,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -203,6 +212,9 @@ class PurchaseStatusResponse(BaseModel):
     is_claimable: bool = False
     claim_url: str | None = None
     bot_claim_link: str | None = None
+    gift_code: str | None = None
+    bot_claim_url: str | None = None
+    cabinet_claim_url: str | None = None
 
 
 class GiftClaimRequest(BaseModel):
@@ -315,15 +327,27 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
     )
     claim_url: str | None = None
     bot_claim_link: str | None = None
+    gift_code: str | None = None
+    bot_claim_url: str | None = None
+    cabinet_claim_url: str | None = None
+
     if is_claimable:
-        cabinet_base = (settings.CABINET_URL or '').rstrip('/')
-        if cabinet_base:
-            claim_url = f'{cabinet_base}/buy/gift/{purchase.token}'
         bot_username = settings.get_bot_username()
-        if bot_username:
-            # Telegram start params are length-limited; use a token prefix.
-            # The bot handler resolves gifts by prefix (start.py:149).
-            bot_claim_link = f'https://t.me/{bot_username}?start=GIFT_{purchase.token[:12]}'
+        cabinet_url = settings.CABINET_URL
+        try:
+            artifacts = build_gift_claim_artifacts(
+                purchase.token,
+                bot_username=bot_username,
+                cabinet_url=cabinet_url,
+            )
+            gift_code = artifacts.public_code
+            bot_claim_url = artifacts.bot_claim_url
+            cabinet_claim_url = artifacts.cabinet_claim_url
+            # Keep legacy fields populated with exact values for backwards compatibility
+            claim_url = artifacts.cabinet_claim_url
+            bot_claim_link = artifacts.bot_claim_url
+        except Exception:
+            pass
 
     return PurchaseStatusResponse(
         status=purchase.status,
@@ -344,6 +368,9 @@ def _build_purchase_status_response(purchase: GuestPurchase) -> PurchaseStatusRe
         is_claimable=is_claimable,
         claim_url=claim_url,
         bot_claim_link=bot_claim_link,
+        gift_code=gift_code,
+        bot_claim_url=bot_claim_url,
+        cabinet_claim_url=cabinet_claim_url,
     )
 
 
@@ -623,15 +650,21 @@ async def claim_gift(
     # Guards passed — now create/finalize the account the gift binds to.
     user, _is_new = await _find_or_create_user(db, 'email', body.email, purchase=purchase, tariff_id=purchase.tariff_id)
 
-    # Bind (if unbound) and move PAID → PENDING_ACTIVATION so activate accepts it.
-    if purchase.user_id is None:
-        purchase.user_id = user.id
-    if purchase.status == GuestPurchaseStatus.PAID.value:
-        purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
-    await db.flush()
-
     try:
-        purchase = await activate_guest_purchase(db, purchase.token, skip_notification=True)
+        purchase = await claim_gift_for_user(
+            db,
+            claimant_user_id=user.id,
+            claim_input=token,
+            allow_legacy_short=False,
+        )
+    except GiftClaimNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Gift not found') from exc
+    except GiftClaimAlreadyOwnedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='This gift has already been claimed') from exc
+    except GiftClaimSelfActivationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Cannot activate your own gift') from exc
+    except GiftClaimNotActivatableError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='This gift cannot be activated') from exc
     except GuestPurchaseError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -890,7 +923,7 @@ async def create_landing_purchase(
         await db.rollback()
         logger.error(
             'Payment created but no payment_url returned',
-            purchase_token=purchase.token[:5],
+            purchase_id=purchase.id,
             provider=payment_result.get('provider'),
         )
         raise HTTPException(

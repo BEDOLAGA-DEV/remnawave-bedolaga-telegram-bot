@@ -25,7 +25,7 @@ from app.database.crud.user import (
     get_user_by_telegram_id,
 )
 from app.database.crud.user_message import get_random_active_message
-from app.database.models import GuestPurchase, GuestPurchaseStatus, PinnedMessage, SubscriptionStatus, UserStatus
+from app.database.models import GuestPurchase, PinnedMessage, SubscriptionStatus, UserStatus
 from app.keyboards.inline import (
     get_back_keyboard,
     get_language_selection_keyboard,
@@ -49,7 +49,13 @@ from app.services.coupon_service import (
     is_coupon_token,
     redeem_coupon,
 )
-from app.services.guest_purchase_service import GIFT_TOKEN_MIN_PREFIX_LENGTH
+from app.services.gift_claim_service import (
+    GiftClaimAlreadyOwnedError,
+    GiftClaimNotActivatableError,
+    GiftClaimNotFoundError,
+    GiftClaimSelfActivationError,
+    claim_gift_for_user,
+)
 from app.services.main_menu_button_service import MainMenuButtonService
 from app.services.phantom_service import claim_phantom, merge_phantom_into_user
 from app.services.pinned_message_service import (
@@ -66,6 +72,7 @@ from app.services.subscription_service import SubscriptionService
 from app.services.support_settings_service import SupportSettingsService
 from app.services.web_auth_service import WEB_AUTH_TOKEN_MIN_LENGTH, link_web_auth_token
 from app.states import RegistrationStates
+from app.utils.gift_links import InvalidGiftTokenError, parse_gift_claim_input
 from app.utils.long_messages import answer_long_text, edit_long_text, send_long_text
 from app.utils.rich_menu import try_answer_rich_main_menu, try_send_rich_main_menu
 from app.utils.user_utils import generate_unique_referral_code
@@ -218,7 +225,7 @@ async def _activate_pending_gift_after_registration(
     user: 'User',
     answer_func: Callable[..., Any],
 ) -> None:
-    """Extract pending_gift_token from FSM state and activate it for the newly registered user.
+    """Extract pending_gift_token from FSM state and activate it for the user.
 
     Must be called BEFORE state.clear() to preserve the token.
     """
@@ -229,89 +236,69 @@ async def _activate_pending_gift_after_registration(
         if not gift_token:
             return
 
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
+        texts = get_texts(user.language)
 
-        from app.services.guest_purchase_service import (
-            GIFT_TOKEN_MIN_PREFIX_LENGTH,
-            activate_purchase as svc_activate,
-        )
-
-        # Support both full token and prefix-based lookup (Telegram truncates the token by
-        # the GIFT_/giftclaim_ prefix length). Require a long minimum prefix so a short,
-        # guessable value can't claim an arbitrary gift via startswith().
-        if len(gift_token) >= 64:
-            token_filter = GuestPurchase.token == gift_token
-        elif len(gift_token) >= GIFT_TOKEN_MIN_PREFIX_LENGTH:
-            token_filter = GuestPurchase.token.startswith(gift_token)
-        else:
-            logger.warning('Gift deep link token too short for prefix lookup', token_length=len(gift_token))
-            return
-
-        gift_result = await db.execute(
-            select(GuestPurchase)
-            .options(selectinload(GuestPurchase.tariff))
-            .where(token_filter, GuestPurchase.is_gift.is_(True))
-            .with_for_update()
-        )
-        gift_purchase = gift_result.scalars().first()
-
-        if not gift_purchase or not gift_purchase.is_gift:
-            logger.warning('Gift not found for deep link token', token_prefix=gift_token[:5])
-            return
-
-        # Prevent self-activation: buyer cannot activate their own gift
-        if gift_purchase.buyer_user_id is not None and gift_purchase.buyer_user_id == user.id:
+        try:
+            gift_purchase = await claim_gift_for_user(
+                db,
+                claimant_user_id=user.id,
+                claim_input=gift_token,
+                allow_legacy_short=False,
+            )
+        except GiftClaimSelfActivationError:
             await answer_func(
-                '⚠️ Нельзя активировать свой собственный подарок.\nОтправьте код другу!',
+                texts.t(
+                    'GIFT_ACTIVATION_SELF_CLAIM_ERROR',
+                    '⚠️ Нельзя активировать свой собственный подарок.\nОтправьте код другу!',
+                ),
                 parse_mode=ParseMode.HTML,
             )
             return
-
-        if gift_purchase.status == GuestPurchaseStatus.DELIVERED.value:
+        except GiftClaimAlreadyOwnedError:
             await answer_func(
-                'ℹ️ Этот подарок уже был активирован.',
+                texts.t(
+                    'GIFT_ACTIVATION_ALREADY_OWNED_ERROR',
+                    'ℹ️ Этот подарок уже был активирован.',
+                ),
                 parse_mode=ParseMode.HTML,
             )
             return
-
-        activatable_statuses = {
-            GuestPurchaseStatus.PENDING_ACTIVATION.value,
-            GuestPurchaseStatus.PAID.value,
-        }
-        if gift_purchase.status not in activatable_statuses:
+        except GiftClaimNotActivatableError:
             await answer_func(
-                '❌ Этот подарок невозможно активировать.',
+                texts.t(
+                    'GIFT_ACTIVATION_NOT_ACTIVATABLE_ERROR',
+                    '❌ Этот подарок невозможно активировать.',
+                ),
                 parse_mode=ParseMode.HTML,
             )
             return
-
-        if gift_purchase.user_id is not None and gift_purchase.user_id != user.id:
-            logger.warning('Gift belongs to another user', token_prefix=gift_token[:5])
+        except GiftClaimNotFoundError:
+            logger.warning('Gift not found for deep link token', token_length=len(gift_token))
             return
 
-        if gift_purchase.user_id is None:
-            gift_purchase.user_id = user.id
-        # Transition PAID → PENDING_ACTIVATION so activate_purchase() accepts it
-        if gift_purchase.status == GuestPurchaseStatus.PAID.value:
-            gift_purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
-        await db.flush()
-        await svc_activate(db, gift_purchase.token, skip_notification=True)
         tariff_name = html.escape(gift_purchase.tariff.name) if gift_purchase.tariff else ''
         await answer_func(
-            f'🎁 <b>Подарок активирован!</b>\n'
-            f'{tariff_name} — {gift_purchase.period_days} дн.\n\n'
-            f'Ваша подписка обновлена.',
+            texts.t(
+                'GIFT_ACTIVATION_SUCCESS_TEXT',
+                '🎁 <b>Подарок активирован!</b>\n{tariff_name} — {period_days} дн.\n\nВаша подписка обновлена.',
+            ).format(
+                tariff_name=tariff_name,
+                period_days=gift_purchase.period_days,
+            ),
             parse_mode=ParseMode.HTML,
         )
     except Exception:
         logger.exception(
             'Failed to auto-activate gift after registration',
-            token_prefix=(gift_token or '')[:5],
+            token_length=len(gift_token) if gift_token else 0,
         )
         try:
+            texts = get_texts(user.language)
             await answer_func(
-                '❌ Произошла ошибка при активации подарка. Попробуйте активировать через личный кабинет.',
+                texts.t(
+                    'GIFT_ACTIVATION_GENERIC_ERROR',
+                    '❌ Произошла ошибка при активации подарка. Попробуйте активировать через личный кабинет.',
+                ),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
@@ -1080,24 +1067,25 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
         await state.set_data(data)
 
     # Handle gift code deep links: /start GIFT_{token} (or giftclaim_{token} alias)
-    if start_parameter and (start_parameter.startswith('GIFT_') or start_parameter.startswith('giftclaim_')):
-        gift_token = (
-            start_parameter.removeprefix('giftclaim_')
-            if start_parameter.startswith('giftclaim_')
-            else start_parameter[5:]  # Strip "GIFT_" prefix
-        )
-        # Reject tokens too short to be a legitimately-truncated gift token — a short prefix
-        # would match (and claim) an arbitrary gift via the startswith lookup downstream.
-        if len(gift_token) >= GIFT_TOKEN_MIN_PREFIX_LENGTH:
+    if start_parameter and (
+        start_parameter.startswith('GIFT_')
+        or start_parameter.startswith('GIFT-')
+        or start_parameter.startswith('giftclaim_')
+        or start_parameter.startswith('giftclaim-')
+    ):
+        try:
+            gift_token = parse_gift_claim_input(start_parameter, allow_legacy_short=False)
             logger.info(
                 'Gift code deep link detected',
-                token_prefix=gift_token[:5],
+                token_length=len(gift_token) if gift_token else 0,
                 telegram_id=message.from_user.id,
             )
             # For new users, gift is auto-activated via
             # _activate_pending_gift_after_registration() before state.clear().
             await state.update_data(pending_gift_token=gift_token)
             start_parameter = None  # Don't treat as campaign or referral
+        except InvalidGiftTokenError:
+            pass
 
     # Handle coupon deep links: /start coupon_{token} — one-time wholesale coupons
     if start_parameter and start_parameter.startswith(COUPON_DEEP_LINK_PREFIX):

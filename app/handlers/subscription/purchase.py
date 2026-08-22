@@ -202,13 +202,17 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     await db.refresh(db_user)
 
     texts = get_texts(db_user.language)
+    gift_enabled = True
     # Multi-tariff: this branch is only reached in single-tariff mode (multi-tariff
     # is redirected to show_my_subscriptions above). db_user.subscription returns
     # the first active or most recent subscription, which is correct here.
     subscription = db_user.subscription
 
     if not subscription:
-        await callback.message.edit_text(texts.SUBSCRIPTION_NONE, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(
+            texts.SUBSCRIPTION_NONE,
+            reply_markup=get_subscription_keyboard(db_user.language, has_subscription=False, gift_enabled=gift_enabled),
+        )
         await callback.answer()
         return
 
@@ -589,7 +593,11 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
     await callback.message.edit_text(
         message,
         reply_markup=get_subscription_keyboard(
-            db_user.language, has_subscription=True, is_trial=subscription.is_trial, subscription=subscription
+            db_user.language,
+            has_subscription=True,
+            is_trial=subscription.is_trial,
+            subscription=subscription,
+            gift_enabled=gift_enabled,
         ),
         parse_mode='HTML',
     )
@@ -1497,8 +1505,6 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
 
     if not settings.is_devices_selection_enabled():
         try:
-            from .pricing import _prepare_subscription_summary
-
             _, recalculated_data = await _prepare_subscription_summary(
                 db_user,
                 prepared_cart_data,

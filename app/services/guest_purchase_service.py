@@ -36,18 +36,10 @@ from app.database.models import (
     _aware,
 )
 from app.services.subscription_service import SubscriptionService
+from app.utils.gift_links import GIFT_TOKEN_MIN_PREFIX_LENGTH  # noqa: F401
 
 
 logger = structlog.get_logger(__name__)
-
-# GuestPurchase.token is a unique 64-char value. A gift deep-link (``GIFT_<token>`` /
-# ``giftclaim_<token>``) overflows Telegram's 64-char start_param limit, so Telegram
-# truncates the token by the prefix length — the surviving prefix is still >= 54 chars.
-# Prefix-based lookups must therefore require a long minimum length: matching on a short
-# prefix (the old 8-char floor) let an attacker enumerate and claim arbitrary unclaimed
-# gifts. 48 base64url chars (~288 bits) is unguessable yet accepts every legitimate
-# truncation.
-GIFT_TOKEN_MIN_PREFIX_LENGTH = 48
 
 _TELEGRAM_USERNAME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 
@@ -200,6 +192,7 @@ async def create_purchase(
     campaign_slug: str | None = None,
     buyer_user_id: int | None = None,
     commit: bool = True,
+    idempotency_key: str | None = None,
 ) -> GuestPurchase:
     """Create a guest purchase record."""
     purchase = await create_guest_purchase(
@@ -221,13 +214,14 @@ async def create_purchase(
         gift_message=gift_message,
         source=source,
         buyer_user_id=buyer_user_id,
+        idempotency_key=idempotency_key,
         status=GuestPurchaseStatus.PENDING.value,
     )
 
     logger.info(
         'Guest purchase created',
         purchase_id=purchase.id,
-        token_prefix=purchase.token[:5],
+        token_length=len(purchase.token),
         landing_slug=landing.slug if landing else None,
         tariff_id=tariff.id,
         period_days=period_days,
@@ -362,12 +356,7 @@ async def fulfill_purchase(
     purchase_token: str,
     pre_resolved_telegram_id: int | None = None,
 ) -> GuestPurchase | None:
-    """After payment: find/create user, create subscription, send notification.
-
-    Uses SELECT ... FOR UPDATE to prevent concurrent fulfillment of the same purchase.
-    The PENDING_ACTIVATION path commits early and returns (terminal for this call).
-    The DELIVERED path commits after subscription creation.
-    Returns the updated purchase or None if not found.
+    """Fulfill a paid guest purchase by creating/extending the user account and subscription.
 
     Args:
         pre_resolved_telegram_id: If caller already resolved the recipient's telegram_id
@@ -377,13 +366,13 @@ async def fulfill_purchase(
     purchase = result.scalars().first()
 
     if purchase is None:
-        logger.warning('Fulfill called for unknown purchase', token_prefix=purchase_token[:5])
+        logger.warning('Fulfill called for unknown purchase', token_length=len(purchase_token))
         return None
 
     if purchase.status != GuestPurchaseStatus.PAID.value:
         logger.warning(
             'Fulfill called for purchase not in PAID status',
-            token_prefix=purchase_token[:5],
+            purchase_id=purchase.id,
             current_status=purchase.status,
         )
         return purchase
@@ -474,7 +463,6 @@ async def fulfill_purchase(
             logger.info(
                 'Guest purchase held for activation (existing subscription)',
                 purchase_id=purchase.id,
-                token_prefix=purchase_token[:5],
                 user_id=user.id,
             )
             return purchase
@@ -647,7 +635,6 @@ async def fulfill_purchase(
         logger.info(
             'Guest purchase fulfilled',
             purchase_id=purchase.id,
-            token_prefix=purchase_token[:5],
             user_id=user.id,
             recipient_type=recipient_type,
         )
@@ -659,7 +646,6 @@ async def fulfill_purchase(
         await db.rollback()
         logger.exception(
             'Failed to fulfill purchase',
-            token_prefix=purchase_token[:5],
             purchase_id=purchase.id,
         )
         raise GuestPurchaseError('Purchase fulfillment failed', status_code=500)
@@ -1353,10 +1339,10 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     device_limit=tariff.device_limit,
                     connected_squads=squads,
                     is_trial=False,
+                    tariff_id=tariff.id,
                     update_server_counters=True,
                     commit=False,
                 )
-                subscription.tariff_id = tariff.id
             else:
                 subscription = await create_paid_subscription(
                     db=db,
@@ -1398,10 +1384,10 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                     device_limit=tariff.device_limit,
                     connected_squads=squads,
                     is_trial=False,
+                    tariff_id=tariff.id,
                     update_server_counters=True,
                     commit=False,
                 )
-                subscription.tariff_id = tariff.id
             else:
                 subscription = await create_paid_subscription(
                     db=db,
@@ -1482,7 +1468,6 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
         logger.info(
             'Guest purchase activated',
             purchase_id=purchase.id,
-            token_prefix=purchase_token[:5],
             user_id=user.id,
         )
 
@@ -1552,9 +1537,9 @@ async def retry_stuck_paid_purchases(
                 await _increment_retry_count(retry_db, token)
                 await fulfill_purchase(retry_db, token)
                 retried += 1
-                logger.info('Retried stuck purchase successfully', token_prefix=token[:5])
+                logger.info('Retried stuck purchase successfully', token_length=len(token))
         except Exception:
-            logger.exception('Failed to retry stuck purchase', token_prefix=token[:5])
+            logger.exception('Failed to retry stuck purchase', token_length=len(token))
 
     return retried
 
@@ -1606,9 +1591,9 @@ async def retry_stuck_pending_activation(
                 await _increment_retry_count(retry_db, token)
                 await activate_purchase(retry_db, token)
                 retried += 1
-                logger.info('Retried stuck pending_activation successfully', token_prefix=token[:5])
+                logger.info('Retried stuck pending_activation successfully', token_length=len(token))
         except Exception:
-            logger.exception('Failed to retry stuck pending_activation', token_prefix=token[:5])
+            logger.exception('Failed to retry stuck pending_activation', token_length=len(token))
 
     return retried
 
@@ -1669,12 +1654,12 @@ async def _fail_exhausted_purchases_batch(
                     await update_purchase_status(fail_db, token, GuestPurchaseStatus.FAILED)
                     logger.error(
                         'Purchase exceeded max retries — marked FAILED',
-                        token_prefix=token[:5],
+                        purchase_id=purchase.id,
                         retry_count=retry_count,
                         phase=status.value,
                     )
         except Exception:
-            logger.exception('Failed to mark exhausted purchase as FAILED', token_prefix=token[:5])
+            logger.exception('Failed to mark exhausted purchase as FAILED', token_length=len(token))
 
         # Send alert OUTSIDE the session (no row lock held)
         if alert_data:
@@ -1796,7 +1781,7 @@ async def recover_stuck_pending_purchases(
                 if paid:
                     recovered += 1
         except Exception:
-            logger.exception('Failed to recover pending purchase', token_prefix=token[:5])
+            logger.exception('Failed to recover pending purchase', token_length=len(token))
 
     return recovered
 
@@ -1960,7 +1945,7 @@ async def _check_and_recover_pending_purchase(
     if provider_amount_kopeks is not None and provider_amount_kopeks != purchase.amount_kopeks:
         logger.error(
             'Amount mismatch during PENDING recovery — skipping',
-            token_prefix=purchase_token[:5],
+            purchase_id=purchase.id,
             provider_amount=provider_amount_kopeks,
             purchase_amount=purchase.amount_kopeks,
             payment_method=payment_method,
@@ -1982,7 +1967,7 @@ async def _check_and_recover_pending_purchase(
     )
     logger.info(
         'Recovered stuck PENDING purchase → PAID',
-        token_prefix=purchase_token[:5],
+        purchase_id=purchase.id,
         payment_method=payment_method,
         provider_payment_id=provider_payment_id,
     )

@@ -17,9 +17,32 @@ from app.config import settings
 from app.database.crud.subscription import extend_subscription
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
-from app.database.models import Subscription, SubscriptionStatus, TransactionType, User
+from app.database.models import (
+    GuestPurchase,
+    GuestPurchaseStatus,
+    Subscription,
+    SubscriptionStatus,
+    TransactionType,
+    User,
+)
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
+from app.services.gift_notification_service import (
+    resolve_gift_claim_channel,
+    send_gift_result_message,
+)
+from app.services.gift_purchase_service import (
+    GiftError,
+    GiftFeatureDisabledError,
+    GiftInsufficientBalanceError,
+    GiftPeriodUnavailableError,
+    GiftPriceChangedError,
+    GiftPurchaseRestrictedError,
+    GiftPurchaseResult,
+    GiftTariffUnavailableError,
+    purchase_gift_from_balance,
+    quote_gift_purchase,
+)
 from app.services.pricing_engine import PricingEngine, pricing_engine
 from app.services.subscription_checkout_service import clear_subscription_checkout_draft
 from app.services.subscription_purchase_service import (
@@ -3161,6 +3184,250 @@ async def _process_single_cart(
     return False
 
 
+async def _deliver_auto_purchased_gift(
+    *,
+    bot: Bot,
+    user: User,
+    purchase_result: GiftPurchaseResult,
+    bot_username: str | None,
+    cabinet_url: str | None,
+    checkout_id: str,
+) -> bool:
+    """Deliver a committed gift result without discarding retry state on failure."""
+    try:
+        sent_msg = await send_gift_result_message(
+            bot=bot,
+            user=user,
+            purchase_result=purchase_result,
+            bot_username=bot_username,
+            cabinet_url=cabinet_url,
+        )
+    except Exception as notify_err:
+        logger.error('Автопокупка подарка: ошибка отправки результата пользователю', error=str(notify_err))
+        sent_msg = None
+
+    if sent_msg is None:
+        logger.warning(
+            'Автопокупка подарка: подарок создан, но сообщение с ссылкой не доставлено; корзина сохранена для повтора',
+            format_user_id=_format_user_id(user),
+            checkout_id=checkout_id,
+        )
+        return False
+
+    return True
+
+
+async def _auto_purchase_gift(
+    db: AsyncSession,
+    user: User,
+    cart_data: dict,
+    *,
+    bot: Bot | None = None,
+) -> bool:
+    """Automatically execute gift purchase from saved cart after top-up."""
+    tariff_id = cart_data.get('tariff_id')
+    period_days = cart_data.get('period_days')
+    saved_expected_price = cart_data.get('total_price')
+    checkout_id = cart_data.get('gift_checkout_id') or cart_data.get('idempotency_key')
+
+    if not tariff_id or not period_days or saved_expected_price is None or not checkout_id:
+        logger.warning(
+            'Автопокупка подарка: некорректные или неполные данные корзины',
+            format_user_id=_format_user_id(user),
+            cart_data=cart_data,
+        )
+        await user_cart_service.delete_user_cart(user.id)
+        await user_cart_service.clear_topup_intent(user.id)
+        return False
+
+    # If bot is None, delivery of claim link cannot be confirmed safely
+    if not bot:
+        logger.warning(
+            'Автопокупка подарка: бот недоступен, выдача ссылки невозможна',
+            format_user_id=_format_user_id(user),
+        )
+        return False
+
+    # Delivery retry must win over repricing. A committed purchase may have
+    # consumed a one-time promo, so recalculating first would make the same gift
+    # look more expensive and incorrectly block idempotent link delivery.
+    existing_stmt = select(GuestPurchase.id).where(
+        GuestPurchase.idempotency_key == checkout_id,
+        GuestPurchase.buyer_user_id == user.id,
+        GuestPurchase.tariff_id == tariff_id,
+        GuestPurchase.period_days == period_days,
+        GuestPurchase.status.in_(
+            (
+                GuestPurchaseStatus.PAID.value,
+                GuestPurchaseStatus.DELIVERED.value,
+            )
+        ),
+    )
+    existing_res = await db.execute(existing_stmt)
+    if existing_res.scalar_one_or_none() is not None:
+        bot_username, cabinet_url = await resolve_gift_claim_channel(bot=bot)
+        if not bot_username and not cabinet_url:
+            logger.warning(
+                'Автопокупка подарка: каналы повторной выдачи ссылки недоступны',
+                format_user_id=_format_user_id(user),
+            )
+            return False
+
+        try:
+            replay_result = await purchase_gift_from_balance(
+                db=db,
+                buyer_id=user.id,
+                tariff_id=tariff_id,
+                period_days=period_days,
+                expected_price_kopeks=saved_expected_price,
+                idempotency_key=checkout_id,
+                source='bot',
+            )
+        except Exception as replay_err:
+            logger.error(
+                'Автопокупка подарка: не удалось загрузить результат для повторной выдачи',
+                error=str(replay_err),
+                exc_info=True,
+            )
+            return False
+
+        delivered = await _deliver_auto_purchased_gift(
+            bot=bot,
+            user=user,
+            purchase_result=replay_result,
+            bot_username=bot_username,
+            cabinet_url=cabinet_url,
+            checkout_id=checkout_id,
+        )
+        if delivered:
+            logger.info(
+                'Автопокупка подарка: ссылка на ранее созданный подарок выдана повторно',
+                format_user_id=_format_user_id(user),
+                tariff_id=tariff_id,
+                period_days=period_days,
+            )
+        return delivered
+
+    texts = get_texts(getattr(user, 'language', 'ru'))
+
+    # Requote to ensure current availability and pricing
+    try:
+        quote = await quote_gift_purchase(db, buyer=user, tariff_id=tariff_id, period_days=period_days)
+    except (
+        GiftFeatureDisabledError,
+        GiftTariffUnavailableError,
+        GiftPeriodUnavailableError,
+        GiftPurchaseRestrictedError,
+    ) as term_err:
+        logger.warning(
+            'Автопокупка подарка: услуга или тариф более недоступны (терминальная ошибка)',
+            format_user_id=_format_user_id(user),
+            error=str(term_err),
+        )
+        await user_cart_service.delete_user_cart(user.id)
+        await user_cart_service.clear_topup_intent(user.id)
+        if bot and getattr(user, 'telegram_id', None) and settings.is_notifications_enabled():
+            try:
+                err_msg = texts.t(
+                    'GIFT_AUTO_PURCHASE_FAILED',
+                    '❌ Не удалось автоматически оформить подарок: выбранный тариф или услуга более недоступны.',
+                )
+                await bot.send_message(chat_id=user.telegram_id, text=err_msg)
+            except Exception as notify_err:
+                logger.warning('Не удалось уведомить пользователя о сбое автопокупки подарка', error=str(notify_err))
+        return False
+    except GiftError as err:
+        logger.error('Автопокупка подарка: ошибка расчета котировки', error=str(err))
+        return False
+
+    # Check if price changed
+    if quote.final_price_kopeks != saved_expected_price:
+        logger.info(
+            'Автопокупка подарка: цена изменилась, требуется повторное подтверждение пользователем',
+            format_user_id=_format_user_id(user),
+            saved_price=saved_expected_price,
+            fresh_price=quote.final_price_kopeks,
+        )
+        cart_data['total_price'] = quote.final_price_kopeks
+        cart_data['missing_amount'] = max(0, quote.final_price_kopeks - user.balance_kopeks)
+        cart_data['return_to_cart'] = False
+        await user_cart_service.save_user_cart(user.id, cart_data)
+        await user_cart_service.clear_topup_intent(user.id)
+        return False
+
+    # Check if balance is still insufficient (partial top-up)
+    if user.balance_kopeks < saved_expected_price:
+        logger.info(
+            'Автопокупка подарка: баланса все еще недостаточно (частичное пополнение)',
+            format_user_id=_format_user_id(user),
+            balance=user.balance_kopeks,
+            required=saved_expected_price,
+        )
+        cart_data['missing_amount'] = saved_expected_price - user.balance_kopeks
+        await user_cart_service.save_user_cart(user.id, cart_data)
+        return False
+
+    # Preflight claim channels before debiting
+    bot_username, cabinet_url = await resolve_gift_claim_channel(bot=bot)
+    if not bot_username and not cabinet_url:
+        logger.warning(
+            'Автопокупка подарка: каналы выдачи ссылки недоступны (транзиентная ошибка)',
+            format_user_id=_format_user_id(user),
+        )
+        return False
+
+    try:
+        purchase_result = await purchase_gift_from_balance(
+            db=db,
+            buyer_id=user.id,
+            tariff_id=tariff_id,
+            period_days=period_days,
+            expected_price_kopeks=saved_expected_price,
+            idempotency_key=checkout_id,
+            source='bot',
+        )
+    except GiftInsufficientBalanceError:
+        return False
+    except GiftPriceChangedError as err:
+        cart_data['total_price'] = err.fresh_quote.final_price_kopeks
+        cart_data['missing_amount'] = max(0, err.fresh_quote.final_price_kopeks - user.balance_kopeks)
+        cart_data['return_to_cart'] = False
+        await user_cart_service.save_user_cart(user.id, cart_data)
+        await user_cart_service.clear_topup_intent(user.id)
+        return False
+    except (
+        GiftFeatureDisabledError,
+        GiftTariffUnavailableError,
+        GiftPeriodUnavailableError,
+        GiftPurchaseRestrictedError,
+    ):
+        await user_cart_service.delete_user_cart(user.id)
+        await user_cart_service.clear_topup_intent(user.id)
+        return False
+    except Exception as err:
+        logger.error('Автопокупка подарка: неожиданная ошибка покупки', error=str(err), exc_info=True)
+        return False
+
+    if not await _deliver_auto_purchased_gift(
+        bot=bot,
+        user=user,
+        purchase_result=purchase_result,
+        bot_username=bot_username,
+        cabinet_url=cabinet_url,
+        checkout_id=checkout_id,
+    ):
+        return False
+
+    logger.info(
+        'Автопокупка подарка: подарок успешно оформлен и доставлен после пополнения',
+        format_user_id=_format_user_id(user),
+        tariff_id=tariff_id,
+        period_days=period_days,
+        total_price=saved_expected_price,
+    )
+    return True
+
+
 async def auto_purchase_saved_cart_after_topup(
     db: AsyncSession,
     user: User,
@@ -3181,6 +3448,23 @@ async def auto_purchase_saved_cart_after_topup(
     if not user or not getattr(user, 'id', None):
         return False
 
+    # Check for explicit global gift_purchase cart first (isolated from subscription carts)
+    global_cart = await user_cart_service.get_user_cart(user.id)
+    if global_cart and (global_cart.get('cart_mode') == 'gift_purchase' or global_cart.get('mode') == 'gift_purchase'):
+        has_fresh_intent = await user_cart_service.has_topup_intent(user.id)
+        if not has_fresh_intent:
+            logger.info(
+                'Автопокупка подарка: пропуск — нет свежего намерения пополнить ради корзины',
+                format_user_id=_format_user_id(user),
+            )
+            return False
+
+        succeeded = await _auto_purchase_gift(db, user, global_cart, bot=bot)
+        if succeeded:
+            await user_cart_service.clear_topup_intent(user.id)
+            await user_cart_service.delete_user_cart(user.id)
+        return succeeded
+
     # Collect all carts: per-subscription + global (deduplicated)
     carts_to_process: list[dict] = []
     seen_subscription_ids: set[int] = set()
@@ -3195,7 +3479,6 @@ async def auto_purchase_saved_cart_after_topup(
 
     # 2. Global cart (backward compat): only add if its subscription_id
     #    is not already covered by a per-subscription cart.
-    global_cart = await user_cart_service.get_user_cart(user.id)
     if global_cart:
         global_sub_id = _safe_int(global_cart.get('subscription_id'))
         if global_sub_id and global_sub_id in seen_subscription_ids:
