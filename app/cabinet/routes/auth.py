@@ -18,6 +18,7 @@ from app.database.crud.user import (
     clear_email_change_pending,
     create_user,
     create_user_by_email,
+    get_user_by_email_alias,
     get_user_by_id,
     get_user_by_referral_code,
     get_user_by_telegram_id,
@@ -1355,6 +1356,20 @@ async def register_email_standalone(
             detail='This email is already registered',
         )
 
+    # ...и что это не другая запись того же ящика: «user+1@gmail.com» проходит
+    # проверку выше, письма при этом уходят владельцу «user@gmail.com»
+    alias_owner = await get_user_by_email_alias(db, request.email)
+    if alias_owner:
+        logger.info(
+            'Registration blocked: email alias of an existing account',
+            email=request.email,
+            existing_user_id=alias_owner.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='This email is already registered',
+        )
+
     # Хешировать пароль
     password_hash = hash_password(request.password)
 
@@ -2082,6 +2097,7 @@ async def request_email_change(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Disposable email addresses are not allowed',
         )
+
 
     # Check if new email is already taken
     if await is_email_taken(db, request.new_email, exclude_user_id=user.id):

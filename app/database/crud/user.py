@@ -1485,6 +1485,49 @@ async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def get_user_by_email_alias(db: AsyncSession, email: str) -> User | None:
+    """Найти пользователя, чей адрес ведёт в тот же ящик, что и ``email``.
+
+    ``user+1@gmail.com`` и ``u.ser@gmail.com`` — разные строки, но один ящик:
+    подтверждение адреса проходит штатно, письма приходят тому же человеку.
+    Сравнение по одному лишь регистру этого не видит, и на каждом таком алиасе
+    заводится отдельный аккаунт со своей пробной подпиской.
+
+    Точное совпадение остаётся за ``get_user_by_email`` — здесь ищем именно
+    другую запись адреса. Для доменов без алиасов (корпоративных и незнакомых)
+    запрос не выполняется вовсе.
+    """
+    from app.utils.email_alias import (
+        canonical_email,
+        canonical_local_sql,
+        email_domain,
+        has_alias_forms,
+        sibling_domains,
+    )
+
+    if not email or not email.strip() or not has_alias_forms(email):
+        return None
+
+    domain = email_domain(email)
+    canonical = canonical_email(email)
+    local = canonical.split('@', 1)[0]
+
+    # Домен в базе может быть записан любым из близнецов (ya.ru / yandex.ru),
+    # поэтому канон локальной части считаем для каждого написания отдельно
+    conditions = [
+        and_(
+            func.lower(func.split_part(User.email, '@', 2)) == sibling,
+            canonical_local_sql(User.email, domain) == local,
+        )
+        for sibling in sorted(sibling_domains(domain))
+    ]
+
+    result = await db.execute(
+        select(User).where(User.email.isnot(None), or_(*conditions)).limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def is_email_taken(db: AsyncSession, email: str, exclude_user_id: int | None = None) -> bool:
     """
     Check if email is already taken by another user.
@@ -1504,7 +1547,12 @@ async def is_email_taken(db: AsyncSession, email: str, exclude_user_id: int | No
     if exclude_user_id:
         query = query.where(User.id != exclude_user_id)
     result = await db.execute(query)
-    return result.scalar_one_or_none() is not None
+    if result.scalar_one_or_none() is not None:
+        return True
+
+    # Другая запись того же ящика занимает его не меньше, чем точное совпадение
+    alias_owner = await get_user_by_email_alias(db, email)
+    return alias_owner is not None and alias_owner.id != exclude_user_id
 
 
 async def set_email_change_pending(
