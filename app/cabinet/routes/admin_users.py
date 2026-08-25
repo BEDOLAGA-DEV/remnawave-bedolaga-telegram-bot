@@ -72,6 +72,7 @@ from ..schemas.users import (
     AdminUserGiftsResponse,
     AssignReferrerRequest,
     AssignReferrerResponse,
+    CancelAllRecurringResponse,
     DeleteDeviceResponse,
     DeleteUserRequest,
     DeleteUserResponse,
@@ -1979,6 +1980,35 @@ async def cancel_user_sbp_recurring(
     )
 
     return {'status': 'cancelled'}
+
+
+@router.post('/{user_id}/cancel-all-recurring', response_model=CancelAllRecurringResponse)
+async def admin_cancel_all_user_recurring(
+    user_id: int,
+    admin: User = Depends(require_permission('users:subscription')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Admin endpoint to force-cancel all recurring subscriptions across payment APIs (Platega, Lava, Antilopay),
+    deactivate saved payment methods (YooKassa), and disable bot autopay, regardless of DB status.
+    """
+    from app.services.admin_recurring_cancellation_service import cancel_all_user_recurring_subscriptions
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    report = await cancel_all_user_recurring_subscriptions(db, user_id)
+
+    logger.info(
+        'Admin force-cancelled all recurring subscriptions for user',
+        admin_id=admin.id,
+        user_id=user_id,
+        total_actions=report['summary']['total_actions'],
+        success_count=report['summary']['success_count'],
+        failed_count=report['summary']['failed_count'],
+    )
+
+    return report
 
 
 # === Available Tariffs ===

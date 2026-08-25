@@ -392,3 +392,8 @@ class PlategaService:
         except Exception:
             logger.warning('Failed to parse Platega expiresIn value', expires_in=expires_in)
             return None
+
+
+# Singleton instance
+platega_service = PlategaService()
+

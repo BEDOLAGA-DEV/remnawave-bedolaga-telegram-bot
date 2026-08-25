@@ -898,3 +898,35 @@ class AdminGenerateLoginLinkResponse(BaseModel):
     message: str
     login_link: str | None = None
 
+
+# === Recurring Cancellation Report ===
+
+
+class RecurringCancellationResultItem(BaseModel):
+    """Result of an individual recurring subscription cancellation attempt."""
+
+    provider: str
+    provider_title: str
+    target_id: str
+    status: str  # "success" | "error" | "info"
+    message: str
+    error: str | None = None
+
+
+class RecurringCancellationSummary(BaseModel):
+    """Summary counts for recurring cancellations."""
+
+    total_actions: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+
+
+class CancelAllRecurringResponse(BaseModel):
+    """Full report returned by admin force cancel-all-recurring endpoint."""
+
+    success: bool
+    summary: RecurringCancellationSummary
+    results: list[RecurringCancellationResultItem] = []
+    message: str
+
+
