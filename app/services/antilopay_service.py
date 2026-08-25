@@ -50,6 +50,10 @@ class AntilopayService:
     def project_id(self) -> str:
         return settings.ANTILOPAY_PROJECT_ID or ''
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.secret_id and self.private_key and self.project_id)
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """Возвращает переиспользуемую HTTP-сессию."""
         if self._session is None or self._session.closed:

@@ -85,6 +85,10 @@ class LavaService:
     def webhook_secret(self) -> str:
         return settings.LAVA_WEBHOOK_SECRET or ''
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.shop_id and self.secret_key)
+
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(

@@ -117,7 +117,7 @@ async def test_cancel_all_recurring_platega_calls_api_and_updates_db(monkeypatch
 
         result = await cancel_all_user_recurring_subscriptions(db, user_id=1)
 
-        mock_platega_service.cancel_subscription.assert_awaited_once_with('platega_sub_123')
+        mock_platega_service.cancel_subscription.assert_awaited_once_with('platega_sub_123', return_status=True)
         assert result['success'] is True
         assert result['summary']['total_actions'] == 1
         assert result['summary']['success_count'] == 1

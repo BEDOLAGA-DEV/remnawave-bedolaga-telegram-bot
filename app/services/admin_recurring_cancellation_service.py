@@ -84,10 +84,15 @@ async def cancel_all_user_recurring_subscriptions(
                     })
                 else:
                     try:
-                        api_res = await platega_service.cancel_subscription(
-                            p_rec.platega_subscription_id
+                        resp = await platega_service.cancel_subscription(
+                            p_rec.platega_subscription_id, return_status=True
                         )
-                        if api_res is not None:
+                        if isinstance(resp, tuple):
+                            api_res, http_status = resp
+                        else:
+                            api_res, http_status = resp, None
+
+                        if (http_status is None or http_status < 400) and api_res is not None:
                             results.append({
                                 'provider': 'platega',
                                 'provider_title': 'Platega (СБП)',
@@ -95,14 +100,33 @@ async def cancel_all_user_recurring_subscriptions(
                                 'status': 'success',
                                 'message': f'Подписка {target_id} успешно отменена через API Platega (статус в БД был: {old_status})',
                             })
+                        elif http_status == 404 or (
+                            isinstance(api_res, dict)
+                            and any(
+                                k in str(api_res).lower()
+                                for k in ['not found', 'already', 'не найдена', 'отменена']
+                            )
+                        ):
+                            results.append({
+                                'provider': 'platega',
+                                'provider_title': 'Platega (СБП)',
+                                'target_id': target_id,
+                                'status': 'success',
+                                'message': f'Подписка {target_id} уже отменена или не найдена в Platega',
+                            })
                         else:
+                            err_detail = None
+                            if isinstance(api_res, dict):
+                                err_detail = api_res.get('message') or str(api_res)
+                            elif http_status:
+                                err_detail = f'HTTP {http_status}'
                             results.append({
                                 'provider': 'platega',
                                 'provider_title': 'Platega (СБП)',
                                 'target_id': target_id,
                                 'status': 'error',
-                                'message': f'API Platega вернул ошибку (None) при отмене {target_id}',
-                                'error': 'Platega API returned None',
+                                'message': f'API Platega вернул ошибку при отмене {target_id}: {err_detail or "Unknown error"}',
+                                'error': err_detail or 'Platega API error',
                             })
                     except Exception as exc:
                         logger.warning('Ошибка вызова API Platega cancel_subscription', error=str(exc))
