@@ -97,6 +97,9 @@ class LandingPaymentMethod(BaseModel):
     # Enabled sub-options with display labels (e.g. СБП, Карта).
     # None or empty means no sub-option selection needed.
     sub_options: list[LandingPaymentMethodSubOption] | None = None
+    # True when paying with this method registers a recurring charge
+    # (card-on-file) — the frontend must show the consent checkbox.
+    requires_recurring_consent: bool = False
 
 
 class LandingDiscountInfo(BaseModel):
@@ -751,6 +754,14 @@ async def get_landing_config(
             if resolved:
                 resolved_sub_options = resolved
 
+        requires_recurring_consent = False
+        if (
+            method_id == 'etoplatezhi'
+            and settings.ETOPLATEZHI_RECURRENT_ENABLED
+            and settings.ETOPLATEZHI_RECURRENT_REQUIRED
+        ) or (method_id == 'yookassa' and getattr(settings, 'YOOKASSA_RECURRENT_ENABLED', False)):
+            requires_recurring_consent = True
+
         payment_methods.append(
             LandingPaymentMethod(
                 method_id=method_id,
@@ -762,6 +773,7 @@ async def get_landing_config(
                 max_amount_kopeks=m.get('max_amount_kopeks'),
                 currency=m.get('currency'),
                 sub_options=resolved_sub_options,
+                requires_recurring_consent=requires_recurring_consent,
             )
         )
 
