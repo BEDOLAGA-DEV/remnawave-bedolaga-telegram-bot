@@ -339,6 +339,7 @@ async def _sync_subscription_to_panel(
     reset_traffic: bool = False,
     reset_traffic_reason: str | None = None,
     pinned_subscription_identity: bool = False,
+    tariff_switch_reset: bool = False,
 ) -> dict:
     """
     Sync user subscription to Remnawave panel.
@@ -366,6 +367,7 @@ async def _sync_subscription_to_panel(
             is_user_not_found_error,
         )
         from app.services.grace_access_runtime import (
+            apply_grace_tariff_switch_reset,
             create_panel_user_grace_safe,
             update_panel_user_grace_safe,
         )
@@ -561,7 +563,14 @@ async def _sync_subscription_to_panel(
             )
             if reset_traffic and _reset_panel_user_id:
                 try:
-                    await api.reset_user_traffic(_reset_panel_user_id)
+                    grace_reset_handled = False
+                    if tariff_switch_reset:
+                        grace_reset_handled = await apply_grace_tariff_switch_reset(
+                            subscription.id,
+                            source='cabinet.admin_users._sync_subscription_to_panel',
+                        )
+                    if not grace_reset_handled:
+                        await api.reset_user_traffic(_reset_panel_user_id)
                     changes['traffic_reset'] = True
                     reason_text = f' ({reset_traffic_reason})' if reset_traffic_reason else ''
                     logger.info('Reset RemnaWave traffic for user', user_id=user.id, reason=reason_text)
@@ -1596,6 +1605,7 @@ async def update_user_subscription(
                 subscription,
                 reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                 reset_traffic_reason='смена тарифа (cabinet admin)',
+                tariff_switch_reset=True,
             )
         except Exception as e:
             logger.error('Failed to sync tariff switch with RemnaWave', error=e)

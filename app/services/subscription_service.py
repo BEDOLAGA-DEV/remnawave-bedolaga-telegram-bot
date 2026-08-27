@@ -170,6 +170,7 @@ class SubscriptionService:
         *,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
+        tariff_switch_reset: bool = False,
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)
@@ -177,7 +178,10 @@ class SubscriptionService:
                 logger.error('Пользователь не найден', user_id=subscription.user_id)
                 return None
 
-            from app.services.grace_access_runtime import lock_grace_sensitive_panel_updates
+            from app.services.grace_access_runtime import (
+                apply_grace_tariff_switch_reset_locked,
+                lock_grace_sensitive_panel_updates,
+            )
 
             await lock_grace_sensitive_panel_updates(db, (subscription.id,))
             validation_success = await self.validate_and_clean_subscription(db, subscription, user)
@@ -240,6 +244,12 @@ class SubscriptionService:
                     if user_tag is not None:
                         metadata_kwargs['tag'] = user_tag
                     updated_user = await api.update_user(**metadata_kwargs)
+                    if reset_traffic and tariff_switch_reset:
+                        await apply_grace_tariff_switch_reset_locked(
+                            db,
+                            subscription.id,
+                            source='subscription_service.create_remnawave_user',
+                        )
                     subscription.remnawave_short_uuid = updated_user.short_uuid
                     subscription.subscription_url = updated_user.subscription_url
                     subscription.subscription_crypto_link = updated_user.happ_crypto_link
@@ -693,6 +703,7 @@ class SubscriptionService:
         reset_traffic: bool = False,
         reset_reason: str | None = None,
         sync_squads: bool = True,
+        tariff_switch_reset: bool = False,
     ) -> RemnaWaveUser | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)
@@ -724,6 +735,7 @@ class SubscriptionService:
             # overlay with the still-expired/limited billing state. A real renewal
             # changes actual_status to active and is intentionally allowed.
             from app.services.grace_access_runtime import (
+                apply_grace_tariff_switch_reset_locked,
                 apply_recovered_grace_update_locked,
                 lock_grace_sensitive_panel_updates,
             )
@@ -767,6 +779,12 @@ class SubscriptionService:
                     if user_tag is not None:
                         metadata_kwargs['tag'] = user_tag
                     updated_user = await api.update_user(**metadata_kwargs)
+                    if reset_traffic and tariff_switch_reset:
+                        await apply_grace_tariff_switch_reset_locked(
+                            db,
+                            subscription.id,
+                            source='subscription_service.update_remnawave_user',
+                        )
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
                 await db.commit()
@@ -904,8 +922,16 @@ class SubscriptionService:
                 # Пользователя удалили из панели, пока подписка жива в боте, —
                 # пересоздаём вместо ошибки (create-флоу сам найдёт/создаст
                 # панель-юзера и сохранит новый id и ссылки в подписку).
+                recreate_kwargs: dict[str, Any] = {
+                    'reset_traffic': reset_traffic,
+                    'reset_reason': reset_reason,
+                }
+                if tariff_switch_reset:
+                    recreate_kwargs['tariff_switch_reset'] = True
                 return await self.recreate_deleted_panel_user(
-                    db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
+                    db,
+                    subscription,
+                    **recreate_kwargs,
                 )
             logger.error('Ошибка RemnaWave API', error=e)
             return None
@@ -921,6 +947,7 @@ class SubscriptionService:
         *,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
+        tariff_switch_reset: bool = False,
     ) -> RemnaWaveUser | None:
         """Пересоздаёт панель-юзера, удалённого из RemnaWave при живой подписке.
 
@@ -944,8 +971,16 @@ class SubscriptionService:
             subscription_id=subscription.id,
             user_id=subscription.user_id,
         )
+        create_kwargs: dict[str, Any] = {
+            'reset_traffic': reset_traffic,
+            'reset_reason': reset_reason,
+        }
+        if tariff_switch_reset:
+            create_kwargs['tariff_switch_reset'] = True
         return await self.create_remnawave_user(
-            db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
+            db,
+            subscription,
+            **create_kwargs,
         )
 
     @staticmethod

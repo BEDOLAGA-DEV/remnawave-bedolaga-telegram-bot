@@ -3895,6 +3895,7 @@ async def confirm_tariff_switch(
                     subscription,
                     reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                     reset_reason='переключение тарифа',
+                    tariff_switch_reset=True,
                 )
             else:
                 await subscription_service.update_remnawave_user(
@@ -3902,6 +3903,7 @@ async def confirm_tariff_switch(
                     subscription,
                     reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                     reset_reason='переключение тарифа',
+                    tariff_switch_reset=True,
                 )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave при переключении тарифа', error=e)
@@ -4190,6 +4192,7 @@ async def confirm_daily_tariff_switch(
                     subscription,
                     reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                     reset_reason='смена на суточный тариф',
+                    tariff_switch_reset=True,
                 )
             else:
                 await subscription_service.update_remnawave_user(
@@ -4197,6 +4200,7 @@ async def confirm_daily_tariff_switch(
                     subscription,
                     reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                     reset_reason='смена на суточный тариф',
+                    tariff_switch_reset=True,
                 )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave', error=e)
@@ -5147,6 +5151,7 @@ async def confirm_instant_switch(
                     subscription,
                     reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                     reset_reason='мгновенное переключение тарифа',
+                    tariff_switch_reset=True,
                 )
             else:
                 await subscription_service.update_remnawave_user(
@@ -5154,6 +5159,7 @@ async def confirm_instant_switch(
                     subscription,
                     reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
                     reset_reason='мгновенное переключение тарифа',
+                    tariff_switch_reset=True,
                 )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave при мгновенном переключении', error=e)
