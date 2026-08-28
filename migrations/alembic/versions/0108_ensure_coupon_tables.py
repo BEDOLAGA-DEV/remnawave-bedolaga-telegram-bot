@@ -17,7 +17,7 @@ Idempotent: guarded by inspector — no-op on databases that already have these
 tables (fresh installs and non-slig deployments).
 
 Revision ID: 0108
-Revises: 0107
+Revises: 0107c
 Create Date: 2026-08-12
 """
 
@@ -28,7 +28,7 @@ from alembic import op
 
 
 revision: str = '0108'
-down_revision: Union[str, None] = '0107'
+down_revision: Union[str, None] = '0107c'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
