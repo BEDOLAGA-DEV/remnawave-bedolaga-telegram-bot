@@ -133,8 +133,20 @@ class EmailNotificationTemplates:
         # Tier 3: Simple HTML fragment — use base template for structure
         return self._get_base_template(content, language)
 
-    def _get_base_template(self, content: str, language: str = 'ru') -> str:
-        """Wrap content in base HTML template."""
+    _UNSUBSCRIBE_TEXTS = {
+        'ru': 'Отписаться от рассылок',
+        'en': 'Unsubscribe from marketing emails',
+        'zh': '退订营销邮件',
+        'ua': 'Відписатися від розсилок',
+        'fa': 'لغو اشتراک ایمیل‌های تبلیغاتی',
+    }
+
+    def _get_base_template(self, content: str, language: str = 'ru', unsubscribe_url: str = '') -> str:
+        """Wrap content in base HTML template.
+
+        ``unsubscribe_url`` непустой только у маркетинговых писем — у писем со
+        сбросом пароля или чеком отписке взяться неоткуда.
+        """
         footer_texts = {
             'ru': 'Это автоматическое сообщение. Пожалуйста, не отвечайте на это письмо.',
             'en': 'This is an automated message. Please do not reply to this email.',
@@ -143,6 +155,14 @@ class EmailNotificationTemplates:
             'fa': 'این یک پیام خودکار است. لطفاً به این ایمیل پاسخ ندهید.',
         }
         footer_text = footer_texts.get(language, footer_texts['ru'])
+
+        unsubscribe_block = ''
+        if unsubscribe_url:
+            unsubscribe_label = self._UNSUBSCRIBE_TEXTS.get(language, self._UNSUBSCRIBE_TEXTS['ru'])
+            unsubscribe_block = (
+                f'<p><a href="{html.escape(unsubscribe_url, quote=True)}" '
+                f'style="color: #666;">{unsubscribe_label}</a></p>'
+            )
 
         return f"""
 <!DOCTYPE html>
@@ -235,6 +255,7 @@ class EmailNotificationTemplates:
         <div class="footer">
             <p>&copy; {self.service_name}</p>
             <p>{footer_text}</p>
+            {unsubscribe_block}
         </div>
     </div>
 </body>
@@ -814,7 +835,9 @@ class EmailNotificationTemplates:
         }
         return {
             'subject': subjects.get(language, subjects['ru']),
-            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+            'body_html': self._get_base_template(
+                bodies.get(language, bodies['ru']), language, context.get('unsubscribe_url', '')
+            ),
         }
 
     def _winback_discount_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
@@ -835,7 +858,9 @@ class EmailNotificationTemplates:
         }
         return {
             'subject': subjects.get(language, subjects['ru']),
-            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+            'body_html': self._get_base_template(
+                bodies.get(language, bodies['ru']), language, context.get('unsubscribe_url', '')
+            ),
         }
 
     def _winback_trial_ending_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
@@ -854,7 +879,9 @@ class EmailNotificationTemplates:
         }
         return {
             'subject': subjects.get(language, subjects['ru']),
-            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+            'body_html': self._get_base_template(
+                bodies.get(language, bodies['ru']), language, context.get('unsubscribe_url', '')
+            ),
         }
 
     def _subscription_activated_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
@@ -1234,9 +1261,28 @@ class EmailNotificationTemplates:
     # ============================================================================
 
     def _referral_bonus_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
-        """Template for referral bonus notification."""
-        bonus = context.get('formatted_bonus', f'{context.get("bonus_rubles", 0):.2f} ₽')
+        """Template for referral bonus notification.
+
+        Награда может быть выдана днями подписки, а не деньгами. В копейках такая
+        награда честно нулевая, поэтому текст строится по ``formatted_reward`` —
+        единственному полю, верному и для денег, и для дней, и для их сочетания.
+        Без него письмо о выданных семи днях уходит как «Реферальный бонус: +0.00 ₽».
+        """
+        bonus = context.get('formatted_reward') or context.get(
+            'formatted_bonus', f'{context.get("bonus_rubles", 0):.2f} ₽'
+        )
         referral_name = html.escape(context.get('referral_name', ''))
+        raw_level = context.get('level', 1)
+        try:
+            show_level = int(raw_level or 1) > 1
+        except (TypeError, ValueError):
+            # Редактор шаблонов рендерит их с токенами вида '{level}'. Уровень там
+            # неизвестен, но блок обязан попасть в payload — иначе админ его просто
+            # не увидит и не сможет отредактировать.
+            show_level = True
+        level_label = html.escape(str(raw_level))
+        level_note_ru = f'<p>Уровень вашей сети: {level_label}</p>' if show_level else ''
+        level_note_en = f'<p>Network level: {level_label}</p>' if show_level else ''
 
         subjects = {
             'ru': f'Реферальный бонус: +{bonus}',
@@ -1251,6 +1297,7 @@ class EmailNotificationTemplates:
                 <div class="highlight success">
                     <p>Вы получили реферальный бонус: <span class="amount">+{bonus}</span></p>
                     {f'<p>Благодаря пользователю: {referral_name}</p>' if referral_name else ''}
+                    {level_note_ru}
                 </div>
                 <p>Продолжайте приглашать друзей и зарабатывайте больше!</p>
                 {self._get_cabinet_button(language)}
@@ -1260,6 +1307,7 @@ class EmailNotificationTemplates:
                 <div class="highlight success">
                     <p>You received a referral bonus: <span class="amount">+{bonus}</span></p>
                     {f'<p>Thanks to: {referral_name}</p>' if referral_name else ''}
+                    {level_note_en}
                 </div>
                 <p>Keep inviting friends and earn more!</p>
                 {self._get_cabinet_button(language)}
@@ -1346,7 +1394,9 @@ class EmailNotificationTemplates:
 
         return {
             'subject': subjects.get(language, subjects['ru']),
-            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+            'body_html': self._get_base_template(
+                bodies.get(language, bodies['ru']), language, context.get('unsubscribe_url', '')
+            ),
         }
 
     def _referral_registered_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:

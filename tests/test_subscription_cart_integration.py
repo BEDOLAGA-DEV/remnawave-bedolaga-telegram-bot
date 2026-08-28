@@ -34,6 +34,7 @@ def mock_user():
     user.balance_kopeks = 10000
     user.subscription = None
     user.has_had_paid_subscription = False
+    user.promo_group = None
     user.promo_group_id = None
     user.get_primary_promo_group = MagicMock(return_value=None)
     user.get_promo_discount = MagicMock(return_value=0)
@@ -269,7 +270,7 @@ async def test_return_to_saved_cart_normalizes_devices_when_disabled(
         patch('app.handlers.subscription.purchase.get_subscription_confirm_keyboard_with_cart') as mock_keyboard_func,
         patch('app.handlers.subscription.purchase.settings') as mock_settings,
         patch(
-            'app.handlers.subscription.pricing._prepare_subscription_summary',
+            'app.handlers.subscription.purchase._prepare_subscription_summary',
             new=AsyncMock(return_value=('ignored', sanitized_summary_data)),
         ),
     ):
@@ -332,10 +333,12 @@ async def test_return_to_saved_cart_insufficient_funds(mock_callback_query, mock
         patch('app.handlers.subscription.purchase.user_cart_service') as mock_cart_service,
         patch('app.localization.texts.get_texts') as mock_get_texts,
         patch('app.handlers.subscription.purchase.get_insufficient_balance_keyboard_with_cart') as mock_keyboard_func,
+        patch('app.handlers.subscription.purchase._prepare_subscription_summary') as mock_prepare_summary,
     ):
         # Подготовим моки
         mock_cart_service.get_user_cart = AsyncMock(return_value=cart_data)
         mock_cart_service.save_user_cart = AsyncMock(return_value=True)
+        mock_prepare_summary.return_value = ('summary', {'total_price': 50000})
         mock_keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text='Пополнить', callback_data='topup')]]
         )

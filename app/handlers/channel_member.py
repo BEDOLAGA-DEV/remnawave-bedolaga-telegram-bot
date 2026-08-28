@@ -118,6 +118,9 @@ async def on_user_joined_channel(event: ChatMemberUpdated, bot: Bot) -> None:
 
             # Notify the user
             try:
+                if not settings.is_notifications_enabled():
+                    await db.commit()
+                    return
                 texts = get_texts(db_user.language or DEFAULT_LANGUAGE)
                 notification_text = texts.t(
                     'SUBSCRIPTION_REACTIVATED_CHANNEL_SUBSCRIBE',
@@ -212,6 +215,9 @@ async def on_user_left_channel(event: ChatMemberUpdated, bot: Bot) -> None:
 
             # Notify the user with channel subscription keyboard
             try:
+                if not settings.is_notifications_enabled():
+                    await db.commit()
+                    return
                 texts = get_texts(db_user.language or DEFAULT_LANGUAGE)
                 unsub_channels = await channel_subscription_service.get_channels_with_status(user.id)
                 notification_text = texts.t(

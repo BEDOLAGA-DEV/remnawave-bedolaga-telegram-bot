@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, validator
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.crud.discount_offer import (
     count_discount_offers,
     list_discount_offers,
@@ -36,6 +37,7 @@ from app.database.models import (
 from app.handlers.admin.messages import get_custom_users, get_target_users, get_target_users_count
 from app.services.broadcast_service import BroadcastConfig, broadcast_service
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
+from app.utils.notification_prefs import is_promo_offers_enabled
 
 from ..dependencies import get_cabinet_db, require_permission
 
@@ -551,7 +553,7 @@ def _build_default_promo_message(
 
 
 async def _send_promo_email_notifications(
-    targets: list[tuple[str, str, str]],
+    targets: list[tuple[str, str, str, int]],
     *,
     message_text: str | None,
     discount_percent: int,
@@ -561,7 +563,7 @@ async def _send_promo_email_notifications(
     """Send promo offer notifications to email-only users.
 
     Args:
-        targets: list of (email, language, username). Скалярные значения (не
+        targets: list of (email, language, username, user_id). Скалярные значения (не
             ORM) — как и Telegram-фан-аут, может бежать detached после
             закрытия сессии запроса.
 
@@ -576,13 +578,14 @@ async def _send_promo_email_notifications(
     # SMTP медленнее и капризнее Telegram — небольшой параллелизм
     semaphore = asyncio.Semaphore(4)
 
-    async def send_single(email: str, language: str, username: str) -> bool:
+    async def send_single(email: str, language: str, username: str, user_id: int) -> bool:
         async with semaphore:
             try:
                 return await send_promo_offer_email(
                     email=email,
                     language=language,
                     username=username,
+                    user_id=user_id,
                     message_text=message_text,
                     valid_hours=valid_hours,
                     discount_percent=discount_percent,
@@ -673,8 +676,11 @@ async def broadcast_offer(
 
     # Reduce to plain (telegram_id, offer_id) so the fan-out can run detached: the
     # request's DB session closes on return, and ORM objects would then fail to lazy-load.
+    notifications_enabled = settings.is_notifications_enabled()
     notify_targets = [
-        (recipient.telegram_id, offer.id) for recipient, offer in offers_to_notify if recipient.telegram_id
+        (recipient.telegram_id, offer.id)
+        for recipient, offer in offers_to_notify
+        if notifications_enabled and recipient.telegram_id and is_promo_offers_enabled(recipient)
     ]
 
     # Email-only юзеры (без telegram_id): оффер у них уже создан выше, но о нём
@@ -682,9 +688,15 @@ async def broadcast_offer(
     # на подтверждённую почту тот же текст (скалярные поля — фан-аут может
     # бежать detached после закрытия сессии запроса).
     email_targets = [
-        (recipient.email, recipient.language or 'ru', recipient.first_name or recipient.username or '')
+        (recipient.email, recipient.language or 'ru', recipient.first_name or recipient.username or '', recipient.id)
         for recipient, _offer in offers_to_notify
-        if not recipient.telegram_id and recipient.email and recipient.email_verified
+        # Отписавшихся от промо пропускаем: тумблер кабинета обязан работать и
+        # для почты, иначе отписка ничего не меняет и превращается в жалобу.
+        if notifications_enabled
+        and not recipient.telegram_id
+        and recipient.email
+        and recipient.email_verified
+        and is_promo_offers_enabled(recipient)
     ]
 
     # Send Telegram/email notifications if requested

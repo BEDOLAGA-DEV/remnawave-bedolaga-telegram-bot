@@ -72,6 +72,10 @@ async def send_poll_to_users(
 ) -> dict:
     from app.database.database import AsyncSessionLocal
 
+    if not settings.is_notifications_enabled():
+        skipped = len(list(users))
+        return {'sent': 0, 'failed': 0, 'skipped': skipped, 'total': skipped}
+
     sent = 0
     failed = 0
     skipped = 0

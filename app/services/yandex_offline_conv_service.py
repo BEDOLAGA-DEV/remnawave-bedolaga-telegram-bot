@@ -228,7 +228,14 @@ async def _fire_bg(event_name: str, event_fn, user_id: int, **kwargs) -> None:
         async with AsyncSessionLocal() as db:
             await event_fn(db, user_id, **kwargs)
     except Exception as exc:
-        logger.warning('YandexOfflineConv background event failed', event=event_name, user_id=user_id, error=str(exc))
+        # Не 'event': structlog занимает это имя под само сообщение, и вызов
+        # падал TypeError — прямо в обработчике ошибки, подменяя её собой.
+        logger.warning(
+            'YandexOfflineConv background event failed',
+            conversion_event=event_name,
+            user_id=user_id,
+            error=str(exc),
+        )
 
 
 async def fire_registration_bg(user_id: int) -> None:

@@ -407,6 +407,15 @@ class BlockedUsersService:
             if not user:
                 return False
 
+            from app.services.rbac_bootstrap_service import is_protected_from_blocking
+
+            if is_protected_from_blocking(user):
+                logger.info(
+                    'Пропуск пометки заблокированным: аккаунт админа из env',
+                    telegram_id=user.telegram_id or user.id,
+                )
+                return False
+
             user.status = UserStatus.BLOCKED.value
             user.updated_at = datetime.now(tz=UTC)
             await db.commit()

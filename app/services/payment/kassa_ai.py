@@ -379,7 +379,7 @@ class KassaAiPaymentMixin:
                 logger.error('Ошибка отправки админ уведомления KassaAI', error=error)
 
         # Отправка уведомления пользователю (только Telegram-пользователям)
-        if getattr(self, 'bot', None) and user.telegram_id:
+        if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
             try:
                 display_name = settings.get_kassa_ai_display_name()
 

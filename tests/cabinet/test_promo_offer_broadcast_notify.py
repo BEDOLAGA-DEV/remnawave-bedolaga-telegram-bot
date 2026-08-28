@@ -58,7 +58,13 @@ def _payload(**kwargs) -> PromoOfferBroadcastRequest:
     return PromoOfferBroadcastRequest(**defaults)
 
 
-async def _seed_subscriber(db, *, telegram_id: int | None, email: str | None = None) -> User:
+async def _seed_subscriber(
+    db,
+    *,
+    telegram_id: int | None,
+    email: str | None = None,
+    notification_settings: dict | None = None,
+) -> User:
     now = datetime.now(UTC)
     user = User(
         telegram_id=telegram_id,
@@ -69,6 +75,7 @@ async def _seed_subscriber(db, *, telegram_id: int | None, email: str | None = N
         status=UserStatus.ACTIVE.value,
         balance_kopeks=0,
         last_activity=now,
+        notification_settings=notification_settings,
     )
     db.add(user)
     await db.commit()
@@ -135,3 +142,43 @@ async def test_nothing_queued_without_telegram_recipients(monkeypatch):
         assert response.created_offers == 1
         assert response.telegram_recipients == 0
         assert response.broadcast_id is None
+
+
+async def test_promo_preferences_filter_telegram_and_email_notifications(monkeypatch):
+    started: list[object] = []
+
+    async def fail_send_emails(*args, **kwargs):
+        raise AssertionError('email notification must be filtered')
+
+    monkeypatch.setattr(
+        'app.cabinet.routes.admin_promo_offers._send_promo_email_notifications',
+        fail_send_emails,
+    )
+
+    async def fake_start_broadcast(broadcast_id, config):
+        started.append(config)
+
+    monkeypatch.setattr(
+        'app.cabinet.routes.admin_promo_offers.broadcast_service.start_broadcast',
+        fake_start_broadcast,
+    )
+
+    async with memory_session(monkeypatch, NOTIFY_TABLES) as db:
+        await _seed_subscriber(
+            db,
+            telegram_id=111,
+            notification_settings={'promo_offers_enabled': False},
+        )
+        await _seed_subscriber(
+            db,
+            telegram_id=None,
+            email='disabled@example.com',
+            notification_settings={'promo_offers_enabled': False},
+        )
+
+        response = await broadcast_offer(_payload(), admin=_admin(), db=db)
+
+        assert response.created_offers == 2
+        assert response.telegram_recipients == 0
+        assert response.broadcast_id is None
+        assert started == []

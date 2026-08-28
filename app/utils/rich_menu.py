@@ -46,8 +46,10 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user_message import get_random_active_message
 from app.database.models import User
 from app.localization.texts import Texts
+from app.utils.formatters import format_username_link
 from app.utils.miniapp_buttons import build_miniapp_startapp_url
 from app.utils.promo_offer import build_promo_offer_hint, build_test_access_hint
+from app.utils.rich_buttons import render_keyboard_as_rich_html
 from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
 from app.utils.timezone import format_local_datetime
 from app.utils.validators import sanitize_html
@@ -504,7 +506,11 @@ async def build_main_menu_rich_html(user: User, texts, db: AsyncSession) -> str:
     if logo_url:
         blocks.append(f'<img src="{html.escape(logo_url, quote=True)}"/>')
 
-    user_name = html.escape(user.full_name or '')
+    # full_name подставляет username, когда имени нет (см. User.full_name), — только
+    # в этом случае показываем логин ссылкой на профиль, а не голым текстом.
+    username = getattr(user, 'username', None)
+    has_name = bool(getattr(user, 'first_name', None) or getattr(user, 'last_name', None))
+    user_name = format_username_link(username) if username and not has_name else html.escape(user.full_name or '')
     blocks.append(f'<h4>👤 {user_name}</h4>')
     blocks.append('<hr/>')
 
@@ -599,6 +605,34 @@ def _input_rich_message(rich_html: str, language: str | None) -> InputRichMessag
     )
 
 
+def _apply_inline_buttons(
+    rich_html: str,
+    keyboard: InlineKeyboardMarkup,
+    *,
+    for_edit: bool = False,
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Переносит клавиатуру внутрь полотна, если это включено настройкой.
+
+    Возвращает пару (html, reply_markup). При переносе клавиатуры под сообщением
+    не остаётся: дублировать кнопки незачем. Для РЕДАКТИРОВАНИЯ отдаётся пустая
+    клавиатура, а не None: у editMessageText отсутствующий reply_markup означает
+    «не трогать», и прежние кнопки остались бы висеть рядом с новыми.
+
+    Если хотя бы одну кнопку перенести нельзя, клавиатура остаётся снаружи
+    целиком — половина кнопок внутри означала бы потерянные кнопки.
+    """
+    if not settings.MAIN_MENU_RICH_INLINE_BUTTONS:
+        return rich_html, keyboard
+
+    # Главное меню всегда уходит в личный чат, поэтому Mini App здесь допустим.
+    buttons_html = render_keyboard_as_rich_html(keyboard, allow_web_app=True)
+    if buttons_html is None:
+        return rich_html, keyboard
+
+    empty = InlineKeyboardMarkup(inline_keyboard=[]) if for_edit else None
+    return rich_html + buttons_html, empty
+
+
 async def _send_rich_menu(
     bot: Bot,
     chat_id: int,
@@ -608,6 +642,7 @@ async def _send_rich_menu(
 ) -> None:
     global _effect_unavailable
 
+    rich_html, keyboard = _apply_inline_buttons(rich_html, keyboard)
     effect_id = (settings.MAIN_MENU_RICH_EFFECT_ID or '').strip() or None
     if _effect_unavailable:
         effect_id = None
@@ -688,6 +723,15 @@ async def try_send_rich_main_menu(
     except TelegramNetworkError as error:
         logger.warning('Сетевая ошибка при отправке rich-меню', error=str(error), chat_id=chat_id)
         return False
+    except Exception:
+        # Всё, что не является ошибкой Telegram API, тоже не должно ронять хендлер.
+        # Свежий сервер может вернуть тип rich-блока, которого установленная aiogram
+        # ещё не знает: строгий discriminated union RichBlock отвергает его, aiogram
+        # оборачивает это в ClientDecodeError, а он наследуется от AiogramError, а НЕ
+        # от TelegramAPIError — то есть пролетает мимо всех except выше. Сообщение при
+        # этом уже доставлено, но пользователь не увидел бы ни rich, ни классики.
+        logger.exception('Непредвиденная ошибка rich-меню, фоллбек на классику', chat_id=chat_id)
+        return False
 
 
 async def try_answer_rich_main_menu(
@@ -728,6 +772,7 @@ async def try_edit_rich_main_menu(
 
     chat_id = message.chat.id
     language = db_user.language
+    rich_html, keyboard = _apply_inline_buttons(rich_html, keyboard, for_edit=True)
 
     is_editable_as_rich = (
         not isinstance(message, InaccessibleMessage)
@@ -801,4 +846,13 @@ async def try_edit_rich_main_menu(
         return False
     except TelegramNetworkError as error:
         logger.warning('Сетевая ошибка при показе rich-меню', error=str(error), chat_id=chat_id)
+        return False
+    except Exception:
+        # Всё, что не является ошибкой Telegram API, тоже не должно ронять хендлер.
+        # Свежий сервер может вернуть тип rich-блока, которого установленная aiogram
+        # ещё не знает: строгий discriminated union RichBlock отвергает его, aiogram
+        # оборачивает это в ClientDecodeError, а он наследуется от AiogramError, а НЕ
+        # от TelegramAPIError — то есть пролетает мимо всех except выше. Сообщение при
+        # этом уже доставлено, но пользователь не увидел бы ни rich, ни классики.
+        logger.exception('Непредвиденная ошибка rich-меню, фоллбек на классику', chat_id=chat_id)
         return False

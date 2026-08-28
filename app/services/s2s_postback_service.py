@@ -53,7 +53,8 @@ async def send_postback(
 
     url_template = _get_url(event)
     if not url_template:
-        logger.debug('S2S postback URL not configured', event=event)
+        # Не 'event': structlog занимает это имя под само сообщение.
+        logger.debug('S2S postback URL not configured', postback_event=event)
         return False
 
     # Replace placeholders (URL-encode subid to prevent injection)
@@ -73,7 +74,7 @@ async def send_postback(
             response = await client.get(url)
             logger.info(
                 'S2S postback sent',
-                event=event,
+                postback_event=event,
                 subid=subid,
                 amount=amount,
                 user_id=user_id,
@@ -84,7 +85,7 @@ async def send_postback(
     except Exception as e:
         logger.error(
             'S2S postback failed',
-            event=event,
+            postback_event=event,
             subid=subid,
             error=str(e),
             url=url[:100],

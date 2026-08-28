@@ -22,6 +22,21 @@ class MaintenanceStates(StatesGroup):
     waiting_for_notification_message = State()
 
 
+# Дописывается к ответу, когда MAINTENANCE_MODE задан в .env. Такой ключ попадает
+# в ENV_OVERRIDE_KEYS: переключение ложится в БД, но к настройкам не применяется, и
+# на старте set_bot читает значение из окружения. Без этого предупреждения админ
+# видит «выключено», а после перезапуска техработы включаются снова — и выглядит
+# это как самопроизвольное включение.
+_ENV_LOCKED_WARNING = (
+    '\n\n⚠️ MAINTENANCE_MODE задан в .env, поэтому переключение не переживёт '
+    'перезапуск. Уберите строку из .env, чтобы управлять режимом отсюда.'
+)
+
+
+def _maintenance_env_locked() -> bool:
+    return bot_configuration_service.is_env_overridden('MAINTENANCE_MODE')
+
+
 async def _persist_maintenance_mode(db: AsyncSession, enabled: bool) -> None:
     try:
         await bot_configuration_service.set_value(db, 'MAINTENANCE_MODE', enabled)
@@ -114,7 +129,10 @@ async def toggle_maintenance_mode(callback: types.CallbackQuery, db_user: User, 
         if success:
             await _persist_maintenance_mode(db, False)
         if success:
-            await callback.answer('Режим техработ выключен', show_alert=True)
+            text = 'Режим техработ выключен'
+            if _maintenance_env_locked():
+                text += _ENV_LOCKED_WARNING
+            await callback.answer(text, show_alert=True)
         else:
             await callback.answer('Ошибка выключения режима техработ', show_alert=True)
     else:
@@ -149,6 +167,8 @@ async def process_maintenance_reason(message: types.Message, db_user: User, db: 
         response_text = 'Режим техработ включен'
         if reason:
             response_text += f'\nПричина: {html.escape(reason)}'
+        if _maintenance_env_locked():
+            response_text += _ENV_LOCKED_WARNING
     else:
         response_text = 'Ошибка включения режима техработ'
 

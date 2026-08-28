@@ -713,3 +713,74 @@ async def test_adopt_forwards_a_non_empty_squad_list():
     await _adopt_or_create(api, 'aBcD12', {'username': 'u', 'active_internal_squads': ['squad-1', 'squad-2']})
 
     assert api.update_user.await_args.kwargs['active_internal_squads'] == ['squad-1', 'squad-2']
+
+
+@pytest.mark.asyncio
+async def test_open_session_without_panel_id_is_repaired_from_the_subscription(monkeypatch):
+    """Сессия с пустым `remnawave_id` должна чиниться, а не жить вечно.
+
+    Такую строку оставил старый код: колонки тогда не было. Читать её нельзя —
+    `_model_to_session` бросает `GraceSnapshotError`, `get_open` роняет продление
+    и разбор платежа, фоновой цикл пишет ошибку каждый проход, а уникальный
+    индекс на открытую сессию не даёт открыть новую. При этом ответ лежит рядом:
+    подписка уже связана бэкфилом.
+    """
+    from app.database.models import Subscription as SubModel, User as UserModel
+    from app.services.grace_access_runtime import SQLAlchemyGraceSessionStore
+    from tests.fixtures.sqlite_memory import memory_session
+
+    tables = [UserModel.__table__, SubModel.__table__, GraceAccessSessionModel.__table__]
+    async with memory_session(monkeypatch, tables) as db:
+        db.add(UserModel(id=1, telegram_id=100, remnawave_id=None))
+        db.add(
+            SubModel(
+                id=42,
+                user_id=1,
+                status='expired',
+                end_date=NOW - timedelta(days=1),
+                remnawave_id=PANEL_ID,
+                remnawave_short_id='sid42',
+            )
+        )
+        # Ровно то, что оставил старый код: валидный снапшот, но колонка пуста.
+        db.add(make_v2_session_row(remnawave_id=None))
+        await db.commit()
+
+        store = SQLAlchemyGraceSessionStore(db)
+        sessions = await store.list_open(limit=10)
+
+        assert len(sessions) == 1, 'сессия должна стать читаемой, а не пропускаться каждый цикл'
+        assert sessions[0].remnawave_id == PANEL_ID
+
+        db.expunge_all()
+        row = await db.get(GraceAccessSessionModel, '11111111-2222-3333-4444-555555555555')
+        assert row.remnawave_id == PANEL_ID, 'починка должна сохраниться, а не повторяться каждый проход'
+
+
+@pytest.mark.asyncio
+async def test_get_open_no_longer_explodes_on_a_session_without_panel_id(monkeypatch):
+    """`get_open` вызывают продление и разбор платежа — он не должен падать."""
+    from app.database.models import Subscription as SubModel, User as UserModel
+    from app.services.grace_access_runtime import SQLAlchemyGraceSessionStore
+    from tests.fixtures.sqlite_memory import memory_session
+
+    tables = [UserModel.__table__, SubModel.__table__, GraceAccessSessionModel.__table__]
+    async with memory_session(monkeypatch, tables) as db:
+        db.add(UserModel(id=1, telegram_id=100, remnawave_id=None))
+        db.add(
+            SubModel(
+                id=42,
+                user_id=1,
+                status='expired',
+                end_date=NOW - timedelta(days=1),
+                remnawave_id=PANEL_ID,
+                remnawave_short_id='sid42',
+            )
+        )
+        db.add(make_v2_session_row(remnawave_id=None))
+        await db.commit()
+
+        session = await SQLAlchemyGraceSessionStore(db).get_open(42)
+
+        assert session is not None
+        assert session.remnawave_id == PANEL_ID

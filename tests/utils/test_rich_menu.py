@@ -227,6 +227,62 @@ async def test_builder_single_subscription_structure(monkeypatch):
     assert '1250' in html_out
 
 
+async def test_builder_links_username_used_instead_of_name(monkeypatch):
+    """Без имени full_name подставляет логин — показываем его ссылкой на профиль.
+
+    skip_entity_detection=True гасит автоопределение @упоминаний, поэтому голый
+    логин в шапке был бы мёртвым текстом.
+    """
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+
+    user = _make_user(None)
+    user.first_name = None
+    user.last_name = None
+    user.username = 'durov'
+    user.full_name = 'durov'
+
+    html_out = await rich_menu.build_main_menu_rich_html(user, DummyTexts(), AsyncMock())
+
+    assert html_out.startswith('<h4>👤 <a href="https://t.me/durov">@durov</a></h4>')
+
+
+async def test_builder_keeps_plain_name_when_user_has_one(monkeypatch):
+    """Имя есть — шапка остаётся обычным текстом, ссылка на логин не подставляется."""
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+
+    user = _make_user(None)
+    user.first_name = 'Егор'
+    user.last_name = None
+    user.username = 'durov'
+
+    html_out = await rich_menu.build_main_menu_rich_html(user, DummyTexts(), AsyncMock())
+
+    assert html_out.startswith('<h4>👤 Егор &lt;script&gt;</h4>')
+    assert 't.me/durov' not in html_out
+
+
+async def test_builder_survives_user_without_username_attribute(monkeypatch):
+    """Шапка не должна падать на объекте без username — иначе меню молча уедет в классику.
+
+    try_send_rich_main_menu ловит любое исключение сборки и возвращает False, так что
+    AttributeError здесь стоил бы rich-меню без единой записи в логе о причине.
+    """
+    _patch_content_sources(monkeypatch)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+
+    user = _make_user(None)
+    assert not hasattr(user, 'username')
+
+    html_out = await rich_menu.build_main_menu_rich_html(user, DummyTexts(), AsyncMock())
+
+    assert html_out.startswith('<h4>👤 Егор &lt;script&gt;</h4>')
+
+
 async def test_builder_multi_tariff_table(monkeypatch):
     _patch_content_sources(monkeypatch)
     monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
@@ -1249,3 +1305,135 @@ async def test_far_future_end_date_in_single_block_renders_without_tg_time(monke
     assert '<tg-time' not in html_out
     # Строка «истекает …» осталась — с текстом остатка дней вместо tg-time
     assert 'осталось' in html_out
+
+
+async def test_try_send_decode_error_falls_back_to_classic(monkeypatch):
+    """ClientDecodeError не наследуется от TelegramAPIError и пролетал мимо всех except.
+
+    Свежий сервер может вернуть тип rich-блока, которого установленная aiogram ещё не
+    знает: строгий discriminated union RichBlock отвергает его при разборе ОТВЕТА.
+    Сообщение при этом уже доставлено, а хендлер падал — пользователь не видел ни
+    rich-меню, ни классического фоллбека, и флаг недоступности не взводился.
+    """
+    from aiogram.exceptions import ClientDecodeError
+
+    async def fake_build(user, texts, db):
+        return '<p>menu</p>'
+
+    monkeypatch.setattr(rich_menu, 'build_main_menu_rich_html', fake_build)
+
+    bot = AsyncMock()
+    bot.send_rich_message.side_effect = ClientDecodeError('Failed to decode object', ValueError('unknown block'), '{}')
+
+    sent = await rich_menu.try_send_rich_main_menu(bot, 1, _make_user(None), DummyTexts(), AsyncMock(), MagicMock())
+
+    assert sent is False
+    # Ошибка разбора ответа — не признак «сервер не умеет rich», rich остаётся включённым.
+    assert rich_menu.is_rich_menu_enabled() is True
+
+
+async def test_try_edit_decode_error_falls_back_to_classic(monkeypatch):
+    from aiogram.exceptions import ClientDecodeError
+
+    async def fake_build(user, texts, db):
+        return '<p>menu</p>'
+
+    monkeypatch.setattr(rich_menu, 'build_main_menu_rich_html', fake_build)
+
+    callback = _make_callback()
+    callback.bot.side_effect = ClientDecodeError('Failed to decode object', ValueError('unknown block'), '{}')
+
+    edited = await rich_menu.try_edit_rich_main_menu(
+        callback, _make_user(None), DummyTexts(), AsyncMock(), _make_keyboard()
+    )
+
+    assert edited is False
+
+
+async def test_inline_buttons_setting_moves_keyboard_into_canvas(monkeypatch):
+    """Bot API 10.3: кнопки уезжают в полотно, клавиатуры под сообщением не остаётся."""
+
+    async def fake_build(user, texts, db):
+        return '<p>menu</p>'
+
+    monkeypatch.setattr(rich_menu, 'build_main_menu_rich_html', fake_build)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_INLINE_BUTTONS', True, raising=False)
+
+    bot = AsyncMock()
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text='Подписка', callback_data='menu_subscription')]]
+    )
+
+    sent = await rich_menu.try_send_rich_main_menu(bot, 1, _make_user(None), DummyTexts(), AsyncMock(), keyboard)
+
+    assert sent is True
+    kwargs = bot.send_rich_message.await_args.kwargs
+    assert '<tg-button type="callback_data" data="menu_subscription">' in kwargs['rich_message'].html
+    # Дублировать кнопки незачем: либо внутри, либо под сообщением.
+    assert kwargs['reply_markup'] is None
+
+
+async def test_inline_buttons_setting_off_keeps_classic_keyboard(monkeypatch):
+    async def fake_build(user, texts, db):
+        return '<p>menu</p>'
+
+    monkeypatch.setattr(rich_menu, 'build_main_menu_rich_html', fake_build)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_INLINE_BUTTONS', False, raising=False)
+
+    bot = AsyncMock()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='a', callback_data='a')]])
+
+    await rich_menu.try_send_rich_main_menu(bot, 1, _make_user(None), DummyTexts(), AsyncMock(), keyboard)
+
+    kwargs = bot.send_rich_message.await_args.kwargs
+    assert '<tg-button' not in kwargs['rich_message'].html
+    assert kwargs['reply_markup'] is keyboard
+
+
+async def test_unmovable_button_keeps_keyboard_outside(monkeypatch):
+    """Если перенести можно не всё — клавиатура остаётся под сообщением целиком."""
+
+    async def fake_build(user, texts, db):
+        return '<p>menu</p>'
+
+    monkeypatch.setattr(rich_menu, 'build_main_menu_rich_html', fake_build)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_INLINE_BUTTONS', True, raising=False)
+
+    bot = AsyncMock()
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='ok', callback_data='ok')],
+            [InlineKeyboardButton(text='Оплатить', pay=True)],
+        ]
+    )
+
+    await rich_menu.try_send_rich_main_menu(bot, 1, _make_user(None), DummyTexts(), AsyncMock(), keyboard)
+
+    kwargs = bot.send_rich_message.await_args.kwargs
+    assert '<tg-button' not in kwargs['rich_message'].html
+    assert kwargs['reply_markup'] is keyboard
+
+
+async def test_edit_clears_old_keyboard_when_buttons_move_inside(monkeypatch):
+    """У editMessageText отсутствующий reply_markup означает «не трогать».
+
+    Без явной пустой клавиатуры прежние кнопки остались бы висеть рядом с новыми,
+    перенесёнными в полотно.
+    """
+
+    async def fake_build(user, texts, db):
+        return '<p>menu</p>'
+
+    monkeypatch.setattr(rich_menu, 'build_main_menu_rich_html', fake_build)
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_INLINE_BUTTONS', True, raising=False)
+
+    callback = _make_callback()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='a', callback_data='a')]])
+
+    edited = await rich_menu.try_edit_rich_main_menu(callback, _make_user(None), DummyTexts(), AsyncMock(), keyboard)
+
+    assert edited is True
+    request = callback.bot.await_args.args[0]
+    assert '<tg-button' in request.rich_message.html
+    assert request.reply_markup is not None
+    assert request.reply_markup.inline_keyboard == []

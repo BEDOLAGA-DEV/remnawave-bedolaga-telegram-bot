@@ -9,6 +9,11 @@ import structlog
 from app.config import settings
 
 
+# Документация MulenPay ограничений на client не задаёт — поле встречается там
+# только в примере тела запроса. Предел выбран нами защитно и совпадает с
+# длиной колонки users.email, чтобы обрезка была недостижима на реальных данных.
+MULENPAY_CLIENT_MAX_LENGTH = 255
+
 logger = structlog.get_logger(__name__)
 
 
@@ -162,6 +167,7 @@ class MulenPayService:
         subscribe: str | None = None,
         hold_time: int | None = None,
         website_url: str | None = None,
+        client: str | None = None,
     ) -> dict[str, Any] | None:
         if not self.is_configured:
             logger.error('MulenPay service is not configured')
@@ -186,6 +192,10 @@ class MulenPayService:
             payload['holdTime'] = hold_time
         if website_url:
             payload['website_url'] = website_url
+        if client:
+            # Контакт плательщика, по которому MulenPay может с ним связаться.
+            # Значение уже нормализовано вызывающим слоем; срез — последний рубеж.
+            payload['client'] = client[:MULENPAY_CLIENT_MAX_LENGTH]
 
         response = await self._request('POST', '/v2/payments', json_data=payload)
         if not response or not response.get('success'):

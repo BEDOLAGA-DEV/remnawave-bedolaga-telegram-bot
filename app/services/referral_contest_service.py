@@ -243,6 +243,9 @@ class ReferralContestService:
         day_end_utc: datetime,
         is_final: bool,
     ) -> None:
+        if not settings.is_notifications_enabled() or not settings.is_referral_notifications_enabled():
+            return
+
         if not self.bot:
             return
 
@@ -326,7 +329,9 @@ class ReferralContestService:
             lines.append(f'Приз: {html.escape(contest.prize_text)}')
 
         # Respect per-category enable/disable
-        if not getattr(settings, 'ADMIN_NOTIFICATIONS_PROMO_ENABLED', True):
+        if not getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False) or not getattr(
+            settings, 'ADMIN_NOTIFICATIONS_PROMO_ENABLED', True
+        ):
             return
 
         try:

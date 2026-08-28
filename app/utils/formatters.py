@@ -1,4 +1,11 @@
+import html
+import re
 from datetime import UTC, datetime
+
+
+# Формат Telegram-логина: 5-32 символа, первый — буква. Тот же шаблон используется
+# в app/services/guest_purchase_service.py при приёме логина от пользователя.
+_TELEGRAM_USERNAME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]{4,31}$')
 
 
 def format_datetime(dt: datetime | str, format_str: str = '%d.%m.%Y %H:%M') -> str:
@@ -172,6 +179,32 @@ def format_username(username: str | None, user_id: int, full_name: str | None = 
     if username:
         return f'@{username}'
     return f'ID{user_id}'
+
+
+def format_username_link(username: str | None, fallback: str = '') -> str:
+    """Telegram-логин явной ссылкой — для rich-сообщений.
+
+    Rich-сообщения уходят со skip_entity_detection=True (app/utils/rich_admin.py,
+    app/utils/rich_menu.py), поэтому голый @username в них не подсвечивается:
+    ссылку приходится ставить руками.
+
+    Ссылка ставится только на то, что выглядит настоящим Telegram-логином.
+    Колонка users.username хранит не только их: OAuth-регистрация в кабинете кладёт
+    туда логин Discord/Яндекса (app/cabinet/auth/oauth_providers.py), а это чужое
+    пространство имён — t.me/<логин> оттуда ведёт либо в никуда, либо на
+    постороннего человека с таким же ником. Остальное отдаём текстом, как было.
+    """
+    if not username:
+        return fallback
+
+    normalized_username = username.lstrip('@')
+    if not normalized_username:
+        return fallback
+
+    safe_username = html.escape(normalized_username, quote=True)
+    if not _TELEGRAM_USERNAME_RE.match(normalized_username):
+        return f'@{safe_username}'
+    return f'<a href="https://t.me/{safe_username}">@{safe_username}</a>'
 
 
 def format_subscription_status(is_active: bool, is_trial: bool, end_date: datetime | str, language: str = 'ru') -> str:

@@ -306,6 +306,9 @@ async def _notify_user(
     *,
     bot: Bot | None,
 ) -> None:
+    if not settings.is_notifications_enabled():
+        return
+
     if bot is not None and user.telegram_id:
         keyboard = None
         try:

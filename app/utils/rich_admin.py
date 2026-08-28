@@ -26,6 +26,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from aiogram.types import InlineKeyboardMarkup, InputRichMessage
 
 from app.config import settings
+from app.utils.rich_buttons import render_keyboard_as_rich_html
 from app.utils.rich_menu import _looks_like_unsupported
 
 
@@ -173,6 +174,18 @@ async def try_send_rich_admin_message(
         return False
     if len(rich_html) > RICH_TEXT_LIMIT:
         return False
+
+    if reply_markup is not None and settings.MAIN_MENU_RICH_INLINE_BUTTONS:
+        # Mini App открывается только в личных чатах, а админ-чат чаще всего группа
+        # (у неё отрицательный id) или канал по @username. В такие чаты web_app-кнопку
+        # переносить нельзя — тогда клавиатура остаётся под сообщением целиком.
+        is_private = isinstance(chat_id, int) and chat_id > 0
+        buttons_html = render_keyboard_as_rich_html(reply_markup, allow_web_app=is_private)
+        if buttons_html is not None:
+            rich_html += buttons_html
+            reply_markup = None
+            if len(rich_html) > RICH_TEXT_LIMIT:
+                return False
 
     kwargs: dict = {
         'chat_id': chat_id,

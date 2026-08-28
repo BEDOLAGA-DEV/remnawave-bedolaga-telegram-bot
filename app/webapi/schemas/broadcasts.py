@@ -85,7 +85,7 @@ class BroadcastCreateRequest(BaseModel):
 class BroadcastResponse(BaseModel):
     id: int
     target_type: str
-    message_text: str
+    message_text: str | None = None
     has_media: bool
     media_type: str | None = None
     media_file_id: str | None = None

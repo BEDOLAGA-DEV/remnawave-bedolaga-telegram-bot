@@ -418,7 +418,18 @@ API снова отвечает на запросы.""",
             if not status_data:
                 return
 
-            self._status.is_active = status_data.get('is_active', False)
+            cached_active = status_data.get('is_active', False)
+            cached_auto = status_data.get('auto_enabled', False)
+
+            # Кэш нужен, чтобы перезапуск во время аварии не снимал АВТОМАТИЧЕСКИ
+            # включённые техработы. Но для ручного режима источник истины —
+            # сохранённая настройка: если она говорит «выключено», протухшая запись
+            # в кэше (TTL час) не имеет права включить режим обратно.
+            if cached_active and not cached_auto and not settings.is_maintenance_mode():
+                logger.info('Кэш техработ противоречит настройке — ручной режим не восстанавливаем')
+                return
+
+            self._status.is_active = cached_active
             self._status.reason = status_data.get('reason')
             self._status.auto_enabled = status_data.get('auto_enabled', False)
             self._status.consecutive_failures = status_data.get('consecutive_failures', 0)

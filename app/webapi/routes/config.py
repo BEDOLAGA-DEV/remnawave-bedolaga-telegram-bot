@@ -66,15 +66,17 @@ def _coerce_value(key: str, value: Any) -> Any:
     except ValueError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid value type') from None
 
-    choices = bot_configuration_service.get_choice_options(key)
-    if choices:
-        allowed_values = {option.value for option in choices}
-        if normalized not in allowed_values:
-            readable = ', '.join(bot_configuration_service.format_value(opt.value) for opt in choices)
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f'Value must be one of: {readable}',
-            )
+    # Сравнение через as_choice_key: варианты описаны строками, а значение уже
+    # приведено к типу настройки. У булевой это True/False, и прямое сравнение
+    # с 'true' не совпадало никогда — настройка с вариантами отвечала 400 на
+    # любое значение, включая перечисленные в самих вариантах.
+    if not bot_configuration_service.value_matches_choice(key, normalized):
+        choices = bot_configuration_service.get_choice_options(key)
+        readable = ', '.join(bot_configuration_service.format_value(opt.value) for opt in choices)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f'Value must be one of: {readable}',
+        )
 
     return normalized
 

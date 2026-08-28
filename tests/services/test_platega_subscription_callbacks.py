@@ -1289,3 +1289,131 @@ async def test_process_callback_balance_topup_recurrent(monkeypatch):
         assert rec.charges_success == 1
         assert rec.status == 'ACTIVE'
 
+
+async def test_camel_case_charge_extends_subscription(monkeypatch):
+    """Списание в camelCase (реальная форма Platega) продлевает подписку.
+
+    До правки обработчик читал только PascalCase: `SubscriptionId` был None,
+    коллбек выходил на «без SubscriptionId», и продление не происходило даже
+    если бы маршрутизация его сюда донесла.
+    """
+    from app.services.payment.platega import PlategaPaymentMixin
+
+    class Svc(PlategaPaymentMixin):
+        """Без атрибута bot."""
+
+    async with _memory_session(monkeypatch) as db:
+        end0 = datetime.now(UTC) + timedelta(days=2)
+        db.add(Subscription(id=1, user_id=1, status='active', end_date=end0))
+        await db.commit()
+
+        rec = await sub_crud.create_platega_subscription(
+            db,
+            user_id=1,
+            subscription_id=1,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-1',
+            status='ACTIVE',
+        )
+
+        await Svc().process_platega_subscription_callback(
+            db,
+            {
+                'id': 'f11d8822-3b12-4afa-a49b-202be11d5600',
+                'status': 'CONFIRMED',
+                'paymentMethod': 6,
+                'subscriptionId': 'ps-1',
+                'nextChargeAt': '2026-09-01T00:00:00Z',
+            },
+        )
+
+        subscription = await db.get(Subscription, 1)
+        await db.refresh(rec)
+        assert subscription.end_date >= end0 + timedelta(days=29)
+        assert rec.charges_success == 1
+        assert rec.last_charge_external_id == 'f11d8822-3b12-4afa-a49b-202be11d5600'
+        assert rec.next_charge_at is not None
+
+
+async def test_camel_case_charge_replay_is_idempotent(monkeypatch):
+    """Ретрай доставки того же списания не продлевает подписку дважды."""
+    from app.services.payment.platega import PlategaPaymentMixin
+
+    class Svc(PlategaPaymentMixin):
+        """Без атрибута bot."""
+
+    async with _memory_session(monkeypatch) as db:
+        end0 = datetime.now(UTC) + timedelta(days=2)
+        db.add(Subscription(id=1, user_id=1, status='active', end_date=end0))
+        await db.commit()
+
+        rec = await sub_crud.create_platega_subscription(
+            db,
+            user_id=1,
+            subscription_id=1,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-1',
+            status='ACTIVE',
+        )
+
+        svc = Svc()
+        payload = {'id': 'charge-1', 'status': 'CONFIRMED', 'subscriptionId': 'ps-1'}
+        await svc.process_platega_subscription_callback(db, payload)
+        subscription = await db.get(Subscription, 1)
+        after_first = subscription.end_date
+
+        await svc.process_platega_subscription_callback(db, payload)
+
+        await db.refresh(rec)
+        await db.refresh(subscription)
+        assert rec.charges_success == 1
+        assert subscription.end_date == after_first
+
+
+async def test_lowercase_confirmed_status_extends_subscription(monkeypatch):
+    """Регистр статуса тоже не должен решать судьбу продления.
+
+    Наблюдаемая форма — `CONFIRMED`, но ключи того же коллбека Platega уже
+    приезжали не в том регистре, что в спеке; сверять статус побайтово значит
+    оставить ту же мину под значением.
+    """
+    from app.services.payment.platega import PlategaPaymentMixin
+
+    class Svc(PlategaPaymentMixin):
+        """Без атрибута bot."""
+
+    async with _memory_session(monkeypatch) as db:
+        end0 = datetime.now(UTC) + timedelta(days=2)
+        db.add(Subscription(id=1, user_id=1, status='active', end_date=end0))
+        await db.commit()
+
+        rec = await sub_crud.create_platega_subscription(
+            db,
+            user_id=1,
+            subscription_id=1,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-1',
+            status='ACTIVE',
+        )
+
+        await Svc().process_platega_subscription_callback(
+            db,
+            {'id': 'charge-1', 'status': 'confirmed', 'subscriptionId': 'ps-1'},
+        )
+
+        subscription = await db.get(Subscription, 1)
+        await db.refresh(rec)
+        assert subscription.end_date >= end0 + timedelta(days=29)
+        assert rec.charges_success == 1

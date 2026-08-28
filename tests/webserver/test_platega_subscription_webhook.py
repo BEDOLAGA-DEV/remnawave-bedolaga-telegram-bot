@@ -173,3 +173,64 @@ async def test_platega_wrong_secret_rejected_before_dispatch(monkeypatch: pytest
 
     assert response.status_code == 401
     assert recorded == []
+
+
+@pytest.mark.anyio
+async def test_platega_camel_case_charge_routes_to_subscription_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Форма из продового лога: списание по подписке в camelCase.
+
+    Раньше не совпадало ни с одним условием маршрутизации и уходило в
+    обработчик разовых платежей — тот не находил платёж (под рекуррентное
+    списание записи в payments нет) и отвечал 400, а Platega показывала
+    «Callback delivery failed» и автопродление не работало.
+    """
+    recorded = _install_recorder(monkeypatch)
+
+    router = create_payment_router(DummyBot(), SimpleNamespace())
+    assert router is not None
+
+    route = _get_route(router, settings.PLATEGA_WEBHOOK_PATH)
+    body = json.dumps(
+        {
+            'id': 'f11d8822-3b12-4afa-a49b-202be11d5600',
+            'status': 'CONFIRMED',
+            'paymentMethod': 6,
+            'subscriptionId': 'ps-1',
+        }
+    ).encode('utf-8')
+    request = _build_request(
+        settings.PLATEGA_WEBHOOK_PATH,
+        body=body,
+        headers={'X-MerchantId': 'm', 'X-Secret': 's', 'Content-Type': 'application/json'},
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 200
+    assert recorded == ['process_platega_subscription_callback']
+
+
+@pytest.mark.anyio
+async def test_platega_camel_case_one_off_still_uses_legacy_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Обратная сторона: обычное пополнение не должно уехать в подписки."""
+    recorded = _install_recorder(monkeypatch)
+
+    router = create_payment_router(DummyBot(), SimpleNamespace())
+    assert router is not None
+
+    route = _get_route(router, settings.PLATEGA_WEBHOOK_PATH)
+    body = json.dumps({'id': 'tx', 'status': 'CONFIRMED', 'paymentMethod': 2}).encode('utf-8')
+    request = _build_request(
+        settings.PLATEGA_WEBHOOK_PATH,
+        body=body,
+        headers={'X-MerchantId': 'm', 'X-Secret': 's', 'Content-Type': 'application/json'},
+    )
+
+    response = await route.endpoint(request)
+
+    assert recorded == ['process_platega_webhook']
+    assert response.status_code == 200

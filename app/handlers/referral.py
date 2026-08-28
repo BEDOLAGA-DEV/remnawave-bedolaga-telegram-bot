@@ -19,6 +19,7 @@ from app.keyboards.inline import (
 )
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+from app.services.referral_reward_service import format_reward_total
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 from app.states import ReferralWithdrawalStates
 from app.utils.photo_message import edit_or_answer_photo
@@ -31,6 +32,27 @@ from app.utils.user_utils import (
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def _reward_tariff_names(db) -> dict[int, str]:
+    """Названия тарифов, на которые ссылаются уровни наград.
+
+    Без них описание обещает «7 дн. подписки», умалчивая, в какой тариф они лягут,
+    — а это ровно то, что настраивает админ.
+    """
+    from sqlalchemy import select
+
+    from app.database.models import Tariff
+    from app.services.referral_reward_service import ReferralRewardLevelService
+
+    configs = await ReferralRewardLevelService.get_all(db)
+    ids = {cfg.referrer_tariff_id for cfg in configs.values() if cfg.referrer_tariff_id}
+    ids |= {cfg.referee_tariff_id for cfg in configs.values() if cfg.referee_tariff_id}
+    if not ids:
+        return {}
+
+    result = await db.execute(select(Tariff.id, Tariff.name).where(Tariff.id.in_(ids)))
+    return {row.id: row.name for row in result.all()}
 
 
 async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -80,17 +102,62 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         + texts.t(
             'REFERRAL_STATS_TOTAL_EARNED',
             '• Заработано всего: <b>{amount}</b>',
-        ).format(amount=texts.format_price(summary['total_earned_kopeks']))
+        ).format(
+            amount=format_reward_total(
+                summary['total_earned_kopeks'], summary.get('total_earned_days', 0), db_user.language
+            )
+        )
         + '\n'
         + texts.t(
             'REFERRAL_STATS_MONTH_EARNED',
             '• За последний месяц: <b>{amount}</b>',
-        ).format(amount=texts.format_price(summary['month_earned_kopeks']))
+        ).format(
+            amount=format_reward_total(
+                summary['month_earned_kopeks'], summary.get('month_earned_days', 0), db_user.language
+            )
+        )
         + '\n\n'
         + texts.t('REFERRAL_REWARDS_HEADER', '🎁 <b>Как работают награды:</b>')
     )
 
-    if settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+    levels_scheme = settings.is_referral_levels_scheme()
+
+    if levels_scheme:
+        # Описание берётся из того же источника, что и расчёт: расхождение
+        # обещанного и начисляемого — самый дорогой класс ошибок в реферальных
+        # программах, и берётся он ровно из отдельно написанного текста.
+        from app.services.referral_reward_service import (
+            describe_active_levels,
+            describe_referee_bonus,
+            format_tier_progress,
+            resolve_tier_progress,
+        )
+
+        tariff_names = await _reward_tariff_names(db)
+        for line in await describe_active_levels(
+            db, tariff_names=tariff_names, language=db_user.language, viewer=db_user
+        ):
+            referral_text += f'\n• {line}'
+        # «Новый пользователь получает» на экране партнёра — это обещание тем,
+        # кого пригласит ИМЕННО ЭТОТ партнёр, поэтому берётся его ранг.
+        referee_bonus = await describe_referee_bonus(
+            db, tariff_names=tariff_names, language=db_user.language, referrer=db_user
+        )
+        if referee_bonus:
+            referral_text += '\n' + texts.t(
+                'REFERRAL_REWARD_NEW_USER_LEVELS',
+                '• Новый пользователь получает: <b>{bonus}</b>',
+            ).format(bonus=referee_bonus)
+
+        # В режиме рангов лестница без отметки «вы здесь» не отвечает на главный
+        # вопрос пользователя: какой ранг у НЕГО и сколько до следующего.
+        progress_lines = format_tier_progress(await resolve_tier_progress(db, db_user), db_user.language)
+        if progress_lines:
+            referral_text += '\n\n' + '\n'.join(progress_lines)
+
+        referral_text += '\n\n'
+
+    if not levels_scheme and settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
         referral_text += '\n' + texts.t(
             'REFERRAL_REWARD_NEW_USER',
             '• Новый пользователь получает: <b>{bonus}</b> при первом пополнении от <b>{minimum}</b>',
@@ -99,27 +166,28 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
             minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
         )
 
-    if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
+    if not levels_scheme and settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
         referral_text += '\n' + texts.t(
             'REFERRAL_REWARD_INVITER',
             '• Вы получаете при первом пополнении реферала: <b>{bonus}</b>',
         ).format(bonus=texts.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS))
 
-    if settings.REFERRAL_MAX_COMMISSION_PAYMENTS > 0:
-        commission_line = texts.t(
-            'REFERRAL_REWARD_COMMISSION_LIMITED',
-            '• Комиссия с первых {max_payments} пополнений реферала: <b>{percent}%</b>',
-        ).format(
-            percent=get_effective_referral_commission_percent(db_user),
-            max_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
-        )
-    else:
-        commission_line = texts.t(
-            'REFERRAL_REWARD_COMMISSION',
-            '• Комиссия с каждого пополнения реферала: <b>{percent}%</b>',
-        ).format(percent=get_effective_referral_commission_percent(db_user))
+    if not levels_scheme:
+        if settings.REFERRAL_MAX_COMMISSION_PAYMENTS > 0:
+            commission_line = texts.t(
+                'REFERRAL_REWARD_COMMISSION_LIMITED',
+                '• Комиссия с первых {max_payments} пополнений реферала: <b>{percent}%</b>',
+            ).format(
+                percent=get_effective_referral_commission_percent(db_user),
+                max_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
+            )
+        else:
+            commission_line = texts.t(
+                'REFERRAL_REWARD_COMMISSION',
+                '• Комиссия с каждого пополнения реферала: <b>{percent}%</b>',
+            ).format(percent=get_effective_referral_commission_percent(db_user))
 
-    referral_text += '\n' + commission_line + '\n\n'
+        referral_text += '\n' + commission_line + '\n\n'
 
     # Show bot link
     referral_text += (
@@ -143,7 +211,14 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
     )
 
     if summary['recent_earnings']:
-        meaningful_earnings = [earning for earning in summary['recent_earnings'][:5] if earning['amount_kopeks'] > 0]
+        # Награда днями имеет amount_kopeks == 0 by design: фильтр «только с
+        # деньгами» выкидывал из истории каждое такое начисление, и пользователь,
+        # только что получивший 7 дней, не видел ничего.
+        meaningful_earnings = [
+            earning
+            for earning in summary['recent_earnings'][:5]
+            if earning['amount_kopeks'] > 0 or earning.get('days_granted', 0) > 0
+        ]
 
         if meaningful_earnings:
             referral_text += (
@@ -167,7 +242,30 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
                         'REFERRAL_EARNING_REASON_COMMISSION_PURCHASE',
                         '💰 Комиссия с покупки',
                     ),
+                    'referral_registration_reward': texts.t(
+                        'REFERRAL_EARNING_REASON_REGISTRATION',
+                        '👥 Награда за регистрацию',
+                    ),
+                    'referral_days_reward': texts.t(
+                        'REFERRAL_EARNING_REASON_DAYS',
+                        '📅 Дни подписки',
+                    ),
+                    'referral_days_bonus': texts.t(
+                        'REFERRAL_EARNING_REASON_DAYS_BONUS',
+                        '🎁 Бонусные дни',
+                    ),
                 }.get(earning['reason'], earning['reason'])
+
+                # В режиме рангов level это ступень партнёра, а не глубина сети:
+                # получатель всегда прямой пригласивший, и «ур. 3» рядом с именем
+                # его собственного реферала утверждает несуществующую цепочку.
+                level = earning.get('level', 1)
+                if level > 1:
+                    reason_text += (
+                        texts.t('REFERRAL_EARNING_TIER_SUFFIX', ' (ранг {level})')
+                        if settings.is_referral_tier_levels()
+                        else texts.t('REFERRAL_EARNING_LEVEL_SUFFIX', ' (ур. {level})')
+                    ).format(level=level)
 
                 referral_text += (
                     texts.t(
@@ -175,7 +273,9 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
                         '• {reason}: <b>{amount}</b> от {referral_name}',
                     ).format(
                         reason=reason_text,
-                        amount=texts.format_price(earning['amount_kopeks']),
+                        amount=format_reward_total(
+                            earning['amount_kopeks'], earning.get('days_granted', 0), db_user.language
+                        ),
                         referral_name=html_escape(str(earning['referral_name'] or '')),
                     )
                     + '\n'
@@ -193,42 +293,48 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
 
         if 'referral_first_topup' in summary['earnings_by_type']:
             data = summary['earnings_by_type']['referral_first_topup']
-            if data['total_amount_kopeks'] > 0:
+            if data['total_amount_kopeks'] > 0 or data.get('total_days', 0) > 0:
                 referral_text += (
                     texts.t(
                         'REFERRAL_EARNINGS_FIRST_TOPUPS',
                         '• Бонусы за первые пополнения: <b>{count}</b> ({amount})',
                     ).format(
                         count=data['count'],
-                        amount=texts.format_price(data['total_amount_kopeks']),
+                        amount=format_reward_total(
+                            data['total_amount_kopeks'], data.get('total_days', 0), db_user.language
+                        ),
                     )
                     + '\n'
                 )
 
         if 'referral_commission_topup' in summary['earnings_by_type']:
             data = summary['earnings_by_type']['referral_commission_topup']
-            if data['total_amount_kopeks'] > 0:
+            if data['total_amount_kopeks'] > 0 or data.get('total_days', 0) > 0:
                 referral_text += (
                     texts.t(
                         'REFERRAL_EARNINGS_TOPUPS',
                         '• Комиссии с пополнений: <b>{count}</b> ({amount})',
                     ).format(
                         count=data['count'],
-                        amount=texts.format_price(data['total_amount_kopeks']),
+                        amount=format_reward_total(
+                            data['total_amount_kopeks'], data.get('total_days', 0), db_user.language
+                        ),
                     )
                     + '\n'
                 )
 
         if 'referral_commission' in summary['earnings_by_type']:
             data = summary['earnings_by_type']['referral_commission']
-            if data['total_amount_kopeks'] > 0:
+            if data['total_amount_kopeks'] > 0 or data.get('total_days', 0) > 0:
                 referral_text += (
                     texts.t(
                         'REFERRAL_EARNINGS_PURCHASES',
                         '• Комиссии с покупок: <b>{count}</b> ({amount})',
                     ).format(
                         count=data['count'],
-                        amount=texts.format_price(data['total_amount_kopeks']),
+                        amount=format_reward_total(
+                            data['total_amount_kopeks'], data.get('total_days', 0), db_user.language
+                        ),
                     )
                     + '\n'
                 )
@@ -357,7 +463,11 @@ async def show_detailed_referral_list(callback: types.CallbackQuery, db_user: Us
             texts.t(
                 'REFERRAL_LIST_ITEM_EARNED',
                 '   💎 Заработано с него: {amount}',
-            ).format(amount=texts.format_price(referral['total_earned_kopeks']))
+            ).format(
+                amount=format_reward_total(
+                    referral['total_earned_kopeks'], referral.get('days_earned', 0), db_user.language
+                )
+            )
             + '\n'
         )
         text += (
@@ -435,28 +545,52 @@ async def show_referral_analytics(callback: types.CallbackQuery, db_user: User, 
         texts.t(
             'REFERRAL_ANALYTICS_EARNINGS_TODAY',
             '• Сегодня: {amount}',
-        ).format(amount=texts.format_price(analytics['earnings_by_period']['today']))
+        ).format(
+            amount=format_reward_total(
+                analytics['earnings_by_period']['today'],
+                (analytics.get('days_by_period') or {}).get('today', 0),
+                db_user.language,
+            )
+        )
         + '\n'
     )
     text += (
         texts.t(
             'REFERRAL_ANALYTICS_EARNINGS_WEEK',
             '• За неделю: {amount}',
-        ).format(amount=texts.format_price(analytics['earnings_by_period']['week']))
+        ).format(
+            amount=format_reward_total(
+                analytics['earnings_by_period']['week'],
+                (analytics.get('days_by_period') or {}).get('week', 0),
+                db_user.language,
+            )
+        )
         + '\n'
     )
     text += (
         texts.t(
             'REFERRAL_ANALYTICS_EARNINGS_MONTH',
             '• За месяц: {amount}',
-        ).format(amount=texts.format_price(analytics['earnings_by_period']['month']))
+        ).format(
+            amount=format_reward_total(
+                analytics['earnings_by_period']['month'],
+                (analytics.get('days_by_period') or {}).get('month', 0),
+                db_user.language,
+            )
+        )
         + '\n'
     )
     text += (
         texts.t(
             'REFERRAL_ANALYTICS_EARNINGS_QUARTER',
             '• За квартал: {amount}',
-        ).format(amount=texts.format_price(analytics['earnings_by_period']['quarter']))
+        ).format(
+            amount=format_reward_total(
+                analytics['earnings_by_period']['quarter'],
+                (analytics.get('days_by_period') or {}).get('quarter', 0),
+                db_user.language,
+            )
+        )
         + '\n\n'
     )
 
@@ -476,7 +610,9 @@ async def show_referral_analytics(callback: types.CallbackQuery, db_user: User, 
                 ).format(
                     index=i,
                     name=html_escape(str(ref['referral_name'] or '')),
-                    amount=texts.format_price(ref['total_earned_kopeks']),
+                    amount=format_reward_total(
+                        ref['total_earned_kopeks'], ref.get('total_earned_days', 0), db_user.language
+                    ),
                     count=ref['earnings_count'],
                 )
                 + '\n'
@@ -498,7 +634,7 @@ async def show_referral_analytics(callback: types.CallbackQuery, db_user: User, 
     await callback.answer()
 
 
-async def create_invite_message(callback: types.CallbackQuery, db_user: User):
+async def create_invite_message(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     texts = get_texts(db_user.language)
 
     if not db_user.referral_code:
@@ -509,8 +645,24 @@ async def create_invite_message(callback: types.CallbackQuery, db_user: User):
     bot_referral_link = settings.get_bot_referral_link(db_user.referral_code, bot_username)
     cabinet_referral_link = settings.get_cabinet_referral_link(db_user.referral_code)
 
+    # Обещание в приглашении обязано совпадать с тем, что реально начислят.
+    # В многоуровневой схеме бонус приглашённому задаётся уровнем, а легаси-ключ
+    # ничем не управляет — пообещать по нему значит отправить другу неправду.
     bonus_block = ''
-    if settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+    if settings.is_referral_levels_scheme():
+        from app.services.referral_reward_service import describe_referee_bonus
+
+        # Текст пересылают другу, и обещание в нём — про бонус ЭТОГО приглашающего:
+        # в режиме рангов сумма зависит от его ранга, а не от стартового.
+        referee_bonus = await describe_referee_bonus(
+            db, tariff_names=await _reward_tariff_names(db), language=db_user.language, referrer=db_user
+        )
+        if referee_bonus:
+            bonus_block = '\n\n' + texts.t(
+                'REFERRAL_INVITE_BONUS_LEVELS',
+                '💎 Твой бонус за регистрацию по ссылке: {bonus}',
+            ).format(bonus=referee_bonus)
+    elif settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
         bonus_block = '\n\n' + texts.t(
             'REFERRAL_INVITE_BONUS',
             '💎 При первом пополнении от {minimum} ты получишь {bonus} бонусом на баланс!',
@@ -863,7 +1015,12 @@ async def confirm_withdrawal_request(callback: types.CallbackQuery, db_user: Use
 
     # Уведомление в топик, если настроено
     topic_id = settings.REFERRAL_WITHDRAWAL_NOTIFICATIONS_TOPIC_ID
-    if topic_id and settings.ADMIN_NOTIFICATIONS_CHAT_ID:
+    if (
+        topic_id
+        and settings.ADMIN_NOTIFICATIONS_CHAT_ID
+        and settings.ADMIN_NOTIFICATIONS_ENABLED
+        and settings.ADMIN_NOTIFICATIONS_PARTNERS_ENABLED
+    ):
         try:
             await callback.bot.send_message(
                 chat_id=settings.ADMIN_NOTIFICATIONS_CHAT_ID,

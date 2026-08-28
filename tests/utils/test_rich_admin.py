@@ -138,3 +138,60 @@ def test_pre_blocks_survive_conversion():
     assert 'line1<br>line2' not in rich
     # Обычные строки при этом абзацируются
     assert '<p>Изменения:</p>' in rich
+
+
+async def test_inline_buttons_move_into_canvas_in_private_admin_chat(monkeypatch):
+    """В личке админа Mini App допустим, поэтому переносится вся клавиатура."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_INLINE_BUTTONS', True, raising=False)
+    monkeypatch.setattr(rich_admin, 'is_rich_admin_enabled', lambda: True)
+
+    bot = AsyncMock()
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text='Кабинет', web_app=WebAppInfo(url='https://cab.example'))]]
+    )
+
+    sent = await rich_admin.try_send_rich_admin_message(bot, 777, '<p>alert</p>', reply_markup=keyboard)
+
+    assert sent is True
+    kwargs = bot.send_rich_message.await_args.kwargs
+    assert '<tg-button type="web_app"' in kwargs['rich_message'].html
+    assert 'reply_markup' not in kwargs
+
+
+async def test_web_app_button_stays_outside_in_group_admin_chat(monkeypatch):
+    """У группы отрицательный id, а Mini App там не откроется — клавиатура остаётся."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_INLINE_BUTTONS', True, raising=False)
+    monkeypatch.setattr(rich_admin, 'is_rich_admin_enabled', lambda: True)
+
+    bot = AsyncMock()
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text='Кабинет', web_app=WebAppInfo(url='https://cab.example'))]]
+    )
+
+    sent = await rich_admin.try_send_rich_admin_message(bot, -1001234567890, '<p>alert</p>', reply_markup=keyboard)
+
+    assert sent is True
+    kwargs = bot.send_rich_message.await_args.kwargs
+    assert '<tg-button' not in kwargs['rich_message'].html
+    assert kwargs['reply_markup'] is keyboard
+
+
+async def test_callback_buttons_move_into_canvas_in_group_admin_chat(monkeypatch):
+    """Обычные callback-кнопки в группе переносятся штатно."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    monkeypatch.setattr(settings, 'MAIN_MENU_RICH_INLINE_BUTTONS', True, raising=False)
+    monkeypatch.setattr(rich_admin, 'is_rich_admin_enabled', lambda: True)
+
+    bot = AsyncMock()
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Открыть', callback_data='open')]])
+
+    await rich_admin.try_send_rich_admin_message(bot, -1001234567890, '<p>alert</p>', reply_markup=keyboard)
+
+    kwargs = bot.send_rich_message.await_args.kwargs
+    assert '<tg-button type="callback_data" data="open">' in kwargs['rich_message'].html
+    assert 'reply_markup' not in kwargs

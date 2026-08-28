@@ -501,7 +501,25 @@ _PROVIDERS: dict[str, type[OAuthProvider]] = {
 }
 
 
-def get_provider(name: str) -> OAuthProvider | None:
+def resolve_oauth_redirect_uri(origin: str | None) -> str:
+    """Pick the OAuth redirect_uri for the request's origin.
+
+    Returns "{origin}/auth/oauth/callback" when origin is an allowed cabinet
+    origin (so mirror/alternate domains can complete OAuth on their own host),
+    else falls back to CABINET_URL. Canonical domain behaviour is unchanged.
+    """
+    default = f'{settings.CABINET_URL}/auth/oauth/callback'
+    if not origin:
+        return default
+    origin = origin.rstrip('/')
+    allowed = {o.rstrip('/') for o in settings.get_cabinet_allowed_origins()}
+    allowed.add(settings.CABINET_URL.rstrip('/'))
+    if origin in allowed:
+        return f'{origin}/auth/oauth/callback'
+    return default
+
+
+def get_provider(name: str, redirect_uri: str | None = None) -> OAuthProvider | None:
     """Get an OAuth provider instance if enabled.
 
     Returns None if the provider is not enabled or not found.
@@ -515,7 +533,8 @@ def get_provider(name: str) -> OAuthProvider | None:
     if not provider_class:
         return None
 
-    redirect_uri = f'{settings.CABINET_URL}/auth/oauth/callback'
+    if not redirect_uri:
+        redirect_uri = f'{settings.CABINET_URL}/auth/oauth/callback'
 
     return provider_class(
         client_id=config['client_id'],

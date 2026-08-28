@@ -433,9 +433,13 @@ class PlategaPaymentMixin:
         from app.database.crud import platega_subscription as sub_crud
         from app.services import platega_recurrent as pr
 
-        status = payload.get('Status')
-        platega_id = payload.get('SubscriptionId')
-        charge_id = payload.get('Id')
+        # Регистр ключей у Platega разный: разовые коллбеки приходят в
+        # camelCase, примеры подписочных в спеке — в PascalCase. Читаем
+        # через общий разбор, иначе списание не находит свою подписку.
+        fields = pr.read_callback_fields(payload)
+        status = fields.status
+        platega_id = fields.subscription_id
+        charge_id = fields.charge_id
 
         if not platega_id:
             logger.warning('Platega subscription callback без SubscriptionId', status=status)
@@ -517,7 +521,7 @@ class PlategaPaymentMixin:
             await self._notify_sbp_recurring(db, record, 'activated')
             return
 
-        if status in pr.CHARGE_SUCCESS:
+        if status is not None and status.upper() in pr.CHARGE_SUCCESS:
             if not charge_id:
                 # CONFIRMED без Id доверять нельзя: без id идемпотентность ниже
                 # не сработает, и каждый повтор такого коллбека продлевал бы
@@ -615,7 +619,7 @@ class PlategaPaymentMixin:
                 record.status = 'ACTIVE'
             record.last_charge_at = datetime.now(UTC)
             record.charges_success += 1
-            record.next_charge_at = _parse_next_charge(payload.get('NextChargeAt'))
+            record.next_charge_at = _parse_next_charge(fields.next_charge_at)
 
             tx = await create_transaction(
                 db,
@@ -738,6 +742,9 @@ class PlategaPaymentMixin:
         завершиться 200 OK независимо от того, доставилось ли сообщение в
         Telegram.
         """
+        if not settings.is_notifications_enabled():
+            return
+
         try:
             from app.cabinet.routes.websocket import cabinet_ws_manager
 
@@ -1128,7 +1135,7 @@ class PlategaPaymentMixin:
 
         method_title = settings.get_platega_method_display_title(payment.payment_method_code)
 
-        if getattr(self, 'bot', None) and user.telegram_id:
+        if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
             try:
                 keyboard = await self.build_topup_success_keyboard(user)
                 await self.bot.send_message(

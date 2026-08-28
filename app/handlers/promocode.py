@@ -214,6 +214,10 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
                 '❌ Для активации этого промокода необходима подписка (активная или просроченная).',
             ),
             'subscription_not_found': texts.t('PROMOCODE_SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена.'),
+            'traffic_not_applicable': texts.t(
+                'PROMOCODE_TRAFFIC_NOT_APPLICABLE',
+                '❌ Этот промокод даёт только трафик, а у вашей подписки он безлимитный. Код не потрачен.',
+            ),
             'daily_limit': texts.t(
                 'PROMO_DAILY_LIMIT',
                 '❌ Достигнут лимит активаций промокодов на сегодня. Попробуйте завтра.',

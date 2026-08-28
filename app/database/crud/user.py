@@ -21,6 +21,7 @@ from app.database.models import (
     PromoGroup,
     Subscription,
     SubscriptionStatus,
+    Tariff,
     Transaction,
     TransactionType,
     User,
@@ -375,6 +376,28 @@ async def create_user_no_commit(
     return user
 
 
+async def emit_user_created_event(db: AsyncSession, user: User) -> None:
+    """Emit the best-effort post-commit user.created event for a persisted user."""
+    try:
+        from app.services.event_emitter import event_emitter
+
+        await event_emitter.emit(
+            'user.created',
+            {
+                'user_id': user.id,
+                'telegram_id': user.telegram_id,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'referral_code': user.referral_code,
+                'referred_by_id': user.referred_by_id,
+            },
+            db=db,
+        )
+    except Exception as error:
+        logger.warning('Failed to emit user.created event', error=error)
+
+
 def _violated_constraint(exc: IntegrityError) -> str:
     """Return the violated DB constraint name for an IntegrityError.
 
@@ -454,26 +477,7 @@ async def create_user(
                 '✅ Создан пользователь с реферальным кодом', telegram_id=telegram_id, referral_code=referral_code
             )
 
-            # Отправляем событие о создании пользователя
-            try:
-                from app.services.event_emitter import event_emitter
-
-                await event_emitter.emit(
-                    'user.created',
-                    {
-                        'user_id': user.id,
-                        'telegram_id': user.telegram_id,
-                        'username': user.username,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
-                        'referral_code': user.referral_code,
-                        'referred_by_id': user.referred_by_id,
-                    },
-                    db=db,
-                )
-            except Exception as error:
-                logger.warning('Failed to emit user.created event', error=error)
-
+            await emit_user_created_event(db, user)
             return user
 
         except IntegrityError as exc:
@@ -962,6 +966,7 @@ async def get_users_list(
     order_by_last_activity: bool = False,
     order_by_total_spent: bool = False,
     order_by_purchase_count: bool = False,
+    order_by_subscription_end: bool = False,
 ) -> list[User]:
     query = select(User).options(
         selectinload(User.subscriptions).selectinload(Subscription.tariff),
@@ -1044,10 +1049,11 @@ async def get_users_list(
         order_by_last_activity,
         order_by_total_spent,
         order_by_purchase_count,
+        order_by_subscription_end,
     ]
     if sum(int(flag) for flag in sort_flags) > 1:
         logger.debug(
-            'Выбрано несколько сортировок пользователей — применяется приоритет: трафик > траты > покупки > баланс > активность'
+            'Выбрано несколько сортировок пользователей — применяется приоритет: трафик > траты > покупки > баланс > активность > окончание подписки'
         )
 
     transactions_stats = None
@@ -1076,6 +1082,37 @@ async def get_users_list(
         query = query.order_by(User.balance_kopeks.desc(), User.created_at.desc())
     elif order_by_last_activity:
         query = query.order_by(nullslast(User.last_activity.desc()), User.created_at.desc())
+    elif order_by_subscription_end:
+        # MIN(end_date) среди подписок пользователя; без outerjoin — иначе дубли
+        # строк при нескольких подписках (мультитариф).
+        #
+        # Статус берём тот же, по которому фильтруется список: иначе связка
+        # «покажи истёкших, отсортируй по дате окончания» давала бы у ВСЕХ строк
+        # пустой ключ и молча схлопывалась в сортировку по дате регистрации.
+        _sort_status = subscription_status or SubscriptionStatus.ACTIVE.value
+        soonest_end_conditions = [
+            Subscription.user_id == User.id,
+            Subscription.status == _sort_status,
+        ]
+        if _sort_status == SubscriptionStatus.ACTIVE.value:
+            # Суточные тарифы исключаем ровно как `get_expiring_subscriptions`:
+            # у активной суточной подписки end_date всегда +24ч, поэтому иначе
+            # они навсегда занимают верх списка и хоронят тех, ради кого
+            # сортировка и делалась. Комментарий там же, subscription.py:1749.
+            soonest_end_conditions.append(
+                ~and_(
+                    Tariff.is_daily.is_(True),
+                    Subscription.is_daily_paused.is_(False),
+                )
+            )
+        soonest_end = (
+            select(func.min(Subscription.end_date))
+            .select_from(Subscription)
+            .outerjoin(Tariff, Subscription.tariff_id == Tariff.id)
+            .where(*soonest_end_conditions)
+            .scalar_subquery()
+        )
+        query = query.order_by(nullslast(soonest_end.asc()), User.created_at.desc())
     else:
         query = query.order_by(User.created_at.desc())
 
@@ -1503,6 +1540,44 @@ async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def get_user_by_email_alias(
+    db: AsyncSession,
+    email: str,
+    *,
+    exclude_user_id: int | None = None,
+) -> User | None:
+    """Найти пользователя, чей адрес ведёт в тот же ящик, что и ``email``.
+
+    ``user+1@gmail.com`` и ``u.ser@gmail.com`` — разные строки, но один ящик:
+    подтверждение адреса проходит штатно, письма приходят тому же человеку.
+    Сравнение по одному лишь регистру этого не видит, и на каждом таком алиасе
+    заводится отдельный аккаунт со своей пробной подпиской.
+
+    Совпадение считается по каноническому виду, поэтому точный дубль сюда тоже
+    попадает — вызывающий код проверяет его отдельно и раньше. Для доменов без
+    алиасов (корпоративных и незнакомых) запрос не выполняется вовсе.
+
+    ``exclude_user_id`` обязателен там, где свой собственный адрес занятым не
+    считается: фильтровать после выборки нельзя — ``LIMIT 1`` вернул бы своего
+    же юзера и скрыл чужой аккаунт на том же ящике.
+    """
+    from app.utils.email_alias import alias_match_clause
+
+    if not email or not email.strip():
+        return None
+
+    clause = alias_match_clause(User.email, email)
+    if clause is None:
+        return None
+
+    query = select(User).where(User.email.isnot(None), clause)
+    if exclude_user_id is not None:
+        query = query.where(User.id != exclude_user_id)
+
+    result = await db.execute(query.limit(1))
+    return result.scalar_one_or_none()
+
+
 async def is_email_taken(db: AsyncSession, email: str, exclude_user_id: int | None = None) -> bool:
     """
     Check if email is already taken by another user.
@@ -1522,7 +1597,12 @@ async def is_email_taken(db: AsyncSession, email: str, exclude_user_id: int | No
     if exclude_user_id:
         query = query.where(User.id != exclude_user_id)
     result = await db.execute(query)
-    return result.scalar_one_or_none() is not None
+    if result.scalar_one_or_none() is not None:
+        return True
+
+    # Другая запись того же ящика занимает его не меньше, чем точное совпадение
+    alias_owner = await get_user_by_email_alias(db, email, exclude_user_id=exclude_user_id)
+    return alias_owner is not None
 
 
 async def set_email_change_pending(

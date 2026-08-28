@@ -10,6 +10,7 @@ from app.database.crud.subscription import get_subscriptions_statistics
 from app.database.crud.transaction import get_revenue_by_period, get_transactions_statistics
 from app.database.models import User
 from app.keyboards.admin import get_admin_statistics_keyboard
+from app.services.referral_reward_service import format_reward_total
 from app.services.user_service import UserService
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime, format_percentage
@@ -196,29 +197,37 @@ async def show_referral_statistics(callback: types.CallbackQuery, db_user: User,
     if stats['active_referrers'] > 0:
         avg_per_referrer = stats['total_paid_kopeks'] / stats['active_referrers']
 
+    # Дни — вторая валюта программы: без них экран показывает «выплачено 0 ₽»
+    # на установке, где начисления идут днями подписки.
     text = f"""
 🤝 <b>Реферальная статистика</b>
 
 <b>Общие показатели:</b>
 - Пользователей с рефералами: {stats['users_with_referrals']}
 - Активных рефереров: {stats['active_referrers']}
-- Выплачено всего: {settings.format_price(stats['total_paid_kopeks'])}
+- Выплачено всего: {format_reward_total(stats['total_paid_kopeks'], stats.get('total_paid_days', 0))}
 
 <b>За период:</b>
-- Сегодня: {settings.format_price(stats['today_earnings_kopeks'])}
-- За неделю: {settings.format_price(stats['week_earnings_kopeks'])}
-- За месяц: {settings.format_price(stats['month_earnings_kopeks'])}
+- Сегодня: {format_reward_total(stats['today_earnings_kopeks'], stats.get('today_earnings_days', 0))}
+- За неделю: {format_reward_total(stats['week_earnings_kopeks'], stats.get('week_earnings_days', 0))}
+- За месяц: {format_reward_total(stats['month_earnings_kopeks'], stats.get('month_earnings_days', 0))}
 
 <b>Средние показатели:</b>
 - На одного рефререра: {settings.format_price(int(avg_per_referrer))}
-
-<b>Топ рефереры:</b>
 """
+
+    meaningful_levels = [row for row in (stats.get('by_level') or []) if row.get('money_kopeks') or row.get('days')]
+    if len(meaningful_levels) > 1:
+        text += '\n<b>По уровням:</b>\n'
+        for row in meaningful_levels:
+            text += f'- Уровень {row["level"]}: {format_reward_total(row.get("money_kopeks", 0), row.get("days", 0))}\n'
+
+    text += '\n<b>Топ рефереры:</b>\n'
 
     if stats['top_referrers']:
         for i, referrer in enumerate(stats['top_referrers'][:5], 1):
             name = referrer['display_name']
-            earned = settings.format_price(referrer['total_earned_kopeks'])
+            earned = format_reward_total(referrer['total_earned_kopeks'], referrer.get('total_earned_days', 0))
             count = referrer['referrals_count']
             text += f'{i}. {name}: {earned} ({count} реф.)\n'
     else:

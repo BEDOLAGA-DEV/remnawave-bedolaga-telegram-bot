@@ -86,6 +86,7 @@ from app.database.models import (
     ReferralContestEvent,
     ReferralContestVirtualParticipant,
     ReferralEarning,
+    ReferralRewardLevel,
     RequiredChannel,
     RioPayPayment,
     RollyPayPayment,
@@ -224,6 +225,12 @@ class BackupService:
             MulenPayPayment,
             Pal24Payment,
             PromoCodeUse,
+            # Правила уровней — конфигурация, а не история, и без них восстановленный
+            # бот встаёт с включённой схемой 'levels' (она лежит в SystemSetting и
+            # переживает восстановление) и пустой таблицей правил: цепочка не находит
+            # ни одного уровня и молча не платит НИЧЕГО, без ошибки в логах.
+            # Идёт после Tariff: ссылается на него через referrer/referee_tariff_id.
+            ReferralRewardLevel,
             ReferralEarning,
             SentNotification,
             DiscountOffer,
@@ -580,6 +587,19 @@ class BackupService:
                 await self._send_backup_notification('error', error_msg)
 
             return False, error_msg, None
+
+    @staticmethod
+    def _invalidate_restored_caches() -> None:
+        """Сбросить кэши, читающие восстановленные таблицы.
+
+        Восстановление пишет строки НАПРЯМУЮ, минуя crud, а сброс кэша уровней
+        живёт именно в crud. Без этого бот продолжал бы начислять по правилам,
+        которые только что заменили: экран показывает восстановленную лестницу,
+        а платит доресторная — до перезапуска.
+        """
+        from app.services.referral_reward_service import ReferralRewardLevelService
+
+        ReferralRewardLevelService.invalidate_cache()
 
     async def restore_backup(self, backup_file_path: str, clear_existing: bool = False) -> tuple[bool, str]:
         try:
@@ -946,6 +966,8 @@ class BackupService:
             if files_info:
                 await self._restore_files(files_info, temp_path)
 
+            self._invalidate_restored_caches()
+
             message = (
                 f'✅ Восстановление завершено!\n'
                 f'📊 Таблиц: {metadata.get("tables_count", 0)}\n'
@@ -1253,6 +1275,8 @@ class BackupService:
             restored_files = await self._restore_file_snapshots(file_snapshots)
             if restored_files:
                 logger.info('📁 Восстановлено файлов конфигурации', restored_files=restored_files)
+
+        self._invalidate_restored_caches()
 
         message = (
             f'✅ Восстановление завершено!\n'
@@ -1701,6 +1725,10 @@ class BackupService:
             'broadcast_history',
             'subscription_conversions',
             'referral_earnings',
+            # Правила уровней — тоже часть восстанавливаемого состояния. Без
+            # очистки восстановление «с заменой» оставило бы правила приёмника,
+            # и программа платила бы по чужой конфигурации при своей истории.
+            'referral_reward_levels',
             'promocode_uses',
             'yookassa_payments',
             'cryptobot_payments',

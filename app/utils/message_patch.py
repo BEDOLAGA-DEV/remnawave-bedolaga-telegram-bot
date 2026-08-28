@@ -127,7 +127,9 @@ def _prepare_logo_for_send(path: Path) -> Path:
 
 # Telegram API: caption limit is 1024 characters AFTER HTML entity parsing (tags stripped)
 TELEGRAM_CAPTION_LIMIT = 1024
-_HTML_TAG_RE = re.compile(r'<[^>]+>')
+# [^<>] держит вырезание тегов линейным: [^>] на строке из одних '<'
+# перебирает хвост заново с каждой позиции.
+_HTML_TAG_RE = re.compile(r'<[^<>]+>')
 
 
 def caption_exceeds_telegram_limit(text: str | None) -> bool:

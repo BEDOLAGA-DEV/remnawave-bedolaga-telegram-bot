@@ -47,7 +47,10 @@ try:  # pragma: no cover - импорт может не работать без 
         RemnaWaveService,
     )
 except Exception:  # pragma: no cover - при ошибке импорта скрываем функционал
-    RemnaWaveConfigurationError = None  # type: ignore[assignment]
+
+    class RemnaWaveConfigurationError(Exception):
+        """Заглушка: `except` требует класс, с None он падал бы с TypeError."""
+
     RemnaWaveService = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:  # pragma: no cover - только для типов в IDE
@@ -453,10 +456,8 @@ async def sync_from_panel(
         stats = await service.sync_users_from_panel(db, payload.mode)
         detail = 'Синхронизация из панели выполнена'
         return RemnaWaveGenericSyncResponse(success=True, detail=detail, data=stats)
-    except Exception as exc:  # pragma: no cover - точный тип зависит от импорта
-        if RemnaWaveConfigurationError and isinstance(exc, RemnaWaveConfigurationError):
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
-        raise
+    except RemnaWaveConfigurationError as exc:  # pragma: no cover - зависит от окружения
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
 
 
 @router.post('/sync/to-panel', response_model=RemnaWaveGenericSyncResponse)

@@ -157,6 +157,21 @@ def info_page_faq_to_telegram(raw_content: str | None) -> str:
     return '\n\n'.join(blocks)
 
 
+def stored_html_to_telegram_pages(raw_content: str | None, *, max_length: int = 3500) -> list[str]:
+    """Сохранённый HTML страницы → куски, которые Telegram согласится разобрать.
+
+    Тексты правил, политики, оферты и FAQ редактируются как HTML, и никто не
+    ограничивает автора набором из восьми тегов, которые понимает Telegram.
+    Один <p> из вставленной вёрстки — и отправка падает с «Unsupported start
+    tag», то есть раздел перестаёт открываться целиком.
+
+    Порядок важен: сначала преобразование, потом нарезка. Резать исходный HTML
+    по длине означало бы считать длину по разметке, которой в сообщении уже не
+    будет, и рвать теги посередине.
+    """
+    return split_telegram_text(html_to_telegram(raw_content), max_length=max_length)
+
+
 def _scan_open_tags(chunk: str, carried: list[tuple[str, str]]) -> list[tuple[str, str]]:
     open_tags = list(carried)
     for match in _TAG_RE.finditer(chunk):
@@ -195,6 +210,15 @@ def _trim_broken_tag(chunk: str) -> str:
     if match:
         chunk = chunk[: match.start()]
     return chunk
+
+
+def trim_broken_markup(chunk: str) -> str:
+    """Обрезает незакрытый тег или неполную HTML-сущность в конце куска.
+
+    Нужна всем, кто режет уже экранированный текст по длине: обрыв внутри
+    `&quot;` ломает разбор HTML на стороне Telegram.
+    """
+    return _trim_broken_tag(chunk)
 
 
 def split_telegram_text(text: str | None, *, max_length: int = 3500) -> list[str]:

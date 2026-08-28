@@ -80,13 +80,20 @@ class PartnerReferralCommissionUpdate(BaseModel):
 
 
 class EarningsByPeriod(BaseModel):
-    """Заработки по периодам."""
+    """Заработки по периодам.
+
+    Дни — вторая валюта программы: награда днями имеет ``amount_kopeks == 0``, и
+    без своих полей внешний API отдаёт нули на установке, где начисления идут
+    днями подписки.
+    """
 
     all_time_kopeks: int
     year_kopeks: int
     month_kopeks: int
     week_kopeks: int
     today_kopeks: int
+    all_time_days: int = 0
+    month_days: int = 0
 
 
 class ReferralsCountByPeriod(BaseModel):
@@ -117,6 +124,9 @@ class ReferrerDetailedStats(BaseModel):
     summary: ReferrerSummary
     earnings: EarningsByPeriod
     referrals_count: ReferralsCountByPeriod
+    # Какую часть дохода даёт глубина сети — без этого «сколько заработал
+    # партнёр» не отвечает на вопрос, окупается ли цепочка.
+    earnings_by_level: list[RewardsByLevel] = []
 
 
 class DailyStats(BaseModel):
@@ -148,6 +158,7 @@ class TopReferralItem(BaseModel):
     has_made_first_topup: bool
     is_active: bool
     total_earnings_kopeks: int
+    total_earnings_days: int = 0
 
 
 class TopReferralsResponse(BaseModel):
@@ -209,6 +220,16 @@ class PayoutsByPeriod(BaseModel):
     month_kopeks: int
     week_kopeks: int
     today_kopeks: int
+    all_time_days: int = 0
+    month_days: int = 0
+
+
+class RewardsByLevel(BaseModel):
+    """Разбивка по уровням цепочки: главная величина многоуровневой схемы."""
+
+    level: int
+    money_kopeks: int
+    days: int
 
 
 class NewReferralsByPeriod(BaseModel):
@@ -225,6 +246,7 @@ class GlobalPartnerStats(BaseModel):
     summary: GlobalPartnerSummary
     payouts: PayoutsByPeriod
     new_referrals: NewReferralsByPeriod
+    payouts_by_level: list[RewardsByLevel] = []
 
 
 class TopReferrerItem(BaseModel):
@@ -239,6 +261,7 @@ class TopReferrerItem(BaseModel):
     referral_code: str | None = None
     referrals_count: int
     total_earnings_kopeks: int
+    total_earnings_days: int = 0
 
 
 class TopReferrersResponse(BaseModel):

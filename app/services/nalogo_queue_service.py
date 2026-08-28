@@ -93,6 +93,9 @@ class NalogoQueueService:
         if not self._bot:
             return
 
+        if not settings.ADMIN_NOTIFICATIONS_ENABLED or not settings.ADMIN_NOTIFICATIONS_INFRASTRUCTURE_ENABLED:
+            return
+
         chat_id = settings.get_admin_notifications_chat_id()
         if not chat_id:
             return

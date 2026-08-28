@@ -47,6 +47,7 @@ class PromoCodeResponse(BaseModel):
     balance_bonus_kopeks: int
     balance_bonus_rubles: float
     subscription_days: int
+    traffic_gb: int = 0
     max_uses: int
     current_uses: int
     uses_left: int
@@ -90,6 +91,7 @@ class PromoCodeCreateRequest(BaseModel):
     type: PromoCodeType
     balance_bonus_kopeks: int = 0
     subscription_days: int = 0
+    traffic_gb: int = 0
     max_uses: int = Field(default=1, ge=0)
     valid_from: datetime | None = None
     valid_until: datetime | None = None
@@ -104,6 +106,7 @@ class PromoCodeUpdateRequest(BaseModel):
     type: PromoCodeType | None = None
     balance_bonus_kopeks: int | None = None
     subscription_days: int | None = None
+    traffic_gb: int | None = None
     max_uses: int | None = Field(default=None, ge=0)
     valid_from: datetime | None = None
     valid_until: datetime | None = None
@@ -187,6 +190,7 @@ async def _serialize_promocode(db: AsyncSession, promocode: PromoCode) -> PromoC
         balance_bonus_kopeks=promocode.balance_bonus_kopeks,
         balance_bonus_rubles=round(promocode.balance_bonus_kopeks / 100, 2),
         subscription_days=promocode.subscription_days,
+        traffic_gb=getattr(promocode, 'traffic_gb', 0) or 0,
         max_uses=promocode.max_uses,
         current_uses=promocode.current_uses,
         uses_left=promocode.uses_left,
@@ -252,13 +256,25 @@ def _validate_create_payload(payload: PromoCodeCreateRequest) -> None:
     normalized_valid_from = _normalize_datetime(payload.valid_from)
     normalized_valid_until = _normalize_datetime(payload.valid_until)
 
-    if payload.type in {PromoCodeType.BALANCE, PromoCodeType.BALANCE_AND_DAYS} and payload.balance_bonus_kopeks <= 0:
+    if payload.type == PromoCodeType.BALANCE and payload.balance_bonus_kopeks <= 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Balance bonus must be positive for balance promo codes')
+
+    # Набор бонусов собирается галочками, поэтому жёстко требовать все
+    # составляющие нельзя — достаточно, чтобы хоть что-то начислялось.
+    if payload.type == PromoCodeType.BALANCE_AND_DAYS and not (
+        payload.balance_bonus_kopeks > 0 or payload.subscription_days > 0 or payload.traffic_gb > 0
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            'Bonus set must grant at least one of: balance, subscription days, traffic',
+        )
+
+    if payload.traffic_gb < 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Traffic must not be negative')
 
     if payload.type in {
         PromoCodeType.SUBSCRIPTION_DAYS,
         PromoCodeType.TRIAL_SUBSCRIPTION,
-        PromoCodeType.BALANCE_AND_DAYS,
     }:
         if payload.subscription_days <= 0:
             raise HTTPException(
@@ -291,11 +307,24 @@ def _validate_update_payload(payload: PromoCodeUpdateRequest, promocode: PromoCo
     subscription_days = (
         payload.subscription_days if payload.subscription_days is not None else promocode.subscription_days
     )
+    traffic_gb = payload.traffic_gb if payload.traffic_gb is not None else (getattr(promocode, 'traffic_gb', 0) or 0)
 
-    if new_type in {PromoCodeType.BALANCE, PromoCodeType.BALANCE_AND_DAYS} and balance_bonus <= 0:
+    if new_type == PromoCodeType.BALANCE and balance_bonus <= 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Balance bonus must be positive for balance promo codes')
 
-    if new_type in {PromoCodeType.SUBSCRIPTION_DAYS, PromoCodeType.TRIAL_SUBSCRIPTION, PromoCodeType.BALANCE_AND_DAYS}:
+    # Набор бонусов: достаточно одной включённой составляющей (см. создание).
+    if new_type == PromoCodeType.BALANCE_AND_DAYS and not (
+        balance_bonus > 0 or subscription_days > 0 or traffic_gb > 0
+    ):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            'Bonus set must grant at least one of: balance, subscription days, traffic',
+        )
+
+    if traffic_gb < 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Traffic must not be negative')
+
+    if new_type in {PromoCodeType.SUBSCRIPTION_DAYS, PromoCodeType.TRIAL_SUBSCRIPTION}:
         if subscription_days <= 0:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, 'Subscription days must be positive for this promo code type'
@@ -391,6 +420,7 @@ async def create_promocode_endpoint(
         type=payload.type,
         balance_bonus_kopeks=payload.balance_bonus_kopeks,
         subscription_days=payload.subscription_days,
+        traffic_gb=payload.traffic_gb,
         max_uses=effective_max_uses,
         valid_until=normalized_valid_until,
         created_by=admin.id,
@@ -448,6 +478,8 @@ async def update_promocode_endpoint(
 
     if payload.subscription_days is not None:
         updates['subscription_days'] = payload.subscription_days
+    if payload.traffic_gb is not None:
+        updates['traffic_gb'] = payload.traffic_gb
 
     if payload.max_uses is not None:
         updates['max_uses'] = 999999 if payload.max_uses == 0 else payload.max_uses

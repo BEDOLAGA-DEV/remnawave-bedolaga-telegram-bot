@@ -446,7 +446,7 @@ class TelegramStarsMixin:
             period_display = settings.SIMPLE_SUBSCRIPTION_PERIOD_DAYS
 
         # Отправляем уведомление только Telegram-пользователям (Stars требует Telegram)
-        if getattr(self, 'bot', None) and user.telegram_id:
+        if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
             try:
                 from aiogram import types
 

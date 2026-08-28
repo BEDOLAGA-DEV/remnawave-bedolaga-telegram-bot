@@ -10,15 +10,28 @@ from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud.referral_reward_level import (
+    LEVELS_MODE_CHAIN,
+    LEVELS_MODE_TIERS,
+    MAX_SUPPORTED_LEVEL,
+    delete_reward_level,
+    get_all_reward_levels,
+    get_reward_level,
+    upsert_reward_level,
+)
 from app.database.models import (
     AdvertisingCampaign,
     PartnerApplication,
     PartnerStatus,
     ReferralEarning,
+    ReferralRewardMode,
+    ReferralRewardTrigger,
+    Tariff,
     User,
 )
 from app.services.partner_application_service import partner_application_service
 from app.services.partner_stats_service import PartnerStatsService
+from app.services.system_settings_service import bot_configuration_service
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.partners import (
@@ -31,6 +44,15 @@ from ..schemas.partners import (
     AdminRejectRequest,
     AdminUpdateCommissionRequest,
     CampaignSummary,
+)
+from ..schemas.referral import (
+    ReferralDepthUpdateRequest,
+    ReferralLevelsModeUpdateRequest,
+    ReferralRewardLevelResponse,
+    ReferralRewardLevelsResponse,
+    ReferralRewardLevelUpdateRequest,
+    ReferralRewardTariffOption,
+    ReferralSchemeUpdateRequest,
 )
 
 
@@ -418,6 +440,267 @@ async def list_partners(
 # ==================== Partner detail (parametric paths last) ====================
 
 
+# ---------------------------------------------------------------------------
+# Уровни реферальных наград
+# ---------------------------------------------------------------------------
+#
+# Живут под тем же правом ``partners:settings``, что и остальные настройки
+# партнёрской программы. Заводить отдельную секцию прав пришлось бы вместе с
+# записью в PERMISSION_REGISTRY, иначе ``require_permission`` проверял бы строку,
+# которой нет в реестре, и роль с таким правом невозможно было бы выдать через UI.
+
+
+async def _levels_payload(db: AsyncSession) -> ReferralRewardLevelsResponse:
+    """Уровни вместе с названиями тарифов.
+
+    Названия резолвятся здесь, а не на фронте: идентификатор тарифа сам по себе
+    не отвечает на вопрос «куда попадут дни», ради которого поле и существует.
+    """
+    levels = await get_all_reward_levels(db)
+
+    tariff_ids = {lvl.referrer_tariff_id for lvl in levels if lvl.referrer_tariff_id}
+    tariff_ids |= {lvl.referee_tariff_id for lvl in levels if lvl.referee_tariff_id}
+    tariff_names: dict[int, str] = {}
+    if tariff_ids:
+        result = await db.execute(select(Tariff.id, Tariff.name).where(Tariff.id.in_(tariff_ids)))
+        tariff_names = {row.id: row.name for row in result.all()}
+
+    tariff_options = await db.execute(
+        select(Tariff.id, Tariff.name).where(Tariff.is_active.is_(True)).order_by(Tariff.display_order, Tariff.id)
+    )
+
+    return ReferralRewardLevelsResponse(
+        scheme='levels' if settings.is_referral_levels_scheme() else 'legacy',
+        scheme_locked_by_env=bot_configuration_service.is_env_locked('REFERRAL_REWARD_SCHEME'),
+        levels_mode=settings.get_referral_levels_mode(),
+        levels_mode_locked_by_env=bot_configuration_service.is_env_locked('REFERRAL_LEVELS_MODE'),
+        multi_tariff_enabled=settings.is_multi_tariff_enabled(),
+        max_level_depth_locked_by_env=bot_configuration_service.is_env_locked('REFERRAL_MAX_LEVEL_DEPTH'),
+        max_level_depth=settings.get_referral_max_level_depth(),
+        max_supported_level=MAX_SUPPORTED_LEVEL,
+        available_tariffs=[ReferralRewardTariffOption(id=row.id, name=row.name) for row in tariff_options.all()],
+        levels=[
+            ReferralRewardLevelResponse(
+                level=lvl.level,
+                is_active=bool(lvl.is_active),
+                reward_mode=lvl.reward_mode,
+                trigger=lvl.trigger,
+                referrer_percent=lvl.referrer_percent,
+                referrer_fixed_kopeks=lvl.referrer_fixed_kopeks,
+                referrer_days=int(lvl.referrer_days or 0),
+                referrer_tariff_id=lvl.referrer_tariff_id,
+                referrer_tariff_name=tariff_names.get(lvl.referrer_tariff_id),
+                referee_fixed_kopeks=lvl.referee_fixed_kopeks,
+                referee_days=int(lvl.referee_days or 0),
+                referee_tariff_id=lvl.referee_tariff_id,
+                referee_tariff_name=tariff_names.get(lvl.referee_tariff_id),
+                max_payments=int(lvl.max_payments or 0),
+                required_referrals=int(getattr(lvl, 'required_referrals', 0) or 0),
+                required_referrals_active_only=bool(getattr(lvl, 'required_referrals_active_only', True)),
+            )
+            for lvl in levels
+        ],
+    )
+
+
+@router.get('/referral-levels', response_model=ReferralRewardLevelsResponse)
+async def list_referral_levels(
+    admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Список уровней реферальных наград и текущая схема."""
+    return await _levels_payload(db)
+
+
+@router.put('/referral-levels/{level}', response_model=ReferralRewardLevelsResponse)
+async def upsert_referral_level(
+    level: int,
+    request: ReferralRewardLevelUpdateRequest,
+    admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Создать или обновить правило уровня.
+
+    Присылаются только изменённые поля: экран правит их по одному, и отправка
+    всего объекта ради одной галочки затирала бы правку, сделанную параллельно из
+    бота — оба интерфейса ходят в одну таблицу.
+    """
+    values = request.model_dump(exclude_unset=True)
+
+    if 'reward_mode' in values and values['reward_mode'] not in {mode.value for mode in ReferralRewardMode}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Unknown reward_mode')
+    if 'trigger' in values and values['trigger'] not in {trigger.value for trigger in ReferralRewardTrigger}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Unknown trigger')
+
+    for field in ('referrer_tariff_id', 'referee_tariff_id'):
+        tariff_id = values.get(field)
+        if tariff_id:
+            exists = await db.execute(select(Tariff.id).where(Tariff.id == tariff_id))
+            if exists.scalar_one_or_none() is None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'Unknown tariff for {field}')
+
+    try:
+        await upsert_reward_level(db, level, **values)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    logger.info('Правило реферального уровня обновлено из кабинета', admin_id=admin.id, level=level)
+    return await _levels_payload(db)
+
+
+@router.delete('/referral-levels/{level}', response_model=ReferralRewardLevelsResponse)
+async def remove_referral_level(
+    level: int,
+    admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Удалить правило уровня."""
+    if not await delete_reward_level(db, level):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Level not found')
+
+    logger.info('Правило реферального уровня удалено из кабинета', admin_id=admin.id, level=level)
+    return await _levels_payload(db)
+
+
+@router.patch('/referral-depth', response_model=ReferralRewardLevelsResponse)
+async def update_referral_depth(
+    request: ReferralDepthUpdateRequest,
+    admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Сколько звеньев цепочки получают награду.
+
+    Настройка живёт в общем списке конфигурации, и добраться до неё из редактора
+    уровней было нельзя: правила глубже неё помечались как неплатящие, а способа
+    поднять предел экран не давал.
+
+    Верхняя граница — число заводимых уровней: глубже них обходить нечего, зато
+    каждый лишний шаг это запрос пользователя на пустое звено при каждом пополнении.
+    """
+    depth = int(request.max_level_depth)
+    if depth < 1 or depth > MAX_SUPPORTED_LEVEL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'max_level_depth must be between 1 and {MAX_SUPPORTED_LEVEL}',
+        )
+
+    if bot_configuration_service.is_env_locked('REFERRAL_MAX_LEVEL_DEPTH'):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='REFERRAL_MAX_LEVEL_DEPTH is pinned in .env and cannot be changed from the cabinet',
+        )
+
+    await bot_configuration_service.set_value(db, 'REFERRAL_MAX_LEVEL_DEPTH', depth)
+    logger.info('Глубина реферальной цепочки изменена из кабинета', admin_id=admin.id, depth=depth)
+    return await _levels_payload(db)
+
+
+@router.post('/referral-levels/import-legacy', response_model=ReferralRewardLevelsResponse)
+async def import_legacy_referral_settings(
+    admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Перенести действующие настройки ``REFERRAL_*`` в уровень 1.
+
+    Отката к ``REFERRAL_COMMISSION_PERCENT`` в расчёте нет, поэтому включение
+    схемы на пустой таблице не платит ничего. Это действие делает переход явным:
+    прежняя конфигурация становится видимым правилом, которое можно прочитать.
+
+    Повод — «первое пополнение»: в классической схеме фиксированные бонусы
+    разовые, а повод у уровня один на всё правило. Перенос с «каждым пополнением»
+    превратил бы оба разовых бонуса в регулярную выплату. Правило создаётся
+    ВЫКЛЮЧЕННЫМ — включает его админ, прочитав.
+    """
+    if await get_reward_level(db, 1) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Level 1 already exists')
+
+    from app.services.referral_reward_service import legacy_percent_for_import
+
+    percent, notes = legacy_percent_for_import()
+    await upsert_reward_level(
+        db,
+        1,
+        is_active=False,
+        reward_mode=ReferralRewardMode.MONEY.value,
+        trigger=ReferralRewardTrigger.FIRST_TOPUP.value,
+        referrer_percent=percent,
+        referrer_fixed_kopeks=settings.REFERRAL_INVITER_BONUS_KOPEKS or None,
+        referee_fixed_kopeks=settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS or None,
+        max_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
+    )
+    logger.info('Легаси-настройки перенесены в уровень 1 из кабинета', admin_id=admin.id, notes=notes)
+    payload = await _levels_payload(db)
+    payload.import_notes = notes
+    return payload
+
+
+@router.patch('/referral-levels-mode', response_model=ReferralRewardLevelsResponse)
+async def update_referral_levels_mode(
+    request: ReferralLevelsModeUpdateRequest,
+    admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Что означает номер уровня: глубина цепочки или ранг партнёра.
+
+    Переключение меняет и получателей награды, и число сработавших правил на
+    одном пополнении, поэтому оно отдельное действие, а не поле в правке уровня.
+
+    Значение проверяется по белому списку: неизвестная строка молча трактовалась
+    бы как 'chain' при чтении, и кабинет показывал бы «сохранено» на настройке,
+    которая не применилась.
+    """
+    mode = str(request.levels_mode or '').strip().lower()
+    if mode not in (LEVELS_MODE_CHAIN, LEVELS_MODE_TIERS):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"levels_mode must be '{LEVELS_MODE_CHAIN}' or '{LEVELS_MODE_TIERS}'",
+        )
+
+    if bot_configuration_service.is_env_locked('REFERRAL_LEVELS_MODE'):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='REFERRAL_LEVELS_MODE is pinned in .env and cannot be changed from the cabinet',
+        )
+
+    await bot_configuration_service.set_value(db, 'REFERRAL_LEVELS_MODE', mode)
+    logger.info('Режим уровней реферальной программы изменён из кабинета', admin_id=admin.id, levels_mode=mode)
+    return await _levels_payload(db)
+
+
+@router.patch('/referral-scheme', response_model=ReferralRewardLevelsResponse)
+async def update_referral_scheme(
+    request: ReferralSchemeUpdateRequest,
+    admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Переключить схему наград.
+
+    Ключ, заданный в ``.env``, попадает в ``ENV_OVERRIDE_KEYS``: запись легла бы
+    в БД и не применилась, а после перезапуска победило бы значение из файла.
+    Молча принять такую правку хуже, чем отказать — админ считал бы схему
+    переключённой.
+    """
+    scheme = (request.scheme or '').strip().lower()
+    if scheme not in ('legacy', 'levels'):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='scheme must be legacy or levels')
+
+    if bot_configuration_service.is_env_locked('REFERRAL_REWARD_SCHEME'):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='REFERRAL_REWARD_SCHEME is pinned in .env and cannot be changed from the cabinet',
+        )
+
+    await bot_configuration_service.set_value(db, 'REFERRAL_REWARD_SCHEME', scheme)
+    logger.info('Схема реферальных наград переключена из кабинета', admin_id=admin.id, scheme=scheme)
+    return await _levels_payload(db)
+
+
+# ВНИМАНИЕ: всё, что ниже, объявлено ПОСЛЕ параметризованных путей вида
+# '/{user_id}'. Литеральные сегменты обязаны идти раньше — FastAPI выбирает первый
+# совпавший маршрут, и '/{user_id}' перехватит любой литерал, отдав 422 при
+# разборе его как int. Новые литеральные пути добавляйте ВЫШЕ этой строки.
+
+
 @router.get('/{user_id}', response_model=AdminPartnerDetailResponse)
 async def get_partner_detail(
     user_id: int,
@@ -474,6 +757,9 @@ async def get_partner_detail(
         earnings_today=earnings['today_kopeks'],
         earnings_week=earnings['week_kopeks'],
         earnings_month=earnings['month_kopeks'],
+        earnings_all_time_days=earnings.get('all_time_days', 0),
+        earnings_month_days=earnings.get('month_days', 0),
+        earnings_by_level=stats.get('earnings_by_level') or [],
         conversion_to_paid=summary['conversion_to_paid_percent'],
         campaigns=campaign_list,
         created_at=user.created_at,

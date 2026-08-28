@@ -117,9 +117,9 @@ async def test_email_fanout_counts_sent_and_failed(monkeypatch):
 
     sent, failed = await route_module._send_promo_email_notifications(
         [
-            ('a@example.com', 'ru', 'A'),
-            ('bad@example.com', 'en', 'B'),
-            ('c@example.com', 'ru', 'C'),
+            ('a@example.com', 'ru', 'A', 1),
+            ('bad@example.com', 'en', 'B', 2),
+            ('c@example.com', 'ru', 'C', 3),
         ],
         message_text='hi',
         discount_percent=10,

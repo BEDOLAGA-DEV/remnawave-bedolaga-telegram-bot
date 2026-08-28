@@ -536,7 +536,7 @@ class LavaPaymentMixin:
             except Exception as error:
                 logger.error('Ошибка отправки админ уведомления Lava', error=error)
 
-        if getattr(self, 'bot', None) and user.telegram_id:
+        if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
             try:
                 keyboard = await self.build_topup_success_keyboard(user)
                 await self.bot.send_message(
@@ -651,6 +651,9 @@ class LavaPaymentMixin:
         Никогда не бросает наружу — вебхук обязан завершиться 200 независимо
         от доставки сообщения (зеркало ``_notify_sbp_recurring`` у Platega).
         """
+        if not settings.is_notifications_enabled():
+            return
+
         try:
             from app.cabinet.routes.websocket import cabinet_ws_manager
 

@@ -229,6 +229,12 @@ class AdminPartnerDetailResponse(BaseModel):
     earnings_today: int = 0
     earnings_week: int = 0
     earnings_month: int = 0
+    # Дни — вторая валюта программы: сервис их считает, а карточка партнёра до
+    # сих пор показывала бы нули на установке, где начисления идут днями.
+    earnings_all_time_days: int = 0
+    earnings_month_days: int = 0
+    # Какую часть дохода партнёра даёт глубина его сети.
+    earnings_by_level: list[dict] = []
     conversion_to_paid: float = 0.0
     campaigns: list[CampaignSummary] = []
     created_at: datetime

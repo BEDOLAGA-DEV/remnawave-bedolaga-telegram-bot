@@ -1,10 +1,15 @@
 from dataclasses import dataclass
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.campaign import record_campaign_registration
+from app.database.crud.campaign import (
+    get_campaign_by_start_parameter,
+    get_campaign_registration_by_user,
+    record_campaign_registration,
+)
 from app.database.crud.subscription import (
     create_paid_subscription,
     get_subscription_by_user_id,
@@ -40,6 +45,9 @@ class CampaignBonusResult:
     tariff_id: int | None = None
     tariff_name: str | None = None
     tariff_duration_days: int | None = None
+    # Имя кампании, к которой привязали юзера. Заполняется attribute_campaign,
+    # чтобы caller не ходил за кампанией второй раз ради текста уведомления.
+    campaign_name: str | None = None
     # True если запись в advertising_campaign_registrations была создана этим вызовом
     # (а не вернулась как existing). Используется caller'ом, чтобы понять, нужно ли
     # слать админу уведомление о регистрации (один раз на первую успешную).
@@ -49,6 +57,102 @@ class CampaignBonusResult:
 class AdvertisingCampaignService:
     def __init__(self) -> None:
         self.subscription_service = SubscriptionService()
+
+    async def attribute_campaign(
+        self,
+        db: AsyncSession,
+        user: User,
+        campaign_slug: str | None,
+    ) -> CampaignBonusResult | None:
+        """Bind a user to an advertising campaign and grant its bonus.
+
+        Shared by every entry point that can produce a campaign-attributed
+        user: cabinet auth, the bot's /start handler and guest purchases made
+        on a landing page. Returns ``None`` when there is nothing to attribute
+        — unknown or inactive campaign, the user is the campaign's own partner,
+        the user already belongs to some campaign, or the bonus did not apply.
+
+        Never raises: attribution is a side effect and must not take down the
+        flow that called it.
+        """
+        if not campaign_slug:
+            return None
+
+        try:
+            campaign = await get_campaign_by_start_parameter(db, campaign_slug, only_active=True)
+            if not campaign:
+                return None
+
+            # Партнёр не может привести сам себя по собственной ссылке.
+            if campaign.partner_user_id and campaign.partner_user_id == user.id:
+                logger.debug(
+                    'Skipping campaign attribution: user is the campaign partner',
+                    user_id=user.id,
+                    campaign_id=campaign.id,
+                )
+                return None
+
+            # Блокируем строку юзера: два параллельных входа иначе успеют
+            # выдать бонус дважды до того, как сработает UNIQUE в регистрации.
+            await db.execute(select(User).where(User.id == user.id).with_for_update())
+
+            existing = await get_campaign_registration_by_user(db, user.id)
+            if existing:
+                logger.debug('User already has campaign registration', user_id=user.id)
+                return None
+
+            await self._link_partner_referral(db, user, campaign)
+
+            result = await self.apply_campaign_bonus(db, user, campaign)
+            if not result.success:
+                return None
+
+            result.campaign_name = campaign.name
+            result.bonus_type = result.bonus_type or campaign.bonus_type
+
+            # Обновляем юзера, чтобы вызывающий увидел начисленный баланс.
+            await db.refresh(user)
+            return result
+        except Exception:
+            logger.exception(
+                'Failed to attribute campaign',
+                user_id=getattr(user, 'id', None),
+                campaign_slug=campaign_slug,
+            )
+            try:
+                await db.rollback()
+                # Перечитываем юзера, чтобы сессия осталась пригодной для caller'а.
+                await db.refresh(user)
+            except Exception:
+                logger.exception('Failed to rollback after campaign attribution error')
+            return None
+
+    async def _link_partner_referral(
+        self,
+        db: AsyncSession,
+        user: User,
+        campaign: AdvertisingCampaign,
+    ) -> None:
+        """Attach the campaign's partner as the user's referrer, if unset."""
+        if not campaign.partner_user_id or user.referred_by_id:
+            return
+
+        user.referred_by_id = campaign.partner_user_id
+        await db.flush()
+        try:
+            from app.bot_factory import create_bot
+            from app.services.referral_service import process_referral_registration
+
+            async with create_bot() as bot:
+                await process_referral_registration(db, user.id, campaign.partner_user_id, bot=bot)
+            logger.info(
+                'Referral set from campaign partner',
+                user_id=user.id,
+                partner_user_id=campaign.partner_user_id,
+                campaign_id=campaign.id,
+            )
+        except Exception as e:
+            logger.error('Failed to process referral from campaign partner', error=e)
 
     async def apply_campaign_bonus(
         self,

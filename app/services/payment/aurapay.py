@@ -471,7 +471,7 @@ class AuraPayPaymentMixin:
             except Exception as error:
                 logger.error('Ошибка отправки админ уведомления AuraPay', error=error)
 
-        if getattr(self, 'bot', None) and user.telegram_id:
+        if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
             try:
                 keyboard = await self.build_topup_success_keyboard(user)
                 await self.bot.send_message(

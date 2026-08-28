@@ -13,6 +13,76 @@ if str(ROOT_DIR) not in sys.path:
 from app.services import referral_service
 
 
+@pytest.mark.parametrize(
+    ('notifications_enabled', 'referral_notifications_enabled'),
+    [
+        (False, True),
+        (True, False),
+    ],
+)
+async def test_referral_notification_respects_notification_switches(
+    monkeypatch,
+    notifications_enabled,
+    referral_notifications_enabled,
+):
+    bot = SimpleNamespace(send_message=AsyncMock())
+    user = SimpleNamespace(id=2)
+
+    monkeypatch.setattr(referral_service.settings, 'ENABLE_NOTIFICATIONS', notifications_enabled)
+    monkeypatch.setattr(
+        referral_service.settings,
+        'REFERRAL_NOTIFICATIONS_ENABLED',
+        referral_notifications_enabled,
+    )
+
+    await referral_service.send_referral_notification(
+        bot,
+        telegram_id=202,
+        message='Реферал пополнил баланс',
+        user=user,
+    )
+
+    bot.send_message.assert_not_awaited()
+
+
+async def test_referral_notification_enabled_sends_telegram_message(monkeypatch):
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    monkeypatch.setattr(referral_service.settings, 'ENABLE_NOTIFICATIONS', True)
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_NOTIFICATIONS_ENABLED', True)
+
+    await referral_service.send_referral_notification(
+        bot,
+        telegram_id=202,
+        message='Реферал пополнил баланс',
+    )
+
+    bot.send_message.assert_awaited_once_with(202, 'Реферал пополнил баланс', parse_mode='HTML')
+
+
+async def test_disabled_referral_notifications_skip_email_delivery(monkeypatch):
+    user = SimpleNamespace(id=2)
+    notify_referral_bonus = AsyncMock()
+
+    monkeypatch.setattr(referral_service.settings, 'ENABLE_NOTIFICATIONS', True)
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_NOTIFICATIONS_ENABLED', False)
+    monkeypatch.setattr(
+        referral_service.notification_delivery_service,
+        'notify_referral_bonus',
+        notify_referral_bonus,
+    )
+
+    await referral_service.send_referral_notification(
+        SimpleNamespace(send_message=AsyncMock()),
+        telegram_id=None,
+        message='Начислен реферальный бонус',
+        user=user,
+        bonus_kopeks=1000,
+    )
+
+    notify_referral_bonus.assert_not_awaited()
+
+
 async def test_commission_accrues_before_minimum_first_topup(monkeypatch):
     user = SimpleNamespace(
         id=1,

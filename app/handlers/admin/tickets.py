@@ -21,68 +21,15 @@ from app.services.support_settings_service import SupportSettingsService
 from app.states import AdminTicketStates
 from app.utils.cache import RateLimitCache
 from app.utils.photo_message import safe_edit_or_resend
+from app.utils.ticket_text import (
+    TICKET_MESSAGE_MAX_LENGTH,
+    TICKET_PAGE_MAX_LEN,
+    build_ticket_pages,
+    preview_text,
+)
 
 
 logger = structlog.get_logger(__name__)
-
-# Максимальная длина сообщения Telegram (с запасом)
-MAX_MESSAGE_LEN = 3500
-
-
-def _split_long_block(block: str, max_len: int) -> list[str]:
-    """Разбивает слишком длинный блок на части."""
-    if len(block) <= max_len:
-        return [block]
-
-    parts = []
-    remaining = block
-    while remaining:
-        if len(remaining) <= max_len:
-            parts.append(remaining)
-            break
-        cut_at = max_len
-        newline_pos = remaining.rfind('\n', 0, max_len)
-        space_pos = remaining.rfind(' ', 0, max_len)
-
-        if newline_pos > max_len // 2:
-            cut_at = newline_pos + 1
-        elif space_pos > max_len // 2:
-            cut_at = space_pos + 1
-
-        parts.append(remaining[:cut_at])
-        remaining = remaining[cut_at:]
-
-    return parts
-
-
-def _split_text_into_pages(header: str, message_blocks: list[str], max_len: int = MAX_MESSAGE_LEN) -> list[str]:
-    """Разбивает текст на страницы с учётом лимита Telegram."""
-    pages: list[str] = []
-    current = header
-    header_len = len(header)
-    block_max_len = max_len - header_len - 50
-
-    for block in message_blocks:
-        if len(block) > block_max_len:
-            block_parts = _split_long_block(block, block_max_len)
-            for part in block_parts:
-                if len(current) + len(part) > max_len:
-                    if current.strip() and current != header:
-                        pages.append(current)
-                    current = header + part
-                else:
-                    current += part
-        elif len(current) + len(block) > max_len:
-            if current.strip() and current != header:
-                pages.append(current)
-            current = header + block
-        else:
-            current += block
-
-    if current.strip():
-        pages.append(current)
-
-    return pages or [header]
 
 
 async def show_admin_tickets(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -194,7 +141,8 @@ async def view_admin_ticket(
         return
 
     # Парсим ticket_id и page из callback_data
-    page = 1
+    # None — страница не задана: открываем последнюю, где лежат свежие сообщения
+    page = None
     data_str = callback.data or ''
 
     if data_str.startswith('admin_ticket_page_'):
@@ -264,15 +212,15 @@ async def view_admin_ticket(
         message_blocks.append(f'💬 Сообщения ({len(ticket.messages)}):\n\n')
         for msg in ticket.messages:
             sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
-            block = f'{sender} ({msg.created_at.strftime("%d.%m %H:%M")}):\n{html.escape(msg.message_text)}\n\n'
+            block = f'{sender} ({msg.created_at.strftime("%d.%m %H:%M")}):\n{html.escape(msg.message_text or "")}\n\n'
             if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
                 block += '📎 Вложение: фото\n\n'
             message_blocks.append(block)
 
     # Разбиваем на страницы
-    pages = _split_text_into_pages(header, message_blocks, max_len=MAX_MESSAGE_LEN)
+    pages = build_ticket_pages(header, message_blocks, max_len=TICKET_PAGE_MAX_LEN)
     total_pages = len(pages)
-    page = min(page, total_pages)
+    page = total_pages if page is None else min(page, total_pages)
 
     # Формируем клавиатуру
     has_photos = any(
@@ -341,14 +289,7 @@ async def view_admin_ticket(
     page_text = pages[page - 1]
 
     # Отправка сообщения
-    try:
-        await callback.message.edit_text(page_text, reply_markup=keyboard, parse_mode='HTML')
-    except TelegramBadRequest:
-        try:
-            await callback.message.delete()
-        except Exception:
-            pass
-        await callback.message.answer(page_text, reply_markup=keyboard, parse_mode='HTML')
+    await safe_edit_or_resend(callback.message, page_text, keyboard)
 
     # Сохраняем id для дальнейших действий
     if state is not None:
@@ -421,8 +362,6 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
     """Обработать ответ админа на тикет"""
     # Поддержка фото вложений в ответе админа
     reply_text = (message.text or message.caption or '').strip()
-    if len(reply_text) > 400:
-        reply_text = reply_text[:400]
     media_type = None
     media_file_id = None
     media_caption = None
@@ -467,6 +406,17 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
             else:
                 await message.answer('❌ Ошибка блокировки')
             await state.clear()
+            return
+
+        # Раньше ответ молча резался до 400 символов, и пользователь получал огрызок.
+        if len(reply_text) > TICKET_MESSAGE_MAX_LENGTH:
+            texts = get_texts(db_user.language)
+            await message.answer(
+                texts.t(
+                    'TICKET_REPLY_TOO_LONG',
+                    'Ответ слишком длинный. Максимум {limit} символов. Сократите текст и отправьте еще раз:',
+                ).format(limit=TICKET_MESSAGE_MAX_LENGTH)
+            )
             return
 
         # Обычный режим ответа админа
@@ -1075,11 +1025,14 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
         chat_id = int(user.telegram_id)
         texts = get_texts(user.language)
 
-        # Формируем уведомление
+        # Формируем уведомление. Превью экранируем ПОСЛЕ обрезки: бот шлёт с
+        # parse_mode=HTML, и угловая скобка в ответе поддержки («откройте
+        # <config>») ломает разбор — уведомление не доходит вовсе. Экранировать
+        # до обрезки нельзя: срез разорвал бы `&quot;` с тем же результатом.
         base_text = texts.t(
             'TICKET_REPLY_NOTIFICATION',
             '🎫 Получен ответ по тикету #{ticket_id}\n\n{reply_preview}\n\nНажмите кнопку ниже, чтобы перейти к тикету:',
-        ).format(ticket_id=ticket.id, reply_preview=reply_text[:100] + '...' if len(reply_text) > 100 else reply_text)
+        ).format(ticket_id=ticket.id, reply_preview=html.escape(preview_text(reply_text)))
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [

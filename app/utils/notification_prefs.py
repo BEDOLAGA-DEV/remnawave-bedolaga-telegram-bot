@@ -83,3 +83,18 @@ def is_news_enabled(user: User) -> bool:
 def is_promo_offers_enabled(user: User) -> bool:
     """Check if promo offer notifications are enabled for user."""
     return bool(get_user_notification_pref(user, 'promo_offers_enabled'))
+
+
+def filter_users_by_broadcast_category(users: list[User], category: str) -> list[User]:
+    """Отсеивает отписавшихся от рассылки этой категории.
+
+    Общая точка для Telegram- и email-путей рассылки: раньше фильтр жил только
+    в Telegram-ветке, и выключенные в кабинете новости всё равно приходили на
+    почту. Категория ``system`` не фильтруется никогда — иначе отписка от
+    новостей отключила бы письмо об истечении подписки.
+    """
+    if category == 'news':
+        return [u for u in users if is_news_enabled(u)]
+    if category == 'promo':
+        return [u for u in users if is_promo_offers_enabled(u)]
+    return list(users)

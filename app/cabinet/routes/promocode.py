@@ -113,6 +113,7 @@ async def activate_promocode(
         'daily_limit': 'Too many promo code activations today',
         'trial_subscription_exists': 'You already have a subscription, so this trial code cannot be applied',
         'trial_provisioning_failed': 'Could not provision the trial right now, please try again later',
+        'traffic_not_applicable': 'This promo code only grants traffic, and your subscription is already unlimited',
         'user_not_found': 'User not found',
         'server_error': 'Server error occurred',
     }

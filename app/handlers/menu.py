@@ -43,9 +43,15 @@ from app.utils.pricing_utils import format_period_description
 from app.utils.promo_offer import (
     build_promo_offer_hint,
     build_test_access_hint,
+    get_user_active_promo_discount_percent,
 )
 from app.utils.rich_menu import try_edit_rich_main_menu
-from app.utils.telegram_html import html_to_telegram, info_page_faq_to_telegram, split_telegram_text
+from app.utils.telegram_html import (
+    html_to_telegram,
+    info_page_faq_to_telegram,
+    split_telegram_text,
+    stored_html_to_telegram_pages,
+)
 from app.utils.timezone import format_local_datetime
 
 
@@ -306,7 +312,7 @@ async def show_service_rules(callback: types.CallbackQuery, db_user: User, db: A
 
     # Правила могут быть длиннее лимита Telegram (4096) — пагинация как у
     # политики конфиденциальности и оферты
-    pages = split_telegram_text(rules_text, max_length=3500) or ['']
+    pages = stored_html_to_telegram_pages(rules_text, max_length=3500) or ['']
     total_pages = len(pages)
     current_page = min(raw_page, total_pages)
 
@@ -671,7 +677,10 @@ async def show_faq_page(
         )
         return
 
-    content_pages = FaqService.split_content_into_pages(page.content)
+    # Через преобразователь: текст страницы редактируется как произвольный HTML,
+    # а Telegram знает восемь тегов. Один <p> из вставленной вёрстки — и вся
+    # страница перестаёт открываться с «Unsupported start tag».
+    content_pages = stored_html_to_telegram_pages(page.content, max_length=FaqService.MAX_PAGE_LENGTH)
 
     if not content_pages:
         await callback.answer(
@@ -800,7 +809,7 @@ async def show_privacy_policy(
         )
         return
 
-    pages = PrivacyPolicyService.split_content_into_pages(policy.content)
+    pages = stored_html_to_telegram_pages(policy.content, max_length=PrivacyPolicyService.MAX_PAGE_LENGTH)
 
     if not pages:
         await callback.answer(
@@ -924,7 +933,7 @@ async def show_public_offer(
         )
         return
 
-    pages = PublicOfferService.split_content_into_pages(offer.content)
+    pages = stored_html_to_telegram_pages(offer.content, max_length=PublicOfferService.MAX_PAGE_LENGTH)
 
     if not pages:
         await callback.answer(

@@ -14,6 +14,7 @@ from app.services.privacy_policy_service import PrivacyPolicyService
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.display_mode import display_mode_label
+from app.utils.telegram_html import stored_html_to_telegram_pages
 from app.utils.validators import get_html_help_text, validate_html_tags
 
 
@@ -436,12 +437,13 @@ async def view_privacy_policy(
         )
         return
 
-    content = policy.content.strip()
-    truncated = False
+    # Экран показывает текст так, как его увидит пользователь, поэтому и
+    # преобразование то же самое: сырой HTML с <p> Telegram не разберёт, и
+    # предпросмотр падал бы там же, где падает сама страница.
     max_length = 3800
-    if len(content) > max_length:
-        content = content[: max_length - 3] + '...'
-        truncated = True
+    pages = stored_html_to_telegram_pages(policy.content, max_length=max_length)
+    content = pages[0] if pages else ''
+    truncated = len(pages) > 1
 
     header = texts.t(
         'ADMIN_PRIVACY_POLICY_VIEW_TITLE',

@@ -1,3 +1,4 @@
+import os
 import stat
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -95,7 +96,6 @@ async def test_store_certificate(cert_and_key, stubbed_env):
 
     stored_path = cert_service.get_canonical_path()
     assert stored_path.read_bytes() == p12_bytes
-    assert stat.S_IMODE(stored_path.stat().st_mode) == 0o600
     assert metadata['subject'] == 'CN=overpay-test'
     assert metadata['path'] == str(stored_path)
     assert metadata['env_locked_path'] is False
@@ -104,6 +104,18 @@ async def test_store_certificate(cert_and_key, stubbed_env):
     config_service.set_value.assert_any_await(db, 'OVERPAY_P12_PASSPHRASE', 'secret')
     db.commit.assert_awaited_once()
     overpay.close.assert_awaited_once()
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX-биты прав на Windows не выставляются: файл всегда 0o666')
+@pytest.mark.asyncio
+async def test_store_certificate_is_readable_by_owner_only(cert_and_key, stubbed_env):
+    """p12 содержит приватный ключ — на диске он должен быть доступен только владельцу."""
+    cert, key = cert_and_key
+    p12_bytes = _build_p12(cert, key, b'secret')
+
+    await cert_service.store_certificate(AsyncMock(), p12_bytes, 'secret')
+
+    assert stat.S_IMODE(cert_service.get_canonical_path().stat().st_mode) == 0o600
 
 
 @pytest.mark.asyncio

@@ -240,7 +240,15 @@ async def test_override_render_injects_common_vars(monkeypatch):
 
 def test_common_vars_exposed_to_editor():
     """Редактор получает список общих переменных для всех типов."""
-    assert COMMON_CONTEXT_VARS == ['service_name', 'cabinet_url', 'support_username', 'username', 'email', 'date']
+    assert COMMON_CONTEXT_VARS == [
+        'service_name',
+        'cabinet_url',
+        'support_username',
+        'username',
+        'email',
+        'date',
+        'unsubscribe_url',
+    ]
     common = build_common_context()
     assert set(common) == set(COMMON_CONTEXT_VARS)
     # Инстанс-уровень заполнен сразу; получательские — пустые дефолты,
@@ -249,6 +257,8 @@ def test_common_vars_exposed_to_editor():
     assert common['date']
     assert common['username'] == ''
     assert common['email'] == ''
+    # Ссылку отписки подставляет отправляющий код и только маркетинговым письмам.
+    assert common['unsubscribe_url'] == ''
 
 
 @pytest.mark.asyncio

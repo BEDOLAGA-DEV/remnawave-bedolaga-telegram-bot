@@ -28,6 +28,9 @@ async def test_unified_app_health_reports_features(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(settings, 'WEB_API_ENABLED', True, raising=False)
     monkeypatch.setattr(settings, 'TRIBUTE_ENABLED', True, raising=False)
+    # Маршрут монтируется по учётным данным, а не по флагу: без ключа
+    # проверять подпись коллбека нечем, и эндпоинт не поднимается.
+    monkeypatch.setattr(settings, 'TRIBUTE_API_KEY', 'k', raising=False)
     monkeypatch.setattr(settings, 'WEBHOOK_URL', 'https://hooks.example.com', raising=False)
     monkeypatch.setattr(settings, 'WEBHOOK_PATH', '/telegram-webhook', raising=False)
     monkeypatch.setattr(settings, 'WEBHOOK_SECRET_TOKEN', 'super-secret', raising=False)
@@ -71,6 +74,10 @@ async def test_unified_app_health_reports_features(monkeypatch: pytest.MonkeyPat
     assert payload['telegram_webhook']['secret_configured'] is True
     assert payload['payment_webhooks']['enabled'] is True
     assert payload['payment_webhooks']['providers']['tribute'] is True
+    # Смонтированные пути в health — единственный способ увидеть снаружи,
+    # что вебхук провайдера действительно поднят: 404 от коллбека до бота
+    # не доходит и в его логах не остаётся ничего.
+    assert settings.TRIBUTE_WEBHOOK_PATH in payload['payment_webhooks']['mounted_paths']
     assert payload['miniapp_static']['mounted'] is True
     assert payload['miniapp_static']['path'].endswith('miniapp')
 

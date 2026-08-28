@@ -112,6 +112,7 @@ class GraceAccessPolicy:
     daily_enabled: bool = False
     free_enabled: bool = False
     reconcile_batch_size: int = 200
+    external_squad_uuid: str | None = None
 
     def __post_init__(self) -> None:
         if self.duration <= timedelta(0):
@@ -937,6 +938,27 @@ def panel_status_matches_reason(status: str, reason: GraceReason) -> bool:
     return normalized == 'limited'
 
 
+# Просьба «оставить как есть»: без неё настройка знала бы только «отцепить» и
+# «подставить конкретный», а сохранить уже назначенный сквад было бы нельзя.
+GRACE_EXTERNAL_SQUAD_KEEP = 'keep'
+
+
+def _resolve_grace_external_squad(configured: str | None, snapshot: GracePanelSnapshot) -> str | None:
+    """Какой внешний сквад назначить на время grace.
+
+    Пусто — отцепить, как было всегда. ``keep`` — оставить текущий из снимка.
+    Иначе — назначить указанный. Без разбора ``keep`` эта строка уходила бы в
+    панель как UUID, то есть настройка, описанная в .env.example, назначала бы
+    несуществующий сквад.
+    """
+    value = (configured or '').strip()
+    if not value:
+        return None
+    if value.lower() == GRACE_EXTERNAL_SQUAD_KEEP:
+        return snapshot.external_squad_uuid or None
+    return value
+
+
 def build_panel_overlay(
     snapshot: GracePanelSnapshot,
     reason: GraceReason,
@@ -954,14 +976,18 @@ def build_panel_overlay(
     # old remaining limit or an old unlimited (zero) limit.
     temporary_limit = snapshot.used_traffic_bytes + policy.traffic_bytes
 
+    # Внешний сквад даёт доступ независимо от внутреннего telegram-only сквада,
+    # поэтому grace по умолчанию его отцепляет: иначе ограничение обходится мимо
+    # всей схемы. Значение задаётся админом осознанно — 'keep' сохраняет текущий
+    # (например, со шаблонами под блокировки), UUID подставляет аварийный.
+    external_squad_uuid = _resolve_grace_external_squad(policy.external_squad_uuid, snapshot)
+
     return GracePanelOverlay(
         status='ACTIVE',
         expire_at=_as_utc(now) + policy.duration,
         traffic_limit_bytes=temporary_limit,
         squad_uuids=(policy.squad_for(reason),),
-        # External squads can provide unrestricted access independently of the
-        # internal Telegram-only squad, so grace must temporarily detach them.
-        external_squad_uuid=None,
+        external_squad_uuid=external_squad_uuid,
     )
 
 

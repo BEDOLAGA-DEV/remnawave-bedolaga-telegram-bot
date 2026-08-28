@@ -658,10 +658,17 @@ async def export_traffic_csv(
         start_str = start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         end_str = end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         period_label = f'{request.start_date}_{request.end_date}'
+        # Длину периода считаем здесь же, где разобрали даты. Раньше она
+        # вычислялась ниже под ПОВТОРНЫМ `if request.start_date and
+        # request.end_date`, то есть start_dt/end_dt читались за 60 строк от
+        # места присваивания под скопированным условием: разойдись эти два
+        # условия — UnboundLocalError и 500 на выгрузке CSV.
+        period_days = max((end_dt - start_dt).days, 1)
     else:
         _validate_period(request.period)
         start_str, end_str = _compute_date_range(request.period)
         period_label = f'{request.period}d'
+        period_days = request.period
 
     user_map = await _load_user_map(db)
     user_traffic, nodes_info = await _aggregate_traffic(start_str, end_str, list(user_map.keys()))
@@ -696,12 +703,6 @@ async def export_traffic_csv(
 
     # Determine which nodes to include in CSV columns
     csv_nodes = [n for n in nodes_info if n.node_uuid in node_filter] if node_filter else nodes_info
-
-    # Compute period days for risk calculation
-    if request.start_date and request.end_date:
-        period_days = max((end_dt - start_dt).days, 1)
-    else:
-        period_days = request.period
 
     total_thr = request.total_threshold_gb or 0
     node_thr = request.node_threshold_gb or 0

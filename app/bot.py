@@ -13,6 +13,7 @@ from app.handlers import (
     polls as user_polls,
     promocode,
     referral,
+    referral_settings,
     server_status,
     simple_subscription,
     start,
@@ -45,6 +46,7 @@ from app.handlers.admin import (
     promocodes as admin_promocodes,
     public_offer as admin_public_offer,
     quick_amounts as admin_quick_amounts,
+    referral_levels as admin_referral_levels,
     referrals as admin_referrals,
     remnawave as admin_remnawave,
     reports as admin_reports,
@@ -65,6 +67,7 @@ from app.handlers.admin import (
 from app.handlers.channel_member import register_handlers as register_channel_member_handlers
 from app.handlers.gift_activation import register_handlers as register_gift_activation_handlers
 from app.handlers.stars_payments import register_stars_handlers
+from app.handlers.subscription import register_gift_handlers
 from app.middlewares.auth import AuthMiddleware
 from app.middlewares.blacklist import BlacklistMiddleware
 from app.middlewares.button_stats import ButtonStatsMiddleware
@@ -183,9 +186,11 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     start.register_handlers(dp)
     menu.register_handlers(dp)
     subscription.register_handlers(dp)
+    register_gift_handlers(dp)
     balance.register_balance_handlers(dp)
     promocode.register_handlers(dp)
     referral.register_handlers(dp)
+    referral_settings.register_handlers(dp)
     support.register_handlers(dp)
     server_status.register_handlers(dp)
     tickets.register_handlers(dp)
@@ -197,6 +202,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     admin_messages.register_handlers(dp)
     admin_monitoring.register_handlers(dp)
     admin_referrals.register_handlers(dp)
+    admin_referral_levels.register_handlers(dp)
     admin_rules.register_handlers(dp)
     admin_remnawave.register_handlers(dp)
     admin_statistics.register_handlers(dp)

@@ -832,8 +832,16 @@ async def main():
                                 daily_subscription_service.start_traffic_reset_monitoring()
                             )
 
-                if auto_verification_active and not auto_payment_verification_service.is_running():
-                    logger.warning('Сервис автопроверки пополнений остановился, пробуем перезапустить...')
+                # Не завязываемся на auto_verification_active: он защёлкивал
+                # результат ПЕРВОЙ попытки. Если на старте ни один поддерживаемый
+                # провайдер не был включён, start() выходил не создав задачу, и
+                # сторож её больше никогда не поднимал — включённая позже платёжка
+                # оставалась и без вебхука (до этого фикса), и без опроса статусов.
+                if (
+                    settings.is_payment_verification_auto_check_enabled()
+                    and not auto_payment_verification_service.is_running()
+                ):
+                    logger.warning('Сервис автопроверки пополнений не запущен, пробуем поднять...')
                     await auto_payment_verification_service.start()
                     auto_verification_active = auto_payment_verification_service.is_running()
 

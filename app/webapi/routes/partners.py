@@ -44,6 +44,7 @@ from ..schemas.partners import (
     ReferralsCountByPeriod,
     ReferrerDetailedStats,
     ReferrerSummary,
+    RewardsByLevel,
     TopReferralItem,
     TopReferralsResponse,
     TopReferrerItem,
@@ -236,6 +237,7 @@ async def get_global_partner_stats(
     return GlobalPartnerStats(
         summary=GlobalPartnerSummary(**data['summary']),
         payouts=PayoutsByPeriod(**data['payouts']),
+        payouts_by_level=[RewardsByLevel(**row) for row in data.get('payouts_by_level') or []],
         new_referrals=NewReferralsByPeriod(**data['new_referrals']),
     )
 
@@ -292,6 +294,7 @@ async def get_referrer_detailed_stats(
         user_id=data['user_id'],
         summary=ReferrerSummary(**data['summary']),
         earnings=EarningsByPeriod(**data['earnings']),
+        earnings_by_level=[RewardsByLevel(**row) for row in data.get('earnings_by_level') or []],
         referrals_count=ReferralsCountByPeriod(**data['referrals_count']),
     )
 

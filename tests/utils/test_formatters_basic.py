@@ -114,3 +114,39 @@ def test_format_boolean_uses_russian_fallback_for_fa() -> None:
     """Для fa булевы значения пока используют базовый ru fallback."""
     assert formatters.format_boolean(True, language='fa') == '✅ Да'
     assert formatters.format_boolean(False, language='fa') == '❌ Нет'
+
+
+def test_format_username_link_wraps_telegram_handle_in_anchor() -> None:
+    """Rich-сообщения идут со skip_entity_detection=True — ссылка нужна явная."""
+    assert formatters.format_username_link('durov') == '<a href="https://t.me/durov">@durov</a>'
+
+
+def test_format_username_link_does_not_double_the_at_sign() -> None:
+    """Логин может прийти уже с собакой — в тексте она должна остаться одна."""
+    assert formatters.format_username_link('@durov') == '<a href="https://t.me/durov">@durov</a>'
+
+
+def test_format_username_link_returns_fallback_without_username() -> None:
+    """Пустой логин отдаётся текстом-заглушкой, без собаки и без ссылки."""
+    assert formatters.format_username_link(None, 'отсутствует') == 'отсутствует'
+    assert formatters.format_username_link('', 'отсутствует') == 'отсутствует'
+    assert formatters.format_username_link('@', 'отсутствует') == 'отсутствует'
+    assert formatters.format_username_link(None) == ''
+
+
+def test_format_username_link_keeps_non_telegram_logins_as_text() -> None:
+    """OAuth-регистрация кладёт в users.username логин Discord/Яндекса.
+
+    Он живёт в чужом пространстве имён: t.me/<логин> ведёт либо в никуда, либо на
+    постороннего человека, поэтому ссылку на такое значение ставить нельзя.
+    """
+    assert formatters.format_username_link('ivan.petrov') == '@ivan.petrov'
+    assert formatters.format_username_link('ab') == '@ab'
+    assert formatters.format_username_link('5abcd') == '@5abcd'
+    assert formatters.format_username_link('a' * 33) == '@' + 'a' * 33
+
+
+def test_format_username_link_escapes_html_metacharacters() -> None:
+    """Значение попадает и в href, и в текст — экранируем оба."""
+    assert formatters.format_username_link('bo&b') == '@bo&amp;b'
+    assert formatters.format_username_link('<b>x</b>') == '@&lt;b&gt;x&lt;/b&gt;'

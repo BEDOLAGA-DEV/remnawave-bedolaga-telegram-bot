@@ -383,7 +383,7 @@ async def start_edit_desc(callback: types.CallbackQuery, db_user: User, db: Asyn
     texts = get_texts(db_user.language)
     current_desc_html = SupportSettingsService.get_support_info_text(db_user.language)
     # plain text for display-only code block
-    current_desc_plain = re.sub(r'<[^>]+>', '', current_desc_html)
+    current_desc_plain = re.sub(r'<[^<>]+>', '', current_desc_html)
 
     kb_rows: list[list[types.InlineKeyboardButton]] = []
     kb_rows.append(
@@ -447,7 +447,7 @@ async def send_desc_copy(callback: types.CallbackQuery, db_user: User, db: Async
     # send plain text for easy copying
     texts = get_texts(db_user.language)
     current_desc_html = SupportSettingsService.get_support_info_text(db_user.language)
-    current_desc_plain = re.sub(r'<[^>]+>', '', current_desc_html)
+    current_desc_plain = re.sub(r'<[^<>]+>', '', current_desc_html)
     # attach delete button to the sent message
     markup = types.InlineKeyboardMarkup(
         inline_keyboard=[

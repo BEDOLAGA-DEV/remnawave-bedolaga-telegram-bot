@@ -6,8 +6,11 @@ while still accepting the old events from 2.7.x panels.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+from app.config import settings
+from app.services import remnawave_webhook_service
 from app.services.remnawave_webhook_service import RemnaWaveWebhookService
 
 
@@ -114,6 +117,29 @@ async def test_no_subscription_sends_nothing():
     svc = _service()
     await svc._handle_user_expiration(None, _user(), None, _receiver_data(-24))
     svc._notify_user.assert_not_awaited()
+
+
+async def test_webhook_expiry_respects_user_days_threshold(monkeypatch):
+    svc = RemnaWaveWebhookService(MagicMock())
+    send_notification = AsyncMock(return_value=True)
+    monkeypatch.setattr(remnawave_webhook_service.notification_delivery_service, 'send_notification', send_notification)
+    monkeypatch.setattr(settings, 'WEBHOOK_NOTIFY_USER_ENABLED', True)
+    monkeypatch.setattr(settings, 'WEBHOOK_NOTIFY_SUB_EXPIRING', True)
+    monkeypatch.setattr(settings, 'ENABLE_NOTIFICATIONS', True)
+    user = SimpleNamespace(
+        id=1,
+        language='ru',
+        notification_settings={
+            'subscription_expiry_enabled': True,
+            'subscription_expiry_days': 1,
+        },
+    )
+
+    await svc._notify_user(user, 'WEBHOOK_SUB_EXPIRES_72H')
+    send_notification.assert_not_awaited()
+
+    await svc._notify_user(user, 'WEBHOOK_SUB_EXPIRES_24H')
+    send_notification.assert_awaited_once()
 
 
 async def test_new_2_8_0_api_token_admin_events_registered():

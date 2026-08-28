@@ -2201,6 +2201,20 @@ class User(Base):
     auto_promo_group_assigned = Column(Boolean, nullable=False, default=False)
     auto_promo_group_threshold_kopeks = Column(BigInteger, nullable=False, default=0)
     referral_commission_percent = Column(Integer, nullable=True)
+    # Выбор пользователя, куда класть дни реферальной награды. NULL — «решай сам»,
+    # то есть прежний автоматический подбор. Хранится идентификатором конкретной
+    # подписки, а не номером тарифа: подписок на один тариф может быть несколько.
+    #
+    # БЕЗ внешнего ключа намеренно. Между users и subscriptions уже есть связь
+    # subscriptions.user_id -> users.id, и вторая делает join между этими
+    # таблицами неоднозначным: SQLAlchemy перестаёт его выводить и роняет
+    # половину запросов приложения. Ссылка здесь мягкая — протухший выбор
+    # (подписка удалена, перенесена при слиянии) проверяется запросом при
+    # начислении и превращается в автоподбор, а не в отказ.
+    referral_days_subscription_id = Column(Integer, nullable=True)
+    # Что предпочитает получать, когда правило платит и деньгами, и днями:
+    # 'money' | 'days'. NULL — «и то и другое», как правило и настроено.
+    referral_reward_preference = Column(String(10), nullable=True)
     promo_offer_discount_percent = Column(Integer, nullable=False, default=0)
     promo_offer_discount_source = Column(String(100), nullable=True)
     promo_offer_discount_expires_at = Column(AwareDateTime(), nullable=True)
@@ -2782,6 +2796,9 @@ class PromoCode(Base):
 
     balance_bonus_kopeks = Column(Integer, default=0)
     subscription_days = Column(Integer, default=0)
+    # Гигабайты к подписке. Часть набора бонусов наравне с балансом и днями;
+    # 0 — трафик не начисляется.
+    traffic_gb = Column(Integer, default=0, server_default='0', nullable=False)
 
     max_uses = Column(Integer, default=1)
     current_uses = Column(Integer, default=0)
@@ -2900,6 +2917,90 @@ class Coupon(Base):
         return f"<Coupon token='{token_prefix}...' status='{self.status}'>"
 
 
+class ReferralRewardType(Enum):
+    """Чем именно выдана награда за реферала."""
+
+    MONEY = 'money'
+    DAYS = 'days'
+
+
+class ReferralRewardTrigger(Enum):
+    """Повод для награды. Задаётся на каждом уровне отдельно."""
+
+    REGISTRATION = 'registration'
+    FIRST_TOPUP = 'first_topup'
+    EVERY_TOPUP = 'every_topup'
+
+
+class ReferralRewardMode(Enum):
+    """Какие бонусы уровня активны: деньги, дни или оба."""
+
+    MONEY = 'money'
+    DAYS = 'days'
+    BOTH = 'both'
+
+
+class ReferralRewardLevel(Base):
+    """Правило награды для одного уровня реферальной цепочки.
+
+    Конфигурация живёт в БД, а не в Settings, намеренно: ключ, заданный в .env,
+    попадает в ENV_OVERRIDE_KEYS и перестаёт меняться из админки. Отдельная таблица
+    этого механизма не касается, поэтому редактируется одинаково из бота и кабинета
+    и переживает перезапуск по определению.
+
+    NULL в percent/fixed_kopeks означает «не начисляется» — ровно то же, что и 0.
+    Отката к legacy-настройкам ``REFERRAL_*`` нет ни на одном уровне, включая
+    первый: иначе уровень с бонусом только приглашённому втихую платил бы и
+    пригласившему. Перенос прежних настроек — отдельная явная кнопка в админке.
+    """
+
+    __tablename__ = 'referral_reward_levels'
+
+    id = Column(Integer, primary_key=True, index=True)
+    level = Column(Integer, nullable=False, unique=True, index=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default='true')
+
+    reward_mode = Column(String(10), nullable=False, default=ReferralRewardMode.MONEY.value, server_default='money')
+    trigger = Column(
+        String(20), nullable=False, default=ReferralRewardTrigger.FIRST_TOPUP.value, server_default='first_topup'
+    )
+
+    # Пригласивший
+    referrer_percent = Column(Integer, nullable=True)
+    referrer_fixed_kopeks = Column(Integer, nullable=True)
+    referrer_days = Column(Integer, nullable=False, default=0, server_default='0')
+    referrer_tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='SET NULL'), nullable=True)
+
+    # Приглашённый
+    referee_fixed_kopeks = Column(Integer, nullable=True)
+    referee_days = Column(Integer, nullable=False, default=0, server_default='0')
+    referee_tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='SET NULL'), nullable=True)
+
+    # 0 — без лимита, как у REFERRAL_MAX_COMMISSION_PAYMENTS
+    max_payments = Column(Integer, nullable=False, default=0, server_default='0')
+
+    # Сколько рефералов открывают этот уровень. 0 — доступен сразу.
+    #
+    # Отвечает на вопрос, которого в схеме не хватало: за ЧТО уровень получают.
+    # Номер уровня говорит, чьё пополнение приносит награду (1 — приглашённый
+    # напрямую, 2 — приглашённый им), а порог — с какого момента партнёр начинает
+    # получать доход с этого звена вообще.
+    required_referrals = Column(Integer, nullable=False, default=0, server_default='0')
+
+    # Считать только рефералов с пополнением. По умолчанию да: иначе порог берётся
+    # накруткой пустых регистраций, и уровень открывается, ничего не принеся.
+    required_referrals_active_only = Column(Boolean, nullable=False, default=True, server_default='true')
+
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    referrer_tariff = relationship('Tariff', foreign_keys=[referrer_tariff_id])
+    referee_tariff = relationship('Tariff', foreign_keys=[referee_tariff_id])
+
+    def __repr__(self) -> str:
+        return f'<ReferralRewardLevel level={self.level} mode={self.reward_mode} trigger={self.trigger}>'
+
+
 class ReferralEarning(Base):
     __tablename__ = 'referral_earnings'
 
@@ -2909,6 +3010,18 @@ class ReferralEarning(Base):
 
     amount_kopeks = Column(Integer, nullable=False)
     reason = Column(String(100), nullable=False)
+
+    # Награда может быть выдана днями подписки, а не деньгами. Без этих колонок
+    # дни физически не помещаются в ledger, а вся статистика построена на сумме
+    # amount_kopeks — то есть дневные награды просто не были бы видны.
+    # Без index=True намеренно: обе колонки участвуют либо в выборках, уже
+    # суженных индексом по user_id, либо в агрегатах по всей таблице, которым
+    # индекс не помогает. А их построение на старте — блокирующий CREATE INDEX
+    # на таблице начислений, которая на живой установке большая.
+    reward_type = Column(String(10), nullable=False, default=ReferralRewardType.MONEY.value, server_default='money')
+    level = Column(Integer, nullable=False, default=1, server_default='1')
+    days_granted = Column(Integer, nullable=False, default=0, server_default='0')
+    tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='SET NULL'), nullable=True)
 
     referral_transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
     campaign_id = Column(
@@ -4534,6 +4647,7 @@ class GuestPurchase(Base):
         Index('ix_guest_purchases_user_gift_status', 'user_id', 'is_gift', 'status'),
         Index('ix_guest_purchases_status_paid_at', 'status', 'paid_at'),
         Index('ix_guest_purchases_buyer_user_id', 'buyer_user_id'),
+        Index('ux_guest_purchases_idempotency_key', 'idempotency_key', unique=True),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -4542,7 +4656,9 @@ class GuestPurchase(Base):
     contact_type = Column(String(20), nullable=False)  # 'email' or 'telegram'
     contact_value = Column(String(255), nullable=False)
     is_gift = Column(Boolean, nullable=False, default=False)
-    source = Column(String(20), nullable=False, default='landing', server_default='landing')  # 'landing' or 'cabinet'
+    source = Column(
+        String(20), nullable=False, default='landing', server_default='landing'
+    )  # 'landing', 'cabinet', 'bot'
     buyer_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     gift_recipient_type = Column(String(20), nullable=True)
     gift_recipient_value = Column(String(255), nullable=True)
@@ -4570,6 +4686,13 @@ class GuestPurchase(Base):
     yandex_cid = Column(String(128), nullable=True)
     subid = Column(String(255), nullable=True)
     referrer = Column(String(500), nullable=True)
+    # Слаг рекламной кампании (``advertising_campaigns.start_parameter``).
+    # Оплату подтверждает вебхук платёжки, где куки и сессии покупателя уже
+    # нет, поэтому источник атрибуции хранится в самой покупке.
+    campaign_slug = Column(String(64), nullable=True)
+    # Идемпотентность покупки (checkout id / idempotency key). Уникальный
+    # индекс ux_guest_purchases_idempotency_key предотвращает повторные списания.
+    idempotency_key = Column(String(64), nullable=True)
 
     landing = relationship('LandingPage', back_populates='guest_purchases', lazy='selectin')
     tariff = relationship('Tariff', lazy='selectin')
@@ -4577,8 +4700,7 @@ class GuestPurchase(Base):
     buyer = relationship('User', foreign_keys=[buyer_user_id], lazy='selectin')
 
     def __repr__(self) -> str:
-        token_prefix = self.token[:5] if self.token else '?'
-        return f"<GuestPurchase token='{token_prefix}...' status='{self.status}'>"
+        return f"<GuestPurchase id={self.id} status='{self.status}'>"
 
 
 class NewsArticle(Base):

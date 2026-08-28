@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class CallbackFields:
+    """Поля коллбека Platega, приведённые к одному виду."""
+
+    status: str | None
+    subscription_id: str | None
+    charge_id: str | None
+    next_charge_at: Any
+
 
 # Platega paymentMethod для подписки
 PLATEGA_SUBSCRIPTION_METHOD = 6
@@ -70,3 +84,72 @@ def platega_reconcile_decision(
     if remote_status is None and remote_missing and local_status == 'PENDING' and age_minutes > 30:
         return 'FAILED'
     return None
+
+
+# --- разбор коллбеков ------------------------------------------------------
+#
+# Platega во всём остальном использует camelCase: исходящее создание подписки
+# шлёт `paymentMethod`/`amount`/`interval`, разовый коллбек читается как `id` и
+# `status`. Подписочная ветка изначально писалась под PascalCase из примеров в
+# спеке, и на живом мерчанте коллбек списания (`{"id": ..., "status":
+# "CONFIRMED", ...}`) не совпадал ни с одним условием маршрутизации: он уходил
+# в обработчик разовых платежей, тот не находил локальный платёж (под
+# рекуррентное списание записи в payments нет вовсе) и отвечал 400 —
+# «Callback delivery failed» на стороне Platega, автопродление не работало.
+#
+# Поэтому имена полей сверяем без учёта регистра и не полагаемся на конкретный
+# вариант написания.
+
+
+def _lower_keys(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Копия пейлоада с ключами в нижнем регистре.
+
+    При коллизии (`Id` и `id` рядом) побеждает первое непустое значение —
+    пустышка не должна затирать реальный идентификатор.
+    """
+    lowered: dict[str, Any] = {}
+    for key, value in payload.items():
+        name = str(key).lower()
+        if name in lowered and lowered[name] not in (None, ''):
+            continue
+        lowered[name] = value
+    return lowered
+
+
+def _text(value: Any) -> str | None:
+    """Непустая строка либо None (числовые id Platega приводим к строке)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def is_subscription_callback(payload: Mapping[str, Any]) -> bool:
+    """Относится ли коллбек к рекуррентной СБП-подписке.
+
+    Три независимых признака: метод оплаты подписки, идентификатор подписки в
+    теле и статус самой подписки. Любого достаточно — Platega шлёт списания и
+    смены статуса подписки на тот же путь, что и разовые платежи.
+    """
+    fields = _lower_keys(payload)
+
+    method = _text(fields.get('paymentmethod'))
+    if method is not None and method == str(PLATEGA_SUBSCRIPTION_METHOD):
+        return True
+
+    if 'subscriptionid' in fields:
+        return True
+
+    status = _text(fields.get('status')) or ''
+    return status.upper().startswith('SUBSCRIPTION_')
+
+
+def read_callback_fields(payload: Mapping[str, Any]) -> CallbackFields:
+    """Поля подписочного коллбека, независимо от регистра ключей."""
+    fields = _lower_keys(payload)
+    return CallbackFields(
+        status=_text(fields.get('status')),
+        subscription_id=_text(fields.get('subscriptionid')),
+        charge_id=_text(fields.get('id')),
+        next_charge_at=fields.get('nextchargeat'),
+    )

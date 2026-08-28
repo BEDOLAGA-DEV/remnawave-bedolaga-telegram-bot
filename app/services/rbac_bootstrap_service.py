@@ -130,6 +130,18 @@ def is_user_admin_by_env(user: User) -> AdminEnvCheck:
     return AdminEnvCheck(is_telegram_admin=is_telegram_admin, is_email_admin=is_email_admin)
 
 
+def is_protected_from_blocking(user: User) -> bool:
+    """An account named in ADMIN_IDS/ADMIN_EMAILS must never end up BLOCKED.
+
+    BLOCKED is not only an administrative punishment here: a broadcast delivery that
+    comes back "user blocked the bot" and the blocked-users scan both set it on their
+    own. An owner who simply muted the bot would otherwise be locked out of both the
+    bot and the cabinet with no way back in — the env config is the root of trust and
+    outranks that flag, so blocking is refused at every write site instead.
+    """
+    return is_user_admin_by_env(user).is_admin
+
+
 logger = structlog.get_logger(__name__)
 
 SUPERADMIN_ROLE_NAME: Final[str] = 'Superadmin'

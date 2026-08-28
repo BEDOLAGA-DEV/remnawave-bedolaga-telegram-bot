@@ -346,6 +346,7 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
         # remnawave_uuid историческая и роутом не читается.
         remnawave_id=None,
         tariff_id=None,
+        user_id=1,
     )
     user = SimpleNamespace(id=1)
 
@@ -359,7 +360,11 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
         return None
 
     monkeypatch.setattr(multi_tariff, 'get_subscription_by_id_for_user', fake_get_subscription)
-    monkeypatch.setattr(multi_tariff, 'decrement_subscription_server_counts', fake_decrement_counts)
+    # Порядок шагов удаления живёт в общем сервисе — там же и счётчики.
+    monkeypatch.setattr(
+        'app.services.subscription_deletion_service.decrement_subscription_server_counts',
+        fake_decrement_counts,
+    )
     monkeypatch.setattr(
         'app.services.grace_access_runtime.ensure_no_open_grace_for_subscriptions',
         fake_ensure_no_open_grace,

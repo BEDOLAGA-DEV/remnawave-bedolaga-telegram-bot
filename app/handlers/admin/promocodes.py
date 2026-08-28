@@ -95,8 +95,12 @@ async def show_promocodes_list(callback: types.CallbackQuery, db_user: User, db:
         elif promo.type == PromoCodeType.SUBSCRIPTION_DAYS.value:
             text += f'📅 Дней: {promo.subscription_days}\n'
         elif promo.type == PromoCodeType.BALANCE_AND_DAYS.value:
-            text += f'💰 Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
-            text += f'📅 Дней: {promo.subscription_days}\n'
+            if promo.balance_bonus_kopeks:
+                text += f'💰 Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
+            if promo.subscription_days:
+                text += f'📅 Дней: {promo.subscription_days}\n'
+            if getattr(promo, 'traffic_gb', 0):
+                text += f'📦 Трафик: {promo.traffic_gb} ГБ\n'
         elif promo.type == PromoCodeType.PROMO_GROUP.value:
             if promo.promo_group:
                 text += f'🏷️ Промогруппа: {html.escape(promo.promo_group.name)}\n'
@@ -180,8 +184,12 @@ async def show_promocode_management(callback: types.CallbackQuery, db_user: User
     elif promo.type == PromoCodeType.SUBSCRIPTION_DAYS.value:
         text += f'📅 <b>Дней:</b> {promo.subscription_days}\n'
     elif promo.type == PromoCodeType.BALANCE_AND_DAYS.value:
-        text += f'💰 <b>Бонус:</b> {settings.format_price(promo.balance_bonus_kopeks)}\n'
-        text += f'📅 <b>Дней:</b> {promo.subscription_days}\n'
+        if promo.balance_bonus_kopeks:
+            text += f'💰 <b>Бонус:</b> {settings.format_price(promo.balance_bonus_kopeks)}\n'
+        if promo.subscription_days:
+            text += f'📅 <b>Дней:</b> {promo.subscription_days}\n'
+        if getattr(promo, 'traffic_gb', 0):
+            text += f'📦 <b>Трафик:</b> {promo.traffic_gb} ГБ\n'
     elif promo.type == PromoCodeType.PROMO_GROUP.value:
         if promo.promo_group:
             text += f'🏷️ <b>Промогруппа:</b> {html.escape(promo.promo_group.name)} (приоритет: {promo.promo_group.priority})\n'
@@ -252,8 +260,12 @@ async def show_promocode_edit_menu(callback: types.CallbackQuery, db_user: User,
     elif promo.type in [PromoCodeType.SUBSCRIPTION_DAYS.value, PromoCodeType.TRIAL_SUBSCRIPTION.value]:
         text += f'• Дней: {promo.subscription_days}\n'
     elif promo.type == PromoCodeType.BALANCE_AND_DAYS.value:
-        text += f'• Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
-        text += f'• Дней: {promo.subscription_days}\n'
+        if promo.balance_bonus_kopeks:
+            text += f'• Бонус: {settings.format_price(promo.balance_bonus_kopeks)}\n'
+        if promo.subscription_days:
+            text += f'• Дней: {promo.subscription_days}\n'
+        if getattr(promo, 'traffic_gb', 0):
+            text += f'• Трафик: {promo.traffic_gb} ГБ\n'
 
     text += f'• Использований: {promo.current_uses}/{promo.max_uses}\n'
 

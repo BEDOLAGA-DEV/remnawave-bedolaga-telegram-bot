@@ -1099,3 +1099,63 @@ async def test_intentional_admin_expiry_is_suppressed_for_current_incident() -> 
     assert result.decision is GraceStartDecision.NOT_ELIGIBLE
     assert store.sessions == {}
     assert panel.applied_overlays == []
+
+
+@pytest.mark.asyncio
+async def test_grace_external_squad_policy_options() -> None:
+    now = datetime(2026, 7, 15, 12, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now)
+    snapshot = replace(
+        make_snapshot(expire_at=now),
+        external_squad_uuid='original-ext-squad-uuid',
+    )
+
+    # 1. Default policy (external_squad_uuid=None): overlay has external_squad_uuid=None
+    service_default, _, panel_default, _ = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+        policy=make_policy(external_squad_uuid=None),
+    )
+    result_default = await service_default.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert result_default.decision is GraceStartDecision.STARTED
+    # applied_overlays хранит пары (remnawave_id, overlay) — сам overlay второй.
+    assert panel_default.applied_overlays[0][1].external_squad_uuid is None
+
+    # 2. Custom external squad: overlay receives configured external_squad_uuid
+    service_custom, _, panel_custom, _ = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+        policy=make_policy(external_squad_uuid='emergency-ext-squad-uuid'),
+    )
+    result_custom = await service_custom.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert result_custom.decision is GraceStartDecision.STARTED
+    assert panel_custom.applied_overlays[0][1].external_squad_uuid == 'emergency-ext-squad-uuid'
+
+    # 3. 'keep': сохраняется внешний сквад, уже назначенный пользователю.
+    #
+    # Значение описано в .env.example и в комментарии к настройке, но кода под
+    # него не было: строка 'keep' уходила бы в панель как UUID, то есть настройка
+    # назначала бы несуществующий сквад.
+    service_keep, _, panel_keep, _ = make_service(
+        billing=billing,
+        snapshot=snapshot,
+        clock=clock,
+        policy=make_policy(external_squad_uuid='keep'),
+    )
+    result_keep = await service_keep.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert result_keep.decision is GraceStartDecision.STARTED
+    assert panel_keep.applied_overlays[0][1].external_squad_uuid == 'original-ext-squad-uuid'
+
+    # 4. 'keep' при отсутствующем внешнем скваде: сохранять нечего.
+    service_keep_empty, _, panel_keep_empty, _ = make_service(
+        billing=billing,
+        snapshot=replace(make_snapshot(expire_at=now), external_squad_uuid=None),
+        clock=clock,
+        policy=make_policy(external_squad_uuid='keep'),
+    )
+    result_keep_empty = await service_keep_empty.start_if_eligible(billing, GraceReason.EXPIRED)
+    assert result_keep_empty.decision is GraceStartDecision.STARTED
+    assert panel_keep_empty.applied_overlays[0][1].external_squad_uuid is None

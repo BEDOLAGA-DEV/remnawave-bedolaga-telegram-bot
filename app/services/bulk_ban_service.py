@@ -6,6 +6,7 @@ import structlog
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.models import UserStatus
 from app.services.admin_notification_service import AdminNotificationService
@@ -75,7 +76,7 @@ class BulkBanService:
                     logger.info('Пользователь успешно заблокирован', telegram_id=telegram_id)
 
                     # Отправляем уведомление пользователю, если возможно
-                    if bot:
+                    if bot and settings.is_notifications_enabled():
                         try:
                             await bot.send_message(
                                 chat_id=telegram_id,

@@ -23,6 +23,7 @@ from starlette.websockets import WebSocketState
 
 from app.bot_factory import create_bot
 from app.cabinet.auth.jwt_handler import get_token_payload
+from app.cabinet.auth.registration_access import evaluate_public_registration
 from app.cabinet.auth.telegram_auth import validate_telegram_init_data
 from app.cabinet.routes.media import (
     _BLOCKED_UPLOAD_CONTENT_TYPES,
@@ -44,6 +45,11 @@ from app.services.blacklist_service import blacklist_service
 from app.services.maintenance_service import maintenance_service
 from app.services.permission_service import PermissionService
 from app.services.rbac_bootstrap_service import is_user_admin_by_env
+from app.services.registration_access_service import (
+    RegistrationAccessDecision,
+    RegistrationAccessReason,
+    RegistrationChannel,
+)
 from app.services.support_settings_service import SupportSettingsService
 from app.services.user_revival_service import NotDeletedError, revive_deleted_user
 
@@ -396,9 +402,32 @@ async def _apply_cabinet_account_guards(
             return _shared_error('FORBIDDEN', 'User is blacklisted', resource_type='auth')
 
     status_value = _user_status_value(user)
+    access_decision = None
+    if status_value != UserStatus.ACTIVE.value:
+        if is_user_admin_by_env(user).is_admin:
+            # Env config outranks any status flag — see get_current_cabinet_user.
+            access_decision = RegistrationAccessDecision(True, RegistrationAccessReason.VERIFIED_ADMIN)
+        elif not settings.INVITE_ONLY_ENABLED:
+            access_decision = RegistrationAccessDecision(True, RegistrationAccessReason.INVITE_ONLY_DISABLED)
+        else:
+            access_decision = await evaluate_public_registration(
+                db,
+                channel=RegistrationChannel.CABINET_SUPPORT_WS,
+                existing_user=user,
+                telegram_id=user.telegram_id,
+                email=user.email,
+                email_verified=bool(user.email_verified),
+                verified_admin=False,
+            )
     if status_value != UserStatus.ACTIVE.value:
         can_auto_revive = (
-            status_value == UserStatus.DELETED.value and user.telegram_id is not None and init_data_matches_user
+            status_value == UserStatus.DELETED.value
+            and user.telegram_id is not None
+            and (
+                init_data_matches_user
+                or bool(access_decision and access_decision.reason is RegistrationAccessReason.VERIFIED_ADMIN)
+            )
+            and bool(access_decision and access_decision.allowed)
         )
         if can_auto_revive:
             try:
@@ -407,6 +436,11 @@ async def _apply_cabinet_account_guards(
                 await db.refresh(user)
             except NotDeletedError:
                 logger.info('Support WS auto-revival race: user already revived', user_id=user.id)
+        elif access_decision and access_decision.reason is RegistrationAccessReason.VERIFIED_ADMIN:
+            user.status = UserStatus.ACTIVE.value
+            user.updated_at = datetime.now(UTC)
+            await db.commit()
+            await db.refresh(user)
         elif status_value == UserStatus.DELETED.value:
             return _shared_error(
                 'FORBIDDEN', 'Account is deleted and must be restored through the bot', resource_type='auth'

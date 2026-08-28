@@ -977,6 +977,7 @@ class RemnaWaveService:
                             'versions': node.versions,
                             'system': node.system,
                             'active_plugin_uuid': node.active_plugin_uuid,
+                            'ips': node.ips,
                         }
                     )
 
@@ -1033,6 +1034,7 @@ class RemnaWaveService:
                     'versions': node.versions,
                     'system': node.system,
                     'active_plugin_uuid': node.active_plugin_uuid,
+                    'ips': node.ips,
                 }
 
         except Exception as e:
@@ -1071,6 +1073,30 @@ class RemnaWaveService:
         except Exception as e:
             logger.error('Ошибка перезагрузки всех нод', error=e)
             return False
+
+    async def request_node_geocheck(
+        self,
+        node_uuid: str,
+        ip: str | None = None,
+        interface: str | None = None,
+    ) -> str:
+        """Ставит GeoCheck ноды в очередь и возвращает ``jobId``.
+
+        В отличие от остальных методов по нодам, ошибки панели тут НЕ гасятся:
+        вызывающему коду нужно отличить «панель старее 3.3.0» (404) от «нода
+        офлайн» (400) и показать это админу, а не молча вернуть ``False``.
+        """
+        self._ensure_configured()
+        async with self.get_api_client() as api:
+            job_id = await api.request_node_geocheck(node_uuid, ip=ip, interface=interface)
+            logger.info('GeoCheck поставлен в очередь', node_uuid=node_uuid, job_id=job_id)
+            return job_id
+
+    async def get_node_geocheck_result(self, job_id: str) -> dict[str, Any]:
+        """Статус задачи GeoCheck: ``{isCompleted, isFailed, result}``."""
+        self._ensure_configured()
+        async with self.get_api_client() as api:
+            return await api.get_node_geocheck_result(job_id)
 
     async def update_squad_inbounds(self, squad_uuid: str, inbound_uuids: list[str]) -> bool:
         try:

@@ -14,6 +14,7 @@ class PromoCodeResponse(BaseModel):
     balance_bonus_kopeks: int
     balance_bonus_rubles: float
     subscription_days: int
+    traffic_gb: int = 0
     max_uses: int
     current_uses: int
     uses_left: int
@@ -38,6 +39,7 @@ class PromoCodeCreateRequest(BaseModel):
     type: PromoCodeType
     balance_bonus_kopeks: int = 0
     subscription_days: int = 0
+    traffic_gb: int = 0
     max_uses: int = Field(default=1, ge=0)
     valid_from: datetime | None = None
     valid_until: datetime | None = None
@@ -50,6 +52,7 @@ class PromoCodeUpdateRequest(BaseModel):
     type: PromoCodeType | None = None
     balance_bonus_kopeks: int | None = None
     subscription_days: int | None = None
+    traffic_gb: int | None = None
     max_uses: int | None = Field(default=None, ge=0)
     valid_from: datetime | None = None
     valid_until: datetime | None = None

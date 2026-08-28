@@ -22,6 +22,19 @@ from app.utils.validators import sanitize_telegram_name
 logger = structlog.get_logger(__name__)
 
 
+def _is_blocked_non_admin(user: Any) -> bool:
+    """BLOCKED stops everyone except an account named in ADMIN_IDS/ADMIN_EMAILS.
+
+    Blocking such an account is refused at every write site, so a BLOCKED admin row can
+    only predate that guard — typically the broadcast auto-block after the owner muted
+    the bot. Honouring it here would lock the owner out of their own bot for good.
+    """
+    from app.database.models import UserStatus
+    from app.services.rbac_bootstrap_service import is_protected_from_blocking
+
+    return user.status == UserStatus.BLOCKED.value and not is_protected_from_blocking(user)
+
+
 async def _refresh_remnawave_description(remnawave_id: int, description: str, telegram_id: int) -> None:
     try:
         remnawave_service = RemnaWaveService()
@@ -98,13 +111,22 @@ class AuthMiddleware(BaseMiddleware):
                     return None
                 from app.database.models import UserStatus
 
-                if db_user.status == UserStatus.BLOCKED.value:
+                if _is_blocked_non_admin(db_user):
                     if isinstance(event, Message):
                         await event.answer('🚫 Ваш аккаунт заблокирован администратором.')
                     elif isinstance(event, CallbackQuery):
                         await event.answer('🚫 Ваш аккаунт заблокирован администратором.', show_alert=True)
                     logger.info('🚫 Заблокированный пользователь попытался использовать бота', user_id=user.id)
                     return None
+
+                if db_user.status == UserStatus.BLOCKED.value:
+                    # Reached only by an env admin (the check above let them through).
+                    # Heal the stale row instead of just ignoring it, so the flag stops
+                    # suppressing their subscription reactivation and notifications too.
+                    db_user.status = UserStatus.ACTIVE.value
+                    db_user.updated_at = datetime.now(UTC)
+                    await db.commit()
+                    logger.info('♻️ Снят устаревший BLOCKED с аккаунта админа из env', user_id=user.id)
 
                 if db_user.status == UserStatus.DELETED.value:
                     state: FSMContext = data.get('state')

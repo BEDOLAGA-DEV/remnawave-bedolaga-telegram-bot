@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.config import ENV_OVERRIDE_KEYS, settings
 from app.database.crud.referral import (
     get_referral_statistics,
     get_top_referrers_by_period,
@@ -23,6 +23,88 @@ from app.utils.decorators import admin_required, error_handler
 
 
 logger = structlog.get_logger(__name__)
+
+
+from app.services.referral_reward_service import format_reward_total as _paid_line
+
+
+def _levels_breakdown_block(by_level: list[dict]) -> str:
+    """Разбивка по уровням — главная новая величина многоуровневой схемы.
+
+    Без неё админ видит общий итог и не понимает, какую его часть создаёт глубина
+    цепочки, то есть не может судить, окупается ли она.
+    """
+    meaningful = [row for row in by_level if row.get('money_kopeks') or row.get('days')]
+    if len(meaningful) < 2:
+        # Единственный уровень — это обычная одноуровневая программа, и блок
+        # только зашумил бы экран.
+        return ''
+
+    lines = ['\n<b>По уровням:</b>']
+    for row in meaningful:
+        lines.append(f'- Уровень {row["level"]}: {_paid_line(row.get("money_kopeks", 0), row.get("days", 0))}')
+    return '\n'.join(lines) + '\n'
+
+
+async def _program_rules_block(db: AsyncSession) -> str:
+    """Действующие правила программы.
+
+    В многоуровневой схеме печатать легаси-ключи нельзя: они не управляют ни одним
+    начислением, и админ читал бы суммы, которых бот не платит. Описание берётся из
+    того же источника, что и расчёт.
+    """
+    if not settings.is_referral_levels_scheme():
+        return (
+            '<b>Настройки реферальной системы:</b>\n'
+            f'- Минимальное пополнение: {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)}\n'
+            f'- Бонус за первое пополнение: {settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)}\n'
+            f'- Бонус пригласившему: {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)}\n'
+            f'- Комиссия с покупок: {settings.REFERRAL_COMMISSION_PERCENT}%'
+        )
+
+    from app.services.referral_reward_service import describe_active_levels, describe_referee_bonus
+
+    tariff_names = await _reward_tariff_names(db)
+    tier_mode = settings.is_referral_tier_levels()
+    header = 'уровни за приглашённых' if tier_mode else 'уровни по цепочке'
+    lines = [f'<b>Правила программы (многоуровневая схема, {header}):</b>']
+    level_lines = await describe_active_levels(db, tariff_names=tariff_names)
+    if level_lines:
+        lines.extend(f'- {line}' for line in level_lines)
+    else:
+        lines.append('- ⚠️ Ни один уровень не настроен — награды не начисляются')
+
+    referee_bonus = await describe_referee_bonus(db, tariff_names=tariff_names)
+    if referee_bonus:
+        lines.append(f'- Приглашённому: {referee_bonus}')
+    if tier_mode:
+        # Про глубину здесь писать нечего: цепочка не обходится. Зато admin
+        # обязан видеть главное отличие режима — платят одному и по одному правилу.
+        lines.append('- Платят только прямому пригласившему, применяется один уровень — старший из достигнутых')
+    else:
+        lines.append(f'- Глубина цепочки: до {settings.get_referral_max_level_depth()} уровней')
+    return '\n'.join(lines)
+
+
+async def _reward_tariff_names(db: AsyncSession) -> dict[int, str]:
+    """Названия тарифов, на которые ссылаются уровни.
+
+    Без них описание обещает «7 дн. подписки», умалчивая, в какой тариф они лягут,
+    — а это ровно то, что настраивает админ.
+    """
+    from sqlalchemy import select as _select
+
+    from app.database.models import Tariff
+    from app.services.referral_reward_service import ReferralRewardLevelService
+
+    configs = await ReferralRewardLevelService.get_all(db)
+    ids = {cfg.referrer_tariff_id for cfg in configs.values() if cfg.referrer_tariff_id}
+    ids |= {cfg.referee_tariff_id for cfg in configs.values() if cfg.referee_tariff_id}
+    if not ids:
+        return {}
+
+    result = await db.execute(_select(Tariff.id, Tariff.name).where(Tariff.id.in_(ids)))
+    return {row.id: row.name for row in result.all()}
 
 
 @admin_required
@@ -43,40 +125,37 @@ async def show_referral_statistics(callback: types.CallbackQuery, db_user: User,
 <b>Общие показатели:</b>
 - Пользователей с рефералами: {stats.get('users_with_referrals', 0)}
 - Активных рефереров: {stats.get('active_referrers', 0)}
-- Выплачено всего: {settings.format_price(stats.get('total_paid_kopeks', 0))}
+- Выплачено всего: {_paid_line(stats.get('total_paid_kopeks', 0), stats.get('total_paid_days', 0))}
 
 <b>За период:</b>
-- Сегодня: {settings.format_price(stats.get('today_earnings_kopeks', 0))}
-- За неделю: {settings.format_price(stats.get('week_earnings_kopeks', 0))}
-- За месяц: {settings.format_price(stats.get('month_earnings_kopeks', 0))}
+- Сегодня: {_paid_line(stats.get('today_earnings_kopeks', 0), stats.get('today_earnings_days', 0))}
+- За неделю: {_paid_line(stats.get('week_earnings_kopeks', 0), stats.get('week_earnings_days', 0))}
+- За месяц: {_paid_line(stats.get('month_earnings_kopeks', 0), stats.get('month_earnings_days', 0))}
 
 <b>Средние показатели:</b>
 - На одного реферера: {settings.format_price(int(avg_per_referrer))}
-
-<b>Топ-5 рефереров:</b>
 """
+
+        text += _levels_breakdown_block(stats.get('by_level') or [])
+        text += '\n<b>Топ-5 рефереров:</b>\n'
 
         top_referrers = stats.get('top_referrers', [])
         if top_referrers:
             for i, referrer in enumerate(top_referrers[:5], 1):
                 earned = referrer.get('total_earned_kopeks', 0)
+                days = referrer.get('total_earned_days', 0)
                 count = referrer.get('referrals_count', 0)
                 user_id = referrer.get('user_id', 'N/A')
 
                 if count > 0:
-                    text += f'{i}. ID {user_id}: {settings.format_price(earned)} ({count} реф.)\n'
+                    text += f'{i}. ID {user_id}: {_paid_line(earned, days)} ({count} реф.)\n'
                 else:
                     logger.warning('Реферер имеет рефералов, но есть в топе', user_id=user_id, count=count)
         else:
             text += 'Нет данных\n'
 
+        text += f'\n{await _program_rules_block(db)}'
         text += f"""
-
-<b>Настройки реферальной системы:</b>
-- Минимальное пополнение: {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)}
-- Бонус за первое пополнение: {settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)}
-- Бонус пригласившему: {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)}
-- Комиссия с покупок: {settings.REFERRAL_COMMISSION_PERCENT}%
 - Уведомления: {'✅ Включены' if settings.REFERRAL_NOTIFICATIONS_ENABLED else '❌ Отключены'}
 
 <i>🕐 Обновлено: {current_time}</i>
@@ -209,7 +288,7 @@ async def _show_top_referrers_filtered(callback: types.CallbackQuery, db: AsyncS
 
         if top_referrers:
             for i, referrer in enumerate(top_referrers[:20], 1):
-                earned = referrer.get('earnings_kopeks', 0)
+                earned = _paid_line(referrer.get('earnings_kopeks', 0), referrer.get('earnings_days', 0))
                 count = referrer.get('invited_count', 0)
                 display_name = referrer.get('display_name', 'N/A')
                 username = referrer.get('username', '')
@@ -236,10 +315,10 @@ async def _show_top_referrers_filtered(callback: types.CallbackQuery, db: AsyncS
                 # Выделяем основную метрику в зависимости от сортировки
                 if sort_by == 'invited':
                     text += f'{emoji}{i}. {display_text}\n'
-                    text += f'   👥 <b>{count} приглашённых</b> | 💰 {settings.format_price(earned)}\n\n'
+                    text += f'   👥 <b>{count} приглашённых</b> | 💰 {earned}\n\n'
                 else:
                     text += f'{emoji}{i}. {display_text}\n'
-                    text += f'   💰 <b>{settings.format_price(earned)}</b> | 👥 {count} приглашённых\n\n'
+                    text += f'   💰 <b>{earned}</b> | 👥 {count} приглашённых\n\n'
         else:
             text += 'Нет данных за выбранный период\n'
 
@@ -259,9 +338,51 @@ async def _show_top_referrers_filtered(callback: types.CallbackQuery, db: AsyncS
         await callback.answer('Ошибка загрузки топа рефереров')
 
 
+def _settings_hint() -> str:
+    """Подсказка о том, ГДЕ настройка реально меняется.
+
+    Реферальные ключи редактируются из админки и кабинета — но только если они не
+    заданы в .env: такой ключ попадает в ENV_OVERRIDE_KEYS, и запись из UI ложится
+    в БД, не применяясь к настройкам. Прежний текст звал править .env всегда, из-за
+    чего залоченность выглядела нормой, а не следствием конфигурации.
+    """
+    locked = sorted(key for key in ENV_OVERRIDE_KEYS if key.startswith('REFERRAL_'))
+    if not locked:
+        return '<i>💡 Настройки меняются здесь и в кабинете, раздел «Реферальная программа».</i>'
+    listed = ', '.join(locked[:5]) + ('…' if len(locked) > 5 else '')
+    return (
+        '<i>⚠️ Часть настроек задана в .env и поэтому не меняется из админки: '
+        f'{listed}. Уберите эти строки из .env и перезапустите бота, '
+        'чтобы управлять программой отсюда.</i>'
+    )
+
+
 @admin_required
 @error_handler
 async def show_referral_settings(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    if settings.is_referral_levels_scheme():
+        text = f"""
+⚙️ <b>Настройки реферальной системы</b>
+
+{await _program_rules_block(db)}
+
+<b>Уведомления:</b>
+• Статус: {'✅ Включены' if settings.REFERRAL_NOTIFICATIONS_ENABLED else '❌ Отключены'}
+
+{_settings_hint()}
+"""
+        await callback.message.edit_text(
+            text,
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text='🪜 Уровни наград', callback_data='admin_ref_levels')],
+                    [types.InlineKeyboardButton(text='⬅️ К статистике', callback_data='admin_referrals')],
+                ]
+            ),
+        )
+        await callback.answer()
+        return
+
     text = f"""
 ⚙️ <b>Настройки реферальной системы</b>
 
@@ -277,11 +398,14 @@ async def show_referral_settings(callback: types.CallbackQuery, db_user: User, d
 • Статус: {'✅ Включены' if settings.REFERRAL_NOTIFICATIONS_ENABLED else '❌ Отключены'}
 • Попытки отправки: {getattr(settings, 'REFERRAL_NOTIFICATION_RETRY_ATTEMPTS', 3)}
 
-<i>💡 Для изменения настроек отредактируйте файл .env и перезапустите бота</i>
+{_settings_hint()}
 """
 
     keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ К статистике', callback_data='admin_referrals')]]
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text='🪜 Уровни наград', callback_data='admin_ref_levels')],
+            [types.InlineKeyboardButton(text='⬅️ К статистике', callback_data='admin_referrals')],
+        ]
     )
 
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -1053,6 +1177,33 @@ async def check_missing_bonuses(callback: types.CallbackQuery, db_user: User, db
 
     try:
         report = await referral_diagnostics_service.check_missing_bonuses(db)
+
+        # Проверка неприменима к многоуровневой схеме: она ищет отсутствие строки
+        # с легаси-причиной и считает суммы по ключам REFERRAL_*. Нули в отчёте
+        # означают «не проверяли», и показать вместо этого «✅ Все бонусы
+        # начислены!» — выдать админу заведомо ложное «всё в порядке» по аудиту,
+        # который не выполнялся.
+        if report.unsupported_scheme:
+            await callback.message.edit_text(
+                '🔍 <b>Проверка бонусов по БД</b>\n\n'
+                '⚠️ Проверка недоступна: включена многоуровневая схема наград.\n\n'
+                'Детектор ищет пропущенные бонусы по правилам классической схемы и '
+                'считает суммы по настройкам REFERRAL_*. В многоуровневой схеме '
+                'награда могла быть выдана по другому поводу или днями подписки — '
+                'такая пара выглядела бы «пропущенной», и доначисление заплатило бы '
+                'второй раз поверх уже выданного.',
+                reply_markup=types.InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [types.InlineKeyboardButton(text='🪜 Уровни наград', callback_data='admin_ref_levels')],
+                        [
+                            types.InlineKeyboardButton(
+                                text='⬅️ К диагностике', callback_data='admin_referral_diagnostics'
+                            )
+                        ],
+                    ]
+                ),
+            )
+            return
 
         # Сохраняем отчёт в state для последующего применения
         await state.update_data(missing_bonuses_report=report.to_dict())

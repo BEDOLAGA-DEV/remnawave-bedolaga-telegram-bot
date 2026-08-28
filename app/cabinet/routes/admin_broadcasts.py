@@ -673,6 +673,7 @@ async def create_combined_broadcast(
             email_subject=request.email_subject.strip(),
             email_html_content=request.email_html_content.strip(),
             initiator_name=admin_name,
+            category=request.category,
         )
 
         await email_broadcast_service.start_broadcast(broadcast.id, email_config)

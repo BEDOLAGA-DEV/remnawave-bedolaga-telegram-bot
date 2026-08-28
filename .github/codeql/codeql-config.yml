@@ -1,0 +1,19 @@
+name: CodeQL config
+
+# Ревизии Alembic — декларативный формат, а не код: `revision`, `down_revision`,
+# `branch_labels` и `depends_on` Alembic читает у модуля по именам, поэтому
+# py/unused-global-variable из набора security-and-quality помечает все четыре
+# в каждом новом файле миграции. Четыре ложных срабатывания на миграцию тонут
+# в ревью и приучают пролистывать вкладку безопасности не глядя.
+paths-ignore:
+  - migrations/alembic/versions
+
+query-filters:
+  # PEP 562: app/webserver и app/webapi объявляют публичные имена в __all__, а
+  # выдают их модульным __getattr__ — ленивый импорт нужен, чтобы импорт пакета
+  # не тянул FastAPI-приложение целиком. Запрос про __getattr__ не знает и
+  # считает все такие имена неопределёнными. Инвариант «каждое имя из __all__
+  # действительно резолвится» проверяется точнее — тестом
+  # tests/test_lazy_package_exports.py, который просто дёргает getattr.
+  - exclude:
+      id: py/undefined-export

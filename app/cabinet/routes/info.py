@@ -298,14 +298,31 @@ async def get_recurrent_payments(
 
 
 @router.get('/service', response_model=ServiceInfoResponse)
-async def get_service_info():
-    """Get general service information."""
+async def get_service_info(
+    language: str = Query('ru', min_length=2, max_length=10),
+):
+    """Get general service information.
+
+    Название и описание берём из брендинга (MINIAPP_SERVICE_NAME_*/
+    MINIAPP_SERVICE_DESCRIPTION_*) — того же источника, что и мини-апп, чтобы
+    сервис не назывался в двух местах по-разному. Раньше здесь читались
+    SERVICE_NAME / SERVICE_DESCRIPTION / WEBSITE_URL, которых в Settings нет,
+    поэтому любой инстанс отдавал «VPN Service» с пустыми контактами.
+    """
+    requested_lang = _normalize_language_code(language)
+    branding = settings.get_miniapp_branding()
+    name = branding['service_name'].get(requested_lang) or branding['service_name']['default']
+    description = branding['service_description'].get(requested_lang) or branding['service_description']['default']
+
+    # Незаполненный контакт — это null, а не пустая строка: так отвечала прежняя
+    # версия ручки (`getattr(...) or getattr(...)`), так же поступает соседний
+    # /support-config, и только так работает клиентская проверка «контакт задан».
     return ServiceInfoResponse(
-        name=getattr(settings, 'SERVICE_NAME', None) or getattr(settings, 'BOT_NAME', 'VPN Service'),
-        description=getattr(settings, 'SERVICE_DESCRIPTION', None),
-        support_email=getattr(settings, 'SUPPORT_EMAIL', None),
-        support_telegram=getattr(settings, 'SUPPORT_USERNAME', None) or getattr(settings, 'SUPPORT_TELEGRAM', None),
-        website=getattr(settings, 'WEBSITE_URL', None),
+        name=name,
+        description=description,
+        support_email=(settings.SUPPORT_EMAIL or '').strip() or None,
+        support_telegram=(settings.SUPPORT_USERNAME or '').strip() or None,
+        website=(settings.SERVICE_WEBSITE_URL or '').strip() or None,
     )
 
 

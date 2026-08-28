@@ -1246,7 +1246,8 @@ def get_insufficient_balance_keyboard(
     language: str = DEFAULT_LANGUAGE,
     resume_callback: str | None = None,
     amount_kopeks: int | None = None,
-    has_saved_cart: bool = False,  # Новый параметр для указания наличия сохраненной корзины
+    has_saved_cart: bool = False,
+    resume_text: str | None = None,
 ) -> InlineKeyboardMarkup:
     texts = get_texts(language)
     keyboard = get_payment_methods_keyboard(amount_kopeks or 0, language)
@@ -1266,12 +1267,13 @@ def get_insufficient_balance_keyboard(
             )
             back_row_index = len(keyboard.inline_keyboard) - 1
 
-    # Если есть сохраненная корзина, добавляем кнопку возврата к оформлению
+    # Если есть сохраненная корзина или передан resume_callback, добавляем кнопку возврата
+    button_label = resume_text or texts.RETURN_TO_SUBSCRIPTION_CHECKOUT
     if has_saved_cart:
         return_row = [
             InlineKeyboardButton(
-                text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
-                callback_data='return_to_saved_cart',
+                text=button_label,
+                callback_data=resume_callback or 'return_to_saved_cart',
             )
         ]
         insert_index = back_row_index if back_row_index is not None else len(keyboard.inline_keyboard)
@@ -1279,7 +1281,7 @@ def get_insufficient_balance_keyboard(
     elif resume_callback:
         return_row = [
             InlineKeyboardButton(
-                text=texts.RETURN_TO_SUBSCRIPTION_CHECKOUT,
+                text=button_label,
                 callback_data=resume_callback,
             )
         ]
@@ -1290,7 +1292,11 @@ def get_insufficient_balance_keyboard(
 
 
 def get_subscription_keyboard(
-    language: str = DEFAULT_LANGUAGE, has_subscription: bool = False, is_trial: bool = False, subscription=None
+    language: str = DEFAULT_LANGUAGE,
+    has_subscription: bool = False,
+    is_trial: bool = False,
+    subscription=None,
+    gift_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     from app.config import settings
 
@@ -1474,6 +1480,16 @@ def get_subscription_keyboard(
                     ]
                 )
 
+    if gift_enabled:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('GIFT_SUBSCRIPTION_BUTTON', '🎁 Подарить подписку'),
+                    callback_data='subscription_gift',
+                )
+            ]
+        )
+
     keyboard.append([build_back_button(texts, callback_data='back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -1516,12 +1532,16 @@ def get_subscription_confirm_keyboard_with_cart(language: str = 'ru') -> InlineK
 def get_insufficient_balance_keyboard_with_cart(
     language: str = 'ru',
     amount_kopeks: int = 0,
+    resume_callback: str | None = None,
+    resume_text: str | None = None,
 ) -> InlineKeyboardMarkup:
     # Используем обновленную версию с флагом has_saved_cart=True
     keyboard = get_insufficient_balance_keyboard(
         language,
         amount_kopeks=amount_kopeks,
         has_saved_cart=True,
+        resume_callback=resume_callback,
+        resume_text=resume_text,
     )
 
     # Добавляем кнопку очистки корзины в начало
@@ -2781,6 +2801,18 @@ def get_referral_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMar
             )
         ],
     ]
+
+    # Кнопка появляется, только когда админ разрешил хотя бы одну из настроек:
+    # экран, на котором нечего менять, обещает влияние, которого нет.
+    if settings.is_referral_reward_kind_choice_enabled() or settings.is_referral_days_target_choice_enabled():
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('REFERRAL_REWARD_SETTINGS_BUTTON', '⚙️ Настройки наград'),
+                    callback_data='referral_reward_settings',
+                )
+            ]
+        )
 
     # Добавляем кнопку вывода, если включена
     if settings.is_referral_withdrawal_enabled():

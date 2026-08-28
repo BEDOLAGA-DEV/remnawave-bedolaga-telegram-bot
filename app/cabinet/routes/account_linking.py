@@ -45,6 +45,7 @@ from ..auth.merge_service import (
 from ..auth.oauth_providers import (
     generate_oauth_state,
     get_provider,
+    resolve_oauth_redirect_uri,
     validate_oauth_state,
 )
 from ..auth.telegram_auth import (
@@ -237,7 +238,9 @@ async def _exchange_and_link_oauth(
 
     Used by both link_provider_callback (JWT-authed) and link_server_complete (state-authed).
     """
-    oauth_provider = get_provider(provider)
+    # Тот же redirect_uri, что был выбран на init: провайдер сверяет их на
+    # обмене кода, а разошедшиеся значения дают invalid_grant.
+    oauth_provider = get_provider(provider, redirect_uri=state_data.get('oauth_redirect_uri'))
     if not oauth_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -391,6 +394,7 @@ async def get_linked_providers(
 @router.get('/link/{provider}/init', response_model=LinkInitResponse)
 async def link_provider_init(
     provider: OAuthProviderName,
+    http_request: Request,
     user: User = Depends(get_current_cabinet_user),
 ) -> LinkInitResponse:
     """Start OAuth flow for linking a new provider to the current account."""
@@ -403,7 +407,11 @@ async def link_provider_init(
             detail='Provider is already linked to your account',
         )
 
-    oauth_provider = get_provider(provider)
+    # Привязка уходит на тот же домен, с которого пришёл запрос, — иначе
+    # пользователь с зеркала возвращается на канонический и привязка срывается
+    # (та же причина, что и у логина в routes/oauth.py).
+    redirect_uri = resolve_oauth_redirect_uri(http_request.headers.get('origin'))
+    oauth_provider = get_provider(provider, redirect_uri=redirect_uri)
     if not oauth_provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -415,6 +423,7 @@ async def link_provider_init(
     extra_data: dict[str, str] = {
         'linking': 'true',
         'user_id': str(user.id),
+        'oauth_redirect_uri': redirect_uri,
     }
     if auth_extra:
         extra_data.update(auth_extra)

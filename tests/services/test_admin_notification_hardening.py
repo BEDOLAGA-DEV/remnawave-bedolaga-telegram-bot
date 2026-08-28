@@ -104,6 +104,17 @@ async def test_send_message_retries_on_flood_control(
 
 
 @pytest.mark.asyncio
+async def test_send_message_respects_global_admin_switch(admin_service: AdminNotificationService) -> None:
+    admin_service.enabled = False
+    admin_service.bot.send_message = AsyncMock()
+
+    result = await admin_service._send_message('hello', category=NotificationCategory.INFRASTRUCTURE)
+
+    assert result is False
+    admin_service.bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_send_message_gives_up_after_three_flood_errors(
     admin_service: AdminNotificationService, monkeypatch: pytest.MonkeyPatch
 ) -> None:

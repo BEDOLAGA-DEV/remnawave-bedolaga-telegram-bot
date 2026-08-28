@@ -29,6 +29,7 @@ async def send_promo_offer_email(
     email: str,
     language: str | None,
     username: str = '',
+    user_id: int | None = None,
     message_text: str | None,
     valid_hours: int,
     discount_percent: int = 0,
@@ -41,10 +42,11 @@ async def send_promo_offer_email(
     """
     from app.cabinet.services.email_service import email_service
     from app.cabinet.services.email_templates import EmailNotificationTemplates
+    from app.cabinet.services.email_unsubscribe import build_unsubscribe_url
     from app.config import settings
     from app.services.notification_delivery_service import NotificationType
 
-    if not email:
+    if not email or not settings.is_notifications_enabled():
         return False
     if not email_service.is_configured():
         logger.debug('SMTP не настроен — промо-письмо пропущено', email=email)
@@ -59,6 +61,9 @@ async def send_promo_offer_email(
         'valid_hours': valid_hours,
         'discount_percent': discount_percent,
         'bonus_amount_kopeks': bonus_amount_kopeks,
+        # Промо — массовая рассылка: без ссылки отписки жалобы «Спам» идут в
+        # репутацию домена. user_id обязателен, токен подписывается по нему.
+        'unsubscribe_url': build_unsubscribe_url(user_id, email) if user_id else '',
     }
     if bonus_amount_kopeks:
         context['amount'] = settings.format_price(bonus_amount_kopeks)
@@ -88,6 +93,7 @@ async def send_promo_offer_email(
             subject=template['subject'],
             body_html=template['body_html'],
             body_text=template.get('body_text'),
+            unsubscribe_url=context['unsubscribe_url'] or None,
         )
     except Exception as e:
         logger.error('Ошибка отправки промо-письма', email=email, e=e)

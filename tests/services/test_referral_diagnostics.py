@@ -14,7 +14,9 @@ from app.services.referral_diagnostics_service import ReferralDiagnosticsService
 @pytest.fixture
 def temp_log_file():
     """Создаёт временный лог-файл для тестов."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
+    # encoding обязателен: логи бота — utf-8 с эмодзи, а дефолт Path.write_text
+    # на Windows это ANSI-кодовая страница (cp1251) -> UnicodeEncodeError
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.log', encoding='utf-8', delete=False) as f:
         yield Path(f.name)
     # Cleanup
     Path(f.name).unlink(missing_ok=True)
@@ -38,7 +40,7 @@ def sample_log_content():
 async def test_parse_logs_basic(temp_log_file, sample_log_content):
     """Тест базового парсинга логов."""
     # Записываем тестовые данные в файл
-    temp_log_file.write_text(sample_log_content)
+    temp_log_file.write_text(sample_log_content, encoding='utf-8')
 
     service = ReferralDiagnosticsService(log_path=str(temp_log_file))
 
@@ -63,7 +65,7 @@ async def test_parse_logs_basic(temp_log_file, sample_log_content):
 @pytest.mark.asyncio
 async def test_analyze_period_with_issues(temp_log_file, sample_log_content):
     """Тест анализа с проблемными случаями."""
-    temp_log_file.write_text(sample_log_content)
+    temp_log_file.write_text(sample_log_content, encoding='utf-8')
 
     service = ReferralDiagnosticsService(log_path=str(temp_log_file))
 
@@ -96,7 +98,7 @@ async def test_analyze_period_with_issues(temp_log_file, sample_log_content):
 @pytest.mark.asyncio
 async def test_empty_log_file(temp_log_file):
     """Тест работы с пустым лог-файлом."""
-    temp_log_file.write_text('')
+    temp_log_file.write_text('', encoding='utf-8')
 
     service = ReferralDiagnosticsService(log_path=str(temp_log_file))
 
@@ -140,7 +142,7 @@ async def test_nonexistent_log_file():
 @pytest.mark.asyncio
 async def test_analyze_today(temp_log_file, sample_log_content):
     """Тест метода analyze_today."""
-    temp_log_file.write_text(sample_log_content)
+    temp_log_file.write_text(sample_log_content, encoding='utf-8')
 
     service = ReferralDiagnosticsService(log_path=str(temp_log_file))
 

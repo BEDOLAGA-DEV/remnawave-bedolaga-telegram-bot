@@ -35,6 +35,7 @@ class SortByEnum(StrEnum):
     LAST_ACTIVITY = 'last_activity'
     TOTAL_SPENT = 'total_spent'
     PURCHASE_COUNT = 'purchase_count'
+    SUBSCRIPTION_END_DATE = 'subscription_end_date'
 
 
 # === User Subscription Info ===

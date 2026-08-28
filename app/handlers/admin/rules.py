@@ -17,7 +17,7 @@ from app.utils.validators import get_html_help_text, validate_html_tags
 
 def _safe_preview(html_text: str, limit: int = 500) -> str:
     """Создаёт превью текста, безопасно обрезая HTML-теги."""
-    plain = re.sub(r'<[^>]+>', '', html_text)
+    plain = re.sub(r'<[^<>]+>', '', html_text)
     if len(plain) <= limit:
         return plain
     return plain[:limit] + '...'

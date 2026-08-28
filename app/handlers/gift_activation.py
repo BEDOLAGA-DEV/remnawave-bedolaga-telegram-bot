@@ -5,12 +5,18 @@ import html as html_mod
 import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.types import InaccessibleMessage
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
+from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import AsyncSessionLocal
-from app.database.models import GuestPurchase
-from app.services.guest_purchase_service import GuestPurchaseError, activate_purchase
+from app.localization.texts import get_texts
+from app.services.gift_claim_service import (
+    GiftClaimAlreadyOwnedError,
+    GiftClaimNotActivatableError,
+    GiftClaimNotFoundError,
+    GiftClaimSelfActivationError,
+    claim_bound_gift_for_user,
+)
+from app.services.guest_purchase_service import GuestPurchaseError
 
 
 logger = structlog.get_logger(__name__)
@@ -42,28 +48,40 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
     await callback.message.edit_text('⏳ Активируем подарок...', parse_mode=None)
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(GuestPurchase)
-            .options(selectinload(GuestPurchase.user), selectinload(GuestPurchase.tariff))
-            .where(GuestPurchase.id == purchase_id)
-        )
-        purchase = result.scalars().first()
-
-        if not purchase or purchase.user_id is None or purchase.user is None:
+        user = await get_user_by_telegram_id(db, callback.from_user.id)
+        if not user:
             await callback.message.edit_text(_GIFT_NOT_FOUND, parse_mode=None)
             return
 
-        # Verify the callback sender is the actual recipient
-        if purchase.user.telegram_id != callback.from_user.id:
-            await callback.message.edit_text(_GIFT_NOT_FOUND, parse_mode=None)
-            return
-
-        # Resolve tariff info inside session (selectin-loaded relationships)
-        tariff_name = html_mod.escape(purchase.tariff.name) if purchase.tariff and purchase.tariff.name else ''
-        period_days = purchase.period_days
+        texts = get_texts(user.language)
 
         try:
-            await activate_purchase(db, purchase.token, skip_notification=True)
+            purchase = await claim_bound_gift_for_user(
+                db,
+                claimant_user_id=user.id,
+                purchase_id=purchase_id,
+            )
+        except (GiftClaimNotFoundError, GiftClaimAlreadyOwnedError):
+            await callback.message.edit_text(
+                texts.t('GIFT_ACTIVATION_NOT_FOUND', _GIFT_NOT_FOUND),
+                parse_mode=None,
+            )
+            return
+        except GiftClaimSelfActivationError:
+            await callback.message.edit_text(
+                texts.t(
+                    'GIFT_ACTIVATION_SELF_CLAIM_ERROR',
+                    '⚠️ Нельзя активировать свой собственный подарок.\nОтправьте код другу!',
+                ),
+                parse_mode=None,
+            )
+            return
+        except GiftClaimNotActivatableError:
+            await callback.message.edit_text(
+                texts.t('GIFT_ACTIVATION_NOT_ACTIVATABLE_ERROR', '❌ Этот подарок невозможно активировать.'),
+                parse_mode=None,
+            )
+            return
         except GuestPurchaseError as exc:
             logger.warning(
                 'Gift activation via callback failed',
@@ -72,10 +90,19 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
                 error=exc.message,
             )
             if exc.status_code >= 500:
-                await callback.message.edit_text('Произошла ошибка при активации. Попробуйте позже.', parse_mode=None)
+                await callback.message.edit_text(
+                    texts.t(
+                        'GIFT_ACTIVATION_GENERIC_ERROR',
+                        'Произошла ошибка при активации. Попробуйте позже.',
+                    ),
+                    parse_mode=None,
+                )
             else:
                 await callback.message.edit_text(
-                    f'Не удалось активировать подарок: {html_mod.escape(exc.message)}',
+                    texts.t(
+                        'GIFT_ACTIVATION_FAILED_PREFIX',
+                        'Не удалось активировать подарок: {error}',
+                    ).format(error=html_mod.escape(exc.message)),
                     parse_mode=None,
                 )
             return
@@ -85,15 +112,28 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
                 purchase_id=purchase_id,
                 telegram_id=callback.from_user.id,
             )
-            await callback.message.edit_text('Произошла ошибка при активации. Попробуйте позже.', parse_mode=None)
+            await callback.message.edit_text(
+                texts.t(
+                    'GIFT_ACTIVATION_GENERIC_ERROR',
+                    'Произошла ошибка при активации. Попробуйте позже.',
+                ),
+                parse_mode=None,
+            )
             return
 
-    period_text = f'{period_days} дн.' if period_days else ''
-    tariff_text = f'{tariff_name} — {period_text}' if tariff_name else period_text
+        tariff_name = html_mod.escape(purchase.tariff.name) if purchase.tariff and purchase.tariff.name else ''
+        period_days = purchase.period_days
+        period_text = f'{period_days} дн.' if period_days else ''
+        tariff_text = f'{tariff_name} — {period_text}' if tariff_name else period_text
 
-    await callback.message.edit_text(
-        f'✅ <b>Подарок активирован!</b>\n{tariff_text}\n\nВаша подписка обновлена.',
-    )
+        await callback.message.edit_text(
+            texts.t(
+                'GIFT_ACTIVATION_CALLBACK_SUCCESS_TEXT',
+                '✅ <b>Подарок активирован!</b>\n{tariff_text}\n\nВаша подписка обновлена.',
+            ).format(
+                tariff_text=tariff_text,
+            ),
+        )
 
 
 def register_handlers(dp: Dispatcher) -> None:

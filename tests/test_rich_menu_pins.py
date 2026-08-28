@@ -46,11 +46,14 @@ def test_back_to_menu_tries_rich_before_classic():
 def test_start_menu_sites_guarded_by_rich_helpers():
     source = _START_PATH.read_text(encoding='utf-8')
 
-    # 5 мест показа меню через message.answer + 2 прямых bot.send_* в
-    # required_sub_channel_check. Новая точка показа меню обязана либо войти в
-    # этот счётчик (добавь rich-гвард), либо осознанно обновить пин.
+    # 5 мест показа меню через message.answer + 1 прямой bot.send_* в
+    # required_sub_channel_check. Вторая прежняя ветка теперь делегирует
+    # complete_registration_from_callback(), где меню защищено answer-helper.
+    # Новая точка показа меню обязана либо войти в этот счётчик (добавь
+    # rich-гвард), либо осознанно обновить пин.
     assert source.count('if not await try_answer_rich_main_menu(') == 5
-    assert source.count('if not await try_send_rich_main_menu(') == 2
+    assert source.count('if not await try_send_rich_main_menu(') == 1
+    assert 'await complete_registration_from_callback(query, state, db)' in source
 
     # Каждый классический показ меню строит текст только внутри фоллбека:
     # 'menu_text = await get_main_menu_text' встречается сразу после rich-гварда

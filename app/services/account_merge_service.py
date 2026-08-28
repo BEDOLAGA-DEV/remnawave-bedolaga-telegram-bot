@@ -308,6 +308,141 @@ async def _sync_transferred_subscriptions_to_panel(
         )
 
 
+# Предел обхода реферальной цепочки при слиянии. Совпадает по смыслу с
+# MAX_REFERRAL_DEPTH в админской карте сети: страховка от порчи данных, а не
+# продуктовое ограничение.
+_MERGE_CHAIN_MAX_DEPTH = 50
+
+# Сколько пар (реферер, реферал) пересчитывать по уровню за одно слияние.
+# Слияния делает админ вручную и они редки, но выродившийся аккаунт с тысячами
+# рефералов не должен превращать слияние в многоминутную операцию.
+_MERGE_LEVEL_REPAIR_LIMIT = 500
+
+
+async def _break_referral_cycle_through(db: AsyncSession, primary: User) -> bool:
+    """Разорвать цикл, в который слияние могло замкнуть цепочку.
+
+    Секция 9 переводит рефералов secondary на primary. Если primary сам был
+    приглашён одним из них (X → secondary, primary → X), после перевода выходит
+    primary → X → primary. Проверок self-referral для этого мало: петля из двух
+    и более звеньев их не задевает.
+
+    Цикл не подвешивает начисления — обход цепочки в движке наград защищён
+    множеством посещённых, — но молча обрезает всю ветку до первого уровня:
+    уровни 2+ перестают платить, и никто об этом не узнает.
+
+    Рвётся ТОЛЬКО петля, проходящая через самого primary, — та, которую и создало
+    слияние. Петля выше по цепочке (B→C→B) к слиянию отношения не имеет: снять там
+    привязку primary значит уничтожить работающую связь с его законным реферером и
+    при этом оставить настоящую петлю нетронутой. Такие данные чинятся отдельно и
+    осознанно, а не побочным эффектом слияния аккаунтов.
+
+    Какое из двух звеньев резать в петле через primary, задаёт секция 9: рефералы
+    secondary становятся рефералами primary, значит связь «primary приглашён своим
+    же новым рефералом» и есть лишняя.
+
+    Флаш не нужен: перепривязка выше сделана ``update()``-запросами, которые уже
+    ушли в БД, а собственная привязка primary читается из Python-атрибута.
+    """
+    seen = {primary.id}
+    current_id = primary.referred_by_id
+    depth = 0
+
+    while current_id and depth < _MERGE_CHAIN_MAX_DEPTH:
+        if current_id == primary.id:
+            logger.warning(
+                'Слияние замкнуло реферальную цепочку в цикл, привязка primary снята',
+                primary_id=primary.id,
+            )
+            primary.referred_by_id = None
+            return True
+        if current_id in seen:
+            logger.warning(
+                'В реферальной цепочке выше primary есть цикл; слияние его не создавало и не чинит',
+                primary_id=primary.id,
+                repeated_id=current_id,
+            )
+            return False
+        seen.add(current_id)
+        result = await db.execute(select(User.referred_by_id).where(User.id == current_id))
+        current_id = result.scalar_one_or_none()
+        depth += 1
+
+    return False
+
+
+async def _repair_referral_levels(db: AsyncSession, primary: User) -> int:
+    """Привести ``level`` перенесённых начислений в соответствие с новой цепочкой.
+
+    Только для режима цепочки. В режиме рангов ``level`` означает не расстояние,
+    а ступень партнёра, и пересчитывать его по глубине нельзя — вызывающий это
+    и проверяет.
+
+    Уровень строки — это расстояние между реферером и рефералом на момент
+    начисления. Слияние это расстояние меняет: реферал уровня 2 у secondary может
+    стать прямым рефералом primary. Перенесённая строка при этом сохраняет
+    level=2, а ``count_level_payments`` для уровня 1 её не видит — и лимит
+    ``max_payments`` для этой пары начинается заново, то есть пара получает
+    оплату сверх настроенной.
+
+    Пересчитывается только то, что можно посчитать: глубина от реферала вверх до
+    primary. Если связь после слияния разорвана, уровень не трогаем — выдумывать
+    его хуже, чем оставить исторический.
+    """
+    pairs_result = await db.execute(
+        select(ReferralEarning.referral_id).where(ReferralEarning.user_id == primary.id).distinct()
+    )
+    referral_ids = [row[0] for row in pairs_result.all() if row[0] is not None]
+
+    if len(referral_ids) > _MERGE_LEVEL_REPAIR_LIMIT:
+        logger.warning(
+            'Слишком много пар для пересчёта уровней, пересчёт пропущен',
+            primary_id=primary.id,
+            pairs=len(referral_ids),
+        )
+        return 0
+
+    repaired = 0
+    for referral_id in referral_ids:
+        depth = await _distance_to_referrer(db, referral_id, primary.id)
+        if depth is None:
+            continue
+        result = await db.execute(
+            update(ReferralEarning)
+            .where(
+                ReferralEarning.user_id == primary.id,
+                ReferralEarning.referral_id == referral_id,
+                ReferralEarning.level != depth,
+            )
+            .values(level=depth)
+        )
+        repaired += result.rowcount or 0
+
+    if repaired:
+        logger.info('Уровни реферальных начислений пересчитаны после слияния', primary_id=primary.id, rows=repaired)
+    return repaired
+
+
+async def _distance_to_referrer(db: AsyncSession, referral_id: int, referrer_id: int) -> int | None:
+    """Сколько звеньев вверх от реферала до реферера. ``None`` — связи нет."""
+    seen = {referral_id}
+    current_id = referral_id
+    depth = 0
+
+    while depth < _MERGE_CHAIN_MAX_DEPTH:
+        result = await db.execute(select(User.referred_by_id).where(User.id == current_id))
+        parent_id = result.scalar_one_or_none()
+        if not parent_id or parent_id in seen:
+            return None
+        depth += 1
+        if parent_id == referrer_id:
+            return depth
+        seen.add(parent_id)
+        current_id = parent_id
+
+    return None
+
+
 async def _handle_subscription_merge(
     db: AsyncSession,
     primary: User,
@@ -766,6 +901,16 @@ async def execute_merge(
     if primary.referred_by_id is None and secondary.referred_by_id is not None:
         if secondary.referred_by_id != primary.id:
             primary.referred_by_id = secondary.referred_by_id
+
+    # 9b. Петля из двух и более звеньев проверками на self-referral выше не ловится.
+    await _break_referral_cycle_through(db, primary)
+
+    # 9c. Уровень перенесённых начислений мог перестать соответствовать цепочке.
+    # Только в режиме цепочки: там level — расстояние, и слияние его меняет.
+    # В режиме рангов level это ступень партнёра, расстояние всегда 1, и пересчёт
+    # переписал бы ранг в единицу — обнулив вместе с ним и учёт лимита выплат.
+    if settings.is_referral_levels_scheme() and not settings.is_referral_tier_levels():
+        await _repair_referral_levels(db, primary)
 
     # 10. Переназначение withdrawal_requests
     await db.execute(

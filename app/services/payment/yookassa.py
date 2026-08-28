@@ -715,7 +715,11 @@ class YooKassaPaymentMixin:
                                         logger.warning('Ошибка уведомления админов о триале', admin_error=admin_error)
 
                                 # Уведомление пользователю (только для Telegram-пользователей)
-                                if getattr(self, 'bot', None) and user.telegram_id:
+                                if (
+                                    getattr(self, 'bot', None)
+                                    and user.telegram_id
+                                    and settings.is_notifications_enabled()
+                                ):
                                     try:
                                         await self.bot.send_message(
                                             chat_id=user.telegram_id,
@@ -925,7 +929,7 @@ class YooKassaPaymentMixin:
                     # Для рекуррентных автоплатежей уведомления отправляет recurrent_payment_service
                     if not is_recurrent_topup:
                         # Отправляем уведомление пользователю (только Telegram-пользователям)
-                        if getattr(self, 'bot', None) and user.telegram_id:
+                        if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
                             try:
                                 # Передаем только простые данные, чтобы избежать проблем с ленивой загрузкой
                                 await self._send_payment_success_notification(
@@ -1020,7 +1024,7 @@ class YooKassaPaymentMixin:
                                 )
 
                             # Отправляем уведомление пользователю об активации подписки (только Telegram)
-                            if getattr(self, 'bot', None) and user.telegram_id:
+                            if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
                                 from aiogram import types
 
                                 tariff_line = ''

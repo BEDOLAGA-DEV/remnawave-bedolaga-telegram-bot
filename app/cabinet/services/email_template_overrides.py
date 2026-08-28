@@ -20,7 +20,15 @@ logger = structlog.get_logger(__name__)
 # Placeholders available in EVERY template regardless of notification type.
 # Injected at the single render chokepoint (get_rendered_override), so an
 # admin can use them in any subject/body; per-type context wins on conflict.
-COMMON_CONTEXT_VARS = ['service_name', 'cabinet_url', 'support_username', 'username', 'email', 'date']
+COMMON_CONTEXT_VARS = [
+    'service_name',
+    'cabinet_url',
+    'support_username',
+    'username',
+    'email',
+    'date',
+    'unsubscribe_url',
+]
 
 
 def build_common_context() -> dict[str, Any]:
@@ -41,6 +49,10 @@ def build_common_context() -> dict[str, Any]:
         'username': '',
         'email': '',
         'date': format_email_datetime(datetime.now(UTC), fmt='%d.%m.%Y'),
+        # Пустая строка по умолчанию: у транзакционных писем отписки нет, но
+        # плейсхолдер обязан резолвиться — иначе админский шаблон с
+        # {unsubscribe_url} доставил бы его литералом.
+        'unsubscribe_url': '',
     }
 
 

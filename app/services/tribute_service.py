@@ -298,6 +298,9 @@ class TributeService:
             logger.error('Ошибка обработки возврата Tribute', error=e)
 
     async def _send_success_notification(self, user_id: int, amount_kopeks: int):
+        if not settings.is_notifications_enabled():
+            return
+
         # Skip if no telegram_id (email-only user)
         if not user_id:
             logger.debug('Пропуск уведомления Tribute для пользователя без telegram_id')
@@ -336,6 +339,9 @@ class TributeService:
             logger.error('Ошибка отправки уведомления об успешном платеже', error=e)
 
     async def _send_failure_notification(self, user_id: int):
+        if not settings.is_notifications_enabled():
+            return
+
         # Skip if no telegram_id (email-only user)
         if not user_id:
             logger.debug('Пропуск уведомления об ошибке Tribute для пользователя без telegram_id')
@@ -365,6 +371,9 @@ class TributeService:
             logger.error('Ошибка отправки уведомления о неудачном платеже', error=e)
 
     async def _send_refund_notification(self, user_id: int, amount_kopeks: int):
+        if not settings.is_notifications_enabled():
+            return
+
         # Skip if no telegram_id (email-only user)
         if not user_id:
             logger.debug('Пропуск уведомления о возврате Tribute для пользователя без telegram_id')

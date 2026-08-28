@@ -17,7 +17,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.config import settings
-from app.services.mulenpay_service import MulenPayService
+from app.services.mulenpay_service import MULENPAY_CLIENT_MAX_LENGTH, MulenPayService
 
 
 class _DummyResponse:
@@ -128,6 +128,81 @@ async def test_create_payment_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured_payload['method'] == 'POST'
     assert captured_payload['endpoint'] == '/v2/payments'
     assert captured_payload['json_data']['language'] == 'ru'
+    assert 'client' not in captured_payload['json_data']
+
+
+@pytest.mark.anyio('asyncio')
+async def test_create_payment_includes_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_service(monkeypatch)
+
+    captured_payload: dict[str, Any] = {}
+
+    async def fake_request(method: str, endpoint: str, **kwargs: Any) -> dict[str, Any]:
+        captured_payload.update({'method': method, 'endpoint': endpoint, **kwargs})
+        return {'success': True, 'id': 101, 'paymentUrl': 'https://mulenpay/pay'}
+
+    service = MulenPayService()
+    monkeypatch.setattr(service, '_request', fake_request, raising=False)
+
+    await service.create_payment(
+        amount_kopeks=25000,
+        description='Пополнение',
+        uuid='uuid-1',
+        items=[{'description': 'item', 'quantity': 1, 'price': 250.0}],
+        client='user@example.com',
+    )
+
+    assert captured_payload['json_data']['client'] == 'user@example.com'
+
+
+@pytest.mark.anyio('asyncio')
+@pytest.mark.parametrize('client', ['', None])
+async def test_create_payment_omits_empty_client(monkeypatch: pytest.MonkeyPatch, client: str | None) -> None:
+    """Пустое значение не должно уходить в payload как пустая строка."""
+    _enable_service(monkeypatch)
+
+    captured_payload: dict[str, Any] = {}
+
+    async def fake_request(method: str, endpoint: str, **kwargs: Any) -> dict[str, Any]:
+        captured_payload.update({'method': method, 'endpoint': endpoint, **kwargs})
+        return {'success': True, 'id': 101, 'paymentUrl': 'https://mulenpay/pay'}
+
+    service = MulenPayService()
+    monkeypatch.setattr(service, '_request', fake_request, raising=False)
+
+    await service.create_payment(
+        amount_kopeks=25000,
+        description='Пополнение',
+        uuid='uuid-1',
+        items=[{'description': 'item', 'quantity': 1, 'price': 250.0}],
+        client=client,
+    )
+
+    assert 'client' not in captured_payload['json_data']
+
+
+@pytest.mark.anyio('asyncio')
+async def test_create_payment_truncates_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_service(monkeypatch)
+
+    captured_payload: dict[str, Any] = {}
+
+    async def fake_request(method: str, endpoint: str, **kwargs: Any) -> dict[str, Any]:
+        captured_payload.update({'method': method, 'endpoint': endpoint, **kwargs})
+        return {'success': True, 'id': 101, 'paymentUrl': 'https://mulenpay/pay'}
+
+    service = MulenPayService()
+    monkeypatch.setattr(service, '_request', fake_request, raising=False)
+
+    await service.create_payment(
+        amount_kopeks=25000,
+        description='Пополнение',
+        uuid='uuid-1',
+        items=[{'description': 'item', 'quantity': 1, 'price': 250.0}],
+        client='x' * 400,
+    )
+
+    assert len(captured_payload['json_data']['client']) == MULENPAY_CLIENT_MAX_LENGTH
 
 
 @pytest.mark.anyio('asyncio')

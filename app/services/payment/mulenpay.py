@@ -5,18 +5,75 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from importlib import import_module
+from types import SimpleNamespace
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.services.mulenpay_service import MULENPAY_CLIENT_MAX_LENGTH
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
 
 class MulenPayPaymentMixin:
     """Mixin с созданием платежей, обработкой callback и проверкой статусов MulenPay."""
+
+    @staticmethod
+    def _build_mulenpay_client(user: Any) -> str | None:
+        """Собирает значение поля ``client`` для MulenPay.
+
+        Отдаём только email и только подтверждённый. Документация MulenPay
+        (docs.mulenpay.ru, POST /v2/payments) описывает ``client`` единственным
+        примером со значением-email: ни формата, ни допустимых альтернатив там
+        нет, в схеме PaymentRequest и в модели официального SDK поля нет вовсе.
+        Класть туда telegram_id — ставка на непроверенный контракт, а поскольку
+        email есть далеко не у всех, именно он уходил бы у большинства: при
+        валидации формата на стороне провайдера сломалась бы оплата ровно у тех,
+        у кого email нет. Поле необязательное, поэтому не отправить его безопасно.
+
+        Подтверждённость обязательна по той же причине, по которой её проверяет
+        остальной код (см. cabinet/dependencies.py): адрес назначается до
+        верификации, а MulenPay фискализирует платёж — чек не должен уходить на
+        неподтверждённый чужой ящик.
+        """
+        if user is None:
+            return None
+
+        if not getattr(user, 'email_verified', False):
+            return None
+
+        email = getattr(user, 'email', None)
+        if not email:
+            return None
+
+        return str(email).strip()[:MULENPAY_CLIENT_MAX_LENGTH] or None
+
+    async def _resolve_mulenpay_client(self, db: AsyncSession, user_id: int | None) -> str | None:
+        """Достаёт контакт плательщика, не имея права сорвать создание платежа.
+
+        Контакт — необязательное поле, поэтому его получение обёрнуто отдельно:
+        в общем try/except метода любая ошибка превращается в «платёж не создан»,
+        и косметическое поле не должно получать такое право. Читаем два скаляра
+        точечным select: crud.get_user_by_id тянет четыре selectinload ради
+        одного адреса, а это горячий путь оплаты.
+        """
+        if user_id is None:
+            return None
+
+        try:
+            from app.database.models import User
+
+            result = await db.execute(select(User.email, User.email_verified).where(User.id == user_id))
+            row = result.first()
+            if row is None:
+                return None
+            return self._build_mulenpay_client(SimpleNamespace(email=row.email, email_verified=row.email_verified))
+        except Exception as error:
+            logger.warning('Не удалось получить контакт плательщика для MulenPay', error=str(error))
+            return None
 
     async def create_mulenpay_payment(
         self,
@@ -25,6 +82,7 @@ class MulenPayPaymentMixin:
         amount_kopeks: int,
         description: str,
         language: str | None = None,
+        client: str | None = None,
     ) -> dict[str, Any] | None:
         """Создаёт локальный платеж и инициализирует сессию в MulenPay."""
         display_name = settings.get_mulenpay_display_name()
@@ -56,6 +114,8 @@ class MulenPayPaymentMixin:
             payment_uuid = f'mulen_{user_id or "guest"}_{uuid.uuid4().hex}'
             amount_rubles = amount_kopeks / 100
 
+            payer_client = client if client else await self._resolve_mulenpay_client(db, user_id)
+
             items = [
                 {
                     'description': description[:128],
@@ -74,6 +134,7 @@ class MulenPayPaymentMixin:
                 items=items,
                 language=language or settings.MULENPAY_LANGUAGE,
                 website_url=settings.MULENPAY_WEBSITE_URL or settings.WEBHOOK_URL,
+                client=payer_client,
             )
 
             if not response:
@@ -363,7 +424,7 @@ class MulenPayPaymentMixin:
                     except Exception as error:
                         logger.error('Ошибка отправки уведомления о пополнении', display_name=display_name, error=error)
 
-                if getattr(self, 'bot', None) and user.telegram_id:
+                if getattr(self, 'bot', None) and user.telegram_id and settings.is_notifications_enabled():
                     try:
                         keyboard = await self.build_topup_success_keyboard(user)
                         await self.bot.send_message(

@@ -239,7 +239,16 @@ TEMPLATE_TYPES = [
             'zh': '推荐奖励通知',
             'ua': 'Сповіщення про нарахування реферального бонусу',
         },
-        'context_vars': ['formatted_bonus', 'bonus_rubles', 'referral_name'],
+        'context_vars': [
+            'formatted_bonus',
+            'bonus_rubles',
+            'referral_name',
+            # formatted_reward описывает награду целиком: деньги, дни или и то и другое.
+            'formatted_reward',
+            'bonus_days',
+            'tariff_name',
+            'level',
+        ],
     },
     {
         'type': 'referral_registered',
@@ -497,7 +506,17 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
     'ban_notification': {'reason': 'Violation of terms of service'},
     'unban_notification': {},
     'warning_notification': {'message': 'Please review our terms of service'},
-    'referral_bonus': {'formatted_bonus': '100.00 ₽', 'bonus_rubles': 100, 'referral_name': 'John'},
+    'referral_bonus': {
+        'formatted_bonus': '100.00 ₽',
+        'bonus_rubles': 100,
+        'referral_name': 'John',
+        # Награда может прийти днями подписки: без этих переменных превью
+        # шаблона с днями рендерится пустым, и админ отправит в прод сломанный текст.
+        'formatted_reward': '100.00 ₽',
+        'bonus_days': 7,
+        'tariff_name': 'Pro',
+        'level': 2,
+    },
     'referral_registered': {'referral_name': 'John'},
     'traffic_reset': {'reset_gb': 50, 'current_limit_gb': 100},
     'payment_received': {'formatted_amount': '500.00 ₽', 'amount_rubles': 500, 'payment_method': 'YooKassa'},

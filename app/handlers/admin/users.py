@@ -1613,7 +1613,17 @@ async def _build_user_referrals_view(
 
     lines: list[str] = [header, summary]
 
-    if user.referral_commission_percent is None:
+    if user.referral_commission_percent is None and settings.is_referral_levels_scheme():
+        # В многоуровневой схеме «стандартный процент» не существует: у каждого
+        # уровня свой, а пустой означает ноль. Печатать REFERRAL_COMMISSION_PERCENT
+        # значит называть админу ставку, по которой ничего не начисляется.
+        lines.append(
+            texts.t(
+                'ADMIN_USER_REFERRAL_COMMISSION_LEVELS',
+                '• Процент комиссии: по уровням реферальной схемы',
+            )
+        )
+    elif user.referral_commission_percent is None:
         lines.append(
             texts.t(
                 'ADMIN_USER_REFERRAL_COMMISSION_DEFAULT',
@@ -5424,7 +5434,7 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
         )
 
         try:
-            if callback.bot and target_user.telegram_id:
+            if callback.bot and target_user.telegram_id and settings.is_notifications_enabled():
                 tariff_line = ''
                 if settings.is_multi_tariff_enabled() and getattr(subscription, 'tariff', None):
                     tariff_line = f'\n📦 Тариф: «{subscription.tariff.name}»'
@@ -5830,7 +5840,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
 
         # Уведомляем пользователя
         try:
-            if callback.bot and target_user.telegram_id:
+            if callback.bot and target_user.telegram_id and settings.is_notifications_enabled():
                 await callback.bot.send_message(
                     chat_id=target_user.telegram_id,
                     text=f'💳 <b>Администратор оформил вам тариф</b>\n\n'

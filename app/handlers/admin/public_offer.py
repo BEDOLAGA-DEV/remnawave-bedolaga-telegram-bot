@@ -14,6 +14,7 @@ from app.services.public_offer_service import PublicOfferService
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.display_mode import display_mode_label
+from app.utils.telegram_html import stored_html_to_telegram_pages
 from app.utils.validators import get_html_help_text, validate_html_tags
 
 
@@ -439,12 +440,9 @@ async def view_public_offer(
         )
         return
 
-    content = offer.content.strip()
+    # Как и на пользовательском экране: сырой HTML с <p> Telegram не разберёт.
     max_length = 3800
-    pages = PublicOfferService.split_content_into_pages(
-        content,
-        max_length=max_length,
-    )
+    pages = stored_html_to_telegram_pages(offer.content, max_length=max_length)
 
     if not pages:
         await callback.answer(

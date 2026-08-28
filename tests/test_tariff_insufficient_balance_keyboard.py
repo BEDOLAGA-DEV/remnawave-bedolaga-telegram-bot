@@ -1,5 +1,8 @@
 from app.config import settings
-from app.handlers.subscription.tariff_purchase import get_tariff_insufficient_balance_keyboard
+from app.handlers.subscription.tariff_purchase import (
+    get_tariff_extend_insufficient_balance_keyboard,
+    get_tariff_insufficient_balance_keyboard,
+)
 
 
 def _callbacks(keyboard):
@@ -93,3 +96,107 @@ def test_falls_back_to_topup_without_direct_payment_methods(monkeypatch):
     keyboard = get_tariff_insufficient_balance_keyboard(7, 30, 'ru', missing_kopeks=50000)
 
     assert 'balance_topup' in _callbacks(keyboard)
+
+
+def test_extend_inlines_prefilled_payment_when_autopurchase_enabled(monkeypatch):
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'TELEGRAM_STARS_ENABLED', True)
+
+    keyboard = get_tariff_extend_insufficient_balance_keyboard(7, 42, 30, 'ru', missing_kopeks=50000)
+    callbacks = _callbacks(keyboard)
+
+    assert 'topup_amount|stars|50000' in callbacks
+    assert 'balance_topup' not in callbacks
+    assert 'subscription_extend' in callbacks
+    assert not any((c or '').startswith('tariff_select:') for c in callbacks)
+    assert not any((c or '').startswith('tariff_sbp:') for c in callbacks)
+
+
+def test_extend_classic_topup_when_autopurchase_disabled(monkeypatch):
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', False)
+    monkeypatch.setattr(settings, 'TELEGRAM_STARS_ENABLED', True)
+
+    keyboard = get_tariff_extend_insufficient_balance_keyboard(7, 42, 30, 'ru', missing_kopeks=50000)
+    callbacks = _callbacks(keyboard)
+
+    assert 'balance_topup' in callbacks
+    assert 'subscription_extend' in callbacks
+    assert not any((c or '').startswith('topup_amount|') for c in callbacks)
+
+
+def test_extend_prefilled_amount_is_missing_not_full_price(monkeypatch):
+    """Частичная нехватка: доплата = missing (260), не цена (630) и не баланс (370)."""
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'TELEGRAM_STARS_ENABLED', True)
+
+    price = 63000
+    balance = 37000
+    missing = price - balance  # 26000
+
+    keyboard = get_tariff_extend_insufficient_balance_keyboard(7, 42, 30, 'ru', missing_kopeks=missing)
+    callbacks = _callbacks(keyboard)
+
+    assert f'topup_amount|stars|{missing}' in callbacks
+    assert f'topup_amount|stars|{price}' not in callbacks
+    assert f'topup_amount|stars|{balance}' not in callbacks
+    assert 'subscription_extend' in callbacks
+
+
+def test_extend_back_points_at_the_subscription_in_multi_tariff(monkeypatch):
+    """«Назад» обязан адресовать конкретную подписку, иначе он никуда не ведёт.
+
+    На экране возврата после пополнения активная подписка в FSM не закрепляется,
+    а само состояние к тому моменту могло быть очищено. Голый
+    `subscription_extend` при двух и более подписках упирается в «Выберите
+    подписку» и НИЧЕГО не перерисовывает — кнопка выглядит сломанной. Идиома
+    `se:{id}` уже используется в monitoring_service и recurrent_payment_service.
+    """
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', False)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+
+    keyboard = get_tariff_extend_insufficient_balance_keyboard(7, 42, 30, 'ru', missing_kopeks=50000)
+
+    assert 'se:42' in _callbacks(keyboard)
+
+
+def test_extend_back_stays_generic_without_multi_tariff(monkeypatch):
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', False)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+
+    keyboard = get_tariff_extend_insufficient_balance_keyboard(7, 42, 30, 'ru', missing_kopeks=50000)
+
+    assert 'subscription_extend' in _callbacks(keyboard)
+    assert not any((c or '').startswith('se:') for c in _callbacks(keyboard))
+
+
+def test_extend_falls_back_to_topup_without_direct_payment_methods(monkeypatch):
+    """Фильтр строк оплаты — единственное, что делает зеркалирование безопасным.
+
+    `get_payment_methods_keyboard` кроме способов оплаты отдаёт и свою навигацию:
+    строку поддержки и собственное «Назад» на `menu_balance`. Без фильтра экран
+    получил бы ДВЕ кнопки «Назад», ведущие в разные места, а запасной переход
+    «Пополнить баланс» перестал бы появляться там, где прямых способов нет.
+    """
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from app.keyboards import inline
+
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: False)
+    # Прямых способов нет — только служебные строки.
+    monkeypatch.setattr(
+        inline,
+        'get_payment_methods_keyboard',
+        lambda *a, **kw: InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text='Поддержка', callback_data='topup_support')],
+                [InlineKeyboardButton(text='Назад', callback_data='menu_balance')],
+            ]
+        ),
+    )
+
+    callbacks = _callbacks(get_tariff_extend_insufficient_balance_keyboard(7, 42, 30, 'ru', missing_kopeks=50000))
+
+    assert 'balance_topup' in callbacks, 'без прямых способов должен остаться классический переход'
+    assert 'menu_balance' not in callbacks, 'чужая навигация не должна попадать на экран продления'
+    assert 'topup_support' not in callbacks

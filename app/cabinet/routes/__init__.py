@@ -15,6 +15,7 @@ from .admin_campaigns import router as admin_campaigns_router
 from .admin_channels import router as admin_channels_router
 from .admin_coupons import router as admin_coupons_router
 from .admin_email_templates import router as admin_email_templates_router
+from .admin_grace_access import router as admin_grace_access_router
 from .admin_info_pages import router as admin_info_pages_router
 from .admin_landings import router as admin_landings_router
 from .admin_legal_pages import router as admin_legal_pages_router
@@ -72,6 +73,7 @@ from .ticket_notifications import (
     router as ticket_notifications_router,
 )
 from .tickets import router as tickets_router
+from .unsubscribe import router as unsubscribe_router
 from .websocket import router as websocket_router
 from .wheel import router as wheel_router
 from .withdrawal import router as withdrawal_router
@@ -84,6 +86,8 @@ router = APIRouter(prefix='/cabinet', tags=['Cabinet'], redirect_slashes=False)
 # Final path becomes `/cabinet/public/site-verification`. Has its own
 # `/public` prefix so it's clearly separated from authenticated routes.
 router.include_router(site_verification_router)
+# Отписка от рассылок — тоже без авторизации: по ссылке ходят почтовые клиенты.
+router.include_router(unsubscribe_router)
 
 # Include all sub-routers
 router.include_router(auth_router)
@@ -148,6 +152,7 @@ router.include_router(admin_payments_router)
 router.include_router(admin_promo_offers_router)
 router.include_router(admin_remnawave_router)
 router.include_router(admin_email_templates_router)
+router.include_router(admin_grace_access_router)
 router.include_router(admin_updates_router)
 router.include_router(admin_traffic_router)
 router.include_router(admin_pinned_messages_router)

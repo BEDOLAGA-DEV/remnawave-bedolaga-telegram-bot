@@ -15,6 +15,8 @@ if str(ROOT_DIR) not in sys.path:
 
 import app.services.payment_service as payment_service_module
 from app.config import settings
+from app.services.mulenpay_service import MULENPAY_CLIENT_MAX_LENGTH
+from app.services.payment.mulenpay import MulenPayPaymentMixin
 from app.services.payment_service import PaymentService
 
 
@@ -24,6 +26,19 @@ def anyio_backend() -> str:
 
 
 class DummySession:
+    """Сессия-заглушка. ``execute`` отдаёт строку контакта, которую подставил тест."""
+
+    def __init__(self, contact_row: Any = None, execute_error: Exception | None = None) -> None:
+        self._contact_row = contact_row
+        self._execute_error = execute_error
+        self.execute_calls = 0
+
+    async def execute(self, *_args: Any, **_kwargs: Any) -> Any:
+        self.execute_calls += 1
+        if self._execute_error is not None:
+            raise self._execute_error
+        return SimpleNamespace(first=lambda: self._contact_row)
+
     async def commit(self) -> None:  # pragma: no cover - метод вызывается, но без логики
         return None
 
@@ -67,7 +82,7 @@ async def test_create_mulenpay_payment_success(monkeypatch: pytest.MonkeyPatch) 
     response = {'id': 123, 'paymentUrl': 'https://mulenpay/pay'}
     stub = StubMulenPayService(response)
     service = _make_service(stub)
-    db = DummySession()
+    db = DummySession(contact_row=SimpleNamespace(email='user@example.com', email_verified=True))
 
     captured_args: dict[str, Any] = {}
 
@@ -103,9 +118,132 @@ async def test_create_mulenpay_payment_success(monkeypatch: pytest.MonkeyPatch) 
     assert result['payment_url'] == 'https://mulenpay/pay'
     assert result['status'] == 'created'
     assert stub.calls and stub.calls[0]['language'] == 'en'
+    assert stub.calls[0]['client'] == 'user@example.com'
     assert captured_args['user_id'] == 77
     assert captured_args['amount_kopeks'] == 25000
     assert captured_args['uuid'].startswith('mulen_77_')
+
+
+def _relax_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'MULENPAY_MIN_AMOUNT_KOPEKS', 1000, raising=False)
+    monkeypatch.setattr(settings, 'MULENPAY_MAX_AMOUNT_KOPEKS', 1_000_000, raising=False)
+    monkeypatch.setattr(settings, 'MULENPAY_VAT_CODE', 1, raising=False)
+    monkeypatch.setattr(settings, 'MULENPAY_PAYMENT_SUBJECT', 'service', raising=False)
+    monkeypatch.setattr(settings, 'MULENPAY_PAYMENT_MODE', 'full_payment', raising=False)
+    monkeypatch.setattr(settings, 'MULENPAY_LANGUAGE', 'ru', raising=False)
+    monkeypatch.setattr(settings, 'WEBHOOK_URL', 'https://example.com', raising=False)
+
+
+@pytest.mark.parametrize(
+    ('user', 'expected'),
+    [
+        (SimpleNamespace(email='user@example.com', email_verified=True), 'user@example.com'),
+        # Неподтверждённый адрес наружу не уходит: он назначается до верификации,
+        # а MulenPay фискализирует платёж — чек не должен уехать чужому человеку.
+        (SimpleNamespace(email='user@example.com', email_verified=False), None),
+        (SimpleNamespace(email=None, email_verified=True), None),
+        (SimpleNamespace(email='', email_verified=True), None),
+        (SimpleNamespace(email='  user@example.com  ', email_verified=True), 'user@example.com'),
+        # telegram_id в поле, которое провайдер документирует единственным примером
+        # с email, не отправляем — см. докстринг _build_mulenpay_client.
+        (SimpleNamespace(email=None, email_verified=True, telegram_id=555), None),
+        (None, None),
+    ],
+)
+def test_build_mulenpay_client_sends_only_verified_email(user: Any, expected: str | None) -> None:
+    assert MulenPayPaymentMixin._build_mulenpay_client(user) == expected
+
+
+def test_build_mulenpay_client_truncates_overlong_value() -> None:
+    built = MulenPayPaymentMixin._build_mulenpay_client(SimpleNamespace(email='a' * 300, email_verified=True))
+
+    assert built is not None
+    assert len(built) == MULENPAY_CLIENT_MAX_LENGTH
+
+
+@pytest.mark.anyio('asyncio')
+async def test_create_mulenpay_payment_skips_lookup_for_guest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Гостевой платёж не ходит в БД за пользователем, которого нет."""
+    stub = StubMulenPayService({'id': 1, 'paymentUrl': 'https://mulenpay/pay'})
+    service = _make_service(stub)
+    db = DummySession()
+
+    async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
+        return DummyLocalPayment()
+
+    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    _relax_limits(monkeypatch)
+
+    result = await service.create_mulenpay_payment(db=db, user_id=None, amount_kopeks=25000, description='Пополнение')
+
+    assert result is not None
+    assert db.execute_calls == 0
+    assert stub.calls[0]['client'] is None
+
+
+@pytest.mark.anyio('asyncio')
+async def test_create_mulenpay_payment_survives_contact_lookup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Контакт — необязательное поле и не имеет права сорвать оплату."""
+    stub = StubMulenPayService({'id': 1, 'paymentUrl': 'https://mulenpay/pay'})
+    service = _make_service(stub)
+    db = DummySession(execute_error=RuntimeError('БД недоступна'))
+
+    async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
+        return DummyLocalPayment()
+
+    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    _relax_limits(monkeypatch)
+
+    result = await service.create_mulenpay_payment(db=db, user_id=77, amount_kopeks=25000, description='Пополнение')
+
+    assert result is not None
+    assert stub.calls[0]['client'] is None
+
+
+@pytest.mark.anyio('asyncio')
+async def test_create_mulenpay_payment_handles_missing_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = StubMulenPayService({'id': 1, 'paymentUrl': 'https://mulenpay/pay'})
+    service = _make_service(stub)
+    db = DummySession(contact_row=None)
+
+    async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
+        return DummyLocalPayment()
+
+    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    _relax_limits(monkeypatch)
+
+    result = await service.create_mulenpay_payment(db=db, user_id=77, amount_kopeks=25000, description='Пополнение')
+
+    assert result is not None
+    assert stub.calls[0]['client'] is None
+
+
+@pytest.mark.anyio('asyncio')
+async def test_explicit_client_wins_over_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Гостевой поток передаёт контакт покупателя явно — лукап при этом не нужен."""
+    stub = StubMulenPayService({'id': 1, 'paymentUrl': 'https://mulenpay/pay'})
+    service = _make_service(stub)
+    db = DummySession(contact_row=SimpleNamespace(email='from-db@example.com', email_verified=True))
+
+    async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
+        return DummyLocalPayment()
+
+    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    _relax_limits(monkeypatch)
+
+    result = await service.create_mulenpay_payment(
+        db=db,
+        user_id=77,
+        amount_kopeks=25000,
+        description='Пополнение',
+        client='guest@example.com',
+    )
+
+    assert result is not None
+    assert db.execute_calls == 0
+    assert stub.calls[0]['client'] == 'guest@example.com'
 
 
 @pytest.mark.anyio('asyncio')
