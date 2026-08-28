@@ -16,6 +16,7 @@ from app.database.models import Subscription, User
 from app.localization.texts import get_texts
 from app.services.subscription_service import SubscriptionService
 from app.utils.decorators import error_handler
+from app.keyboards.inline import build_back_button
 
 
 logger = structlog.get_logger(__name__)
@@ -223,7 +224,7 @@ async def confirm_subscription_revoke(
             texts.t('SUBSCRIPTION_REVOKE_ERROR', '❌ Ошибка при перевыпуске подписки. Попробуйте позже.'),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                    [build_back_button(texts, 'menu_subscription')],
                 ]
             ),
             parse_mode='HTML',

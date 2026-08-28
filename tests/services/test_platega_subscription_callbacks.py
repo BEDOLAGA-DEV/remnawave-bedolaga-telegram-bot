@@ -12,7 +12,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.crud import platega_subscription as sub_crud
-from app.database.models import Base, PlategaSubscription, Subscription, Transaction
+from app.database.models import (
+    AntilopayRecurrent,
+    Base,
+    PlategaPayment,
+    PlategaSubscription,
+    Subscription,
+    Transaction,
+    User,
+    UserPromoGroup,
+)
 
 
 def _ensure_real_aiosqlite(monkeypatch) -> None:
@@ -34,21 +43,22 @@ def _ensure_real_aiosqlite(monkeypatch) -> None:
 
 @contextlib.asynccontextmanager
 async def _memory_session(monkeypatch):
-    """Реальная in-memory SQLite сессия с таблицами platega_subscriptions,
-    subscriptions и transactions (последние две нужны коллбек-тестам — продление
-    через ``Subscription.extend_subscription`` и аудит через ``create_transaction``).
-
-    Полный create_all не годится (другие таблицы используют JSONB, SQLite не
-    компилирует), а FK в SQLite по умолчанию не форсятся — поэтому user_id/
-    subscription_id можно ставить произвольными; реальная строка Subscription
-    нужна только тестам, которые проверяют фактическое продление end_date.
-    """
+    """Реальная in-memory SQLite сессия с необходимыми таблицами."""
     _ensure_real_aiosqlite(monkeypatch)
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda c: Base.metadata.create_all(
-                c, tables=[PlategaSubscription.__table__, Subscription.__table__, Transaction.__table__]
+                c,
+                tables=[
+                    PlategaSubscription.__table__,
+                    Subscription.__table__,
+                    Transaction.__table__,
+                    User.__table__,
+                    PlategaPayment.__table__,
+                    UserPromoGroup.__table__,
+                    AntilopayRecurrent.__table__,
+                ],
             )
         )
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -1157,6 +1167,127 @@ async def test_replay_noop_without_metrics_or_deficit(monkeypatch):
         assert await replay_missed_platega_charges(db, rec, {'chargeMetrics': {}}) == 0
         rec.charges_success = 3
         assert await replay_missed_platega_charges(db, rec, {'chargeMetrics': {'chargesSuccess': 3}}) == 0
+
+
+async def test_process_callback_deactivates_old_alive_subscription(monkeypatch):
+    """При привязке гостевой покупки к существующей подписке пользователя,
+    если у неё уже была активная PlategaSubscription, старая запись
+    должна стать CANCELLED, предотвращая UniqueViolationError (uq_platega_subscriptions_alive).
+    """
+    from unittest.mock import AsyncMock
+
+    from app.database.crud import landing as landing_crud
+    from app.database.crud import platega as platega_crud
+    from app.database.models import User
+    from app.services.payment.platega import PlategaPaymentMixin
+
+    class Svc(PlategaPaymentMixin):
+        pass
+
+    async with _memory_session(monkeypatch) as db:
+        user = User(id=90422, telegram_id=90422, status='active')
+        db.add(user)
+        sub = Subscription(id=36101, user_id=90422, status='active', end_date=datetime.now(UTC) + timedelta(days=30))
+        db.add(sub)
+        await db.commit()
+
+        # Existing active subscription for sub 36101
+        old_rec = await sub_crud.create_platega_subscription(
+            db,
+            user_id=90422,
+            subscription_id=36101,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-old',
+            status='ACTIVE',
+        )
+
+        # New guest subscription record being attached
+        new_rec = await sub_crud.create_platega_subscription(
+            db,
+            user_id=None,
+            subscription_id=None,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-new',
+            status='PENDING',
+        )
+
+        # Mock guest purchase lookup
+        mock_pm = SimpleNamespace(payload='token-123', metadata_json={})
+        monkeypatch.setattr(platega_crud, 'get_platega_payment_by_transaction_id', AsyncMock(return_value=mock_pm))
+
+        from app.services.payment import common as payment_common
+        monkeypatch.setattr(payment_common, 'try_fulfill_guest_purchase', AsyncMock(return_value=None))
+
+        mock_purchase = SimpleNamespace(user_id=90422)
+        monkeypatch.setattr(landing_crud, 'get_purchase_by_token', AsyncMock(return_value=mock_purchase))
+
+        svc = Svc()
+        await svc.process_platega_subscription_callback(
+            db, {'Status': 'SUBSCRIPTION_ACTIVATED', 'SubscriptionId': 'ps-new'}
+        )
+
+        await db.refresh(old_rec)
+        await db.refresh(new_rec)
+
+        assert old_rec.status == 'CANCELLED'
+        assert new_rec.subscription_id == 36101
+        assert new_rec.user_id == 90422
+        assert new_rec.status == 'ACTIVE'
+
+
+async def test_process_callback_balance_topup_recurrent(monkeypatch):
+    """Рекуррентная подписка Platega для пополнения баланса (subscription_id is None, user_id set):
+    успешное списание должно пополнять balance_kopeks пользователя.
+    """
+    from unittest.mock import AsyncMock
+
+    from app.database.crud import user as user_crud
+    from app.services.payment.platega import PlategaPaymentMixin
+
+    class Svc(PlategaPaymentMixin):
+        pass
+
+    async with _memory_session(monkeypatch) as db:
+        user_mock = SimpleNamespace(id=888, balance_kopeks=5000)
+        monkeypatch.setattr(user_crud, 'get_user_by_id', AsyncMock(return_value=user_mock))
+
+        rec = await sub_crud.create_platega_subscription(
+            db,
+            user_id=888,
+            subscription_id=None,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=20000,
+            redirect_url=None,
+            platega_subscription_id='ps-topup',
+            status='ACTIVE',
+        )
+
+        svc = Svc()
+        payload = {
+            'Status': 'CONFIRMED',
+            'Id': 'charge-topup-1',
+            'Amount': 200,
+            'Currency': 'RUB',
+            'PaymentMethod': 6,
+            'SubscriptionId': 'ps-topup',
+            'NextChargeAt': '2026-09-01T00:00:00Z',
+        }
+        await svc.process_platega_subscription_callback(db, payload)
+
+        await db.refresh(rec)
+        assert user_mock.balance_kopeks == 25000
+        assert rec.charges_success == 1
+        assert rec.status == 'ACTIVE'
 
 
 async def test_camel_case_charge_extends_subscription(monkeypatch):

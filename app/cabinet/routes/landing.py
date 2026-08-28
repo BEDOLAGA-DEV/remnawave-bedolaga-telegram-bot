@@ -849,6 +849,8 @@ async def create_landing_purchase(
                 method_def = method_defaults.get(mid)
                 available = (method_def.get('available_sub_options') if method_def else None) or []
                 valid_ids = {opt['id'] for opt in available}
+                if mid == 'platega':
+                    valid_ids.update({'recurrent', 'sbp_recurrent', '6'})
                 if suffix not in valid_ids:
                     break  # invalid suffix → reject
                 # Validate suffix is enabled on this landing

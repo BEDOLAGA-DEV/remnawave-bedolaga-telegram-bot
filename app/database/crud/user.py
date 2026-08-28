@@ -132,6 +132,8 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
             selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
             selectinload(User.referrer),
             selectinload(User.promo_group),
+            selectinload(User.antilopay_recurrents),
+            selectinload(User.saved_payment_methods),
         )
         .where(User.id == user_id)
     )
@@ -152,6 +154,8 @@ async def get_user_by_telegram_id(db: AsyncSession, telegram_id: int) -> User | 
             selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
             selectinload(User.referrer),
             selectinload(User.promo_group),
+            selectinload(User.antilopay_recurrents),
+            selectinload(User.saved_payment_methods),
         )
         .where(User.telegram_id == telegram_id)
     )
@@ -956,6 +960,7 @@ async def get_users_list(
     promo_group_id: int | None = None,
     campaign_id: int | None = None,
     partner_id: int | None = None,
+    is_recurrent: bool | None = None,
     order_by_balance: bool = False,
     order_by_traffic: bool = False,
     order_by_last_activity: bool = False,
@@ -967,6 +972,8 @@ async def get_users_list(
         selectinload(User.subscriptions).selectinload(Subscription.tariff),
         selectinload(User.promo_group),
         selectinload(User.referrer),
+        selectinload(User.antilopay_recurrents),
+        selectinload(User.saved_payment_methods),
     )
 
     if status:
@@ -1014,6 +1021,21 @@ async def get_users_list(
                 )
             )
         )
+
+    if is_recurrent is not None:
+        from app.database.models import AntilopayRecurrent, SavedPaymentMethod
+        active_recurrent_exists = select(AntilopayRecurrent.id).where(
+            AntilopayRecurrent.user_id == User.id,
+            AntilopayRecurrent.is_active == True,
+        ).exists()
+        active_yookassa_exists = select(SavedPaymentMethod.id).where(
+            SavedPaymentMethod.user_id == User.id,
+            SavedPaymentMethod.is_active == True,
+        ).exists()
+        if is_recurrent:
+            query = query.where(or_(active_recurrent_exists, active_yookassa_exists))
+        else:
+            query = query.where(and_(~active_recurrent_exists, ~active_yookassa_exists))
 
     if search:
         query = query.where(or_(*_user_search_conditions(search)))
@@ -1118,6 +1140,7 @@ async def get_users_count(
     promo_group_id: int | None = None,
     campaign_id: int | None = None,
     partner_id: int | None = None,
+    is_recurrent: bool | None = None,
 ) -> int:
     query = select(func.count(User.id))
 
@@ -1165,6 +1188,21 @@ async def get_users_count(
                 )
             )
         )
+
+    if is_recurrent is not None:
+        from app.database.models import AntilopayRecurrent, SavedPaymentMethod
+        active_recurrent_exists = select(AntilopayRecurrent.id).where(
+            AntilopayRecurrent.user_id == User.id,
+            AntilopayRecurrent.is_active == True,
+        ).exists()
+        active_yookassa_exists = select(SavedPaymentMethod.id).where(
+            SavedPaymentMethod.user_id == User.id,
+            SavedPaymentMethod.is_active == True,
+        ).exists()
+        if is_recurrent:
+            query = query.where(or_(active_recurrent_exists, active_yookassa_exists))
+        else:
+            query = query.where(and_(~active_recurrent_exists, ~active_yookassa_exists))
 
     if search:
         query = query.where(or_(*_user_search_conditions(search)))
@@ -1219,16 +1257,16 @@ async def get_referrals(db: AsyncSession, user_id: int) -> list[User]:
             selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
             selectinload(User.referrer),
             selectinload(User.promo_group),
+            selectinload(User.antilopay_recurrents),
+            selectinload(User.saved_payment_methods),
         )
         .where(User.referred_by_id == user_id)
         .order_by(User.created_at.desc())
     )
     users = result.scalars().all()
 
-    # Загружаем дополнительные зависимости для всех пользователей
     for user in users:
         if user and user.subscription:
-            # Загружаем дополнительные зависимости для subscription
             _ = user.subscription.is_active
 
     return users
@@ -1287,10 +1325,8 @@ async def get_users_for_promo_segment(db: AsyncSession, segment: str) -> list[Us
     result = await db.execute(query.order_by(User.id))
     users = result.scalars().unique().all()
 
-    # Загружаем дополнительные зависимости для всех пользователей
     for user in users:
         if user and user.subscription:
-            # Загружаем дополнительные зависимости для subscription
             _ = user.subscription.is_active
 
     return users
@@ -1299,8 +1335,6 @@ async def get_users_for_promo_segment(db: AsyncSession, segment: str) -> list[Us
 async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
     threshold_date = datetime.now(UTC) - timedelta(days=months * 30)
 
-    # Подзапрос: пользователи, у которых есть подписка с end_date >= threshold
-    # (активная или недавно истёкшая) — таких удалять нельзя
     users_with_recent_subs = (
         select(Subscription.user_id).where(Subscription.end_date >= threshold_date).distinct().scalar_subquery()
     )
@@ -1323,10 +1357,8 @@ async def get_inactive_users(db: AsyncSession, months: int = 3) -> list[User]:
     )
     users = result.scalars().all()
 
-    # Загружаем дополнительные зависимости для всех пользователей
     for user in users:
         if user and user.subscription:
-            # Загружаем дополнительные зависимости для subscription
             _ = user.subscription.is_active
 
     return users
@@ -1367,6 +1399,25 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     )
     new_month = month_result.scalar()
 
+    from app.database.models import AntilopayRecurrent, SavedPaymentMethod
+    recurrent_result = await db.execute(
+        select(func.count(User.id))
+        .select_from(User)
+        .where(
+            or_(
+                select(AntilopayRecurrent.id).where(
+                    AntilopayRecurrent.user_id == User.id,
+                    AntilopayRecurrent.is_active == True,
+                ).exists(),
+                select(SavedPaymentMethod.id).where(
+                    SavedPaymentMethod.user_id == User.id,
+                    SavedPaymentMethod.is_active == True,
+                ).exists(),
+            )
+        )
+    )
+    recurrent_users = recurrent_result.scalar() or 0
+
     return {
         'total_users': total_users,
         'active_users': active_users,
@@ -1374,6 +1425,7 @@ async def get_users_statistics(db: AsyncSession) -> dict:
         'new_today': new_today,
         'new_week': new_week,
         'new_month': new_month,
+        'recurrent_users': recurrent_users,
     }
 
 

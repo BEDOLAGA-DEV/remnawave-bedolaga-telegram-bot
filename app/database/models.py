@@ -31,6 +31,12 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(element, compiler, **kw):
+    return "JSON"
+
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -688,8 +694,8 @@ class PlategaSubscription(Base):
     __tablename__ = 'platega_subscriptions'
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=True, index=True)
     tariff_id = Column(Integer, ForeignKey('tariffs.id'), nullable=True)
 
     platega_subscription_id = Column(String(255), unique=True, nullable=True, index=True)
@@ -1442,6 +1448,7 @@ class AntilopayPayment(Base):
     # Метаданные
     metadata_json = Column(JSON, nullable=True)
     callback_payload = Column(JSON, nullable=True)
+    recurrent_id = Column(String(255), nullable=True, index=True)
 
     # Временные метки
     paid_at = Column(AwareDateTime(), nullable=True)
@@ -1474,6 +1481,37 @@ class AntilopayPayment(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f'<AntilopayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
+
+
+class AntilopayRecurrent(Base):
+    """Рекуррентная подписка Antilopay (payment/create + recurrent)."""
+
+    __tablename__ = 'antilopay_recurrents'
+    __table_args__ = (Index('ix_antilopay_recurrents_user_active', 'user_id', 'is_active'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    recurrent_id = Column(String(255), unique=True, nullable=False, index=True)
+    initial_payment_id = Column(String(128), nullable=True, index=True)
+    recurrent_type = Column(String(10), nullable=False, default='MONTH')
+    payment_count = Column(Integer, nullable=True)
+    status = Column(String(32), nullable=True)
+    pay_method = Column(String(50), nullable=True)
+    pay_data = Column(String(255), nullable=True)
+    title = Column(String(255), nullable=True)
+
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(AwareDateTime(), nullable=False, server_default=func.now())
+    updated_at = Column(AwareDateTime(), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    user = relationship('User', backref='antilopay_recurrents')
+    subscription = relationship('Subscription', backref='antilopay_recurrents')
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f'<AntilopayRecurrent(id={self.id}, user_id={self.user_id}, recurrent_id={self.recurrent_id})>'
 
 
 class JupiterPayment(Base):
@@ -2242,26 +2280,27 @@ class User(Base):
 
     def get_primary_promo_group(self):
         """Возвращает промогруппу с максимальным приоритетом."""
+        from sqlalchemy import inspect
         try:
-            if not self.user_promo_groups:
-                return getattr(self, 'promo_group', None)
+            state = inspect(self)
+            upg_unloaded = 'user_promo_groups' in state.unloaded
+            pg_unloaded = 'promo_group' in state.unloaded
 
-            # Сортируем по приоритету группы (убывание), затем по ID группы
-            # Используем getattr для защиты от ленивой загрузки
-            sorted_groups = sorted(
-                self.user_promo_groups,
-                key=lambda upg: (getattr(upg.promo_group, 'priority', 0) if upg.promo_group else 0, upg.promo_group_id),
-                reverse=True,
-            )
+            if not upg_unloaded and self.user_promo_groups:
+                sorted_groups = sorted(
+                    self.user_promo_groups,
+                    key=lambda upg: (getattr(upg.promo_group, 'priority', 0) if upg.promo_group else 0, upg.promo_group_id),
+                    reverse=True,
+                )
+                if sorted_groups and sorted_groups[0].promo_group:
+                    return sorted_groups[0].promo_group
 
-            if sorted_groups and sorted_groups[0].promo_group:
-                return sorted_groups[0].promo_group
+            if not pg_unloaded:
+                return self.promo_group
         except Exception:
-            # Если возникла ошибка (например, ленивая загрузка в async), fallback на старую связь
             pass
 
-        # Fallback на старую связь если новая пустая или возникла ошибка
-        return getattr(self, 'promo_group', None)
+        return None
 
     def get_promo_discount(self, category: str, period_days: int | None = None) -> int:
         primary_group = self.get_primary_promo_group()
@@ -4578,7 +4617,9 @@ class LandingPage(Base):
     analytics_click_goal = Column(String(64), nullable=True)
     created_at = Column(AwareDateTime(), server_default=func.now())
     updated_at = Column(AwareDateTime(), server_default=func.now(), onupdate=func.now())
+    referrer_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
 
+    referrer = relationship('User', foreign_keys=[referrer_id], backref='referrer_landings')
     guest_purchases = relationship('GuestPurchase', back_populates='landing', lazy='noload')
 
     def __repr__(self) -> str:

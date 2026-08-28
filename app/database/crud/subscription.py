@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, case, delete, func, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -27,6 +27,49 @@ from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
+
+# Statuses that still represent a live subscription (incl. traffic-limited / legacy trial status).
+_LIVE_SUBSCRIPTION_STATUSES = (
+    SubscriptionStatus.ACTIVE.value,
+    SubscriptionStatus.TRIAL.value,
+    SubscriptionStatus.LIMITED.value,
+)
+
+
+def _live_subscription_filters(now: datetime | None = None):
+    """Subscriptions that are not expired yet (status + end_date)."""
+    current_time = now or datetime.now(UTC)
+    return and_(
+        Subscription.status.in_(_LIVE_SUBSCRIPTION_STATUSES),
+        Subscription.end_date.isnot(None),
+        Subscription.end_date > current_time,
+    )
+
+
+def _trial_subscription_filters(now: datetime | None = None):
+    """Active trial subscriptions — same rules as get_trial_statistics()['active_trials']."""
+    current_time = now or datetime.now(UTC)
+    return and_(
+        Subscription.is_trial.is_(True),
+        Subscription.end_date.isnot(None),
+        Subscription.end_date > current_time,
+        Subscription.status.in_(
+            [
+                SubscriptionStatus.ACTIVE.value,
+                SubscriptionStatus.TRIAL.value,
+            ]
+        ),
+    )
+
+
+def _paid_subscription_filters(now: datetime | None = None):
+    """Active paid (non-trial) subscriptions."""
+    return and_(
+        _live_subscription_filters(now),
+        Subscription.is_trial.is_(False),
+        Subscription.status != SubscriptionStatus.TRIAL.value,
+    )
+
 
 # Статусы, при которых подписка считается «живой» (индекс uq_subscriptions_user_tariff_active
 # защищает именно эти статусы). Используется в нескольких местах модуля.
@@ -1651,6 +1694,19 @@ async def update_subscription_autopay(
 
     status = 'включен' if enabled else 'выключен'
     logger.info('💳 Автоплатеж для подписки пользователя', user_id=subscription.user_id, status=status)
+
+    if not enabled:
+        try:
+            from app.services.payment_service import payment_service
+
+            await payment_service.cancel_user_antilopay_recurrents(db, subscription.user_id)
+        except Exception as error:
+            logger.warning(
+                'Antilopay: ошибка при отмене рекуррентов при отключении autopay',
+                user_id=subscription.user_id,
+                error=error,
+            )
+
     return subscription
 
 
@@ -1821,24 +1877,23 @@ async def get_subscriptions_for_autopay(db: AsyncSession) -> list[Subscription]:
 
 
 async def get_subscriptions_statistics(db: AsyncSession) -> dict:
-    total_result = await db.execute(select(func.count(Subscription.id)))
-    total_subscriptions = total_result.scalar()
+    now = datetime.now(UTC)
 
-    active_result = await db.execute(
-        select(func.count(Subscription.id)).where(Subscription.status == SubscriptionStatus.ACTIVE.value)
+    total_result = await db.execute(select(func.count(Subscription.id)))
+    total_subscriptions = total_result.scalar() or 0
+
+    paid_result = await db.execute(
+        select(func.count(Subscription.id)).where(_paid_subscription_filters(now))
     )
-    active_subscriptions = active_result.scalar()
+    paid_subscriptions = paid_result.scalar() or 0
 
     trial_result = await db.execute(
-        select(func.count(Subscription.id)).where(
-            and_(Subscription.is_trial == True, Subscription.status == SubscriptionStatus.ACTIVE.value)
-        )
+        select(func.count(Subscription.id)).where(_trial_subscription_filters(now))
     )
-    trial_subscriptions = trial_result.scalar()
+    trial_subscriptions = trial_result.scalar() or 0
 
-    paid_subscriptions = active_subscriptions - trial_subscriptions
+    active_subscriptions = paid_subscriptions + trial_subscriptions
 
-    now = datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = today_start - timedelta(days=7)
     month_ago = today_start - timedelta(days=30)
@@ -1927,11 +1982,7 @@ async def get_trial_statistics(db: AsyncSession) -> dict:
     total_trials = total_trials_result.scalar() or 0
 
     active_trials_result = await db.execute(
-        select(func.count(Subscription.id)).where(
-            Subscription.is_trial.is_(True),
-            Subscription.end_date > now,
-            Subscription.status.in_([SubscriptionStatus.TRIAL.value, SubscriptionStatus.ACTIVE.value]),
-        )
+        select(func.count(Subscription.id)).where(_trial_subscription_filters(now))
     )
     active_trials = active_trials_result.scalar() or 0
 

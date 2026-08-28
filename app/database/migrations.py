@@ -138,8 +138,13 @@ async def _ensure_runtime_schema_guards() -> None:
 async def run_alembic_upgrade() -> None:
     """Run ``alembic upgrade head``, handling fresh and legacy databases."""
     import asyncio
+    from sqlalchemy import text, inspect
+    from app.database.database import engine
 
     db_state = await _detect_db_state()
+
+    if db_state == 'managed':
+        pass  # normal path — alembic upgrade head will run pending revisions
 
     if db_state == 'fresh':
         logger.warning('Обнаружена пустая БД — создание схемы из моделей + stamp head')

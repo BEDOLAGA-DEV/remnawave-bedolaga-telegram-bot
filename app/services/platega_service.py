@@ -56,8 +56,8 @@ class PlategaService:
                 break
         self.base_url = base_url
         self.api_version = forced_version or self._normalize_api_version(settings.PLATEGA_API_VERSION)
-        self.merchant_id = settings.PLATEGA_MERCHANT_ID
-        self.secret = settings.PLATEGA_SECRET
+        self._merchant_id: str | None = None
+        self._secret: str | None = None
         self._timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=25)
         self._max_retries = 3
         self._retry_delay = 0.5
@@ -65,8 +65,24 @@ class PlategaService:
         self._description_max_length = 64
 
     @property
+    def merchant_id(self) -> str | None:
+        return self._merchant_id if self._merchant_id is not None else settings.PLATEGA_MERCHANT_ID
+
+    @merchant_id.setter
+    def merchant_id(self, value: str | None) -> None:
+        self._merchant_id = value
+
+    @property
+    def secret(self) -> str | None:
+        return self._secret if self._secret is not None else settings.PLATEGA_SECRET
+
+    @secret.setter
+    def secret(self, value: str | None) -> None:
+        self._secret = value
+
+    @property
     def is_configured(self) -> bool:
-        return settings.is_platega_enabled()
+        return bool(self.merchant_id and self.secret)
 
     async def create_payment(
         self,
@@ -205,10 +221,12 @@ class PlategaService:
 
         return await self._request('GET', '/subscription', params=params)
 
-    async def cancel_subscription(self, subscription_id: str) -> dict[str, Any] | None:
+    async def cancel_subscription(
+        self, subscription_id: str, *, return_status: bool = False
+    ) -> Any:
         # Неверсионированный эндпоинт, аналогично get_subscription/get_transaction.
         endpoint = f'/subscription/{subscription_id}/cancel'
-        return await self._request('POST', endpoint)
+        return await self._request('POST', endpoint, return_status=return_status)
 
     async def _request(
         self,
@@ -392,3 +410,8 @@ class PlategaService:
         except Exception:
             logger.warning('Failed to parse Platega expiresIn value', expires_in=expires_in)
             return None
+
+
+# Singleton instance
+platega_service = PlategaService()
+

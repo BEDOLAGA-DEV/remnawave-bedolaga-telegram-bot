@@ -145,6 +145,7 @@ class UserListItem(BaseModel):
     has_restrictions: bool = False
     restriction_topup: bool = False
     restriction_subscription: bool = False
+    is_recurrent: bool = False
 
 
 class UsersListResponse(BaseModel):
@@ -282,6 +283,9 @@ class UserDetailResponse(BaseModel):
 
     # Remnawave panel user id
     remnawave_id: int | None = None
+
+    # Recurrent cards
+    recurrent_cards: list[str] = []
 
 
 # === Panel Info ===
@@ -592,6 +596,7 @@ class UsersStatsResponse(BaseModel):
     users_with_active_subscription: int = 0
     users_with_trial: int = 0
     users_with_expired_subscription: int = 0
+    recurrent_users_count: int = 0
 
     # Financial stats
     total_balance_kopeks: int = 0
@@ -877,3 +882,52 @@ class AdminUserGiftsResponse(BaseModel):
     received: list[AdminUserGiftItem] = []
     sent_total: int = 0
     received_total: int = 0
+
+
+class AdminResetPasswordResponse(BaseModel):
+    """Response returned when admin resets user password."""
+
+    success: bool
+    message: str
+    new_password: str | None = None
+
+
+class AdminGenerateLoginLinkResponse(BaseModel):
+    """Response returned when admin generates user auto-login link."""
+
+    success: bool
+    message: str
+    login_link: str | None = None
+
+
+# === Recurring Cancellation Report ===
+
+
+class RecurringCancellationResultItem(BaseModel):
+    """Result of an individual recurring subscription cancellation attempt."""
+
+    provider: str
+    provider_title: str
+    target_id: str
+    status: str  # "success" | "error" | "info"
+    message: str
+    error: str | None = None
+
+
+class RecurringCancellationSummary(BaseModel):
+    """Summary counts for recurring cancellations."""
+
+    total_actions: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+
+
+class CancelAllRecurringResponse(BaseModel):
+    """Full report returned by admin force cancel-all-recurring endpoint."""
+
+    success: bool
+    summary: RecurringCancellationSummary
+    results: list[RecurringCancellationResultItem] = []
+    message: str
+
+

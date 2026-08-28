@@ -21,6 +21,7 @@ from app.keyboards.inline import (
     get_devices_keyboard,
     get_insufficient_balance_keyboard,
     get_reset_traffic_confirm_keyboard,
+    build_back_button,
 )
 from app.localization.texts import get_texts
 from app.services.pricing_engine import PricingEngine
@@ -86,7 +87,7 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append([build_back_button(texts, 'back_to_menu')])
             await callback.message.edit_text(
                 '📊 <b>Докупить трафик</b>\n\nВыберите подписку:',
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),

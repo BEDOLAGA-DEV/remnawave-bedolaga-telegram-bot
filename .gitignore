@@ -50,6 +50,8 @@
 !locales/**
 !.github/
 !.github/**
+!ai_support_bot/
+!ai_support_bot/**
 
 # ========== BLACKLIST: игнорируемые внутри папок ==========
 

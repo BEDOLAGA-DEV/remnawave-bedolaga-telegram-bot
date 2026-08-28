@@ -213,7 +213,7 @@ class EmailService:
             msg['Subject'] = subject
             safe_from_name = self.from_name.replace('\n', '').replace('\r', '') if self.from_name else ''
             safe_from_email = sender_email.replace('\n', '').replace('\r', '')
-            msg['From'] = formataddr((safe_from_name, safe_from_email))
+            msg['From'] = formataddr((safe_from_name, safe_from_email)) if safe_from_name else safe_from_email
             msg['To'] = to_email
             # Адрес из .env: перенос строки в нём дописал бы произвольный
             # заголовок в письмо, поэтому кривое значение не чиним, а

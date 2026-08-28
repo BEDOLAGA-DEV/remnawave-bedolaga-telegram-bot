@@ -81,6 +81,7 @@ _LANDING_UPDATABLE_FIELDS = frozenset(
         'analytics_view_goal',
         'analytics_click_enabled',
         'analytics_click_goal',
+        'referrer_id',
     }
 )
 
@@ -226,17 +227,45 @@ async def get_landing_purchase_stats(db: AsyncSession, landing_id: int) -> dict:
 
     stats = {s.value: 0 for s in GuestPurchaseStatus}
     stats['total'] = 0
+    stats['active_cards'] = 0
     for status_value, count in rows:
         stats[status_value] = count
         stats['total'] += count
 
+    from app.database.models import SavedPaymentMethod, AntilopayRecurrent, User
+    from sqlalchemy import distinct
+    yoo_result = await db.execute(
+        select(func.count(distinct(SavedPaymentMethod.id)))
+        .join(User, GuestPurchase.user_id == User.id)
+        .join(SavedPaymentMethod, SavedPaymentMethod.user_id == User.id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            SavedPaymentMethod.is_active == True,
+            GuestPurchase.status.in_(['paid', 'delivered', 'pending_activation']),
+        )
+    )
+    yoo_count = yoo_result.scalar_one_or_none() or 0
+
+    anti_result = await db.execute(
+        select(func.count(distinct(AntilopayRecurrent.id)))
+        .join(User, GuestPurchase.user_id == User.id)
+        .join(AntilopayRecurrent, AntilopayRecurrent.user_id == User.id)
+        .where(
+            GuestPurchase.landing_id == landing_id,
+            AntilopayRecurrent.is_active == True,
+            GuestPurchase.status.in_(['paid', 'delivered', 'pending_activation']),
+        )
+    )
+    anti_count = anti_result.scalar_one_or_none() or 0
+
+    stats['active_cards'] = yoo_count + anti_count
     return stats
 
 
 async def get_all_landing_purchase_stats(db: AsyncSession) -> dict[int, dict]:
     """Get purchase counts grouped by landing_id and status in a single query.
 
-    Returns a dict mapping landing_id -> {status: count, 'total': count}.
+    Returns a dict mapping landing_id -> {status: count, 'total': count, 'active_cards': count}.
     """
     result = await db.execute(
         select(
@@ -249,13 +278,62 @@ async def get_all_landing_purchase_stats(db: AsyncSession) -> dict[int, dict]:
     )
     rows = result.all()
 
+    from app.database.models import SavedPaymentMethod, AntilopayRecurrent, User
+    from sqlalchemy import distinct
+    yoo_result = await db.execute(
+        select(
+            GuestPurchase.landing_id,
+            func.count(distinct(SavedPaymentMethod.id)),
+        )
+        .join(User, GuestPurchase.user_id == User.id)
+        .join(SavedPaymentMethod, SavedPaymentMethod.user_id == User.id)
+        .where(
+            GuestPurchase.landing_id.is_not(None),
+            SavedPaymentMethod.is_active == True,
+            GuestPurchase.status.in_(['paid', 'delivered', 'pending_activation']),
+        )
+        .group_by(GuestPurchase.landing_id)
+    )
+    yoo_rows = yoo_result.all()
+    yoo_map = {landing_id: count for landing_id, count in yoo_rows}
+
+    anti_result = await db.execute(
+        select(
+            GuestPurchase.landing_id,
+            func.count(distinct(AntilopayRecurrent.id)),
+        )
+        .join(User, GuestPurchase.user_id == User.id)
+        .join(AntilopayRecurrent, AntilopayRecurrent.user_id == User.id)
+        .where(
+            GuestPurchase.landing_id.is_not(None),
+            AntilopayRecurrent.is_active == True,
+            GuestPurchase.status.in_(['paid', 'delivered', 'pending_activation']),
+        )
+        .group_by(GuestPurchase.landing_id)
+    )
+    anti_rows = anti_result.all()
+    anti_map = {landing_id: count for landing_id, count in anti_rows}
+
+    cards_map = {}
+    for lid in set(yoo_map.keys()) | set(anti_map.keys()):
+        cards_map[lid] = yoo_map.get(lid, 0) + anti_map.get(lid, 0)
+
     all_stats: dict[int, dict] = {}
     for landing_id, status_value, count in rows:
         if landing_id not in all_stats:
             stats = {s.value: 0 for s in GuestPurchaseStatus}
             stats['total'] = 0
+            stats['active_cards'] = 0
             all_stats[landing_id] = stats
         all_stats[landing_id][status_value] = count
         all_stats[landing_id]['total'] += count
+
+    for landing_id, count in cards_map.items():
+        if landing_id not in all_stats:
+            stats = {s.value: 0 for s in GuestPurchaseStatus}
+            stats['total'] = 0
+            stats['active_cards'] = 0
+            all_stats[landing_id] = stats
+        all_stats[landing_id]['active_cards'] = count
 
     return all_stats

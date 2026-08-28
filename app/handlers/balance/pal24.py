@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.database import AsyncSessionLocal
 from app.database.models import User
-from app.keyboards.inline import get_back_keyboard
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
@@ -190,7 +193,7 @@ async def _send_pal24_payment_message(
                     callback_data=f'check_pal24_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [build_back_button(texts, 'balance_topup')],
         ]
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
@@ -268,7 +271,7 @@ async def start_pal24_payment(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -336,7 +339,7 @@ async def process_pal24_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -422,7 +425,7 @@ async def process_pal24_payment_amount(
             ]
         )
 
-    method_buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')])
+    method_buttons.append([build_back_button(texts, 'balance_topup')])
 
     await message.answer(
         texts.t(
@@ -636,7 +639,7 @@ async def check_pal24_payment_status(
                     callback_data=f'check_pal24_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [build_back_button(texts, 'balance_topup')],
         ]
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)

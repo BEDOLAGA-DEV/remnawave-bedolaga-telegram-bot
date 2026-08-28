@@ -1,7 +1,7 @@
 """Порог открытия уровня: сколько рефералов его открывают
 
 Revision ID: 0109
-Revises: 0108
+Revises: 0108, 0108r
 Create Date: 2026-08-27
 
 Номер уровня отвечал только на вопрос «чьё пополнение приносит награду», и со
@@ -19,7 +19,7 @@ from alembic import op
 
 
 revision: str = '0109'
-down_revision: Union[str, None] = '0108'
+down_revision: Union[str, tuple] = ('0108', '0108r')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -553,6 +553,8 @@ class Settings(BaseSettings):
     # rounding loss visible on every payment).
     TELEGRAM_STARS_RATE_RUB: float = 1.0
     TELEGRAM_STARS_DISPLAY_NAME: str = 'Telegram Stars'
+    STEAM_TOP_UP_API_URL: str = 'https://tg.slig.app/'
+    STEAM_TOP_UP_SOURCE: str = 'slig'
 
     # Telegram Login Widget (cabinet auth page)
     TELEGRAM_WIDGET_SIZE: Literal['large', 'medium', 'small'] = 'large'
@@ -690,7 +692,7 @@ class Settings(BaseSettings):
     MULENPAY_PAYMENT_SUBJECT: int = 4
     MULENPAY_PAYMENT_MODE: int = 4
     MULENPAY_MIN_AMOUNT_KOPEKS: int = 10000
-    MULENPAY_MAX_AMOUNT_KOPEKS: int = 10000000
+    MULENPAY_MAX_AMOUNT_KOPEKS: int = 1000000
     MULENPAY_IFRAME_EXPECTED_ORIGIN: str | None = None
     MULENPAY_WEBSITE_URL: str | None = None
 
@@ -703,7 +705,7 @@ class Settings(BaseSettings):
     PAL24_WEBHOOK_PATH: str = '/pal24-webhook'
     PAL24_PAYMENT_DESCRIPTION: str = 'Пополнение баланса'
     PAL24_MIN_AMOUNT_KOPEKS: int = 10000
-    PAL24_MAX_AMOUNT_KOPEKS: int = 100000000
+    PAL24_MAX_AMOUNT_KOPEKS: int = 1000000
     PAL24_REQUEST_TIMEOUT: int = 30
     PAL24_SBP_BUTTON_TEXT: str | None = None
     PAL24_CARD_BUTTON_TEXT: str | None = None
@@ -726,7 +728,7 @@ class Settings(BaseSettings):
     PLATEGA_ACTIVE_METHODS: str = '2,11,12,13'
     PLATEGA_INLINE_METHODS: bool = True
     PLATEGA_MIN_AMOUNT_KOPEKS: int = 10000
-    PLATEGA_MAX_AMOUNT_KOPEKS: int = 100000000
+    PLATEGA_MAX_AMOUNT_KOPEKS: int = 1000000
     PLATEGA_WEBHOOK_PATH: str = '/platega-webhook'
     PLATEGA_WEBHOOK_HOST: str = '0.0.0.0'
     PLATEGA_WEBHOOK_PORT: int = 8086
@@ -743,7 +745,7 @@ class Settings(BaseSettings):
     WATA_FAIL_REDIRECT_URL: str | None = None
     WATA_LINK_TTL_MINUTES: int | None = None
     WATA_MIN_AMOUNT_KOPEKS: int = 10000
-    WATA_MAX_AMOUNT_KOPEKS: int = 100000000
+    WATA_MAX_AMOUNT_KOPEKS: int = 1000000
     WATA_REQUEST_TIMEOUT: int = 30
     WATA_WEBHOOK_PATH: str = '/wata-webhook'
     WATA_WEBHOOK_HOST: str = '0.0.0.0'
@@ -761,7 +763,7 @@ class Settings(BaseSettings):
     CLOUDPAYMENTS_DESCRIPTION: str = 'Пополнение баланса'
     CLOUDPAYMENTS_CURRENCY: str = 'RUB'
     CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS: int = 5000
-    CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS: int = 10000000
+    CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS: int = 1000000
     CLOUDPAYMENTS_WEBHOOK_PATH: str = '/cloudpayments-webhook'
     CLOUDPAYMENTS_WEBHOOK_HOST: str = '0.0.0.0'
     CLOUDPAYMENTS_WEBHOOK_PORT: int = 8087
@@ -779,7 +781,7 @@ class Settings(BaseSettings):
     FREEKASSA_DISPLAY_NAME: str = 'Freekassa'
     FREEKASSA_CURRENCY: str = 'RUB'
     FREEKASSA_MIN_AMOUNT_KOPEKS: int = 10000  # 100 руб
-    FREEKASSA_MAX_AMOUNT_KOPEKS: int = 100000000  # 1 000 000 руб
+    FREEKASSA_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000 руб
     FREEKASSA_PAYMENT_TIMEOUT_SECONDS: int = 3600
     FREEKASSA_WEBHOOK_PATH: str = '/freekassa-webhook'
     FREEKASSA_WEBHOOK_HOST: str = '0.0.0.0'
@@ -804,7 +806,7 @@ class Settings(BaseSettings):
     KASSA_AI_DISPLAY_NAME: str = 'KassaAI'
     KASSA_AI_CURRENCY: str = 'RUB'
     KASSA_AI_MIN_AMOUNT_KOPEKS: int = 10000  # 100 руб
-    KASSA_AI_MAX_AMOUNT_KOPEKS: int = 100000000  # 1 000 000 руб
+    KASSA_AI_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000 руб
     KASSA_AI_WEBHOOK_PATH: str = '/kassa-ai-webhook'
     KASSA_AI_WEBHOOK_HOST: str = '0.0.0.0'
     KASSA_AI_WEBHOOK_PORT: int = 8089
@@ -843,7 +845,7 @@ class Settings(BaseSettings):
     RIOPAY_DISPLAY_NAME: str = 'RioPay'
     RIOPAY_CURRENCY: str = 'RUB'
     RIOPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    RIOPAY_MAX_AMOUNT_KOPEKS: int = 100000000  # 1 000 000₽
+    RIOPAY_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     RIOPAY_WEBHOOK_PATH: str = '/riopay-webhook'
     RIOPAY_SUCCESS_URL: str | None = None
     RIOPAY_FAIL_URL: str | None = None
@@ -855,7 +857,7 @@ class Settings(BaseSettings):
     SEVERPAY_DISPLAY_NAME: str = 'SeverPay'
     SEVERPAY_CURRENCY: str = 'RUB'
     SEVERPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    SEVERPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    SEVERPAY_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     SEVERPAY_WEBHOOK_PATH: str = '/severpay-webhook'
     SEVERPAY_RETURN_URL: str | None = None
     SEVERPAY_LIFETIME: int = 1440  # minutes, 30-4320
@@ -887,7 +889,7 @@ class Settings(BaseSettings):
     PAYPEAR_DISPLAY_NAME: str = 'PayPear'
     PAYPEAR_CURRENCY: str = 'RUB'
     PAYPEAR_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    PAYPEAR_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    PAYPEAR_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     PAYPEAR_WEBHOOK_PATH: str = '/paypear-webhook'
     PAYPEAR_RETURN_URL: str | None = None
     PAYPEAR_PAYMENT_METHOD: str = 'sbp'  # bank_card, sbp, sberpay, tpay
@@ -899,7 +901,7 @@ class Settings(BaseSettings):
     ROLLYPAY_DISPLAY_NAME: str = 'RollyPay'
     ROLLYPAY_CURRENCY: str = 'RUB'
     ROLLYPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    ROLLYPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    ROLLYPAY_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     ROLLYPAY_WEBHOOK_PATH: str = '/rollypay-webhook'
     ROLLYPAY_RETURN_URL: str | None = None
 
@@ -914,7 +916,7 @@ class Settings(BaseSettings):
     OVERPAY_DISPLAY_NAME: str = 'Overpay'
     OVERPAY_CURRENCY: str = 'RUB'
     OVERPAY_MIN_AMOUNT_KOPEKS: int = 10000
-    OVERPAY_MAX_AMOUNT_KOPEKS: int = 10000000
+    OVERPAY_MAX_AMOUNT_KOPEKS: int = 1000000
     OVERPAY_WEBHOOK_PATH: str = '/overpay-webhook'
     OVERPAY_RETURN_URL: str | None = None
     OVERPAY_LIFETIME_MINUTES: int = 1440
@@ -936,7 +938,7 @@ class Settings(BaseSettings):
     AURAPAY_DISPLAY_NAME: str = 'AuraPay'
     AURAPAY_CURRENCY: str = 'RUB'
     AURAPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    AURAPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    AURAPAY_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     AURAPAY_WEBHOOK_PATH: str = '/aurapay-webhook'
     AURAPAY_RETURN_URL: str | None = None
     AURAPAY_PAYMENT_LIFETIME_MINUTES: int = 60
@@ -956,7 +958,7 @@ class Settings(BaseSettings):
     ANTILOPAY_PRODUCT_TYPE: str = 'services'
     ANTILOPAY_CURRENCY: str = 'RUB'
     ANTILOPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    ANTILOPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    ANTILOPAY_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     ANTILOPAY_WEBHOOK_PATH: str = '/antilopay-webhook'
     ANTILOPAY_RETURN_URL: str | None = None
     ANTILOPAY_PAYMENT_LIFETIME_MINUTES: int = 60
@@ -974,6 +976,12 @@ class Settings(BaseSettings):
 
     ANTILOPAY_SBERPAY_ENABLED: bool = False
     ANTILOPAY_SBERPAY_DISPLAY_NAME: str = 'SberPay (Antilopay)'
+    # Рекуррентные платежи Antilopay (payment/create + recurrent, см. Antilopay API)
+    ANTILOPAY_RECURRENT_ENABLED: bool = False
+    ANTILOPAY_RECURRENT_TYPE: str = 'MONTH'  # WEEK или MONTH
+    ANTILOPAY_RECURRENT_PAYMENT_COUNT: int = 24  # число списаний, включая первичный платёж
+    # Методы, для которых передаётся recurrent в payment/create: sbp, card, sberpay
+    ANTILOPAY_RECURRENT_METHODS: str = 'sbp'
 
     # Jupiter (FPGate P2P v2.1, app.juppiter.tech)
     JUPITER_ENABLED: bool = False
@@ -985,7 +993,7 @@ class Settings(BaseSettings):
     JUPITER_DISPLAY_NAME: str = 'Jupiter'
     JUPITER_CURRENCY: str = 'RUB'
     JUPITER_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    JUPITER_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    JUPITER_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     JUPITER_WEBHOOK_PATH: str = '/jupiter-webhook'
     JUPITER_RETURN_URL: str | None = None
     JUPITER_PAYMENT_LIFETIME_MINUTES: int = 60
@@ -1004,7 +1012,7 @@ class Settings(BaseSettings):
     DONUT_DISPLAY_NAME: str = 'Donut'
     DONUT_CURRENCY: str = 'RUB'
     DONUT_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    DONUT_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    DONUT_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     DONUT_WEBHOOK_PATH: str = '/donut-webhook'
     DONUT_RETURN_URL: str | None = None
     DONUT_PAYMENT_LIFETIME_MINUTES: int = 60
@@ -1043,7 +1051,7 @@ class Settings(BaseSettings):
     LAVA_DISPLAY_NAME: str = 'Lava'
     LAVA_CURRENCY: str = 'RUB'
     LAVA_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    LAVA_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    LAVA_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     LAVA_WEBHOOK_PATH: str = '/lava-webhook'
     LAVA_RETURN_URL: str | None = None
     LAVA_PAYMENT_LIFETIME_MINUTES: int = 60  # макс 7200 минут (5 дней)
@@ -1064,7 +1072,7 @@ class Settings(BaseSettings):
     ETOPLATEZHI_DISPLAY_NAME: str = 'Etoplatezhi'
     ETOPLATEZHI_CURRENCY: str = 'RUB'
     ETOPLATEZHI_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    ETOPLATEZHI_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
+    ETOPLATEZHI_MAX_AMOUNT_KOPEKS: int = 1000000  # 10 000₽
     ETOPLATEZHI_WEBHOOK_PATH: str = '/etoplatezhi-webhook'
     ETOPLATEZHI_RETURN_URL: str | None = None
     ETOPLATEZHI_PAYMENT_LIFETIME_MINUTES: int = 60
@@ -1108,6 +1116,8 @@ class Settings(BaseSettings):
     USER_ACTION_LOG_RETENTION_DAYS: int = 90
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
+    # Premium emoji ID для кнопки «Назад» (Bot API icon_custom_emoji_id). Пусто = обычный unicode emoji из локали.
+    BACK_BUTTON_CUSTOM_EMOJI_ID: str = ''
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
     MINIAPP_CUSTOM_URL: str = ''
     MINIAPP_STATIC_PATH: str = 'miniapp'
@@ -2647,12 +2657,12 @@ class Settings(BaseSettings):
             except ValueError:
                 logger.warning('Некорректный код метода Platega', part=part)
                 continue
-            if method_code in {2, 11, 12, 13} and method_code not in seen:
+            if method_code in {2, 6, 11, 12, 13} and method_code not in seen:
                 methods.append(method_code)
                 seen.add(method_code)
 
         if not methods:
-            return [2]
+            return [6, 2] if self.is_platega_recurrent_enabled() else [2]
 
         return methods
 
@@ -2660,6 +2670,7 @@ class Settings(BaseSettings):
     def get_platega_method_definitions() -> dict[int, dict[str, str]]:
         return {
             2: {'name': 'СБП (QR)', 'title': '🏦 СБП (QR)'},
+            6: {'name': 'СБП (Подписка)', 'title': '🔄 СБП (Подписка)'},
             11: {'name': 'Карты (RUB)', 'title': '💳 Карты (RUB)'},
             12: {'name': 'Международные карты', 'title': '🌍 Международные карты'},
             13: {'name': 'Криптовалюта', 'title': '🪙 Криптовалюта'},
@@ -3037,6 +3048,11 @@ class Settings(BaseSettings):
 
     def get_antilopay_sberpay_display_name_html(self) -> str:
         return html.escape(self.get_antilopay_sberpay_display_name())
+
+    def get_antilopay_recurrent_methods(self) -> frozenset[str]:
+        raw = (self.ANTILOPAY_RECURRENT_METHODS or 'sbp').replace(' ', '')
+        methods = {item.strip().lower() for item in raw.split(',') if item.strip()}
+        return frozenset(methods or {'sbp'})
 
     def is_jupiter_configured(self) -> bool:
         """Есть ли учётные данные провайдера — без учёта флага включения."""

@@ -132,6 +132,13 @@ class PricingEngine:
             pg = user.get_primary_promo_group()
             if pg is not None:
                 return pg
+        from sqlalchemy import inspect
+        try:
+            state = inspect(user)
+            if 'promo_group' in state.unloaded:
+                return None
+        except Exception:
+            pass
         return getattr(user, 'promo_group', None)
 
     @staticmethod

@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_back_keyboard
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
@@ -29,7 +32,7 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -57,13 +60,13 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
     assets_text = ', '.join(available_assets)
 
     message_text = (
-        f'🪙 <b>Пополнение криптовалютой</b>\n\n'
-        f'Введите сумму для пополнения от 100 до 100,000 ₽:\n\n'
+        '<tg-emoji emoji-id="5355123515672510607">🪙</tg-emoji> Пополнение через Криптовалюту\n\n'
+        'Введите сумму пополнения от 100 до 100 000 ₽:\n'
+        '<tg-emoji emoji-id="5400071306202867643">⚡️</tg-emoji>Мгновенное зачисление\n'
+        '<tg-emoji emoji-id="5400163201323130799">💯</tg-emoji>Безопасная оплата\n\n'
         f'💰 Доступные активы: {assets_text}\n'
-        f'⚡ Мгновенное зачисление на баланс\n'
-        f'🔒 Безопасная оплата через CryptoBot\n\n'
         f'{rate_text}\n'
-        f'Сумма будет автоматически конвертирована в USD для оплаты.'
+        'Сумма будет автоматически конвертирована в USD для оплаты.'
     )
 
     keyboard = await get_topup_amount_keyboard('cryptobot', db_user.language, back_callback='back_to_menu')
@@ -93,7 +96,7 @@ async def process_cryptobot_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -182,7 +185,7 @@ async def process_cryptobot_payment_amount(
                         callback_data=f'check_cryptobot_{payment_result["local_payment_id"]}',
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+                [build_back_button(texts, 'balance_topup')],
             ]
         )
 
