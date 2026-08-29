@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -17,6 +18,8 @@ logger = structlog.get_logger(__name__)
 
 NALOGO_QUEUE_KEY = 'nalogo:receipt_queue'
 NALOGO_PENDING_VERIFICATION_KEY = 'nalogo:pending_verification'
+# Токен считаем протухшим заранее, чтобы он не истёк между авторизацией и выпуском чека
+NALOGO_TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
 
 
 class NaloGoService:
@@ -324,6 +327,9 @@ class NaloGoService:
         if not self.configured:
             return False
 
+        if await self._authenticate_with_saved_token():
+            return True
+
         try:
             token = await self.client.create_new_access_token(self.inn, self.password)
             await self.client.authenticate(token)
@@ -335,6 +341,62 @@ class NaloGoService:
             else:
                 logger.error('Ошибка аутентификации в NaloGO', error=sanitize_proxy_error(error))
             return False
+
+    async def _authenticate_with_saved_token(self) -> bool:
+        """Переиспользовать сохранённый токен вместо логина по ИНН и паролю.
+
+        Токен ФНС живёт дольше, чем выпуск одного чека, а refresh-токен — ещё дольше.
+        Благодаря этому чеки продолжают уходить, даже когда вход по паролю временно
+        недоступен (смена пароля в личном кабинете, техработы на стороне ФНС).
+        """
+        try:
+            token_data = await self.client.auth_provider.get_token()
+        except Exception as error:
+            logger.warning('Не удалось прочитать сохранённый токен NaloGO', error=sanitize_proxy_error(error))
+            return False
+
+        if not token_data or not token_data.get('token'):
+            return False
+
+        if not self._token_expires_soon(token_data):
+            await self.client.authenticate(json.dumps(token_data))
+            logger.info('Используем сохранённый токен NaloGO')
+            return True
+
+        refresh_token = token_data.get('refreshToken')
+        if not refresh_token:
+            return False
+
+        try:
+            refreshed = await self.client.auth_provider.refresh(refresh_token)
+        except Exception as error:
+            logger.warning('Не удалось обновить токен NaloGO', error=sanitize_proxy_error(error))
+            return False
+
+        if not refreshed or not refreshed.get('token'):
+            logger.info('Refresh-токен NaloGO не принят, входим по ИНН и паролю')
+            return False
+
+        await self.client.authenticate(json.dumps(refreshed))
+        logger.info('Токен NaloGO обновлён по refresh-токену')
+        return True
+
+    @staticmethod
+    def _token_expires_soon(token_data: dict[str, Any]) -> bool:
+        """Истёк ли токен (или истечёт в ближайшие минуты)."""
+        raw_expires_at = token_data.get('tokenExpireIn') or token_data.get('tokenExpiresIn')
+        if not raw_expires_at:
+            return True
+
+        try:
+            expires_at = datetime.fromisoformat(str(raw_expires_at).replace('Z', '+00:00'))
+        except ValueError:
+            return True
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        return expires_at - datetime.now(UTC) <= NALOGO_TOKEN_EXPIRY_MARGIN
 
     async def create_receipt(
         self,

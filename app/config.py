@@ -631,7 +631,8 @@ class Settings(BaseSettings):
     NALOGO_INN: str | None = None
     NALOGO_PASSWORD: str | None = None
     NALOGO_DEVICE_ID: str | None = None
-    NALOGO_STORAGE_PATH: str = './nalogo_tokens.json'
+    # В ./data, а не в корне приложения: в Docker рабочий каталог недоступен на запись
+    NALOGO_STORAGE_PATH: str = './data/nalogo_tokens.json'
     NALOGO_PROXY_URL: str | None = None  # SOCKS proxy for nalog.ru; falls back to PROXY_URL if not set
 
     AUTO_PURCHASE_AFTER_TOPUP_ENABLED: bool = False
