@@ -358,27 +358,36 @@ class NaloGoService:
         if not token_data or not token_data.get('token'):
             return False
 
-        if not self._token_expires_soon(token_data):
-            await self.client.authenticate(json.dumps(token_data))
-            logger.info('Используем сохранённый токен NaloGO')
-            return True
+        refreshed = False
+        if self._token_expires_soon(token_data):
+            refresh_token = token_data.get('refreshToken')
+            if not refresh_token:
+                return False
 
-        refresh_token = token_data.get('refreshToken')
-        if not refresh_token:
-            return False
+            try:
+                token_data = await self.client.auth_provider.refresh(refresh_token)
+            except Exception as error:
+                logger.warning('Не удалось обновить токен NaloGO', error=sanitize_proxy_error(error))
+                return False
 
+            if not token_data or not token_data.get('token'):
+                logger.info('Refresh-токен NaloGO не принят, входим по ИНН и паролю')
+                return False
+            refreshed = True
+
+        await self.client.authenticate(json.dumps(token_data))
+
+        # Токен мог быть отозван раньше срока — проверяем, иначе упадёт уже выпуск чека
         try:
-            refreshed = await self.client.auth_provider.refresh(refresh_token)
+            await self.client.user().get()
         except Exception as error:
-            logger.warning('Не удалось обновить токен NaloGO', error=sanitize_proxy_error(error))
+            logger.info(
+                'Сохранённый токен NaloGO отклонён, входим по ИНН и паролю',
+                error=sanitize_proxy_error(error),
+            )
             return False
 
-        if not refreshed or not refreshed.get('token'):
-            logger.info('Refresh-токен NaloGO не принят, входим по ИНН и паролю')
-            return False
-
-        await self.client.authenticate(json.dumps(refreshed))
-        logger.info('Токен NaloGO обновлён по refresh-токену')
+        logger.info('Авторизация в NaloGO по сохранённому токену', refreshed=refreshed)
         return True
 
     @staticmethod
