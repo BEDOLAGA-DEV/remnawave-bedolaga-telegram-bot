@@ -685,6 +685,69 @@ class SubscriptionService:
             await self._reset_user_traffic(api, updated_user.id, user, reset_reason)
         return updated_user
 
+    @staticmethod
+    async def _clear_stale_limited_status(
+        api: Any,
+        remnawave_id: int,
+        updated_user: Any,
+        *,
+        intended_active: bool,
+    ) -> Any:
+        """Снять LIMITED, залипший из-за гонки с кроном панели.
+
+        ``findExceededUsers`` в Remnawave крутится по ``*/45 * * * * *`` и ставит
+        LIMITED всем, у кого ``status=ACTIVE AND usedTraffic >= trafficLimit``.
+        Если он сработает между чтением и записью нашего PATCH, юзер останется
+        LIMITED уже с поднятым лимитом: ``users.service.ts::updateUser`` снимает
+        статус только когда до записи юзер был не ACTIVE либо был LIMITED и лимит
+        вырос — в окне гонки не выполняется ни то, ни другое. Обратного пересчёта
+        «used < limit ⇒ снять LIMITED» в панели нет ни в одном кроне, поэтому
+        состояние залипает навсегда: VPN не работает, лечится только руками.
+
+        Дожимаем ``enable`` только когда доказано, что лимит уже больше
+        израсходованного: воскресить реально исчерпавшего трафик хуже, чем
+        оставить как есть.
+        """
+        if not intended_active or getattr(updated_user, 'status', None) is not UserStatus.LIMITED:
+            return updated_user
+
+        limit_bytes = getattr(updated_user, 'traffic_limit_bytes', 0) or 0
+
+        used_bytes: int | None = None
+        traffic = getattr(updated_user, 'user_traffic', None)
+        if traffic is not None:
+            used_bytes = getattr(traffic, 'used_traffic_bytes', None)
+
+        if used_bytes is None and limit_bytes > 0:
+            # Ответ на PATCH не обязан содержать userTraffic — спрашиваем отдельно.
+            try:
+                fresh = await api.get_user_by_id(remnawave_id)
+            except Exception as e:
+                logger.warning('Не удалось перечитать расход трафика из панели', remnawave_id=remnawave_id, error=e)
+                fresh = None
+            fresh_traffic = getattr(fresh, 'user_traffic', None) if fresh is not None else None
+            if fresh_traffic is not None:
+                used_bytes = getattr(fresh_traffic, 'used_traffic_bytes', None)
+
+        # limit_bytes == 0 — безлимит: LIMITED при нём бессмысленен в любом случае.
+        if limit_bytes > 0 and (used_bytes is None or used_bytes >= limit_bytes):
+            return updated_user
+
+        try:
+            enabled = await api.enable_user(remnawave_id)
+        except Exception as e:
+            # Операция уже закоммичена вызывающим кодом — падать здесь нельзя.
+            logger.error('Не удалось снять залипший LIMITED в панели', remnawave_id=remnawave_id, error=e)
+            return updated_user
+
+        logger.info(
+            'Снят LIMITED, выставленный кроном панели поверх поднятого лимита',
+            remnawave_id=remnawave_id,
+            limit_bytes=limit_bytes,
+            used_bytes=used_bytes,
+        )
+        return enabled or updated_user
+
     async def update_remnawave_user(
         self,
         db: AsyncSession,
@@ -857,6 +920,14 @@ class SubscriptionService:
                     updated_user = await api.update_user(**update_kwargs)
                 if updated_user is None:
                     raise RemnaWaveAPIError('Remnawave returned no user after subscription renewal update')
+
+                # Крон панели мог поставить LIMITED прямо в окне этого PATCH —
+                # тогда лимит запишется, а статус останется. Лечим здесь, а не в
+                # вызывающем коде: так закрыты все повышения лимита разом
+                # (колесо, докупка трафика, смена тарифа).
+                updated_user = await self._clear_stale_limited_status(
+                    api, remnawave_id, updated_user, intended_active=is_actually_active
+                )
 
                 if reset_traffic:
                     if settings.is_multi_tariff_enabled():

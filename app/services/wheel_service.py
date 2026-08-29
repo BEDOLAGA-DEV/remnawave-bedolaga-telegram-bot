@@ -328,8 +328,40 @@ class FortuneWheelService:
 
         return kopeks
 
+    @staticmethod
+    def _defer_panel_sync(pending: dict[int, Subscription] | None, subscription: Subscription) -> None:
+        """Отложить синк подписки до конца спина.
+
+        Ключ — id подписки: за один спин её трогают и списание, и приз, а PATCH
+        должен уйти один и уже с финальным состоянием.
+        """
+        if pending is None:
+            return
+        pending[subscription.id] = subscription
+
+    @staticmethod
+    async def _flush_panel_sync(db: AsyncSession, pending: dict[int, Subscription]) -> None:
+        """Один PATCH на каждую затронутую подписку — после всех изменений."""
+        if not pending:
+            return
+        subscription_service = SubscriptionService()
+        for subscription in pending.values():
+            try:
+                result = await subscription_service.update_remnawave_user(db, subscription)
+                if result is None:
+                    logger.error('⚠️ Не удалось синхронизировать спин с RemnaWave', subscription_id=subscription.id)
+                else:
+                    logger.info('✅ Спин синхронизирован с RemnaWave', subscription_id=subscription.id)
+            except Exception as e:
+                logger.error('⚠️ Ошибка синхронизации спина с RemnaWave', error=e, subscription_id=subscription.id)
+
     async def _process_days_payment(
-        self, db: AsyncSession, user: User, config: WheelConfig, subscription: Subscription | None = None
+        self,
+        db: AsyncSession,
+        user: User,
+        config: WheelConfig,
+        subscription: Subscription | None = None,
+        pending_sync: dict[int, Subscription] | None = None,
     ) -> int:
         """
         Обработать оплату днями подписки.
@@ -360,16 +392,12 @@ class FortuneWheelService:
 
         logger.info('📅 Списано дней подписки у user_id', spin_cost_days=config.spin_cost_days, user_id=user.id)
 
-        # Синхронизируем с RemnaWave
-        try:
-            subscription_service = SubscriptionService()
-            result = await subscription_service.update_remnawave_user(db, subscription)
-            if result is not None:
-                logger.info('✅ Списание дней синхронизировано с RemnaWave для user_id', user_id=user.id)
-            else:
-                logger.error('⚠️ Не удалось синхронизировать списание дней с RemnaWave', user_id=user.id)
-        except Exception as e:
-            logger.error('⚠️ Ошибка синхронизации списания дней с RemnaWave', error=e, user_id=user.id)
+        # В панель отсюда НЕ ходим: приз ещё не начислен, и такой PATCH унёс бы
+        # заведомо устаревший trafficLimitBytes. Между ним и синком приза
+        # успевал сработать крон панели findExceededUsers (*/45 * * * * *) и
+        # поставить LIMITED, который второй PATCH уже не снимал. Синк делает
+        # spin() один раз, когда подписка приведена в финальное состояние.
+        self._defer_panel_sync(pending_sync, subscription)
 
         return kopeks
 
@@ -380,6 +408,7 @@ class FortuneWheelService:
         prize: WheelPrize,
         config: WheelConfig,
         subscription: Subscription | None = None,
+        pending_sync: dict[int, Subscription] | None = None,
     ) -> str | None:
         """
         Применить приз к пользователю.
@@ -471,13 +500,7 @@ class FortuneWheelService:
                     subscription.updated_at = datetime.now(UTC)
                     logger.info('📅 Начислено дней подписки user_id', prize_value=prize.prize_value, user_id=user.id)
 
-                    # Синхронизируем с RemnaWave
-                    try:
-                        subscription_service = SubscriptionService()
-                        await subscription_service.update_remnawave_user(db, subscription)
-                        logger.info('✅ Синхронизировано с RemnaWave для user_id', user_id=user.id)
-                    except Exception as e:
-                        logger.error('⚠️ Ошибка синхронизации с RemnaWave', error=e)
+                    self._defer_panel_sync(pending_sync, subscription)
             else:
                 # Если нет подписки - начисляем на баланс эквивалент
                 await add_user_balance(
@@ -516,13 +539,7 @@ class FortuneWheelService:
                 subscription.updated_at = datetime.now(UTC)
                 logger.info('📊 Начислено трафика user_id', prize_value=prize.prize_value, user_id=user.id)
 
-                # Синхронизируем с RemnaWave
-                try:
-                    subscription_service = SubscriptionService()
-                    await subscription_service.update_remnawave_user(db, subscription)
-                    logger.info('✅ Трафик синхронизирован с RemnaWave для user_id', user_id=user.id)
-                except Exception as e:
-                    logger.error('⚠️ Ошибка синхронизации трафика с RemnaWave', error=e)
+                self._defer_panel_sync(pending_sync, subscription)
             else:
                 # Если безлимит или нет подписки - на баланс
                 await add_user_balance(
@@ -655,6 +672,11 @@ class FortuneWheelService:
                     message='Выберите подписку для оплаты днями',
                 )
 
+            # Подписки, которые спин изменил: в панель уходит ОДИН PATCH на каждую
+            # и только после начисления приза. Два PATCH подряд оставляли окно
+            # для крона панели findExceededUsers — см. _defer_panel_sync.
+            pending_sync: dict[int, Subscription] = {}
+
             # 2. Обрабатываем оплату
             if payment_type == WheelSpinPaymentType.TELEGRAM_STARS.value:
                 if not availability.can_pay_stars:
@@ -673,7 +695,9 @@ class FortuneWheelService:
                         message='Оплата днями подписки недоступна',
                     )
                 payment_amount = config.spin_cost_days
-                payment_value_kopeks = await self._process_days_payment(db, user, config, target_subscription)
+                payment_value_kopeks = await self._process_days_payment(
+                    db, user, config, target_subscription, pending_sync=pending_sync
+                )
             else:
                 return SpinResult(
                     success=False,
@@ -689,7 +713,13 @@ class FortuneWheelService:
             rotation = self._calculate_rotation(prizes, selected_prize)
 
             # 5. Применяем приз
-            generated_promocode = await self._apply_prize(db, user, selected_prize, config, target_subscription)
+            generated_promocode = await self._apply_prize(
+                db, user, selected_prize, config, target_subscription, pending_sync=pending_sync
+            )
+
+            # Единственный поход в панель за спин — уже с финальным состоянием
+            # подписки (списанные дни + начисленный приз).
+            await self._flush_panel_sync(db, pending_sync)
             promocode_id = None
             if generated_promocode:
                 # Получаем ID промокода
