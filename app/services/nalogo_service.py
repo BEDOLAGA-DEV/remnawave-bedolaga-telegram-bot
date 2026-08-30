@@ -393,6 +393,23 @@ class NaloGoService:
         logger.info('Авторизация в NaloGO по сохранённому токену', refreshed=refreshed)
         return True
 
+    async def _has_usable_token(self) -> bool:
+        """Есть ли на руках токен, которым можно ходить в API прямо сейчас.
+
+        Протухший токен здесь не считается годным: его обновит authenticate().
+        Отозванный раньше срока — отработает 401 в HTTP-слое.
+        """
+        try:
+            token_data = await self.client.auth_provider.get_token()
+        except Exception as error:
+            logger.warning('Не удалось прочитать токен NaloGO', error=sanitize_proxy_error(error))
+            return False
+
+        if not token_data or not token_data.get('token'):
+            return False
+
+        return not self._token_expires_soon(token_data)
+
     @staticmethod
     def _token_expires_soon(token_data: dict[str, Any]) -> bool:
         """Истёк ли токен (или истечёт в ближайшие минуты)."""
@@ -460,7 +477,7 @@ class NaloGoService:
         # ЭТАП 1: Аутентификация
         # Если не прошла — чек точно не создавался, безопасно добавить в очередь
         try:
-            if not hasattr(self.client, '_access_token') or not self.client._access_token:
+            if not await self._has_usable_token():
                 auth_success = await self.authenticate()
                 if not auth_success:
                     # Аутентификация не прошла — чек не создавался, безопасно в очередь
@@ -698,7 +715,7 @@ class NaloGoService:
 
         try:
             # Аутентифицируемся если нужно
-            if not hasattr(self.client, '_access_token') or not self.client._access_token:
+            if not await self._has_usable_token():
                 auth_success = await self.authenticate()
                 if not auth_success:
                     return []
