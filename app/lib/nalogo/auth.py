@@ -106,6 +106,14 @@ class AuthProviderImpl(AuthProvider):
             with contextlib.suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
 
+    def reload_token_from_storage(self) -> None:
+        """Re-read the token file.
+
+        A long-lived provider only loads it once, at construction time, so it misses a
+        token written afterwards — by another process, or by an import done by hand.
+        """
+        self._load_token_from_storage()
+
     async def get_token(self) -> dict[str, Any] | None:
         """Get current access token data."""
         return self._token_data

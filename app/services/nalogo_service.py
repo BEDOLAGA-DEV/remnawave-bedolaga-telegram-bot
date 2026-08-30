@@ -349,7 +349,10 @@ class NaloGoService:
         Благодаря этому чеки продолжают уходить, даже когда вход по паролю временно
         недоступен (смена пароля в личном кабинете, техработы на стороне ФНС).
         """
+        # Экземпляр сервиса живёт всё время работы бота, а файл с токеном мог появиться
+        # или обновиться уже после его создания — перечитываем на каждой попытке
         try:
+            self.client.auth_provider.reload_token_from_storage()
             token_data = await self.client.auth_provider.get_token()
         except Exception as error:
             logger.warning('Не удалось прочитать сохранённый токен NaloGO', error=sanitize_proxy_error(error))
