@@ -99,6 +99,8 @@ class AuthProviderImpl(AuthProvider):
 
             with tmp_path.open('w', encoding='utf-8') as f:
                 json.dump(self._token_data, f, ensure_ascii=False, indent=2)
+            # The file holds both access and refresh tokens: full access to the tax account
+            tmp_path.chmod(0o600)
             os.replace(tmp_path, storage_path)
         except OSError as error:
             # Storage is best-effort, but staying silent hides a token cache that never works.
