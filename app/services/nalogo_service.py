@@ -600,6 +600,14 @@ class NaloGoService:
             logger.warning('Не удалось построить ссылку на чек NaloGO', error=sanitize_proxy_error(error))
             return None
 
+    async def is_pending_verification(self, payment_id: str) -> bool:
+        """Ждёт ли этот платёж ручной проверки (чек по нему мог быть создан)."""
+        if not payment_id:
+            return False
+
+        receipts = await self.get_pending_verification_receipts()
+        return any(receipt.get('payment_id') == payment_id for receipt in receipts)
+
     async def get_queue_length(self) -> int:
         """Получить количество чеков в очереди."""
         return await cache.llen(NALOGO_QUEUE_KEY)
