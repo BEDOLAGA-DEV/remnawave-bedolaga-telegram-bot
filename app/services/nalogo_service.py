@@ -20,6 +20,8 @@ NALOGO_QUEUE_KEY = 'nalogo:receipt_queue'
 NALOGO_PENDING_VERIFICATION_KEY = 'nalogo:pending_verification'
 # Токен считаем протухшим заранее, чтобы он не истёк между авторизацией и выпуском чека
 NALOGO_TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
+# Чек подтверждён администратором вручную, UUID у нас так и не появился
+NALOGO_MANUAL_VERIFICATION_MARKER = 'verified-manually'
 
 
 class NaloGoService:
@@ -224,10 +226,15 @@ class NaloGoService:
         for receipt in receipts:
             if receipt.get('payment_id') == payment_id:
                 removed_receipt = receipt
-                if was_created and receipt_uuid:
-                    # Сохраняем что чек создан
+                if was_created:
+                    # Отметка нужна и без UUID: иначе тот же payment_id пройдёт мимо
+                    # защиты от дублей и по нему выпишется второй чек
                     created_key = f'nalogo:created:{payment_id}'
-                    await cache.set(created_key, receipt_uuid, expire=30 * 24 * 3600)
+                    await cache.set(
+                        created_key,
+                        receipt_uuid or NALOGO_MANUAL_VERIFICATION_MARKER,
+                        expire=30 * 24 * 3600,
+                    )
                     logger.info('Чек помечен как созданный', payment_id=payment_id, receipt_uuid=receipt_uuid)
             else:
                 updated_receipts.append(receipt)
@@ -472,6 +479,10 @@ class NaloGoService:
                     payment_id=payment_id,
                     already_created=already_created,
                 )
+                # У подтверждённого вручную чека UUID неизвестен — возвращать нечего,
+                # но повторно создавать его тем более нельзя
+                if already_created == NALOGO_MANUAL_VERIFICATION_MARKER:
+                    return None
                 return already_created  # Возвращаем ранее созданный uuid
 
         # ЭТАП 1: Аутентификация
