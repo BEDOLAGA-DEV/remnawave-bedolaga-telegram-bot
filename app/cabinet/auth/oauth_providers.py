@@ -7,7 +7,7 @@ import json
 import secrets
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 import httpx
 import jwt as pyjwt
@@ -68,6 +68,7 @@ class OAuthProviderConfig(TypedDict):
     private_key: str
     web_client_id: str
     ios_client_id: str
+    ios_client_ids: NotRequired[list[str]]
     android_client_id: str
 
 
@@ -86,6 +87,7 @@ class OAuthTokenResponse(TypedDict, total=False):
     _apple_nonce: str
     _apple_user: Any
     _apple_client_type: AppleClientType
+    _apple_client_id: str
 
 
 class GoogleUserInfoResponse(TypedDict, total=False):
@@ -873,6 +875,7 @@ class AppleProvider(OAuthProvider):
         *,
         web_client_id: str,
         ios_client_id: str,
+        ios_client_ids: list[str] | None = None,
         team_id: str,
         key_id: str,
         private_key: str,
@@ -880,6 +883,11 @@ class AppleProvider(OAuthProvider):
         super().__init__(client_id, client_secret, redirect_uri)
         self.web_client_id = web_client_id
         self.ios_client_id = ios_client_id
+        self.ios_client_ids = frozenset(
+            candidate.strip()
+            for candidate in [ios_client_id, *(ios_client_ids or [])]
+            if candidate and candidate.strip()
+        )
         self.team_id = team_id
         self.key_id = key_id
         self.private_key = private_key
@@ -895,7 +903,7 @@ class AppleProvider(OAuthProvider):
         nonce: str = kwargs.get('_nonce', '')
         client_type: AppleClientType = kwargs.get('_client_type', 'web')
         params: dict[str, str] = {
-            'client_id': self._client_id_for(client_type),
+            'client_id': self.resolve_client_id(client_type),
             'redirect_uri': self.redirect_uri,
             'response_type': 'code id_token',
             'scope': 'name email',
@@ -906,19 +914,39 @@ class AppleProvider(OAuthProvider):
         request = httpx.Request('GET', self.AUTHORIZE_URL, params=params)
         return str(request.url)
 
-    def _client_id_for(self, client_type: str | None) -> str:
+    def resolve_client_id(
+        self,
+        client_type: str | None,
+        requested_client_id: str | None = None,
+    ) -> str:
         if client_type == 'ios':
-            if not self.ios_client_id:
+            if requested_client_id is None:
+                client_id = self.ios_client_id
+            elif requested_client_id:
+                client_id = requested_client_id.strip()
+            else:
+                client_id = ''
+            if not client_id or client_id not in self.ios_client_ids:
                 raise ValueError('Apple iOS client ID is not configured')
-            return self.ios_client_id
+            return client_id
         if client_type == 'web':
+            if requested_client_id is not None:
+                # allow callers to pass the configured web client id back through
+                if requested_client_id != self.web_client_id:
+                    raise ValueError('Explicit Apple client ID is supported only for native iOS')
+                return self.web_client_id
             if not self.web_client_id:
                 raise ValueError('Apple web client ID is not configured')
             return self.web_client_id
         raise ValueError('Unsupported Apple client type')
 
-    def create_client_secret(self, client_type: AppleClientType = 'web', now: datetime | None = None) -> str:
-        client_id = self._client_id_for(client_type)
+    def create_client_secret(
+        self,
+        client_type: AppleClientType = 'web',
+        client_id: str | None = None,
+        now: datetime | None = None,
+    ) -> str:
+        resolved_client_id = self.resolve_client_id(client_type, client_id)
         issued_at = now or datetime.now(UTC)
         expires_at = issued_at + APPLE_CLIENT_SECRET_TTL
         return pyjwt.encode(
@@ -927,7 +955,7 @@ class AppleProvider(OAuthProvider):
                 'iat': int(issued_at.timestamp()),
                 'exp': int(expires_at.timestamp()),
                 'aud': APPLE_ISSUER,
-                'sub': client_id,
+                'sub': resolved_client_id,
             },
             self.private_key,
             algorithm='ES256',
@@ -939,10 +967,10 @@ class AppleProvider(OAuthProvider):
             raise ValueError('Apple Sign in is missing team_id, key_id, or private_key')
 
         client_type: AppleClientType = kwargs.get('client_type', 'web')
-        client_id = self._client_id_for(client_type)
+        client_id = self.resolve_client_id(client_type, kwargs.get('apple_client_id'))
         token_request_data = {
             'client_id': client_id,
-            'client_secret': self.create_client_secret(client_type=client_type),
+            'client_secret': self.create_client_secret(client_type=client_type, client_id=client_id),
             'code': code,
             'grant_type': 'authorization_code',
         }
@@ -965,6 +993,7 @@ class AppleProvider(OAuthProvider):
         if kwargs.get('user') is not None:
             data['_apple_user'] = kwargs['user']
         data['_apple_client_type'] = client_type
+        data['_apple_client_id'] = client_id
         return data
 
     async def get_user_info(self, token_data: OAuthTokenResponse) -> OAuthUserInfo:
@@ -972,7 +1001,9 @@ class AppleProvider(OAuthProvider):
         if not id_token:
             raise ValueError('Apple token response missing id_token')
 
-        client_id = self._client_id_for(token_data.get('_apple_client_type', 'web'))
+        client_type = token_data.get('_apple_client_type', 'web')
+        # Revalidate the state-bound client type and ID before using as id_token audience.
+        client_id = self.resolve_client_id(client_type, token_data.get('_apple_client_id'))
         claims = await validate_apple_id_token(id_token, client_id, token_data.get('_apple_nonce'))
         if not claims:
             raise ValueError('Apple id_token validation failed')
@@ -1030,6 +1061,7 @@ def get_provider(name: str) -> OAuthProvider | None:
             redirect_uri=redirect_uri,
             web_client_id=config['web_client_id'],
             ios_client_id=config['ios_client_id'],
+            ios_client_ids=config.get('ios_client_ids'),
             team_id=config['team_id'],
             key_id=config['key_id'],
             private_key=config['private_key'],

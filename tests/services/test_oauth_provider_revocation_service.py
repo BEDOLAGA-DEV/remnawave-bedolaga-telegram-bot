@@ -95,7 +95,7 @@ async def test_revoke_apple_authorization_code_uses_client_secret_and_refresh_to
     provider.get_user_info = AsyncMock(
         return_value=OAuthUserInfo(provider='apple', provider_id='apple-sub', email='user@example.com')
     )
-    provider._client_id_for.return_value = 'com.bitnet.ios'
+    provider.resolve_client_id.return_value = 'com.bitnet.ios'
     provider.create_client_secret.return_value = 'apple-client-secret'
     response = SimpleNamespace(status_code=200, text='')
 
@@ -115,8 +115,8 @@ async def test_revoke_apple_authorization_code_uses_client_secret_and_refresh_to
         )
 
     provider.exchange_code.assert_awaited_once_with('auth-code', client_type='ios')
-    provider._client_id_for.assert_called_once_with('ios')
-    provider.create_client_secret.assert_called_once_with(client_type='ios')
+    provider.resolve_client_id.assert_called_once_with('ios', None)
+    provider.create_client_secret.assert_called_once_with(client_type='ios', client_id='com.bitnet.ios')
     client.post.assert_awaited_once()
     assert client.post.await_args.args[0] == 'https://appleid.apple.com/auth/revoke'
     assert client.post.await_args.kwargs['data']['client_id'] == 'com.bitnet.ios'
@@ -130,13 +130,52 @@ async def test_revoke_apple_authorization_code_uses_client_secret_and_refresh_to
 
 
 @pytest.mark.asyncio
+async def test_revocation_success_log_does_not_include_provider_id() -> None:
+    provider = MagicMock()
+    provider.exchange_code = AsyncMock(
+        return_value={
+            'id_token': 'apple-id-token',
+            'access_token': 'apple-access-token',
+            'refresh_token': 'apple-refresh-token',
+        }
+    )
+    provider.get_user_info = AsyncMock(
+        return_value=OAuthUserInfo(provider='apple', provider_id='apple-sub', email='user@example.com')
+    )
+    provider.resolve_client_id.return_value = 'com.bitnet.ios'
+    provider.create_client_secret.return_value = 'apple-client-secret'
+    response = SimpleNamespace(status_code=200, text='')
+
+    with patch('app.services.oauth_provider_revocation_service.httpx.AsyncClient') as client_class:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = None
+        client_class.return_value = client
+
+        with patch('app.services.oauth_provider_revocation_service.logger.info') as mock_info:
+            await OAuthProviderRevocationService().revoke_authorization_code(
+                provider_name='apple',
+                oauth_provider=provider,
+                code='auth-code',
+                expected_provider_id='apple-sub',
+                client_type='ios',
+            )
+
+    # The success log must NOT include provider_id (sensitive subject). Fail if present.
+    mock_info.assert_called_once_with(
+        'OAuth provider token revoked', provider='apple', token_type='refresh_token'
+    )
+
+
+@pytest.mark.asyncio
 async def test_revoke_apple_authorization_code_uses_web_client_id_for_web_flow() -> None:
     provider = MagicMock()
     provider.exchange_code = AsyncMock(return_value={'access_token': 'apple-access-token'})
     provider.get_user_info = AsyncMock(
         return_value=OAuthUserInfo(provider='apple', provider_id='apple-sub', email='user@example.com')
     )
-    provider._client_id_for.return_value = 'com.bitnet.web'
+    provider.resolve_client_id.return_value = 'com.bitnet.web'
     provider.create_client_secret.return_value = 'apple-web-client-secret'
     response = SimpleNamespace(status_code=200, text='')
 
@@ -155,8 +194,8 @@ async def test_revoke_apple_authorization_code_uses_web_client_id_for_web_flow()
             client_type='web',
         )
 
-    provider._client_id_for.assert_called_once_with('web')
-    provider.create_client_secret.assert_called_once_with(client_type='web')
+    provider.resolve_client_id.assert_called_once_with('web', None)
+    provider.create_client_secret.assert_called_once_with(client_type='web', client_id='com.bitnet.web')
     assert client.post.await_args.kwargs['data']['client_id'] == 'com.bitnet.web'
     assert client.post.await_args.kwargs['data']['client_secret'] == 'apple-web-client-secret'
     assert client.post.await_args.kwargs['data']['token'] == 'apple-access-token'
@@ -245,7 +284,7 @@ async def test_revoke_apple_authorization_code_maps_network_failure_to_value_err
     provider.get_user_info = AsyncMock(
         return_value=OAuthUserInfo(provider='apple', provider_id='apple-sub', email='user@example.com')
     )
-    provider._client_id_for.return_value = 'com.bitnet.ios'
+    provider.resolve_client_id.return_value = 'com.example.legacy'
     provider.create_client_secret.return_value = 'apple-client-secret'
 
     with patch('app.services.oauth_provider_revocation_service.httpx.AsyncClient') as client_class:
@@ -263,3 +302,49 @@ async def test_revoke_apple_authorization_code_maps_network_failure_to_value_err
                 expected_provider_id='apple-sub',
                 client_type='ios',
             )
+
+
+@pytest.mark.asyncio
+async def test_revoke_apple_authorization_code_uses_replacement_client_id_from_token_data() -> None:
+    provider = MagicMock()
+    provider.exchange_code = AsyncMock(
+        return_value={
+            'id_token': 'apple-id-token',
+            'access_token': 'apple-access-token',
+            'refresh_token': 'apple-refresh-token',
+            '_apple_client_id': 'com.example.replacement',
+        }
+    )
+    provider.get_user_info = AsyncMock(
+        return_value=OAuthUserInfo(provider='apple', provider_id='apple-sub', email='user@example.com')
+    )
+    provider.resolve_client_id.return_value = 'com.example.replacement'
+    provider.create_client_secret.return_value = 'replacement-client-secret'
+    response = SimpleNamespace(status_code=200, text='')
+
+    with patch('app.services.oauth_provider_revocation_service.httpx.AsyncClient') as client_class:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = None
+        client_class.return_value = client
+
+        result = await OAuthProviderRevocationService().revoke_authorization_code(
+            provider_name='apple',
+            oauth_provider=provider,
+            code='auth-code',
+            expected_provider_id='apple-sub',
+            client_type='ios',
+        )
+
+    provider.exchange_code.assert_awaited_once_with('auth-code', client_type='ios')
+    provider.resolve_client_id.assert_called_once_with('ios', 'com.example.replacement')
+    provider.create_client_secret.assert_called_once_with(client_type='ios', client_id='com.example.replacement')
+    client.post.assert_awaited_once()
+    assert client.post.await_args.kwargs['data']['client_id'] == 'com.example.replacement'
+    assert client.post.await_args.kwargs['data']['client_secret'] == 'replacement-client-secret'
+    assert client.post.await_args.kwargs['data']['token'] == 'apple-refresh-token'
+    assert client.post.await_args.kwargs['data']['token_type_hint'] == 'refresh_token'
+    assert result.provider == 'apple'
+    assert result.provider_id == 'apple-sub'
+    assert result.token_type == 'refresh_token'

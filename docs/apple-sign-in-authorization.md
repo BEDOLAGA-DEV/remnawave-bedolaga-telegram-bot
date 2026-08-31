@@ -9,7 +9,7 @@ Set these variables to enable the provider:
 ```env
 OAUTH_APPLE_ENABLED=true
 OAUTH_APPLE_WEB_CLIENT_ID=com.example.service
-OAUTH_APPLE_IOS_CLIENT_ID=com.example.app
+OAUTH_APPLE_IOS_CLIENT_ID=["com.example.legacy","com.example.replacement"]
 OAUTH_APPLE_TEAM_ID=ABCDE12345
 OAUTH_APPLE_KEY_ID=ABC123DEFG
 OAUTH_APPLE_PRIVATE_KEY_PATH=/run/secrets/apple-signin/AuthKey_ABC123DEFG.p8
@@ -18,7 +18,12 @@ OAUTH_APPLE_PRIVATE_KEY_PATH=/run/secrets/apple-signin/AuthKey_ABC123DEFG.p8
 Both Apple client identifiers are required when the provider is enabled:
 
 - `OAUTH_APPLE_WEB_CLIENT_ID`: Apple Services ID for web / Apple JS popup flows.
-- `OAUTH_APPLE_IOS_CLIENT_ID`: native iOS Bundle ID configured for Sign in with Apple.
+- `OAUTH_APPLE_IOS_CLIENT_ID`: JSON array of native iOS Bundle IDs configured for Sign in with Apple. The first normalized item is the compatibility default for clients that omit `client_id`; the complete array is the allowlist.
+
+This is a breaking configuration-format change. Before deploying this version,
+replace any scalar value such as `OAUTH_APPLE_IOS_CLIENT_ID=com.example.app`
+with a JSON array such as `OAUTH_APPLE_IOS_CLIENT_ID=["com.example.app"]`.
+A scalar value cannot be parsed as a list and prevents the service from starting.
 
 The backend creates Apple's ES256 `client_secret`, exchanges authorization codes at `https://appleid.apple.com/auth/token`, and verifies Apple `id_token` values against `https://appleid.apple.com/auth/keys`.
 
@@ -28,9 +33,15 @@ Start the flow with:
 
 ```http
 GET /cabinet/auth/oauth/apple/authorize?client_type=web
+GET /cabinet/auth/oauth/apple/authorize?client_type=ios&client_id=com.example.replacement
 ```
 
-Use `client_type=web` for Apple JS/web and `client_type=ios` for native iOS. The selected type is stored in the one-time backend state and controls which Apple client ID is used during token exchange and `id_token.aud` validation.
+Use `client_type=web` for Apple JS/web and `client_type=ios` for native iOS.
+Native iOS clients may select a configured Bundle ID with `client_id`. Released
+clients that omit `client_id` use the first configured item. The backend rejects
+unknown IDs and explicit IDs on non-native-Apple flows before creating state.
+The selected type and client ID are stored in one-time backend state and control
+the client secret, token exchange, and `id_token.aud` validation.
 
 The response includes `authorize_url`, `state`, `nonce`, and `client_type`. The client must preserve `state` and use the returned `nonce` for the Apple request.
 
@@ -67,10 +78,21 @@ Account linking uses the same provider:
 
 ```http
 GET /cabinet/auth/account/link/apple/init?client_type=web
+GET /cabinet/auth/account/link/apple/init?client_type=ios&client_id=com.example.replacement
 POST /cabinet/auth/account/link/apple/callback
 ```
 
 The callback body is the same shape as the login callback. As with login, `authorize_url` is only returned for web linking; native iOS linking receives `state`, `nonce`, and `client_type` and should complete authorization through `AuthenticationServices`.
+
+Provider revocation uses the same state-bound selection:
+
+```http
+GET /cabinet/auth/account/revoke/apple/init?purpose=unlink&client_type=ios&client_id=com.example.replacement
+POST /cabinet/auth/account/revoke/apple/callback
+```
+
+Callback bodies never accept `client_id`; the backend uses only the value bound
+to the consumed OAuth state.
 
 ## Apple Developer Setup
 

@@ -48,6 +48,58 @@ async def test_revoke_provider_init_returns_authorize_url_and_state() -> None:
 
 
 @pytest.mark.asyncio
+async def test_apple_revoke_init_binds_selected_native_client_id() -> None:
+    user = SimpleNamespace(id=123, apple_id='apple-sub')
+    provider = MagicMock()
+    provider.prepare_auth_state.return_value = {'nonce': 'nonce-1', '_nonce': 'nonce-1'}
+    provider.resolve_client_id.return_value = 'com.example.replacement'
+
+    with (
+        patch('app.cabinet.routes.account_linking.get_provider', return_value=provider),
+        patch(
+            'app.cabinet.routes.account_linking.generate_oauth_state',
+            AsyncMock(return_value='state-1'),
+        ) as state_mock,
+    ):
+        response = await revoke_provider_init(
+            'apple',
+            purpose='delete',
+            client_type='ios',
+            client_id='com.example.replacement',
+            user=user,
+        )
+
+    assert state_mock.await_args.kwargs['extra_data']['apple_client_id'] == 'com.example.replacement'
+    provider.get_authorization_url.assert_not_called()
+    assert response.authorize_url is None
+
+
+@pytest.mark.asyncio
+async def test_google_revoke_init_rejects_explicit_apple_client_id_before_state_creation() -> None:
+    user = SimpleNamespace(id=123, google_id='google-sub')
+    provider = MagicMock()
+    provider.prepare_auth_state.return_value = {}
+    generate_state = AsyncMock()
+
+    with (
+        patch('app.cabinet.routes.account_linking.get_provider', return_value=provider),
+        patch('app.cabinet.routes.account_linking.generate_oauth_state', generate_state),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await revoke_provider_init(
+            'google',
+            purpose='delete',
+            client_type='ios',
+            client_id='com.example.replacement',
+            user=user,
+        )
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc.value.detail == 'Explicit client_id is supported only for native Apple OAuth'
+    generate_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_revoke_provider_callback_returns_delete_proof_for_matching_provider() -> None:
     user = SimpleNamespace(id=123, google_id='google-sub')
     db = AsyncMock()
@@ -136,6 +188,61 @@ async def test_revoke_provider_callback_uses_real_service_without_duplicate_clie
         client_type='ios',
         state='state-1',
         nonce='nonce-1',
+    )
+
+
+@pytest.mark.asyncio
+async def test_revoke_provider_callback_uses_real_service_with_apple_client_id() -> None:
+    user = SimpleNamespace(id=123, apple_id='apple-sub')
+    db = AsyncMock()
+    db.add = MagicMock()
+    provider = MagicMock()
+    provider.exchange_code = AsyncMock(return_value={'access_token': 'apple-access-token'})
+    provider.get_user_info = AsyncMock(
+        return_value=OAuthUserInfo(provider='apple', provider_id='apple-sub', email='user@example.com')
+    )
+    response = SimpleNamespace(status_code=200, text='')
+
+    with (
+        patch(
+            'app.cabinet.routes.account_linking.validate_oauth_state',
+            AsyncMock(
+                return_value={
+                    'revoking': 'true',
+                    'purpose': 'delete',
+                    'user_id': '123',
+                    'client_type': 'ios',
+                    'nonce': 'nonce-1',
+                    'state': 'state-1',
+                    'apple_client_id': 'com.example.replacement',
+                }
+            ),
+        ),
+        patch('app.cabinet.routes.account_linking.get_provider', return_value=provider),
+        patch('app.cabinet.routes.account_linking.create_oauth_revocation_proof', AsyncMock(return_value='proof-token')),
+        patch('app.services.oauth_provider_revocation_service.httpx.AsyncClient') as client_class,
+    ):
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = None
+        client_class.return_value = client
+
+        result = await revoke_provider_callback(
+            'apple',
+            RevokeProviderCallbackRequest(code='auth-code', state='state-1'),
+            user=user,
+            db=db,
+        )
+
+    assert result.success is True
+    assert result.proof_token == 'proof-token'
+    provider.exchange_code.assert_awaited_once_with(
+        'auth-code',
+        client_type='ios',
+        state='state-1',
+        nonce='nonce-1',
+        apple_client_id='com.example.replacement',
     )
 
 

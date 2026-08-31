@@ -1,16 +1,17 @@
 import html
+import json
 import os
 import re
 from collections import defaultdict
 from datetime import time
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Annotated, ClassVar, Literal
 from urllib.parse import quote as _url_quote, urlparse
 from zoneinfo import ZoneInfo
 
 import structlog
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 
 
 DEFAULT_DISPLAY_NAME_BANNED_KEYWORDS: list[str] = [
@@ -1324,12 +1325,30 @@ class Settings(BaseSettings):
     OAUTH_VK_ENABLED: bool = False
 
     OAUTH_APPLE_WEB_CLIENT_ID: str = ''
-    OAUTH_APPLE_IOS_CLIENT_ID: str = ''
+    OAUTH_APPLE_IOS_CLIENT_ID: Annotated[list[str], NoDecode] = []
     OAUTH_APPLE_TEAM_ID: str = ''
     OAUTH_APPLE_KEY_ID: str = ''
     OAUTH_APPLE_PRIVATE_KEY: str = ''
     OAUTH_APPLE_PRIVATE_KEY_PATH: str = ''
     OAUTH_APPLE_ENABLED: bool = False
+
+    @field_validator('OAUTH_APPLE_IOS_CLIENT_ID', mode='before')
+    @classmethod
+    def parse_oauth_apple_ios_client_ids(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip()
+        if not normalized:
+            return []
+
+        try:
+            parsed = json.loads(normalized)
+        except json.JSONDecodeError as exc:
+            raise ValueError('OAUTH_APPLE_IOS_CLIENT_ID must be a JSON array') from exc
+        if not isinstance(parsed, list):
+            raise ValueError('OAUTH_APPLE_IOS_CLIENT_ID must be a JSON array')
+        return parsed
 
     # SMTP settings for cabinet email
     SMTP_HOST: str | None = None
@@ -2722,6 +2741,20 @@ class Settings(BaseSettings):
                 )
         return ''
 
+    def get_oauth_apple_ios_client_ids(self) -> list[str]:
+        """Return normalized list of allowed Apple iOS client ids.
+
+        Trims whitespace, drops empty entries and preserves order while
+        deduplicating.
+        """
+        return list(
+            dict.fromkeys(
+                candidate.strip()
+                for candidate in self.OAUTH_APPLE_IOS_CLIENT_ID
+                if candidate and candidate.strip()
+            )
+        )
+
     def is_paypear_enabled(self) -> bool:
         return self.PAYPEAR_ENABLED and self.PAYPEAR_SHOP_ID is not None and self.PAYPEAR_SECRET_KEY is not None
 
@@ -3826,8 +3859,10 @@ class Settings(BaseSettings):
         return self.SMTP_USER
 
     # OAuth helpers
-    def get_oauth_providers_config(self) -> dict[str, dict[str, str | bool]]:
+    def get_oauth_providers_config(self) -> dict[str, dict[str, str | bool | list[str]]]:
         """Return config for all OAuth providers (enabled or not)."""
+        apple_ios_client_ids = self.get_oauth_apple_ios_client_ids()
+
         return {
             'google': {
                 'client_id': self.OAUTH_GOOGLE_CLIENT_ID,
@@ -3863,14 +3898,15 @@ class Settings(BaseSettings):
                 'enabled': (
                     self.OAUTH_APPLE_ENABLED
                     and bool(self.OAUTH_APPLE_WEB_CLIENT_ID)
-                    and bool(self.OAUTH_APPLE_IOS_CLIENT_ID)
+                    and bool(apple_ios_client_ids)
                     and bool(self.OAUTH_APPLE_TEAM_ID)
                     and bool(self.OAUTH_APPLE_KEY_ID)
                     and bool(self.get_oauth_apple_private_key())
                 ),
                 'display_name': 'Apple',
                 'web_client_id': self.OAUTH_APPLE_WEB_CLIENT_ID,
-                'ios_client_id': self.OAUTH_APPLE_IOS_CLIENT_ID,
+                'ios_client_id': apple_ios_client_ids[0] if apple_ios_client_ids else '',
+                'ios_client_ids': apple_ios_client_ids,
                 'team_id': self.OAUTH_APPLE_TEAM_ID,
                 'key_id': self.OAUTH_APPLE_KEY_ID,
                 'private_key': self.get_oauth_apple_private_key(),
