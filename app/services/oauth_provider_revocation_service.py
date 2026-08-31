@@ -8,6 +8,7 @@ import structlog
 
 from app.cabinet.auth.oauth_providers import OAuthProvider, OAuthTokenResponse
 
+
 logger = structlog.get_logger(__name__)
 
 OAuthRevocationProvider = Literal['google', 'apple']
@@ -62,14 +63,14 @@ class OAuthProviderRevocationService:
         if provider_name == 'google':
             await self._revoke_google_token(token, token_type)
         elif provider_name == 'apple':
-            await self._revoke_apple_token(oauth_provider, token, token_type, client_type)
+            selected_client_id = token_data.get('_apple_client_id')
+            await self._revoke_apple_token(oauth_provider, token, token_type, client_type, selected_client_id)
         else:
             raise ValueError(f'Unsupported provider revocation: {provider_name}')
 
         logger.info(
             'OAuth provider token revoked',
             provider=provider_name,
-            provider_id=expected_provider_id,
             token_type=token_type,
         )
         return OAuthProviderRevocationResult(
@@ -109,14 +110,18 @@ class OAuthProviderRevocationService:
         token: str,
         token_type: Literal['access_token', 'refresh_token'],
         client_type: str,
+        selected_client_id: str | None,
     ) -> None:
-        client_id_for = getattr(oauth_provider, '_client_id_for', None)
+        resolve_client_id = getattr(oauth_provider, 'resolve_client_id', None)
         create_client_secret = getattr(oauth_provider, 'create_client_secret', None)
-        if not callable(client_id_for) or not callable(create_client_secret):
+        if not callable(resolve_client_id) or not callable(create_client_secret):
             raise ValueError('Apple provider revocation is not configured')
 
-        client_id = client_id_for(client_type)
-        client_secret = create_client_secret(client_type=client_type)
+        # Re-validate/resolve the client id selected during the token exchange.
+        # If token metadata did not include a selected id, pass None to allow
+        # the provider to fallback to legacy/default/web behavior.
+        client_id = resolve_client_id(client_type, selected_client_id)
+        client_secret = create_client_secret(client_type=client_type, client_id=client_id)
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.post(

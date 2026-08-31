@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### ⚠ BREAKING CHANGES
+
+* **oauth:** `OAUTH_APPLE_IOS_CLIENT_ID` теперь принимает JSON-массив Bundle ID. Перед обновлением замените скалярное значение `com.example.app` на `["com.example.app"]`; старый формат остановит запуск сервиса.
+
 ## [4.0.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v3.67.0...v4.0.0) (2026-08-03)
 
 

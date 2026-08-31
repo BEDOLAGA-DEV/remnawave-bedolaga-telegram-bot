@@ -61,6 +61,28 @@ def _ensure_client_type_configured(oauth_provider: Any, provider: str, client_ty
         ) from exc
 
 
+def _resolve_apple_native_client_id(
+    oauth_provider: Any,
+    provider: str,
+    client_type: str,
+    requested_client_id: str | None,
+) -> str | None:
+    if requested_client_id is not None and not (provider == 'apple' and client_type == 'ios'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Explicit client_id is supported only for native Apple OAuth',
+        )
+    if provider != 'apple' or client_type != 'ios':
+        return None
+    try:
+        return oauth_provider.resolve_client_id(client_type, requested_client_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
 async def _finalize_oauth_login(
     db: AsyncSession,
     user: User,
@@ -142,7 +164,9 @@ async def get_oauth_providers():
 
 
 @router.get('/{provider}/authorize', response_model=OAuthAuthorizeResponse)
-async def get_oauth_authorize_url(provider: OAuthProviderName, client_type: OAuthClientType = 'web'):
+async def get_oauth_authorize_url(
+    provider: OAuthProviderName, client_type: OAuthClientType = 'web', client_id: str | None = None
+):
     """Get authorization URL for an OAuth provider."""
     if provider == 'apple' and client_type == 'android':
         raise HTTPException(
@@ -160,6 +184,11 @@ async def get_oauth_authorize_url(provider: OAuthProviderName, client_type: OAut
 
     # Generate extra state data (e.g., PKCE code_verifier for VK)
     auth_extra = oauth_provider.prepare_auth_state()
+    # Resolve and bind selected Apple native client_id (fail-closed)
+    apple_client_id = _resolve_apple_native_client_id(oauth_provider, provider, client_type, client_id)
+    if apple_client_id:
+        # store selected ID in non-secret extra_data (surface for callbacks)
+        auth_extra['apple_client_id'] = apple_client_id
     if provider == 'apple':
         auth_extra['client_type'] = client_type
         auth_extra['_client_type'] = client_type
@@ -250,6 +279,11 @@ async def oauth_callback(
         exchange_kwargs['user'] = request.user
     if request.id_token and _is_google_native_token_flow(provider, client_type):
         exchange_kwargs['id_token'] = request.id_token
+
+    # Forward selected apple client id from validated state (do NOT trust callback payload)
+    apple_client_id = state_data.get('apple_client_id')
+    if apple_client_id:
+        exchange_kwargs['apple_client_id'] = apple_client_id
 
     try:
         token_data = await oauth_provider.exchange_code(request.code or '', **exchange_kwargs)

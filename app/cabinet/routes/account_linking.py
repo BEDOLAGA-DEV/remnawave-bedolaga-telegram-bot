@@ -16,6 +16,10 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.auth.oauth_revocation_proofs import (
+    consume_oauth_revocation_proof,
+    create_oauth_revocation_proof,
+)
 from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.database.crud.user import (
@@ -28,19 +32,15 @@ from app.database.crud.user import (
     set_user_oauth_provider_id,
 )
 from app.database.models import OAuthProviderRevocationEvent, User
-from app.cabinet.auth.oauth_revocation_proofs import (
-    consume_oauth_revocation_proof,
-    create_oauth_revocation_proof,
-)
-from app.services.oauth_provider_revocation_service import (
-    OAuthProviderRevocationResult,
-    oauth_provider_revocation_service,
-)
 from app.services.account_merge_service import (
     compute_auth_methods,
     execute_merge,
     flush_remnawave_deletions,
     get_merge_preview,
+)
+from app.services.oauth_provider_revocation_service import (
+    OAuthProviderRevocationResult,
+    oauth_provider_revocation_service,
 )
 from app.utils.cache import RateLimitCache, TokenReplayCache
 
@@ -99,6 +99,28 @@ def _ensure_client_type_configured(oauth_provider: Any, provider: str, client_ty
         ) from exc
 
 
+def _resolve_apple_native_client_id(
+    oauth_provider: Any,
+    provider: str,
+    client_type: str,
+    requested_client_id: str | None,
+) -> str | None:
+    if requested_client_id is not None and not (provider == 'apple' and client_type == 'ios'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Explicit client_id is supported only for native Apple OAuth',
+        )
+    if provider != 'apple' or client_type != 'ios':
+        return None
+    try:
+        return oauth_provider.resolve_client_id(client_type, requested_client_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
 # Ensure OAuthProviderName Literal stays in sync with OAUTH_PROVIDER_COLUMNS
 _EXPECTED_PROVIDERS = {'google', 'yandex', 'discord', 'vk', 'apple'}
 if set(OAUTH_PROVIDER_COLUMNS.keys()) != _EXPECTED_PROVIDERS:
@@ -117,6 +139,7 @@ class OAuthStateData(TypedDict):
     code_verifier: NotRequired[str]  # PKCE code verifier (VK)
     nonce: NotRequired[str]  # OIDC nonce (Apple)
     client_type: NotRequired[str]  # OAuth client type: web, ios, or android
+    apple_client_id: NotRequired[str]  # State-bound native Apple client ID
 
 
 def _get_active_providers() -> list[str]:
@@ -381,6 +404,10 @@ async def _exchange_and_link_oauth(
         exchange_kwargs['user'] = user_payload
     if id_token and _is_google_native_token_flow(provider, client_type):
         exchange_kwargs['id_token'] = id_token
+    # Forward selected apple client id from validated state (do NOT trust callback payload)
+    apple_client_id = state_data.get('apple_client_id')
+    if apple_client_id:
+        exchange_kwargs['apple_client_id'] = apple_client_id
 
     try:
         token_data = await oauth_provider.exchange_code(code or '', **exchange_kwargs)
@@ -522,6 +549,7 @@ async def get_linked_providers(
 async def link_provider_init(
     provider: OAuthProviderName,
     client_type: OAuthClientType = 'web',
+    client_id: str | None = None,
     user: User = Depends(get_current_cabinet_user),
 ) -> LinkInitResponse:
     """Start OAuth flow for linking a new provider to the current account."""
@@ -555,6 +583,10 @@ async def link_provider_init(
     }
     if auth_extra:
         extra_data.update(auth_extra)
+    # Resolve and bind Apple native client_id selection (fail-closed)
+    apple_client_id = _resolve_apple_native_client_id(oauth_provider, provider, client_type, client_id)
+    if apple_client_id:
+        extra_data['apple_client_id'] = apple_client_id
     if provider == 'apple':
         extra_data['client_type'] = client_type
         auth_extra['_client_type'] = client_type
@@ -638,6 +670,7 @@ async def revoke_provider_init(
     provider: OAuthRevocationProviderName,
     purpose: OAuthRevocationPurpose,
     client_type: OAuthClientType = 'web',
+    client_id: str | None = None,
     user: User = Depends(get_current_cabinet_user),
 ) -> RevokeProviderInitResponse:
     """Start a fresh OAuth flow that can revoke a linked Google/Apple authorization."""
@@ -671,6 +704,9 @@ async def revoke_provider_init(
     }
     if auth_extra:
         extra_data.update(auth_extra)
+    apple_client_id = _resolve_apple_native_client_id(oauth_provider, provider, client_type, client_id)
+    if apple_client_id:
+        extra_data['apple_client_id'] = apple_client_id
     if provider == 'apple':
         auth_extra['_client_type'] = client_type
 
@@ -745,6 +781,10 @@ async def revoke_provider_callback(
         exchange_kwargs['nonce'] = state_data['nonce']
     if request.user is not None:
         exchange_kwargs['user'] = request.user
+    # Forward selected apple client id from validated state (do NOT trust callback payload)
+    apple_client_id = state_data.get('apple_client_id')
+    if apple_client_id:
+        exchange_kwargs['apple_client_id'] = apple_client_id
 
     event: OAuthProviderRevocationEvent | None = None
     proof_token: str | None = None
