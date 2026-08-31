@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -17,6 +18,10 @@ logger = structlog.get_logger(__name__)
 
 NALOGO_QUEUE_KEY = 'nalogo:receipt_queue'
 NALOGO_PENDING_VERIFICATION_KEY = 'nalogo:pending_verification'
+# Токен считаем протухшим заранее, чтобы он не истёк между авторизацией и выпуском чека
+NALOGO_TOKEN_EXPIRY_MARGIN = timedelta(minutes=5)
+# Чек подтверждён администратором вручную, UUID у нас так и не появился
+NALOGO_MANUAL_VERIFICATION_MARKER = 'verified-manually'
 
 
 class NaloGoService:
@@ -221,10 +226,15 @@ class NaloGoService:
         for receipt in receipts:
             if receipt.get('payment_id') == payment_id:
                 removed_receipt = receipt
-                if was_created and receipt_uuid:
-                    # Сохраняем что чек создан
+                if was_created:
+                    # Отметка нужна и без UUID: иначе тот же payment_id пройдёт мимо
+                    # защиты от дублей и по нему выпишется второй чек
                     created_key = f'nalogo:created:{payment_id}'
-                    await cache.set(created_key, receipt_uuid, expire=30 * 24 * 3600)
+                    await cache.set(
+                        created_key,
+                        receipt_uuid or NALOGO_MANUAL_VERIFICATION_MARKER,
+                        expire=30 * 24 * 3600,
+                    )
                     logger.info('Чек помечен как созданный', payment_id=payment_id, receipt_uuid=receipt_uuid)
             else:
                 updated_receipts.append(receipt)
@@ -324,6 +334,9 @@ class NaloGoService:
         if not self.configured:
             return False
 
+        if await self._authenticate_with_saved_token():
+            return True
+
         try:
             token = await self.client.create_new_access_token(self.inn, self.password)
             await self.client.authenticate(token)
@@ -335,6 +348,91 @@ class NaloGoService:
             else:
                 logger.error('Ошибка аутентификации в NaloGO', error=sanitize_proxy_error(error))
             return False
+
+    async def _authenticate_with_saved_token(self) -> bool:
+        """Переиспользовать сохранённый токен вместо логина по ИНН и паролю.
+
+        Токен ФНС живёт дольше, чем выпуск одного чека, а refresh-токен — ещё дольше.
+        Благодаря этому чеки продолжают уходить, даже когда вход по паролю временно
+        недоступен (смена пароля в личном кабинете, техработы на стороне ФНС).
+        """
+        # Экземпляр сервиса живёт всё время работы бота, а файл с токеном мог появиться
+        # или обновиться уже после его создания — перечитываем на каждой попытке
+        try:
+            self.client.auth_provider.reload_token_from_storage()
+            token_data = await self.client.auth_provider.get_token()
+        except Exception as error:
+            logger.warning('Не удалось прочитать сохранённый токен NaloGO', error=sanitize_proxy_error(error))
+            return False
+
+        if not token_data or not token_data.get('token'):
+            return False
+
+        refreshed = False
+        if self._token_expires_soon(token_data):
+            refresh_token = token_data.get('refreshToken')
+            if not refresh_token:
+                return False
+
+            try:
+                token_data = await self.client.auth_provider.refresh(refresh_token)
+            except Exception as error:
+                logger.warning('Не удалось обновить токен NaloGO', error=sanitize_proxy_error(error))
+                return False
+
+            if not token_data or not token_data.get('token'):
+                logger.info('Refresh-токен NaloGO не принят, входим по ИНН и паролю')
+                return False
+            refreshed = True
+
+        await self.client.authenticate(json.dumps(token_data))
+
+        # Токен мог быть отозван раньше срока — проверяем, иначе упадёт уже выпуск чека
+        try:
+            await self.client.user().get()
+        except Exception as error:
+            logger.info(
+                'Сохранённый токен NaloGO отклонён, входим по ИНН и паролю',
+                error=sanitize_proxy_error(error),
+            )
+            return False
+
+        logger.info('Авторизация в NaloGO по сохранённому токену', refreshed=refreshed)
+        return True
+
+    async def _has_usable_token(self) -> bool:
+        """Есть ли на руках токен, которым можно ходить в API прямо сейчас.
+
+        Протухший токен здесь не считается годным: его обновит authenticate().
+        Отозванный раньше срока — отработает 401 в HTTP-слое.
+        """
+        try:
+            token_data = await self.client.auth_provider.get_token()
+        except Exception as error:
+            logger.warning('Не удалось прочитать токен NaloGO', error=sanitize_proxy_error(error))
+            return False
+
+        if not token_data or not token_data.get('token'):
+            return False
+
+        return not self._token_expires_soon(token_data)
+
+    @staticmethod
+    def _token_expires_soon(token_data: dict[str, Any]) -> bool:
+        """Истёк ли токен (или истечёт в ближайшие минуты)."""
+        raw_expires_at = token_data.get('tokenExpireIn') or token_data.get('tokenExpiresIn')
+        if not raw_expires_at:
+            return True
+
+        try:
+            expires_at = datetime.fromisoformat(str(raw_expires_at).replace('Z', '+00:00'))
+        except ValueError:
+            return True
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        return expires_at - datetime.now(UTC) <= NALOGO_TOKEN_EXPIRY_MARGIN
 
     async def create_receipt(
         self,
@@ -381,12 +479,16 @@ class NaloGoService:
                     payment_id=payment_id,
                     already_created=already_created,
                 )
+                # У подтверждённого вручную чека UUID неизвестен — возвращать нечего,
+                # но повторно создавать его тем более нельзя
+                if already_created == NALOGO_MANUAL_VERIFICATION_MARKER:
+                    return None
                 return already_created  # Возвращаем ранее созданный uuid
 
         # ЭТАП 1: Аутентификация
         # Если не прошла — чек точно не создавался, безопасно добавить в очередь
         try:
-            if not hasattr(self.client, '_access_token') or not self.client._access_token:
+            if not await self._has_usable_token():
                 auth_success = await self.authenticate()
                 if not auth_success:
                     # Аутентификация не прошла — чек не создавался, безопасно в очередь
@@ -509,6 +611,14 @@ class NaloGoService:
             logger.warning('Не удалось построить ссылку на чек NaloGO', error=sanitize_proxy_error(error))
             return None
 
+    async def is_pending_verification(self, payment_id: str) -> bool:
+        """Ждёт ли этот платёж ручной проверки (чек по нему мог быть создан)."""
+        if not payment_id:
+            return False
+
+        receipts = await self.get_pending_verification_receipts()
+        return any(receipt.get('payment_id') == payment_id for receipt in receipts)
+
     async def get_queue_length(self) -> int:
         """Получить количество чеков в очереди."""
         return await cache.llen(NALOGO_QUEUE_KEY)
@@ -624,7 +734,7 @@ class NaloGoService:
 
         try:
             # Аутентифицируемся если нужно
-            if not hasattr(self.client, '_access_token') or not self.client._access_token:
+            if not await self._has_usable_token():
                 auth_success = await self.authenticate()
                 if not auth_success:
                     return []

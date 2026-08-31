@@ -265,6 +265,20 @@ class NalogoQueueService:
                             amount=amount,
                             user_email=user_email,
                         )
+                elif await self._nalogo_service.is_pending_verification(payment_id):
+                    # Таймаут пришёл уже после успешной авторизации: чек мог быть создан,
+                    # и create_receipt отправил его на ручную проверку. Возврат в очередь
+                    # означал бы второй чек на тот же платёж, поэтому больше не трогаем.
+                    skipped += 1
+                    service_unavailable = True
+                    if payment_id and payment_id != 'unknown':
+                        await cache.delete(f'nalogo:queued:{payment_id}')
+                    logger.warning(
+                        'Чек отправлен на ручную проверку и убран из очереди',
+                        payment_id=payment_id,
+                        amount=amount,
+                    )
+                    break
                 else:
                     # Вернуть в очередь с увеличенным счетчиком попыток
                     await self._nalogo_service.requeue_receipt(receipt_data)
