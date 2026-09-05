@@ -2267,6 +2267,7 @@
 - `docs/persistent_cart_system.md` — файл
 - `docs/project_structure_reference.md` — файл
 - `docs/referral_program_setting.md` — файл
+- `docs/superpowers/`
 - `docs/web-admin-integration-guide.md` — файл
 - `docs/web-admin-integration.md` — файл
 - `docs/websocket-and-webhooks.md` — файл
@@ -2275,6 +2276,21 @@
 
 - `docs/handoffs/handoff-2026-08-31-1659.md` — файл
 - `docs/handoffs/handoff-2026-08-31-1944.md` — файл
+
+### docs/superpowers
+
+- `docs/superpowers/plans/`
+- `docs/superpowers/specs/`
+
+#### docs/superpowers/plans
+
+- `docs/superpowers/plans/2026-09-05-reachability-bot-core.md` — файл
+- `docs/superpowers/plans/2026-09-05-reachability-bot-jobs-api.md` — файл
+- `docs/superpowers/plans/2026-09-05-reachability-cabinet.md` — файл
+
+#### docs/superpowers/specs
+
+- `docs/superpowers/specs/2026-09-05-reachability-bschek-design.md` — файл
 
 ## migrations
 
@@ -3163,6 +3179,7 @@
 - `tests/fixtures/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/fixtures/bschek/`
 - `tests/fixtures/postgres_db.py` — Python-модуль
   Классы: нет
   Функции: `postgres_dsn` — URL тестовой базы из окружения или ``None``., `postgres_is_required` — Требует ли окружение, чтобы тесты на PostgreSQL действительно шли., `require_postgres_dsn` — URL живого PostgreSQL, иначе пропуск теста (или падение, если требуется)., `real_asyncpg` — Снимает заглушку ``sys.modules['asyncpg']``, поставленную conftest., `postgres_database` — URL тестовой базы, в которой уже создана полная схема проекта., `truncate_tables` — Очищает переданные таблицы вместе со счётчиками идентификаторов., `postgres_engine` — Движок к тестовой базе; переданные таблицы очищаются до и после теста., `postgres_session` — Одна сессия к тестовой базе (зеркало ``memory_session``, но на PostgreSQL)., `postgres_sessions` — Несколько независимых сессий, каждая на своём соединении., `lock_waiter_appeared` — Дождалась ли база сессии, стоящей в очереди за блокировкой., `wait_for_lock_waiter` — То же, но отсутствие соперника — сразу падение теста.
@@ -3172,6 +3189,121 @@
 - `tests/fixtures/sqlite_memory.py` — Python-модуль
   Классы: нет
   Функции: `ensure_real_aiosqlite` — Снять заглушку sys.modules['aiosqlite'] из conftest перед созданием engine., `memory_session` — Сессия к :memory: БД, где созданы только переданные таблицы.
+
+#### tests/fixtures/bschek
+
+- `tests/fixtures/bschek/README.md` — файл
+- `tests/fixtures/bschek/account.json` — файл
+- `tests/fixtures/bschek/auth_bad.json` — файл
+- `tests/fixtures/bschek/auth_none.json` — файл
+- `tests/fixtures/bschek/conc_a.json` — файл
+- `tests/fixtures/bschek/method_405.json` — файл
+- `tests/fixtures/bschek/op_bad.json` — файл
+- `tests/fixtures/bschek/op_dpi_on.json` — файл
+- `tests/fixtures/bschek/op_mts_beeline.json` — файл
+- `tests/fixtures/bschek/op_probeable.json` — файл
+- `tests/fixtures/bschek/op_region.json` — файл
+- `tests/fixtures/bschek/op_region_enc.json` — файл
+- `tests/fixtures/bschek/op_region_lat.json` — файл
+- `tests/fixtures/bschek/op_unknown.json` — файл
+- `tests/fixtures/bschek/operators.json` — файл
+- `tests/fixtures/bschek/p1_probe.json` — файл
+- `tests/fixtures/bschek/p1_replay.json` — файл
+- `tests/fixtures/bschek/p1_reused.json` — файл
+- `tests/fixtures/bschek/p2_full.json` — файл
+- `tests/fixtures/bschek/p2_replay.json` — файл
+- `tests/fixtures/bschek/p3_bare_mts.json` — файл
+- `tests/fixtures/bschek/p4_bare_mts_any.json` — файл
+- `tests/fixtures/bschek/pF_fleet.json` — файл
+- `tests/fixtures/bschek/pF_replay_0.json` — файл
+- `tests/fixtures/bschek/pF_replay_late.json` — файл
+- `tests/fixtures/bschek/pF_same_key_while_running.json` — файл
+- `tests/fixtures/bschek/p_blocked.json` — файл
+- `tests/fixtures/bschek/p_dpi_off.json` — файл
+- `tests/fixtures/bschek/p_empty_ops.json` — файл
+- `tests/fixtures/bschek/p_legacy_alias.json` — файл
+- `tests/fixtures/bschek/p_noidem.json` — файл
+- `tests/fixtures/bschek/pv_11_targets.json` — файл
+- `tests/fixtures/bschek/pv_all_any.json` — файл
+- `tests/fixtures/bschek/pv_all_default.json` — файл
+- `tests/fixtures/bschek/pv_all_stars.json` — файл
+- `tests/fixtures/bschek/pv_bad_key.json` — файл
+- `tests/fixtures/bschek/pv_bare_mts.json` — файл
+- `tests/fixtures/bschek/pv_bare_mts_any.json` — файл
+- `tests/fixtures/bschek/pv_cfo_stub.json` — файл
+- `tests/fixtures/bschek/pv_conflict.json` — файл
+- `tests/fixtures/bschek/pv_dup_targets.json` — файл
+- `tests/fixtures/bschek/pv_empty_ops.json` — файл
+- `tests/fixtures/bschek/pv_garbage.json` — файл
+- `tests/fixtures/bschek/pv_ipport_target.json` — файл
+- `tests/fixtures/bschek/pv_lat_region.json` — файл
+- `tests/fixtures/bschek/pv_mixed.json` — файл
+- `tests/fixtures/bschek/pv_mts_cfo_off.json` — файл
+- `tests/fixtures/bschek/pv_no_probes.json` — файл
+- `tests/fixtures/bschek/pv_no_target.json` — файл
+- `tests/fixtures/bschek/pv_old_format.json` — файл
+- `tests/fixtures/bschek/pv_sni.json` — файл
+- `tests/fixtures/bschek/pv_sni_hosts_only.json` — файл
+- `tests/fixtures/bschek/pv_sni_no_hosts.json` — файл
+- `tests/fixtures/bschek/pv_star_cfo_any.json` — файл
+- `tests/fixtures/bschek/pv_star_cfo_on.json` — файл
+- `tests/fixtures/bschek/pv_two_targets.json` — файл
+- `tests/fixtures/bschek/pv_unknown_op.json` — файл
+- `tests/fixtures/bschek/pv_url_target.json` — файл
+- `tests/fixtures/bschek/rl2_a.json` — файл
+- `tests/fixtures/bschek/rl2_b.json` — файл
+- `tests/fixtures/bschek/s1_poll_00.json` — файл
+- `tests/fixtures/bschek/s1_poll_01.json` — файл
+- `tests/fixtures/bschek/s1_poll_03.json` — файл
+- `tests/fixtures/bschek/s1_second.json` — файл
+- `tests/fixtures/bschek/s1_submit.json` — файл
+- `tests/fixtures/bschek/sB_after_0.json` — файл
+- `tests/fixtures/bschek/sB_cancel.json` — файл
+- `tests/fixtures/bschek/sB_cancel_again.json` — файл
+- `tests/fixtures/bschek/sB_submit.json` — файл
+- `tests/fixtures/bschek/sC_poll_05.json` — файл
+- `tests/fixtures/bschek/sC_replay_done.json` — файл
+- `tests/fixtures/bschek/sC_replay_running.json` — файл
+- `tests/fixtures/bschek/sC_submit.json` — файл
+- `tests/fixtures/bschek/sD_poll_37.json` — файл
+- `tests/fixtures/bschek/sD_submit.json` — файл
+- `tests/fixtures/bschek/s_cancel_done.json` — файл
+- `tests/fixtures/bschek/s_notfound.json` — файл
+- `tests/fixtures/bschek/sv_25.json` — файл
+- `tests/fixtures/bschek/sv_all_any.json` — файл
+- `tests/fixtures/bschek/sv_cfo_any_sni.json` — файл
+- `tests/fixtures/bschek/sv_cfo_on.json` — файл
+- `tests/fixtures/bschek/sv_not24.json` — файл
+- `tests/fixtures/bschek/sv_one_unit.json` — файл
+- `tests/fixtures/bschek/sv_webhook.json` — файл
+- `tests/fixtures/bschek/v1_poll_00.json` — файл
+- `tests/fixtures/bschek/v1_poll_01.json` — файл
+- `tests/fixtures/bschek/v1_poll_12.json` — файл
+- `tests/fixtures/bschek/v1_second.json` — файл
+- `tests/fixtures/bschek/v1_submit.json` — файл
+- `tests/fixtures/bschek/v2_cancel.json` — файл
+- `tests/fixtures/bschek/v2_cancel_again.json` — файл
+- `tests/fixtures/bschek/v2_replay.json` — файл
+- `tests/fixtures/bschek/v2_status.json` — файл
+- `tests/fixtures/bschek/v2_submit.json` — файл
+- `tests/fixtures/bschek/vA_poll_02.json` — файл
+- `tests/fixtures/bschek/vA_submit.json` — файл
+- `tests/fixtures/bschek/vB_poll_34.json` — файл
+- `tests/fixtures/bschek/vB_submit.json` — файл
+- `tests/fixtures/bschek/vC_after_cancel.json` — файл
+- `tests/fixtures/bschek/vC_cancel.json` — файл
+- `tests/fixtures/bschek/vC_same_key_now.json` — файл
+- `tests/fixtures/bschek/vC_submit.json` — файл
+- `tests/fixtures/bschek/vD_poll_19.json` — файл
+- `tests/fixtures/bschek/vD_submit.json` — файл
+- `tests/fixtures/bschek/vE_poll_01.json` — файл
+- `tests/fixtures/bschek/vE_submit.json` — файл
+- `tests/fixtures/bschek/v_cancel_done.json` — файл
+- `tests/fixtures/bschek/v_noconfigs.json` — файл
+- `tests/fixtures/bschek/v_notfound.json` — файл
+- `tests/fixtures/bschek/v_suburl.json` — файл
+- `tests/fixtures/bschek/v_too_large.json` — файл
+- `tests/fixtures/bschek/v_too_many.json` — файл
 
 ### tests/handlers
 
