@@ -147,6 +147,25 @@ class RemnaWaveAccessibleNode:
 
 
 @dataclass
+class RemnaWaveHost:
+    """Хост панели — то, куда подключаются пользователи: адрес, порт, SNI, инбаунд."""
+
+    uuid: str
+    remark: str
+    address: str
+    port: int | None = None
+    sni: str | None = None
+    host: str | None = None
+    is_disabled: bool = False
+    is_hidden: bool = False
+    tag: str | None = None
+    security_layer: str | None = None
+    config_profile_uuid: str | None = None
+    config_profile_inbound_uuid: str | None = None
+    view_position: int = 0
+
+
+@dataclass
 class RemnaWaveNode:
     uuid: str
     name: str
@@ -1237,6 +1256,11 @@ class RemnaWaveAPI:
         response = await self._make_request('GET', '/api/nodes')
         return [self._parse_node(node) for node in response['response']]
 
+    async def get_all_hosts(self) -> list[RemnaWaveHost]:
+        """GET /api/hosts — все хосты панели (включая отключённые и скрытые)."""
+        response = await self._make_request('GET', '/api/hosts')
+        return [self._parse_host(host) for host in response.get('response') or []]
+
     async def get_node_by_uuid(self, uuid: str) -> RemnaWaveNode | None:
         try:
             response = await self._make_request('GET', f'/api/nodes/{uuid}')
@@ -2040,6 +2064,26 @@ class RemnaWaveAPI:
             config_profile_uuid=node_data['configProfileUuid'],
             config_profile_name=node_data['configProfileName'],
             active_inbounds=node_data.get('activeInbounds', []),
+        )
+
+    @staticmethod
+    def _parse_host(data: dict) -> RemnaWaveHost:
+        inbound = data.get('inbound') or {}
+        port = data.get('port')
+        return RemnaWaveHost(
+            uuid=data['uuid'],
+            remark=data.get('remark') or '',
+            address=data.get('address') or '',
+            port=int(port) if port is not None else None,
+            sni=data.get('sni') or None,
+            host=data.get('host') or None,
+            is_disabled=bool(data.get('isDisabled', False)),
+            is_hidden=bool(data.get('isHidden', False)),
+            tag=data.get('tag') or None,
+            security_layer=data.get('securityLayer') or None,
+            config_profile_uuid=inbound.get('configProfileUuid') or None,
+            config_profile_inbound_uuid=inbound.get('configProfileInboundUuid') or None,
+            view_position=int(data.get('viewPosition') or 0),
         )
 
     def _parse_node(self, node_data: dict) -> RemnaWaveNode:
