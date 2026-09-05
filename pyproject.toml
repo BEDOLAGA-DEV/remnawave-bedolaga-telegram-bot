@@ -337,4 +337,5 @@ markers = [
     'asyncio: запуск асинхронного теста через встроенный цикл событий',
     'anyio: запуск асинхронного теста через встроенный цикл событий',
     'postgres: тесту нужен настоящий PostgreSQL из TEST_DATABASE_URL',
+    'bschek_live: живой bschekbot API, нужен BSCHEK_LIVE_API_KEY; только бесплатные ручки, денег не тратит',
 ]

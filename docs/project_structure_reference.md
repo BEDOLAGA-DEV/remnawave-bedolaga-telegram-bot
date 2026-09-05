@@ -2723,6 +2723,7 @@
 - `tests/fixtures/`
 - `tests/handlers/`
 - `tests/integration/`
+- `tests/live/`
 - `tests/middlewares/`
 - `tests/services/`
 - `tests/test_config_languages.py` — Python-модуль
@@ -3491,6 +3492,15 @@
   Классы: нет
   Функции: `test_promo_group_promocode_full_workflow` — Integration test: Full workflow of promo group promocode, `test_duplicate_promo_group_assignment_edge_case` — Edge case: User already has promo group from previous promocode, `test_missing_promo_group_graceful_failure` — Edge case: Promocode references deleted/non-existent promo group
 
+### tests/live
+
+- `tests/live/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `tests/live/test_bschek_live.py` — Python-модуль
+  Классы: нет
+  Функции: `api_key`, `test_operators_shape_and_catalog_parsing`, `test_account_shape_without_secret`, `test_probe_preview_breakdown`, `test_probe_preview_sni_needs_both_fields`, `test_validation_codes_still_the_same`, `test_scan_preview_rejects_non_24`, `test_scan_preview_shape`, `test_bad_key_is_unauthenticated`
+
 ### tests/middlewares
 
 - `tests/middlewares/__init__.py` — Python-модуль
@@ -4013,6 +4023,9 @@
 - `tests/services/reachability/fakes.py` — Python-модуль
   Классы: `FakeClock` (3 методов), `FakeAPI` (11 методов)
   Функции: нет
+- `tests/services/reachability/test_background.py` — Python-модуль
+  Классы: нет
+  Функции: `test_start_background_is_idempotent_and_stop_cancels`, `test_failed_background_is_restarted_on_next_start`, `test_stop_without_start_is_noop`
 - `tests/services/reachability/test_gate.py` — Python-модуль
   Классы: `FakeClock` (3 методов)
   Функции: `test_spaces_calls_by_min_interval`, `test_retries_rate_limited_with_retry_after_and_same_call`, `test_gives_up_after_max_rate_limit_retries`, `test_other_errors_pass_through_immediately`, `test_lock_is_not_held_during_the_call`
