@@ -1856,12 +1856,21 @@
 - `app/services/reachability/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/services/reachability/gate.py` — Python-модуль
+  Классы: `PaidCallGate` (3 методов)
+  Функции: нет
 - `app/services/reachability/links.py` — Python-модуль
   Классы: `ParsedLink`, `RejectedLink`
   Функции: `parse_links`
+- `app/services/reachability/pricing.py` — Python-модуль
+  Классы: `CostLimitExceeded` (1 методов)
+  Функции: `format_rubles`, `credits_to_kopeks`, `estimate_vless_kopeks`, `enforce_cost_limit`
 - `app/services/reachability/targets.py` — Python-модуль
   Классы: `TargetValidationError`, `Target` (2 методов)
   Функции: `target_key`, `probe_api_target` — Строка цели для API: IP/домен с портом либо без., `normalize_custom_target` — IP, домен, адрес:порт или URL → цель. Схема отбрасывается (HTTP-проба у API с http:// не работает)., `is_reality_like` — SNI чужого домена — признак Reality с dest на «белом» сайте., `guess_purpose`, `validate_cidr24`, `cidr24_for_ip`, `hosts_for_node` — Хосты ноды: по инбаунду, а без него — по совпадению адреса с адресом/IP ноды.
+- `app/services/reachability/units.py` — Python-модуль
+  Классы: `SelectorError`, `Unit` (1 методов), `Selector`, `Expansion`, `UnitsCatalog` (3 методов), `UnitsCache` (2 методов)
+  Функции: `parse_selector`
 - `app/services/reachability/verdict.py` — Python-модуль
   Классы: нет
   Функции: `probe_leg_verdict`, `vless_leg_verdict`, `matches_expectation` — True/False, когда ожидание есть; None — справочная строка без ожидания.
@@ -3984,12 +3993,21 @@
 - `tests/services/reachability/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/services/reachability/test_gate.py` — Python-модуль
+  Классы: `FakeClock` (3 методов)
+  Функции: `test_spaces_calls_by_min_interval`, `test_retries_rate_limited_with_retry_after_and_same_call`, `test_gives_up_after_max_rate_limit_retries`, `test_other_errors_pass_through_immediately`, `test_lock_is_not_held_during_the_call`
 - `tests/services/reachability/test_links.py` — Python-модуль
   Классы: нет
   Функции: `test_parses_vless_with_sni_and_decoded_name`, `test_parses_other_protocols`, `test_stub_links_from_subscription_page_are_rejected`, `test_unknown_scheme_and_garbage_are_rejected_with_reason`, `test_multiple_lines_keep_order_and_skip_blank_lines`, `test_max_configs_constant_matches_api_limit`
+- `tests/services/reachability/test_pricing.py` — Python-модуль
+  Классы: нет
+  Функции: `test_credits_are_kopeks`, `test_vless_estimate_uses_last_leg_price_or_default`, `test_cost_limit_zero_means_unlimited`, `test_cost_limit_exceeded_carries_numbers`, `test_format_rubles`
 - `tests/services/reachability/test_targets.py` — Python-модуль
   Классы: нет
   Функции: `test_normalize_custom_target`, `test_normalize_rejects_private_and_malformed`, `test_target_key_is_lowercase_with_optional_port`, `test_probe_api_target_keeps_port`, `test_is_reality_like`, `test_guess_purpose`, `test_cidr_helpers` — Документационные диапазоны (192.0.2.0/24 и т. п.) не глобальные — их тоже режем., `test_hosts_for_node_matches_by_inbound_then_by_address`, `test_target_round_trips_through_dict`
+- `tests/services/reachability/test_units.py` — Python-модуль
+  Классы: нет
+  Функции: `catalog`, `test_catalog_from_response`, `test_parse_selector`, `test_parse_selector_rejects`, `test_expand_bare_operator_with_dpi_on_skips_off_units`, `test_expand_region_selector_and_latin_code`, `test_expand_any_keeps_both_groups_and_dedups`, `test_expand_empty_means_whole_fleet_by_dpi`, `test_expand_reports_unknown_selectors_instead_of_dropping_them`, `test_expand_marks_non_probeable_units_unavailable`, `test_expand_rejects_unknown_dpi_mode`, `test_cache_refetches_after_ttl_and_on_force`
 - `tests/services/reachability/test_verdict.py` — Python-модуль
   Классы: нет
   Функции: `test_probe_leg_verdict_on_recorded_legs`, `test_reality_tls_blocked_without_sni_probe_is_unknown`, `test_sni_entry_in_evidence_shape_is_understood` — Проба по флоту отдаёт sni[] без поля host: имя лежит в evidence.sni, форма другая., `test_probe_leg_not_executed_is_unknown`, `test_icmp_only_probe`, `test_vless_verdicts_on_recorded_legs`, `test_vless_other_protocol_fail_reasons`, `test_matches_expectation`
