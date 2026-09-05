@@ -479,8 +479,13 @@ class ReachabilityService:
     # ------------------------------------------------------------ фон
 
     def start_background(self) -> None:
-        if self._background is None or self._background.done():
-            self._background = asyncio.create_task(self.runner.sweeper_loop())
+        """Идемпотентно: живой обходчик не трогает, упавший — перезапускает с записью причины."""
+        task = self._background
+        if task is not None and not task.done():
+            return
+        if task is not None and not task.cancelled() and task.exception() is not None:
+            logger.error('Обходчик задач проверки упал, перезапуск', error=str(task.exception()))
+        self._background = asyncio.create_task(self.runner.sweeper_loop())
 
     async def stop_background(self) -> None:
         self.runner.stop()
