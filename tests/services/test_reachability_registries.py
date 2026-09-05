@@ -2,8 +2,7 @@
 
 Право, которого нет в PERMISSION_REGISTRY, редактор ролей отвергает с 400, а
 настройка без категории не показывается в кабинете. Здесь закреплены имена и
-дефолты из спецификации (docs/superpowers/specs/2026-09-05-reachability-bschek-design.md,
-раздел 5).
+дефолты интеграции: префикс BSCHEK_, категория BSCHEK, секция прав reachability.
 """
 
 from __future__ import annotations
