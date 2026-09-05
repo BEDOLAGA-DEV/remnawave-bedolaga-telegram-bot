@@ -199,6 +199,10 @@ class RemnaWaveNode:
     # Адреса узла: [{ip, status}], status ∈ INBOUND/OUTBOUND/MANAGEMENT/...
     # Нужны, чтобы предложить выбор исходного адреса в GeoCheck (3.3.0).
     ips: list[dict[str, Any]] = field(default_factory=list)
+    # Активный профиль конфигурации и UUID его активных инбаундов (configProfile.activeInbounds[].uuid).
+    # По ним хост панели (inbound.configProfileInboundUuid) привязывается к ноде.
+    active_config_profile_uuid: str | None = None
+    active_inbound_uuids: list[str] = field(default_factory=list)
 
     @property
     def is_node_online(self) -> bool:
@@ -2087,6 +2091,7 @@ class RemnaWaveAPI:
         )
 
     def _parse_node(self, node_data: dict) -> RemnaWaveNode:
+        config_profile = node_data.get('configProfile') or {}
         return RemnaWaveNode(
             uuid=node_data['uuid'],
             name=node_data['name'],
@@ -2125,6 +2130,12 @@ class RemnaWaveAPI:
             system=node_data.get('system'),
             active_plugin_uuid=node_data.get('activePluginUuid'),
             ips=node_data.get('ips') or [],
+            active_config_profile_uuid=config_profile.get('activeConfigProfileUuid') or None,
+            active_inbound_uuids=[
+                str(inbound['uuid'])
+                for inbound in config_profile.get('activeInbounds') or []
+                if isinstance(inbound, dict) and inbound.get('uuid')
+            ],
         )
 
     def _parse_subscription_info(self, data: dict) -> SubscriptionInfo:

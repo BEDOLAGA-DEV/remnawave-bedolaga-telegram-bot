@@ -1865,6 +1865,9 @@
 - `app/services/reachability/pricing.py` — Python-модуль
   Классы: `CostLimitExceeded` (1 методов)
   Функции: `format_rubles`, `credits_to_kopeks`, `estimate_vless_kopeks`, `enforce_cost_limit`
+- `app/services/reachability/resolver.py` — Python-модуль
+  Классы: `TargetResolutionError`, `HostView`, `NodeView`, `SubscriptionConfigs`, `TargetResolver` (14 методов)
+  Функции: `target_from_host`, `target_from_node`, `target_from_link`, `target_from_cidr`
 - `app/services/reachability/targets.py` — Python-модуль
   Классы: `TargetValidationError`, `Target` (2 методов)
   Функции: `target_key`, `probe_api_target` — Строка цели для API: IP/домен с портом либо без., `normalize_custom_target` — IP, домен, адрес:порт или URL → цель. Схема отбрасывается (HTTP-проба у API с http:// не работает)., `is_reality_like` — SNI чужого домена — признак Reality с dest на «белом» сайте., `guess_purpose`, `validate_cidr24`, `cidr24_for_ip`, `hosts_for_node` — Хосты ноды: по инбаунду, а без него — по совпадению адреса с адресом/IP ноды.
@@ -3184,7 +3187,7 @@
   Функции: `test_request_geocheck_posts_to_connections_endpoint`, `test_request_geocheck_default_mode_sends_empty_json_body` — requestBody у команды required: «по умолчанию» — это ``{}``, а не отсутствие тела., `test_request_geocheck_sends_ip_only`, `test_request_geocheck_sends_interface_only`, `test_request_geocheck_rejects_ip_and_interface_together` — Панель выбирает один источник маршрута; отправлять оба — молча неоднозначно., `test_request_geocheck_ignores_blank_values`, `test_request_geocheck_raises_when_panel_returns_no_job_id`, `test_get_geocheck_result_uses_job_id_path`, `test_get_geocheck_result_returns_completed_payload`, `test_parse_node_exposes_ips`, `test_parse_node_ips_defaults_to_empty_list`
 - `tests/external/test_remnawave_hosts.py` — Python-модуль
   Классы: нет
-  Функции: `test_parse_host_maps_panel_fields`, `test_parse_host_tolerates_missing_optional_fields`, `test_get_all_hosts_calls_hosts_endpoint`
+  Функции: `test_parse_host_maps_panel_fields`, `test_parse_host_tolerates_missing_optional_fields`, `test_get_all_hosts_calls_hosts_endpoint`, `test_parse_node_exposes_active_inbound_uuids_for_host_linking`, `test_parse_node_without_config_profile_has_no_inbounds`
 - `tests/external/test_remnawave_remove_device.py` — Python-модуль
   Классы: нет
   Функции: `test_remove_device_posts_numeric_user_id_in_body` — Тело запроса — {'userId': int, 'hwid': str}; никакого userUuid., `test_remove_device_coerces_digit_string_id_to_int` — БД отдаёт BigInteger, но JSON/FSM могут донести строку — коерсим до запроса., `test_remove_device_rejects_uuid_id_without_hitting_the_panel` — Протухший UUID вместо id — наша битая ссылка, а не запрос к панели., `test_success_when_target_hwid_absent_from_remaining_list`, `test_failure_when_panel_acks_but_hwid_still_present`, `test_404_is_treated_as_success`, `test_other_api_error_is_failure`, `test_transient_exception_is_failure`, `test_bare_ack_without_device_list_is_success` — Panels that reply with just an ack (no devices echo) keep the old behaviour., `test_empty_response_is_success`, `test_reset_user_devices_is_a_single_delete_all_call`, `test_reset_user_devices_coerces_digit_string_id_to_int`, `test_reset_user_devices_rejects_uuid_id_without_hitting_the_panel`, `test_reset_user_devices_404_is_success` — Пользователя/устройств уже нет — цель достигнута., `test_reset_user_devices_failure_is_reported`
@@ -3986,6 +3989,9 @@
 - `tests/services/reachability/test_pricing.py` — Python-модуль
   Классы: нет
   Функции: `test_credits_are_kopeks`, `test_vless_estimate_uses_last_leg_price_or_default`, `test_cost_limit_zero_means_unlimited`, `test_cost_limit_exceeded_carries_numbers`, `test_format_rubles`
+- `tests/services/reachability/test_resolver.py` — Python-модуль
+  Классы: нет
+  Функции: `test_hosts_hide_disabled_by_default_and_guess_purpose`, `test_sources_are_fetched_once_per_resolver`, `test_prefs_override_guess_and_mark_excluded`, `test_pref_with_unknown_purpose_keeps_guess`, `test_nodes_expose_icmp_target_and_linked_hosts`, `test_subscription_configs_parse_links_and_reject_stubs`, `test_resolve_mixed_items_dedups_by_target_key`, `test_resolve_host_applies_prefs`, `test_resolve_custom_link_becomes_config_target`, `test_resolve_reports_unknown_targets`
 - `tests/services/reachability/test_targets.py` — Python-модуль
   Классы: нет
   Функции: `test_normalize_custom_target`, `test_normalize_rejects_private_and_malformed`, `test_target_key_is_lowercase_with_optional_port`, `test_probe_api_target_keeps_port`, `test_is_reality_like`, `test_guess_purpose`, `test_cidr_helpers` — Документационные диапазоны (192.0.2.0/24 и т. п.) не глобальные — их тоже режем., `test_hosts_for_node_matches_by_inbound_then_by_address`, `test_target_round_trips_through_dict`
