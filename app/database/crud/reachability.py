@@ -21,6 +21,10 @@ async def create_job(db: AsyncSession, **fields: Any) -> ReachabilityJob:
     job = ReachabilityJob(**fields)
     db.add(job)
     await db.flush()
+    # Свежий объект не знает своих легов: обращение к ``job.legs`` в обработчике
+    # запустило бы ленивый SELECT вне greenlet (MissingGreenlet). Задача отдаётся
+    # готовой к ответу, как из get_job/list_jobs с selectinload.
+    await db.refresh(job, attribute_names=['legs'])
     return job
 
 
@@ -96,6 +100,11 @@ async def replace_legs(db: AsyncSession, job_id: int, legs: list[dict[str, Any]]
     rows = [ReachabilityLeg(job_id=job_id, **leg) for leg in legs]
     db.add_all(rows)
     await db.flush()
+    # Леги пишутся мимо ORM-коллекции; у задачи, уже загруженной в этом сеансе,
+    # ``legs`` остался бы прежним. Обновляем явно, чтобы объект отвечал базе.
+    job = await db.get(ReachabilityJob, job_id)
+    if job is not None:
+        await db.refresh(job, attribute_names=['legs'])
     return rows
 
 

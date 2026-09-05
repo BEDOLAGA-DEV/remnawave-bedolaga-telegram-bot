@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import inspect as sa_inspect
 
 from app.database.crud import reachability as crud
 from app.database.models import User
@@ -364,6 +365,26 @@ async def test_create_job_writes_row_and_spawns_runner(session_factory) -> None:
         await task
     async with session_factory() as db:
         assert (await crud.get_job(db, job.id)).status == 'done'
+
+
+async def test_create_job_returns_job_ready_for_response(session_factory) -> None:
+    """Роут сериализует созданную задачу сразу, включая ``legs``.
+
+    Свежий объект после flush/commit не имеет загруженной связи: обращение к
+    ``job.legs`` в обработчике запускает ленивый SELECT вне greenlet — в проде
+    это MissingGreenlet на POST /jobs. CRUD обязан отдавать задачу, готовую к
+    ответу без дополнительного IO.
+    """
+    client = FakeClient({'probe': [load_bschek_fixture('p1_probe')['body']]})
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, PROBE_PAYLOAD, admin.id)
+        assert 'legs' not in sa_inspect(job).unloaded
+        assert job.legs == []
+    for task in list(service.runner._tasks.values()):
+        await task
 
 
 async def test_create_job_refuses_second_active_vless(session_factory) -> None:
