@@ -32,6 +32,7 @@ from .admin_pinned_messages import router as admin_pinned_messages_router
 from .admin_policies import router as admin_policies_router
 from .admin_promo_offers import router as admin_promo_offers_router
 from .admin_promocodes import promo_groups_router as admin_promo_groups_router, router as admin_promocodes_router
+from .admin_reachability import router as admin_reachability_router
 from .admin_referral_network import router as admin_referral_network_router
 from .admin_remnawave import router as admin_remnawave_router
 from .admin_roles import router as admin_roles_router
@@ -138,6 +139,7 @@ router.include_router(admin_stats_router)
 router.include_router(admin_referral_network_router)
 router.include_router(admin_sales_stats_router)
 router.include_router(admin_ban_system_router)
+router.include_router(admin_reachability_router)
 router.include_router(admin_broadcasts_router)
 router.include_router(admin_promocodes_router)
 router.include_router(admin_promo_groups_router)

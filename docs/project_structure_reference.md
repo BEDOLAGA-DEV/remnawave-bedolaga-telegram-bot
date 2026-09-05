@@ -246,6 +246,9 @@
 - `app/cabinet/routes/admin_promocodes.py` — Python-модуль
   Классы: `PromoCodeResponse`, `PromoCodeListResponse`, `PromoCodeRecentUse`, `PromoCodeDetailResponse`, `PromoCodeCreateRequest`, `PromoCodeUpdateRequest`, `PromoGroupResponse`, `PromoGroupListResponse`, `PromoGroupCreateRequest`, `PromoGroupUpdateRequest`, `DeactivateDiscountResponse`
   Функции: `list_promocodes` — Get list of all promocodes., `get_promocode` — Get promocode details with usage statistics., `create_promocode_endpoint` — Create a new promocode., `update_promocode_endpoint` — Update an existing promocode., `delete_promocode_endpoint` — Delete a promocode., `admin_deactivate_discount_promocode` — Admin: deactivate a user's active discount (promo code or promo offer)., `list_promo_groups` — Get list of all promo groups., `get_promo_group` — Get promo group details., `create_promo_group_endpoint` — Create a new promo group., `update_promo_group_endpoint` — Update a promo group., `delete_promo_group_endpoint` — Delete a promo group.
+- `app/cabinet/routes/admin_reachability.py` — Python-модуль
+  Классы: нет
+  Функции: `get_status`, `get_units`, `get_hosts`, `get_nodes`, `get_subscription_configs`, `update_pref`, `preview_job`, `create_job`, `list_jobs`, `get_job`, `cancel_job`, `retrieve_job`, `get_summary`
 - `app/cabinet/routes/admin_referral_network.py` — Python-модуль
   Классы: `NetworkUserNode`, `TopReferrer`, `NetworkCampaignNode`, `NetworkEdge`, `NetworkGraphResponse`, `NetworkUserDetail`, `NetworkCampaignDetail`, `NetworkSearchResult`, `CampaignOption`, `PartnerOption`, `ScopeOptionsResponse`
   Функции: `get_referral_network` — Return full referral network graph data for visualization., `get_scope_options` — Return lightweight lists of campaigns and partners for the scope selector., `get_scoped_referral_network` — Return scoped referral network graph for selected campaigns, partners, and/or users., `get_network_user_detail` — Return detailed info about a specific user in the referral network., `get_network_campaign_detail` — Return detailed info about a specific advertising campaign., `search_referral_network` — Search users and campaigns in the referral network by telegram_id, username, email, or campaign name.
@@ -480,6 +483,9 @@
   Функции: нет
 - `app/cabinet/schemas/pinned_messages.py` — Python-модуль
   Классы: `PinnedMessageMedia`, `PinnedMessageCreateRequest`, `PinnedMessageUpdateRequest`, `PinnedMessageSettingsRequest`, `PinnedMessageResponse`, `PinnedMessageBroadcastResponse`, `PinnedMessageUnpinResponse`, `PinnedMessageListResponse`
+  Функции: нет
+- `app/cabinet/schemas/reachability.py` — Python-модуль
+  Классы: `TargetIn` (1 методов), `ProbesIn`, `JobCreateRequest`, `PrefUpdateRequest`, `UnitOut`, `UnitsResponse`, `ActiveJobOut`, `ReferenceOut`, `StatusResponse`, `HostTargetOut`, `HostsResponse`, `NodeTargetOut`, `NodesResponse`, `ConfigOut`, `RejectedOut`, `SubscriptionConfigsResponse`, `PrefOut`, `SkippedOut`, `TargetOut`, `PreviewResponse`, `LegOut`, `JobOut`, `JobListResponse`, `CellOut`, `SummaryRow`, `SummaryResponse`
   Функции: нет
 - `app/cabinet/schemas/referral.py` — Python-модуль
   Классы: `ReferralInfoResponse`, `ReferralItemResponse`, `ReferralListResponse`, `ReferralEarningResponse`, `ReferralEarningsListResponse`, `ReferralDaysTargetOption`, `ReferralRewardChoiceRequest`, `ReferralProgramLevel`, `ReferralTermsResponse`, `ReferralRewardLevelResponse`, `ReferralRewardTariffOption`, `ReferralRewardLevelsResponse`, `ReferralRewardLevelUpdateRequest`, `ReferralSchemeUpdateRequest`, `ReferralDepthUpdateRequest`, `ReferralLevelsModeUpdateRequest`
@@ -2842,6 +2848,9 @@
 - `tests/cabinet/test_admin_overpay_certificate_routes.py` — Python-модуль
   Классы: нет
   Функции: `p12_bytes`, `stubbed_service`, `test_admin_overpay_certificate_routes_registered`, `test_upload_certificate_commits`, `test_upload_certificate_env_locked_warning`, `test_upload_certificate_invalid_returns_422`, `test_upload_certificate_oversize_returns_413`, `test_delete_certificate_commits`
+- `tests/cabinet/test_admin_reachability.py` — Python-модуль
+  Классы: нет
+  Функции: `service`, `test_routes_are_registered`, `test_routes_require_expected_permission`, `test_target_in_validation`, `test_status_maps_service_dict`, `test_preview_errors_are_translated`, `test_busy_is_409_with_job_reference`, `test_cancel_not_cancellable_is_409_and_not_found_is_404`, `test_create_job_logs_audit_and_hides_raw_links`, `test_cancel_logs_audit`, `test_list_jobs_passes_filters_and_paginates`, `test_units_splits_csv_filters`, `test_subscription_configs_hide_credentials`, `test_preview_response_omits_request_body`, `test_update_pref_calls_service_with_admin`, `test_summary_maps_rows_and_units`
 - `tests/cabinet/test_admin_referral_levels_routes.py` — Python-модуль
   Классы: `TestValidation` (3 методов), `TestPartialUpdate` (2 методов), `TestSchemeSwitch` (3 методов), `TestDeletion` (1 методов), `TestTermsEndpointUnderLevels` (3 методов), `TestLegacyImportEndpoint` (2 методов), `TestDepthEndpoint` (3 методов), `TestLevelsModeSetting` (3 методов), `TestLevelsModeEndpoint` (5 методов), `TestLevelsPayloadReportsTheMode` (2 методов), `TestBotAndCabinetAgree` (3 методов)
   Функции: `test_referral_level_routes_registered`, `test_each_url_reaches_its_own_handler` — Наличия пути в списке МАЛО — важно, какой обработчик его получит., `wired`
@@ -4021,7 +4030,7 @@
   Функции: `test_credits_are_kopeks`, `test_vless_estimate_uses_last_leg_price_or_default`, `test_cost_limit_zero_means_unlimited`, `test_cost_limit_exceeded_carries_numbers`, `test_format_rubles`
 - `tests/services/reachability/test_requests.py` — Python-модуль
   Классы: нет
-  Функции: `test_probe_request_has_targets_units_probes_and_sni_hosts`, `test_probe_request_without_sni_omits_sni_hosts_and_skips_cidr_targets`, `test_probe_request_normalizes_partial_probes_dict`, `test_probe_request_rejects_no_probes_and_no_targets`, `test_vless_request_joins_raw_links_and_limits_20`, `test_scan_request`
+  Функции: `test_probe_request_has_targets_units_probes_and_sni_hosts`, `test_probe_request_without_sni_omits_sni_hosts_and_skips_cidr_targets`, `test_probe_request_normalizes_partial_probes_dict`, `test_probe_request_rejects_no_probes_and_no_targets`, `test_vless_request_joins_raw_links_and_limits_20`, `test_scan_request`, `test_probe_request_limits_targets_to_api_maximum`
 - `tests/services/reachability/test_resolver.py` — Python-модуль
   Классы: нет
   Функции: `test_hosts_hide_disabled_by_default_and_guess_purpose`, `test_sources_are_fetched_once_per_resolver`, `test_prefs_override_guess_and_mark_excluded`, `test_pref_with_unknown_purpose_keeps_guess`, `test_nodes_expose_icmp_target_and_linked_hosts`, `test_subscription_configs_parse_links_and_reject_stubs`, `test_resolve_mixed_items_dedups_by_target_key`, `test_resolve_host_applies_prefs`, `test_resolve_custom_link_becomes_config_target`, `test_resolve_reports_unknown_targets`
