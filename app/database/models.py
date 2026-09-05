@@ -5036,3 +5036,94 @@ class EmailQueueItem(Base):
 
     created_at = Column(AwareDateTime(), server_default=func.now(), nullable=False, index=True)
     sent_at = Column(AwareDateTime(), nullable=True)
+
+
+class ReachabilityJob(Base):
+    """Задача проверки достижимости через bschekbot (probe / vless / scan).
+
+    Хранит запрос байт в байт и ключ идемпотентности: любой повтор к API идёт
+    только с ними (иначе списание повторится). ``result`` — сырой итоговый ответ.
+    """
+
+    __tablename__ = 'reachability_jobs'
+    __table_args__ = (Index('ix_reachability_jobs_kind_created', 'kind', 'created_at'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(16), nullable=False)  # probe | vless | scan
+    status = Column(String(16), nullable=False, default='pending', index=True)
+    phase = Column(String(32), nullable=True)  # submitting | waiting | retrieving | polling | cancelling
+    trigger = Column(String(16), nullable=False, default='manual')  # manual | scheduled (v2)
+    started_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    idempotency_key = Column(String(64), unique=True, nullable=False)
+    external_id = Column(Integer, nullable=True, index=True)  # scan_id / test_id
+    last_request_id = Column(String(64), nullable=True)
+
+    request = Column(JSON, nullable=False)
+    targets = Column(JSON, nullable=False)
+    units_requested = Column(JSON, nullable=True)
+    units_resolved = Column(JSON, nullable=True)
+    units_effective = Column(JSON, nullable=True)
+    skipped = Column(JSON, nullable=True)
+    dpi = Column(String(8), nullable=False, default='on')
+
+    estimated_kopeks = Column(Integer, nullable=True)
+    estimate_is_exact = Column(Boolean, nullable=False, default=True)
+    cost_kopeks = Column(Integer, nullable=True)
+    refunded_kopeks = Column(Integer, nullable=True)
+
+    result = Column(JSON, nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    retryable = Column(Boolean, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(AwareDateTime(), default=func.now())
+    started_at = Column(AwareDateTime(), nullable=True)
+    finished_at = Column(AwareDateTime(), nullable=True)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    legs = relationship(
+        'ReachabilityLeg', back_populates='job', cascade='all, delete-orphan', order_by='ReachabilityLeg.id'
+    )
+    started_by = relationship('User', backref='reachability_jobs')
+
+
+class ReachabilityLeg(Base):
+    """Пара цель × симка с вердиктом — из неё строится сводка. Только probe и vless."""
+
+    __tablename__ = 'reachability_legs'
+    __table_args__ = (Index('ix_reachability_legs_target_unit_time', 'target_key', 'op_key', 'checked_at'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(Integer, ForeignKey('reachability_jobs.id', ondelete='CASCADE'), nullable=False, index=True)
+    kind = Column(String(16), nullable=False)
+    target_key = Column(String(255), nullable=False)  # адрес:порт в нижнем регистре
+    target_kind = Column(String(32), nullable=True)  # host | node | subscription_config | custom
+    target_ref = Column(String(255), nullable=True)  # uuid хоста / uuid ноды / shortUuid
+    op_key = Column(String(64), nullable=False)
+    operator = Column(String(32), nullable=True)
+    region = Column(String(32), nullable=True)
+    dpi = Column(String(8), nullable=True)
+    verdict = Column(String(16), nullable=False)  # reachable | blocked | down | unknown | cancelled
+    matches_expectation = Column(Boolean, nullable=True)
+    raw = Column(JSON, nullable=True)
+    checked_at = Column(AwareDateTime(), nullable=False)
+
+    job = relationship('ReachabilityJob', back_populates='legs')
+
+
+class ReachabilityTargetPref(Base):
+    """Назначение цели (под Белый список / обычный) и её исключение из сводки — решение админа."""
+
+    __tablename__ = 'reachability_target_prefs'
+    __table_args__ = (UniqueConstraint('target_kind', 'target_ref', name='uq_reachability_target_prefs_target'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    target_kind = Column(String(32), nullable=False)  # host | node
+    target_ref = Column(String(255), nullable=False)
+    purpose = Column(String(16), nullable=False, default='unknown')  # bs | regular | unknown
+    excluded = Column(Boolean, nullable=False, default=False)
+    note = Column(Text, nullable=True)
+    updated_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
