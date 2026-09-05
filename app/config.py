@@ -1504,7 +1504,7 @@ class Settings(BaseSettings):
     BAN_SYSTEM_API_TOKEN: str | None = None
     BAN_SYSTEM_REQUEST_TIMEOUT: int = 30
 
-    # bschekbot — «Доступность из РФ»: проверка хостов глазами мобильных операторов
+    # bschekbot — BSCHEKER: проверка хостов глазами мобильных операторов
     BSCHEK_ENABLED: bool = False
     BSCHEK_API_URL: str = 'https://bsbord.com/v1'
     BSCHEK_API_KEY: str | None = None  # bsk_live_…, выпускается вручную в кабинете bschekbot

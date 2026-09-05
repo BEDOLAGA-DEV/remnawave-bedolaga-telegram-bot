@@ -205,7 +205,7 @@ class BotConfigurationService:
         'BAN_NOTIFICATIONS': '🚫 Тексты уведомлений о блокировках',
         'INFO_PAGES': '📄 Инфо-страницы',
         'GRACE_ACCESS': '🛟 Grace-доступ',
-        'BSCHEK': '📶 Доступность из РФ (bschekbot)',
+        'BSCHEK': '📶 BSCHEKER (bschekbot)',
     }
 
     CATEGORY_DESCRIPTIONS: dict[str, str] = {

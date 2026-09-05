@@ -1,4 +1,4 @@
-"""Сервис задач «Доступность из РФ»: фон, повторы тем же ключом, опрос, отмена, обходчик.
+"""Сервис задач BSCHEKER: фон, повторы тем же ключом, опрос, отмена, обходчик.
 
 Состояния: pending → running(phase) → done | failed | cancelled. Фазы running:
 submitting → waiting (probe идёт) / polling (VLESS, скан) / retrieving (probe оборвался,
