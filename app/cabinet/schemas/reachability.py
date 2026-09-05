@@ -113,6 +113,8 @@ class StatusResponse(BaseModel):
     active_jobs: list[ActiveJobOut] = Field(default_factory=list)
     reference: ReferenceOut | None = None
     cost_limit_kopeks: int = 0
+    # Ядро Xray → номер версии (как показывает оригинал bsbord.com).
+    cores: dict[str, str] = Field(default_factory=dict)
 
 
 # ============ Цели ============

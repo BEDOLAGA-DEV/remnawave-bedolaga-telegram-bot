@@ -3,6 +3,7 @@ create_job проверяет занятость и потолок, пишет �
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from app.external.remnawave_api import RemnaWaveHost
 from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.jobs import JobNotCancellable, JobRunner, RunnerConfig
 from app.services.reachability.pricing import CostLimitExceeded
+from app.services.reachability.resolver import TargetResolutionError
 from app.services.reachability.service import (
     JobNotFound,
     PanelUnavailable,
@@ -190,6 +192,9 @@ async def test_status_reports_balance_without_secret_and_reference(session_facto
     assert status['balance_kopeks'] == 100018 and 'webhook_secret' not in str(status)
     assert (status['tier'], status['active_jobs'], status['cost_limit_kopeks']) == ('gold', [], 0)
     assert status['reference'] == {'short_uuid': 'ref-1', 'configs': 1, 'rejected': 0, 'error': None}
+    # Номера ядер Xray для фронта: оригинал bsbord.com показывает версии цифрами, а не «stable/prerelease».
+    assert set(status['cores']) == {'stable', 'prerelease'}
+    assert all(re.fullmatch(r'\d+\.\d+\.\d+', version) for version in status['cores'].values())
 
 
 async def test_status_lists_active_jobs_and_missing_reference(session_factory) -> None:
@@ -264,6 +269,15 @@ async def test_panel_failure_becomes_panel_unavailable(session_factory) -> None:
             await service.hosts(db)
         with pytest.raises(PanelUnavailable):
             await service.preview(db, PROBE_PAYLOAD)
+
+
+async def test_subscription_configs_for_user_without_subscription_explains(session_factory) -> None:
+    """Пользователь без подписки панели — своя ошибка, а не жалоба на эталон из настроек."""
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        with pytest.raises(TargetResolutionError, match=f'#{admin.id} нет подписки'):
+            await service.subscription_configs(db, user_id=admin.id)
 
 
 async def test_subscription_configs_without_reference_raise(session_factory) -> None:

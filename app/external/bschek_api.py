@@ -179,6 +179,10 @@ class BschekAPI:
         params = build_operators_params(dpi=dpi, operator=operator, region=region, probeable=probeable)
         return await self._request('GET', '/operators', params=params)
 
+    async def get_openapi(self) -> dict:
+        """OpenAPI-описание API (бесплатно): единственное место, где названы версии ядер Xray."""
+        return await self._request('GET', '/openapi.json')
+
     async def get_account(self) -> dict:
         account = await self._request('GET', '/account')
         return {key: value for key, value in account.items() if key != 'webhook_secret'}

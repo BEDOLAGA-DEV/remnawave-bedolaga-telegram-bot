@@ -34,7 +34,14 @@ from app.services.reachability.requests import (
     build_vless_request,
     sni_hosts_for,
 )
-from app.services.reachability.resolver import HostView, NodeView, PrefsMap, SubscriptionConfigs, TargetResolver
+from app.services.reachability.resolver import (
+    HostView,
+    NodeView,
+    PrefsMap,
+    SubscriptionConfigs,
+    TargetResolutionError,
+    TargetResolver,
+)
 from app.services.reachability.status import AccountCache, collect_status
 from app.services.reachability.summary import build_summary_rows
 from app.services.reachability.targets import KIND_CIDR, KIND_HOST, PURPOSE_BS, Target
@@ -291,6 +298,8 @@ class ReachabilityService:
     ) -> SubscriptionConfigs:
         if not short_uuid and user_id is not None:
             short_uuid = await self._short_uuid_for_user(db, user_id)
+            if not short_uuid:
+                raise TargetResolutionError(f'У пользователя #{user_id} нет подписки панели Remnawave')
         short_uuid = short_uuid or self.reference_short_uuid()
         if not short_uuid:
             raise ReachabilityDisabled('Не задана эталонная подписка панели (BSCHEK_REFERENCE_SUBSCRIPTION)')

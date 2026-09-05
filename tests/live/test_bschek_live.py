@@ -13,6 +13,7 @@ import os
 import pytest
 
 from app.external.bschek_api import BschekAPI, BschekAPIError
+from app.services.reachability.cores import XRAY_CORES
 from app.services.reachability.units import UnitsCatalog
 
 
@@ -39,6 +40,15 @@ async def test_operators_shape_and_catalog_parsing(api_key: str) -> None:
     catalog = UnitsCatalog.from_response(payload, fetched_at=0.0)
     assert len(catalog.units) == payload['n_units']
     assert catalog.expand([], 'any').resolved
+
+
+async def test_openapi_core_versions_match_constant(api_key: str) -> None:
+    """Версии ядер Xray живут только в описании параметра ``core`` OpenAPI — сверяем константу с ним."""
+    async with BschekAPI(api_key=api_key) as api:
+        spec = await api.get_openapi()
+    text = str(spec)
+    for name, version in XRAY_CORES.items():
+        assert f"'{name}' = {version}" in text, f'ядро {name}: в OpenAPI больше нет версии {version}'
 
 
 async def test_account_shape_without_secret(api_key: str) -> None:

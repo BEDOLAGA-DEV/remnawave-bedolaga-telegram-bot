@@ -12,11 +12,17 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, ReachabilityJob, ReachabilityLeg, ReachabilityTargetPref, User
+from app.database.models import Base, ReachabilityJob, ReachabilityLeg, ReachabilityTargetPref, Subscription, User
 from tests.fixtures.sqlite_memory import ensure_real_aiosqlite
 
 
-_TABLES = (User.__table__, ReachabilityJob.__table__, ReachabilityLeg.__table__, ReachabilityTargetPref.__table__)
+_TABLES = (
+    User.__table__,
+    Subscription.__table__,
+    ReachabilityJob.__table__,
+    ReachabilityLeg.__table__,
+    ReachabilityTargetPref.__table__,
+)
 
 
 @pytest_asyncio.fixture

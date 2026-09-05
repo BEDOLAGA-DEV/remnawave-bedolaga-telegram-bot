@@ -127,6 +127,17 @@ def test_operators_params_join_lists_and_keep_cyrillic() -> None:
     assert build_operators_params() == {}
 
 
+async def test_get_openapi_reads_spec_from_api_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = BschekAPI(api_key='bsk_live_test')
+
+    async def fake_request(method: str, path: str, **kwargs: Any) -> dict:
+        assert (method, path) == ('GET', '/openapi.json')
+        return {'openapi': '3.1.0', 'paths': {}}
+
+    monkeypatch.setattr(api, '_request', fake_request)
+    assert (await api.get_openapi())['openapi'] == '3.1.0'
+
+
 async def test_account_hides_webhook_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     api = BschekAPI(api_key='bsk_live_test')
     fx = load_bschek_fixture('account')

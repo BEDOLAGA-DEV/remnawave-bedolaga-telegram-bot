@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+
 from app.services.reachability.links import MAX_CONFIGS_PER_TEST
 from app.services.reachability.targets import KIND_CIDR, Target, probe_api_target
 
@@ -26,9 +28,26 @@ def normalize_probes(probes: dict[str, bool] | None) -> dict[str, bool]:
     return clean
 
 
+def _is_ip_literal(address: str) -> bool:
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return True
+
+
+def sni_name_for(target: Target) -> str | None:
+    """Имя для TLS-SNI: SNI цели, а без него — её адрес, если это домен. У голого IP имени нет."""
+    sni = (target.sni or '').strip().lower()
+    if sni:
+        return sni
+    address = target.address.strip().lower()
+    return None if not address or _is_ip_literal(address) else address
+
+
 def sni_hosts_for(targets: list[Target]) -> list[str]:
-    """Имена для SNI-пробы: SNI цели, а без него — её адрес. Уникальные, по алфавиту."""
-    return sorted({(target.sni or target.address).lower() for target in targets})
+    """Имена для SNI-пробы по всем целям: уникальные, по алфавиту, без IP-адресов."""
+    return sorted({name for name in map(sni_name_for, targets) if name})
 
 
 def build_probe_request(targets: list[Target], units: list[str], dpi: str, probes: dict[str, bool]) -> dict:
@@ -44,9 +63,12 @@ def build_probe_request(targets: list[Target], units: list[str], dpi: str, probe
         'probes': clean_probes,
         'dpi': dpi,
     }
-    if clean_probes['sni']:
-        return {**body, 'sni_hosts': sni_hosts_for(hosts)}
-    return body
+    if not clean_probes['sni']:
+        return body
+    sni_hosts = sni_hosts_for(hosts)
+    if not sni_hosts:
+        raise RequestBuildError('Для TLS-SNI нужен домен среди целей: у IP-адреса нет имени для SNI')
+    return {**body, 'sni_hosts': sni_hosts}
 
 
 def build_vless_request(targets: list[Target], units: list[str], dpi: str, core: str) -> dict:

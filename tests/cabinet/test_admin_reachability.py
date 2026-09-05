@@ -165,10 +165,12 @@ async def test_status_maps_service_dict(service) -> None:
             'active_jobs': [],
             'reference': {'short_uuid': 'r', 'configs': 3, 'rejected': 1, 'error': None},
             'cost_limit_kopeks': 0,
+            'cores': {'stable': '26.3.27', 'prerelease': '26.7.11'},
         }
     )
     response = await admin_reachability.get_status(admin=ADMIN, db=None)
     assert (response.balance_kopeks, response.tier, response.reference.configs) == (100018, 'gold', 3)
+    assert response.cores == {'stable': '26.3.27', 'prerelease': '26.7.11'}
     assert 'webhook_secret' not in response.model_dump()
 
 

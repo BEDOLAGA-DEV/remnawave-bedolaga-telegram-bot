@@ -11,6 +11,7 @@ from app.services.reachability.requests import (
     build_probe_request,
     build_scan_request,
     build_vless_request,
+    sni_hosts_for,
 )
 from app.services.reachability.targets import Target
 
@@ -104,3 +105,22 @@ def test_probe_request_limits_targets_to_api_maximum() -> None:
     assert (
         len(build_probe_request(targets[:MAX_PROBE_TARGETS], [], 'on', {'tcp': True})['targets']) == MAX_PROBE_TARGETS
     )
+
+
+# ---------------------------------------------------------------- SNI-имена
+
+
+def test_sni_hosts_prefer_sni_and_skip_bare_ip_targets() -> None:
+    """Имя для TLS-SNI — SNI цели, а без него домен; у голого IP имени нет (RFC 6066)."""
+    targets = [
+        _t('203.0.113.10', 443, None),
+        _t('203.0.113.11', 443, 'White.example'),
+        _t('EU-host.example', None, None),
+        _t('eu-host.example', 8443, 'eu-host.example'),
+    ]
+    assert sni_hosts_for(targets) == ['eu-host.example', 'white.example']
+
+
+def test_probe_request_with_sni_but_only_ip_targets_fails_fast() -> None:
+    with pytest.raises(RequestBuildError, match='домен'):
+        build_probe_request([_t('203.0.113.10', 443, None)], ['mts'], 'on', {'tcp': True, 'sni': True})

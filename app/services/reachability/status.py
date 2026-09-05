@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.crud import reachability as crud
 from app.database.models import ReachabilityJob
 from app.external.bschek_api import BschekAPIError
+from app.services.reachability.cores import XRAY_CORES
 from app.services.reachability.jobs import KIND_SCAN, KIND_VLESS
 from app.services.reachability.pricing import credits_to_kopeks
 
@@ -117,4 +118,5 @@ async def collect_status(service: ReachabilityService, db: AsyncSession) -> dict
         'active_jobs': await _active_jobs(db),
         'reference': reference,
         'cost_limit_kopeks': service.cost_limit_kopeks(),
+        'cores': dict(XRAY_CORES),
     }

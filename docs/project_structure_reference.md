@@ -828,7 +828,7 @@
   Классы: `BanSystemAPIError` (1 методов), `BanSystemAPI` (34 методов)
   Функции: нет
 - `app/external/bschek_api.py` — Python-модуль
-  Классы: `BschekAPIError` (1 методов), `BschekGatewayError`, `BschekAPI` (17 методов)
+  Классы: `BschekAPIError` (1 методов), `BschekGatewayError`, `BschekAPI` (18 методов)
   Функции: `build_operators_params` — Query для GET /operators. aiohttp сам percent-encode'ит кириллицу.
 - `app/external/cryptobot.py` — Python-модуль
   Классы: `CryptoBotService` (9 методов)
@@ -1862,6 +1862,9 @@
 - `app/services/reachability/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/services/reachability/cores.py` — Python-модуль
+  Классы: нет
+  Функции: нет
 - `app/services/reachability/gate.py` — Python-модуль
   Классы: `PaidCallGate` (3 методов)
   Функции: нет
@@ -1879,7 +1882,7 @@
   Функции: `format_rubles`, `credits_to_kopeks`, `estimate_vless_kopeks`, `enforce_cost_limit`
 - `app/services/reachability/requests.py` — Python-модуль
   Классы: `RequestBuildError`
-  Функции: `normalize_probes`, `sni_hosts_for` — Имена для SNI-пробы: SNI цели, а без него — её адрес. Уникальные, по алфавиту., `build_probe_request`, `build_vless_request`, `build_scan_request`
+  Функции: `normalize_probes`, `sni_name_for` — Имя для TLS-SNI: SNI цели, а без него — её адрес, если это домен. У голого IP имени нет., `sni_hosts_for` — Имена для SNI-пробы по всем целям: уникальные, по алфавиту, без IP-адресов., `build_probe_request`, `build_vless_request`, `build_scan_request`
 - `app/services/reachability/resolver.py` — Python-модуль
   Классы: `TargetResolutionError`, `HostView`, `NodeView`, `SubscriptionConfigs`, `TargetResolver` (14 методов)
   Функции: `target_from_host`, `target_from_node`, `target_from_link`, `target_from_cidr`
@@ -3206,7 +3209,7 @@
   Функции: `anyio_backend`
 - `tests/external/test_bschek_api.py` — Python-модуль
   Классы: нет
-  Функции: `test_error_envelope_is_mapped`, `test_no_dpi_on_carries_skipped_units_in_details`, `test_rate_limited_exposes_retry_after`, `test_validation_422_keeps_fields`, `test_cloudflare_524_without_body_is_gateway_error`, `test_html_502_is_gateway_error`, `test_success_body_is_returned_as_is`, `test_no_dpi_on_race_with_200_is_not_an_error`, `test_every_recorded_error_fixture_parses_to_a_code` — Сторож: новый записанный ответ с конвертом ошибки обязан разбираться., `test_operators_params_join_lists_and_keep_cyrillic`, `test_account_hides_webhook_secret`, `test_methods_hit_expected_paths`, `test_api_key_never_appears_in_repr`
+  Функции: `test_error_envelope_is_mapped`, `test_no_dpi_on_carries_skipped_units_in_details`, `test_rate_limited_exposes_retry_after`, `test_validation_422_keeps_fields`, `test_cloudflare_524_without_body_is_gateway_error`, `test_html_502_is_gateway_error`, `test_success_body_is_returned_as_is`, `test_no_dpi_on_race_with_200_is_not_an_error`, `test_every_recorded_error_fixture_parses_to_a_code` — Сторож: новый записанный ответ с конвертом ошибки обязан разбираться., `test_operators_params_join_lists_and_keep_cyrillic`, `test_get_openapi_reads_spec_from_api_root`, `test_account_hides_webhook_secret`, `test_methods_hit_expected_paths`, `test_api_key_never_appears_in_repr`
 - `tests/external/test_cryptobot_service.py` — Python-модуль
   Классы: нет
   Функции: `anyio_backend`, `test_create_invoice_uses_make_request`, `test_make_request_returns_none_without_token`, `test_verify_webhook_signature`, `test_verify_webhook_signature_without_token`
@@ -3502,7 +3505,7 @@
   Функции: нет
 - `tests/live/test_bschek_live.py` — Python-модуль
   Классы: нет
-  Функции: `api_key`, `test_operators_shape_and_catalog_parsing`, `test_account_shape_without_secret`, `test_probe_preview_breakdown`, `test_probe_preview_sni_needs_both_fields`, `test_validation_codes_still_the_same`, `test_scan_preview_rejects_non_24`, `test_scan_preview_shape`, `test_bad_key_is_unauthenticated`
+  Функции: `api_key`, `test_operators_shape_and_catalog_parsing`, `test_openapi_core_versions_match_constant` — Версии ядер Xray живут только в описании параметра ``core`` OpenAPI — сверяем константу с ним., `test_account_shape_without_secret`, `test_probe_preview_breakdown`, `test_probe_preview_sni_needs_both_fields`, `test_validation_codes_still_the_same`, `test_scan_preview_rejects_non_24`, `test_scan_preview_shape`, `test_bad_key_is_unauthenticated`
 
 ### tests/middlewares
 
@@ -4046,13 +4049,13 @@
   Функции: `test_credits_are_kopeks`, `test_vless_estimate_uses_last_leg_price_or_default`, `test_cost_limit_zero_means_unlimited`, `test_cost_limit_exceeded_carries_numbers`, `test_format_rubles`
 - `tests/services/reachability/test_requests.py` — Python-модуль
   Классы: нет
-  Функции: `test_probe_request_has_targets_units_probes_and_sni_hosts`, `test_probe_request_without_sni_omits_sni_hosts_and_skips_cidr_targets`, `test_probe_request_normalizes_partial_probes_dict`, `test_probe_request_rejects_no_probes_and_no_targets`, `test_vless_request_joins_raw_links_and_limits_20`, `test_scan_request`, `test_probe_request_limits_targets_to_api_maximum`
+  Функции: `test_probe_request_has_targets_units_probes_and_sni_hosts`, `test_probe_request_without_sni_omits_sni_hosts_and_skips_cidr_targets`, `test_probe_request_normalizes_partial_probes_dict`, `test_probe_request_rejects_no_probes_and_no_targets`, `test_vless_request_joins_raw_links_and_limits_20`, `test_scan_request`, `test_probe_request_limits_targets_to_api_maximum`, `test_sni_hosts_prefer_sni_and_skip_bare_ip_targets` — Имя для TLS-SNI — SNI цели, а без него домен; у голого IP имени нет (RFC 6066)., `test_probe_request_with_sni_but_only_ip_targets_fails_fast`
 - `tests/services/reachability/test_resolver.py` — Python-модуль
   Классы: нет
   Функции: `test_hosts_hide_disabled_by_default_and_guess_purpose`, `test_sources_are_fetched_once_per_resolver`, `test_prefs_override_guess_and_mark_excluded`, `test_pref_with_unknown_purpose_keeps_guess`, `test_nodes_expose_icmp_target_and_linked_hosts`, `test_subscription_configs_parse_links_and_reject_stubs`, `test_resolve_mixed_items_dedups_by_target_key`, `test_resolve_host_applies_prefs`, `test_resolve_custom_link_becomes_config_target`, `test_resolve_reports_unknown_targets`
 - `tests/services/reachability/test_service.py` — Python-модуль
   Классы: `FakePanel` (5 методов), `FakeClient` (5 методов)
-  Функции: `make_service`, `test_disabled_integration_raises`, `test_missing_key_is_reported_as_not_configured`, `test_status_reports_balance_without_secret_and_reference`, `test_status_lists_active_jobs_and_missing_reference`, `test_auth_error_marks_integration_unhealthy_for_a_while`, `test_account_is_cached_between_calls`, `test_units_filters_locally_over_cached_catalog`, `test_hosts_nodes_and_configs_go_through_panel`, `test_panel_failure_becomes_panel_unavailable`, `test_subscription_configs_without_reference_raise`, `test_preview_probe_expands_units_reports_skipped_and_exact_price`, `test_preview_probe_warns_about_bs_host_without_sni_probe`, `test_preview_unknown_selector_is_rejected_before_api`, `test_preview_unknown_kind_is_rejected`, `test_preview_vless_is_an_estimate`, `test_preview_scan_uses_cidr_and_exact_price`, `test_preview_without_units_left_warns`, `test_create_job_writes_row_and_spawns_runner`, `test_create_job_returns_job_ready_for_response` — Роут сериализует созданную задачу сразу, включая ``legs``., `test_create_job_refuses_second_active_vless`, `test_create_job_enforces_cost_limit_and_units`, `test_create_job_refuses_when_balance_is_short`, `test_get_cancel_and_retrieve_jobs`, `test_retrieve_job_resumes_stuck_probe`, `test_summary_builds_matrix_from_latest_legs`, `test_summary_survives_panel_and_api_outage`, `test_update_pref_persists_and_changes_summary_purpose`, `test_background_sweeper_starts_and_stops`
+  Функции: `make_service`, `test_disabled_integration_raises`, `test_missing_key_is_reported_as_not_configured`, `test_status_reports_balance_without_secret_and_reference`, `test_status_lists_active_jobs_and_missing_reference`, `test_auth_error_marks_integration_unhealthy_for_a_while`, `test_account_is_cached_between_calls`, `test_units_filters_locally_over_cached_catalog`, `test_hosts_nodes_and_configs_go_through_panel`, `test_panel_failure_becomes_panel_unavailable`, `test_subscription_configs_for_user_without_subscription_explains` — Пользователь без подписки панели — своя ошибка, а не жалоба на эталон из настроек., `test_subscription_configs_without_reference_raise`, `test_preview_probe_expands_units_reports_skipped_and_exact_price`, `test_preview_probe_warns_about_bs_host_without_sni_probe`, `test_preview_unknown_selector_is_rejected_before_api`, `test_preview_unknown_kind_is_rejected`, `test_preview_vless_is_an_estimate`, `test_preview_scan_uses_cidr_and_exact_price`, `test_preview_without_units_left_warns`, `test_create_job_writes_row_and_spawns_runner`, `test_create_job_returns_job_ready_for_response` — Роут сериализует созданную задачу сразу, включая ``legs``., `test_create_job_refuses_second_active_vless`, `test_create_job_enforces_cost_limit_and_units`, `test_create_job_refuses_when_balance_is_short`, `test_get_cancel_and_retrieve_jobs`, `test_retrieve_job_resumes_stuck_probe`, `test_summary_builds_matrix_from_latest_legs`, `test_summary_survives_panel_and_api_outage`, `test_update_pref_persists_and_changes_summary_purpose`, `test_background_sweeper_starts_and_stops`
 - `tests/services/reachability/test_summary.py` — Python-модуль
   Классы: нет
   Функции: `test_rows_follow_panel_order_and_carry_purpose_and_cells`, `test_excluded_hosts_are_hidden_even_if_they_have_legs`, `test_legs_of_targets_missing_from_panel_go_last_with_pref_purpose`, `test_rows_are_new_objects_and_inputs_untouched`
