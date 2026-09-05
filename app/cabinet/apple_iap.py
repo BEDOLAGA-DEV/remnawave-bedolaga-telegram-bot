@@ -13,6 +13,7 @@ from app.config import settings
 from app.database.models import User
 from app.services.apple_iap import AppleIAPFulfillmentService, apple_iap_fulfillment_service
 from app.services.apple_iap_reconciliation_service import apple_iap_reconciliation_service
+from app.utils.redis_client import create_redis
 
 from .dependencies import get_cabinet_db, get_current_admin_user, get_current_cabinet_user
 from .ip_utils import get_client_ip
@@ -33,7 +34,7 @@ async def _close_redis_client(client: redis.Redis) -> None:
 
 @asynccontextmanager
 async def apple_iap_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    client = redis.from_url(settings.REDIS_URL)
+    client = create_redis()
     setattr(app.state, APPLE_IAP_REDIS_STATE_KEY, client)
     try:
         yield

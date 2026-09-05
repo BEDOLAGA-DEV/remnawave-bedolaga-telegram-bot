@@ -7,7 +7,7 @@ import redis.asyncio as redis
 import structlog
 from redis.exceptions import NoScriptError
 
-from app.config import settings
+from app.utils.redis_client import create_redis
 
 
 logger = structlog.get_logger(__name__)
@@ -20,7 +20,7 @@ class CacheService:
 
     async def connect(self):
         try:
-            self.redis_client = redis.from_url(settings.REDIS_URL)
+            self.redis_client = create_redis()
             await self.redis_client.ping()
             self._connected = True
             # Invalidate cached Lua script SHA (new connection = new script cache)

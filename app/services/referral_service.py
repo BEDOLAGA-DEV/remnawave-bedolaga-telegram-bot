@@ -14,6 +14,7 @@ from app.database.models import ReferralEarning, TransactionType, User
 from app.services.notification_delivery_service import (
     notification_delivery_service,
 )
+from app.utils.redis_client import create_redis
 from app.utils.user_utils import get_effective_referral_commission_percent
 
 
@@ -34,7 +35,7 @@ def _get_redis() -> aioredis.Redis | None:
     if _redis_initialized:
         return _redis_client
     try:
-        _redis_client = aioredis.from_url(settings.REDIS_URL)
+        _redis_client = create_redis()
         _redis_initialized = True
         logger.debug('Redis client for pending referrals initialized')
     except Exception as exc:

@@ -75,7 +75,7 @@ if 'redis.asyncio' not in sys.modules:
         async def incr(self, key):
             return 1
 
-    def _from_url(url):
+    def _from_url(url, **kwargs):
         return _FakeRedisClient()
 
     redis_module.__path__ = []

@@ -2006,6 +2006,9 @@
 - `app/utils/proxy.py` — Python-модуль
   Классы: нет
   Функции: `mask_proxy_url` — Mask credentials in a proxy URL for safe logging., `sanitize_proxy_error` — Strip proxy credentials from exception messages.
+- `app/utils/redis_client.py` — Python-модуль
+  Классы: нет
+  Функции: `create_redis` — Клиент с пулом соединений к ``url`` (по умолчанию ``settings.REDIS_URL``).
 - `app/utils/rich_admin.py` — Python-модуль
   Классы: нет
   Функции: `is_rich_admin_enabled`, `rich_footer_now` — Футер с меткой и временем: tg-time рендерится в таймзоне админа., `rich_kv_table` — Таблица «показатель → значение» (bordered/striped). Значения — сырой HTML., `rich_traceback_details` — Сворачиваемый traceback: <details> + <pre><code class="language-python">., `classic_admin_html_to_rich` — Конвертирует классическое HTML-уведомление в rich-разметку., `try_send_rich_admin_message` — Отправляет rich-сообщение в админ-чат. False — слать классический вариант.
@@ -4101,6 +4104,9 @@
 - `tests/utils/test_pricing_utils.py` — Python-модуль
   Классы: `TestCalculatePricePerMonth` (4 методов), `TestBuildDynamicValues` (2 методов)
   Функции: нет
+- `tests/utils/test_redis_client.py` — Python-модуль
+  Классы: нет
+  Функции: `from_url`, `test_factory_disables_maintenance_notifications`, `test_factory_defaults_to_settings_url_and_keeps_explicit_kwargs`, `test_factory_skips_config_on_old_redis_py` — redis-py без модуля maint_notifications: лишний kwarg уронил бы from_url., `test_every_redis_client_in_app_goes_through_factory` — Сторож: прямой ``from_url``/``Redis(`` в app/ вернул бы шум и обошёл общие настройки.
 - `tests/utils/test_remnawave_auto_sync.py` — Python-модуль
   Классы: нет
   Функции: `test_parse_daily_time_list`, `test_calculate_next_run_same_day`, `test_calculate_next_run_rollover`, `test_perform_sync_rebuilds_service_on_each_run`

@@ -5,6 +5,7 @@ import redis.asyncio as redis
 import structlog
 
 from app.config import settings
+from app.utils.redis_client import create_redis
 
 
 logger = structlog.get_logger(__name__)
@@ -28,7 +29,7 @@ class UserCartService:
             return self._redis_client
 
         try:
-            self._redis_client = redis.from_url(settings.REDIS_URL)
+            self._redis_client = create_redis()
             self._initialized = True
             logger.debug('Redis клиент для корзины инициализирован')
         except Exception as e:
