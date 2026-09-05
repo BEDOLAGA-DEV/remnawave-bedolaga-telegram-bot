@@ -131,6 +131,9 @@ class JobRunner:
     def spawn(self, job_id: int) -> asyncio.Task:
         return self._track(job_id, self.run(job_id))
 
+    def spawn_resume(self, job_id: int) -> asyncio.Task:
+        return self._track(job_id, self.resume(job_id))
+
     def is_active(self, job_id: int) -> bool:
         task = self._tasks.get(job_id)
         return task is not None and not task.done()
@@ -151,7 +154,7 @@ class JobRunner:
             stamp = job.updated_at or job.created_at
             if self.is_active(job.id) or (stamp is not None and stamp.timestamp() > threshold):
                 continue
-            self._track(job.id, self.resume(job.id))
+            self.spawn_resume(job.id)
 
     async def sweeper_loop(self) -> None:
         self._running = True

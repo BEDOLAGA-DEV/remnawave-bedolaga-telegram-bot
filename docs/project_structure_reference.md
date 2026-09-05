@@ -1860,7 +1860,7 @@
   Классы: `PaidCallGate` (3 методов)
   Функции: нет
 - `app/services/reachability/jobs.py` — Python-модуль
-  Классы: `RunnerConfig`, `JobNotCancellable`, `JobRunner` (31 методов)
+  Классы: `RunnerConfig`, `JobNotCancellable`, `JobRunner` (32 методов)
   Функции: нет
 - `app/services/reachability/legs.py` — Python-модуль
   Классы: нет
@@ -1871,9 +1871,21 @@
 - `app/services/reachability/pricing.py` — Python-модуль
   Классы: `CostLimitExceeded` (1 методов)
   Функции: `format_rubles`, `credits_to_kopeks`, `estimate_vless_kopeks`, `enforce_cost_limit`
+- `app/services/reachability/requests.py` — Python-модуль
+  Классы: `RequestBuildError`
+  Функции: `normalize_probes`, `sni_hosts_for` — Имена для SNI-пробы: SNI цели, а без него — её адрес. Уникальные, по алфавиту., `build_probe_request`, `build_vless_request`, `build_scan_request`
 - `app/services/reachability/resolver.py` — Python-модуль
   Классы: `TargetResolutionError`, `HostView`, `NodeView`, `SubscriptionConfigs`, `TargetResolver` (14 методов)
   Функции: `target_from_host`, `target_from_node`, `target_from_link`, `target_from_cidr`
+- `app/services/reachability/service.py` — Python-модуль
+  Классы: `ReachabilityDisabled` (1 методов), `ReachabilityUnhealthy` (1 методов), `ReachabilityBusy` (1 методов), `PanelUnavailable` (1 методов), `JobNotFound`, `Health` (1 методов), `Quote`, `PreviewResult`, `ReachabilityService` (41 методов)
+  Функции: нет
+- `app/services/reachability/status.py` — Python-модуль
+  Классы: `AccountCache` (3 методов)
+  Функции: `account_summary` — Поля аккаунта для фронта; webhook_secret клиент уже отбросил., `reference_status`, `collect_status`
+- `app/services/reachability/summary.py` — Python-модуль
+  Классы: нет
+  Функции: `build_summary_rows` — Всегда новые словари: строки и ячейки не разделяются между вызовами.
 - `app/services/reachability/targets.py` — Python-модуль
   Классы: `TargetValidationError`, `Target` (2 методов)
   Функции: `target_key`, `probe_api_target` — Строка цели для API: IP/домен с портом либо без., `normalize_custom_target` — IP, домен, адрес:порт или URL → цель. Схема отбрасывается (HTTP-проба у API с http:// не работает)., `is_reality_like` — SNI чужого домена — признак Reality с dest на «белом» сайте., `guess_purpose`, `validate_cidr24`, `cidr24_for_ip`, `hosts_for_node` — Хосты ноды: по инбаунду, а без него — по совпадению адреса с адресом/IP ноды.
@@ -4007,9 +4019,18 @@
 - `tests/services/reachability/test_pricing.py` — Python-модуль
   Классы: нет
   Функции: `test_credits_are_kopeks`, `test_vless_estimate_uses_last_leg_price_or_default`, `test_cost_limit_zero_means_unlimited`, `test_cost_limit_exceeded_carries_numbers`, `test_format_rubles`
+- `tests/services/reachability/test_requests.py` — Python-модуль
+  Классы: нет
+  Функции: `test_probe_request_has_targets_units_probes_and_sni_hosts`, `test_probe_request_without_sni_omits_sni_hosts_and_skips_cidr_targets`, `test_probe_request_normalizes_partial_probes_dict`, `test_probe_request_rejects_no_probes_and_no_targets`, `test_vless_request_joins_raw_links_and_limits_20`, `test_scan_request`
 - `tests/services/reachability/test_resolver.py` — Python-модуль
   Классы: нет
   Функции: `test_hosts_hide_disabled_by_default_and_guess_purpose`, `test_sources_are_fetched_once_per_resolver`, `test_prefs_override_guess_and_mark_excluded`, `test_pref_with_unknown_purpose_keeps_guess`, `test_nodes_expose_icmp_target_and_linked_hosts`, `test_subscription_configs_parse_links_and_reject_stubs`, `test_resolve_mixed_items_dedups_by_target_key`, `test_resolve_host_applies_prefs`, `test_resolve_custom_link_becomes_config_target`, `test_resolve_reports_unknown_targets`
+- `tests/services/reachability/test_service.py` — Python-модуль
+  Классы: `FakePanel` (5 методов), `FakeClient` (5 методов)
+  Функции: `make_service`, `test_disabled_integration_raises`, `test_missing_key_is_reported_as_not_configured`, `test_status_reports_balance_without_secret_and_reference`, `test_status_lists_active_jobs_and_missing_reference`, `test_auth_error_marks_integration_unhealthy_for_a_while`, `test_account_is_cached_between_calls`, `test_units_filters_locally_over_cached_catalog`, `test_hosts_nodes_and_configs_go_through_panel`, `test_panel_failure_becomes_panel_unavailable`, `test_subscription_configs_without_reference_raise`, `test_preview_probe_expands_units_reports_skipped_and_exact_price`, `test_preview_probe_warns_about_bs_host_without_sni_probe`, `test_preview_unknown_selector_is_rejected_before_api`, `test_preview_unknown_kind_is_rejected`, `test_preview_vless_is_an_estimate`, `test_preview_scan_uses_cidr_and_exact_price`, `test_preview_without_units_left_warns`, `test_create_job_writes_row_and_spawns_runner`, `test_create_job_refuses_second_active_vless`, `test_create_job_enforces_cost_limit_and_units`, `test_create_job_refuses_when_balance_is_short`, `test_get_cancel_and_retrieve_jobs`, `test_retrieve_job_resumes_stuck_probe`, `test_summary_builds_matrix_from_latest_legs`, `test_summary_survives_panel_and_api_outage`, `test_update_pref_persists_and_changes_summary_purpose`, `test_background_sweeper_starts_and_stops`
+- `tests/services/reachability/test_summary.py` — Python-модуль
+  Классы: нет
+  Функции: `test_rows_follow_panel_order_and_carry_purpose_and_cells`, `test_excluded_hosts_are_hidden_even_if_they_have_legs`, `test_legs_of_targets_missing_from_panel_go_last_with_pref_purpose`, `test_rows_are_new_objects_and_inputs_untouched`
 - `tests/services/reachability/test_targets.py` — Python-модуль
   Классы: нет
   Функции: `test_normalize_custom_target`, `test_normalize_rejects_private_and_malformed`, `test_target_key_is_lowercase_with_optional_port`, `test_probe_api_target_keeps_port`, `test_is_reality_like`, `test_guess_purpose`, `test_cidr_helpers` — Документационные диапазоны (192.0.2.0/24 и т. п.) не глобальные — их тоже режем., `test_hosts_for_node_matches_by_inbound_then_by_address`, `test_target_round_trips_through_dict`
