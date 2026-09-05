@@ -1570,6 +1570,7 @@
 - `app/services/rbac_bootstrap_service.py` — Python-модуль
   Классы: `AdminEnvCheck` (2 методов)
   Функции: `normalize_admin_email` — Канонизация email для сравнения с ADMIN_EMAILS: NFKC + lower + strip., `is_user_admin_by_env` — Проверяет, является ли юзер админом по ENV-конфигу (ADMIN_IDS/ADMIN_EMAILS)., `is_protected_from_blocking` — An account named in ADMIN_IDS/ADMIN_EMAILS must never end up BLOCKED., `bootstrap_superadmins` — Ensure every user from ADMIN_IDS / ADMIN_EMAILS has the Superadmin role., `ensure_superadmin_role_on_login` — Idempotent Superadmin assign for ADMIN_IDS / ADMIN_EMAILS users at login time.
+- `app/services/reachability/`
 - `app/services/recurrent_amount.py` — Python-модуль
   Классы: нет
   Функции: `resolve_true_renewal_amount` — Цена продления подписки за ``charge_days`` для сверки с суммой привязки., `sync_recurrent_bindings_after_price_change` — Гасит привязки, чья сумма больше не соответствует цене продления.
@@ -1849,6 +1850,15 @@
 - `app/services/payment/yookassa.py` — Python-модуль
   Классы: `YooKassaPaymentMixin` (15 методов)
   Функции: нет
+
+#### app/services/reachability
+
+- `app/services/reachability/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `app/services/reachability/links.py` — Python-модуль
+  Классы: `ParsedLink`, `RejectedLink`
+  Функции: `parse_links`
 
 ### app/tools
 
@@ -3481,6 +3491,7 @@
 - `tests/services/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/services/reachability/`
 - `tests/services/test_account_merge_service.py` — Python-модуль
   Классы: `TestComputeAuthMethods` (6 методов), `TestBuildSubscriptionPreview` (3 методов), `TestBuildUserPreview` (2 методов), `TestGetMergePreview` (4 методов), `TestExecuteMergeValidation` (6 методов), `TestExecuteMergeOAuthTransfer` (2 методов), `TestExecuteMergeTelegramTransfer` (2 методов), `TestExecuteMergeEmailTransfer` (2 методов), `TestExecuteMergeBalance` (3 методов), `TestExecuteMergePartnerStatus` (4 методов), `TestExecuteMergeReferralCommission` (2 методов), `TestExecuteMergeSecondaryDeleted` (3 методов), `TestExecuteMergeSubscription` (7 методов), `TestExecuteMergeSubscriptionMultiTariff` (2 методов), `TestExecuteMergeBulkUpdates` (1 методов), `TestExecuteMergeSelfReferralPrevention` (6 методов)
   Функции: нет
@@ -3961,6 +3972,15 @@
 - `tests/services/test_yookassa_timeout_hardening.py` — Python-модуль
   Классы: нет
   Функции: `test_apiclient_patch_helper_exists_and_runs_at_import` — Source-level pin: ``_patch_yookassa_timeout`` must be DEFINED, `test_patched_execute_passes_timeout_to_session_request` — Negative-control against upstream regression: the patched, `test_patch_idempotency_guard_exists` — The patch helper must check ``ApiClient._timeout_patched`` to, `test_patch_respects_settings_overrides` — An operator who sets YOOKASSA_HTTP_CONNECT_TIMEOUT or, `test_dedicated_executor_exists_with_bounded_max_workers` — The bug-report's "обязательное" fix #2: dedicated executor with, `test_max_workers_resolver_respects_setting` — REGRESSION: ``YOOKASSA_MAX_CONCURRENT_REQUESTS`` env var must flow, `test_max_workers_resolver_floors_at_one` — A misconfigured ``YOOKASSA_MAX_CONCURRENT_REQUESTS=0`` must NOT, `test_dedicated_executor_thread_name_prefix` — Threads in the YK executor must be identifiable in py-spy /, `test_all_run_in_executor_callsites_use_dedicated_pool` — Source-level pin: every ``run_in_executor`` in, `test_webhook_uses_wait_for_with_tight_budget` — ``process_yookassa_webhook`` cross-check of payment status must, `test_webhook_handles_timeout_with_payload_fallback` — When the API cross-check times out, the handler must NOT raise.
+
+#### tests/services/reachability
+
+- `tests/services/reachability/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `tests/services/reachability/test_links.py` — Python-модуль
+  Классы: нет
+  Функции: `test_parses_vless_with_sni_and_decoded_name`, `test_parses_other_protocols`, `test_stub_links_from_subscription_page_are_rejected`, `test_unknown_scheme_and_garbage_are_rejected_with_reason`, `test_multiple_lines_keep_order_and_skip_blank_lines`, `test_max_configs_constant_matches_api_limit`
 
 ### tests/utils
 
