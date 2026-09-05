@@ -569,6 +569,11 @@ lint/format/type-check/build, чеклист верификации перед �
     вместо 5, все БС-симки — 16 вместо 15).
 30. Публичный sub-URL панели неизвестному UA отдаёт три заглушки `0.0.0.0:1`.
 31. `X-Request-Id` дублируется в `details.request_id`; `Retry-After` только у 429.
+32. **У элементов `sni[]` две формы** (зависит от исполнителя/симки): `{ok, host, verdict,
+    latency_ms, error?}` и `{ok, kind:"sni", detail, rtt_ms, verdict, evidence:{sni, phase|tls,
+    cipher}}` без `host`. Во второй форме в `evidence.sni` может стоять имя самого хоста, а не
+    заказанное `sni_hosts`. ⇒ имя записи читать из `host` **или** `evidence.sni`; если запись
+    одна — считать её нашей пробой.
 
 Записанные фикстуры (санитизированные) переносятся в `tests/fixtures/bschek/` на этапе
 реализации.
