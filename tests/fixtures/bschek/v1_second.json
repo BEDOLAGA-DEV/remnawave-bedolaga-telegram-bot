@@ -1,0 +1,29 @@
+{
+ "name": "v1_second",
+ "status": 409,
+ "elapsed_sec": 0.54,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "1752aaf0bd4e",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "vless://00000000-0000-4000-8000-000000000001@eu-host.example:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=eu-host.example&fp=firefox&pbk=PUBKEY#%F0%9F%87%A9%F0%9F%87%AA%20Germany",
+  "selected_modems": [
+   "dobro|цфо|on"
+  ],
+  "dpi": "on"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "test_in_progress",
+   "message": "У вас уже идёт VLESS-тест — дождитесь завершения.",
+   "details": {
+    "request_id": "1752aaf0bd4e",
+    "retryable": true
+   }
+  }
+ }
+}

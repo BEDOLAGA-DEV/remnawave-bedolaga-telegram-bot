@@ -1,0 +1,47 @@
+{
+ "name": "pv_cfo_stub",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "5e3ce0d64a33",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "|цфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "cost_credits": 111,
+  "full_credits": 111,
+  "legs_without_bs": 0,
+  "n_targets": 1,
+  "operators_available": 10,
+  "selected_units": [
+   "megafon|цфо|on",
+   "tele2|цфо|on",
+   "yota|цфо|on",
+   "t-mobile|цфо|on",
+   "dobro|цфо|on",
+   "sberm|цфо|on"
+  ],
+  "legs_with_sni": 0,
+  "breakdown": {
+   "base": 20,
+   "sni_addon": 0,
+   "multi_scan_factor": 6,
+   "pre_discount": 120,
+   "discount_pct": 7,
+   "total": 111
+  },
+  "level": {
+   "key": "gold",
+   "name": "Gold",
+   "discount_pct": 7
+  }
+ }
+}

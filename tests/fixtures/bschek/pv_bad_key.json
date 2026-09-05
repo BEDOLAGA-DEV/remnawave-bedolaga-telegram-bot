@@ -1,0 +1,29 @@
+{
+ "name": "pv_bad_key",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "9ca9e5489ac3",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "mts|цфо|off|extra"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "invalid_request",
+   "message": "op_key — это 'оператор|округ|бс' (компонент можно опустить или заменить на '*')",
+   "details": {
+    "got": "mts|цфо|off|extra",
+    "request_id": "9ca9e5489ac3",
+    "retryable": false
+   }
+  }
+ }
+}

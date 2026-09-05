@@ -1,0 +1,33 @@
+{
+ "name": "rl2_b",
+ "status": 429,
+ "elapsed_sec": 0.42,
+ "headers": {
+  "Content-Type": "application/json",
+  "retry-after": "1",
+  "x-api-version": "1.1",
+  "x-request-id": "88e7ecc3dcde",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "1.1.1.1",
+  "operators": [
+   "dobro|цфо|on"
+  ],
+  "probes": {
+   "icmp": true
+  }
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "rate_limited",
+   "message": "Не чаще 1 запроса в секунду (для POST-проверок)",
+   "details": {
+    "retry_after": 1.0,
+    "retryable": true,
+    "request_id": "88e7ecc3dcde"
+   }
+  }
+ }
+}

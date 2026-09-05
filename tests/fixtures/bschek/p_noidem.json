@@ -1,0 +1,28 @@
+{
+ "name": "p_noidem",
+ "status": 400,
+ "elapsed_sec": 0.54,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "ae52cbfa5fb2",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "eu-host.example",
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "idempotency_key_required",
+   "message": "Заголовок Idempotency-Key обязателен для этого запроса",
+   "details": {
+    "request_id": "ae52cbfa5fb2",
+    "retryable": false
+   }
+  }
+ }
+}

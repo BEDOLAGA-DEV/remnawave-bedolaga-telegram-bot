@@ -1,0 +1,53 @@
+{
+ "name": "pv_all_default",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "345fa69712ee",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com"
+ },
+ "idempotency_key": null,
+ "body": {
+  "cost_credits": 279,
+  "full_credits": 279,
+  "legs_without_bs": 0,
+  "n_targets": 1,
+  "operators_available": 9,
+  "selected_units": [
+   "beeline|юфо|on",
+   "beeline|kgd|on",
+   "beeline|пфо|on",
+   "mts|пфо|on",
+   "megafon|пфо|on",
+   "megafon|цфо|on",
+   "rtk|пфо|on",
+   "tele2|пфо|on",
+   "tele2|уфо|on",
+   "tele2|цфо|on",
+   "t-mobile|уфо|on",
+   "t-mobile|цфо|on",
+   "dobro|цфо|on",
+   "sberm|цфо|on",
+   "winmobile|юфо|on"
+  ],
+  "legs_with_sni": 0,
+  "breakdown": {
+   "base": 20,
+   "sni_addon": 0,
+   "multi_scan_factor": 15,
+   "pre_discount": 300,
+   "discount_pct": 7,
+   "total": 279
+  },
+  "level": {
+   "key": "gold",
+   "name": "Gold",
+   "discount_pct": 7
+  }
+ }
+}

@@ -1,0 +1,29 @@
+{
+ "name": "pv_all_stars",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "a27ab28d532c",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "*|*|*"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "invalid_request",
+   "message": "Некорректный op_key",
+   "details": {
+    "got": "*|*|*",
+    "request_id": "a27ab28d532c",
+    "retryable": false
+   }
+  }
+ }
+}

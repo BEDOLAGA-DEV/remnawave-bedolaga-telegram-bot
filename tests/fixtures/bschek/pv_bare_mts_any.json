@@ -1,0 +1,45 @@
+{
+ "name": "pv_bare_mts_any",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "6621aa09ddad",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "mts"
+  ],
+  "dpi": "any"
+ },
+ "idempotency_key": null,
+ "body": {
+  "cost_credits": 55,
+  "full_credits": 55,
+  "legs_without_bs": 2,
+  "n_targets": 1,
+  "operators_available": 9,
+  "selected_units": [
+   "mts|цфо|off",
+   "mts|дфо|off",
+   "mts|пфо|on"
+  ],
+  "legs_with_sni": 0,
+  "breakdown": {
+   "base": 20,
+   "sni_addon": 0,
+   "multi_scan_factor": 3,
+   "pre_discount": 60,
+   "discount_pct": 7,
+   "total": 55
+  },
+  "level": {
+   "key": "gold",
+   "name": "Gold",
+   "discount_pct": 7
+  }
+ }
+}

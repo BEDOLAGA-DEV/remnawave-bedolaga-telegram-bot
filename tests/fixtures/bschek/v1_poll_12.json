@@ -1,0 +1,109 @@
+{
+ "name": "v1_poll_12",
+ "status": 200,
+ "elapsed_sec": 0.41,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "1ab7ac261438",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "test_id": 43300,
+  "state": "done",
+  "queue_pos": null,
+  "queue_total": null,
+  "result_ready": true,
+  "completed_at": "2026-09-05T14:13:18.418897+00:00",
+  "result": [
+   {
+    "ok": true,
+    "sni": "whitelisted.example",
+    "stage": "",
+    "tcp_ok": true,
+    "targets": [
+     {
+      "ok": true,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": true,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "vless",
+    "diagnosis": "Туннель работает, целевые сайты достижимы",
+    "tunnel_up": true,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "",
+    "server_addr": "bs-host.example:9443",
+    "server_name": "🇷🇺 Russia | LTE | БС",
+    "speed_error": "",
+    "tcp_latency_ms": 44,
+    "operator": "tele2",
+    "operator_name": "Tele2",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON"
+   },
+   {
+    "ok": true,
+    "sni": "whitelisted.example",
+    "stage": "",
+    "tcp_ok": true,
+    "targets": [
+     {
+      "ok": true,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": true,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "vless",
+    "diagnosis": "Туннель работает, целевые сайты достижимы",
+    "tunnel_up": true,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "",
+    "server_addr": "bs-host.example:9443",
+    "server_name": "🇷🇺 Russia | LTE | БС",
+    "speed_error": "",
+    "tcp_latency_ms": 28,
+    "operator": "dobro",
+    "operator_name": "dobro",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON"
+   }
+  ],
+  "used_core": "prerelease",
+  "core_requested": "auto"
+ }
+}

@@ -1,0 +1,42 @@
+{
+ "name": "pv_ipport_target",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "f10d4d4711bf",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "1.1.1.1:443",
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "cost_credits": 18,
+  "full_credits": 18,
+  "legs_without_bs": 0,
+  "n_targets": 1,
+  "operators_available": 9,
+  "selected_units": [
+   "mts|пфо|on"
+  ],
+  "legs_with_sni": 0,
+  "breakdown": {
+   "base": 20,
+   "sni_addon": 0,
+   "multi_scan_factor": 1,
+   "pre_discount": 20,
+   "discount_pct": 7,
+   "total": 18
+  },
+  "level": {
+   "key": "gold",
+   "name": "Gold",
+   "discount_pct": 7
+  }
+ }
+}

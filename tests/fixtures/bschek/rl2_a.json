@@ -1,0 +1,61 @@
+{
+ "name": "rl2_a",
+ "status": 200,
+ "elapsed_sec": 3.43,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "da75a58b776e",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "1.1.1.1",
+  "operators": [
+   "dobro|цфо|on"
+  ],
+  "probes": {
+   "icmp": true
+  }
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "cost_credits": 18,
+  "refunded": 0,
+  "n_targets": 1,
+  "by_target": {
+   "1.1.1.1": {
+    "target_resolved": "1.1.1.1",
+    "is_domain": false,
+    "by_operator": {
+     "dobro|цфо|on": {
+      "ok": true,
+      "icmp": {
+       "ok": false,
+       "sent": 3,
+       "loss_pct": 100.0,
+       "received": 0,
+       "rtt_avg_ms": 0.0,
+       "rtt_max_ms": 0.0,
+       "rtt_min_ms": 0.0,
+       "rtt_ms": 0.0
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЦФО",
+      "channel_state": "DPI_ON",
+      "operator": "dobro",
+      "dpi": "on"
+     }
+    }
+   }
+  },
+  "operators": [
+   "dobro|цфо|on"
+  ]
+ }
+}

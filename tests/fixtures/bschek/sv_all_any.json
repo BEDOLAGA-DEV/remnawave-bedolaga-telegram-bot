@@ -1,0 +1,41 @@
+{
+ "name": "sv_all_any",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "1133ca1b18ef",
+  "server": "cloudflare"
+ },
+ "request": {
+  "cidr": "192.0.2.0/24",
+  "dpi": "any"
+ },
+ "idempotency_key": null,
+ "body": {
+  "cost_credits": 1841,
+  "prefix_len": 24,
+  "cidr_count": 1,
+  "total_ips": 256,
+  "is_big_task": false,
+  "no_probes": false,
+  "is_level_allowed": true,
+  "operators_available": 9,
+  "legs_with_sni": 0,
+  "breakdown": {
+   "base": 66,
+   "sni_addon": 0,
+   "multi_scan_factor": 30,
+   "pre_discount": 1980,
+   "discount_pct": 7,
+   "total": 1841,
+   "big_task_surcharge_applied": false
+  },
+  "level": {
+   "key": "gold",
+   "name": "Gold",
+   "discount_pct": 7
+  }
+ }
+}

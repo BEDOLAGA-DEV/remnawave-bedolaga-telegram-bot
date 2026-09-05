@@ -1,0 +1,54 @@
+{
+ "name": "vD_submit",
+ "status": 200,
+ "elapsed_sec": 0.49,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "53dd22508d0f",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "vmess://eyJ2IjogIjIiLCAicHMiOiAidm1lc3MtdGVzdCIsICJhZGQiOiAiZGUyLmRvbGJpLnNwYWNlIiwgInBvcnQiOiAiNDQzIiwgImlkIjogIjhhM2YxZGU3LTc3MDEtNDBjNC05YTVjLWZiM2VmYzUwZWY3ZiIsICJhaWQiOiAiMCIsICJzY3kiOiAiYXV0byIsICJuZXQiOiAid3MiLCAidHlwZSI6ICJub25lIiwgImhvc3QiOiAiZGUyLmRvbGJpLnNwYWNlIiwgInBhdGgiOiAiL3dzIiwgInRscyI6ICJ0bHMiLCAic25pIjogImRlMi5kb2xiaS5zcGFjZSJ9\ntrojan://testpassword@eu-host.example:443?security=tls&sni=eu-host.example&type=tcp#trojan-test\nss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTp0ZXN0cGFzc3dvcmQ=@eu-host.example:8388#ss-test\nhysteria2://testpassword@eu-host.example:443/?sni=eu-host.example&insecure=0#hy2-test",
+  "selected_modems": [
+   "dobro|цфо|on"
+  ],
+  "dpi": "on"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "queued",
+  "test_id": 43312,
+  "tx_id": 868756,
+  "cost_credits": 412,
+  "n_servers": 4,
+  "n_modems": 1,
+  "configs": [
+   {
+    "name": "vmess-test",
+    "address": "eu-host.example",
+    "port": 443,
+    "protocol": "vmess"
+   },
+   {
+    "name": "trojan-test",
+    "address": "eu-host.example",
+    "port": 443,
+    "protocol": "trojan"
+   },
+   {
+    "name": "ss-test",
+    "address": "eu-host.example",
+    "port": 8388,
+    "protocol": "shadowsocks"
+   },
+   {
+    "name": "hy2-test",
+    "address": "eu-host.example",
+    "port": 443,
+    "protocol": "hysteria2"
+   }
+  ],
+  "queue_pos": 0
+ }
+}

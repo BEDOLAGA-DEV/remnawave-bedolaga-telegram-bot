@@ -1,0 +1,28 @@
+{
+ "name": "sv_25",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "f49fb8671b0d",
+  "server": "cloudflare"
+ },
+ "request": {
+  "cidr": "192.0.2.0/25",
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "cidr_not_24",
+   "message": "Только ровно /24 — единичные цели через /v1/probe",
+   "details": {
+    "request_id": "f49fb8671b0d",
+    "retryable": false
+   }
+  }
+ }
+}

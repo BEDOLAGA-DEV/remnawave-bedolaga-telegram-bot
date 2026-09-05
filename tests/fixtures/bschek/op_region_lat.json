@@ -1,0 +1,38 @@
+{
+ "name": "op_region_lat",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "bed989493c0c",
+  "server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "units": [
+   {
+    "op_key": "mts|цфо|off",
+    "operator": "mts",
+    "name": "МТС",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   }
+  ],
+  "n_units": 1,
+  "n_probeable": 1,
+  "n_total": 30,
+  "filters": {
+   "dpi": "off",
+   "operator": null,
+   "region": [
+    "cfo"
+   ],
+   "probeable": null
+  }
+ }
+}

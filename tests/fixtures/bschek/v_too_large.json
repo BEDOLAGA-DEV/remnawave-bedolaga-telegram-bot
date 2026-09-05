@@ -1,0 +1,28 @@
+{
+ "name": "v_too_large",
+ "status": 400,
+ "elapsed_sec": 0.94,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "c58a876e0426",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "<1 127 583 bytes: one valid vless:// link followed by ~1100 comment lines; omitted from fixture>",
+  "selected_modems": [
+   "dobro|цфо|on"
+  ]
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "input_too_large",
+   "message": "raw_input больше 1 МБ",
+   "details": {
+    "request_id": "c58a876e0426",
+    "retryable": false
+   }
+  }
+ }
+}

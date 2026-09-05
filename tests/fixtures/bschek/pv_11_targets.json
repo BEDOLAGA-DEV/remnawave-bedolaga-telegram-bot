@@ -1,0 +1,40 @@
+{
+ "name": "pv_11_targets",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "320e17be248d",
+  "server": "cloudflare"
+ },
+ "request": {
+  "targets": [
+   "a1.test",
+   "a2.test",
+   "a3.test",
+   "a4.test",
+   "a5.test",
+   "a6.test",
+   "a7.test",
+   "a8.test",
+   "a9.test",
+   "a10.test",
+   "a11.test"
+  ],
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "too_many_targets",
+   "message": "Лимит 10 целей, получено 11",
+   "details": {
+    "request_id": "320e17be248d",
+    "retryable": false
+   }
+  }
+ }
+}

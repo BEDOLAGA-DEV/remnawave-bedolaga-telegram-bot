@@ -1,0 +1,28 @@
+{
+ "name": "v_too_many",
+ "status": 400,
+ "elapsed_sec": 0.72,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "33436109275f",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "vless://00000000-0000-4000-8000-000000000001@s0.example.invalid:443?encryption=none&security=reality&sni=s0.example.invalid&fp=chrome&pbk=PUBKEY#srv0\nvless://00000000-0000-4000-8000-000000000001@s1.example.invalid:443?encryption=none&security=reality&sni=s1.example.invalid&fp=chrome&pbk=PUBKEY#srv1\nvless://00000000-0000-4000-8000-000000000001@s2.example.invalid:443?encryption=none&security=reality&sni=s2.example.invalid&fp=chrome&pbk=PUBKEY#srv2\nvless://00000000-0000-4000-8000-000000000001@s3.example.invalid:443?encryption=none&security=reality&sni=s3.example.invalid&fp=chrome&pbk=PUBKEY#srv3\nvless://00000000-0000-4000-8000-000000000001@s4.example.invalid:443?encryption=none&security=reality&sni=s4.example.invalid&fp=chrome&pbk=PUBKEY#srv4\nvless://00000000-0000-4000-8000-000000000001@s5.example.invalid:443?encryption=none&security=reality&sni=s5.example.invalid&fp=chrome&pbk=PUBKEY#srv5\nvless://00000000-0000-4000-8000-000000000001@s6.example.invalid:443?encryption=none&security=reality&sni=s6.example.invalid&fp=chrome&pbk=PUBKEY#srv6\nvless://00000000-0000-4000-8000-000000000001@s7.example.invalid:443?encryption=none&security=reality&sni=s7.example.invalid&fp=chrome&pbk=PUBKEY#srv7\nvless://00000000-0000-4000-8000-000000000001@s8.example.invalid:443?encryption=none&security=reality&sni=s8.example.invalid&fp=chrome&pbk=PUBKEY#srv8\nvless://00000000-0000-4000-8000-000000000001@s9.example.invalid:443?encryption=none&security=reality&sni=s9.example.invalid&fp=chrome&pbk=PUBKEY#srv9\nvless://00000000-0000-4000-8000-000000000001@s10.example.invalid:443?encryption=none&security=reality&sni=s10.example.invalid&fp=chrome&pbk=PUBKEY#srv10\nvless://00000000-0000-4000-8000-000000000001@s11.example.invalid:443?encryption=none&security=reality&sni=s11.example.invalid&fp=chrome&pbk=PUBKEY#srv11\nvless://00000000-0000-4000-8000-000000000001@s12.example.invalid:443?encryption=none&security=reality&sni=s12.example.invalid&fp=chrome&pbk=PUBKEY#srv12\nvless://00000000-0000-4000-8000-000000000001@s13.example.invalid:443?encryption=none&security=reality&sni=s13.example.invalid&fp=chrome&pbk=PUBKEY#srv13\nvless://00000000-0000-4000-8000-000000000001@s14.example.invalid:443?encryption=none&security=reality&sni=s14.example.invalid&fp=chrome&pbk=PUBKEY#srv14\nvless://00000000-0000-4000-8000-000000000001@s15.example.invalid:443?encryption=none&security=reality&sni=s15.example.invalid&fp=chrome&pbk=PUBKEY#srv15\nvless://00000000-0000-4000-8000-000000000001@s16.example.invalid:443?encryption=none&security=reality&sni=s16.example.invalid&fp=chrome&pbk=PUBKEY#srv16\nvless://00000000-0000-4000-8000-000000000001@s17.example.invalid:443?encryption=none&security=reality&sni=s17.example.invalid&fp=chrome&pbk=PUBKEY#srv17\nvless://00000000-0000-4000-8000-000000000001@s18.example.invalid:443?encryption=none&security=reality&sni=s18.example.invalid&fp=chrome&pbk=PUBKEY#srv18\nvless://00000000-0000-4000-8000-000000000001@s19.example.invalid:443?encryption=none&security=reality&sni=s19.example.invalid&fp=chrome&pbk=PUBKEY#srv19\nvless://00000000-0000-4000-8000-000000000001@s20.example.invalid:443?encryption=none&security=reality&sni=s20.example.invalid&fp=chrome&pbk=PUBKEY#srv20",
+  "selected_modems": [
+   "dobro|цфо|on"
+  ]
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "too_many_configs",
+   "message": "Слишком много серверов: 21 (лимит API — 20). Отправьте не больше 20 ссылок за раз",
+   "details": {
+    "request_id": "33436109275f",
+    "retryable": false
+   }
+  }
+ }
+}

@@ -1,0 +1,27 @@
+{
+ "name": "pv_no_target",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "554c41b458d0",
+  "server": "cloudflare"
+ },
+ "request": {
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "invalid_request",
+   "message": "Поля targets[] или target обязательны",
+   "details": {
+    "request_id": "554c41b458d0",
+    "retryable": false
+   }
+  }
+ }
+}

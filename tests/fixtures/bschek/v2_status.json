@@ -1,0 +1,47 @@
+{
+ "name": "v2_status",
+ "status": 200,
+ "elapsed_sec": 0.41,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "c56da71599b1",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "test_id": 43301,
+  "state": "done",
+  "queue_pos": null,
+  "queue_total": null,
+  "result_ready": true,
+  "completed_at": "2026-09-05T14:13:24.704398+00:00",
+  "result": [
+   {
+    "ok": false,
+    "sni": "eu-host.example",
+    "stage": "cancelled",
+    "tcp_ok": false,
+    "targets": [],
+    "attempts": 0,
+    "protocol": "vless",
+    "cancelled": true,
+    "diagnosis": "Проверка отменена — сервер не проверен, кредиты не списаны",
+    "tunnel_up": false,
+    "speed_mbps": 0,
+    "fail_reason": "cancelled",
+    "server_addr": "eu-host.example:443",
+    "server_name": "🇩🇪 Germany",
+    "speed_error": "",
+    "operator": "dobro",
+    "operator_name": "dobro",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON",
+    "used_core": null
+   }
+  ],
+  "used_core": null,
+  "core_requested": "auto"
+ }
+}

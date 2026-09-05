@@ -1,0 +1,94 @@
+{
+ "name": "conc_a",
+ "status": 200,
+ "elapsed_sec": 42.97,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "aeae98bf65ca",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "eu-host-2.example",
+  "operators": [
+   "mts|пфо|on",
+   "tele2|цфо|on"
+  ],
+  "probes": {
+   "tcp": true
+  }
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "cost_credits": 37,
+  "refunded": 0,
+  "n_targets": 1,
+  "by_target": {
+   "eu-host-2.example": {
+    "target_resolved": "eu-host-2.example",
+    "is_domain": true,
+    "by_operator": {
+     "mts|пфо|on": {
+      "ok": true,
+      "icmp": null,
+      "tcp": {
+       "ok": false,
+       "received": 0,
+       "total": 1,
+       "matches_sni": null,
+       "cert_names": [],
+       "verdict": "down"
+      },
+      "tcp_is_tls": true,
+      "sni": null,
+      "http": {
+       "ok": false,
+       "url": "https://eu-host-2.example/",
+       "error": "failed to connect to /198.51.100.61 (port 443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2008
+      },
+      "target": "eu-host-2.example",
+      "error": null,
+      "region": "ПФО",
+      "channel_state": "DPI_ON",
+      "operator": "mts",
+      "dpi": "on"
+     },
+     "tele2|цфо|on": {
+      "ok": true,
+      "icmp": null,
+      "tcp": {
+       "ok": false,
+       "received": 0,
+       "total": 1,
+       "matches_sni": null,
+       "cert_names": [],
+       "verdict": "blocked"
+      },
+      "tcp_is_tls": true,
+      "sni": null,
+      "http": {
+       "ok": false,
+       "url": "https://eu-host-2.example/",
+       "error": "SSL handshake timed out",
+       "method": "GET",
+       "elapsed_ms": 2155
+      },
+      "target": "eu-host-2.example",
+      "error": null,
+      "region": "ЦФО",
+      "channel_state": "DPI_ON",
+      "operator": "tele2",
+      "dpi": "on"
+     }
+    }
+   }
+  },
+  "operators": [
+   "mts|пфо|on",
+   "tele2|цфо|on"
+  ]
+ }
+}

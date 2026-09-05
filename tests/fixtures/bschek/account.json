@@ -1,0 +1,23 @@
+{
+ "name": "account",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "6c996dfc91f0",
+  "server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "balance_credits": 0,
+  "bonus_credits": 100018,
+  "balance_total": 100018,
+  "tier": "gold",
+  "tier_expires_at": "2026-09-07T07:26:32.633092+00:00",
+  "active_scan": false,
+  "min_interval_sec": 1.0,
+  "webhook_secret": "REDACTED"
+ }
+}

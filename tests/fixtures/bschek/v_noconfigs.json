@@ -1,0 +1,25 @@
+{
+ "name": "v_noconfigs",
+ "status": 400,
+ "elapsed_sec": 0.6,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "60e744b20b6f",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "hello world"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "parse_failed",
+   "message": "Не удалось распарсить конфиги: не удалось распознать формат — ожидается vless:// / vmess:// / trojan:// / ss:// URI, xray JSON, base64-список или subscription URL",
+   "details": {
+    "request_id": "60e744b20b6f",
+    "retryable": false
+   }
+  }
+ }
+}

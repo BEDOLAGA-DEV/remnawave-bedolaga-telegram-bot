@@ -1,0 +1,468 @@
+{
+ "name": "p2_replay",
+ "status": 200,
+ "elapsed_sec": 0.44,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "19cfd47aa8b0",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "targets": [
+   "eu-host.example",
+   "bs-host.example:9443"
+  ],
+  "operators": [
+   "*|цфо|on"
+  ],
+  "probes": {
+   "tcp": true,
+   "sni": true
+  },
+  "sni_hosts": [
+   "eu-host.example",
+   "whitelisted.example"
+  ],
+  "dpi": "on"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "refunded": 0,
+  "by_target": {
+   "eu-host.example": {
+    "is_domain": true,
+    "by_operator": {
+     "dobro|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "eu-host.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1004
+       },
+       {
+        "ok": false,
+        "host": "whitelisted.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1002
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "error": "failed to connect to /192.0.2.142 (port 443) after 2000ms",
+       "total": 3,
+       "received": 0
+      },
+      "http": {
+       "ok": false,
+       "url": "https://eu-host.example/",
+       "error": "failed to connect to /192.0.2.142 (port 443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2005
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "eu-host.example",
+      "operator": "dobro",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "sberm|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "eu-host.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms: isConnected failed: ECONNREFUSED (Connection refused)",
+        "verdict": "refused",
+        "latency_ms": 49
+       },
+       {
+        "ok": false,
+        "host": "whitelisted.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms: isConnected failed: ECONNREFUSED (Connection refused)",
+        "verdict": "refused",
+        "latency_ms": 49
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "error": "failed to connect to /192.0.2.142 (port 443) after 2000ms: isConnected failed: ECONNREFUSED (Connection refused)",
+       "total": 3,
+       "received": 0
+      },
+      "http": {
+       "ok": false,
+       "url": "https://eu-host.example/",
+       "error": "Failed to connect to /192.0.2.142:443",
+       "method": "GET",
+       "elapsed_ms": 67
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "eu-host.example",
+      "operator": "sberm",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "tele2|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "eu-host.example",
+        "error": "handshake: SSL handshake timed out",
+        "verdict": "blocked",
+        "latency_ms": 3640
+       },
+       {
+        "ok": false,
+        "host": "whitelisted.example",
+        "error": "handshake: SSL handshake timed out",
+        "verdict": "blocked",
+        "latency_ms": 3646
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "blocked",
+       "received": 0,
+       "cert_names": [],
+       "matches_sni": null
+      },
+      "http": {
+       "ok": false,
+       "url": "https://eu-host.example/",
+       "error": "SSL handshake timed out",
+       "method": "GET",
+       "elapsed_ms": 2137
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "eu-host.example",
+      "operator": "tele2",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     },
+     "megafon|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "eu-host.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1010
+       },
+       {
+        "ok": false,
+        "host": "whitelisted.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1005
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "error": "failed to connect to /192.0.2.142 (port 443) after 2000ms: isConnected failed: ECONNREFUSED (Connection refused)",
+       "total": 3,
+       "received": 0
+      },
+      "http": {
+       "ok": false,
+       "url": "https://eu-host.example/",
+       "error": "Failed to connect to /192.0.2.142:443",
+       "method": "GET",
+       "elapsed_ms": 1117
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "eu-host.example",
+      "operator": "megafon",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "t-mobile|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "eu-host.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1011
+       },
+       {
+        "ok": false,
+        "host": "whitelisted.example",
+        "error": "connect: failed to connect to /192.0.2.142 (port 443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1007
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "error": "failed to connect to /192.0.2.142 (port 443) after 2000ms",
+       "total": 3,
+       "received": 0
+      },
+      "http": {
+       "ok": false,
+       "url": "https://eu-host.example/",
+       "error": "failed to connect to /192.0.2.142 (port 443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2011
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "eu-host.example",
+      "operator": "t-mobile",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     }
+    },
+    "target_resolved": "eu-host.example"
+   },
+   "bs-host.example:9443": {
+    "is_domain": true,
+    "by_operator": {
+     "dobro|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "host": "eu-host.example",
+        "verdict": "alive",
+        "latency_ms": 132
+       },
+       {
+        "ok": true,
+        "host": "whitelisted.example",
+        "verdict": "alive",
+        "latency_ms": 116
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 202,
+       "throughput_kbps": 21
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "dobro",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "sberm|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "eu-host.example",
+        "error": "handshake: SSL handshake timed out",
+        "verdict": "blocked",
+        "latency_ms": 3571
+       },
+       {
+        "ok": true,
+        "host": "whitelisted.example",
+        "verdict": "alive",
+        "latency_ms": 1064
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "SSL handshake timed out",
+       "method": "GET",
+       "elapsed_ms": 2079
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "sberm",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "tele2|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "host": "eu-host.example",
+        "verdict": "alive",
+        "latency_ms": 115
+       },
+       {
+        "ok": true,
+        "host": "whitelisted.example",
+        "verdict": "alive",
+        "latency_ms": 100
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "blocked",
+       "received": 0,
+       "cert_names": [
+        "CN=*.whitelisted.example"
+       ],
+       "matches_sni": false
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 218,
+       "throughput_kbps": 20
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "tele2",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     },
+     "megafon|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "host": "eu-host.example",
+        "verdict": "alive",
+        "latency_ms": 731
+       },
+       {
+        "ok": true,
+        "host": "whitelisted.example",
+        "verdict": "alive",
+        "latency_ms": 168
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 257,
+       "throughput_kbps": 17
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "megafon",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "t-mobile|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "eu-host.example",
+        "error": "connect: failed to connect to /198.51.100.44 (port 9443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1009
+       },
+       {
+        "ok": false,
+        "host": "whitelisted.example",
+        "error": "connect: failed to connect to /198.51.100.44 (port 9443) after 1000ms",
+        "verdict": "down",
+        "latency_ms": 1005
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "error": "failed to connect to /198.51.100.44 (port 9443) after 2000ms",
+       "total": 3,
+       "received": 0
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "failed to connect to /198.51.100.44 (port 9443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2007
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "t-mobile",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     }
+    },
+    "target_resolved": "bs-host.example"
+   }
+  },
+  "n_targets": 2,
+  "operators": [
+   "megafon|цфо|on",
+   "tele2|цфо|on",
+   "t-mobile|цфо|on",
+   "dobro|цфо|on",
+   "sberm|цфо|on"
+  ],
+  "cost_credits": 260
+ }
+}

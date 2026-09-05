@@ -1,0 +1,23 @@
+{
+ "name": "v2_cancel_again",
+ "status": 409,
+ "elapsed_sec": 0.5,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "f69ac77e2c34",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "cannot_cancel_running",
+   "message": "Тест уже в финальной стадии — подожди пару секунд.",
+   "details": {
+    "request_id": "f69ac77e2c34",
+    "retryable": true
+   }
+  }
+ }
+}

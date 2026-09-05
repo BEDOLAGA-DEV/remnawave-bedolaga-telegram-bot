@@ -1,0 +1,87 @@
+{
+ "name": "p_legacy_alias",
+ "status": 200,
+ "elapsed_sec": 3.48,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "b46b695dbc07",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "1.1.1.1",
+  "operators": [
+   "mts|цфо|off",
+   "mts|пфо|on"
+  ],
+  "confirm_dpi_off": true,
+  "probes": {
+   "icmp": true
+  }
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "cost_credits": 37,
+  "refunded": 1,
+  "n_targets": 1,
+  "by_target": {
+   "1.1.1.1": {
+    "target_resolved": "1.1.1.1",
+    "is_domain": false,
+    "by_operator": {
+     "mts|цфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 186.62746533333333,
+       "rtt_max_ms": 447.194896,
+       "rtt_min_ms": 42.81625,
+       "rtt_ms": 186.62746533333333
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЦФО",
+      "channel_state": "DPI_OFF",
+      "operator": "mts",
+      "dpi": "off"
+     },
+     "mts|пфо|on": {
+      "ok": true,
+      "icmp": {
+       "ok": false,
+       "sent": 3,
+       "loss_pct": 100.0,
+       "received": 0,
+       "rtt_avg_ms": 0.0,
+       "rtt_max_ms": 0.0,
+       "rtt_min_ms": 0.0,
+       "rtt_ms": 0.0
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ПФО",
+      "channel_state": "DPI_ON",
+      "operator": "mts",
+      "dpi": "on"
+     }
+    }
+   }
+  },
+  "operators": [
+   "mts|цфо|off",
+   "mts|пфо|on"
+  ]
+ }
+}

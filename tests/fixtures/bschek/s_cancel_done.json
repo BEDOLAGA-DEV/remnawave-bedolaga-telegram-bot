@@ -1,0 +1,23 @@
+{
+ "name": "s_cancel_done",
+ "status": 409,
+ "elapsed_sec": 0.65,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "7a8ffa6f9d7b",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "not_running",
+   "message": "Скан уже завершён (сейчас: done) — останавливать нечего",
+   "details": {
+    "request_id": "7a8ffa6f9d7b",
+    "retryable": false
+   }
+  }
+ }
+}

@@ -1,0 +1,32 @@
+{
+ "name": "pF_same_key_while_running",
+ "status": 409,
+ "elapsed_sec": 0.41,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "8714568d201a",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "bs-host.example:9443",
+  "probes": {
+   "tcp": true,
+   "sni": true
+  },
+  "sni_hosts": [
+   "whitelisted.example"
+  ]
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "request_in_progress",
+   "message": "Идентичный запрос ещё выполняется — дождитесь ответа и повторите с ТЕМ ЖЕ Idempotency-Key (новый ключ запустит вторую платную проверку)",
+   "details": {
+    "request_id": "8714568d201a",
+    "retryable": false
+   }
+  }
+ }
+}

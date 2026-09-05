@@ -1,0 +1,37 @@
+{
+ "name": "pv_unknown_op",
+ "status": 503,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "13650cf80daf",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "nokia|цфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "worker_unavailable",
+   "message": "Под ваш выбор сейчас нет ни одной доступной единицы — попробуйте позже",
+   "details": {
+    "dpi": "any",
+    "unavailable": [
+     {
+      "op_key": "nokia|цфо|on",
+      "operator": "nokia",
+      "region": "ЦФО",
+      "dpi": "on"
+     }
+    ],
+    "retryable": true,
+    "request_id": "13650cf80daf"
+   }
+  }
+ }
+}

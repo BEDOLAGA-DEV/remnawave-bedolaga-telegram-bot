@@ -1,0 +1,24 @@
+{
+ "name": "op_bad",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "b1c37c8c56bd",
+  "server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "invalid_request",
+   "message": "dpi должен быть 'on', 'off' или 'any'",
+   "details": {
+    "got": "maybe",
+    "request_id": "b1c37c8c56bd",
+    "retryable": false
+   }
+  }
+ }
+}

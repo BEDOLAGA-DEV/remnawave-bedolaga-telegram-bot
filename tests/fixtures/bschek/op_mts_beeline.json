@@ -1,0 +1,119 @@
+{
+ "name": "op_mts_beeline",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "2f49e2ea3412",
+  "server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "units": [
+   {
+    "op_key": "beeline|уфо|off",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "УФО",
+    "region_code": "urfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|юфо|on",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|юфо|off",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|kgd|on",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "KGD",
+    "region_code": "kgd",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|пфо|on",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|сзфо|off",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "СЗФО",
+    "region_code": "szfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "mts|цфо|off",
+    "operator": "mts",
+    "name": "МТС",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "mts|дфо|off",
+    "operator": "mts",
+    "name": "МТС",
+    "region": "ДФО",
+    "region_code": "dfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "mts|пфо|on",
+    "operator": "mts",
+    "name": "МТС",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   }
+  ],
+  "n_units": 9,
+  "n_probeable": 9,
+  "n_total": 30,
+  "filters": {
+   "dpi": "any",
+   "operator": [
+    "beeline",
+    "mts"
+   ],
+   "region": null,
+   "probeable": null
+  }
+ }
+}

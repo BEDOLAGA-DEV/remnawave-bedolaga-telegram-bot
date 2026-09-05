@@ -1,0 +1,49 @@
+{
+ "name": "pv_sni",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "ea5ecc7bd1e8",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "mts|пфо|on"
+  ],
+  "probes": {
+   "tcp": true,
+   "sni": true
+  },
+  "sni_hosts": [
+   "example.com"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "cost_credits": 22,
+  "full_credits": 22,
+  "legs_without_bs": 0,
+  "n_targets": 1,
+  "operators_available": 9,
+  "selected_units": [
+   "mts|пфо|on"
+  ],
+  "legs_with_sni": 1,
+  "breakdown": {
+   "base": 20,
+   "sni_addon": 4,
+   "multi_scan_factor": 1,
+   "pre_discount": 24,
+   "discount_pct": 7,
+   "total": 22
+  },
+  "level": {
+   "key": "gold",
+   "name": "Gold",
+   "discount_pct": 7
+  }
+ }
+}

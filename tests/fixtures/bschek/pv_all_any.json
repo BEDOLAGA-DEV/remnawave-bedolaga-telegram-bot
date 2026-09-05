@@ -1,0 +1,69 @@
+{
+ "name": "pv_all_any",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "43e20aab94a6",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "dpi": "any"
+ },
+ "idempotency_key": null,
+ "body": {
+  "cost_credits": 558,
+  "full_credits": 558,
+  "legs_without_bs": 15,
+  "n_targets": 1,
+  "operators_available": 9,
+  "selected_units": [
+   "beeline|уфо|off",
+   "beeline|юфо|on",
+   "beeline|юфо|off",
+   "beeline|kgd|on",
+   "beeline|пфо|on",
+   "beeline|сзфо|off",
+   "mts|цфо|off",
+   "mts|дфо|off",
+   "mts|пфо|on",
+   "letai|пфо|off",
+   "megafon|пфо|on",
+   "megafon|сзфо|off",
+   "megafon|цфо|on",
+   "megafon|юфо|off",
+   "rtk|пфо|on",
+   "tele2|пфо|on",
+   "tele2|уфо|on",
+   "tele2|цфо|on",
+   "tele2|юфо|off",
+   "yota|пфо|off",
+   "yota|сзфо|off",
+   "yota|уфо|off",
+   "yota|юфо|off",
+   "t-mobile|уфо|on",
+   "t-mobile|уфо|off",
+   "t-mobile|цфо|on",
+   "dobro|цфо|on",
+   "sberm|цфо|on",
+   "volna|юфо|off",
+   "winmobile|юфо|on"
+  ],
+  "legs_with_sni": 0,
+  "breakdown": {
+   "base": 20,
+   "sni_addon": 0,
+   "multi_scan_factor": 30,
+   "pre_discount": 600,
+   "discount_pct": 7,
+   "total": 558
+  },
+  "level": {
+   "key": "gold",
+   "name": "Gold",
+   "discount_pct": 7
+  }
+ }
+}

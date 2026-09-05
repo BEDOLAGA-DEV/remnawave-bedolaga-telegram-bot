@@ -1,0 +1,388 @@
+{
+ "name": "p_empty_ops",
+ "status": 200,
+ "elapsed_sec": 20.85,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "70dbf5a2d0fd",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "1.1.1.1",
+  "operators": [],
+  "dpi": "off",
+  "probes": {
+   "icmp": true
+  }
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "cost_credits": 279,
+  "refunded": 0,
+  "n_targets": 1,
+  "by_target": {
+   "1.1.1.1": {
+    "target_resolved": "1.1.1.1",
+    "is_domain": false,
+    "by_operator": {
+     "beeline|уфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 41.832320333333335,
+       "rtt_max_ms": 42.903,
+       "rtt_min_ms": 40.817692,
+       "rtt_ms": 41.832320333333335
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "УФО",
+      "channel_state": "DPI_OFF",
+      "operator": "beeline",
+      "dpi": "off"
+     },
+     "beeline|юфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 71.164861,
+       "rtt_max_ms": 88.259218,
+       "rtt_min_ms": 61.099896,
+       "rtt_ms": 71.164861
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЮФО",
+      "channel_state": "DPI_OFF",
+      "operator": "beeline",
+      "dpi": "off"
+     },
+     "beeline|сзфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 45.43561533333334,
+       "rtt_max_ms": 64.948615,
+       "rtt_min_ms": 32.493846,
+       "rtt_ms": 45.43561533333334
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "СЗФО",
+      "channel_state": "DPI_OFF",
+      "operator": "beeline",
+      "dpi": "off"
+     },
+     "mts|цфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "error": "",
+       "rtt_ms": 24.102905998006463,
+       "loss_pct": 0.0,
+       "latency_ms": 26,
+       "rtt_avg_ms": 24.102905998006463
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЦФО",
+      "channel_state": "DPI_OFF",
+      "operator": "mts",
+      "dpi": "off"
+     },
+     "mts|дфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 160.790656,
+       "rtt_max_ms": 210.148992,
+       "rtt_min_ms": 134.615168,
+       "rtt_ms": 160.790656
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ДФО",
+      "channel_state": "DPI_OFF",
+      "operator": "mts",
+      "dpi": "off"
+     },
+     "letai|пфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 187.51833366666665,
+       "rtt_max_ms": 268.829539,
+       "rtt_min_ms": 94.245154,
+       "rtt_ms": 187.51833366666665
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ПФО",
+      "channel_state": "DPI_OFF",
+      "operator": "letai",
+      "dpi": "off"
+     },
+     "megafon|сзфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 42.136111,
+       "rtt_max_ms": 46.073593,
+       "rtt_min_ms": 39.085677,
+       "rtt_ms": 42.136111
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "СЗФО",
+      "channel_state": "DPI_OFF",
+      "operator": "megafon",
+      "dpi": "off"
+     },
+     "megafon|юфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "error": "",
+       "rtt_ms": 94.82747498744477,
+       "loss_pct": 0.0,
+       "latency_ms": 95,
+       "rtt_avg_ms": 94.82747498744477
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЮФО",
+      "channel_state": "DPI_OFF",
+      "operator": "megafon",
+      "dpi": "off"
+     },
+     "tele2|юфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 102.27430533333334,
+       "rtt_max_ms": 109.861249,
+       "rtt_min_ms": 93.975313,
+       "rtt_ms": 102.27430533333334
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЮФО",
+      "channel_state": "DPI_OFF",
+      "operator": "tele2",
+      "dpi": "off"
+     },
+     "yota|пфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 214.8857423333333,
+       "rtt_max_ms": 459.418783,
+       "rtt_min_ms": 90.233155,
+       "rtt_ms": 214.8857423333333
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ПФО",
+      "channel_state": "DPI_OFF",
+      "operator": "yota",
+      "dpi": "off"
+     },
+     "yota|сзфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 34.37392366666667,
+       "rtt_max_ms": 42.977657,
+       "rtt_min_ms": 29.562708,
+       "rtt_ms": 34.37392366666667
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "СЗФО",
+      "channel_state": "DPI_OFF",
+      "operator": "yota",
+      "dpi": "off"
+     },
+     "yota|уфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 216.38088533333334,
+       "rtt_max_ms": 481.930677,
+       "rtt_min_ms": 79.654427,
+       "rtt_ms": 216.38088533333334
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "УФО",
+      "channel_state": "DPI_OFF",
+      "operator": "yota",
+      "dpi": "off"
+     },
+     "yota|юфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "error": "",
+       "rtt_ms": 148.85556899632016,
+       "loss_pct": 0.0,
+       "latency_ms": 150,
+       "rtt_avg_ms": 148.85556899632016
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЮФО",
+      "channel_state": "DPI_OFF",
+      "operator": "yota",
+      "dpi": "off"
+     },
+     "t-mobile|уфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "sent": 3,
+       "loss_pct": 0.0,
+       "received": 3,
+       "rtt_avg_ms": 58.772031000000005,
+       "rtt_max_ms": 63.061874,
+       "rtt_min_ms": 53.652917,
+       "rtt_ms": 58.772031000000005
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "УФО",
+      "channel_state": "DPI_OFF",
+      "operator": "t-mobile",
+      "dpi": "off"
+     },
+     "volna|юфо|off": {
+      "ok": true,
+      "icmp": {
+       "ok": true,
+       "error": "",
+       "rtt_ms": 60.51110999639301,
+       "loss_pct": 0.0,
+       "latency_ms": 66,
+       "rtt_avg_ms": 60.51110999639301
+      },
+      "tcp": null,
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЮФО",
+      "channel_state": "DPI_OFF",
+      "operator": "volna",
+      "dpi": "off"
+     }
+    }
+   }
+  },
+  "operators": [
+   "beeline|уфо|off",
+   "beeline|юфо|off",
+   "beeline|сзфо|off",
+   "mts|цфо|off",
+   "mts|дфо|off",
+   "letai|пфо|off",
+   "megafon|сзфо|off",
+   "megafon|юфо|off",
+   "tele2|юфо|off",
+   "yota|пфо|off",
+   "yota|сзфо|off",
+   "yota|уфо|off",
+   "yota|юфо|off",
+   "t-mobile|уфо|off",
+   "volna|юфо|off"
+  ]
+ }
+}

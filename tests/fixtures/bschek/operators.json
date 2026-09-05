@@ -1,0 +1,326 @@
+{
+ "name": "operators",
+ "status": 200,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "5ce1331155aa",
+  "server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "units": [
+   {
+    "op_key": "beeline|уфо|off",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "УФО",
+    "region_code": "urfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|юфо|on",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|юфо|off",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|kgd|on",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "KGD",
+    "region_code": "kgd",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|пфо|on",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "beeline|сзфо|off",
+    "operator": "beeline",
+    "name": "Билайн",
+    "region": "СЗФО",
+    "region_code": "szfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "mts|цфо|off",
+    "operator": "mts",
+    "name": "МТС",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "mts|дфо|off",
+    "operator": "mts",
+    "name": "МТС",
+    "region": "ДФО",
+    "region_code": "dfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "mts|пфо|on",
+    "operator": "mts",
+    "name": "МТС",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "letai|пфо|off",
+    "operator": "letai",
+    "name": "Летай",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "megafon|пфо|on",
+    "operator": "megafon",
+    "name": "МегаФон",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "megafon|сзфо|off",
+    "operator": "megafon",
+    "name": "МегаФон",
+    "region": "СЗФО",
+    "region_code": "szfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "megafon|цфо|on",
+    "operator": "megafon",
+    "name": "МегаФон",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "megafon|юфо|off",
+    "operator": "megafon",
+    "name": "МегаФон",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "rtk|пфо|on",
+    "operator": "rtk",
+    "name": "Ростелеком",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "tele2|пфо|on",
+    "operator": "tele2",
+    "name": "Tele2",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "tele2|уфо|on",
+    "operator": "tele2",
+    "name": "Tele2",
+    "region": "УФО",
+    "region_code": "urfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "tele2|цфо|on",
+    "operator": "tele2",
+    "name": "Tele2",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "tele2|юфо|off",
+    "operator": "tele2",
+    "name": "Tele2",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "yota|пфо|off",
+    "operator": "yota",
+    "name": "Yota",
+    "region": "ПФО",
+    "region_code": "pfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "yota|сзфо|off",
+    "operator": "yota",
+    "name": "Yota",
+    "region": "СЗФО",
+    "region_code": "szfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "yota|уфо|off",
+    "operator": "yota",
+    "name": "Yota",
+    "region": "УФО",
+    "region_code": "urfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "yota|юфо|off",
+    "operator": "yota",
+    "name": "Yota",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "t-mobile|уфо|on",
+    "operator": "t-mobile",
+    "name": "T-Mobile",
+    "region": "УФО",
+    "region_code": "urfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "t-mobile|уфо|off",
+    "operator": "t-mobile",
+    "name": "T-Mobile",
+    "region": "УФО",
+    "region_code": "urfo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "t-mobile|цфо|on",
+    "operator": "t-mobile",
+    "name": "T-Mobile",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "dobro|цфо|on",
+    "operator": "dobro",
+    "name": "Добросвязь",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "sberm|цфо|on",
+    "operator": "sberm",
+    "name": "СберМобайл",
+    "region": "ЦФО",
+    "region_code": "cfo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   },
+   {
+    "op_key": "volna|юфо|off",
+    "operator": "volna",
+    "name": "Волна",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "off",
+    "channel_state": "DPI_OFF",
+    "probeable": true
+   },
+   {
+    "op_key": "winmobile|юфо|on",
+    "operator": "winmobile",
+    "name": "Win Mobile",
+    "region": "ЮФО",
+    "region_code": "yufo",
+    "dpi": "on",
+    "channel_state": "DPI_ON",
+    "probeable": true
+   }
+  ],
+  "n_units": 30,
+  "n_probeable": 30,
+  "n_total": 30,
+  "filters": {
+   "dpi": "any",
+   "operator": null,
+   "region": null,
+   "probeable": null
+  }
+ }
+}

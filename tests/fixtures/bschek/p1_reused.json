@@ -1,0 +1,28 @@
+{
+ "name": "p1_reused",
+ "status": 409,
+ "elapsed_sec": 0.45,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "4d5fc22906ff",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "eu-host-2.example",
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "idempotency_key_reused",
+   "message": "Idempotency-Key уже использован с другим телом запроса",
+   "details": {
+    "request_id": "4d5fc22906ff",
+    "retryable": false
+   }
+  }
+ }
+}

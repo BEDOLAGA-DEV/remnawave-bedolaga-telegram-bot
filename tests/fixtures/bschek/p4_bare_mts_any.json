@@ -1,0 +1,104 @@
+{
+ "name": "p4_bare_mts_any",
+ "status": 200,
+ "elapsed_sec": 2.43,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "69e1cccd1824",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "1.1.1.1",
+  "operators": [
+   "mts"
+  ],
+  "probes": {
+   "tcp": true
+  },
+  "dpi": "any"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "cost_credits": 55,
+  "refunded": 1,
+  "n_targets": 1,
+  "by_target": {
+   "1.1.1.1": {
+    "target_resolved": "1.1.1.1",
+    "is_domain": false,
+    "by_operator": {
+     "mts|цфо|off": {
+      "ok": true,
+      "icmp": null,
+      "tcp": {
+       "ok": true,
+       "received": 1,
+       "total": 1,
+       "matches_sni": true,
+       "cert_names": [
+        "CN=cloudflare-dns.com,O=Cloudflare\\, Inc.,L=San Francisco,ST=California,C=US"
+       ],
+       "verdict": "alive"
+      },
+      "tcp_is_tls": true,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ЦФО",
+      "channel_state": "DPI_OFF",
+      "operator": "mts",
+      "dpi": "off"
+     },
+     "mts|дфо|off": {
+      "ok": true,
+      "icmp": null,
+      "tcp": {
+       "ok": true,
+       "received": 3,
+       "total": 3,
+       "error": ""
+      },
+      "tcp_is_tls": false,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ДФО",
+      "channel_state": "DPI_OFF",
+      "operator": "mts",
+      "dpi": "off"
+     },
+     "mts|пфо|on": {
+      "ok": true,
+      "icmp": null,
+      "tcp": {
+       "ok": false,
+       "received": 0,
+       "total": 1,
+       "matches_sni": null,
+       "cert_names": [],
+       "verdict": "down"
+      },
+      "tcp_is_tls": true,
+      "sni": null,
+      "http": null,
+      "target": "1.1.1.1",
+      "error": null,
+      "region": "ПФО",
+      "channel_state": "DPI_ON",
+      "operator": "mts",
+      "dpi": "on"
+     }
+    }
+   }
+  },
+  "operators": [
+   "mts|цфо|off",
+   "mts|дфо|off",
+   "mts|пфо|on"
+  ]
+ }
+}
