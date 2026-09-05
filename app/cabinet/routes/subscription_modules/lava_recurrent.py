@@ -88,6 +88,7 @@ async def enable_lava_recurrent(
 @router.post('/lava-recurrent/purchase')
 async def purchase_with_lava_recurrent(
     tariff_id: int = Query(..., description='Tariff to subscribe to'),
+    subscription_id: int | None = Query(None, description='Legacy subscription to convert'),
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -108,10 +109,24 @@ async def purchase_with_lava_recurrent(
     if not tariff or not getattr(tariff, 'is_active', False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Tariff not found')
 
+    target_subscription = None
+    if isinstance(subscription_id, int):
+        target_subscription = await resolve_subscription(db, user, subscription_id)
+        if not target_subscription:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No subscription found')
+
     from app.services.payment.lava import purchase_tariff_with_lava_recurring
 
     try:
-        result = await purchase_tariff_with_lava_recurring(db, user=user, tariff=tariff)
+        if target_subscription is None:
+            result = await purchase_tariff_with_lava_recurring(db, user=user, tariff=tariff)
+        else:
+            result = await purchase_tariff_with_lava_recurring(
+                db,
+                user=user,
+                tariff=tariff,
+                subscription=target_subscription,
+            )
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     except Exception as error:
