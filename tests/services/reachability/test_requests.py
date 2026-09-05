@@ -6,6 +6,7 @@ import pytest
 
 from app.services.reachability.links import MAX_CONFIGS_PER_TEST
 from app.services.reachability.requests import (
+    MAX_PROBE_TARGETS,
     RequestBuildError,
     build_probe_request,
     build_scan_request,
@@ -94,3 +95,12 @@ def test_scan_request() -> None:
         build_scan_request(cidr, [], 'on', {'sni': True}, [])
     with pytest.raises(RequestBuildError):
         build_scan_request(_t('a.example', None, None), [], 'on', {'tcp': True}, [])
+
+
+def test_probe_request_limits_targets_to_api_maximum() -> None:
+    targets = [_t(f'h{i}.example', 443, None) for i in range(MAX_PROBE_TARGETS + 1)]
+    with pytest.raises(RequestBuildError, match=str(MAX_PROBE_TARGETS)):
+        build_probe_request(targets, [], 'on', {'tcp': True})
+    assert (
+        len(build_probe_request(targets[:MAX_PROBE_TARGETS], [], 'on', {'tcp': True})['targets']) == MAX_PROBE_TARGETS
+    )

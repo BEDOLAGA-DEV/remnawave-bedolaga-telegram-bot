@@ -1,8 +1,8 @@
 """Тела запросов bschekbot из целей и раскрытых симок.
 
 Правила из живого API: строгий селектор проб (хотя бы одна), SNI только парой
-``probes.sni`` + ``sni_hosts``, не больше 20 конфигов на VLESS-тест, скан — ровно
-одна подсеть /24.
+``probes.sni`` + ``sni_hosts``, не больше 10 целей на probe (``too_many_targets``),
+не больше 20 конфигов на VLESS-тест, скан — ровно одна подсеть /24.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from app.services.reachability.targets import KIND_CIDR, Target, probe_api_targe
 
 
 PROBE_NAMES = ('icmp', 'tcp', 'sni')
+MAX_PROBE_TARGETS = 10
 
 
 class RequestBuildError(ValueError):
@@ -34,6 +35,8 @@ def build_probe_request(targets: list[Target], units: list[str], dpi: str, probe
     hosts = [target for target in targets if target.kind != KIND_CIDR]
     if not hosts:
         raise RequestBuildError('Нет целей для пробы')
+    if len(hosts) > MAX_PROBE_TARGETS:
+        raise RequestBuildError(f'API проверяет не больше {MAX_PROBE_TARGETS} целей за раз, выбрано {len(hosts)}')
     clean_probes = normalize_probes(probes)
     body = {
         'targets': [probe_api_target(target) for target in hosts],
