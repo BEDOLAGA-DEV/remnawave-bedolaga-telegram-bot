@@ -1859,6 +1859,9 @@
 - `app/services/reachability/gate.py` — Python-модуль
   Классы: `PaidCallGate` (3 методов)
   Функции: нет
+- `app/services/reachability/legs.py` — Python-модуль
+  Классы: нет
+  Функции: `build_probe_legs` — Леги probe: ``by_target[цель].by_operator[op_key]`` → по одному легу на пару., `vless_op_key` — У лега VLESS нет op_key — собираем ``оператор|округ|on/off`` из его полей., `build_vless_legs` — Леги VLESS: сервер ищется по ``server_addr`` (= target_key), запасной путь — по имени., `merge_skipped` — Наши пропуски (расчёт по каталогу) + пропуски из ответа API. Всегда новый словарь.
 - `app/services/reachability/links.py` — Python-модуль
   Классы: `ParsedLink`, `RejectedLink`
   Функции: `parse_links`
@@ -3983,6 +3986,9 @@
 - `tests/services/reachability/test_gate.py` — Python-модуль
   Классы: `FakeClock` (3 методов)
   Функции: `test_spaces_calls_by_min_interval`, `test_retries_rate_limited_with_retry_after_and_same_call`, `test_gives_up_after_max_rate_limit_retries`, `test_other_errors_pass_through_immediately`, `test_lock_is_not_held_during_the_call`
+- `tests/services/reachability/test_legs.py` — Python-модуль
+  Классы: нет
+  Функции: `test_probe_legs_from_recorded_full_response`, `test_probe_legs_for_unknown_target_fall_back_to_api_key`, `test_probe_legs_match_api_target_case_insensitively`, `test_vless_legs_match_by_server_addr_and_compose_op_key`, `test_vless_legs_fall_back_to_server_name_then_raw_address`, `test_vless_op_key_from_leg_fields`, `test_merge_skipped_keeps_ours_and_adds_api_lists_without_mutation`
 - `tests/services/reachability/test_links.py` — Python-модуль
   Классы: нет
   Функции: `test_parses_vless_with_sni_and_decoded_name`, `test_parses_other_protocols`, `test_stub_links_from_subscription_page_are_rejected`, `test_unknown_scheme_and_garbage_are_rejected_with_reason`, `test_multiple_lines_keep_order_and_skip_blank_lines`, `test_max_configs_constant_matches_api_limit`
