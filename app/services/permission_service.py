@@ -78,6 +78,7 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     'system_errors': ['read', 'manage'],
     'channels': ['read', 'edit'],
     'ban_system': ['read', 'edit', 'ban', 'unban'],
+    'reachability': ['read', 'run'],
     'wheel': ['read', 'edit'],
     'apps': ['read', 'edit'],
     'email_templates': ['read', 'edit'],

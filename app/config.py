@@ -1504,6 +1504,14 @@ class Settings(BaseSettings):
     BAN_SYSTEM_API_TOKEN: str | None = None
     BAN_SYSTEM_REQUEST_TIMEOUT: int = 30
 
+    # bschekbot — «Доступность из РФ»: проверка хостов глазами мобильных операторов
+    BSCHEK_ENABLED: bool = False
+    BSCHEK_API_URL: str = 'https://bsbord.com/v1'
+    BSCHEK_API_KEY: str | None = None  # bsk_live_…, выпускается вручную в кабинете bschekbot
+    BSCHEK_REQUEST_TIMEOUT: int = 200  # синхронный probe идёт до нескольких минут
+    BSCHEK_REFERENCE_SUBSCRIPTION: str | None = None  # shortUuid эталонной подписки панели
+    BSCHEK_JOB_COST_LIMIT_KOPEKS: int = 0  # потолок цены одной задачи, 0 — без потолка
+
     # SOCKS5 proxy for routing bot traffic to Telegram API
     # Format: socks5://user:password@host:port or socks5://host:port
     PROXY_URL: str | None = None
@@ -4300,6 +4308,16 @@ class Settings(BaseSettings):
 
     def get_ban_system_request_timeout(self) -> int:
         return max(1, self.BAN_SYSTEM_REQUEST_TIMEOUT)
+
+    # bschekbot helpers
+    def is_bschek_enabled(self) -> bool:
+        return bool(self.BSCHEK_ENABLED)
+
+    def is_bschek_configured(self) -> bool:
+        return bool(self.BSCHEK_API_KEY)
+
+    def get_bschek_api_url(self) -> str:
+        return (self.BSCHEK_API_URL or 'https://bsbord.com/v1').rstrip('/')
 
     model_config = {'env_file': '.env', 'env_file_encoding': 'utf-8', 'extra': 'ignore'}
 
