@@ -30,6 +30,7 @@ from .admin_payment_methods import router as admin_payment_methods_router
 from .admin_payments import router as admin_payments_router
 from .admin_pinned_messages import router as admin_pinned_messages_router
 from .admin_policies import router as admin_policies_router
+from .admin_premium_traffic import router as admin_premium_traffic_router
 from .admin_promo_offers import router as admin_promo_offers_router
 from .admin_promocodes import promo_groups_router as admin_promo_groups_router, router as admin_promocodes_router
 from .admin_reachability import router as admin_reachability_router
@@ -157,6 +158,7 @@ router.include_router(admin_remnawave_router)
 router.include_router(admin_email_templates_router)
 router.include_router(admin_grace_access_router)
 router.include_router(admin_updates_router)
+router.include_router(admin_premium_traffic_router)
 router.include_router(admin_traffic_router)
 router.include_router(admin_pinned_messages_router)
 router.include_router(admin_button_styles_router)

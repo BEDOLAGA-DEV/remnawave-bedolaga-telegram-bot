@@ -285,6 +285,13 @@ class Settings(BaseSettings):
     DEFAULT_TRAFFIC_RESET_STRATEGY: str = 'MONTH'
     RESET_TRAFFIC_ON_PAYMENT: bool = False
     RESET_TRAFFIC_ON_TARIFF_SWITCH: bool = True
+
+    # Премиум-трафик: отдельные лимиты по сквадам внутри тарифа
+    # (Tariff.server_traffic_limits). Период сброса берётся из режима тарифа,
+    # своей настройки у премиума нет.
+    PREMIUM_TRAFFIC_ENABLED: bool = True
+    # Чаще минуты смысла нет: панель агрегирует статистику с задержкой.
+    PREMIUM_TRAFFIC_CHECK_INTERVAL_SECONDS: int = 300
     RESET_DEVICES_ON_RENEWAL: bool = False
     TARIFF_SWITCH_UPGRADE_ENABLED: bool = True
     TARIFF_SWITCH_DOWNGRADE_ENABLED: bool = True

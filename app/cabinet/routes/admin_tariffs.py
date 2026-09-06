@@ -22,6 +22,7 @@ from app.database.crud.tariff import (
     update_tariff,
 )
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, Transaction, TransactionType, User
+from app.utils.premium_traffic import effective_panel_squads
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.tariffs import (
@@ -681,7 +682,9 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
                                 api,
                                 sub.id,
                                 user_id=remnawave_id,
-                                active_internal_squads=new_squads,
+                                # В панель — без снятых за перерасход премиум-сквадов;
+                                # connected_squads ниже остаётся полным набором прав.
+                                active_internal_squads=await effective_panel_squads(sub.id, new_squads),
                                 external_squad_uuid=ext_squad_uuid,
                             )
                             sub.connected_squads = new_squads
@@ -807,7 +810,8 @@ async def sync_tariff_squads(
                         api,
                         sub.id,
                         user_id=remnawave_id,
-                        active_internal_squads=new_squads,
+                        # См. выше: право на сквад и его наличие в панели — разные вещи.
+                        active_internal_squads=await effective_panel_squads(sub.id, new_squads),
                         external_squad_uuid=ext_squad_uuid,
                     )
                     # Update local DB only on successful API call

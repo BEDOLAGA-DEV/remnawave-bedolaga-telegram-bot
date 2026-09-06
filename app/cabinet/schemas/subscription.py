@@ -24,6 +24,27 @@ class TrafficPurchaseInfo(BaseModel):
     progress_percent: float
 
 
+class PremiumTrafficInfo(BaseModel):
+    """Остаток по одному премиум-скваду.
+
+    Отдаётся, только если в тарифе подписки заданы посквадные лимиты. У тарифов
+    без премиума список пустой, и мини-апп не рисует блок вовсе.
+    """
+
+    squad_uuid: str
+    name: str | None = None
+    limit_gb: float
+    # Докупленный сверх лимита объём — показываем отдельно, чтобы было видно,
+    # что пользователь докупал.
+    extra_gb: float = 0
+    used_gb: float
+    used_percent: float
+    is_limited: bool = False
+    period_start_at: datetime | None = None
+    # Докупка доступна не всегда: её включают отдельно на каждом скваде.
+    topup_available: bool = False
+
+
 class SubscriptionData(BaseModel):
     """User subscription data."""
 
@@ -58,6 +79,8 @@ class SubscriptionData(BaseModel):
     tariff_id: int | None = None
     tariff_name: str | None = None
     traffic_reset_mode: str | None = None
+    # Пусто у тарифов без премиум-сквадов — блок в мини-аппе не рендерится.
+    premium_traffic: list[PremiumTrafficInfo] = []
 
     class Config:
         from_attributes = True
@@ -118,6 +141,35 @@ class TrafficPackageResponse(BaseModel):
     discount_percent: int = 0
     base_price_kopeks: int | None = None
     discount_kopeks: int | None = None
+
+
+class PremiumTrafficPackage(BaseModel):
+    """Пакет докупки премиум-трафика по конкретному скваду."""
+
+    gb: int
+    price_kopeks: int
+    price_rubles: float
+
+
+class PremiumTrafficOptionsResponse(BaseModel):
+    """Что можно докупить по одному премиум-скваду."""
+
+    squad_uuid: str
+    name: str | None = None
+    limit_gb: float
+    extra_gb: float
+    used_gb: float
+    is_limited: bool = False
+    # 0 = без ограничения сверху.
+    max_topup_gb: int = 0
+    packages: list[PremiumTrafficPackage] = []
+
+
+class PremiumTrafficPurchaseRequest(BaseModel):
+    """Покупка премиум-трафика: сквад и объём пакета."""
+
+    squad_uuid: str = Field(..., min_length=1, max_length=64)
+    gb: int = Field(..., ge=1, le=100_000, description='GB to purchase')
 
 
 class TrafficPurchaseRequest(BaseModel):

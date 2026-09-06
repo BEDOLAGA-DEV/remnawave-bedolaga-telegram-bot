@@ -2536,6 +2536,9 @@ class Subscription(Base):
     grace_access_sessions = relationship(
         'GraceAccessSessionModel', back_populates='subscription', passive_deletes=True, lazy='noload'
     )
+    premium_traffic_states = relationship(
+        'SubscriptionPremiumTraffic', back_populates='subscription', passive_deletes=True, cascade='all, delete-orphan'
+    )
 
     @property
     def is_active(self) -> bool:
@@ -2825,6 +2828,81 @@ class TrafficPurchase(Base):
     def is_expired(self) -> bool:
         """Проверяет, истекла ли докупка."""
         return datetime.now(UTC) >= _aware(self.expires_at)
+
+
+class SubscriptionPremiumTraffic(Base):
+    """Состояние премиум-лимита по одному скваду внутри подписки.
+
+    Панель не умеет ограничивать трафик отдельным сквадом: у пользователя одно
+    поле ``trafficLimitBytes`` на всю учётную запись. Лимит держим здесь, а при
+    исчерпании убираем сквад из ``activeInternalSquads``.
+
+    Потраченное не храним как источник правды: расход считается запросом
+    ``bandwidth-stats/nodes/usage`` за ``[period_start_at, сейчас]``, а
+    ``used_bytes`` — лишь кеш последнего замера, чтобы показывать остаток
+    пользователю без похода в панель.
+    """
+
+    __tablename__ = 'subscription_premium_traffic'
+    __table_args__ = (
+        # Одна строка на пару подписка+сквад. Уникальность нужна не только как
+        # инвариант: воркер и покупка доп. трафика ходят сюда конкурентно, и без
+        # неё гонка родила бы два состояния с разными счётчиками.
+        UniqueConstraint('subscription_id', 'squad_uuid', name='uq_subscription_premium_traffic_sub_squad'),
+        # Воркер выбирает состояния пачкой по скваду (один запрос статистики на
+        # сквад, а не на пользователя), поэтому ведущая колонка — squad_uuid.
+        Index('ix_subscription_premium_traffic_squad', 'squad_uuid'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    # subscription_id: отдельный индекс не нужен — leftmost prefix покрывается
+    # уникальным ключом (subscription_id, squad_uuid).
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    squad_uuid = Column(String(64), nullable=False)
+
+    # Снимок лимита тарифа на текущий период: тариф могут отредактировать
+    # посреди периода, и уже начатый период должен доживать на прежних условиях.
+    limit_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    # Докуплено сверх лимита. Обнуляется вместе с периодом.
+    extra_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    used_bytes = Column(BigInteger, nullable=False, default=0, server_default='0')
+    # Поправка на суточную гранулярность статистики панели: запрос за день
+    # начала периода захватывает и трафик, потраченный до сброса. NULL означает
+    # «ещё не замеряли» — величина снимается один раз, первой проверкой периода.
+    baseline_bytes = Column(BigInteger, nullable=True)
+
+    is_limited = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+
+    period_start_at = Column(AwareDateTime(), nullable=False)
+    # Последнее учтённое `lastTrafficResetAt` панели. Нужен, чтобы отличить
+    # сброс, о котором мы знаем (админ сбросил общий трафик — премиум не
+    # трогаем), от досрочного сброса панели, за которым период должен пойти.
+    panel_reset_ack_at = Column(AwareDateTime(), nullable=True)
+
+    notified_80 = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+    last_checked_at = Column(AwareDateTime(), nullable=True)
+
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    subscription = relationship('Subscription', back_populates='premium_traffic_states')
+
+    @property
+    def total_limit_bytes(self) -> int:
+        """Полный лимит периода: базовый плюс докупленный."""
+        return (self.limit_bytes or 0) + (self.extra_bytes or 0)
+
+    @property
+    def remaining_bytes(self) -> int:
+        """Остаток до исчерпания, не уходит в минус."""
+        return max(0, self.total_limit_bytes - (self.used_bytes or 0))
+
+    @property
+    def is_exhausted(self) -> bool:
+        """Исчерпан ли лимит. Нулевой лимит трактуем как безлимит."""
+        if self.total_limit_bytes <= 0:
+            return False
+        return (self.used_bytes or 0) >= self.total_limit_bytes
 
 
 class Transaction(Base):

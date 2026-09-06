@@ -61,6 +61,7 @@ from app.database.models import (
     WithdrawalRequest,
 )
 from app.services.permission_service import PermissionService
+from app.utils.premium_traffic import effective_panel_squads
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
 
@@ -485,7 +486,9 @@ async def _sync_subscription_to_panel(
                 if expire_at:
                     update_kwargs['expire_at'] = expire_at
                 if subscription.connected_squads:
-                    update_kwargs['active_internal_squads'] = subscription.connected_squads
+                    update_kwargs['active_internal_squads'] = await effective_panel_squads(
+                        subscription.id, subscription.connected_squads, db=db
+                    )
                 if hwid_limit is not None:
                     update_kwargs['hwid_device_limit'] = hwid_limit
 
@@ -526,7 +529,9 @@ async def _sync_subscription_to_panel(
                     'telegram_id': user.telegram_id,
                     'email': user.email,
                     'description': description,
-                    'active_internal_squads': subscription.connected_squads or [],
+                    'active_internal_squads': await effective_panel_squads(
+                        subscription.id, subscription.connected_squads or [], db=db
+                    ),
                 }
                 if hwid_limit is not None:
                     create_kwargs['hwid_device_limit'] = hwid_limit
@@ -4363,7 +4368,9 @@ async def sync_user_to_panel(
                     changes['traffic_limit_gb'] = sub.traffic_limit_gb
 
                 if request.update_squads and sub.connected_squads:
-                    update_kwargs['active_internal_squads'] = sub.connected_squads
+                    update_kwargs['active_internal_squads'] = await effective_panel_squads(
+                        sub.id, sub.connected_squads, db=db
+                    )
                     changes['connected_squads'] = sub.connected_squads
 
                 update_kwargs['description'] = description
@@ -4405,7 +4412,7 @@ async def sync_user_to_panel(
                     'telegram_id': user.telegram_id,
                     'email': user.email,
                     'description': description,
-                    'active_internal_squads': sub.connected_squads or [],
+                    'active_internal_squads': await effective_panel_squads(sub.id, sub.connected_squads or [], db=db),
                 }
 
                 if hwid_limit is not None:

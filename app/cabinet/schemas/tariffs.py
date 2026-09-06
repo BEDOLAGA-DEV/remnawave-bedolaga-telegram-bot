@@ -19,9 +19,30 @@ class PeriodPrice(BaseModel):
 
 
 class ServerTrafficLimit(BaseModel):
-    """Traffic limit for a specific server."""
+    """Traffic limit for a specific server (premium squad).
+
+    Поля докупки — посквадный аналог тарифных `traffic_topup_*`: премиум-трафик
+    продаётся отдельно от общего, со своей ценой (`topup_packages`) и своим
+    потолком (`max_topup_gb`).
+
+    Все поля обязаны быть объявлены здесь: `admin_tariffs` сохраняет тариф через
+    `limit.model_dump()`, а pydantic по умолчанию отбрасывает незадекларированные
+    ключи — незаявленное поле молча пропало бы при первом же сохранении тарифа
+    из админки.
+    """
 
     traffic_limit_gb: int = Field(0, ge=0, description='0 = use default tariff limit')
+    name: str | None = Field(
+        None,
+        max_length=64,
+        description='Своё название премиум-лимита; пусто — берём имя сервера',
+    )
+    sort_order: int = Field(0, ge=0, description='Порядок показа; 0 у всех — порядок не настраивали')
+    topup_enabled: bool = Field(False, description='Разрешена ли докупка премиум-трафика по этому скваду')
+    topup_packages: dict[str, int] = Field(
+        default_factory=dict, description='Пакеты докупки {ГБ: цена в копейках}, как traffic_topup_packages тарифа'
+    )
+    max_topup_gb: int = Field(0, ge=0, description='Потолок докупки сверх лимита в ГБ, 0 = без ограничения')
 
 
 class ServerInfo(BaseModel):
