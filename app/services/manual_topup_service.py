@@ -211,20 +211,24 @@ async def credit_manual_topup(
             description=description,
         )
 
-        if apply_topup_bonuses:
-            await _apply_referral_topup(db, locked, amount_kopeks, was_first_topup=was_first_topup, bot=bot)
-
         await _notify_admins(db, locked, transaction, old_balance, bot=bot)
 
         if notify_user:
             await _notify_user(locked, amount_kopeks, transaction, bot=bot)
 
         if apply_topup_bonuses:
-            from app.services.payment.common import send_cart_notification_after_topup
+            from app.services.deposit_side_effects import after_successful_deposit
 
-            # notify_email=False — письмо для юзеров без Telegram уже ушло из
-            # _notify_user, под общим гейтом notify_user.
-            await send_cart_notification_after_topup(locked, amount_kopeks, db, bot, notify_email=False)
+            await after_successful_deposit(
+                db,
+                locked,
+                amount_kopeks,
+                bot=bot,
+                was_first_topup=was_first_topup,
+                notify_email=False,
+            )
+            await db.commit()
+            await db.refresh(locked)
     except Exception as error:
         logger.error(
             'Ошибка пост-обработки ручного пополнения (деньги зачислены)',
@@ -240,34 +244,6 @@ async def credit_manual_topup(
         new_balance_kopeks=new_balance,
         duplicate=False,
     )
-
-
-async def _apply_referral_topup(
-    db: AsyncSession,
-    user: User,
-    amount_kopeks: int,
-    *,
-    was_first_topup: bool,
-    bot: Bot | None,
-) -> None:
-    try:
-        from app.services.referral_service import process_referral_topup
-
-        await process_referral_topup(db, user.id, amount_kopeks, bot)
-    except Exception as error:
-        logger.error('Ошибка реферальной обработки ручного пополнения', user_id=user.id, error=error)
-
-    # Для рефералов флаг «первое пополнение» выставляет сам process_referral_topup —
-    # там он завязан на выдачу отложенного бонуса. Здесь добираем только тех, у кого
-    # реферера нет: иначе бонус реферера остался бы невыданным навсегда.
-    if was_first_topup and not user.has_made_first_topup and not user.referred_by_id:
-        try:
-            user.has_made_first_topup = True
-            await db.commit()
-            await db.refresh(user)
-        except Exception as error:
-            await db.rollback()
-            logger.error('Не удалось отметить первое пополнение', user_id=user.id, error=error)
 
 
 async def _notify_admins(
