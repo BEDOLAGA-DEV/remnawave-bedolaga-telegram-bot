@@ -43,11 +43,15 @@ from ..schemas.reachability import (
     JobOut,
     NodesResponse,
     NodeTargetOut,
+    ParsedConfigOut,
+    ParsedInputResponse,
+    ParseInputRequest,
     PrefOut,
     PrefUpdateRequest,
     PreviewResponse,
     RejectedOut,
     SkippedOut,
+    SourceOut,
     StatusResponse,
     SubscriptionConfigsResponse,
     SummaryResponse,
@@ -107,10 +111,21 @@ def _target_out(target: dict[str, Any] | Target) -> TargetOut:
     return TargetOut(**{key: value for key, value in data.items() if key in TargetOut.model_fields})
 
 
+_JOB_DERIVED = ('targets', 'probes', 'sni_hosts')
+
+
 def _job_out(job: Any) -> JobOut:
-    """Цели задачи — без raw_link: ссылки конфигов на фронт не отдаются."""
-    data = {name: getattr(job, name) for name in JobOut.model_fields if name != 'targets'}
-    return JobOut(**data, targets=[_target_out(target) for target in job.targets or []])
+    """Цели задачи — как TargetOut (без raw_link); пробы и SNI-имена — из тела запроса к API."""
+    data = {name: getattr(job, name) for name in JobOut.model_fields if name not in _JOB_DERIVED}
+    request = getattr(job, 'request', None)
+    request = request if isinstance(request, dict) else {}
+    probes = request.get('probes')
+    return JobOut(
+        **data,
+        targets=[_target_out(target) for target in job.targets or []],
+        probes=dict(probes) if isinstance(probes, dict) else None,
+        sni_hosts=[str(name) for name in (request.get('sni_hosts') or [])],
+    )
 
 
 def _host_out(view: HostView) -> HostTargetOut:
@@ -264,6 +279,27 @@ async def get_subscription_configs(
     except Exception as exc:
         raise _http(exc) from exc
     return _configs_out(configs)
+
+
+@router.post('/targets/parse', response_model=ParsedInputResponse)
+async def parse_input(
+    body: ParseInputRequest,
+    admin: User = Depends(require_permission('reachability:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> ParsedInputResponse:
+    """Поле «Конфиг или подписка»: ссылки, URL подписок, base64 → конфиги с готовыми целями."""
+    try:
+        parsed = await _service().parse_input(db, body.raw_input)
+    except Exception as exc:
+        raise _http(exc) from exc
+    return ParsedInputResponse(
+        configs=[
+            ParsedConfigOut(**_config_out(index, item.target).model_dump(), target=item.target_in)
+            for index, item in enumerate(parsed.configs)
+        ],
+        rejected=[RejectedOut(reason=item.reason, preview=_rejected_preview(item.raw)) for item in parsed.rejected],
+        sources=[SourceOut(**source) for source in parsed.sources],
+    )
 
 
 @router.put('/targets/prefs', response_model=PrefOut)

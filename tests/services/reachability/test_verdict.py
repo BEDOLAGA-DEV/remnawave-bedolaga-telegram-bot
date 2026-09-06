@@ -131,3 +131,18 @@ def test_vless_other_protocol_fail_reasons() -> None:
 )
 def test_matches_expectation(verdict, purpose, dpi, expected) -> None:
     assert matches_expectation(verdict, purpose, dpi) is expected
+
+
+def test_explicit_sni_names_any_alive_is_reachable_all_blocked_is_blocked() -> None:
+    """Multi-SNI по своим именам: ни одно не совпадает с SNI хоста — судим по совокупности."""
+    base = {'ok': True, 'tcp_is_tls': True, 'tcp': {'ok': False, 'verdict': 'blocked'}}
+    mixed = {**base, 'sni': [{'host': 'ads.x5.ru', 'ok': False, 'verdict': 'blocked'}, {'host': 'vk.com', 'ok': True}]}
+    assert probe_leg_verdict(mixed, sni_host='whitelisted.example', reality=True) == REACHABLE
+    all_blocked = {
+        **base,
+        'sni': [
+            {'host': 'ads.x5.ru', 'ok': False, 'verdict': 'blocked'},
+            {'host': 'vk.com', 'ok': False, 'verdict': 'blocked'},
+        ],
+    }
+    assert probe_leg_verdict(all_blocked, sni_host='whitelisted.example', reality=True) == BLOCKED

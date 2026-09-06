@@ -1,0 +1,100 @@
+"""Загрузка чужой подписки по URL для поля «Конфиг или подписка»: только публичные http(s)-адреса,
+клиентский User-Agent, лимит размера, страница вместо конфигов — понятная ошибка."""
+
+from __future__ import annotations
+
+import base64
+from types import SimpleNamespace
+
+import pytest
+from yarl import URL
+
+from app.services.reachability.panel_links import CLIENT_USER_AGENT
+from app.services.reachability.subscriptions import (
+    MAX_BODY_BYTES,
+    SubscriptionFetchError,
+    fetch_subscription_links,
+    is_subscription_url,
+    validate_public_url,
+)
+
+
+pytestmark = pytest.mark.asyncio
+
+LINK_A = 'vless://00000000-0000-4000-8000-000000000001@a.example:443?security=reality&sni=white.example#A'
+LINK_B = 'trojan://pass@b.example:443?security=tls&sni=b.example#B'
+
+
+class _Content:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def read(self, n: int = -1) -> bytes:
+        return self._body if n < 0 else self._body[:n]
+
+
+class FakeSession:
+    def __init__(self, body: str | bytes, status: int = 200, final_url: str | None = None) -> None:
+        self.body = body.encode() if isinstance(body, str) else body
+        self.status = status
+        self.final_url = final_url
+        self.requests: list[dict] = []
+
+    def get(self, url: str, **kwargs):
+        self.requests.append({'url': url, **kwargs})
+        response = SimpleNamespace(status=self.status, url=URL(self.final_url or url), content=_Content(self.body))
+
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return response
+
+            async def __aexit__(self_inner, *exc):
+                return None
+
+        return _Ctx()
+
+    async def close(self) -> None:
+        return None
+
+
+def test_is_subscription_url_and_validate_public_url() -> None:
+    assert is_subscription_url('https://sub.example/abc') and is_subscription_url('HTTP://x.example/a')
+    assert not is_subscription_url('vless://u@h:443') and not is_subscription_url('ya.ru')
+    assert validate_public_url('https://sub.example/abc') == 'https://sub.example/abc'
+    for bad in (
+        'ftp://sub.example/a',
+        'http://127.0.0.1/a',
+        'http://10.0.0.1/a',
+        'http://localhost/a',
+        'https://u:p@h.example/a',
+        'https:///a',
+    ):
+        with pytest.raises(SubscriptionFetchError):
+            validate_public_url(bad)
+
+
+async def test_fetch_decodes_base64_body_with_client_user_agent() -> None:
+    session = FakeSession(base64.b64encode(f'{LINK_A}\n{LINK_B}'.encode()).decode())
+    links = await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+    assert links == [LINK_A, LINK_B]
+    assert session.requests[0]['headers']['User-Agent'] == CLIENT_USER_AGENT
+
+
+async def test_fetch_accepts_plain_links_and_rejects_pages_errors_and_private_redirects() -> None:
+    assert await fetch_subscription_links(
+        'https://sub.example/abc', session_factory=lambda: FakeSession(f'{LINK_A}\n')
+    ) == [LINK_A]
+    with pytest.raises(SubscriptionFetchError, match='конфиг'):
+        await fetch_subscription_links(
+            'https://sub.example/abc', session_factory=lambda: FakeSession('<html>page</html>')
+        )
+    with pytest.raises(SubscriptionFetchError, match='404'):
+        await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: FakeSession('', status=404))
+    with pytest.raises(SubscriptionFetchError):
+        await fetch_subscription_links(
+            'https://sub.example/abc', session_factory=lambda: FakeSession(LINK_A, final_url='http://127.0.0.1/x')
+        )
+    with pytest.raises(SubscriptionFetchError, match='велик'):
+        await fetch_subscription_links(
+            'https://sub.example/abc', session_factory=lambda: FakeSession(b'x' * (MAX_BODY_BYTES + 1))
+        )

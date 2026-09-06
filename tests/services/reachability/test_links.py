@@ -97,3 +97,17 @@ def test_multiple_lines_keep_order_and_skip_blank_lines() -> None:
 
 def test_max_configs_constant_matches_api_limit() -> None:
     assert MAX_CONFIGS_PER_TEST == 20
+
+
+# ---------------------------------------------------------------- вставленный текст (как поле «Конфиг или подписка»)
+
+
+def test_expand_raw_input_splits_lines_decodes_base64_and_keeps_urls() -> None:
+    from app.services.reachability.links import expand_raw_input
+
+    blob = base64.b64encode(f'{VLESS}\n{TROJAN}'.encode()).decode()
+    text = f'  {HY2}\nhttps://sub.example/abc\n\n{blob}\n'
+    assert expand_raw_input(text) == [HY2, 'https://sub.example/abc', VLESS, TROJAN]
+    assert expand_raw_input('') == []
+    # Не base64 и не ссылка — остаётся строкой, дальше её отвергнет разбор.
+    assert expand_raw_input('just words') == ['just words']

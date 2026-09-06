@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.services.reachability.requests import MAX_SNI_HOSTS, normalize_sni_hosts
 
 
 Kind = Literal['probe', 'vless', 'scan']
@@ -30,14 +32,18 @@ class TargetIn(BaseModel):
     ref: str | None = Field(default=None, max_length=255)
     value: str | None = Field(default=None, max_length=4096)
     short_uuid: str | None = Field(default=None, max_length=255)
+    # Подписка по URL (чужая панель) — из поля «Конфиг или подписка».
+    url: str | None = Field(default=None, max_length=2048)
     index: int | None = Field(default=None, ge=0)
+    # Ключ цели на момент разбора: подписка могла измениться, бот сверит.
+    target_key: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode='after')
     def _required_fields(self) -> Self:
         if self.kind in ('host', 'node') and not self.ref:
             raise ValueError('для host/node нужен ref (uuid)')
-        if self.kind == 'subscription_config' and (not self.short_uuid or self.index is None):
-            raise ValueError('для subscription_config нужны short_uuid и index')
+        if self.kind == 'subscription_config' and (not (self.short_uuid or self.url) or self.index is None):
+            raise ValueError('для subscription_config нужны short_uuid или url и index')
         if self.kind in ('custom', 'cidr') and not (self.value or '').strip():
             raise ValueError('для custom/cidr нужно value')
         return self
@@ -56,6 +62,19 @@ class JobCreateRequest(BaseModel):
     dpi: Dpi = 'on'
     probes: ProbesIn = Field(default_factory=ProbesIn)
     core: Literal['', 'stable', 'prerelease'] = ''
+    # Свои имена для TLS-SNI (до 5, как Multi-SNI в оригинале); пусто — имена целей или дефолт из настроек.
+    sni_hosts: list[str] = Field(default_factory=list, max_length=MAX_SNI_HOSTS)
+
+    @field_validator('sni_hosts')
+    @classmethod
+    def _clean_sni_hosts(cls, value: list[str]) -> list[str]:
+        return normalize_sni_hosts(value)
+
+
+class ParseInputRequest(BaseModel):
+    """Поле «Конфиг или подписка»: ссылки, URL подписок, base64 — построчно."""
+
+    raw_input: str = Field(min_length=1, max_length=65536)
 
 
 class PrefUpdateRequest(BaseModel):
@@ -115,6 +134,8 @@ class StatusResponse(BaseModel):
     cost_limit_kopeks: int = 0
     # Ядро Xray → номер версии (как показывает оригинал bsbord.com).
     cores: dict[str, str] = Field(default_factory=dict)
+    # «SNI-хост по умолчанию» из настроек — кабинет подставляет его в поле SNI.
+    default_sni: str | None = None
 
 
 # ============ Цели ============
@@ -173,6 +194,24 @@ class SubscriptionConfigsResponse(BaseModel):
     short_uuid: str
     configs: list[ConfigOut]
     rejected: list[RejectedOut]
+
+
+class SourceOut(BaseModel):
+    kind: Literal['links', 'subscription']
+    label: str
+    count: int
+
+
+class ParsedConfigOut(ConfigOut):
+    # Что кабинет отправит в targets[] задачи: custom со ссылкой пользователя или
+    # subscription_config по shortUuid/url — сырые ссылки подписки наружу не уходят.
+    target: dict[str, Any]
+
+
+class ParsedInputResponse(BaseModel):
+    configs: list[ParsedConfigOut]
+    rejected: list[RejectedOut]
+    sources: list[SourceOut]
 
 
 class PrefOut(BaseModel):
@@ -263,6 +302,9 @@ class JobOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     legs: list[LegOut] = Field(default_factory=list)
+    # Из тела запроса к API: какие пробы заказаны и какие SNI-имена — для «Моих проверок».
+    probes: dict[str, bool] | None = None
+    sni_hosts: list[str] = Field(default_factory=list)
 
 
 class JobListResponse(BaseModel):

@@ -124,3 +124,50 @@ def test_sni_hosts_prefer_sni_and_skip_bare_ip_targets() -> None:
 def test_probe_request_with_sni_but_only_ip_targets_fails_fast() -> None:
     with pytest.raises(RequestBuildError, match='домен'):
         build_probe_request([_t('203.0.113.10', 443, None)], ['mts'], 'on', {'tcp': True, 'sni': True})
+
+
+# ---------------------------------------------------------------- SNI: дефолт и свои имена (как в оригинале)
+
+
+def test_explicit_sni_hosts_win_over_target_names_and_allow_bare_ip_targets() -> None:
+    body = build_probe_request(
+        [_t('203.0.113.10', 443, None)],
+        ['mts'],
+        'on',
+        {'tcp': True, 'sni': True},
+        sni_hosts=['ads.x5.ru'],
+    )
+    assert body['sni_hosts'] == ['ads.x5.ru'] and body['probes']['sni'] is True
+
+
+def test_default_sni_is_used_when_targets_have_no_names() -> None:
+    body = build_probe_request(
+        [_t('203.0.113.10', 443, None)], ['mts'], 'on', {'tcp': True, 'sni': True}, default_sni='Ads.X5.ru'
+    )
+    assert body['sni_hosts'] == ['ads.x5.ru']
+    # Имена целей важнее дефолта: дефолт — только когда взять нечего.
+    named = build_probe_request(
+        [_t('eu-host.example', None, None)], ['mts'], 'on', {'tcp': True, 'sni': True}, default_sni='ads.x5.ru'
+    )
+    assert named['sni_hosts'] == ['eu-host.example']
+
+
+def test_normalize_sni_hosts_dedupes_lowercases_and_limits_to_five() -> None:
+    from app.services.reachability.requests import MAX_SNI_HOSTS, normalize_sni_hosts
+
+    assert normalize_sni_hosts([' Ads.X5.ru ', 'vk.com', 'ads.x5.ru', '']) == ['ads.x5.ru', 'vk.com']
+    assert normalize_sni_hosts(None) == []
+    with pytest.raises(RequestBuildError, match=str(MAX_SNI_HOSTS)):
+        normalize_sni_hosts([f'h{i}.example' for i in range(MAX_SNI_HOSTS + 1)])
+    with pytest.raises(RequestBuildError, match='домен'):
+        normalize_sni_hosts(['not a host'])
+    with pytest.raises(RequestBuildError, match='домен'):
+        normalize_sni_hosts(['203.0.113.10'])
+
+
+def test_scan_request_takes_explicit_names_or_default() -> None:
+    cidr = _t('192.0.2.0', None, None, kind='cidr')
+    body = build_scan_request(cidr, [], 'on', {'tcp': True, 'sni': True}, ['ads.x5.ru', 'vk.com'])
+    assert body['sni_hosts'] == ['ads.x5.ru', 'vk.com']
+    by_default = build_scan_request(cidr, [], 'on', {'tcp': True, 'sni': True}, [], default_sni='ads.x5.ru')
+    assert by_default['sni_hosts'] == ['ads.x5.ru']

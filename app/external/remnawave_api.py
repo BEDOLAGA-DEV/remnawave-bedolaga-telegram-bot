@@ -1305,8 +1305,16 @@ class RemnaWaveAPI:
                 info.happ_crypto_link = encrypted
         return info
 
-    async def get_subscription_by_short_uuid(self, short_uuid: str) -> str:
-        async with self.session.get(f'{self.base_url}/api/sub/{short_uuid}') as response:
+    async def get_subscription_links_by_short_uuid(self, short_uuid: str) -> list[str]:
+        """Remnawave 2.x: защищённая ``GET /api/subscriptions/by-short-uuid/{shortUuid}`` → ``response.links``."""
+        response = await self._make_request('GET', f'/api/subscriptions/by-short-uuid/{short_uuid}')
+        data = response.get('response') if isinstance(response, dict) else None
+        return [str(link) for link in ((data or {}).get('links') or []) if link]
+
+    async def get_subscription_by_short_uuid(self, short_uuid: str, user_agent: str | None = None) -> str:
+        """Публичная подписка; с клиентским User-Agent панель отдаёт настоящие ссылки (base64)."""
+        headers = {'User-Agent': user_agent} if user_agent else None
+        async with self.session.get(f'{self.base_url}/api/sub/{short_uuid}', headers=headers) as response:
             if response.status >= 400:
                 raise RemnaWaveAPIError(f'Failed to get subscription: {response.status}')
             return await response.text()

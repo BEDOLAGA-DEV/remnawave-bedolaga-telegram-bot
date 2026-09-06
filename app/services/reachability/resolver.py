@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from app.external.remnawave_api import RemnaWaveHost, RemnaWaveNode
 from app.services.reachability.links import SUPPORTED_SCHEMES, ParsedLink, RejectedLink, parse_links
+from app.services.reachability.subscriptions import is_subscription_url
 from app.services.reachability.targets import (
     KIND_CIDR,
     KIND_CUSTOM,
@@ -129,10 +130,12 @@ class TargetResolver:
         fetch_nodes: Callable[[], Awaitable[list[RemnaWaveNode]]],
         fetch_links: Callable[[str], Awaitable[list[str]]],
         prefs: PrefsMap,
+        fetch_url_links: Callable[[str], Awaitable[list[str]]] | None = None,
     ) -> None:
         self._fetch_hosts = fetch_hosts
         self._fetch_nodes = fetch_nodes
         self._fetch_links = fetch_links
+        self._fetch_url_links = fetch_url_links
         self._prefs = prefs
         self._hosts: list[RemnaWaveHost] | None = None
         self._nodes: list[RemnaWaveNode] | None = None
@@ -177,15 +180,25 @@ class TargetResolver:
             for node in await self._all_nodes()
         ]
 
-    async def subscription_configs(self, short_uuid: str) -> SubscriptionConfigs:
-        if short_uuid not in self._configs:
-            parsed, rejected = parse_links('\n'.join(await self._fetch_links(short_uuid)))
+    async def _links_for(self, source: str) -> list[str]:
+        """Ссылки источника: shortUuid — через панель, http(s)-адрес — загрузкой подписки."""
+        if is_subscription_url(source):
+            if self._fetch_url_links is None:
+                raise TargetResolutionError('Загрузка подписок по URL недоступна')
+            return list(await self._fetch_url_links(source))
+        return list(await self._fetch_links(source))
+
+    async def subscription_configs(self, source: str) -> SubscriptionConfigs:
+        """Конфиги подписки по источнику — shortUuid панели или URL чужой подписки (кэш на резолвер)."""
+        if source not in self._configs:
+            parsed, rejected = parse_links('\n'.join(await self._links_for(source)))
+            ref_key = 'url' if is_subscription_url(source) else 'short_uuid'
             configs = [
-                target_from_link(link, KIND_SUBSCRIPTION_CONFIG, {'short_uuid': short_uuid, 'index': index})
+                target_from_link(link, KIND_SUBSCRIPTION_CONFIG, {ref_key: source, 'index': index})
                 for index, link in enumerate(parsed)
             ]
-            self._configs[short_uuid] = SubscriptionConfigs(short_uuid=short_uuid, configs=configs, rejected=rejected)
-        return self._configs[short_uuid]
+            self._configs[source] = SubscriptionConfigs(short_uuid=source, configs=configs, rejected=rejected)
+        return self._configs[source]
 
     # ------------------------------------------------------------------ разрешение
 
@@ -202,12 +215,16 @@ class TargetResolver:
         return target_from_node(node)
 
     async def _resolve_subscription_config(self, item: dict) -> Target:
-        short_uuid = str(item.get('short_uuid') or '')
-        configs = (await self.subscription_configs(short_uuid)).configs
+        source = str(item.get('short_uuid') or item.get('url') or '')
+        configs = (await self.subscription_configs(source)).configs
         index = item.get('index')
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(configs):
-            raise TargetResolutionError(f'В подписке {short_uuid} нет конфига №{index}')
-        return configs[index]
+            raise TargetResolutionError(f'В подписке {source} нет конфига №{index}')
+        target = configs[index]
+        expected = str(item.get('target_key') or '').lower()
+        if expected and expected != target.target_key:
+            raise TargetResolutionError(f'Подписка изменилась: конфиг №{index} теперь другой — обновите список')
+        return target
 
     async def _resolve_custom(self, item: dict) -> Target:
         value = str(item.get('value') or '')

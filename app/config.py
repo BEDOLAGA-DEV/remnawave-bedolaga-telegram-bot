@@ -1510,6 +1510,7 @@ class Settings(BaseSettings):
     BSCHEK_API_KEY: str | None = None  # bsk_live_…, выпускается вручную в кабинете bschekbot
     BSCHEK_REQUEST_TIMEOUT: int = 200  # синхронный probe идёт до нескольких минут
     BSCHEK_REFERENCE_SUBSCRIPTION: str | None = None  # shortUuid эталонной подписки панели
+    BSCHEK_DEFAULT_SNI: str | None = None  # «SNI-хост по умолчанию» для TLS-SNI проб (как в bsbord), напр. ads.x5.ru
     BSCHEK_JOB_COST_LIMIT_KOPEKS: int = 0  # потолок цены одной задачи, 0 — без потолка
 
     # SOCKS5 proxy for routing bot traffic to Telegram API

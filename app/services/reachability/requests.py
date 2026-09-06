@@ -10,11 +10,12 @@ from __future__ import annotations
 import ipaddress
 
 from app.services.reachability.links import MAX_CONFIGS_PER_TEST
-from app.services.reachability.targets import KIND_CIDR, Target, probe_api_target
+from app.services.reachability.targets import KIND_CIDR, Target, is_hostname, probe_api_target
 
 
 PROBE_NAMES = ('icmp', 'tcp', 'sni')
 MAX_PROBE_TARGETS = 10
+MAX_SNI_HOSTS = 5  # как Multi-SNI в оригинале: до 5 имён за прогон
 
 
 class RequestBuildError(ValueError):
@@ -50,7 +51,41 @@ def sni_hosts_for(targets: list[Target]) -> list[str]:
     return sorted({name for name in map(sni_name_for, targets) if name})
 
 
-def build_probe_request(targets: list[Target], units: list[str], dpi: str, probes: dict[str, bool]) -> dict:
+def normalize_sni_hosts(names: list[str] | None) -> list[str]:
+    """Свои имена для TLS-SNI: домены в нижнем регистре, без повторов, не больше пяти."""
+    clean: list[str] = []
+    for raw in names or []:
+        name = str(raw or '').strip().lower().rstrip('.')
+        if not name:
+            continue
+        if _is_ip_literal(name) or not is_hostname(name):
+            raise RequestBuildError(f'«{name}» не похоже на домен для SNI')
+        if name not in clean:
+            clean.append(name)
+    if len(clean) > MAX_SNI_HOSTS:
+        raise RequestBuildError(f'API принимает не больше {MAX_SNI_HOSTS} имён SNI за проверку')
+    return clean
+
+
+def resolve_sni_hosts(targets: list[Target], explicit: list[str] | None, default_sni: str | None) -> list[str]:
+    """Имена для SNI-пробы: свои → из целей → «SNI-хост по умолчанию» из настроек."""
+    names = normalize_sni_hosts(explicit)
+    if names:
+        return names
+    auto = sni_hosts_for(targets)
+    if auto:
+        return auto
+    return normalize_sni_hosts([default_sni]) if default_sni else []
+
+
+def build_probe_request(
+    targets: list[Target],
+    units: list[str],
+    dpi: str,
+    probes: dict[str, bool],
+    sni_hosts: list[str] | None = None,
+    default_sni: str | None = None,
+) -> dict:
     hosts = [target for target in targets if target.kind != KIND_CIDR]
     if not hosts:
         raise RequestBuildError('Нет целей для пробы')
@@ -65,10 +100,10 @@ def build_probe_request(targets: list[Target], units: list[str], dpi: str, probe
     }
     if not clean_probes['sni']:
         return body
-    sni_hosts = sni_hosts_for(hosts)
-    if not sni_hosts:
-        raise RequestBuildError('Для TLS-SNI нужен домен среди целей: у IP-адреса нет имени для SNI')
-    return {**body, 'sni_hosts': sni_hosts}
+    names = resolve_sni_hosts(hosts, sni_hosts, default_sni)
+    if not names:
+        raise RequestBuildError('Для TLS-SNI укажите SNI-хост или добавьте домен среди целей: у IP-адреса нет имени')
+    return {**body, 'sni_hosts': names}
 
 
 def build_vless_request(targets: list[Target], units: list[str], dpi: str, core: str) -> dict:
@@ -85,7 +120,12 @@ def build_vless_request(targets: list[Target], units: list[str], dpi: str, core:
 
 
 def build_scan_request(
-    target: Target, units: list[str], dpi: str, probes: dict[str, bool], sni_hosts: list[str]
+    target: Target,
+    units: list[str],
+    dpi: str,
+    probes: dict[str, bool],
+    sni_hosts: list[str],
+    default_sni: str | None = None,
 ) -> dict:
     if target.kind != KIND_CIDR:
         raise RequestBuildError('Скан принимает только подсеть /24')
@@ -93,6 +133,7 @@ def build_scan_request(
     body = {'cidr': target.target_key, 'operators': list(units), 'probes': clean_probes, 'dpi': dpi}
     if not clean_probes['sni']:
         return body
-    if not sni_hosts:
-        raise RequestBuildError('Для SNI-пробы скана укажите имена (sni_hosts)')
-    return {**body, 'sni_hosts': list(sni_hosts)}
+    names = normalize_sni_hosts(sni_hosts) or (normalize_sni_hosts([default_sni]) if default_sni else [])
+    if not names:
+        raise RequestBuildError('Для SNI-пробы скана укажите SNI-хост')
+    return {**body, 'sni_hosts': names}

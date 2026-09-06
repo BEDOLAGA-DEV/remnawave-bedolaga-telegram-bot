@@ -176,3 +176,65 @@ async def test_resolve_custom_link_becomes_config_target() -> None:
 async def test_resolve_reports_unknown_targets(item: dict) -> None:
     with pytest.raises((TargetResolutionError, ValueError)):
         await _resolver().resolve([item])
+
+
+# ---------------------------------------------------------------- подписка по URL (чужая панель)
+
+
+def _url_resolver(links: list[str] | None = None) -> tuple[TargetResolver, list[str]]:
+    calls: list[str] = []
+
+    async def fetch_hosts():
+        return HOSTS
+
+    async def fetch_nodes():
+        return NODES
+
+    async def fetch_links(short_uuid: str):
+        return [BS_LINK]
+
+    async def fetch_url_links(url: str):
+        calls.append(url)
+        return links if links is not None else [EU_LINK]
+
+    resolver = TargetResolver(
+        fetch_hosts=fetch_hosts,
+        fetch_nodes=fetch_nodes,
+        fetch_links=fetch_links,
+        fetch_url_links=fetch_url_links,
+        prefs={},
+    )
+    return resolver, calls
+
+
+async def test_subscription_configs_from_url_use_url_fetcher_and_url_refs() -> None:
+    resolver, calls = _url_resolver()
+    url = 'https://sub.example/abc'
+    configs = await resolver.subscription_configs(url)
+    assert configs.short_uuid == url
+    assert configs.configs[0].ref == {'url': url, 'index': 0}
+    targets = await resolver.resolve(
+        [{'kind': 'subscription_config', 'url': url, 'index': 0, 'target_key': 'eu-host.example:443'}]
+    )
+    assert targets[0].raw_link == EU_LINK and targets[0].kind == KIND_SUBSCRIPTION_CONFIG
+    assert calls == [url]  # второй раз — из кэша резолвера
+
+
+async def test_subscription_config_with_stale_target_key_is_rejected() -> None:
+    resolver, _ = _url_resolver()
+    with pytest.raises(TargetResolutionError, match='изменилась'):
+        await resolver.resolve(
+            [
+                {
+                    'kind': 'subscription_config',
+                    'url': 'https://sub.example/abc',
+                    'index': 0,
+                    'target_key': 'other.example:1',
+                }
+            ]
+        )
+
+
+async def test_url_source_without_fetcher_is_explained() -> None:
+    with pytest.raises(TargetResolutionError, match='URL'):
+        await _resolver().subscription_configs('https://sub.example/abc')

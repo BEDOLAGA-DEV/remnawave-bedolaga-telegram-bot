@@ -23,6 +23,19 @@ def _sni_name(entry: dict) -> str:
     return str(entry.get('host') or evidence.get('sni') or '').lower()
 
 
+def _sni_alive(entry: dict) -> bool:
+    return bool(entry.get('ok')) or entry.get('verdict') == 'alive'
+
+
+def _aggregate_sni(entries: list[dict]) -> dict:
+    """Несколько своих имён (Multi-SNI): хоть одно прошло — жив; все режутся — заблокирован."""
+    alive = [entry for entry in entries if _sni_alive(entry)]
+    if alive:
+        return alive[0]
+    blocked = [entry for entry in entries if entry.get('verdict') in ('blocked', 'refused')]
+    return blocked[0] if blocked else entries[0]
+
+
 def _pick_sni(entries: list[dict] | None, sni_host: str | None) -> dict | None:
     if not entries:
         return None
@@ -30,9 +43,9 @@ def _pick_sni(entries: list[dict] | None, sni_host: str | None) -> dict | None:
         for entry in entries:
             if _sni_name(entry) == sni_host.lower():
                 return entry
-        # Запись одна — это и есть наша проба, даже если исполнитель записал в неё имя хоста.
-        return entries[0] if len(entries) == 1 else None
-    return entries[0]
+    # Запись одна — это и есть наша проба, даже если исполнитель записал в неё имя хоста;
+    # записей несколько и ни одна не про SNI хоста — это свои имена, судим по совокупности.
+    return entries[0] if len(entries) == 1 else _aggregate_sni(entries)
 
 
 def probe_leg_verdict(leg: dict, *, sni_host: str | None = None, reality: bool = False) -> str:

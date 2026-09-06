@@ -119,4 +119,5 @@ async def collect_status(service: ReachabilityService, db: AsyncSession) -> dict
         'reference': reference,
         'cost_limit_kopeks': service.cost_limit_kopeks(),
         'cores': dict(XRAY_CORES),
+        'default_sni': service.default_sni(),
     }

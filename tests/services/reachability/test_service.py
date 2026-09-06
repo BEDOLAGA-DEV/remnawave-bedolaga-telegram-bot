@@ -26,6 +26,7 @@ from app.services.reachability.service import (
     ReachabilityService,
     ReachabilityUnhealthy,
 )
+from app.services.reachability.subscriptions import SubscriptionFetchError
 from app.services.reachability.units import SelectorError
 from tests.fixtures.bschek_fixtures import load_bschek_fixture
 from tests.services.reachability.fakes import FakeAPI, FakeClock
@@ -64,6 +65,8 @@ class FakePanel:
         return []
 
     async def get_subscription_info(self, short_uuid):
+        if short_uuid not in ('ref-1', 'sub-1'):
+            raise RuntimeError('404 User not found')
         return SimpleNamespace(links=[BS_LINK])
 
 
@@ -98,8 +101,10 @@ def make_service(
     key: str | None = 'bsk_live_test',
     limit: int = 0,
     reference: str | None = 'ref-1',
+    default_sni: str | None = None,
     client: FakeClient | None = None,
     panel: FakePanel | None = None,
+    url_links: dict[str, list[str] | Exception] | None = None,
 ) -> ReachabilityService:
     settings_obj = SimpleNamespace(
         BSCHEK_ENABLED=enabled,
@@ -107,6 +112,7 @@ def make_service(
         BSCHEK_REQUEST_TIMEOUT=200,
         BSCHEK_REFERENCE_SUBSCRIPTION=reference,
         BSCHEK_JOB_COST_LIMIT_KOPEKS=limit,
+        BSCHEK_DEFAULT_SNI=default_sni,
         is_bschek_enabled=lambda: enabled,
         is_bschek_configured=lambda: bool(key),
         get_bschek_api_url=lambda: 'https://bsbord.com/v1',
@@ -123,12 +129,22 @@ def make_service(
         clock=clock,
     )
     panel_obj = panel or FakePanel()
+
+    async def url_fetcher(url: str) -> list[str]:
+        answer = (url_links or {}).get(url)
+        if answer is None:
+            raise SubscriptionFetchError(f'Не удалось загрузить {url}')
+        if isinstance(answer, Exception):
+            raise answer
+        return list(answer)
+
     service = ReachabilityService(
         settings_obj=settings_obj,
         session_factory=session_factory,
         remnawave_factory=lambda: panel_obj,
         runner=runner,
         clock=clock,
+        url_fetcher=url_fetcher,
     )
     service._client_factory = lambda: api
     return service
@@ -590,3 +606,127 @@ async def test_background_sweeper_starts_and_stops(session_factory) -> None:
     assert service._background is not None and not service._background.done()
     await service.stop_background()
     assert service._background is None
+
+
+# ---------------------------------------------------------------- SNI: дефолт из настроек и свои имена
+
+
+async def test_preview_probe_uses_explicit_sni_hosts_for_bare_ip(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        'kind': 'probe',
+        'targets': [{'kind': 'custom', 'value': '8.8.8.8'}],
+        'units': ['mts'],
+        'dpi': 'on',
+        'probes': {'tcp': True, 'sni': True},
+        'sni_hosts': ['ads.x5.ru', 'vk.com'],
+    }
+    async with session_factory() as db:
+        preview = await service.preview(db, payload)
+    assert preview.request['sni_hosts'] == ['ads.x5.ru', 'vk.com']
+
+
+async def test_preview_probe_falls_back_to_default_sni_from_settings(session_factory) -> None:
+    service = make_service(session_factory, default_sni='ads.x5.ru')
+    payload = {
+        'kind': 'probe',
+        'targets': [{'kind': 'custom', 'value': '8.8.8.8'}],
+        'units': ['mts'],
+        'dpi': 'on',
+        'probes': {'tcp': True, 'sni': True},
+    }
+    async with session_factory() as db:
+        preview = await service.preview(db, payload)
+        status = await service.status(db)
+    assert preview.request['sni_hosts'] == ['ads.x5.ru']
+    assert status['default_sni'] == 'ads.x5.ru'
+
+
+async def test_preview_scan_with_sni_takes_names_from_payload(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        'kind': 'scan',
+        'targets': [{'kind': 'cidr', 'value': '8.8.8.0/24'}],
+        'units': ['dobro|цфо|on'],
+        'dpi': 'on',
+        'probes': {'tcp': True, 'sni': True},
+        'sni_hosts': ['ads.x5.ru'],
+    }
+    async with session_factory() as db:
+        preview = await service.preview(db, payload)
+    assert preview.request['sni_hosts'] == ['ads.x5.ru']
+
+
+# ---------------------------------------------------------------- поле «Конфиг или подписка»
+
+EU_LINK = 'vless://00000000-0000-4000-8000-000000000001@eu-host.example:443?security=reality&sni=eu-host.example#EU'
+
+
+async def test_parse_input_direct_links_become_custom_targets(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, f'{EU_LINK}\n8.8.8.8\n')
+    assert [c.target.target_key for c in parsed.configs] == ['eu-host.example:443']
+    assert parsed.configs[0].target_in == {'kind': 'custom', 'value': EU_LINK}
+    assert parsed.configs[0].target.raw_link == EU_LINK
+    assert [r.reason for r in parsed.rejected] == ['unsupported_scheme']
+    assert parsed.sources == [{'kind': 'links', 'label': 'ссылки', 'count': 1}]
+
+
+async def test_parse_input_own_panel_url_resolves_through_panel_api(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://sub.example/ref-1')
+    config = parsed.configs[0]
+    assert config.target.kind == 'subscription_config' and config.target.raw_link == BS_LINK
+    assert config.target_in == {
+        'kind': 'subscription_config',
+        'short_uuid': 'ref-1',
+        'index': 0,
+        'target_key': 'bs-host.example:9443',
+    }
+    assert parsed.sources == [{'kind': 'subscription', 'label': 'https://sub.example/ref-1', 'count': 1}]
+
+
+async def test_parse_input_foreign_url_is_fetched_and_referenced_by_url(session_factory) -> None:
+    url = 'https://other.example/xyz'
+    service = make_service(session_factory, url_links={url: [EU_LINK]})
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, url)
+        # Цель по url разрешается при preview — та же ссылка, что при разборе.
+        preview = await service.preview(
+            db,
+            {
+                'kind': 'vless',
+                'targets': [parsed.configs[0].target_in],
+                'units': ['*|цфо|on'],
+                'dpi': 'on',
+                'probes': {},
+                'core': '',
+            },
+        )
+    assert parsed.configs[0].target_in == {
+        'kind': 'subscription_config',
+        'url': url,
+        'index': 0,
+        'target_key': 'eu-host.example:443',
+    }
+    assert preview.request['raw_input'] == EU_LINK
+
+
+async def test_parse_input_unreachable_url_is_rejected_not_raised(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://dead.example/abc')
+    assert parsed.configs == [] and [r.reason for r in parsed.rejected] == ['subscription_failed']
+    assert parsed.rejected[0].raw == 'https://dead.example/abc'
+
+
+async def test_parse_input_base64_blob_expands_to_links(session_factory) -> None:
+    import base64
+
+    service = make_service(session_factory)
+    blob = base64.b64encode(f'{EU_LINK}\n{BS_LINK}'.encode()).decode()
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, blob)
+    assert [c.target.target_key for c in parsed.configs] == ['eu-host.example:443', 'bs-host.example:9443']

@@ -12,6 +12,8 @@ import json
 from dataclasses import dataclass
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from app.services.reachability.panel_links import decode_subscription_body
+
 
 MAX_CONFIGS_PER_TEST = 20
 SUPPORTED_SCHEMES = ('vless', 'vmess', 'trojan', 'ss', 'hysteria2', 'hy2')
@@ -112,3 +114,18 @@ def _parse_ss(raw: str) -> ParsedLink | None:
     if not host or not port_text.isdigit():
         return None
     return ParsedLink('ss', host, int(port_text), None, unquote(fragment), raw)
+
+
+def expand_raw_input(text: str) -> list[str]:
+    """Строки поля «Конфиг или подписка»: ссылки и URL как есть, base64-блоб — в ссылки."""
+    lines: list[str] = []
+    for raw in (text or '').splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if '://' in line:
+            lines.append(line)
+            continue
+        decoded = decode_subscription_body(line)
+        lines.extend(decoded if decoded else [line])
+    return lines

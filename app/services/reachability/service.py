@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -27,12 +28,14 @@ from app.database.models import ReachabilityJob, ReachabilityTargetPref, Subscri
 from app.external.bschek_api import BschekAPI, BschekAPIError
 from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.jobs import KIND_PROBE, KIND_SCAN, KIND_VLESS, JobNotCancellable, JobRunner
+from app.services.reachability.links import RejectedLink, expand_raw_input, parse_links
+from app.services.reachability.panel_links import fetch_panel_links
 from app.services.reachability.pricing import credits_to_kopeks, enforce_cost_limit, estimate_vless_kopeks
 from app.services.reachability.requests import (
     build_probe_request,
     build_scan_request,
     build_vless_request,
-    sni_hosts_for,
+    resolve_sni_hosts,
 )
 from app.services.reachability.resolver import (
     HostView,
@@ -41,10 +44,16 @@ from app.services.reachability.resolver import (
     SubscriptionConfigs,
     TargetResolutionError,
     TargetResolver,
+    target_from_link,
 )
 from app.services.reachability.status import AccountCache, collect_status
+from app.services.reachability.subscriptions import (
+    SubscriptionFetchError,
+    fetch_subscription_links,
+    is_subscription_url,
+)
 from app.services.reachability.summary import build_summary_rows
-from app.services.reachability.targets import KIND_CIDR, KIND_HOST, PURPOSE_BS, Target
+from app.services.reachability.targets import KIND_CIDR, KIND_CUSTOM, KIND_HOST, PURPOSE_BS, Target
 from app.services.reachability.units import Expansion, SelectorError, Unit, UnitsCache
 
 
@@ -55,6 +64,8 @@ UNHEALTHY_FOR = timedelta(minutes=5)
 JOB_KINDS = (KIND_PROBE, KIND_VLESS, KIND_SCAN)
 EXCLUSIVE_KINDS = (KIND_VLESS, KIND_SCAN)
 NO_UNITS_MESSAGE = 'Под фильтр Белого списка не попала ни одна симка'
+# Последний сегмент URL подписки, похожий на shortUuid панели — сначала спрашиваем свою панель.
+_SHORT_UUID_RE = re.compile(r'^[A-Za-z0-9_-]{4,64}$')
 
 
 class ReachabilityDisabled(Exception):
@@ -111,6 +122,21 @@ class Quote:
 
 
 @dataclass(frozen=True)
+class ParsedConfig:
+    """Конфиг из поля «Конфиг или подписка»: цель и то, что кабинет пришлёт обратно в задаче."""
+
+    target: Target
+    target_in: dict
+
+
+@dataclass(frozen=True)
+class ParsedInput:
+    configs: list[ParsedConfig]
+    rejected: list[RejectedLink]
+    sources: list[dict]
+
+
+@dataclass(frozen=True)
 class PreviewResult:
     kind: str
     targets: list[Target]
@@ -142,10 +168,12 @@ class ReachabilityService:
         runner: JobRunner | None = None,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        url_fetcher: Callable[[str], Any] | None = None,
     ) -> None:
         self._settings = settings_obj
         self._session_factory = session_factory
         self._remnawave_factory = remnawave_factory
+        self._url_fetcher = url_fetcher or fetch_subscription_links
         self._clock = clock
         self._now = now
         self._client_factory: Callable[[], BschekAPI] = self._make_client
@@ -174,6 +202,11 @@ class ReachabilityService:
 
     def reference_short_uuid(self) -> str | None:
         return self._settings.BSCHEK_REFERENCE_SUBSCRIPTION or None
+
+    def default_sni(self) -> str | None:
+        """«SNI-хост по умолчанию» из настроек — имя для TLS-SNI, когда у целей нет своего."""
+        value = str(getattr(self._settings, 'BSCHEK_DEFAULT_SNI', None) or '').strip().lower()
+        return value or None
 
     def health(self) -> tuple[bool, str | None]:
         healthy = self._health.is_healthy(self._now())
@@ -280,9 +313,15 @@ class ReachabilityService:
 
         async def fetch_links(short_uuid: str):
             async with self._panel_client() as api:
-                return list((await api.get_subscription_info(short_uuid)).links or [])
+                return await fetch_panel_links(api, short_uuid)
 
-        return TargetResolver(fetch_hosts=fetch_hosts, fetch_nodes=fetch_nodes, fetch_links=fetch_links, prefs=prefs)
+        return TargetResolver(
+            fetch_hosts=fetch_hosts,
+            fetch_nodes=fetch_nodes,
+            fetch_links=fetch_links,
+            fetch_url_links=self._url_fetcher,
+            prefs=prefs,
+        )
 
     async def resolver(self, db: AsyncSession) -> TargetResolver:
         return self._resolver_with(await self._prefs(db))
@@ -305,6 +344,66 @@ class ReachabilityService:
             raise ReachabilityDisabled('Не задана эталонная подписка панели (BSCHEK_REFERENCE_SUBSCRIPTION)')
         return await (await self.resolver(db)).subscription_configs(short_uuid)
 
+    # ------------------------------------------------------------ поле «Конфиг или подписка»
+
+    async def parse_input(self, db: AsyncSession, text: str) -> ParsedInput:
+        """Ссылки, URL подписок и base64 из одного поля → конфиги с готовыми ссылками для задачи."""
+        resolver = await self.resolver(db)
+        configs: list[ParsedConfig] = []
+        rejected: list[RejectedLink] = []
+        sources: list[dict] = []
+        links_count = 0
+        for line in expand_raw_input(text):
+            if is_subscription_url(line):
+                found, bad = await self._parse_subscription_url(resolver, line)
+                configs.extend(found)
+                rejected.extend(bad)
+                sources.append({'kind': 'subscription', 'label': line, 'count': len(found)})
+                continue
+            parsed, bad = parse_links(line)
+            rejected.extend(bad)
+            for link in parsed:
+                target = target_from_link(link, KIND_CUSTOM, {})
+                configs.append(ParsedConfig(target=target, target_in={'kind': 'custom', 'value': line}))
+                links_count += 1
+        if links_count:
+            sources.insert(0, {'kind': 'links', 'label': 'ссылки', 'count': links_count})
+        return ParsedInput(configs=configs, rejected=rejected, sources=sources)
+
+    async def _parse_subscription_url(
+        self, resolver: TargetResolver, url: str
+    ) -> tuple[list[ParsedConfig], list[RejectedLink]]:
+        """Подписка своей панели — через её API по shortUuid из адреса; иначе загружаем сам URL."""
+        candidate = url.rstrip('/').rsplit('/', 1)[-1]
+        if _SHORT_UUID_RE.match(candidate):
+            try:
+                own = await resolver.subscription_configs(candidate)
+            except (PanelUnavailable, TargetResolutionError):
+                own = None
+            if own is not None and own.configs:
+                return self._parsed_configs(own, {'short_uuid': candidate}), list(own.rejected)
+        try:
+            fetched = await resolver.subscription_configs(url)
+        except SubscriptionFetchError as exc:
+            logger.info('Подписка по URL не загружена', url=url, error=str(exc))
+            return [], [RejectedLink(url, 'subscription_failed')]
+        return self._parsed_configs(fetched, {'url': url}), list(fetched.rejected)
+
+    @staticmethod
+    def _parsed_configs(configs: SubscriptionConfigs, source_ref: dict) -> list[ParsedConfig]:
+        return [
+            ParsedConfig(
+                target=target,
+                target_in={
+                    'kind': 'subscription_config',
+                    **source_ref,
+                    'index': index,
+                    'target_key': target.target_key,
+                },
+            )
+            for index, target in enumerate(configs.configs)
+        ]
+
     @staticmethod
     async def _short_uuid_for_user(db: AsyncSession, user_id: int) -> str | None:
         rows = await db.execute(
@@ -318,7 +417,14 @@ class ReachabilityService:
     # ------------------------------------------------------------ preview
 
     async def _quote_probe(self, db: AsyncSession, targets: list[Target], units: list[str], payload: dict) -> Quote:
-        request = build_probe_request(targets, units, str(payload.get('dpi') or 'on'), payload.get('probes') or {})
+        request = build_probe_request(
+            targets,
+            units,
+            str(payload.get('dpi') or 'on'),
+            payload.get('probes') or {},
+            sni_hosts=list(payload.get('sni_hosts') or []),
+            default_sni=self.default_sni(),
+        )
         warnings = []
         if any(target.purpose == PURPOSE_BS for target in targets) and not request['probes']['sni']:
             warnings.append('У хостов под Белый список без SNI-пробы вердикт ненадёжен: Reality даёт ложный blocked')
@@ -335,7 +441,12 @@ class ReachabilityService:
         cidr = next((target for target in targets if target.kind == KIND_CIDR), None)
         if cidr is None:
             raise ValueError('Для скана нужна подсеть /24')
-        sni_hosts = sni_hosts_for([target for target in targets if target.kind != KIND_CIDR])
+        # Свои имена → имена целей рядом с подсетью (хост панели) → «SNI-хост по умолчанию».
+        sni_hosts = resolve_sni_hosts(
+            [target for target in targets if target.kind != KIND_CIDR],
+            list(payload.get('sni_hosts') or []),
+            self.default_sni(),
+        )
         request = build_scan_request(
             cidr, units, str(payload.get('dpi') or 'on'), payload.get('probes') or {}, sni_hosts
         )

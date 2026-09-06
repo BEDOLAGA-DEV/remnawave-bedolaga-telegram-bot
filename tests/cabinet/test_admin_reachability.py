@@ -95,6 +95,7 @@ def test_routes_are_registered(registered_paths) -> None:
     assert 'GET' in registered_paths[f'{BASE}/targets/nodes']
     assert 'GET' in registered_paths[f'{BASE}/targets/subscription']
     assert 'PUT' in registered_paths[f'{BASE}/targets/prefs']
+    assert 'POST' in registered_paths[f'{BASE}/targets/parse']
     assert 'POST' in registered_paths[f'{BASE}/jobs/preview']
     assert {'GET', 'POST'} <= registered_paths[f'{BASE}/jobs']
     assert 'GET' in registered_paths[f'{BASE}/jobs/{{job_id}}']
@@ -111,6 +112,7 @@ def test_routes_are_registered(registered_paths) -> None:
         ('get_hosts', 'reachability:read'),
         ('get_nodes', 'reachability:read'),
         ('get_subscription_configs', 'reachability:read'),
+        ('parse_input', 'reachability:read'),
         ('update_pref', 'reachability:run'),
         ('preview_job', 'reachability:read'),
         ('create_job', 'reachability:run'),
@@ -344,3 +346,75 @@ async def test_summary_maps_rows_and_units(service) -> None:
     response = await admin_reachability.get_summary(dpi='on', admin=ADMIN, db=None)
     assert [u.in_catalog for u in response.units] == [True, False]
     assert response.rows[0].cells['mts|пфо|on'].verdict == 'reachable' and response.rows[0].purpose_guessed
+
+
+# ============== SNI: дефолт в статусе и свои имена в запросе ==============
+
+
+async def test_status_exposes_default_sni(service) -> None:
+    service.status = AsyncMock(
+        return_value={
+            'enabled': True,
+            'configured': True,
+            'healthy': True,
+            'active_jobs': [],
+            'reference': None,
+            'cost_limit_kopeks': 0,
+            'cores': {},
+            'default_sni': 'ads.x5.ru',
+        }
+    )
+    response = await admin_reachability.get_status(admin=ADMIN, db=None)
+    assert response.default_sni == 'ads.x5.ru'
+
+
+def test_job_request_accepts_up_to_five_sni_hosts_and_normalizes_them() -> None:
+    body = _probe_body(sni_hosts=[' Ads.X5.ru ', 'vk.com', 'ads.x5.ru'])
+    assert body.sni_hosts == ['ads.x5.ru', 'vk.com']
+    assert _probe_body().sni_hosts == []
+    with pytest.raises(ValidationError):
+        _probe_body(sni_hosts=[f'h{i}.example' for i in range(6)])
+    with pytest.raises(ValidationError):
+        _probe_body(sni_hosts=['not a host'])
+
+
+# ============== Поле «Конфиг или подписка» и пробы в истории ==============
+
+
+def test_target_in_accepts_subscription_config_by_url() -> None:
+    item = TargetIn(kind='subscription_config', url='https://sub.example/x', index=0, target_key='a.example:443')
+    assert item.url == 'https://sub.example/x'
+    with pytest.raises(ValidationError):
+        TargetIn(kind='subscription_config', index=0)
+
+
+async def test_parse_input_route_maps_configs_and_hides_raw_links(service) -> None:
+    from app.cabinet.schemas.reachability import ParseInputRequest
+    from app.services.reachability.service import ParsedConfig, ParsedInput
+
+    stub = f'vless://{"1" * 36}@0.0.0.0:1?security=none#stub'
+    target_in = {'kind': 'subscription_config', 'url': 'https://sub.example/x', 'index': 0, 'target_key': BS.target_key}
+    service.parse_input = AsyncMock(
+        return_value=ParsedInput(
+            configs=[ParsedConfig(target=BS, target_in=target_in)],
+            rejected=[RejectedLink(stub, 'stub')],
+            sources=[{'kind': 'subscription', 'label': 'https://sub.example/x', 'count': 1}],
+        )
+    )
+    response = await admin_reachability.parse_input(
+        ParseInputRequest(raw_input='https://sub.example/x'), admin=ADMIN, db=None
+    )
+    assert response.configs[0].target == target_in and response.configs[0].label == 'BS'
+    assert response.sources[0].count == 1 and response.rejected[0].reason == 'stub'
+    assert LINK not in response.model_dump_json() and '1' * 36 not in response.model_dump_json()
+
+
+async def test_job_out_exposes_probes_and_sni_hosts_from_request(service) -> None:
+    service.get_job = AsyncMock(
+        return_value=_job(request={'probes': {'icmp': False, 'tcp': True, 'sni': True}, 'sni_hosts': ['ads.x5.ru']})
+    )
+    response = await admin_reachability.get_job(5, admin=ADMIN, db=None)
+    assert response.probes == {'icmp': False, 'tcp': True, 'sni': True} and response.sni_hosts == ['ads.x5.ru']
+    service.get_job = AsyncMock(return_value=_job())
+    bare = await admin_reachability.get_job(5, admin=ADMIN, db=None)
+    assert bare.probes is None and bare.sni_hosts == []

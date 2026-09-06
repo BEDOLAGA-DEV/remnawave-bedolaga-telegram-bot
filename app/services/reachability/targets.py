@@ -33,6 +33,11 @@ class TargetValidationError(ValueError):
     """Цель не годится для проверки; сообщение — для админа, по-русски."""
 
 
+def is_hostname(value: str) -> bool:
+    """Синтаксически корректное доменное имя (строчные буквы, без localhost)."""
+    return value != 'localhost' and bool(_HOSTNAME_RE.match(value))
+
+
 @dataclass(frozen=True)
 class Target:
     kind: str
