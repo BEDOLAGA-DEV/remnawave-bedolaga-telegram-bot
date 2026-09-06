@@ -337,6 +337,53 @@ class TestDecisions:
         assert outcome is None
 
 
+class TestPanelUserCache:
+    """Карточка панельного пользователя — самая дорогая часть прохода.
+
+    Запрашивать её на каждого подписчика каждые пять минут значит держать на
+    панели больше десятка запросов в секунду при пяти тысячах подписок. Обе
+    нужные величины (дата сброса и набор сквадов) меняются куда реже.
+    """
+
+    async def test_card_is_requested_once_and_reused(self):
+        api = FakeRemnawaveApi(panel_user=SimpleNamespace(last_traffic_reset_at=None))
+        service = PremiumTrafficService()
+
+        await service._panel_user(api, PANEL_USER_ID)
+        await service._panel_user(api, PANEL_USER_ID)
+
+        assert service._cached_panel_user(PANEL_USER_ID) is not None
+
+    async def test_our_own_change_drops_the_cache(self):
+        """Иначе сверка увидела бы протухший снимок и отправила бы всё заново."""
+        api = FakeRemnawaveApi(panel_user=SimpleNamespace(last_traffic_reset_at=None))
+        service = PremiumTrafficService()
+        await service._panel_user(api, PANEL_USER_ID)
+
+        service.invalidate_panel_user(PANEL_USER_ID)
+
+        assert service._cached_panel_user(PANEL_USER_ID) is None
+
+    async def test_expired_entry_is_refetched(self, monkeypatch):
+        api = FakeRemnawaveApi(panel_user=SimpleNamespace(last_traffic_reset_at=None))
+        service = PremiumTrafficService()
+        await service._panel_user(api, PANEL_USER_ID)
+
+        # Протухание: подменяем срок годности на прошлое.
+        _expires, panel_user = service._panel_users[PANEL_USER_ID]
+        service._panel_users[PANEL_USER_ID] = (-1.0, panel_user)
+
+        assert service._cached_panel_user(PANEL_USER_ID) is None
+
+    async def test_unknown_user_is_not_cached(self):
+        api = FakeRemnawaveApi(panel_user=SimpleNamespace(last_traffic_reset_at=None))
+        service = PremiumTrafficService()
+
+        assert service._cached_panel_user(999) is None
+        void = await service._panel_user(api, 999)
+        assert void is not None
+
+
 class TestFirstDayCorrection:
     """Статистика панели задаётся датами без времени.
 

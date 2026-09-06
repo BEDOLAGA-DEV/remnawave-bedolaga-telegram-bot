@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
@@ -58,6 +59,13 @@ WARNING_THRESHOLD = 0.8
 # Ноды сквада меняются редко, а спрашивают их на каждом проходе по каждому
 # скваду. Кеш живёт дольше интервала воркера, чтобы не дёргать панель впустую.
 NODES_CACHE_TTL_SECONDS = 3600
+# Карточка панельного пользователя нужна ради `lastTrafficResetAt` (досрочный
+# сброс) и фактического набора сквадов (сверка). Обе величины меняются редко, а
+# запрашивать их на каждого подписчика каждый проход — самая дорогая часть
+# работы: при пяти тысячах подписок это больше десятка запросов в секунду
+# непрерывно. Держим час, разброс не даёт всем протухнуть одновременно.
+PANEL_USER_CACHE_TTL_SECONDS = 3600
+PANEL_USER_CACHE_JITTER = 0.25
 
 
 @dataclass
@@ -80,6 +88,8 @@ class PremiumTrafficService:
         self._running = False
         self._bot: Bot | None = None
         self._nodes_cache: dict[str, tuple[float, list[str]]] = {}
+        # Живёт между проходами, а не внутри одного: см. PANEL_USER_CACHE_TTL_SECONDS.
+        self._panel_users: dict[int, tuple[float, Any]] = {}
 
     def set_bot(self, bot: Bot) -> None:
         self._bot = bot
@@ -142,12 +152,9 @@ class PremiumTrafficService:
                 # состояния одной подписки могут разойтись, если один сквад уже
                 # перевалил границу, а другой ещё нет.
                 period_starts: dict[tuple[int, str], datetime] = {}
-                # Отметки панели читаем по разу на пользователя за проход.
-                panel_cache: dict[int, Any] = {}
-
                 for target in targets:
                     try:
-                        period_start = await self._resolve_period(db, api, target, now, panel_cache)
+                        period_start = await self._resolve_period(db, api, target, now)
                     except Exception as error:
                         stats['errors'] += 1
                         logger.warning(
@@ -187,7 +194,7 @@ class PremiumTrafficService:
                                 used_bytes=usage.get(target.panel_user_id, 0),
                                 period_start=period_starts[(target.subscription.id, target.config.squad_uuid)],
                                 now=now,
-                                panel_user=panel_cache.get(target.panel_user_id),
+                                panel_user=self._cached_panel_user(target.panel_user_id),
                             )
                         except Exception as error:
                             stats['errors'] += 1
@@ -288,7 +295,6 @@ class PremiumTrafficService:
         api: Any,
         target: _Target,
         now: datetime,
-        panel_cache: dict[int, Any],
     ) -> datetime:
         """Определить период и, если он сменился, начать новый."""
         subscription = target.subscription
@@ -300,7 +306,7 @@ class PremiumTrafficService:
             period_start_at=now,
         )
 
-        panel_user = await self._panel_user(api, target.panel_user_id, panel_cache)
+        panel_user = await self._panel_user(api, target.panel_user_id)
         panel_reset_at = getattr(panel_user, 'last_traffic_reset_at', None)
         first_connected_at = getattr(panel_user, 'first_connected_at', None)
         anchor = period_anchor(first_connected_at, subscription.start_date, fallback=now)
@@ -335,15 +341,39 @@ class PremiumTrafficService:
 
         return _as_utc(state.period_start_at)
 
-    async def _panel_user(self, api: Any, panel_user_id: int, cache: dict[int, Any]) -> Any:
+    async def _panel_user(self, api: Any, panel_user_id: int) -> Any:
         """Пользователь из панели: отметки времени и фактический набор сквадов.
 
-        Кеш живёт один проход: у подписки может быть несколько премиум-сквадов,
-        и без него панель опрашивалась бы по разу на каждый.
+        Кеш переживает проходы: запрашивать карточку на каждого подписчика раз в
+        пять минут — самая дорогая часть работы, и обе нужные величины меняются
+        куда реже. Немедленные действия — снятие и возврат сквада — от кеша не
+        зависят, они идут по свежему замеру расхода.
         """
-        if panel_user_id not in cache:
-            cache[panel_user_id] = await api.get_user_by_id(panel_user_id)
-        return cache[panel_user_id]
+        cached = self._cached_panel_user(panel_user_id)
+        if cached is not None:
+            return cached
+
+        panel_user = await api.get_user_by_id(panel_user_id)
+        # Разброс срока жизни: иначе через час все записи протухли бы разом и
+        # один проход дал бы залп на всю базу подписчиков.
+        ttl = PANEL_USER_CACHE_TTL_SECONDS * (1 + random.uniform(-PANEL_USER_CACHE_JITTER, PANEL_USER_CACHE_JITTER))
+        self._panel_users[panel_user_id] = (asyncio.get_running_loop().time() + ttl, panel_user)
+        return panel_user
+
+    def _cached_panel_user(self, panel_user_id: int) -> Any:
+        """Непротухшая карточка из кеша либо None."""
+        entry = self._panel_users.get(panel_user_id)
+        if entry is None:
+            return None
+        expires_at, panel_user = entry
+        if asyncio.get_running_loop().time() >= expires_at:
+            del self._panel_users[panel_user_id]
+            return None
+        return panel_user
+
+    def invalidate_panel_user(self, panel_user_id: int) -> None:
+        """Сбросить кеш после того, как мы сами изменили набор сквадов."""
+        self._panel_users.pop(panel_user_id, None)
 
     # -------------------------------------------------------------- расход
 
@@ -516,6 +546,9 @@ class PremiumTrafficService:
                 target.subscription.id, target.subscription.connected_squads or [], db=db
             ),
         )
+        # Набор сквадов в панели только что изменился — иначе сверка на
+        # следующем проходе увидела бы протухший снимок и отправила бы всё заново.
+        self.invalidate_panel_user(target.panel_user_id)
 
     # ------------------------------------------------------- уведомления
 

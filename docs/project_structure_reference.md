@@ -1562,7 +1562,7 @@
   Классы: `PremiumTopupError` (1 методов), `PremiumTopupQuote` (1 методов)
   Функции: `get_premium_topup_options` — Сквады подписки, где докупка премиум-трафика включена и есть пакеты., `quote_premium_topup` — Проверить возможность покупки и посчитать цену до скидок., `apply_premium_topup` — Начислить купленный объём.
 - `app/services/premium_traffic_service.py` — Python-модуль
-  Классы: `PremiumTrafficService` (22 методов)
+  Классы: `PremiumTrafficService` (26 методов)
   Функции: нет
 - `app/services/pricing_engine.py` — Python-модуль
   Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (19 методов)
@@ -3163,7 +3163,7 @@
   Функции: `test_unknown_event_is_not_processed`, `test_remembered_event_is_recognised`, `test_same_id_other_status_is_separate_event` — Возврат по оплаченному счёту — другое событие того же платежа., `test_remember_is_idempotent`, `test_remember_rebuilds_list_instead_of_mutating` — SQLAlchemy замечает изменение JSON-колонки только по присваиванию., `test_remember_handles_none_column` — У записей, созданных до появления колонки, там NULL., `test_both_providers_expose_the_same_helpers` — Расхождение API между провайдерами ломает миксин на ровном месте.
 - `tests/crud/test_premium_traffic_state.py` — Python-модуль
   Классы: нет
-  Функции: `test_state_is_created_once_and_read_back`, `test_lost_insert_race_returns_the_existing_row` — Воркер и покупка трафика могут дойти до вставки одновременно., `test_foreign_integrity_error_is_not_swallowed` — Если упал не наш уникальный ключ — ошибку прятать нельзя., `test_usage_never_goes_down_inside_a_period` — Просадка выборки не должна вернуть доступ к исчерпанному скваду., `test_usage_records_check_time`, `test_exhaustion_and_topup_return_the_squad`, `test_topup_smaller_than_overspend_keeps_the_squad_limited`, `test_non_positive_topup_changes_nothing`, `test_new_period_resets_everything_and_takes_fresh_limit`, `test_new_period_keeps_ack_when_not_given`, `test_limited_squads_are_listed_for_the_subscription`, `test_limited_squads_of_other_subscriptions_do_not_leak`, `test_states_are_collected_per_squad_for_the_worker`, `test_states_are_deleted_for_a_subscription`, `test_only_named_squads_are_deleted`, `test_deleting_nothing_is_a_no_op`
+  Функции: `test_state_is_created_once_and_read_back`, `test_lost_insert_race_returns_the_existing_row` — Воркер и покупка трафика могут дойти до вставки одновременно., `test_foreign_integrity_error_is_not_swallowed` — Если упал не наш уникальный ключ — ошибку прятать нельзя., `test_usage_never_goes_down_inside_a_period` — Просадка выборки не должна вернуть доступ к исчерпанному скваду., `test_usage_records_check_time`, `test_exhaustion_and_topup_return_the_squad`, `test_topup_smaller_than_overspend_keeps_the_squad_limited`, `test_non_positive_topup_changes_nothing`, `test_new_period_resets_everything_and_takes_fresh_limit`, `test_new_period_clears_the_first_day_correction` — Период новый — поправку на его первые сутки надо снять заново., `test_new_period_keeps_ack_when_not_given`, `test_limited_squads_are_listed_for_the_subscription`, `test_limited_squads_of_other_subscriptions_do_not_leak`, `test_states_are_collected_per_squad_for_the_worker`, `test_states_are_deleted_for_a_subscription`, `test_only_named_squads_are_deleted`, `test_deleting_nothing_is_a_no_op`
 - `tests/crud/test_promocode_crud.py` — Python-модуль
   Классы: нет
   Функции: `test_create_promocode_with_promo_group_id` — Test creating a promocode with promo_group_id, `test_create_promocode_without_promo_group_id` — Test creating a promocode without promo_group_id (other types), `test_get_promocode_by_code_loads_promo_group` — Test that get_promocode_by_code loads promo_group relationship, `test_get_promocodes_list_loads_promo_groups` — Test that get_promocodes_list loads promo_group relationships
@@ -3892,7 +3892,7 @@
   Классы: `TestOptions` (4 методов), `TestQuote` (6 методов), `TestApply` (5 методов)
   Функции: нет
 - `tests/services/test_premium_traffic_service.py` — Python-модуль
-  Классы: `FakeRemnawaveApi` (4 методов), `TestUsageCollection` (6 методов), `TestDecisions` (10 методов), `TestIntervalSettings` (1 методов), `TestNotifications` (4 методов)
+  Классы: `FakeRemnawaveApi` (4 методов), `TestUsageCollection` (6 методов), `TestDecisions` (10 методов), `TestPanelUserCache` (4 методов), `TestFirstDayCorrection` (5 методов), `TestIntervalSettings` (1 методов), `TestNotifications` (6 методов)
   Функции: нет
 - `tests/services/test_promocode_rollback_keeps_user_usable.py` — Python-модуль
   Классы: нет
