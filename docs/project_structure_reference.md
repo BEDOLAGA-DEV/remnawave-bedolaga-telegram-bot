@@ -1316,7 +1316,7 @@
   Классы: `ButtonStatsMiddleware` (6 методов)
   Функции: нет
 - `app/middlewares/channel_checker.py` — Python-модуль
-  Классы: `ChannelCheckerMiddleware` (8 методов)
+  Классы: `ChannelCheckerMiddleware` (9 методов)
   Функции: `save_pending_payload_to_redis` — Save pending_start_payload to Redis via the shared cache singleton., `get_pending_payload_from_redis` — Get pending_start_payload from Redis via the shared cache singleton., `delete_pending_payload_from_redis` — Delete pending_start_payload from Redis via the shared cache singleton.
 - `app/middlewares/chat_type_filter.py` — Python-модуль
   Классы: `ChatTypeFilterMiddleware` (1 методов)
