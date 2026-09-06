@@ -320,7 +320,7 @@ class JobRunner:
                 if not isinstance(exc, BschekGatewayError) and exc.code != 'request_in_progress':
                     raise
                 trace = self._trace(exc, job, self._now())
-                logger.warning('Повтор пробы тем же ключом без результата', job_id=job.id, **trace)
+                logger.info('Повтор пробы тем же ключом без результата', job_id=job.id, **trace)
                 await self._update(db, job, result={**(job.result or {}), 'retrieve': trace})
         logger.warning('Результат пробы не получен за отведённое время, доберёт обходчик', job_id=job.id)
         return None
