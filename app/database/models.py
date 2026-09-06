@@ -4355,6 +4355,10 @@ class WheelPrize(Base):
     promo_balance_bonus_kopeks = Column(Integer, default=0)
     promo_subscription_days = Column(Integer, default=0)
     promo_traffic_gb = Column(Integer, default=0)
+    # Промогруппа, в которую попадёт активировавший код. Открывает призы вида
+    # «скидка N% на продление»: назначение промогруппы по промокоду уже умеет
+    # promocode_service, колесу не хватало только способа выдать такой код.
+    promo_group_id = Column(Integer, ForeignKey('promo_groups.id', ondelete='SET NULL'), nullable=True, index=True)
 
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())

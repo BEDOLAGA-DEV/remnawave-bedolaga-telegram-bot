@@ -202,7 +202,9 @@ async def _handle_wheel_spin_payment(
         await db.commit()
 
         # Отправляем результат
-        prize_message = wheel_service._get_prize_message(selected_prize, generated_promocode)
+        prize_message = wheel_service._get_prize_message(
+            selected_prize, generated_promocode, validity_days=config.promo_validity_days
+        )
 
         emoji = selected_prize.emoji or '🎁'
         await message.answer(

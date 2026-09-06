@@ -1425,7 +1425,9 @@ async def extend_subscription(
     return subscription
 
 
-async def add_subscription_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
+async def add_subscription_traffic(
+    db: AsyncSession, subscription: Subscription, gb: int, commit: bool = True
+) -> Subscription:
     # Lock subscription row — защита от lost-update гонки с housekeeping в extend_subscription
     # (см. _apply_base_limit_preserving_active_purchases / _housekeep_expired_purchases).
     # Без lock'а одновременный renewal + topup могут затереть друг друга.
@@ -1464,8 +1466,11 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
         # Первая докупка
         subscription.traffic_reset_at = new_expires_at
 
-    await db.commit()
-    await db.refresh(subscription)
+    # commit=False — для вызова внутри чужой транзакции (спин колеса держит
+    # user-lock и коммитит всё одним куском, как add_user_balance(commit=False)).
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
 
     logger.info(
         '📈 К подписке пользователя добавлено ГБ трафика (истекает )',
@@ -1480,7 +1485,7 @@ async def add_subscription_traffic(db: AsyncSession, subscription: Subscription,
     # меняется, и хелпер молча выйдет по совпадению сумм.
     from app.services.recurrent_amount import sync_recurrent_bindings_after_price_change
 
-    await sync_recurrent_bindings_after_price_change(db, subscription.id)
+    await sync_recurrent_bindings_after_price_change(db, subscription.id, commit=commit)
 
     return subscription
 
