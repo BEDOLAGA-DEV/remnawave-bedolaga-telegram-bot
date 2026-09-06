@@ -2708,6 +2708,9 @@
 - `migrations/alembic/versions/0115_create_reachability_tables.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0116_wheel_prize_promo_group.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -2837,6 +2840,9 @@
 - `tests/test_wheel_fixes.py` — Python-модуль
   Классы: нет
   Функции: `test_spin_rechecks_daily_limit_under_lock` — Even if check_availability passed, spin() must re-count under the lock and, `test_spin_under_limit_proceeds_to_payment` — Sanity: when the re-check is below the limit, spin() proceeds to payment., `test_stars_wheel_spin_idempotent_on_redelivery` — A successful_payment redelivered with the same charge id must NOT grant a
+- `tests/test_wheel_prize_grants.py` — Python-модуль
+  Классы: нет
+  Функции: `test_get_wheel_prizes_orders_by_sort_order_then_id` — B1: без вторичного ключа порядок при равных sort_order произволен., `test_promocode_prize_carries_traffic_and_promo_group` — B2: гигабайты и промогруппа обязаны доехать до промокода., `test_promocode_prize_with_only_promo_group_gets_promo_group_type` — B2: чисто скидочный приз — код типа promo_group, а не пустой balance., `test_traffic_prize_goes_through_traffic_purchase` — B3: сырой `traffic_limit_gb +=` стирается пересчётом лимита., `test_promocode_message_states_contents_and_validity` — B4: голый код не говорит ни что внутри, ни что он сгорит., `test_promocode_message_without_validity_stays_backward_compatible`
 - `tests/utils/`
 - `tests/webapi/`
 - `tests/webserver/`
