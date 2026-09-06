@@ -159,7 +159,17 @@ def _resolve_rich_logo_url() -> str:
     parsed = urlparse(webhook_url)
     if not parsed.scheme or not parsed.netloc:
         return ''
-    return f'{parsed.scheme}://{parsed.netloc}/cabinet/branding/bot-logo'
+    # Cache-busting: Telegram скачивает медиа по URL один раз и дальше кеширует
+    # результат за этим URL бессрочно, независимо от Cache-Control сервера —
+    # без версии в query при замене LOGO_FILE на диске rich-меню годами
+    # показывало бы старый кадр. Версия — mtime файла, растёт при каждой
+    # реальной замене и не меняется, пока файл не тронут (не дёргает Telegram
+    # на каждый рендер меню).
+    try:
+        version = int(Path(settings.LOGO_FILE).stat().st_mtime)
+    except OSError:
+        version = 0
+    return f'{parsed.scheme}://{parsed.netloc}/cabinet/branding/bot-logo?v={version}'
 
 
 def _is_media_fetch_error(error: Exception) -> bool:
