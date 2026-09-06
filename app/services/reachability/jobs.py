@@ -59,6 +59,8 @@ class RunnerConfig:
     probe_retrieve_fast_window: float = 120.0
     probe_retrieve_slow_interval: float = 30.0
     probe_retrieve_max: float = 1200.0
+    # Старше этого проба не поднимается обходчиком, а падает с внятной причиной.
+    probe_max_age_sec: float = 2700.0
     vless_poll_interval: float = 5.0
     vless_timeout_base: float = 300.0
     vless_timeout_per_leg: float = 180.0
@@ -197,6 +199,9 @@ class JobRunner:
             if job.status == STATUS_PENDING or job.phase == PHASE_SUBMITTING:
                 await self._start(db, job)
                 return
+            if self._job_age(job) > self.cfg.probe_max_age_sec:
+                await self._fail(db, job, 'probe_stalled', self._stalled_message(job), False)
+                return
             result = await self._retrieve_probe(db, job)
             if result is not None:
                 await self._finish_probe(db, job, result)
@@ -204,6 +209,35 @@ class JobRunner:
             await self._start(db, job)
         else:
             await self._poll(db, job)
+
+    def _job_age(self, job: ReachabilityJob) -> float:
+        started = job.started_at or job.created_at
+        if started is None:
+            return 0.0
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        return (self._now() - started).total_seconds()
+
+    def _stalled_message(self, job: ReachabilityJob) -> str:
+        trace = (job.result or {}).get('retrieve') or {}
+        minutes = int(self.cfg.probe_max_age_sec // 60)
+        last = f'{trace.get("status") or "—"} {trace.get("code") or "—"}'
+        return (
+            f'bschekbot не отдал результат пробы за {minutes} минут '
+            f'(последний ответ: {last}, request_id {trace.get("request_id") or "—"}, попыток {job.attempts or 0}). '
+            'Если списание прошло, результат можно запросить у поддержки bschek по request_id.'
+        )
+
+    @staticmethod
+    def _trace(exc: BschekAPIError, job: ReachabilityJob, now: datetime) -> dict[str, Any]:
+        return {
+            'code': exc.code,
+            'status': exc.status,
+            'message': (exc.message or '')[:200],
+            'request_id': exc.request_id,
+            'attempt': job.attempts or 0,
+            'at': now.isoformat(),
+        }
 
     async def _update(self, db: AsyncSession, job: ReachabilityJob, **fields: Any) -> None:
         await crud.update_job(db, job, **fields)
@@ -282,11 +316,12 @@ class JobRunner:
             await self._update(db, job, attempts=(job.attempts or 0) + 1)
             try:
                 return await self._call(lambda api: api.probe(job.request, job.idempotency_key), paid=True)
-            except BschekGatewayError:
-                continue
             except BschekAPIError as exc:
-                if exc.code != 'request_in_progress':
+                if not isinstance(exc, BschekGatewayError) and exc.code != 'request_in_progress':
                     raise
+                trace = self._trace(exc, job, self._now())
+                logger.warning('Повтор пробы тем же ключом без результата', job_id=job.id, **trace)
+                await self._update(db, job, result={**(job.result or {}), 'retrieve': trace})
         logger.warning('Результат пробы не получен за отведённое время, доберёт обходчик', job_id=job.id)
         return None
 
