@@ -868,7 +868,10 @@ async def test_logo_auto_url_from_webhook(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, 'WEBHOOK_URL', 'https://bot.example.com/webhook', raising=False)
     monkeypatch.setattr(settings, 'LOGO_FILE', str(logo), raising=False)
 
-    assert rich_menu._resolve_rich_logo_url() == 'https://bot.example.com/cabinet/branding/bot-logo'
+    expected_version = int(logo.stat().st_mtime)
+    assert rich_menu._resolve_rich_logo_url() == (
+        f'https://bot.example.com/cabinet/branding/bot-logo?v={expected_version}'
+    )
 
     # Файла нет — логотип не подставляется
     monkeypatch.setattr(settings, 'LOGO_FILE', str(tmp_path / 'missing.png'), raising=False)
