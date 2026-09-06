@@ -219,13 +219,13 @@ class JobRunner:
         return (self._now() - started).total_seconds()
 
     def _stalled_message(self, job: ReachabilityJob) -> str:
+        """Текст для людей, не для разработчиков: что случилось и куда идти; номер запроса — для поддержки."""
         trace = (job.result or {}).get('retrieve') or {}
         minutes = int(self.cfg.probe_max_age_sec // 60)
-        last = f'{trace.get("status") or "—"} {trace.get("code") or "—"}'
+        request_id = trace.get('request_id') or '—'
         return (
-            f'bschekbot не отдал результат пробы за {minutes} минут '
-            f'(последний ответ: {last}, request_id {trace.get("request_id") or "—"}, попыток {job.attempts or 0}). '
-            'Если списание прошло, результат можно запросить у поддержки bschek по request_id.'
+            f'Сервис BSCHEKER не отдал результат за {minutes} минут. Проверка у него могла завершиться, '
+            f'а деньги списаться — напишите в поддержку BSCHEKER и назовите номер запроса {request_id}.'
         )
 
     @staticmethod

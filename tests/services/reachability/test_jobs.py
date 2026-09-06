@@ -204,7 +204,8 @@ async def test_probe_older_than_cap_fails_instead_of_retrying_forever(session_fa
 
     job = await load(session_factory, job_id)
     assert (job.status, job.error_code, job.retryable) == (STATUS_FAILED, 'probe_stalled', False)
-    assert '45' in job.error_message and 'request_in_progress' in job.error_message and 'r9' in job.error_message
+    assert '45 минут' in job.error_message and 'r9' in job.error_message
+    assert 'request_in_progress' not in job.error_message  # людям — словами, код не нужен
     assert api.calls == []
 
 
