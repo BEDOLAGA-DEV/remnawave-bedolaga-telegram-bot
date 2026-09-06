@@ -16,6 +16,8 @@ from app.services.reachability.targets import KIND_CIDR, Target, is_hostname, pr
 PROBE_NAMES = ('icmp', 'tcp', 'sni')
 MAX_PROBE_TARGETS = 10
 MAX_SNI_HOSTS = 5  # как Multi-SNI в оригинале: до 5 имён за прогон
+# Белый домен по умолчанию для TLS-SNI, когда имя не ввели и у целей его нет (плейсхолдер оригинала).
+DEFAULT_SNI_HOST = 'ads.x5.ru'
 
 
 class RequestBuildError(ValueError):
@@ -67,8 +69,10 @@ def normalize_sni_hosts(names: list[str] | None) -> list[str]:
     return clean
 
 
-def resolve_sni_hosts(targets: list[Target], explicit: list[str] | None, default_sni: str | None) -> list[str]:
-    """Имена для SNI-пробы: свои → из целей → «SNI-хост по умолчанию» из настроек."""
+def resolve_sni_hosts(
+    targets: list[Target], explicit: list[str] | None, default_sni: str | None = DEFAULT_SNI_HOST
+) -> list[str]:
+    """Имена для SNI-пробы: свои → из целей → белый домен по умолчанию."""
     names = normalize_sni_hosts(explicit)
     if names:
         return names
@@ -84,7 +88,7 @@ def build_probe_request(
     dpi: str,
     probes: dict[str, bool],
     sni_hosts: list[str] | None = None,
-    default_sni: str | None = None,
+    default_sni: str | None = DEFAULT_SNI_HOST,
 ) -> dict:
     hosts = [target for target in targets if target.kind != KIND_CIDR]
     if not hosts:
@@ -125,7 +129,7 @@ def build_scan_request(
     dpi: str,
     probes: dict[str, bool],
     sni_hosts: list[str],
-    default_sni: str | None = None,
+    default_sni: str | None = DEFAULT_SNI_HOST,
 ) -> dict:
     if target.kind != KIND_CIDR:
         raise RequestBuildError('Скан принимает только подсеть /24')

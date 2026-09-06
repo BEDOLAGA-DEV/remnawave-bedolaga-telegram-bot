@@ -32,6 +32,7 @@ from app.services.reachability.links import RejectedLink, expand_raw_input, pars
 from app.services.reachability.panel_links import fetch_panel_links
 from app.services.reachability.pricing import credits_to_kopeks, enforce_cost_limit, estimate_vless_kopeks
 from app.services.reachability.requests import (
+    DEFAULT_SNI_HOST,
     build_probe_request,
     build_scan_request,
     build_vless_request,
@@ -203,10 +204,10 @@ class ReachabilityService:
     def reference_short_uuid(self) -> str | None:
         return self._settings.BSCHEK_REFERENCE_SUBSCRIPTION or None
 
-    def default_sni(self) -> str | None:
-        """«SNI-хост по умолчанию» из настроек — имя для TLS-SNI, когда у целей нет своего."""
-        value = str(getattr(self._settings, 'BSCHEK_DEFAULT_SNI', None) or '').strip().lower()
-        return value or None
+    @staticmethod
+    def default_sni() -> str:
+        """Белый домен по умолчанию для TLS-SNI (зашит в код, как плейсхолдер оригинала)."""
+        return DEFAULT_SNI_HOST
 
     def health(self) -> tuple[bool, str | None]:
         healthy = self._health.is_healthy(self._now())

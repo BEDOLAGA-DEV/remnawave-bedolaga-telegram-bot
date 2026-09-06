@@ -101,7 +101,6 @@ def make_service(
     key: str | None = 'bsk_live_test',
     limit: int = 0,
     reference: str | None = 'ref-1',
-    default_sni: str | None = None,
     client: FakeClient | None = None,
     panel: FakePanel | None = None,
     url_links: dict[str, list[str] | Exception] | None = None,
@@ -112,7 +111,6 @@ def make_service(
         BSCHEK_REQUEST_TIMEOUT=200,
         BSCHEK_REFERENCE_SUBSCRIPTION=reference,
         BSCHEK_JOB_COST_LIMIT_KOPEKS=limit,
-        BSCHEK_DEFAULT_SNI=default_sni,
         is_bschek_enabled=lambda: enabled,
         is_bschek_configured=lambda: bool(key),
         get_bschek_api_url=lambda: 'https://bsbord.com/v1',
@@ -626,8 +624,8 @@ async def test_preview_probe_uses_explicit_sni_hosts_for_bare_ip(session_factory
     assert preview.request['sni_hosts'] == ['ads.x5.ru', 'vk.com']
 
 
-async def test_preview_probe_falls_back_to_default_sni_from_settings(session_factory) -> None:
-    service = make_service(session_factory, default_sni='ads.x5.ru')
+async def test_preview_probe_falls_back_to_built_in_default_sni(session_factory) -> None:
+    service = make_service(session_factory)
     payload = {
         'kind': 'probe',
         'targets': [{'kind': 'custom', 'value': '8.8.8.8'}],
