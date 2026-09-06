@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from yarl import URL
 
-from app.services.reachability.panel_links import CLIENT_USER_AGENT
+from app.services.reachability.panel_links import CLIENT_USER_AGENT, HWID_HEADERS
 from app.services.reachability.subscriptions import (
     MAX_BODY_BYTES,
     SubscriptionFetchError,
@@ -34,15 +34,27 @@ class _Content:
 
 
 class FakeSession:
-    def __init__(self, body: str | bytes, status: int = 200, final_url: str | None = None) -> None:
+    def __init__(
+        self,
+        body: str | bytes,
+        status: int = 200,
+        final_url: str | None = None,
+        hwid_body: str | None = None,
+    ) -> None:
         self.body = body.encode() if isinstance(body, str) else body
         self.status = status
         self.final_url = final_url
+        self.hwid_body = hwid_body.encode() if isinstance(hwid_body, str) else hwid_body
         self.requests: list[dict] = []
 
     def get(self, url: str, **kwargs):
         self.requests.append({'url': url, **kwargs})
-        response = SimpleNamespace(status=self.status, url=URL(self.final_url or url), content=_Content(self.body))
+        with_hwid = 'x-hwid' in (kwargs.get('headers') or {})
+        body = self.hwid_body if with_hwid and self.hwid_body is not None else self.body
+        headers = {'x-hwid-active': 'true'} if self.hwid_body is not None else {}
+        response = SimpleNamespace(
+            status=self.status, url=URL(self.final_url or url), content=_Content(body), headers=headers
+        )
 
         class _Ctx:
             async def __aenter__(self_inner):
@@ -78,6 +90,15 @@ async def test_fetch_decodes_base64_body_with_client_user_agent() -> None:
     links = await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
     assert links == [LINK_A, LINK_B]
     assert session.requests[0]['headers']['User-Agent'] == CLIENT_USER_AGENT
+
+
+async def test_fetch_repeats_with_device_headers_when_panel_requires_hwid() -> None:
+    stub = 'vless://00000000-0000-4000-8000-000000000001@0.0.0.0:1?security=none#stub'
+    session = FakeSession(stub, hwid_body=f'{LINK_A}\n')
+    links = await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+    assert links == [LINK_A]
+    assert len(session.requests) == 2 and session.requests[1]['headers']['x-hwid'] == HWID_HEADERS['x-hwid']
+    assert session.requests[1]['headers']['User-Agent'] == CLIENT_USER_AGENT
 
 
 async def test_fetch_accepts_plain_links_and_rejects_pages_errors_and_private_redirects() -> None:

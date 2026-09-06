@@ -313,8 +313,10 @@ class ReachabilityService:
                 return await api.get_all_nodes()
 
         async def fetch_links(short_uuid: str):
+            # Своя подписка по умолчанию — как видит клиент (с балансировщиком «АВТО»);
+            # подписки пользователей — через API, чтобы не занимать им HWID-слот.
             async with self._panel_client() as api:
-                return await fetch_panel_links(api, short_uuid)
+                return await fetch_panel_links(api, short_uuid, prefer_public=short_uuid == self.reference_short_uuid())
 
         return TargetResolver(
             fetch_hosts=fetch_hosts,

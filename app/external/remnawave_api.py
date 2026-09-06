@@ -1313,11 +1313,22 @@ class RemnaWaveAPI:
 
     async def get_subscription_by_short_uuid(self, short_uuid: str, user_agent: str | None = None) -> str:
         """Публичная подписка; с клиентским User-Agent панель отдаёт настоящие ссылки (base64)."""
-        headers = {'User-Agent': user_agent} if user_agent else None
-        async with self.session.get(f'{self.base_url}/api/sub/{short_uuid}', headers=headers) as response:
+        body, _ = await self.get_public_subscription(short_uuid, user_agent=user_agent)
+        return body
+
+    async def get_public_subscription(
+        self, short_uuid: str, *, user_agent: str | None = None, headers: dict[str, str] | None = None
+    ) -> tuple[str, dict[str, str]]:
+        """Публичная подписка как её видит клиент: тело и заголовки ответа (``x-hwid-active`` и т. п.)."""
+        request_headers = dict(headers or {})
+        if user_agent:
+            request_headers['User-Agent'] = user_agent
+        async with self.session.get(
+            f'{self.base_url}/api/sub/{short_uuid}', headers=request_headers or None
+        ) as response:
             if response.status >= 400:
                 raise RemnaWaveAPIError(f'Failed to get subscription: {response.status}')
-            return await response.text()
+            return await response.text(), {key.lower(): value for key, value in response.headers.items()}
 
     async def get_subscription_by_client_type(self, short_uuid: str, client_type: str) -> str:
         valid_types = ['stash', 'singbox', 'singbox-legacy', 'mihomo', 'json', 'v2ray-json', 'clash']

@@ -15,7 +15,12 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from app.services.reachability.panel_links import CLIENT_USER_AGENT, decode_subscription_body
+from app.services.reachability.panel_links import (
+    CLIENT_USER_AGENT,
+    HWID_HEADERS,
+    decode_subscription_body,
+    hwid_required,
+)
 
 
 MAX_BODY_BYTES = 1_000_000
@@ -57,25 +62,34 @@ def _default_session() -> aiohttp.ClientSession:
     return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS))
 
 
+async def _get(session: Any, url: str, headers: dict[str, str]) -> tuple[bytes, dict[str, str]]:
+    async with session.get(url, headers=headers, allow_redirects=True, max_redirects=MAX_REDIRECTS) as response:
+        _check_host(response.url.host)
+        if response.status >= 400:
+            raise SubscriptionFetchError(f'Подписка ответила HTTP {response.status}')
+        body = await response.content.read(MAX_BODY_BYTES + 1)
+        if len(body) > MAX_BODY_BYTES:
+            raise SubscriptionFetchError('Ответ подписки слишком велик')
+        raw_headers = getattr(response, 'headers', None) or {}
+        return body, {str(key).lower(): str(value) for key, value in dict(raw_headers).items()}
+
+
 async def fetch_subscription_links(url: str, *, session_factory: Callable[[], Any] | None = None) -> list[str]:
     """Ссылки конфигов по публичному URL подписки; страница или заглушка вместо них — ошибка."""
     url = validate_public_url(url)
     session = (session_factory or _default_session)()
     headers = {'User-Agent': CLIENT_USER_AGENT, 'Accept': 'text/plain, */*'}
     try:
-        async with session.get(url, headers=headers, allow_redirects=True, max_redirects=MAX_REDIRECTS) as response:
-            _check_host(response.url.host)
-            if response.status >= 400:
-                raise SubscriptionFetchError(f'Подписка ответила HTTP {response.status}')
-            body = await response.content.read(MAX_BODY_BYTES + 1)
+        body, response_headers = await _get(session, url, headers)
+        # Панель с HWID-лимитом без заголовков устройства отдаёт заглушки — повторяем как устройство.
+        if hwid_required(response_headers):
+            body, _ = await _get(session, url, {**headers, **HWID_HEADERS})
     except aiohttp.ClientError as exc:
         raise SubscriptionFetchError(f'Не удалось загрузить подписку: {exc}'[:200]) from exc
     except TimeoutError as exc:
         raise SubscriptionFetchError('Подписка не ответила за отведённое время') from exc
     finally:
         await session.close()
-    if len(body) > MAX_BODY_BYTES:
-        raise SubscriptionFetchError('Ответ подписки слишком велик')
     links = decode_subscription_body(body.decode('utf-8', errors='replace'))
     if not links:
         raise SubscriptionFetchError('По этому адресу нет конфигов: страница или заглушка вместо подписки')
