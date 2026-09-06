@@ -65,6 +65,7 @@ async def get_admin_wheel_config(
             promo_balance_bonus_kopeks=p.promo_balance_bonus_kopeks or 0,
             promo_subscription_days=p.promo_subscription_days or 0,
             promo_traffic_gb=p.promo_traffic_gb or 0,
+            promo_group_id=p.promo_group_id,
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
@@ -128,6 +129,7 @@ async def update_admin_wheel_config(
             promo_balance_bonus_kopeks=p.promo_balance_bonus_kopeks or 0,
             promo_subscription_days=p.promo_subscription_days or 0,
             promo_traffic_gb=p.promo_traffic_gb or 0,
+            promo_group_id=p.promo_group_id,
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
@@ -178,6 +180,7 @@ async def get_prizes(
             promo_balance_bonus_kopeks=p.promo_balance_bonus_kopeks or 0,
             promo_subscription_days=p.promo_subscription_days or 0,
             promo_traffic_gb=p.promo_traffic_gb or 0,
+            promo_group_id=p.promo_group_id,
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
@@ -209,6 +212,7 @@ async def create_prize(
         promo_balance_bonus_kopeks=request.promo_balance_bonus_kopeks,
         promo_subscription_days=request.promo_subscription_days,
         promo_traffic_gb=request.promo_traffic_gb,
+        promo_group_id=request.promo_group_id,
     )
 
     logger.info('🎁 Admin created prize', telegram_id=admin.telegram_id, display_name=prize.display_name)
@@ -228,6 +232,7 @@ async def create_prize(
         promo_balance_bonus_kopeks=prize.promo_balance_bonus_kopeks or 0,
         promo_subscription_days=prize.promo_subscription_days or 0,
         promo_traffic_gb=prize.promo_traffic_gb or 0,
+        promo_group_id=prize.promo_group_id,
         created_at=prize.created_at,
         updated_at=prize.updated_at,
     )
@@ -278,6 +283,7 @@ async def update_prize(
         promo_balance_bonus_kopeks=prize.promo_balance_bonus_kopeks or 0,
         promo_subscription_days=prize.promo_subscription_days or 0,
         promo_traffic_gb=prize.promo_traffic_gb or 0,
+        promo_group_id=prize.promo_group_id,
         created_at=prize.created_at,
         updated_at=prize.updated_at,
     )

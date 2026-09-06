@@ -512,8 +512,14 @@ class FortuneWheelService:
                     return None
                 subscription = await get_subscription_by_user_id(db, user.id)
             if subscription and subscription.traffic_limit_gb > 0:
-                subscription.traffic_limit_gb += prize.prize_value
-                subscription.updated_at = datetime.now(UTC)
+                # Через штатную докупку, а не `traffic_limit_gb += N`: лимит
+                # пересчитывается как base_limit + purchased_gb (см.
+                # _apply_base_limit_preserving_active_purchases), поэтому сырая
+                # прибавка без строки в traffic_purchases стиралась при первом
+                # же продлении или следующей докупке — приз молча исчезал.
+                from app.database.crud.subscription import add_subscription_traffic
+
+                await add_subscription_traffic(db, subscription, prize.prize_value, commit=False)
                 logger.info('📊 Начислено трафика user_id', prize_value=prize.prize_value, user_id=user.id)
 
                 # Синхронизируем с RemnaWave
@@ -550,17 +556,34 @@ class FortuneWheelService:
         # Генерируем уникальный код
         code = f'{config.promo_prefix}{secrets.token_hex(4).upper()}'
 
-        # Определяем тип промокода
-        if prize.promo_subscription_days > 0:
+        days = prize.promo_subscription_days or 0
+        balance = prize.promo_balance_bonus_kopeks or 0
+        traffic = prize.promo_traffic_gb or 0
+
+        # Тип определяет, какие поля промокода вообще применятся при активации
+        # (см. PromoCodeService._apply_promocode_effects). Трафик применяется
+        # ТОЛЬКО у BALANCE_AND_DAYS, поэтому любой набор с гигабайтами обязан
+        # получить именно этот тип — иначе трафик сгорит вместе с кодом.
+        if traffic > 0 or (days > 0 and balance > 0):
+            promo_type = PromoCodeType.BALANCE_AND_DAYS.value
+        elif days > 0:
             promo_type = PromoCodeType.SUBSCRIPTION_DAYS.value
+        elif balance > 0:
+            promo_type = PromoCodeType.BALANCE.value
+        elif prize.promo_group_id:
+            promo_type = PromoCodeType.PROMO_GROUP.value
         else:
             promo_type = PromoCodeType.BALANCE.value
 
         promocode = PromoCode(
             code=code,
             type=promo_type,
-            balance_bonus_kopeks=prize.promo_balance_bonus_kopeks,
-            subscription_days=prize.promo_subscription_days,
+            balance_bonus_kopeks=balance,
+            subscription_days=days,
+            # promo_traffic_gb объявлен у WheelPrize и настраивается в админке,
+            # но в промокод не переносился — трафиковая часть приза пропадала.
+            traffic_gb=traffic,
+            promo_group_id=prize.promo_group_id,
             max_uses=1,
             valid_until=datetime.now(UTC) + timedelta(days=config.promo_validity_days),
             is_active=True,
@@ -721,7 +744,9 @@ class FortuneWheelService:
             await db.commit()
 
             # 7. Формируем результат
-            message = self._get_prize_message(selected_prize, generated_promocode)
+            message = self._get_prize_message(
+                selected_prize, generated_promocode, validity_days=config.promo_validity_days
+            )
 
             return SpinResult(
                 success=True,
@@ -763,7 +788,7 @@ class FortuneWheelService:
         }
         return messages.get(reason, 'Произошла ошибка')
 
-    def _get_prize_message(self, prize: WheelPrize, promocode: str | None) -> str:
+    def _get_prize_message(self, prize: WheelPrize, promocode: str | None, validity_days: int | None = None) -> str:
         """Сформировать сообщение о выигрыше."""
         prize_type = prize.prize_type
 
@@ -781,7 +806,25 @@ class FortuneWheelService:
             return f'Поздравляем! Вы выиграли {prize.prize_value}GB трафика!'
 
         if prize_type == WheelPrizeType.PROMOCODE.value:
-            return f'Поздравляем! Ваш промокод: {promocode}'
+            # Один голый код ничего не говорит о выигрыше: человек не знает ни
+            # что внутри, ни что код сгорит. Промокод с колеса живёт
+            # promo_validity_days и молча истекал вместе с призом.
+            parts: list[str] = []
+            if prize.promo_subscription_days:
+                days = prize.promo_subscription_days
+                parts.append(f'{days} {self._pluralize_days(days)} подписки')
+            if prize.promo_balance_bonus_kopeks:
+                parts.append(f'{prize.promo_balance_bonus_kopeks / 100:.0f}₽ на баланс')
+            if prize.promo_traffic_gb:
+                parts.append(f'{prize.promo_traffic_gb} ГБ трафика')
+
+            message = 'Поздравляем! Ваш промокод'
+            if parts:
+                message += f' на {", ".join(parts)}'
+            message += f': {promocode}'
+            if validity_days:
+                message += f'\nАктивируйте в течение {validity_days} {self._pluralize_days(validity_days)}.'
+            return message
 
         return 'Поздравляем с выигрышем!'
 

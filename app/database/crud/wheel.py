@@ -82,7 +82,10 @@ async def get_wheel_prizes(db: AsyncSession, config_id: int = 1, active_only: bo
     if active_only:
         query = query.where(WheelPrize.is_active == True)
 
-    query = query.order_by(WheelPrize.sort_order)
+    # id вторичным ключом сортировки: _calculate_rotation сопоставляет приз
+    # сектору по индексу в этом списке, а при равных sort_order порядок выдачи
+    # БД произволен — стрелка останавливалась не на объявленном призе.
+    query = query.order_by(WheelPrize.sort_order, WheelPrize.id)
 
     result = await db.execute(query)
     return list(result.scalars().all())
@@ -109,6 +112,7 @@ async def create_wheel_prize(
     promo_balance_bonus_kopeks: int = 0,
     promo_subscription_days: int = 0,
     promo_traffic_gb: int = 0,
+    promo_group_id: int | None = None,
 ) -> WheelPrize:
     """Создать новый приз на колесе."""
     prize = WheelPrize(
@@ -125,6 +129,7 @@ async def create_wheel_prize(
         promo_balance_bonus_kopeks=promo_balance_bonus_kopeks,
         promo_subscription_days=promo_subscription_days,
         promo_traffic_gb=promo_traffic_gb,
+        promo_group_id=promo_group_id,
     )
     db.add(prize)
     await db.commit()
@@ -139,9 +144,17 @@ async def update_wheel_prize(db: AsyncSession, prize_id: int, **kwargs) -> Wheel
     if not prize:
         return None
 
+    # promo_group_id обязан уметь сбрасываться в NULL — снять с приза
+    # промогруппу иначе невозможно: общий guard `value is not None` такой
+    # апдейт глотает, и приз навсегда остаётся со скидочной группой.
+    nullable_fields = {'promo_group_id'}
+
     for key, value in kwargs.items():
-        if hasattr(prize, key) and value is not None:
-            setattr(prize, key, value)
+        if not hasattr(prize, key):
+            continue
+        if value is None and key not in nullable_fields:
+            continue
+        setattr(prize, key, value)
 
     prize.updated_at = datetime.now(UTC)
     await db.commit()
