@@ -22,6 +22,7 @@ from app.external.remnawave_api import (
     UserStatus,
     is_user_not_found_error,
 )
+from app.utils.premium_traffic import effective_panel_squads
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -454,7 +455,11 @@ class SubscriptionService:
             description=description,
         )
         if subscription.connected_squads:
-            common_kwargs['active_internal_squads'] = subscription.connected_squads
+            # Снятые за перерасход премиум-сквады не возвращаем: иначе создание
+            # или пересоздание панельного юзера отменило бы ограничение.
+            common_kwargs['active_internal_squads'] = await effective_panel_squads(
+                subscription.id, subscription.connected_squads
+            )
         if user_tag is not None:
             common_kwargs['tag'] = user_tag
         if hwid_limit is not None:
@@ -649,7 +654,11 @@ class SubscriptionService:
             description=description,
         )
         if subscription.connected_squads:
-            common_kwargs['active_internal_squads'] = subscription.connected_squads
+            # Снятые за перерасход премиум-сквады не возвращаем: иначе создание
+            # или пересоздание панельного юзера отменило бы ограничение.
+            common_kwargs['active_internal_squads'] = await effective_panel_squads(
+                subscription.id, subscription.connected_squads
+            )
         if user_tag is not None:
             common_kwargs['tag'] = user_tag
         if hwid_limit is not None:
@@ -829,7 +838,9 @@ class SubscriptionService:
                 # В рутинных обновлениях пропускаем — сквады уже назначены при создании подписки,
                 # а пересылка стейловых UUID вызывает FK violation → A039 в RemnaWave
                 if sync_squads and subscription.connected_squads:
-                    update_kwargs['active_internal_squads'] = subscription.connected_squads
+                    update_kwargs['active_internal_squads'] = await effective_panel_squads(
+                        subscription.id, subscription.connected_squads, db=db
+                    )
 
                 if user_tag is not None:
                     update_kwargs['tag'] = user_tag
@@ -1548,7 +1559,9 @@ class SubscriptionService:
                         # сквады (у подписки без connected_squads это не намерение
                         # «отключить», а просто отсутствие данных) — как в dev.
                         if sub.connected_squads:
-                            update_kwargs['active_internal_squads'] = sub.connected_squads
+                            update_kwargs['active_internal_squads'] = await effective_panel_squads(
+                                sub.id, sub.connected_squads
+                            )
 
                         # Не отправляем null — RemnaWave API не принимает null для externalSquadUuid (A039)
                         if ext_squad_uuid is not None:

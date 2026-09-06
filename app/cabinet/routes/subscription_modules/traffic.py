@@ -31,6 +31,9 @@ from app.utils.cache import RateLimitCache, cache, cache_key
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
+    PremiumTrafficOptionsResponse,
+    PremiumTrafficPackage,
+    PremiumTrafficPurchaseRequest,
     TrafficPackageResponse,
     TrafficPurchaseRequest,
 )
@@ -858,3 +861,157 @@ async def refresh_traffic(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to refresh traffic data',
         )
+
+
+# ============ Premium traffic (посквадные лимиты) ============
+
+
+@router.get('/premium-traffic', response_model=list[PremiumTrafficOptionsResponse])
+async def get_premium_traffic_options(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+):
+    """Что можно докупить по премиум-сквадам подписки.
+
+    Пустой список — премиум-сквадов в тарифе нет либо докупка по ним выключена.
+    """
+    from app.database.crud.premium_traffic import get_states_for_subscription
+    from app.database.crud.server_squad import get_squad_display_names
+    from app.services.premium_traffic_purchase import get_premium_topup_options
+    from app.utils.premium_traffic import BYTES_IN_GB
+
+    subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No subscription found')
+
+    options = get_premium_topup_options(subscription)
+    if not options:
+        return []
+
+    states = {state.squad_uuid: state for state in await get_states_for_subscription(db, subscription.id)}
+    squad_names = await get_squad_display_names(db, list(options))
+
+    result: list[PremiumTrafficOptionsResponse] = []
+    for squad_uuid, config in options.items():
+        state = states.get(squad_uuid)
+        result.append(
+            PremiumTrafficOptionsResponse(
+                squad_uuid=squad_uuid,
+                name=config.name or squad_names.get(squad_uuid),
+                limit_gb=round((state.limit_bytes if state else config.limit_bytes) / BYTES_IN_GB, 2),
+                extra_gb=round((state.extra_bytes if state else 0) / BYTES_IN_GB, 2),
+                used_gb=round((state.used_bytes if state else 0) / BYTES_IN_GB, 2),
+                is_limited=bool(state.is_limited) if state else False,
+                max_topup_gb=config.max_topup_gb,
+                packages=[
+                    PremiumTrafficPackage(gb=gb, price_kopeks=price, price_rubles=price / 100)
+                    for gb, price in config.available_packages()
+                ],
+            )
+        )
+    return result
+
+
+@router.post('/premium-traffic')
+async def purchase_premium_traffic(
+    request: PremiumTrafficPurchaseRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+):
+    """Докупить премиум-трафик по конкретному скваду."""
+    from datetime import UTC as _UTC, datetime as _datetime
+
+    from app.database.crud.user import lock_user_for_pricing
+    from app.services.premium_traffic_purchase import (
+        PremiumTopupError,
+        apply_premium_topup,
+        quote_premium_topup,
+    )
+
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Subscription purchases are restricted for this account',
+        )
+
+    subscription = await resolve_subscription(db, user, subscription_id)
+    if not subscription:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No subscription found')
+
+    try:
+        quote = await quote_premium_topup(db, subscription, request.squad_uuid, request.gb)
+    except PremiumTopupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={'code': error.code, 'message': error.message},
+        ) from error
+
+    # Блокируем строку пользователя до расчёта цены: скидка промогруппы и баланс
+    # должны читаться в одном срезе, иначе параллельная покупка уведёт баланс
+    # между проверкой и списанием.
+    user = await lock_user_for_pricing(db, user.id)
+
+    discount = _apply_addon_discount(user, 'traffic', quote.base_price_kopeks, 30)
+    final_price = discount['discounted']
+    if discount['percent'] < 100 and final_price > 0:
+        final_price = max(100, final_price)
+
+    if final_price > 0 and user.balance_kopeks < final_price:
+        missing = final_price - user.balance_kopeks
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                'code': 'insufficient_funds',
+                'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
+                'missing_amount': missing,
+            },
+        )
+
+    description = f'Докупка {quote.gb} ГБ премиум-трафика'
+    if discount['percent'] > 0:
+        description += f' (скидка {discount["percent"]}%)'
+
+    if not await subtract_user_balance(db, user, final_price, description):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Failed to charge balance',
+        )
+
+    _state, restored = await apply_premium_topup(db, subscription, quote, period_start_at=_datetime.now(_UTC))
+    await create_transaction(
+        db=db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=final_price,
+        description=description,
+    )
+    await db.commit()
+
+    # Сквад возвращаем в панель только если он был снят. В остальных случаях
+    # набор не менялся, и лишний PATCH панели ни к чему.
+    if restored:
+        try:
+            async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
+                await SubscriptionService().update_remnawave_user(db, subscription, sync_squads=True)
+        except Exception as error:
+            # Трафик уже начислен и оплачен: ответ не держим, возврат сквада
+            # доберёт ближайший проход воркера премиум-трафика.
+            logger.error(
+                'Не удалось вернуть премиум-сквад сразу после докупки',
+                subscription_id=subscription.id,
+                squad_uuid=quote.squad_uuid,
+                error=error,
+            )
+
+    await db.refresh(user)
+    return {
+        'success': True,
+        'squad_uuid': quote.squad_uuid,
+        'gb': quote.gb,
+        'price_kopeks': final_price,
+        'discount_percent': discount['percent'],
+        'squad_restored': restored,
+        'balance_kopeks': user.balance_kopeks,
+    }

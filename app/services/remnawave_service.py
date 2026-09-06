@@ -37,6 +37,7 @@ from app.external.remnawave_api import (
     is_user_not_found_error,
 )
 from app.services.subscription_service import get_traffic_reset_strategy
+from app.utils.premium_traffic import effective_panel_squads
 from app.utils.subscription_utils import (
     coerce_panel_device_limit,
     device_limit_needs_heal,
@@ -1283,7 +1284,7 @@ class RemnaWaveService:
                             api,
                             subscription.id,
                             user_id=_panel_user_id,
-                            active_internal_squads=new_squads,
+                            active_internal_squads=await effective_panel_squads(subscription.id, new_squads, db=db),
                         )
                         panel_updated += 1
                     except Exception as error:
@@ -2703,7 +2704,9 @@ class RemnaWaveService:
                                         telegram_id=user.telegram_id,
                                         email=user.email,
                                     ),
-                                    active_internal_squads=sub.connected_squads,
+                                    active_internal_squads=await effective_panel_squads(
+                                        sub.id, sub.connected_squads, db=db
+                                    ),
                                 )
 
                                 if hwid_limit is not None:
@@ -2783,7 +2786,9 @@ class RemnaWaveService:
                                         traffic_limit_strategy=get_traffic_reset_strategy(sub.tariff),
                                         email=user.email,
                                         description=create_kwargs['description'],
-                                        active_internal_squads=sub.connected_squads,
+                                        active_internal_squads=await effective_panel_squads(
+                                            sub.id, sub.connected_squads, db=db
+                                        ),
                                     )
 
                                     # Пустой список сквадов НЕ отправляем: update_user

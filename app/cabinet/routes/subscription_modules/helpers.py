@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from app.database.models import Subscription, User
 
 from ...schemas.subscription import (
+    PremiumTrafficInfo,
     ServerInfo,
     SubscriptionResponse,
 )
@@ -101,12 +102,63 @@ def _apply_addon_discount(
     }
 
 
+async def build_premium_traffic_info(
+    db: AsyncSession,
+    subscription: Subscription,
+) -> list[PremiumTrafficInfo]:
+    """Остатки по премиум-сквадам подписки для карточки расхода.
+
+    Пустой список — у тарифа нет посквадных лимитов, и мини-апп блок не рисует.
+    Состояние может ещё не существовать (воркер до подписки не дошёл) — тогда
+    показываем полный лимит с нулевым расходом, а не прячем сквад: пользователь
+    должен видеть, что лимит у него есть, ещё до первого прохода воркера.
+    """
+    from app.database.crud.premium_traffic import get_states_for_subscription
+    from app.database.crud.server_squad import get_squad_display_names
+    from app.utils.premium_traffic import BYTES_IN_GB, get_premium_squads_for_tariff
+
+    configs = get_premium_squads_for_tariff(getattr(subscription, 'tariff', None))
+    if not configs:
+        return []
+
+    connected = set(subscription.connected_squads or [])
+    states = {state.squad_uuid: state for state in await get_states_for_subscription(db, subscription.id)}
+    # Без названия строки премиума в интерфейсе неразличимы, когда серверов
+    # несколько. Берём своё имя из тарифа, иначе имя сервера.
+    squad_names = await get_squad_display_names(db, list(configs))
+
+    result: list[PremiumTrafficInfo] = []
+    for squad_uuid, config in configs.items():
+        if squad_uuid not in connected:
+            continue
+        state = states.get(squad_uuid)
+        limit_bytes = state.limit_bytes if state else config.limit_bytes
+        extra_bytes = state.extra_bytes if state else 0
+        used_bytes = state.used_bytes if state else 0
+        total = (limit_bytes or 0) + (extra_bytes or 0)
+        result.append(
+            PremiumTrafficInfo(
+                squad_uuid=squad_uuid,
+                name=config.name or squad_names.get(squad_uuid),
+                limit_gb=round((limit_bytes or 0) / BYTES_IN_GB, 2),
+                extra_gb=round((extra_bytes or 0) / BYTES_IN_GB, 2),
+                used_gb=round((used_bytes or 0) / BYTES_IN_GB, 2),
+                used_percent=round(min(100.0, (used_bytes or 0) / total * 100), 1) if total > 0 else 0.0,
+                is_limited=bool(state.is_limited) if state else False,
+                period_start_at=state.period_start_at if state else None,
+                topup_available=config.topup_enabled,
+            )
+        )
+    return result
+
+
 def _subscription_to_response(
     subscription: Subscription,
     servers: list[ServerInfo] | None = None,
     tariff_name: str | None = None,
     traffic_purchases: list[dict[str, Any]] | None = None,
     user: User | None = None,
+    premium_traffic: list[PremiumTrafficInfo] | None = None,
 ) -> SubscriptionResponse:
     """Convert Subscription model to response."""
     now = datetime.now(UTC)
@@ -231,4 +283,5 @@ def _subscription_to_response(
         tariff_id=tariff_id,
         tariff_name=tariff_name,
         traffic_reset_mode=traffic_reset_mode,
+        premium_traffic=premium_traffic or [],
     )

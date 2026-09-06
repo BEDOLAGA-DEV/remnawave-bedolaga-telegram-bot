@@ -35,6 +35,7 @@ from app.services.payment_verification_service import (
     get_enabled_auto_methods,
     method_display_name,
 )
+from app.services.premium_traffic_service import premium_traffic_service
 from app.services.reachability.service import reachability_service
 from app.services.referral_contest_service import referral_contest_service
 from app.services.remnawave_sync_service import remnawave_sync_service
@@ -176,6 +177,7 @@ async def main():
     version_check_task = None
     traffic_monitoring_task = None
     daily_subscription_task = None
+    premium_traffic_task = None
     polling_task = None
     web_api_server = None
     telegram_webhook_enabled = False
@@ -320,6 +322,7 @@ async def main():
         ban_notification_service.set_bot(bot)
         traffic_monitoring_scheduler.set_bot(bot)
         daily_subscription_service.set_bot(bot)
+        premium_traffic_service.set_bot(bot)
         telegram_notifier.set_bot(bot)
 
         # Хранилище ошибок: пишет события ДО попытки доставки в Telegram,
@@ -697,6 +700,17 @@ async def main():
                 stage.skip('Мониторинг трафика отключен настройками')
 
         async with timeline.stage(
+            'Премиум-трафик',
+            '🎫',
+            success_message='Учёт премиум-трафика запущен',
+        ) as stage:
+            if premium_traffic_service.is_enabled():
+                premium_traffic_task = asyncio.create_task(premium_traffic_service.start_monitoring())
+                stage.log(f'Интервал проверки: {premium_traffic_service.get_check_interval_seconds()} с')
+            else:
+                stage.skip('Учёт премиум-трафика отключен настройками')
+
+        async with timeline.stage(
             'Суточные подписки',
             '💳',
             success_message='Сервис суточных подписок запущен',
@@ -937,6 +951,15 @@ async def main():
             traffic_monitoring_task.cancel()
             try:
                 await traffic_monitoring_task
+            except asyncio.CancelledError:
+                pass
+
+        if premium_traffic_task and not premium_traffic_task.done():
+            logger.info('ℹ️ Остановка учёта премиум-трафика...')
+            premium_traffic_service.stop()
+            premium_traffic_task.cancel()
+            try:
+                await premium_traffic_task
             except asyncio.CancelledError:
                 pass
 

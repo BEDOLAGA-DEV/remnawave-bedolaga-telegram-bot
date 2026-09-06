@@ -54,6 +54,7 @@ from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime, format_time_ago
 from app.utils.formatting import user_html_link
 from app.utils.photo_message import safe_edit_or_resend
+from app.utils.premium_traffic import effective_panel_squads
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -3860,7 +3861,7 @@ async def toggle_user_server(callback: types.CallbackQuery, db_user: User, db: A
                         api,
                         subscription.id,
                         user_id=panel_user_id,
-                        active_internal_squads=current_squads,
+                        active_internal_squads=await effective_panel_squads(subscription.id, current_squads, db=db),
                         description=settings.format_remnawave_user_description(
                             full_name=user.full_name, username=user.username, telegram_id=user.telegram_id
                         ),
@@ -5163,7 +5164,9 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                                 email=target_user.email,
                                 user_id=target_user.id,
                             ),
-                            active_internal_squads=subscription.connected_squads,
+                            active_internal_squads=await effective_panel_squads(
+                                subscription.id, subscription.connected_squads, db=db
+                            ),
                         )
 
                         # Пустой список сквадов НЕ отправляем: `[]` в PATCH означает
@@ -5221,7 +5224,9 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                                 telegram_id=target_user.telegram_id,
                                 email=target_user.email,
                             ),
-                            active_internal_squads=subscription.connected_squads,
+                            active_internal_squads=await effective_panel_squads(
+                                subscription.id, subscription.connected_squads, db=db
+                            ),
                         )
 
                         if hwid_limit is not None:
