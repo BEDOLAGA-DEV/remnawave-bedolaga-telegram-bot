@@ -358,7 +358,8 @@ async def create_trial_subscription(
 
             server_ids = await get_server_ids_by_uuids(db, final_squads)
             if server_ids:
-                await add_user_to_servers(db, server_ids)
+                async with db.begin_nested():
+                    await add_user_to_servers(db, server_ids)
                 logger.info('📈 Обновлен счетчик пользователей для триальных сквадов', final_squads=final_squads)
             else:
                 logger.warning('⚠️ Не удалось найти серверы для обновления счетчика (сквады)', final_squads=final_squads)
@@ -368,6 +369,8 @@ async def create_trial_subscription(
                 final_squads=final_squads,
                 error=error,
             )
+            with contextlib.suppress(Exception):
+                await db.rollback()
 
     return subscription
 
@@ -2120,13 +2123,62 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
         await db.rollback()
         return 0
 
-    for subscription in to_reset:
+    if len(to_reset) <= 10:
+        for subscription in to_reset:
+            try:
+                await decrement_subscription_server_counts(db, subscription)
+            except Exception as error:  # pragma: no cover - defensive logging
+                logger.error(
+                    'Не удалось обновить счётчики серверов при сбросе триала',
+                    subscription_id=getattr(subscription, 'id', None),
+                    error=error,
+                )
+    else:
         try:
-            await decrement_subscription_server_counts(db, subscription)
+            from collections import defaultdict
+            from app.database.crud.server_squad import ServerSquad
+
+            sub_ids = [sub.id for sub in to_reset if hasattr(sub, 'id')]
+            server_counts: dict[int, int] = defaultdict(int)
+
+            CHUNK_SIZE = 200
+            for i in range(0, len(sub_ids), CHUNK_SIZE):
+                chunk = sub_ids[i : i + CHUNK_SIZE]
+                res = await db.execute(
+                    select(SubscriptionServer.server_squad_id).where(
+                        SubscriptionServer.subscription_id.in_(chunk),
+                        SubscriptionServer.server_squad_id.isnot(None),
+                    )
+                )
+                for (ssq_id,) in res.fetchall():
+                    server_counts[ssq_id] += 1
+
+            all_squad_uuids = {
+                uuid
+                for sub in to_reset
+                for uuid in (getattr(sub, 'connected_squads', None) or [])
+            }
+            if all_squad_uuids:
+                res = await db.execute(
+                    select(ServerSquad.id, ServerSquad.squad_uuid).where(
+                        ServerSquad.squad_uuid.in_(list(all_squad_uuids))
+                    )
+                )
+                uuid_to_id = {row[1]: row[0] for row in res.fetchall()}
+                for sub in to_reset:
+                    for uuid in (getattr(sub, 'connected_squads', None) or []):
+                        if uuid in uuid_to_id:
+                            server_counts[uuid_to_id[uuid]] += 1
+
+            if server_counts:
+                for server_id, count in sorted(server_counts.items()):
+                    await db.execute(
+                        update(ServerSquad)
+                        .where(ServerSquad.id == server_id)
+                        .values(current_users=func.greatest(ServerSquad.current_users - count, 0))
+                    )
         except Exception as error:  # pragma: no cover - defensive logging
-            logger.error(
-                'Не удалось обновить счётчики серверов при сбросе триала', subscription_id=subscription.id, error=error
-            )
+            logger.error('Не удалось пакетно обновить счётчики серверов при сбросе триалов', error=error)
 
     CHUNK_SIZE = 200
     subscription_ids = [subscription.id for subscription in to_reset]
