@@ -2128,15 +2128,17 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
                 'Не удалось обновить счётчики серверов при сбросе триала', subscription_id=subscription.id, error=error
             )
 
+    CHUNK_SIZE = 200
     subscription_ids = [subscription.id for subscription in to_reset]
 
-    try:
-        await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id.in_(subscription_ids)))
-    except Exception as error:  # pragma: no cover - defensive logging
-        logger.error('Ошибка удаления серверных связей триалов', subscription_ids=subscription_ids, error=error)
-        raise
-
-    await db.execute(delete(Subscription).where(Subscription.id.in_(subscription_ids)))
+    for i in range(0, len(subscription_ids), CHUNK_SIZE):
+        chunk_sub_ids = subscription_ids[i : i + CHUNK_SIZE]
+        try:
+            await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id.in_(chunk_sub_ids)))
+        except Exception as error:  # pragma: no cover - defensive logging
+            logger.error('Ошибка удаления серверных связей триалов', subscription_ids=chunk_sub_ids, error=error)
+            raise
+        await db.execute(delete(Subscription).where(Subscription.id.in_(chunk_sub_ids)))
 
     # single-tariff: панель-юзер на уровне пользователя — чистим устаревшую панельную
     # идентичность, чтобы синк по ней ничего не восстанавливал. Историческую колонку
@@ -2144,7 +2146,9 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     # оставшийся потребитель — one-shot бэкфил, который иначе попробует её разрезолвить.
     if not is_multi:
         user_ids = list({subscription.user_id for subscription in to_reset})
-        await db.execute(update(User).where(User.id.in_(user_ids)).values(remnawave_id=None, remnawave_uuid=None))
+        for i in range(0, len(user_ids), CHUNK_SIZE):
+            chunk_user_ids = user_ids[i : i + CHUNK_SIZE]
+            await db.execute(update(User).where(User.id.in_(chunk_user_ids)).values(remnawave_id=None, remnawave_uuid=None))
 
     return len(to_reset)
 

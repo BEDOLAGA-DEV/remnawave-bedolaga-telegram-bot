@@ -82,8 +82,10 @@ async def _run_dedupe() -> dict[str, int]:
                 await cancel_lava_recurring_for_subscription_safe(db, dup.id, commit=False)
                 await db.delete(dup)
                 removed_db += 1
+                if removed_db % 20 == 0:
+                    await db.commit()
 
-        if removed_db:
+        if removed_db % 20 != 0:
             await db.commit()
 
     if removed_db:

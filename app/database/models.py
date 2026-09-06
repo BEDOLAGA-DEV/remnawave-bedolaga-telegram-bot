@@ -2660,7 +2660,7 @@ class GraceAccessSessionModel(Base):
     )
 
     id = Column(String(36), primary_key=True)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
     # Панельная идентичность сессии (Remnawave 3.0.0: числовой id). Nullable на
     # время бэкфила: колонку нельзя добавить сразу NOT NULL на живой таблице, а
     # флип делается отдельной ревизией после проверки нулей.
@@ -3428,7 +3428,7 @@ class SentNotification(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
     notification_type = Column(String(50), nullable=False)
     days_before = Column(Integer, nullable=True)
     created_at = Column(AwareDateTime(), default=func.now())
@@ -3443,7 +3443,7 @@ class SubscriptionEvent(Base):
     id = Column(Integer, primary_key=True, index=True)
     event_type = Column(String(50), nullable=False)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True, index=True)
     transaction_id = Column(Integer, ForeignKey('transactions.id', ondelete='SET NULL'), nullable=True)
     amount_kopeks = Column(Integer, nullable=True)
     currency = Column(String(16), nullable=True)
@@ -3463,7 +3463,7 @@ class DiscountOffer(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True, index=True)
     notification_type = Column(String(50), nullable=False)
     discount_percent = Column(Integer, nullable=False, default=0)
     bonus_amount_kopeks = Column(Integer, nullable=False, default=0)
@@ -3507,7 +3507,7 @@ class SubscriptionTemporaryAccess(Base):
     __tablename__ = 'subscription_temporary_access'
 
     id = Column(Integer, primary_key=True, index=True)
-    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
     offer_id = Column(Integer, ForeignKey('discount_offers.id', ondelete='CASCADE'), nullable=False)
     squad_uuid = Column(String(255), nullable=False)
     expires_at = Column(AwareDateTime(), nullable=False)

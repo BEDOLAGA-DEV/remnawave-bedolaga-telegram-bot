@@ -730,7 +730,7 @@ class SubscriptionService:
         sync_squads: bool = True,
     ) -> RemnaWaveUser | None:
         try:
-            user = subscription.user or await get_user_by_id(db, subscription.user_id)
+            user = subscription.__dict__.get('user') or await get_user_by_id(db, subscription.user_id)
             if not user:
                 logger.error('Пользователь не найден', user_id=subscription.user_id)
                 return None
