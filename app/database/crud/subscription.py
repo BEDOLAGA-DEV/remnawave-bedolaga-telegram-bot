@@ -1385,8 +1385,8 @@ async def extend_subscription(
             # so the caller can keep using it (the extension itself is already durable).
             try:
                 await db.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_err:
+                logger.debug('Откат сессии после ошибки очистки уведомлений не удался', error=str(rollback_err))
 
     # Ручное продление (баланс/промокод/бонусные дни админа) при живой привязке
     # Lava: двигаем ближайшее автосписание на добавленные дни, иначе Lava спишет

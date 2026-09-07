@@ -282,10 +282,8 @@ async def view_admin_ticket(
             nav_row.append(
                 types.InlineKeyboardButton(text='➡️', callback_data=f'admin_ticket_page_{ticket_id}_{page + 1}')
             )
-        try:
+        if getattr(keyboard, 'inline_keyboard', None) is not None:
             keyboard.inline_keyboard.insert(0, nav_row)
-        except Exception:
-            pass
 
     page_text = pages[page - 1]
 

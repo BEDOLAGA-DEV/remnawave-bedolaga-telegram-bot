@@ -18,7 +18,7 @@ pytestmark = pytest.mark.asyncio
 def _service(session_factory) -> ReachabilityService:
     clock = FakeClock()
     runner = JobRunner(
-        client_factory=lambda: FakeAPI(),
+        client_factory=FakeAPI,
         gate=PaidCallGate(min_interval=0, clock=clock, sleep=clock.sleep),
         session_factory=session_factory,
         cost_limit_kopeks=lambda: 0,

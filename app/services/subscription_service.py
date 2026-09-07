@@ -585,8 +585,8 @@ class SubscriptionService:
                 existing_user = await api.get_user_by_id(exact_id)
                 if existing_user:
                     existing_users = [existing_user]
-            except Exception:
-                pass
+            except Exception as error:
+                logger.debug('Панель не отдала пользователя по id', remnawave_id=exact_id, error=str(error))
 
         adoption_error: Exception | None = None
         if not existing_users:
@@ -620,8 +620,8 @@ class SubscriptionService:
         if not existing_users and user.email:
             try:
                 existing_users = await api.find_users_by_email(user.email)
-            except Exception:
-                pass
+            except Exception as error:
+                logger.debug('Панель не нашла пользователя по email', user_id=user.id, error=str(error))
 
         if not existing_users and adoption_error is not None:
             # Ничем не опознали, а точный ключ остался непроверенным: создание

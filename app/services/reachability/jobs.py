@@ -10,6 +10,7 @@ submitting → waiting (probe идёт) / polling (VLESS, скан) / retrieving
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
@@ -20,18 +21,17 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.crud import reachability as crud
-from app.database.models import ReachabilityJob
+from app.database.models import ReachabilityBatch, ReachabilityJob
 from app.external.bschek_api import BschekAPI, BschekAPIError, BschekGatewayError
+from app.services.reachability.batches import batch_cost_kopeks, batch_status_from_jobs
 from app.services.reachability.gate import PaidCallGate
-from app.services.reachability.legs import build_probe_legs, build_vless_legs, merge_skipped
+from app.services.reachability.kinds import KIND_PROBE, KIND_VLESS
+from app.services.reachability.legs import build_probe_legs, build_vless_legs, merge_skipped, partial_probe_progress
 from app.services.reachability.pricing import credits_to_kopeks, format_rubles
 
 
 logger = structlog.get_logger(__name__)
 
-KIND_PROBE = 'probe'
-KIND_VLESS = 'vless'
-KIND_SCAN = 'scan'
 STATUS_PENDING, STATUS_RUNNING, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED = crud.JOB_STATUSES
 PHASE_SUBMITTING = 'submitting'
 PHASE_WAITING = 'waiting'
@@ -47,6 +47,8 @@ TRANSIENT_CODES = frozenset(
 BUSY_CODES = frozenset({'test_in_progress', 'scan_in_progress', 'busy', 'too_many_active'})
 # Отменять уже нечего: итог возьмёт контрольный GET.
 CANCEL_OK_CODES = frozenset({'cannot_cancel_running', 'not_running', 'not_found'})
+# Пробу можно остановить, пока она идёт у API: ключ уже ушёл, результат ещё не пришёл.
+PROBE_CANCELLABLE_PHASES = frozenset({'waiting', 'retrieving'})
 _SCAN_PENDING_STATES = ('queued', 'running')
 _NO_DPI_ON_MESSAGE = 'Под фильтр Белого списка не попала ни одна симка'
 
@@ -59,6 +61,8 @@ class RunnerConfig:
     probe_retrieve_fast_window: float = 120.0
     probe_retrieve_slow_interval: float = 30.0
     probe_retrieve_max: float = 1200.0
+    # Старше этого проба не поднимается обходчиком, а падает с внятной причиной.
+    probe_max_age_sec: float = 2700.0
     vless_poll_interval: float = 5.0
     vless_timeout_base: float = 300.0
     vless_timeout_per_leg: float = 180.0
@@ -72,6 +76,9 @@ class RunnerConfig:
     internal_error_replay_wait: float = 60.0
     sweep_interval: float = 60.0
     sweep_min_age_sec: float = 30.0
+    # Пачка: не более стольких проб одновременно (лимит API на пробы с несколькими целями) и пауза между итерациями.
+    batch_parallel: int = 3
+    batch_poll_interval: float = 2.0
 
 
 class JobNotCancellable(Exception):
@@ -113,6 +120,7 @@ class JobRunner:
         self._clock = clock
         self._now = now
         self._tasks: dict[int, asyncio.Task] = {}
+        self._batch_tasks: dict[int, asyncio.Task] = {}
         self._running = False
 
     # ------------------------------------------------------------ фон
@@ -155,6 +163,11 @@ class JobRunner:
             if self.is_active(job.id) or (stamp is not None and stamp.timestamp() > threshold):
                 continue
             self.spawn_resume(job.id)
+        async with self._session_factory() as db:
+            batches = await crud.list_unfinished_batches(db)
+        for batch in batches:
+            if not self.is_batch_active(batch.id):
+                self.spawn_batch(batch.id)
 
     async def sweeper_loop(self) -> None:
         self._running = True
@@ -167,6 +180,77 @@ class JobRunner:
 
     def stop(self) -> None:
         self._running = False
+
+    # ------------------------------------------------------------ пачка
+
+    def spawn_batch(self, batch_id: int) -> asyncio.Task:
+        task = asyncio.create_task(self.run_batch(batch_id))
+        self._batch_tasks[batch_id] = task
+
+        def _forget(done: asyncio.Task) -> None:
+            if self._batch_tasks.get(batch_id) is done:
+                self._batch_tasks.pop(batch_id, None)
+
+        task.add_done_callback(_forget)
+        return task
+
+    def is_batch_active(self, batch_id: int) -> bool:
+        task = self._batch_tasks.get(batch_id)
+        return task is not None and not task.done()
+
+    async def run_batch(self, batch_id: int) -> None:
+        """Гнать задачи пачки не более ``batch_parallel`` одновременно; когда все завершены — подвести итог."""
+        while True:
+            async with self._session_factory() as db:
+                batch = await crud.get_batch(db, batch_id)
+                if batch is None or batch.status in crud.TERMINAL_STATUSES:
+                    return
+                jobs = await crud.jobs_for_batch(db, batch_id)
+                cancelling = batch.phase == PHASE_CANCELLING
+                final = batch_status_from_jobs(jobs, cancelling=cancelling)
+                if final is not None:
+                    await crud.update_batch(
+                        db,
+                        batch,
+                        status=final,
+                        phase=None,
+                        cost_kopeks=batch_cost_kopeks(jobs),
+                        finished_at=self._now(),
+                    )
+                    await db.commit()
+                    logger.info('Пачка проверок завершена', batch_id=batch_id, status=final)
+                    return
+                if batch.status == STATUS_PENDING:
+                    await crud.update_batch(db, batch, status=STATUS_RUNNING, started_at=self._now())
+                    await db.commit()
+                self._dispatch_batch_jobs(jobs, cancelling=cancelling)
+            pending = [task for task in self._tasks.values() if not task.done()]
+            if pending:
+                await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            await self._sleep(self.cfg.batch_poll_interval)
+
+    def _dispatch_batch_jobs(self, jobs: list[ReachabilityJob], *, cancelling: bool) -> None:
+        active = sum(1 for job in jobs if job.status == STATUS_RUNNING or self.is_active(job.id))
+        for job in jobs:
+            if job.status == STATUS_RUNNING and not self.is_active(job.id):
+                self.spawn_resume(job.id)
+            elif job.status == STATUS_PENDING and not cancelling and active < self.cfg.batch_parallel:
+                self.spawn(job.id)
+                active += 1
+
+    async def cancel_batch(self, db: AsyncSession, batch: ReachabilityBatch) -> ReachabilityBatch:
+        """Очередь гаснет сразу и бесплатно, идущие пробы останавливаются у API; итог подведёт драйвер."""
+        if batch.status not in crud.ACTIVE_STATUSES:
+            raise JobNotCancellable('Проверка уже завершена')
+        await crud.update_batch(db, batch, phase=PHASE_CANCELLING)
+        for job in await crud.jobs_for_batch(db, batch.id):
+            if job.status == STATUS_PENDING:
+                await crud.update_job(db, job, status=STATUS_CANCELLED, phase=None, finished_at=self._now())
+            elif job.status == STATUS_RUNNING:
+                with contextlib.suppress(JobNotCancellable):
+                    await self.cancel(db, job)
+        await db.commit()
+        return batch
 
     # ------------------------------------------------------------ каркас
 
@@ -197,6 +281,9 @@ class JobRunner:
             if job.status == STATUS_PENDING or job.phase == PHASE_SUBMITTING:
                 await self._start(db, job)
                 return
+            if self._job_age(job) > self.cfg.probe_max_age_sec:
+                await self._fail(db, job, 'probe_stalled', self._stalled_message(job), False)
+                return
             result = await self._retrieve_probe(db, job)
             if result is not None:
                 await self._finish_probe(db, job, result)
@@ -204,6 +291,43 @@ class JobRunner:
             await self._start(db, job)
         else:
             await self._poll(db, job)
+
+    def _job_age(self, job: ReachabilityJob) -> float:
+        started = job.started_at or job.created_at
+        if started is None:
+            return 0.0
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        return (self._now() - started).total_seconds()
+
+    def _stalled_message(self, job: ReachabilityJob) -> str:
+        """Текст для людей, не для разработчиков: что случилось и куда идти; номер запроса — для поддержки."""
+        trace = (job.result or {}).get('retrieve') or {}
+        minutes = int(self.cfg.probe_max_age_sec // 60)
+        request_id = trace.get('request_id') or '—'
+        return (
+            f'Сервис BSCHEKER не отдал результат за {minutes} минут. Проверка у него могла завершиться, '
+            f'а деньги списаться — напишите в поддержку BSCHEKER и назовите номер запроса {request_id}.'
+        )
+
+    def _progress_fields(self, job: ReachabilityJob, exc: BschekAPIError) -> dict[str, Any]:
+        """След ответа и частичный результат (если API его прислал) поверх прежнего result."""
+        result = {**(job.result or {}), 'retrieve': self._trace(exc, job, self._now())}
+        details = exc.details or {}
+        if details.get('legs') or details.get('total'):
+            result['partial'] = partial_probe_progress(details)
+        return {'result': result}
+
+    @staticmethod
+    def _trace(exc: BschekAPIError, job: ReachabilityJob, now: datetime) -> dict[str, Any]:
+        return {
+            'code': exc.code,
+            'status': exc.status,
+            'message': (exc.message or '')[:200],
+            'request_id': exc.request_id,
+            'attempt': job.attempts or 0,
+            'at': now.isoformat(),
+        }
 
     async def _update(self, db: AsyncSession, job: ReachabilityJob, **fields: Any) -> None:
         await crud.update_job(db, job, **fields)
@@ -268,13 +392,17 @@ class JobRunner:
         except BschekAPIError as exc:
             if exc.code != 'request_in_progress':
                 raise
+            await self._update(db, job, **self._progress_fields(job, exc))
             result = await self._retrieve_probe(db, job)
         if result is not None:
             await self._finish_probe(db, job, result)
 
     async def _retrieve_probe(self, db: AsyncSession, job: ReachabilityJob) -> dict | None:
         """Повтор тем же ключом: часто первые 2 минуты, потом реже; None — доберёт обходчик."""
-        await self._update(db, job, phase=PHASE_RETRIEVING)
+        # Отмену мог поставить другой запрос, пока мы ждали API: фазу «отменяем» не затирать.
+        await db.refresh(job, attribute_names=['phase'])
+        if job.phase != PHASE_CANCELLING:
+            await self._update(db, job, phase=PHASE_RETRIEVING)
         started = self._clock()
         while self._clock() - started < self.cfg.probe_retrieve_max:
             fast = self._clock() - started < self.cfg.probe_retrieve_fast_window
@@ -282,11 +410,13 @@ class JobRunner:
             await self._update(db, job, attempts=(job.attempts or 0) + 1)
             try:
                 return await self._call(lambda api: api.probe(job.request, job.idempotency_key), paid=True)
-            except BschekGatewayError:
-                continue
             except BschekAPIError as exc:
-                if exc.code != 'request_in_progress':
+                if not isinstance(exc, BschekGatewayError) and exc.code != 'request_in_progress':
                     raise
+                logger.info(
+                    'Повтор пробы тем же ключом без результата', job_id=job.id, **self._trace(exc, job, self._now())
+                )
+                await self._update(db, job, **self._progress_fields(job, exc))
         logger.warning('Результат пробы не получен за отведённое время, доберёт обходчик', job_id=job.id)
         return None
 
@@ -299,10 +429,13 @@ class JobRunner:
             return
         legs = build_probe_legs(job.targets or [], job.request or {}, result, checked_at=self._now())
         await crud.replace_legs(db, job.id, legs)
+        # Отмену ставит другой запрос, пока этот ждёт ответа API: фазу перечитываем из базы.
+        await db.refresh(job, attribute_names=['phase'])
+        cancelled = job.phase == PHASE_CANCELLING
         await self._update(
             db,
             job,
-            status=STATUS_DONE,
+            status=STATUS_CANCELLED if cancelled else STATUS_DONE,
             phase=None,
             result={'response': result},
             cost_kopeks=credits_to_kopeks(result.get('cost_credits')),
@@ -359,7 +492,7 @@ class JobRunner:
         limit, cost = self._cost_limit(), job.cost_kopeks
         if not limit or not cost or cost <= limit:
             return False
-        await self._try_cancel_remote(job.kind, int(job.external_id))
+        await self._try_cancel_remote(job)
         message = (
             f'Цена теста {format_rubles(cost)} выше потолка {format_rubles(limit)}; тест отменён сразу, списания нет'
         )
@@ -429,6 +562,9 @@ class JobRunner:
     async def _handle_scan_status(self, db: AsyncSession, job: ReachabilityJob, status: dict) -> bool:
         state = status.get('state')
         if state in _SCAN_PENDING_STATES:
+            progress = status.get('progress')
+            if isinstance(progress, dict) and progress != (job.result or {}).get('progress'):
+                await self._update(db, job, result={**(job.result or {}), 'progress': progress})
             return False
         merged = {**(job.result or {}), 'status': status}
         if state == 'failed':
@@ -450,24 +586,33 @@ class JobRunner:
 
     # ------------------------------------------------------------ отмена
 
-    async def _try_cancel_remote(self, kind: str, external_id: int) -> None:
+    async def _try_cancel_remote(self, job: ReachabilityJob) -> None:
+        """Отмена у API: пробу — её ключом, тест и скан — их идентификатором. «Уже нечего» — не ошибка."""
+
         def call(api: BschekAPI) -> Awaitable[dict]:
-            return api.cancel_vless(external_id) if kind == KIND_VLESS else api.cancel_scan(external_id)
+            if job.kind == KIND_PROBE:
+                return api.cancel_probe(job.idempotency_key)
+            external_id = int(job.external_id)
+            return api.cancel_vless(external_id) if job.kind == KIND_VLESS else api.cancel_scan(external_id)
 
         try:
             await self._call(call, paid=False)
         except BschekAPIError as exc:
-            if exc.code not in CANCEL_OK_CODES:
+            if exc.code not in CANCEL_OK_CODES and exc.status != 404:
                 raise
 
     async def cancel(self, db: AsyncSession, job: ReachabilityJob) -> ReachabilityJob:
-        """Дёрнуть отмену у API и пометить фазу; итог (статус, цена) поставит поллер или обходчик по GET."""
+        """Дёрнуть отмену у API и пометить фазу; итог (статус, цена) поставит поллер или обходчик.
+
+        Проба: висящий POST вернётся сам с тем, что успели измерить, платим только за это.
+        """
         if job.status not in crud.ACTIVE_STATUSES:
             raise JobNotCancellable('Задача уже завершена')
         if job.kind == KIND_PROBE:
-            raise JobNotCancellable('Синхронную пробу нельзя отменить: у API нет такой операции')
-        if job.external_id is None:
+            if job.phase not in PROBE_CANCELLABLE_PHASES:
+                raise JobNotCancellable('Проверка ещё не отправлена, подождите пару секунд')
+        elif job.external_id is None:
             raise JobNotCancellable('Задача ещё не отправлена, подождите пару секунд')
         await self._update(db, job, phase=PHASE_CANCELLING)
-        await self._try_cancel_remote(job.kind, int(job.external_id))
+        await self._try_cancel_remote(job)
         return job

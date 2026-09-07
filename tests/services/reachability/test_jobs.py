@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -13,9 +14,6 @@ from app.database.models import User
 from app.external.bschek_api import BschekAPIError, BschekGatewayError
 from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.jobs import (
-    KIND_PROBE,
-    KIND_SCAN,
-    KIND_VLESS,
     PHASE_CANCELLING,
     PHASE_RETRIEVING,
     STATUS_CANCELLED,
@@ -26,6 +24,7 @@ from app.services.reachability.jobs import (
     JobRunner,
     RunnerConfig,
 )
+from app.services.reachability.kinds import KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.targets import Target
 from tests.fixtures.bschek_fixtures import load_bschek_fixture
 from tests.services.reachability.fakes import FakeAPI, FakeClock
@@ -159,6 +158,74 @@ async def test_probe_left_retrieving_when_result_never_comes(session_factory) ->
     job = await load(session_factory, job_id)
     assert (job.status, job.phase) == (STATUS_RUNNING, PHASE_RETRIEVING)
     assert clock.now == 60.0
+
+
+async def test_probe_retrieve_keeps_last_api_answer_on_job(session_factory) -> None:
+    """Пока результат не пришёл, в задаче виден последний ответ API — иначе «идёт» ничего не объясняет."""
+    api = FakeAPI(
+        {
+            'probe': [
+                BschekGatewayError(code='http_524', message='cf', status=524, retryable=True),
+                BschekAPIError(code='request_in_progress', message='wait', status=409, request_id='r9'),
+            ]
+        }
+    )
+    cfg = RunnerConfig(probe_retrieve_max=30.0, probe_retrieve_fast_interval=15.0)
+    job_id = await make_job(session_factory, KIND_PROBE, {'target': 'x'}, [EU], ['mts|пфо|on'])
+    await make_runner(session_factory, api, FakeClock(), config=cfg).run(job_id)
+
+    job = await load(session_factory, job_id)
+    assert (job.status, job.phase) == (STATUS_RUNNING, PHASE_RETRIEVING)
+    trace = job.result['retrieve']
+    assert (trace['code'], trace['status'], trace['request_id']) == ('request_in_progress', 409, 'r9')
+    assert trace['attempt'] == job.attempts and trace['at']
+
+
+async def test_probe_older_than_cap_fails_instead_of_retrying_forever(session_factory) -> None:
+    """Обходчик не должен поднимать пробу вечно: старше потолка — падение с внятной причиной, без вызовов API."""
+    api = FakeAPI({'probe': [BschekAPIError(code='request_in_progress', message='wait', status=409)]})
+    cfg = RunnerConfig(probe_max_age_sec=2700.0)
+    job_id = await make_job(
+        session_factory,
+        KIND_PROBE,
+        {'target': 'x'},
+        [EU],
+        ['mts|пфо|on'],
+        status=STATUS_RUNNING,
+        phase=PHASE_RETRIEVING,
+        started_at=datetime.now(UTC) - timedelta(hours=1),
+        attempts=15,
+        result={
+            'retrieve': {'code': 'request_in_progress', 'status': 409, 'attempt': 15, 'at': 'x', 'request_id': 'r9'}
+        },
+    )
+    await make_runner(session_factory, api, FakeClock(), config=cfg).resume(job_id)
+
+    job = await load(session_factory, job_id)
+    assert (job.status, job.error_code, job.retryable) == (STATUS_FAILED, 'probe_stalled', False)
+    assert '45 минут' in job.error_message and 'r9' in job.error_message
+    assert 'request_in_progress' not in job.error_message  # людям — словами, код не нужен
+    assert api.calls == []
+
+
+async def test_probe_younger_than_cap_keeps_retrieving_on_resume(session_factory) -> None:
+    api = FakeAPI({'probe': [BschekAPIError(code='request_in_progress', message='wait', status=409)]})
+    cfg = RunnerConfig(probe_max_age_sec=2700.0, probe_retrieve_max=30.0, probe_retrieve_fast_interval=15.0)
+    job_id = await make_job(
+        session_factory,
+        KIND_PROBE,
+        {'target': 'x'},
+        [EU],
+        ['mts|пфо|on'],
+        status=STATUS_RUNNING,
+        phase=PHASE_RETRIEVING,
+        started_at=datetime.now(UTC) - timedelta(minutes=10),
+    )
+    await make_runner(session_factory, api, FakeClock(), config=cfg).resume(job_id)
+
+    job = await load(session_factory, job_id)
+    assert (job.status, job.phase) == (STATUS_RUNNING, PHASE_RETRIEVING)
+    assert len(api.calls) == 2
 
 
 async def test_probe_retrieve_slows_down_after_fast_window(session_factory) -> None:
@@ -482,8 +549,7 @@ async def test_poll_timeout_leaves_job_running_and_sweep_resumes_it(session_fact
 
     await runner.sweep()
     assert runner.is_active(job_id)
-    for task in list(runner._tasks.values()):
-        await task
+    await asyncio.gather(*runner._tasks.values())
     assert not runner.is_active(job_id)
     assert (await load(session_factory, job_id)).status == STATUS_DONE
 
@@ -529,6 +595,21 @@ async def test_spawn_tracks_task_until_done(session_factory) -> None:
     job_id = await make_job(session_factory, KIND_PROBE, fx['request'], [EU], ['mts|пфо|on'])
     task = runner.spawn(job_id)
     assert runner.is_active(job_id)
-    await task
+    await asyncio.gather(task)
     assert not runner.is_active(job_id)
     assert (await load(session_factory, job_id)).status == STATUS_DONE
+
+
+async def test_scan_progress_is_stored_while_running(session_factory) -> None:
+    """Пока скан идёт, его progress из GET лежит в задаче — кабинет показывает, сколько адресов уже проверено."""
+    running = {
+        **body('s1_poll_00'),
+        'progress': {'done_ips': 128, 'total_ips': 512, 'percent': 25, 'units_done': 0, 'units_total': 2},
+    }
+    api = FakeAPI({'start_scan': [body('s1_submit')], 'get_scan': [running, body('s1_poll_03')]})
+    job_id = await make_job(session_factory, KIND_SCAN, {'cidr': '192.0.2.0/24'}, CIDR, ['dobro|цфо|on'])
+    await make_runner(session_factory, api, FakeClock()).run(job_id)
+
+    job = await load(session_factory, job_id)
+    assert job.status == STATUS_DONE
+    assert job.result['progress'] == running['progress']

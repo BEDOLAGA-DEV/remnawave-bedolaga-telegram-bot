@@ -44,6 +44,9 @@ class FakeAPI:
     async def probe(self, body: dict, key: str) -> dict:
         return self._next('probe', key)
 
+    async def cancel_probe(self, key: str) -> dict:
+        return self._next('cancel_probe', key)
+
     async def start_vless(self, body: dict, key: str) -> dict:
         return self._next('start_vless', key)
 

@@ -94,8 +94,7 @@ class EmailRetryService:
         for task in (self._writer, self._worker, self._cleanup):
             if task and not task.done():
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                await asyncio.wait([task])
         self._writer = None
         self._worker = None
         self._cleanup = None

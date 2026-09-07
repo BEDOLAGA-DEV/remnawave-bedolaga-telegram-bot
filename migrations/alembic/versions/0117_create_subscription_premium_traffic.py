@@ -1,7 +1,7 @@
 """create subscription_premium_traffic (premium squad traffic limits)
 
-Revision ID: 0116
-Revises: 0115
+Revision ID: 0117
+Revises: 0116
 Create Date: 2026-09-06
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0116'
-down_revision: Union[str, None] = '0115'
+revision: str = '0117'
+down_revision: Union[str, None] = '0116'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

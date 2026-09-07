@@ -1,19 +1,23 @@
 """Загрузка чужой подписки по URL для поля «Конфиг или подписка» (как в оригинале bsbord).
 
 Админ вводит адрес руками, но бот всё равно не ходит во внутреннюю сеть: только публичные
-http(s)-адреса без учётных данных, проверка хоста и после редиректов. Панели отдают
+http(s)-адреса без учётных данных, проверка хоста до запроса и после редиректов. Панели отдают
 конфиги только клиентам — представляемся клиентом. Тело ограничено по размеру.
-Проверка по DNS (домен, указывающий во внутреннюю сеть) не делается: раздел админский.
+DNS резолвится своим резолвером, который отдаёт соединению только публичные адреса —
+домен, глядящий во внутреннюю сеть (в том числе подменённый после первого ответа), не пройдёт.
 """
 
 from __future__ import annotations
 
 import ipaddress
+import socket
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
 import aiohttp
+from aiohttp.abc import AbstractResolver, ResolveResult
+from aiohttp.resolver import DefaultResolver
 
 from app.services.reachability.panel_links import (
     CLIENT_USER_AGENT,
@@ -58,8 +62,37 @@ def validate_public_url(url: str) -> str:
     return text
 
 
+class PublicOnlyResolver(AbstractResolver):
+    """DNS для загрузки подписок: адреса не из публичного пространства не отдаются соединению вовсе."""
+
+    def __init__(self, inner: AbstractResolver | None = None) -> None:
+        self._inner = inner or DefaultResolver()
+
+    async def resolve(
+        self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
+    ) -> list[ResolveResult]:
+        results = await self._inner.resolve(host, port, family)
+        for item in results:
+            address = str(item['host'])
+            try:
+                is_global = ipaddress.ip_address(address).is_global
+            except ValueError:
+                is_global = False
+            if not is_global:
+                raise SubscriptionFetchError(
+                    f'{host} указывает на служебный адрес {address}, такие подписки не загружаются'
+                )
+        return results
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+
 def _default_session() -> aiohttp.ClientSession:
-    return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS))
+    return aiohttp.ClientSession(
+        connector=aiohttp.TCPConnector(resolver=PublicOnlyResolver()),
+        timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS),
+    )
 
 
 async def _get(session: Any, url: str, headers: dict[str, str]) -> tuple[bytes, dict[str, str]]:

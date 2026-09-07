@@ -5116,6 +5116,33 @@ class EmailQueueItem(Base):
     sent_at = Column(AwareDateTime(), nullable=True)
 
 
+class ReachabilityBatch(Base):
+    """Проверка многих серверов одной кнопкой: ⌈N/10⌉ задач probe, идут не более трёх одновременно.
+
+    Статус выводится из задач (все завершены → done / failed / cancelled), цена — их сумма.
+    """
+
+    __tablename__ = 'reachability_batches'
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(16), nullable=False, default='pending', index=True)  # pending|running|done|failed|cancelled
+    phase = Column(String(32), nullable=True)  # cancelling
+    started_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    scope = Column(JSON, nullable=False)  # {'kind': problems|stale|all|manual, 'host_refs': [...]}
+    request = Column(JSON, nullable=False)  # шаблон чашек: units, dpi, probes, sni_hosts
+    total_targets = Column(Integer, nullable=False, default=0)
+    estimated_kopeks = Column(Integer, nullable=True)
+    cost_kopeks = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    started_at = Column(AwareDateTime(), nullable=True)
+    finished_at = Column(AwareDateTime(), nullable=True)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    jobs = relationship('ReachabilityJob', back_populates='batch', order_by='ReachabilityJob.id')
+    started_by = relationship('User', backref='reachability_batches')
+
+
 class ReachabilityJob(Base):
     """Задача проверки достижимости через bschekbot (probe / vless / scan).
 
@@ -5133,6 +5160,7 @@ class ReachabilityJob(Base):
     trigger = Column(String(16), nullable=False, default='manual')  # manual | scheduled (v2)
     started_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
 
+    batch_id = Column(Integer, ForeignKey('reachability_batches.id', ondelete='SET NULL'), nullable=True, index=True)
     idempotency_key = Column(String(64), unique=True, nullable=False)
     external_id = Column(Integer, nullable=True, index=True)  # scan_id / test_id
     last_request_id = Column(String(64), nullable=True)
@@ -5165,6 +5193,7 @@ class ReachabilityJob(Base):
         'ReachabilityLeg', back_populates='job', cascade='all, delete-orphan', order_by='ReachabilityLeg.id'
     )
     started_by = relationship('User', backref='reachability_jobs')
+    batch = relationship('ReachabilityBatch', back_populates='jobs')
 
 
 class ReachabilityLeg(Base):

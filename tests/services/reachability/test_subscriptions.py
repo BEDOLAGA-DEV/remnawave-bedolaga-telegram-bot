@@ -12,6 +12,7 @@ from yarl import URL
 from app.services.reachability.panel_links import CLIENT_USER_AGENT, HWID_HEADERS
 from app.services.reachability.subscriptions import (
     MAX_BODY_BYTES,
+    PublicOnlyResolver,
     SubscriptionFetchError,
     fetch_subscription_links,
     is_subscription_url,
@@ -57,10 +58,10 @@ class FakeSession:
         )
 
         class _Ctx:
-            async def __aenter__(self_inner):
+            async def __aenter__(self):
                 return response
 
-            async def __aexit__(self_inner, *exc):
+            async def __aexit__(self, *exc):
                 return None
 
         return _Ctx()
@@ -119,3 +120,49 @@ async def test_fetch_accepts_plain_links_and_rejects_pages_errors_and_private_re
         await fetch_subscription_links(
             'https://sub.example/abc', session_factory=lambda: FakeSession(b'x' * (MAX_BODY_BYTES + 1))
         )
+
+
+class _FakeInnerResolver:
+    """Резолвер-заглушка: отдаёт заданные адреса, помнит, что закрыт."""
+
+    def __init__(self, addresses: list[str]) -> None:
+        self.addresses = addresses
+        self.closed = False
+
+    async def resolve(self, host, port=0, family=0):
+        return [
+            {'hostname': host, 'host': address, 'port': port, 'family': family, 'proto': 6, 'flags': 0}
+            for address in self.addresses
+        ]
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_public_only_resolver_passes_public_and_rejects_private() -> None:
+    public = PublicOnlyResolver(_FakeInnerResolver(['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946']))
+    assert [item['host'] for item in await public.resolve('sub.example', 443)] == [
+        '93.184.216.34',
+        '2606:2800:220:1:248:1893:25c8:1946',
+    ]
+    for private in ('127.0.0.1', '10.0.0.5', '169.254.169.254', '::1', 'fd00::1', 'not-an-ip'):
+        inner = _FakeInnerResolver(['93.184.216.34', private])
+        with pytest.raises(SubscriptionFetchError, match='служебный адрес'):
+            await PublicOnlyResolver(inner).resolve('sub.example', 443)
+    inner = _FakeInnerResolver([])
+    await PublicOnlyResolver(inner).close()
+    assert inner.closed
+
+
+@pytest.mark.asyncio
+async def test_fetch_uses_public_only_resolver_for_the_real_connection() -> None:
+    """Домен, глядящий во внутреннюю сеть, отсекается настоящим aiohttp ещё до соединения."""
+    import aiohttp
+
+    def session_factory():
+        resolver = PublicOnlyResolver(_FakeInnerResolver(['10.0.0.5']))
+        return aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=resolver))
+
+    with pytest.raises(SubscriptionFetchError, match=r'служебный адрес 10\.0\.0\.5'):
+        await fetch_subscription_links('http://internal.example/sub', session_factory=session_factory)

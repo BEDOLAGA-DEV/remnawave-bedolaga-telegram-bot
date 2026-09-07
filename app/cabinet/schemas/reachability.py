@@ -12,11 +12,13 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.services.reachability.batches import MAX_BATCH_TARGETS
 from app.services.reachability.requests import MAX_SNI_HOSTS, normalize_sni_hosts
 
 
 Kind = Literal['probe', 'vless', 'scan']
 Dpi = Literal['on', 'off', 'any']
+ScopeKind = Literal['problems', 'stale', 'all', 'manual']
 Purpose = Literal['bs', 'regular', 'unknown']
 TargetKind = Literal['host', 'node', 'subscription_config', 'custom', 'cidr']
 
@@ -64,6 +66,22 @@ class JobCreateRequest(BaseModel):
     core: Literal['', 'stable', 'prerelease'] = ''
     # Свои имена для TLS-SNI (до 5, как Multi-SNI в оригинале); пусто — имена целей или дефолт из настроек.
     sni_hosts: list[str] = Field(default_factory=list, max_length=MAX_SNI_HOSTS)
+
+    @field_validator('sni_hosts')
+    @classmethod
+    def _clean_sni_hosts(cls, value: list[str]) -> list[str]:
+        return normalize_sni_hosts(value)
+
+
+class BatchCreateRequest(BaseModel):
+    """Проверка многих серверов панели одной кнопкой: до 300 хостов, чашки по 10 собирает бот."""
+
+    host_refs: list[str] = Field(min_length=1, max_length=MAX_BATCH_TARGETS)
+    units: list[str] = Field(default_factory=list, max_length=MAX_UNITS_PER_JOB)
+    dpi: Dpi = 'on'
+    probes: ProbesIn = Field(default_factory=ProbesIn)
+    sni_hosts: list[str] = Field(default_factory=list, max_length=MAX_SNI_HOSTS)
+    scope_kind: ScopeKind = 'manual'
 
     @field_validator('sni_hosts')
     @classmethod
@@ -119,6 +137,13 @@ class ReferenceOut(BaseModel):
     error: str | None
 
 
+class ActiveBatchOut(BaseModel):
+    id: int
+    total_targets: int
+    done_targets: int
+    started_at: datetime | None
+
+
 class StatusResponse(BaseModel):
     enabled: bool
     configured: bool
@@ -136,6 +161,8 @@ class StatusResponse(BaseModel):
     cores: dict[str, str] = Field(default_factory=dict)
     # «SNI-хост по умолчанию» из настроек — кабинет подставляет его в поле SNI.
     default_sni: str | None = None
+    # Идущая проверка серверов: кабинет открывает её экран после перезагрузки страницы.
+    active_batch: ActiveBatchOut | None = None
 
 
 # ============ Цели ============
@@ -302,6 +329,8 @@ class JobOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     legs: list[LegOut] = Field(default_factory=list)
+    # Пачка, в которую входит задача (проверка многих серверов одной кнопкой).
+    batch_id: int | None = None
     # Из тела запроса к API: какие пробы заказаны и какие SNI-имена — для «Моих проверок».
     probes: dict[str, bool] | None = None
     sni_hosts: list[str] = Field(default_factory=list)
@@ -309,6 +338,52 @@ class JobOut(BaseModel):
 
 class JobListResponse(BaseModel):
     items: list[JobOut]
+    total: int
+    offset: int
+    limit: int
+
+
+# ============ Пачка проверок ============
+
+
+class BatchPreviewResponse(BaseModel):
+    targets: list[TargetOut]
+    units_resolved: list[str]
+    chunks: int
+    cost_kopeks: int | None
+    estimated_minutes: int
+    warnings: list[str] = Field(default_factory=list)
+    balance_kopeks: int | None = None
+
+
+class BatchJobOut(BaseModel):
+    id: int
+    status: str
+    phase: str | None
+    target_keys: list[str]
+    cost_kopeks: int | None
+    # Частичный результат идущей пробы (``job.result.partial``): по симкам «готово / проверяем / ждёт».
+    partial: dict[str, Any] | None = None
+
+
+class BatchOut(BaseModel):
+    id: int
+    status: str
+    phase: str | None
+    scope: dict[str, Any]
+    total_targets: int
+    done_targets: int
+    estimated_kopeks: int | None
+    cost_kopeks: int | None
+    error_message: str | None
+    created_at: datetime | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    jobs: list[BatchJobOut] = Field(default_factory=list)
+
+
+class BatchListResponse(BaseModel):
+    items: list[BatchOut]
     total: int
     offset: int
     limit: int

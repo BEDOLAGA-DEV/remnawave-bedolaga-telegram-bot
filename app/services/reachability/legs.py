@@ -18,7 +18,12 @@ from app.services.reachability.targets import (
     is_reality_like,
     probe_api_target,
 )
-from app.services.reachability.verdict import matches_expectation, probe_leg_verdict, vless_leg_verdict
+from app.services.reachability.verdict import (
+    compact_probe_verdict,
+    matches_expectation,
+    probe_leg_verdict,
+    vless_leg_verdict,
+)
 
 
 _CHANNEL_TO_DPI = {'DPI_ON': 'on', 'DPI_OFF': 'off'}
@@ -114,4 +119,43 @@ def merge_skipped(existing: dict | None, response: dict[str, Any]) -> dict:
         'unavailable': [*base.get('unavailable', []), *(response.get('skipped_unavailable') or [])],
         'unknown': list(base.get('unknown', [])),
         'blocked_targets': [*base.get('blocked_targets', []), *(response.get('skipped') or [])],
+    }
+
+
+_PARTIAL_CELLS = ('sni', 'tcp', 'icmp', 'http')
+
+
+def _partial_latency(result: dict | None) -> int | None:
+    for name in _PARTIAL_CELLS:
+        cell = (result or {}).get(name)
+        if isinstance(cell, dict) and cell.get('latency_ms') is not None:
+            return int(cell['latency_ms'])
+    return None
+
+
+def partial_probe_progress(details: dict) -> dict[str, Any]:
+    """Срез частичного результата пробы из 409 request_in_progress — для «проверяем…» в кабинете."""
+    legs = []
+    for raw in details.get('legs') or []:
+        if not isinstance(raw, dict):
+            continue
+        done = raw.get('state') == 'done'
+        result = raw.get('result') if isinstance(raw.get('result'), dict) else None
+        legs.append(
+            {
+                'target': str(raw.get('target') or ''),
+                'operator': raw.get('operator'),
+                'region': raw.get('region'),
+                'dpi': raw.get('dpi'),
+                'state': str(raw.get('state') or 'queued'),
+                'verdict': compact_probe_verdict(result) if done else None,
+                'latency_ms': _partial_latency(result) if done else None,
+            }
+        )
+    elapsed = details.get('elapsed_sec')
+    return {
+        'done': int(details.get('done') or 0),
+        'total': int(details.get('total') or 0),
+        'elapsed_sec': float(elapsed) if elapsed is not None else None,
+        'legs': legs,
     }

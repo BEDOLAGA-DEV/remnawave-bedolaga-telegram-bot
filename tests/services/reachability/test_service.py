@@ -3,6 +3,7 @@ create_job проверяет занятость и потолок, пишет �
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -48,12 +49,12 @@ class FakePanel:
         outer = self
 
         class _Ctx:
-            async def __aenter__(self_inner):
+            async def __aenter__(self):
                 if outer.broken:
                     raise RuntimeError('panel down')
                 return outer
 
-            async def __aexit__(self_inner, *exc):
+            async def __aexit__(self, *exc):
                 return None
 
         return _Ctx()
@@ -389,8 +390,7 @@ async def test_create_job_writes_row_and_spawns_runner(session_factory) -> None:
         assert (job.units_requested, job.units_resolved, job.estimated_kopeks) == (['mts'], ['mts|пфо|on'], 18)
         assert job.targets[0]['target_key'] == 'bs-host.example:9443' and job.skipped['dpi_off']
         assert service.runner.is_active(job.id)
-    for task in list(service.runner._tasks.values()):
-        await task
+    await asyncio.gather(*service.runner._tasks.values())
     async with session_factory() as db:
         assert (await crud.get_job(db, job.id)).status == 'done'
 
@@ -411,8 +411,7 @@ async def test_create_job_returns_job_ready_for_response(session_factory) -> Non
         job = await service.create_job(db, PROBE_PAYLOAD, admin.id)
         assert 'legs' not in sa_inspect(job).unloaded
         assert job.legs == []
-    for task in list(service.runner._tasks.values()):
-        await task
+    await asyncio.gather(*service.runner._tasks.values())
 
 
 async def test_create_job_refuses_second_active_vless(session_factory) -> None:
@@ -495,8 +494,7 @@ async def test_get_cancel_and_retrieve_jobs(session_factory) -> None:
             await service.get_job(db, job.id + 100)
         cancelled = await service.cancel_job(db, job.id)
         assert cancelled.phase == 'cancelling' and service.runner.is_active(job.id)
-    for task in list(service.runner._tasks.values()):
-        await task
+    await asyncio.gather(*service.runner._tasks.values())
     async with session_factory() as db:
         assert (await crud.get_job(db, job.id)).status == 'cancelled'
         with pytest.raises(JobNotCancellable):
@@ -522,8 +520,7 @@ async def test_retrieve_job_resumes_stuck_probe(session_factory) -> None:
         )
         await db.commit()
         await service.retrieve_job(db, job.id)
-    for task in list(service.runner._tasks.values()):
-        await task
+    await asyncio.gather(*service.runner._tasks.values())
     async with session_factory() as db:
         assert (await crud.get_job(db, job.id)).status == 'done'
 

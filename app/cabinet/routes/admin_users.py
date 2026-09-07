@@ -3273,8 +3273,12 @@ async def disable_user(
                     if sub.remnawave_id:
                         try:
                             await subscription_service.disable_remnawave_user(sub.remnawave_id, db=db)
-                        except Exception:
-                            pass
+                        except Exception as error:
+                            logger.warning(
+                                'Не удалось отключить пользователя панели при деактивации',
+                                remnawave_id=sub.remnawave_id,
+                                error=str(error),
+                            )
                 panel_deactivated = True
             elif user.remnawave_id:
                 panel_deactivated = await subscription_service.disable_remnawave_user(user.remnawave_id, db=db)

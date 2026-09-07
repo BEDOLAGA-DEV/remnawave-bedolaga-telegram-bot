@@ -113,8 +113,7 @@ class SystemErrorLogService:
         for task in (self._worker, self._cleanup_worker):
             if task and not task.done():
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                await asyncio.wait([task])
         self._worker = None
         self._cleanup_worker = None
 

@@ -732,7 +732,7 @@ async def test_bridge_message_added_broadcasts_contract_message_created(monkeypa
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     msg = _message(id=501, ticket_id=3, user_id=10, is_from_admin=False, message_text='hi')
     ticket = _ticket(id=3, messages=[msg])
@@ -762,7 +762,7 @@ async def test_bridge_message_added_noops_when_ticket_missing(monkeypatch):
         called = True
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     async def fake_load(_db, _ticket_id):
         return None
@@ -781,7 +781,7 @@ async def test_bridge_ticket_created_broadcasts_opening_message(monkeypatch):
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     opening = _message(id=700, ticket_id=8, message_text='first!')
     ticket = _ticket(id=8, messages=[opening])
@@ -805,7 +805,7 @@ async def test_bridge_status_changed_broadcasts_status_updated(monkeypatch):
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     ticket = _ticket(id=8, status='closed')
 
@@ -858,7 +858,7 @@ async def test_bridge_consumes_cabinet_emit_payload(monkeypatch):
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     msg = _message(id=501, ticket_id=3, message_text='from cabinet')
     ticket = _ticket(id=3, messages=[msg])

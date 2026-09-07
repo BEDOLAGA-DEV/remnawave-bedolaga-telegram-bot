@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
 import hashlib
 import json
 import mimetypes
@@ -1554,10 +1555,9 @@ async def support_mobile_websocket_endpoint(websocket: WebSocket):
     finally:
         await support_ws_manager.disconnect(session)
         if websocket.client_state != WebSocketState.DISCONNECTED:
-            try:
+            # Сокет мог закрыться сам, пока мы шли к finally — повторное закрытие не ошибка.
+            with contextlib.suppress(RuntimeError):
                 await websocket.close()
-            except RuntimeError:
-                pass
 
 
 # ---------------------------------------------------------------------------

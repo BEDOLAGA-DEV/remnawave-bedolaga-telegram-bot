@@ -161,6 +161,7 @@ async def test_account_hides_webhook_secret(monkeypatch: pytest.MonkeyPatch) -> 
         ('preview_scan', ({'cidr': 'c'},), ('POST', '/scans/preview', {'cidr': 'c'}, None)),
         ('get_scan', (5,), ('GET', '/scans/5', None, None)),
         ('cancel_scan', (5,), ('POST', '/scans/5/cancel', None, None)),
+        ('cancel_probe', ('k9',), ('POST', '/probe/cancel', None, 'k9')),
         ('start_vless', ({'raw_input': 'v'}, 'k3'), ('POST', '/vless', {'raw_input': 'v'}, 'k3')),
         ('get_vless', (7,), ('GET', '/vless/7', None, None)),
         ('cancel_vless', (7,), ('POST', '/vless/7/cancel', None, None)),

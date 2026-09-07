@@ -1,4 +1,4 @@
-"""CRUD раздела BSCHEKER: задачи, леги, предпочтения по целям."""
+"""CRUD раздела BSCHEKER: задачи, пачки проверок, леги, предпочтения по целям."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from sqlalchemy import Text, and_, delete, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import ReachabilityJob, ReachabilityLeg, ReachabilityTargetPref
+from app.database.models import ReachabilityBatch, ReachabilityJob, ReachabilityLeg, ReachabilityTargetPref
 
 
 JOB_STATUSES = ('pending', 'running', 'done', 'failed', 'cancelled')
@@ -196,3 +196,70 @@ async def last_vless_leg_price_kopeks(db: AsyncSession) -> int | None:
     submit = job.result.get('submit') or job.result
     legs = int(submit.get('n_servers') or 0) * int(submit.get('n_modems') or 0)
     return round(job.cost_kopeks / legs) if legs else None
+
+
+# ------------------------------------------------------------------ пачки проверок
+
+
+async def create_batch(db: AsyncSession, **fields: Any) -> ReachabilityBatch:
+    batch = ReachabilityBatch(**fields)
+    db.add(batch)
+    await db.flush()
+    await db.refresh(batch, attribute_names=['jobs'])
+    return batch
+
+
+async def get_batch(db: AsyncSession, batch_id: int) -> ReachabilityBatch | None:
+    result = await db.execute(
+        select(ReachabilityBatch)
+        .options(selectinload(ReachabilityBatch.jobs).selectinload(ReachabilityJob.legs))
+        .where(ReachabilityBatch.id == batch_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_batch(db: AsyncSession, batch: ReachabilityBatch, **fields: Any) -> ReachabilityBatch:
+    for name, value in fields.items():
+        setattr(batch, name, value)
+    batch.updated_at = datetime.now(UTC)
+    await db.flush()
+    return batch
+
+
+async def list_batches(db: AsyncSession, *, offset: int = 0, limit: int = 20) -> tuple[list[ReachabilityBatch], int]:
+    total = (await db.execute(select(func.count()).select_from(ReachabilityBatch))).scalar_one()
+    rows = await db.execute(
+        select(ReachabilityBatch)
+        .options(selectinload(ReachabilityBatch.jobs).selectinload(ReachabilityJob.legs))
+        .order_by(ReachabilityBatch.created_at.desc(), ReachabilityBatch.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(rows.scalars().all()), int(total)
+
+
+async def list_unfinished_batches(db: AsyncSession) -> list[ReachabilityBatch]:
+    result = await db.execute(
+        select(ReachabilityBatch).where(ReachabilityBatch.status.in_(ACTIVE_STATUSES)).order_by(ReachabilityBatch.id)
+    )
+    return list(result.scalars().all())
+
+
+async def get_active_batch(db: AsyncSession) -> ReachabilityBatch | None:
+    result = await db.execute(
+        select(ReachabilityBatch)
+        .where(ReachabilityBatch.status.in_(ACTIVE_STATUSES))
+        .order_by(ReachabilityBatch.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def jobs_for_batch(db: AsyncSession, batch_id: int) -> list[ReachabilityJob]:
+    result = await db.execute(
+        select(ReachabilityJob)
+        .options(selectinload(ReachabilityJob.legs))
+        .where(ReachabilityJob.batch_id == batch_id)
+        .order_by(ReachabilityJob.id)
+    )
+    return list(result.scalars().all())
