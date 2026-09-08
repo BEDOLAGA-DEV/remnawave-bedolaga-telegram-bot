@@ -193,6 +193,10 @@ class BschekAPI:
     async def probe(self, body: dict, idempotency_key: str) -> dict:
         return await self._request('POST', '/probe', json_body=body, idempotency_key=idempotency_key)
 
+    async def cancel_probe(self, idempotency_key: str) -> dict:
+        """Остановить идущую пробу: ручка — тот же Idempotency-Key; 404 = проба уже завершилась."""
+        return await self._request('POST', '/probe/cancel', idempotency_key=idempotency_key)
+
     async def preview_scan(self, body: dict) -> dict:
         return await self._request('POST', '/scans/preview', json_body=body)
 

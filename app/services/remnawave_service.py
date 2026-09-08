@@ -1930,8 +1930,8 @@ class RemnaWaveService:
                                 cleanup_panel_id_mutations.clear()
                             try:
                                 await db.rollback()
-                            except:
-                                pass
+                            except Exception as rollback_error:
+                                logger.debug('Откат сессии после ошибки не удался', error=str(rollback_error))
                         else:
                             if cleanup_mutation and cleanup_mutation.has_changes():
                                 cleanup_panel_id_mutations.append(cleanup_mutation)

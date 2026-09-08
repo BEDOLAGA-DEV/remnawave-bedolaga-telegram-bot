@@ -78,6 +78,26 @@ def probe_leg_verdict(leg: dict, *, sni_host: str | None = None, reality: bool =
     return UNKNOWN
 
 
+def compact_probe_verdict(result: dict | None) -> str:
+    """Вердикт по компактной ячейке частичного результата (409): SNI → TCP → ICMP, как у полной формы."""
+    if not result:
+        return UNKNOWN
+    sni = result.get('sni')
+    if isinstance(sni, dict) and sni.get('ok'):
+        return REACHABLE
+    tcp = result.get('tcp')
+    if isinstance(tcp, dict) and tcp.get('ok'):
+        return REACHABLE
+    if isinstance(sni, dict):
+        return BLOCKED
+    if isinstance(tcp, dict):
+        return DOWN
+    icmp = result.get('icmp')
+    if isinstance(icmp, dict):
+        return REACHABLE if icmp.get('ok') else DOWN
+    return UNKNOWN
+
+
 def vless_leg_verdict(leg: dict) -> str:
     if leg.get('cancelled') or leg.get('stage') == 'cancelled':
         return CANCELLED

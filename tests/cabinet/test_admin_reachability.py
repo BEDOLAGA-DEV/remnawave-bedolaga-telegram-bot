@@ -100,7 +100,6 @@ def test_routes_are_registered(registered_paths) -> None:
     assert {'GET', 'POST'} <= registered_paths[f'{BASE}/jobs']
     assert 'GET' in registered_paths[f'{BASE}/jobs/{{job_id}}']
     assert 'POST' in registered_paths[f'{BASE}/jobs/{{job_id}}/cancel']
-    assert 'POST' in registered_paths[f'{BASE}/jobs/{{job_id}}/retrieve']
     assert 'GET' in registered_paths[f'{BASE}/summary/hosts']
 
 
@@ -119,7 +118,6 @@ def test_routes_are_registered(registered_paths) -> None:
         ('list_jobs', 'reachability:read'),
         ('get_job', 'reachability:read'),
         ('cancel_job', 'reachability:run'),
-        ('retrieve_job', 'reachability:run'),
         ('get_summary', 'reachability:read'),
     ],
 )

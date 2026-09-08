@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.auth.email_auth_gate import is_email_auth_enabled
 from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.database.crud.user import (
@@ -82,10 +83,10 @@ class OAuthStateData(TypedDict):
     code_verifier: NotRequired[str]  # PKCE code verifier (VK)
 
 
-def _get_active_providers() -> list[str]:
-    """Вернуть список активных провайдеров аутентификации (только включённые)."""
+async def _get_active_providers(db: AsyncSession) -> list[str]:
+    """Активные способы входа: email — по тому же переключателю, что UI и роуты."""
     providers: list[str] = ['telegram']
-    if settings.is_cabinet_email_auth_enabled():
+    if await is_email_auth_enabled(db):
         providers.append('email')
     providers.extend(settings.get_enabled_oauth_provider_names())
     return providers
@@ -376,10 +377,11 @@ router = APIRouter(prefix='/auth/account', tags=['Cabinet Account Linking'])
 @router.get('/linked-providers', response_model=LinkedProvidersResponse)
 async def get_linked_providers(
     user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
 ) -> LinkedProvidersResponse:
     """Return all auth methods with their link status for the current user."""
     providers: list[LinkedProvider] = []
-    for provider in _get_active_providers():
+    for provider in await _get_active_providers(db):
         identifier = _get_provider_identifier(user, provider)
         providers.append(
             LinkedProvider(

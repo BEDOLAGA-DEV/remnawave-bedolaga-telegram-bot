@@ -760,6 +760,8 @@ async def save_devices_cart(
     return {'success': True, 'cart_saved': True}
 
 
+# Отказы обоих эндпоинтов несут ``reason_code`` — кабинет переводит его сам; ``reason``
+# остаётся текстом для кабинетов, которые кода ещё не знают (тест-сторож в tests/cabinet).
 @router.get('/devices/price')
 async def get_device_price(
     devices: int = 1,
@@ -774,6 +776,7 @@ async def get_device_price(
         return {
             'available': False,
             'reason': 'Нет активной подписки',
+            'reason_code': 'no_active_subscription',
         }
 
     tariff = None
@@ -795,6 +798,7 @@ async def get_device_price(
         return {
             'available': False,
             'reason': 'Докупка устройств недоступна',
+            'reason_code': 'devices_unavailable',
         }
 
     # Check max device limit
@@ -805,6 +809,7 @@ async def get_device_price(
         return {
             'available': False,
             'reason': f'Достигнут максимум устройств ({max_device_limit})',
+            'reason_code': 'max_devices_reached',
             'current_device_limit': current_devices,
             'max_device_limit': max_device_limit,
         }
@@ -813,6 +818,7 @@ async def get_device_price(
         return {
             'available': False,
             'reason': f'Можно добавить максимум {can_add} устройств',
+            'reason_code': 'can_add_limited',
             'current_device_limit': current_devices,
             'max_device_limit': max_device_limit,
             'can_add': can_add,
@@ -1178,6 +1184,7 @@ async def get_device_reduction_info(
         return {
             'available': False,
             'reason': 'No subscription found',
+            'reason_code': 'no_subscription',
             'current_device_limit': 0,
             'min_device_limit': 1,
             'can_reduce': 0,
@@ -1189,6 +1196,7 @@ async def get_device_reduction_info(
         return {
             'available': False,
             'reason': 'Device reduction is not available for trial subscriptions',
+            'reason_code': 'trial',
             'current_device_limit': subscription.device_limit or 1,
             'min_device_limit': 1,
             'can_reduce': 0,
@@ -1216,6 +1224,7 @@ async def get_device_reduction_info(
         return {
             'available': False,
             'reason': 'Already at minimum device limit',
+            'reason_code': 'at_minimum',
             'current_device_limit': current_device_limit,
             'min_device_limit': min_device_limit,
             'can_reduce': 0,

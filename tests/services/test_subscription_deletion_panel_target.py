@@ -341,3 +341,28 @@ async def test_step_order_is_pinned(monkeypatch):
         await deletion.delete_subscription_record(db, target, deleted_by='user')
 
     assert spy.order == ['grace', 'platega', 'lava', 'grace', 'panel_delete', 'decrement']
+
+
+@pytest.mark.asyncio
+async def test_multi_tariff_deletion_honours_disable_mode(monkeypatch):
+    """REMNAWAVE_USER_DELETE_MODE=disable: аккаунт подписки отключается, а не удаляется.
+
+    Режим читался только при полном удалении пользователя; удаление подписки
+    (и сброс триала) сносили аккаунт из панели вопреки настройке.
+    """
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+    spy = _PanelSpy()
+    spy.install(monkeypatch)
+    async with memory_session(monkeypatch, TABLES) as db:
+        db.add(_user(remnawave_id=None))
+        target = _sub(1, status=SubscriptionStatus.EXPIRED.value, remnawave_id=PANEL_ID)
+        db.add(target)
+        await db.commit()
+        await deletion.delete_subscription_record(db, target, deleted_by='user')
+        remaining = await db.scalar(select(Subscription.id).where(Subscription.id == 1))
+    assert spy.disabled == [PANEL_ID]
+    assert spy.deleted == []
+    # ничего не удаляется — и помечать намеренное удаление нечего
+    assert spy.marked == []
+    assert remaining is None

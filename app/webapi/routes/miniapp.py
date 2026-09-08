@@ -85,6 +85,7 @@ from app.services.subscription_renewal_service import (
     with_admin_notification_service,
 )
 from app.services.subscription_service import SubscriptionService
+from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
 from app.services.trial_activation_service import (
     TrialPaymentChargeFailed,
     TrialPaymentInsufficientFunds,
@@ -6563,11 +6564,7 @@ async def get_tariffs_endpoint(
     current_tariff_model: MiniAppCurrentTariff | None = None
     current_tariff = None
 
-    # Вычисляем оставшиеся дни подписки
-    remaining_days = 0
-    if subscription and subscription.end_date:
-        delta = subscription.end_date - datetime.now(UTC)
-        remaining_days = max(0, delta.days)
+    remaining_days = remaining_days_for_switch(subscription.end_date if subscription else None)
 
     if current_tariff_id:
         current_tariff = await get_tariff_by_id(db, current_tariff_id)
@@ -6791,15 +6788,14 @@ async def purchase_tariff_endpoint(
         await db.commit()
         await db.refresh(subscription)
 
-    # Синхронизируем с RemnaWave
-    # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
+    # Синхронизируем с RemnaWave: новая подписка панели ещё не известна — sync
+    # выберет create; существующая — update. При покупке тарифа ВСЕГДА сбрасываем трафик.
     service = SubscriptionService()
-    await service.update_remnawave_user(
+    await service.sync_remnawave_user(
         db,
         subscription,
         reset_traffic=True,
         reset_reason='покупка тарифа (miniapp)',
-        sync_squads=True,
     )
 
     # Сохраняем корзину для автопродления
@@ -6947,11 +6943,7 @@ async def preview_tariff_switch_endpoint(
             detail={'code': 'tariff_not_available', 'message': 'Tariff not available for your promo group'},
         )
 
-    # Рассчитываем оставшиеся дни
-    remaining_days = 0
-    if subscription.end_date and subscription.end_date > datetime.now(UTC):
-        delta = subscription.end_date - datetime.now(UTC)
-        remaining_days = max(0, delta.days)
+    remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Рассчитываем стоимость переключения (PricingEngine обрабатывает все случаи: periodic↔periodic, daily↔periodic)
     switch_result = _calculate_tariff_switch(current_tariff, new_tariff, remaining_days, user=user)
@@ -7081,11 +7073,7 @@ async def switch_tariff_endpoint(
 
     user = await lock_user_for_pricing(db, user.id)
 
-    # Рассчитываем оставшиеся дни
-    remaining_days = 0
-    if subscription.end_date and subscription.end_date > datetime.now(UTC):
-        delta = subscription.end_date - datetime.now(UTC)
-        remaining_days = max(0, delta.days)
+    remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Рассчитываем стоимость (PricingEngine обрабатывает все случаи)
     switch_result = _calculate_tariff_switch(current_tariff, new_tariff, remaining_days, user=user)
@@ -7182,7 +7170,9 @@ async def switch_tariff_endpoint(
     subscription.purchased_traffic_gb = 0
     subscription.traffic_reset_at = None
 
-    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+    # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение (см. tariff_switch_policy).
+    reset_used_traffic = should_reset_used_traffic(upgrade_cost)
+    if reset_used_traffic:
         subscription.traffic_used_gb = 0.0
 
     # Обработка daily полей при смене тарифа
@@ -7230,7 +7220,7 @@ async def switch_tariff_endpoint(
     await db.refresh(user)
 
     # Синхронизируем с RemnaWave (опционально сбрасываем трафик по настройке)
-    should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
+    should_reset_traffic = reset_used_traffic
     try:
         service = SubscriptionService()
         await service.update_remnawave_user(

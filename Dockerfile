@@ -19,12 +19,22 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.13-slim
 
-ARG VERSION="v4.5.0" # x-release-please-version
+ARG VERSION="v4.6.0" # x-release-please-version
 ARG BUILD_DATE
 ARG VCS_REF
 
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
+
+# База — плавающий тег python:3.13-slim, и между её пересборками Debian успевает
+# выпустить исправления системных пакетов (util-linux, zlib, PCRE2 в отчётах
+# Trivy). Ставим их на этапе сборки: иначе образ уезжает с дырами, которые в
+# апстриме уже закрыты, а сама база подтянется неизвестно когда.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
+# Системные pip и setuptools базового образа приложению не нужны (зависимости в .venv), а Trivy
+# находит в них CVE (setuptools 70.3.0, msgpack внутри pip) — убираем из образа.
+RUN /usr/local/bin/python -m pip uninstall -y setuptools pip
 
 RUN groupadd -g 1000 app && \
     useradd -u 1000 -g 1000 -m -s /bin/bash app

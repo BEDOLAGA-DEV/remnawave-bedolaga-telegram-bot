@@ -135,6 +135,9 @@
 - `app/cabinet/auth/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/cabinet/auth/email_auth_gate.py` — Python-модуль
+  Классы: нет
+  Функции: `is_email_auth_enabled` — Строка в system_settings важнее значения из окружения., `require_email_auth_enabled` — Первый шаг любого email/password-роута: до rate-limit и до таблицы users.
 - `app/cabinet/auth/email_verification.py` — Python-модуль
   Классы: нет
   Функции: `generate_email_change_code` — Generate a 6-digit verification code for email change., `get_email_change_expires_at` — Get the expiration datetime for an email change code., `generate_verification_token` — Generate a secure random verification token., `generate_password_reset_token` — Generate a secure random password reset token., `get_verification_expires_at` — Get the expiration datetime for a verification token., `get_password_reset_expires_at` — Get the expiration datetime for a password reset token., `is_token_expired` — Check if a token has expired.
@@ -153,6 +156,9 @@
 - `app/cabinet/auth/registration_access.py` — Python-модуль
   Классы: нет
   Функции: `evaluate_public_registration`, `raise_for_registration_decision`, `is_env_admin_recovery` — True when a non-ACTIVE account must be restored because env names it as admin.
+- `app/cabinet/auth/registration_throttle.py` — Python-модуль
+  Классы: нет
+  Функции: `enforce_email_registration_throttle`, `enforce_verification_resend_throttle` — Дроссель кнопки «Отправить письмо ещё раз» на экране «Проверьте почту».
 - `app/cabinet/auth/telegram_auth.py` — Python-модуль
   Классы: нет
   Функции: `validate_telegram_login_widget` — Validate Telegram Login Widget data., `validate_telegram_init_data` — Validate Telegram WebApp initData., `extract_telegram_user_from_init_data` — Extract and validate user info from Telegram WebApp initData., `validate_telegram_oidc_token` — Validate a Telegram OIDC id_token using JWKS.
@@ -192,6 +198,9 @@
 - `app/cabinet/routes/admin_coupons.py` — Python-модуль
   Классы: нет
   Функции: `list_coupon_batches` — List coupon batches with redemption stats., `create_coupon_batch_endpoint` — Create a batch of one-time coupons and return the generated links., `get_coupon_batch` — Batch card with redemption stats., `export_coupon_batch_links` — Still-active coupon links of the batch (for handing to the partner)., `revoke_coupon_batch` — Revoke all still-active coupons of the batch (e.g. the partner did not pay)., `delete_batch` — Полностью удаляет партию вместе с её купонами.
+- `app/cabinet/routes/admin_email_queue.py` — Python-модуль
+  Классы: нет
+  Функции: `get_email_queue` — Сводка по очереди писем и последние письма в ней., `clear_email_queue` — Убрать письма из очереди. По умолчанию — целиком, вместе с историей.
 - `app/cabinet/routes/admin_email_templates.py` — Python-модуль
   Классы: `EmailTemplateUpdate`, `EmailTemplateEnabledRequest`, `EmailTemplatePreviewRequest`, `EmailTemplateSendTestRequest`
   Функции: `list_template_types` — List all available email template types with override status., `get_templates_for_type` — Get all language templates for a specific notification type., `update_template` — Save a custom email template override., `set_template_enabled` — Выключатель писем по типу: отключённое письмо не отправляется никому., `reset_template` — Delete custom template override, reverting to default., `preview_template` — Preview a rendered email template with sample data., `send_test_email` — Send a test email to the admin's email address.
@@ -227,7 +236,7 @@
   Функции: `get_certificate_status`, `upload_certificate`, `delete_certificate`
 - `app/cabinet/routes/admin_partners.py` — Python-модуль
   Классы: `PartnerSettingsResponse`, `PartnerSettingsUpdateRequest`
-  Функции: `get_partner_settings` — Get partner system settings., `update_partner_settings` — Update partner system settings., `list_applications` — List partner applications., `approve_application` — Approve a partner application., `reject_application` — Reject a partner application., `get_partner_stats` — Get overall partner statistics., `list_partners` — List approved partners., `list_referral_levels` — Список уровней реферальных наград и текущая схема., `upsert_referral_level` — Создать или обновить правило уровня., `remove_referral_level` — Удалить правило уровня., `update_referral_depth` — Сколько звеньев цепочки получают награду., `import_legacy_referral_settings` — Перенести действующие настройки ``REFERRAL_*`` в уровень 1., `update_referral_levels_mode` — Что означает номер уровня: глубина цепочки или ранг партнёра., `update_referral_scheme` — Переключить схему наград., `get_partner_detail` — Get detailed partner info., `update_commission` — Update partner commission percent., `revoke_partner` — Revoke partner status., `assign_campaign` — Assign a campaign to a partner., `unassign_campaign` — Unassign a campaign from a partner.
+  Функции: `get_partner_settings` — Get partner system settings., `update_partner_settings` — Update partner system settings — в system_settings, с применением сразу., `list_applications` — List partner applications., `approve_application` — Approve a partner application., `reject_application` — Reject a partner application., `get_partner_stats` — Get overall partner statistics., `list_partners` — List approved partners., `list_referral_levels` — Список уровней реферальных наград и текущая схема., `upsert_referral_level` — Создать или обновить правило уровня., `remove_referral_level` — Удалить правило уровня., `update_referral_depth` — Сколько звеньев цепочки получают награду., `import_legacy_referral_settings` — Перенести действующие настройки ``REFERRAL_*`` в уровень 1., `update_referral_levels_mode` — Что означает номер уровня: глубина цепочки или ранг партнёра., `update_referral_scheme` — Переключить схему наград., `get_partner_detail` — Get detailed partner info., `update_commission` — Update partner commission percent., `revoke_partner` — Revoke partner status., `assign_campaign` — Assign a campaign to a partner., `unassign_campaign` — Unassign a campaign from a partner.
 - `app/cabinet/routes/admin_payment_methods.py` — Python-модуль
   Классы: `SubOptionInfo`, `PaymentMethodConfigResponse`, `PaymentMethodConfigUpdateRequest` (2 методов), `SortOrderRequest`, `PromoGroupSimple`
   Функции: `list_payment_methods` — List all payment method configurations., `list_promo_groups` — List all promo groups for filter selector., `get_payment_method` — Get a single payment method configuration., `update_payment_methods_order` — Batch update sort order for payment methods., `update_payment_method` — Update a payment method configuration.
@@ -248,7 +257,7 @@
   Функции: `list_promocodes` — Get list of all promocodes., `get_promocode` — Get promocode details with usage statistics., `create_promocode_endpoint` — Create a new promocode., `update_promocode_endpoint` — Update an existing promocode., `delete_promocode_endpoint` — Delete a promocode., `admin_deactivate_discount_promocode` — Admin: deactivate a user's active discount (promo code or promo offer)., `list_promo_groups` — Get list of all promo groups., `get_promo_group` — Get promo group details., `create_promo_group_endpoint` — Create a new promo group., `update_promo_group_endpoint` — Update a promo group., `delete_promo_group_endpoint` — Delete a promo group.
 - `app/cabinet/routes/admin_reachability.py` — Python-модуль
   Классы: нет
-  Функции: `get_status`, `get_units`, `get_hosts`, `get_nodes`, `get_subscription_configs`, `parse_input` — Поле «Конфиг или подписка»: ссылки, URL подписок, base64 → конфиги с готовыми целями., `update_pref`, `preview_job`, `create_job`, `list_jobs`, `get_job`, `cancel_job`, `retrieve_job`, `get_summary`
+  Функции: `get_status`, `get_units`, `get_hosts`, `get_nodes`, `get_subscription_configs`, `parse_input` — Поле «Конфиг или подписка»: ссылки, URL подписок, base64 → конфиги с готовыми целями., `update_pref`, `preview_job`, `create_job`, `list_jobs`, `get_job`, `cancel_job`, `preview_batch`, `create_batch`, `list_batches`, `get_batch`, `cancel_batch`, `get_summary`
 - `app/cabinet/routes/admin_referral_network.py` — Python-модуль
   Классы: `NetworkUserNode`, `TopReferrer`, `NetworkCampaignNode`, `NetworkEdge`, `NetworkGraphResponse`, `NetworkUserDetail`, `NetworkCampaignDetail`, `NetworkSearchResult`, `CampaignOption`, `PartnerOption`, `ScopeOptionsResponse`
   Функции: `get_referral_network` — Return full referral network graph data for visualization., `get_scope_options` — Return lightweight lists of campaigns and partners for the scope selector., `get_scoped_referral_network` — Return scoped referral network graph for selected campaigns, partners, and/or users., `get_network_user_detail` — Return detailed info about a specific user in the referral network., `get_network_campaign_detail` — Return detailed info about a specific advertising campaign., `search_referral_network` — Search users and campaigns in the referral network by telegram_id, username, email, or campaign name.
@@ -278,7 +287,7 @@
   Функции: `list_tariffs` — Get list of all tariffs., `get_available_servers` — Get list of all servers for tariff selection., `get_available_external_squads` — Fetch external squads from RemnaWave panel., `update_tariff_order` — Update the display order of tariffs., `get_tariff` — Get detailed tariff info., `create_new_tariff` — Create a new tariff., `update_existing_tariff` — Update an existing tariff., `delete_existing_tariff` — Delete a tariff., `toggle_tariff` — Toggle tariff active status., `toggle_trial_tariff` — Toggle tariff trial availability., `get_tariff_stats` — Get tariff statistics., `sync_tariff_squads` — Sync squads from tariff to all active/trial subscriptions in Remnawave panel.
 - `app/cabinet/routes/admin_tickets.py` — Python-модуль
   Классы: `AdminTicketUserInfo`, `AdminTicketResponse`, `AdminTicketDetailResponse`, `AdminTicketListResponse`, `AdminReplyRequest` (1 методов), `AdminStatusUpdateRequest`, `AdminPriorityUpdateRequest`, `AdminStatsResponse`, `TicketSettingsResponse`, `TicketSettingsUpdateRequest`
-  Функции: `get_ticket_stats` — Get ticket statistics., `get_ticket_settings` — Get ticket system settings., `update_ticket_settings` — Update ticket system settings., `get_all_tickets` — Get all tickets for admin., `get_ticket_detail` — Get ticket with all messages for admin., `reply_to_ticket` — Reply to a ticket as admin., `update_ticket_status` — Update ticket status., `update_ticket_priority` — Update ticket priority.
+  Функции: `get_ticket_stats` — Get ticket statistics., `get_ticket_settings` — Get ticket system settings., `update_ticket_settings` — Update ticket system settings — SLA в system_settings, режим и уведомления в своём хранилище., `get_all_tickets` — Get all tickets for admin., `get_ticket_detail` — Get ticket with all messages for admin., `reply_to_ticket` — Reply to a ticket as admin., `update_ticket_status` — Update ticket status., `update_ticket_priority` — Update ticket priority.
 - `app/cabinet/routes/admin_traffic.py` — Python-модуль
   Классы: нет
   Функции: `get_traffic_usage` — Get paginated per-user traffic usage by node., `get_traffic_enrichment` — Return enrichment data: device counts, spending, dates, last node., `export_traffic_csv` — Generate CSV with traffic usage and send to admin's Telegram DM.
@@ -296,7 +305,7 @@
   Функции: `list_withdrawals` — List all withdrawal requests., `get_withdrawal_detail` — Get detailed withdrawal request with risk analysis., `approve_withdrawal` — Approve a withdrawal request., `reject_withdrawal` — Reject a withdrawal request., `complete_withdrawal` — Mark a withdrawal as completed (money transferred).
 - `app/cabinet/routes/auth.py` — Python-модуль
   Классы: нет
-  Функции: `auth_telegram` — Authenticate using Telegram WebApp initData., `auth_telegram_widget` — Authenticate using Telegram Login Widget data., `auth_telegram_oidc` — Authenticate using Telegram OIDC id_token (popup flow)., `register_email` — Register/link email to existing Telegram account., `verify_email_merge` — Confirm an email account merge with the code mailed to the existing account., `register_email_standalone` — Register new account with email and password., `verify_email` — Verify email with token and return auth tokens., `resend_verification` — Resend verification email., `login_email` — Login with email and password., `refresh_token` — Refresh access token using refresh token., `logout` — Logout and revoke refresh token., `auto_login` — Auto-login using a short-lived JWT from guest purchase success page., `forgot_password` — Request password reset., `reset_password` — Reset password with token., `get_current_user` — Get current authenticated user info., `get_my_avatar` — Фото профиля Telegram для шапки кабинета., `get_my_permissions` — Get current user's RBAC permissions, roles, and level., `check_is_admin` — Check if current user is an admin (legacy config or RBAC)., `request_email_change` — Request email change., `verify_email_change` — Verify email change with code., `cancel_email_change` — Cancel pending email change., `get_email_change_status` — Get pending email change status., `request_deep_link_token` — Generate a one-time deep link auth token., `poll_deep_link_token` — Poll for deep link auth completion.
+  Функции: `auth_telegram` — Authenticate using Telegram WebApp initData., `auth_telegram_widget` — Authenticate using Telegram Login Widget data., `auth_telegram_oidc` — Authenticate using Telegram OIDC id_token (popup flow)., `register_email` — Register/link email to existing Telegram account., `verify_email_merge` — Confirm an email account merge with the code mailed to the existing account., `register_email_standalone` — Register new account with email and password., `verify_email` — Verify email with token and return auth tokens., `resend_verification` — Resend verification email., `resend_verification_public` — Повторно отправить письмо подтверждения с экрана «Проверьте почту»., `login_email` — Login with email and password., `refresh_token` — Refresh access token using refresh token., `logout` — Logout and revoke refresh token., `auto_login` — Auto-login using a short-lived JWT from guest purchase success page., `forgot_password` — Request password reset., `reset_password` — Reset password with token., `get_current_user` — Get current authenticated user info., `get_my_avatar` — Фото профиля Telegram для шапки кабинета., `get_my_permissions` — Get current user's RBAC permissions, roles, and level., `check_is_admin` — Check if current user is an admin (legacy config or RBAC)., `request_email_change` — Request email change., `verify_email_change` — Verify email change with code., `cancel_email_change` — Cancel pending email change., `get_email_change_status` — Get pending email change status., `request_deep_link_token` — Generate a one-time deep link auth token., `poll_deep_link_token` — Poll for deep link auth completion.
 - `app/cabinet/routes/balance.py` — Python-модуль
   Классы: нет
   Функции: `get_balance` — Get current user's balance., `get_transactions` — Get transaction history., `get_payment_methods` — Get available payment methods for the current user., `create_stars_invoice` — Создать Telegram Stars invoice для пополнения баланса., `create_topup` — Create payment for balance top-up., `get_pending_payments` — Get user's pending payments for manual verification., `get_latest_payment_by_method` — Get user's most recent payment for a given method (any status, not just pending)., `get_pending_payment_details` — Get details of a specific pending payment., `check_payment_status` — Manually check and update payment status., `get_saved_cards` — Get user's saved payment methods (cards) for recurrent payments., `delete_saved_card` — Unlink (deactivate) a saved payment method.
@@ -348,6 +357,9 @@
 - `app/cabinet/routes/referral.py` — Python-модуль
   Классы: нет
   Функции: `get_referral_info` — Get referral program info for current user., `get_referral_list` — Get list of invited users., `get_referral_earnings` — Get referral earnings history., `update_reward_choice` — Сохранить, что получать и куда класть дни., `get_referral_terms` — Get referral program terms.
+- `app/cabinet/routes/settings_form.py` — Python-модуль
+  Классы: нет
+  Функции: `save_settings_form` — Записать значения по ключам Settings; ``set_value`` сам применяет их в памяти., `env_locked_fields` — Имена полей формы, чьи ключи закреплены в .env (порядок — как в форме)., `form_updates` — Переданные (не None) поля формы → ключи Settings.
 - `app/cabinet/routes/site_verification.py` — Python-модуль
   Классы: нет
   Функции: `get_site_verification` — Return all configured site-verification tokens.
@@ -434,7 +446,7 @@
   Классы: `ApplePurchaseRequest` (1 методов), `ApplePurchaseResponse`, `AppleAccountTokenResponse`
   Функции: нет
 - `app/cabinet/schemas/auth.py` — Python-модуль
-  Классы: `TelegramAuthRequest`, `TelegramWidgetAuthRequest`, `TelegramOIDCAuthRequest`, `EmailRegisterRequest`, `EmailVerifyRequest`, `EmailLoginRequest`, `RefreshTokenRequest`, `PasswordForgotRequest`, `PasswordResetRequest`, `AutoLoginRequest`, `TokenResponse`, `UserResponse`, `UserAvatarResponse`, `EmailRegisterStandaloneRequest`, `CampaignBonusInfo`, `AuthResponse`, `RegisterResponse`, `EmailChangeRequest`, `EmailChangeVerifyRequest`, `EmailMergeVerifyRequest`, `EmailChangeResponse`, `DeepLinkTokenResponse`, `DeepLinkPollRequest`
+  Классы: `TelegramAuthRequest`, `TelegramWidgetAuthRequest`, `TelegramOIDCAuthRequest`, `EmailRegisterRequest`, `EmailVerifyRequest`, `EmailLoginRequest`, `RefreshTokenRequest`, `VerificationResendRequest`, `PasswordForgotRequest`, `PasswordResetRequest`, `AutoLoginRequest`, `TokenResponse`, `UserResponse`, `UserAvatarResponse`, `EmailRegisterStandaloneRequest`, `CampaignBonusInfo`, `AuthResponse`, `RegisterResponse`, `EmailChangeRequest`, `EmailChangeVerifyRequest`, `EmailMergeVerifyRequest`, `EmailChangeResponse`, `DeepLinkTokenResponse`, `DeepLinkPollRequest`
   Функции: нет
 - `app/cabinet/schemas/balance.py` — Python-модуль
   Классы: `BalanceResponse`, `TransactionResponse`, `TransactionListResponse`, `PaymentOptionResponse`, `PaymentMethodResponse`, `TopUpRequest`, `TopUpResponse`, `StarsInvoiceRequest`, `StarsInvoiceResponse`, `PendingPaymentResponse`, `PendingPaymentListResponse`, `ManualCheckResponse`, `SavedCardResponse`, `SavedCardsListResponse`
@@ -485,7 +497,7 @@
   Классы: `PinnedMessageMedia`, `PinnedMessageCreateRequest`, `PinnedMessageUpdateRequest`, `PinnedMessageSettingsRequest`, `PinnedMessageResponse`, `PinnedMessageBroadcastResponse`, `PinnedMessageUnpinResponse`, `PinnedMessageListResponse`
   Функции: нет
 - `app/cabinet/schemas/reachability.py` — Python-модуль
-  Классы: `TargetIn` (1 методов), `ProbesIn`, `JobCreateRequest` (1 методов), `ParseInputRequest`, `PrefUpdateRequest`, `UnitOut`, `UnitsResponse`, `ActiveJobOut`, `ReferenceOut`, `StatusResponse`, `HostTargetOut`, `HostsResponse`, `NodeTargetOut`, `NodesResponse`, `ConfigOut`, `RejectedOut`, `SubscriptionConfigsResponse`, `SourceOut`, `ParsedConfigOut`, `ParsedInputResponse`, `PrefOut`, `SkippedOut`, `TargetOut`, `PreviewResponse`, `LegOut`, `JobOut`, `JobListResponse`, `CellOut`, `SummaryRow`, `SummaryResponse`
+  Классы: `TargetIn` (1 методов), `ProbesIn`, `JobCreateRequest` (1 методов), `BatchCreateRequest` (1 методов), `ParseInputRequest`, `PrefUpdateRequest`, `UnitOut`, `UnitsResponse`, `ActiveJobOut`, `ReferenceOut`, `ActiveBatchOut`, `StatusResponse`, `HostTargetOut`, `HostsResponse`, `NodeTargetOut`, `NodesResponse`, `ConfigOut`, `RejectedOut`, `SubscriptionConfigsResponse`, `SourceOut`, `ParsedConfigOut`, `ParsedInputResponse`, `PrefOut`, `SkippedOut`, `TargetOut`, `PreviewResponse`, `LegOut`, `JobOut`, `JobListResponse`, `BatchPreviewResponse`, `BatchJobOut`, `BatchOut`, `BatchListResponse`, `CellOut`, `SummaryRow`, `SummaryResponse`
   Функции: нет
 - `app/cabinet/schemas/referral.py` — Python-модуль
   Классы: `ReferralInfoResponse`, `ReferralItemResponse`, `ReferralListResponse`, `ReferralEarningResponse`, `ReferralEarningsListResponse`, `ReferralDaysTargetOption`, `ReferralRewardChoiceRequest`, `ReferralProgramLevel`, `ReferralTermsResponse`, `ReferralRewardLevelResponse`, `ReferralRewardTariffOption`, `ReferralRewardLevelsResponse`, `ReferralRewardLevelUpdateRequest`, `ReferralSchemeUpdateRequest`, `ReferralDepthUpdateRequest`, `ReferralLevelsModeUpdateRequest`
@@ -533,7 +545,7 @@
   Классы: нет
   Функции: `apply_legacy_aliases` — Возвращает копию контекста со старыми именами плейсхолдеров, если есть новые., `build_common_context` — Values for the type-independent placeholders., `substitute_context_vars` — Replace {var} placeholders in template text with context values., `get_template_override` — Get custom email template from the database., `get_all_overrides` — Get all custom template overrides from the database., `get_overrides_for_type` — Get all language overrides for a specific notification type., `save_template_override` — Save or update a custom email template in the database., `get_rendered_override` — Get a custom template override rendered with the base email template., `delete_template_override` — Delete a custom template override (revert to default).
 - `app/cabinet/services/email_templates.py` — Python-модуль
-  Классы: `EmailNotificationTemplates` (46 методов)
+  Классы: `EmailNotificationTemplates` (47 методов)
   Функции: нет
 - `app/cabinet/services/email_type_switch.py` — Python-модуль
   Классы: нет
@@ -585,7 +597,7 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (20 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (20 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`
   Функции: нет
 
 #### app/database/crud
@@ -718,7 +730,7 @@
   Функции: нет
 - `app/database/crud/reachability.py` — Python-модуль
   Классы: нет
-  Функции: `create_job`, `get_job`, `update_job`, `list_jobs`, `get_active_job`, `list_unfinished_jobs`, `replace_legs`, `latest_legs` — Последний лег на каждую пару (target_key, op_key)., `get_pref`, `upsert_pref`, `list_prefs`, `last_vless_leg_price_kopeks` — Цена одного лега VLESS по последней завершённой задаче (cost / (серверы × симки)).
+  Функции: `create_job`, `get_job`, `update_job`, `list_jobs`, `get_active_job`, `list_unfinished_jobs`, `replace_legs`, `latest_legs` — Последний лег на каждую пару (target_key, op_key)., `get_pref`, `upsert_pref`, `list_prefs`, `last_vless_leg_price_kopeks` — Цена одного лега VLESS по последней завершённой задаче (cost / (серверы × симки))., `create_batch`, `get_batch`, `update_batch`, `list_batches`, `list_unfinished_batches`, `get_active_batch`, `jobs_for_batch`
 - `app/database/crud/recurrent_payments.py` — Python-модуль
   Классы: нет
   Функции: `get_recurrent_payments`, `upsert_recurrent_payments`, `set_recurrent_payments_enabled`
@@ -828,7 +840,7 @@
   Классы: `BanSystemAPIError` (1 методов), `BanSystemAPI` (34 методов)
   Функции: нет
 - `app/external/bschek_api.py` — Python-модуль
-  Классы: `BschekAPIError` (1 методов), `BschekGatewayError`, `BschekAPI` (18 методов)
+  Классы: `BschekAPIError` (1 методов), `BschekGatewayError`, `BschekAPI` (19 методов)
   Функции: `build_operators_params` — Query для GET /operators. aiohttp сам percent-encode'ит кириллицу.
 - `app/external/cryptobot.py` — Python-модуль
   Классы: `CryptoBotService` (9 методов)
@@ -1036,7 +1048,7 @@
   Функции: `format_custom_traffic_settings` — Format custom-traffic state for the main tariff card., `render_custom_traffic_settings` — Render the dedicated custom-traffic settings screen., `get_custom_traffic_keyboard` — Build the dedicated custom-traffic settings keyboard., `show_custom_traffic_settings` — Show custom-traffic settings for a tariff and leave any field-edit state., `toggle_custom_traffic` — Enable or disable custom traffic after validating stored settings., `start_edit_custom_traffic_price` — Start editing the custom-traffic price per gigabyte., `start_edit_custom_traffic_min` — Start editing the minimum selectable traffic amount., `start_edit_custom_traffic_max` — Start editing the maximum selectable traffic amount., `process_custom_traffic_price_input` — Persist a validated custom-traffic price per gigabyte., `process_custom_traffic_min_input` — Persist a validated minimum selectable traffic amount., `process_custom_traffic_max_input` — Persist a validated maximum selectable traffic amount., `register_custom_traffic_handlers` — Register callbacks and FSM handlers for custom-traffic administration.
 - `app/handlers/admin/tariffs.py` — Python-модуль
   Классы: нет
-  Функции: `get_tariffs_list_keyboard` — Создает клавиатуру списка тарифов., `get_tariff_view_keyboard` — Создает клавиатуру просмотра тарифа., `format_tariff_info` — Форматирует информацию о тарифе., `show_tariffs_list` — Показывает список тарифов., `show_tariffs_page` — Показывает страницу списка тарифов., `view_tariff` — Просмотр тарифа., `toggle_tariff` — Переключает активность тарифа., `toggle_trial_tariff` — Переключает тариф как триальный., `toggle_daily_tariff` — Переключает суточный режим тарифа., `start_edit_daily_price` — Начинает редактирование суточной цены., `process_daily_price_input` — Обрабатывает ввод суточной цены (создание и редактирование)., `start_create_tariff` — Начинает создание тарифа., `process_tariff_name` — Обрабатывает название тарифа., `process_tariff_traffic` — Обрабатывает лимит трафика., `process_tariff_devices` — Обрабатывает лимит устройств., `process_tariff_tier` — Обрабатывает уровень тарифа., `select_tariff_type_periodic` — Выбирает периодный тип тарифа., `select_tariff_type_daily` — Выбирает суточный тип тарифа., `process_tariff_prices` — Обрабатывает цены тарифа., `start_edit_tariff_name` — Начинает редактирование названия тарифа., `process_edit_tariff_name` — Обрабатывает новое название тарифа., `start_edit_tariff_description` — Начинает редактирование описания тарифа., `process_edit_tariff_description` — Обрабатывает новое описание тарифа., `start_edit_tariff_traffic` — Начинает редактирование трафика тарифа., `process_edit_tariff_traffic` — Обрабатывает новый лимит трафика., `start_edit_tariff_devices` — Начинает редактирование лимита устройств., `process_edit_tariff_devices` — Обрабатывает новый лимит устройств., `start_edit_tariff_tier` — Начинает редактирование уровня тарифа., `process_edit_tariff_tier` — Обрабатывает новый уровень тарифа., `start_edit_tariff_prices` — Начинает редактирование цен тарифа., `process_edit_tariff_prices` — Обрабатывает новые цены тарифа., `start_edit_tariff_device_price` — Начинает редактирование цены за устройство., `process_edit_tariff_device_price` — Обрабатывает новую цену за устройство., `start_edit_tariff_max_devices` — Начинает редактирование макс. устройств., `process_edit_tariff_max_devices` — Обрабатывает новое макс. кол-во устройств., `start_edit_tariff_trial_days` — Начинает редактирование дней триала., `process_edit_tariff_trial_days` — Обрабатывает новое количество дней триала., `start_edit_tariff_traffic_topup` — Показывает меню настройки докупки трафика., `toggle_tariff_traffic_topup` — Переключает включение/выключение докупки трафика., `start_edit_traffic_topup_packages` — Начинает редактирование пакетов докупки трафика., `process_edit_traffic_topup_packages` — Обрабатывает новые пакеты докупки трафика., `start_edit_max_topup_traffic` — Начинает редактирование максимального лимита докупки трафика., `process_edit_max_topup_traffic` — Обрабатывает новое значение максимального лимита докупки трафика., `confirm_delete_tariff` — Запрашивает подтверждение удаления тарифа., `delete_tariff_confirmed` — Удаляет тариф после подтверждения., `start_edit_tariff_squads` — Показывает меню выбора серверов для тарифа., `toggle_tariff_squad` — Переключает выбор сервера для тарифа., `clear_tariff_squads` — Очищает список серверов тарифа., `select_all_tariff_squads` — Выбирает все серверы для тарифа., `start_edit_tariff_promo_groups` — Показывает меню выбора промогрупп для тарифа., `toggle_tariff_promo_group` — Переключает выбор промогруппы для тарифа., `clear_tariff_promo_groups` — Очищает список промогрупп тарифа., `get_traffic_reset_mode_keyboard` — Создает клавиатуру для выбора режима сброса трафика., `start_edit_traffic_reset_mode` — Начинает редактирование режима сброса трафика., `set_traffic_reset_mode` — Устанавливает режим сброса трафика для тарифа., `register_handlers` — Регистрирует обработчики для управления тарифами.
+  Функции: `get_tariffs_list_keyboard` — Создает клавиатуру списка тарифов., `get_tariff_view_keyboard` — Создает клавиатуру просмотра тарифа., `format_tariff_info` — Форматирует информацию о тарифе., `show_tariffs_list` — Показывает список тарифов., `show_tariffs_page` — Показывает страницу списка тарифов., `view_tariff` — Просмотр тарифа., `toggle_tariff_highlight` — Отмечает тариф как выгодный — в списке тарифов он показывается с подписью., `toggle_tariff` — Переключает активность тарифа., `toggle_trial_tariff` — Переключает тариф как триальный., `toggle_daily_tariff` — Переключает суточный режим тарифа., `start_edit_daily_price` — Начинает редактирование суточной цены., `process_daily_price_input` — Обрабатывает ввод суточной цены (создание и редактирование)., `start_create_tariff` — Начинает создание тарифа., `process_tariff_name` — Обрабатывает название тарифа., `process_tariff_traffic` — Обрабатывает лимит трафика., `process_tariff_devices` — Обрабатывает лимит устройств., `process_tariff_tier` — Обрабатывает уровень тарифа., `select_tariff_type_periodic` — Выбирает периодный тип тарифа., `select_tariff_type_daily` — Выбирает суточный тип тарифа., `process_tariff_prices` — Обрабатывает цены тарифа., `start_edit_tariff_name` — Начинает редактирование названия тарифа., `process_edit_tariff_name` — Обрабатывает новое название тарифа., `start_edit_tariff_description` — Начинает редактирование описания тарифа., `process_edit_tariff_description` — Обрабатывает новое описание тарифа., `start_edit_tariff_traffic` — Начинает редактирование трафика тарифа., `process_edit_tariff_traffic` — Обрабатывает новый лимит трафика., `start_edit_tariff_devices` — Начинает редактирование лимита устройств., `process_edit_tariff_devices` — Обрабатывает новый лимит устройств., `start_edit_tariff_tier` — Начинает редактирование уровня тарифа., `process_edit_tariff_tier` — Обрабатывает новый уровень тарифа., `start_edit_tariff_prices` — Начинает редактирование цен тарифа., `process_edit_tariff_prices` — Обрабатывает новые цены тарифа., `start_edit_tariff_highlight` — Показывает выбор периода, который будет отмечен как самый выгодный., `set_tariff_highlight` — Сохраняет выделенный период. 0 — снять выделение., `start_edit_tariff_device_price` — Начинает редактирование цены за устройство., `process_edit_tariff_device_price` — Обрабатывает новую цену за устройство., `start_edit_tariff_max_devices` — Начинает редактирование макс. устройств., `process_edit_tariff_max_devices` — Обрабатывает новое макс. кол-во устройств., `start_edit_tariff_trial_days` — Начинает редактирование дней триала., `process_edit_tariff_trial_days` — Обрабатывает новое количество дней триала., `start_edit_tariff_traffic_topup` — Показывает меню настройки докупки трафика., `toggle_tariff_traffic_topup` — Переключает включение/выключение докупки трафика., `start_edit_traffic_topup_packages` — Начинает редактирование пакетов докупки трафика., `process_edit_traffic_topup_packages` — Обрабатывает новые пакеты докупки трафика., `start_edit_max_topup_traffic` — Начинает редактирование максимального лимита докупки трафика., `process_edit_max_topup_traffic` — Обрабатывает новое значение максимального лимита докупки трафика., `confirm_delete_tariff` — Запрашивает подтверждение удаления тарифа., `delete_tariff_confirmed` — Удаляет тариф после подтверждения., `start_edit_tariff_squads` — Показывает меню выбора серверов для тарифа., `toggle_tariff_squad` — Переключает выбор сервера для тарифа., `clear_tariff_squads` — Очищает список серверов тарифа., `select_all_tariff_squads` — Выбирает все серверы для тарифа., `start_edit_tariff_promo_groups` — Показывает меню выбора промогрупп для тарифа., `toggle_tariff_promo_group` — Переключает выбор промогруппы для тарифа., `clear_tariff_promo_groups` — Очищает список промогрупп тарифа., `get_traffic_reset_mode_keyboard` — Создает клавиатуру для выбора режима сброса трафика., `start_edit_traffic_reset_mode` — Начинает редактирование режима сброса трафика., `set_traffic_reset_mode` — Устанавливает режим сброса трафика для тарифа., `register_handlers` — Регистрирует обработчики для управления тарифами.
 - `app/handlers/admin/tickets.py` — Python-модуль
   Классы: нет
   Функции: `show_admin_tickets` — Показать все тикеты для админов, `view_admin_ticket` — Показать детали тикета для админа с пагинацией, `reply_to_admin_ticket` — Начать ответ на тикет от админа, `handle_admin_ticket_reply`, `mark_ticket_as_answered` — Отметить тикет как отвеченный, `close_all_open_admin_tickets` — Закрыть все открытые тикеты., `close_admin_ticket` — Закрыть тикет админом, `cancel_admin_ticket_reply` — Отменить ответ админа на тикет, `block_user_in_ticket`, `handle_admin_block_duration_input`, `unblock_user_in_ticket`, `block_user_permanently`, `notify_user_about_ticket_reply` — Уведомить пользователя о новом ответе в тикете, `register_handlers` — Регистрация админских обработчиков тикетов
@@ -1336,6 +1348,9 @@
 - `app/middlewares/maintenance.py` — Python-модуль
   Классы: `MaintenanceMiddleware` (1 методов)
   Функции: нет
+- `app/middlewares/stale_callback_answer.py` — Python-модуль
+  Классы: `StaleCallbackAnswerMiddleware` (1 методов)
+  Функции: нет
 - `app/middlewares/subscription_checker.py` — Python-модуль
   Классы: `SubscriptionStatusMiddleware` (1 методов)
   Функции: нет
@@ -1408,12 +1423,12 @@
   Функции: нет
 - `app/services/disposable_email_service.py` — Python-модуль
   Классы: `DisposableEmailService` (7 методов)
-  Функции: нет
+  Функции: `parse_extra_domains` — Список оператора из настройки: любые разделители, регистр и ведущие '@'/'.' не важны., `domain_and_parents` — 'deep.sub.mail.tm' → 'deep.sub.mail.tm', 'sub.mail.tm', 'mail.tm' (голый TLD не считается).
 - `app/services/donut_service.py` — Python-модуль
   Классы: `DonutAPIError` (1 методов), `DonutService` (18 методов)
   Функции: нет
 - `app/services/email_retry_service.py` — Python-модуль
-  Классы: `EmailRetryService` (12 методов)
+  Классы: `EmailRetryService` (13 методов)
   Функции: нет
 - `app/services/etoplatezhi_service.py` — Python-модуль
   Классы: `EtoplatezhiService` (7 методов)
@@ -1495,10 +1510,13 @@
   Классы: `SavedMedia`
   Функции: `ensure_upload_dirs` — Create images/, videos/, thumbnails/ subdirectories under upload_path., `detect_file_type` — Detect media type and extension from magic bytes., `save_image` — Validate, resize, and save an image file. Runs PIL operations in a thread., `save_video` — Validate and save a video file. Runs I/O in a thread., `delete_media_file` — Delete a media file by filename with path traversal protection.
 - `app/services/notification_delivery_service.py` — Python-модуль
-  Классы: `NotificationType`, `NotificationDeliveryService` (23 методов)
+  Классы: `NotificationDeliveryService` (25 методов)
   Функции: нет
 - `app/services/notification_settings_service.py` — Python-модуль
   Классы: `NotificationSettingsService` (28 методов)
+  Функции: нет
+- `app/services/notification_types.py` — Python-модуль
+  Классы: `NotificationType`
   Функции: нет
 - `app/services/overpay_certificate_service.py` — Python-модуль
   Классы: нет
@@ -1553,7 +1571,7 @@
   Классы: нет
   Функции: `build_start_keyboard`, `send_poll_to_users`, `reward_user_for_poll`, `get_next_question`, `get_question_option`
 - `app/services/pricing_engine.py` — Python-модуль
-  Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (19 методов)
+  Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (20 методов)
   Функции: нет
 - `app/services/privacy_policy_service.py` — Python-модуль
   Классы: `PrivacyPolicyService` (9 методов)
@@ -1668,8 +1686,8 @@
   Классы: `SubscriptionRenewalError`, `SubscriptionRenewalChargeError`, `SubscriptionRenewalPricing` (2 методов), `SubscriptionRenewalResult`, `RenewalPaymentDescriptor` (1 методов), `SubscriptionRenewalService` (1 методов)
   Функции: `build_renewal_period_id`, `build_payment_descriptor`, `encode_payment_payload`, `decode_payment_payload`, `build_payment_metadata`, `parse_payment_metadata`, `with_admin_notification_service`, `calculate_missing_amount`
 - `app/services/subscription_service.py` — Python-модуль
-  Классы: `PropagateSquadsResult`, `SubscriptionService` (30 методов)
-  Функции: `get_traffic_reset_strategy` — Получает стратегию сброса трафика., `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
+  Классы: `PropagateSquadsResult`, `SubscriptionService` (31 методов)
+  Функции: `get_traffic_reset_strategy` — Получает стратегию сброса трафика., `panel_id_is_free_for` — Не держит ли этот панельный id уже ДРУГАЯ строка подписок., `link_subscription_panel_identity` — Проставить строке id панельного аккаунта, который только что обновили., `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
 - `app/services/support_settings_service.py` — Python-модуль
   Классы: `SupportSettingsService` (28 методов)
   Функции: нет
@@ -1685,6 +1703,9 @@
 - `app/services/tariff_custom_traffic.py` — Python-модуль
   Классы: нет
   Функции: `parse_positive_rubles_to_kopeks` — Parse a positive ruble amount without floating-point rounding., `parse_positive_gb` — Parse a positive whole-number traffic amount in gigabytes., `validate_custom_traffic_configuration` — Return user-facing validation errors for enabling custom traffic.
+- `app/services/tariff_switch_policy.py` — Python-модуль
+  Классы: нет
+  Функции: `remaining_days_for_switch` — Сколько дней остатка оплачивать при переключении тарифа., `should_reset_used_traffic` — Обнулять ли счётчик трафика при переключении тарифа.
 - `app/services/traffic_monitoring_service.py` — Python-модуль
   Классы: `TrafficViolation`, `TrafficMonitoringServiceV2` (35 методов), `TrafficMonitoringSchedulerV2` (8 методов), `TrafficMonitoringService` (6 методов), `TrafficMonitoringScheduler` (9 методов)
   Функции: нет
@@ -1862,6 +1883,9 @@
 - `app/services/reachability/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/services/reachability/batches.py` — Python-модуль
+  Классы: `BatchService` (3 методов), `BatchPreview`
+  Функции: `chunk_targets`, `estimate_batch_minutes` — Примерное время всей пачки: раунды по ``parallel`` чашек, раунд длится по числу симок., `batch_status_from_jobs` — None — пачка ещё идёт; иначе итог: отменена, не удалась целиком или завершена., `batch_cost_kopeks`, `batch_done_targets`, `preview_batch` — Цена и время всей пачки: превью каждой чашки (бесплатно, без троттла) и сумма., `create_batch` — Одна пачка и задача на каждую чашку; деньги проверяются до записи, драйвер стартует после коммита.
 - `app/services/reachability/cores.py` — Python-модуль
   Классы: нет
   Функции: нет
@@ -1869,17 +1893,23 @@
   Классы: `PaidCallGate` (3 методов)
   Функции: нет
 - `app/services/reachability/jobs.py` — Python-модуль
-  Классы: `RunnerConfig`, `JobNotCancellable`, `JobRunner` (35 методов)
+  Классы: `RunnerConfig`, `JobNotCancellable`, `JobRunner` (41 методов)
+  Функции: нет
+- `app/services/reachability/kinds.py` — Python-модуль
+  Классы: нет
   Функции: нет
 - `app/services/reachability/legs.py` — Python-модуль
   Классы: нет
-  Функции: `build_probe_legs` — Леги probe: ``by_target[цель].by_operator[op_key]`` → по одному легу на пару., `vless_op_key` — У лега VLESS нет op_key — собираем ``оператор|округ|on/off`` из его полей., `build_vless_legs` — Леги VLESS: сервер ищется по ``server_addr`` (= target_key), запасной путь — по имени., `merge_skipped` — Наши пропуски (расчёт по каталогу) + пропуски из ответа API. Всегда новый словарь.
+  Функции: `build_probe_legs` — Леги probe: ``by_target[цель].by_operator[op_key]`` → по одному легу на пару., `vless_op_key` — У лега VLESS нет op_key — собираем ``оператор|округ|on/off`` из его полей., `build_vless_legs` — Леги VLESS: сервер ищется по ``server_addr`` (= target_key), запасной путь — по имени., `merge_skipped` — Наши пропуски (расчёт по каталогу) + пропуски из ответа API. Всегда новый словарь., `partial_probe_progress` — Срез частичного результата пробы из 409 request_in_progress — для «проверяем…» в кабинете.
 - `app/services/reachability/links.py` — Python-модуль
   Классы: `ParsedLink`, `RejectedLink`
   Функции: `parse_links`, `expand_raw_input` — Строки поля «Конфиг или подписка»: ссылки и URL как есть, base64-блоб — в ссылки.
 - `app/services/reachability/panel_links.py` — Python-модуль
   Классы: нет
   Функции: `decode_subscription_body` — Тело публичной подписки: ссылки построчно, base64 от них или xray-json; страница — пусто., `hwid_required`, `fetch_panel_links` — Первый непустой список ссылок из трёх источников; ошибки источника — в лог, не наружу.
+- `app/services/reachability/preview.py` — Python-модуль
+  Классы: `PreviewResult`
+  Функции: нет
 - `app/services/reachability/pricing.py` — Python-модуль
   Классы: `CostLimitExceeded` (1 методов)
   Функции: `format_rubles`, `credits_to_kopeks`, `estimate_vless_kopeks`, `enforce_cost_limit`
@@ -1890,13 +1920,13 @@
   Классы: `TargetResolutionError`, `HostView`, `NodeView`, `SubscriptionConfigs`, `TargetResolver` (15 методов)
   Функции: `target_from_host`, `target_from_node`, `target_from_link`, `target_from_cidr`
 - `app/services/reachability/service.py` — Python-модуль
-  Классы: `ReachabilityDisabled` (1 методов), `ReachabilityUnhealthy` (1 методов), `ReachabilityBusy` (1 методов), `PanelUnavailable` (1 методов), `JobNotFound`, `Health` (1 методов), `Quote`, `ParsedConfig`, `ParsedInput`, `PreviewResult`, `ReachabilityService` (45 методов)
+  Классы: `ReachabilityDisabled` (1 методов), `ReachabilityUnhealthy` (1 методов), `ReachabilityBusy` (1 методов), `PanelUnavailable` (1 методов), `JobNotFound`, `Health` (1 методов), `Quote`, `ParsedConfig`, `ParsedInput`, `ReachabilityService` (50 методов)
   Функции: нет
 - `app/services/reachability/status.py` — Python-модуль
-  Классы: `AccountCache` (3 методов)
+  Классы: `StatusSource` (8 методов), `AccountCache` (3 методов)
   Функции: `account_summary` — Поля аккаунта для фронта; webhook_secret клиент уже отбросил., `reference_status`, `collect_status`
 - `app/services/reachability/subscriptions.py` — Python-модуль
-  Классы: `SubscriptionFetchError`
+  Классы: `SubscriptionFetchError`, `PublicOnlyResolver` (3 методов)
   Функции: `is_subscription_url`, `validate_public_url`, `fetch_subscription_links` — Ссылки конфигов по публичному URL подписки; страница или заглушка вместо них — ошибка.
 - `app/services/reachability/summary.py` — Python-модуль
   Классы: нет
@@ -1909,7 +1939,7 @@
   Функции: `parse_selector`
 - `app/services/reachability/verdict.py` — Python-модуль
   Классы: нет
-  Функции: `probe_leg_verdict`, `vless_leg_verdict`, `matches_expectation` — True/False, когда ожидание есть; None — справочная строка без ожидания.
+  Функции: `probe_leg_verdict`, `compact_probe_verdict` — Вердикт по компактной ячейке частичного результата (409): SNI → TCP → ICMP, как у полной формы., `vless_leg_verdict`, `matches_expectation` — True/False, когда ожидание есть; None — справочная строка без ожидания.
 - `app/services/reachability/xray_json.py` — Python-модуль
   Классы: нет
   Функции: `links_from_xray_json` — Ссылки из JSON-подписки; не JSON или без прокси-outbound — пусто.
@@ -1935,7 +1965,7 @@
   Классы: нет
   Функции: `get_cached_button_styles` — Return the current merged config (DB overrides + defaults)., `load_button_styles_cache` — Load button styles from DB and refresh the module cache.
 - `app/utils/cache.py` — Python-модуль
-  Классы: `CacheService` (20 методов), `UserCache` (6 методов), `SystemCache` (6 методов), `RateLimitCache` (4 методов), `TokenReplayCache` (1 методов), `ChannelSubCache` (8 методов)
+  Классы: `CacheService` (20 методов), `UserCache` (6 методов), `SystemCache` (6 методов), `RateLimitCache` (5 методов), `TokenReplayCache` (1 методов), `ChannelSubCache` (8 методов)
   Функции: `cache_key`, `cached_function`
 - `app/utils/chat_menu_button.py` — Python-модуль
   Классы: нет
@@ -2042,6 +2072,9 @@
 - `app/utils/subscription_utils.py` — Python-модуль
   Классы: нет
   Функции: `cleanup_duplicate_subscriptions`, `get_display_subscription_link`, `get_happ_cryptolink_redirect_link`, `convert_subscription_link_to_happ_scheme`, `device_limit_needs_heal` — Return True if a stored ``device_limit`` is structurally invalid., `coerce_panel_device_limit` — Normalize ``hwidDeviceLimit`` from a RemnaWave panel response., `resolve_min_device_limit` — Нижняя граница, до которой пользователь может уменьшить лимит устройств., `resolve_hwid_device_limit` — Return a device limit value for RemnaWave payloads when selection is enabled., `resolve_hwid_device_limit_for_payload` — Return the device limit that should be sent to RemnaWave APIs., `resolve_simple_subscription_device_limit` — Return the effective device limit for simple subscription flows.
+- `app/utils/telegram_errors.py` — Python-модуль
+  Классы: нет
+  Функции: `is_stale_callback_query_error` — Telegram уже не ждёт ответ на это нажатие: пользователь давно увидел результат.
 - `app/utils/telegram_html.py` — Python-модуль
   Классы: нет
   Функции: `html_to_telegram`, `info_page_faq_to_telegram`, `stored_html_to_telegram_pages` — Сохранённый HTML страницы → куски, которые Telegram согласится разобрать., `trim_broken_markup` — Обрезает незакрытый тег или неполную HTML-сущность в конце куска., `split_telegram_text`
@@ -2708,6 +2741,15 @@
 - `migrations/alembic/versions/0115_create_reachability_tables.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0116_reachability_batches.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0117_tariff_highlight_period.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0118_tariff_is_highlighted.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -2816,6 +2858,9 @@
 - `tests/test_sync_bot_username.py` — Python-модуль
   Классы: нет
   Функции: `test_sync_overrides_stale_username`, `test_sync_keeps_config_on_get_me_failure`, `test_sync_noop_when_already_correct`
+- `tests/test_tariff_highlight_period.py` — Python-модуль
+  Классы: нет
+  Функции: `test_highlighted_period_is_marked_in_every_keyboard`, `test_nothing_is_marked_without_a_highlight`, `test_stale_highlight_marks_nothing` — Период удалили, а число осталось: отмечать нечего, но и падать нельзя., `test_prices_stay_visible_next_to_the_badge` — Отметка добавляется к строке, а не вместо неё: цена обязана остаться., `test_resolve_keeps_only_existing_periods`, `test_highlight_survives_price_edit_only_if_the_period_survives` — Правка цен не должна оставлять метку на периоде, которого больше нет., `test_highlight_cannot_point_at_a_missing_period`, `test_highlighted_tariff_is_marked_in_the_list`, `test_purchased_mark_wins_over_the_badge` — Галочка «уже куплен» отвечает на другой вопрос и важнее подсказки о выгоде., `test_tariff_list_survives_objects_without_the_flag` — Старые вызовы передают тарифы без нового поля — список не должен падать., `test_tariff_highlight_is_stored_and_cleared`
 - `tests/test_tariff_insufficient_balance_keyboard.py` — Python-модуль
   Классы: нет
   Функции: `test_classic_topup_when_autopurchase_disabled`, `test_inlines_prefilled_payment_when_autopurchase_enabled`, `test_classic_topup_when_missing_zero`, `test_sbp_purchase_offered_on_insufficient_balance` — СБП-оформлению баланс не нужен — кнопка обязана быть и на экране нехватки средств., `test_no_sbp_purchase_when_recurrent_disabled`, `test_daily_insufficient_balance_offers_sbp_purchase`, `test_falls_back_to_topup_without_direct_payment_methods`, `test_extend_inlines_prefilled_payment_when_autopurchase_enabled`, `test_extend_classic_topup_when_autopurchase_disabled`, `test_extend_prefilled_amount_is_missing_not_full_price` — Частичная нехватка: доплата = missing (260), не цена (630) и не баланс (370)., `test_extend_back_points_at_the_subscription_in_multi_tariff` — «Назад» обязан адресовать конкретную подписку, иначе он никуда не ведёт., `test_extend_back_stays_generic_without_multi_tariff`, `test_extend_falls_back_to_topup_without_direct_payment_methods` — Фильтр строк оплаты — единственное, что делает зеркалирование безопасным.
@@ -2849,6 +2894,9 @@
 - `tests/cabinet/test_admin_delete_user_subscription.py` — Python-модуль
   Классы: нет
   Функции: `test_route_registered` — Метод и путь закреплены: иначе маршрут можно переименовать с зелёным CI., `test_force_defaults_to_off` — Без явного force активную платную подписку снести нельзя., `test_deletes_expired_trial` — Базовый случай из отчёта: отработавший триал убирается из карточки., `test_foreign_subscription_not_found` — Подписка чужого пользователя не удаляется по одному лишь sub_id., `test_active_paid_needs_force` — Оплаченный активный доступ не сносится одним промахом., `test_open_grace_blocks_deletion` — Пока открыт временный доступ, подписку из-под него не вырывают.
+- `tests/cabinet/test_admin_email_queue.py` — Python-модуль
+  Классы: нет
+  Функции: `test_summary_counts_each_status`, `test_items_are_newest_first_and_carry_no_letter_body` — Тело письма — это код или ссылка входа: наружу его не отдаём., `test_clear_removes_the_queue_and_reports_the_count`, `test_clear_pending_only_leaves_history` — «Отменить ожидающие» не должно стирать историю доставленных и потерянных., `test_clear_defaults_to_wiping_everything` — Запрос без параметров чистит очередь целиком — дефолт проверяем по сигнатуре., `test_empty_queue_is_not_an_error`, `test_routes_are_registered`
 - `tests/cabinet/test_admin_grace_access.py` — Python-модуль
   Классы: `TestEnabling` (6 методов), `TestRejectedInput` (3 методов), `TestPartialUpdate` (3 методов), `TestEnvLock` (3 методов), `TestOverview` (9 методов), `TestSquadPicker` (4 методов)
   Функции: `test_routes_registered`, `test_each_url_reaches_its_own_handler`, `test_sessions_endpoint_also_requires_users_read` — Список отдаёт чужие telegram_id, @логины и имена., `test_configuration_endpoints_stay_on_settings_permissions`, `config` — Живые настройки grace с валидной конфигурацией; правки не утекают в другие тесты., `saved` — Перехват записи настроек: значение сразу видно и в ``settings``, как в проде., `empty_db`, `status_snapshot` — Счётчики сессий подменяются: раздел читает их из общего сборщика.
@@ -2867,6 +2915,9 @@
 - `tests/cabinet/test_admin_reachability.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_routes_are_registered`, `test_routes_require_expected_permission`, `test_target_in_validation`, `test_status_maps_service_dict`, `test_preview_errors_are_translated`, `test_busy_is_409_with_job_reference`, `test_cancel_not_cancellable_is_409_and_not_found_is_404`, `test_create_job_logs_audit_and_hides_raw_links`, `test_cancel_logs_audit`, `test_list_jobs_passes_filters_and_paginates`, `test_units_splits_csv_filters`, `test_subscription_configs_hide_credentials`, `test_preview_response_omits_request_body`, `test_update_pref_calls_service_with_admin`, `test_summary_maps_rows_and_units`, `test_status_exposes_default_sni`, `test_job_request_accepts_up_to_five_sni_hosts_and_normalizes_them`, `test_target_in_accepts_subscription_config_by_url`, `test_parse_input_route_maps_configs_and_hides_raw_links`, `test_job_out_exposes_probes_and_sni_hosts_from_request`
+- `tests/cabinet/test_admin_reachability_batches.py` — Python-модуль
+  Классы: нет
+  Функции: `service`, `test_batch_routes_registered`, `test_batch_routes_require_expected_permission`, `test_batch_request_validation`, `test_preview_batch_returns_totals`, `test_create_batch_returns_jobs_with_partial_and_audits`, `test_get_batch_counts_done_targets`, `test_list_batches_paginates`, `test_cancel_and_missing_batch_map_domain_errors`, `test_job_out_carries_batch_id`
 - `tests/cabinet/test_admin_referral_levels_routes.py` — Python-модуль
   Классы: `TestValidation` (3 методов), `TestPartialUpdate` (2 методов), `TestSchemeSwitch` (3 методов), `TestDeletion` (1 методов), `TestTermsEndpointUnderLevels` (3 методов), `TestLegacyImportEndpoint` (2 методов), `TestDepthEndpoint` (3 методов), `TestLevelsModeSetting` (3 методов), `TestLevelsModeEndpoint` (5 методов), `TestLevelsPayloadReportsTheMode` (2 методов), `TestBotAndCabinetAgree` (3 методов)
   Функции: `test_referral_level_routes_registered`, `test_each_url_reaches_its_own_handler` — Наличия пути в списке МАЛО — важно, какой обработчик его получит., `wired`
@@ -2876,6 +2927,12 @@
 - `tests/cabinet/test_admin_send_user_message.py` — Python-модуль
   Классы: нет
   Функции: `test_send_message_success`, `test_send_message_email_only_user_rejected` — Email-only юзер → 400 с кодом no_telegram_id, бот не создаётся., `test_send_message_forbidden_maps_to_400_and_closes_session` — Юзер заблокировал бота → 400 с кодом forbidden, сессия бота закрыта., `test_send_message_user_not_found`, `test_send_message_permission_registered` — users:send_message должен существовать в реестре RBAC — иначе
+- `tests/cabinet/test_admin_settings_forms_persist.py` — Python-модуль
+  Классы: `TestPartnerSettings` (3 методов), `TestTicketSettings` (1 методов)
+  Функции: `isolated_settings`, `test_no_cabinet_route_rewrites_dotenv` — Сторож: .env — не хранилище настроек; в контейнере это не тот файл или его нет.
+- `tests/cabinet/test_admin_sync_records_panel_identity.py` — Python-модуль
+  Классы: нет
+  Функции: `test_single_mode_update_records_user_panel_id_on_new_subscription`, `test_single_mode_leaves_row_unlinked_when_another_row_holds_the_id` — Колонка частично уникальна: id у соседней строки — не пишем и не падаем., `test_multi_mode_new_subscription_gets_its_own_panel_user`, `test_sync_to_panel_endpoint_records_panel_id_on_selected_subscription`
 - `tests/cabinet/test_admin_traffic_period_days.py` — Python-модуль
   Классы: нет
   Функции: `test_dates_are_read_only_where_they_are_assigned` — Чтение start_dt/end_dt не должно жить вне ветки, которая их задаёт., `test_period_days_is_set_in_every_branch` — Обе ветки разбора дат обязаны задать period_days.
@@ -2909,15 +2966,27 @@
 - `tests/cabinet/test_coupon_routes.py` — Python-модуль
   Классы: нет
   Функции: `test_coupon_routes_registered`, `test_coupons_permissions_registered`, `test_create_batch_returns_links_and_tokens`, `test_create_batch_rejects_inactive_tariff`, `test_create_batch_rejects_blank_name`, `test_get_batch_404_when_missing`, `test_links_export_counts_active_only`, `test_revoke_returns_count_and_updated_card`, `test_redeem_success_for_telegram_user_sends_no_email`, `test_redeem_notifies_email_only_user`, `test_redeem_maps_service_errors_to_structured_contract`, `test_public_status_returns_offer_for_active_coupon`, `test_public_status_is_uniform_404_for_consumed_coupon`, `test_public_status_rate_limited`, `test_public_status_rejects_malformed_token_without_db_hit`
+- `tests/cabinet/test_daily_price_display.py` — Python-модуль
+  Классы: `TestDailyGroupPrice` (3 методов), `TestPurchaseOptionsDailyPrice` (2 методов)
+  Функции: нет
 - `tests/cabinet/test_deleted_user_revival.py` — Python-модуль
   Классы: нет
   Функции: `db`, `test_dependencies_auto_revives_deleted_user_with_valid_init_data` — REGRESSION: signed initData proving same telegram_id → revive in place., `test_dependencies_rejects_deleted_user_without_init_data` — Without a fresh signature, return structured 403 — never auto-revive., `test_dependencies_rejects_deleted_user_with_mismatched_init_data` — initData proving DIFFERENT telegram_id → cross-account 401, NOT revival., `test_dependencies_blocks_revival_for_blacklisted_deleted_user` — A DELETED + blacklisted row must NOT be revived. Banned stays banned., `test_dependencies_blacklist_runs_before_status_check_for_no_init_data` — REGRESSION: blacklisted+DELETED without initData must still return, `test_dependencies_preserves_blocked_status_with_generic_message` — Status=BLOCKED is an admin action, not inactivity — generic 403., `test_dependencies_active_user_still_passes_through` — Negative-control: ACTIVE user is unaffected by all the new branches., `test_dependencies_auto_revive_persists_via_db_commit` — Pin the caller-owns-commit contract at the dependency boundary., `test_dependencies_rejects_deleted_user_with_invalid_init_data` — initData header present but signature INVALID → falls back to no-proof path., `test_dependencies_deleted_email_only_user_without_telegram_id` — Email-only DELETED user (telegram_id=None) → 403 account_deleted, no AttributeError.
 - `tests/cabinet/test_device_addon_prorate.py` — Python-модуль
   Классы: нет
   Функции: `test_device_addon_prorates_to_full_remaining_period` — Device add-on scales with the actual remaining days — no one-month cap., `test_no_upper_cap_long_subscription_costs_more_than_one_month` — A year-long subscription must charge ~12× the monthly rate, not a flat month., `test_short_remainder_is_prorated_down` — 5 days left → pay for ~5 days, not a full month., `test_one_ruble_floor_for_paid_devices` — Tiny prorated amounts floor to 1₽ (100 kopeks)., `test_free_devices_cost_nothing` — Zero chargeable monthly price → free, no floor applied., `test_multi_device_scales_linearly` — N devices = N × per-device prorated price., `test_bot_and_cabinet_formulas_agree` — The bot (calculate_prorated_price) and the cabinet inline math must match.
+- `tests/cabinet/test_device_info_reason_codes.py` — Python-модуль
+  Классы: `TestReductionInfo` (3 методов), `TestDevicePrice` (4 методов)
+  Функции: `multi_tariff`, `test_every_unavailable_answer_carries_a_code` — Сторож: новый отказ без кода снова покажет человеку фразу на чужом языке.
 - `tests/cabinet/test_device_ownership.py` — Python-модуль
   Классы: нет
   Функции: `test_collect_panel_user_ids_deduplicates_and_preserves_order` — user.remnawave_id first, then unique subscription ids in declared order., `test_collect_panel_user_ids_handles_classic_mode_user_only` — Classic mode: only user.remnawave_id, no subscriptions array., `test_collect_panel_user_ids_handles_multi_tariff_no_top_id` — Multi-tariff: top-level user.remnawave_id often None, sub ids only., `test_collect_panel_user_ids_returns_empty_when_no_panel_attached`, `test_collect_panel_user_ids_ignores_legacy_uuid_column` — Только remnawave_id: юзер с одними легаси-UUID панели не привязан., `test_verify_finds_hwid_on_first_panel`, `test_verify_finds_hwid_on_non_primary_subscription_panel` — REGRESSION: multi-tariff user with device on sub-B's panel user must pass., `test_verify_returns_false_when_hwid_on_no_panel`, `test_verify_short_circuits_after_first_hit` — We stop iterating panels as soon as we find the device — fewer remote calls., `test_verify_degrades_open_on_remnawave_failure` — Degrade-open contract: panel unreachable → True so renames don't break., `test_verify_does_not_degrade_open_on_unusable_panel_id` — Битая ссылка в НАШЕЙ БД — не сбой панели: такой id пропускается, проверка закрыта., `test_verify_skips_unusable_id_but_still_checks_remaining_panels` — Один непригодный id не должен обрывать обход остальных панелей юзера., `test_verify_returns_false_when_user_has_no_panel_id` — No panel id on user or any subscription → False (nothing to validate against).
+- `tests/cabinet/test_email_auth_gate.py` — Python-модуль
+  Классы: `Reached`
+  Функции: `test_db_row_overrides_env`, `test_env_applies_when_no_db_row`, `test_require_raises_403_with_machine_code`, `test_handler_refuses_before_touching_anything`, `test_handler_proceeds_when_enabled`, `test_every_email_and_password_route_is_gated` — Новый /email/* или /password/* роут без гейта — красный тест, а не дыра в проде., `test_linked_providers_follow_the_same_switch` — Список способов входа в профиле читает тот же переключатель, что UI и роуты., `test_db_value_parsed_like_settings_editor` — Строку пишут и админский переключатель ('true'), и общий редактор настроек, и, `test_garbage_db_value_falls_back_to_env`
+- `tests/cabinet/test_email_auth_gate_http.py` — Python-модуль
+  Классы: нет
+  Функции: `test_disabled_in_admin_refuses_register_and_login_over_http` — Админ выключил email-вход в кабинете (строка в БД), окружение говорит «включён»:, `test_enabled_in_admin_lets_request_through_the_gate` — Обратная сторона: строка 'true' в БД при выключенном окружении — запрос проходит гейт
 - `tests/cabinet/test_email_change_otp_security.py` — Python-модуль
   Классы: нет
   Функции: `test_verify_blocked_and_code_not_checked_when_ip_rate_limited`, `test_verify_per_account_cap_burns_pending_change`, `test_request_change_rejects_unowned_admin_email`, `test_verify_and_apply_rejects_wrong_code_and_applies_correct`
@@ -2936,6 +3005,9 @@
 - `tests/cabinet/test_email_plaintext_conversion.py` — Python-модуль
   Классы: нет
   Функции: `test_style_block_content_is_stripped`, `test_script_block_content_is_stripped`, `test_style_block_stripped_case_insensitive_and_multiline`, `test_entities_unescaped_amp_last`, `test_blank_line_runs_are_collapsed`, `test_real_default_template_produces_clean_plain_text` — Регрессия на живом шаблоне: дефолтное письмо верификации собирается на, `test_unclosed_style_block_does_not_leak_css` — Битый шаблон (частый случай для кастомных писем из админки): открытый, `test_send_email_plain_part_is_clean` — End-to-end: send_email должен положить в text/plain часть очищенный текст,
+- `tests/cabinet/test_email_registration_throttle.py` — Python-модуль
+  Классы: нет
+  Функции: `test_windows_come_from_settings_and_are_checked_in_order`, `test_tripped_slow_window_returns_429_with_its_retry_after`, `test_zero_disables_a_window`, `test_standalone_registration_uses_the_throttle` — Боевой обработчик зовёт общий дроссель, а не свой минутный лимит.
 - `tests/cabinet/test_email_rendering_integrity.py` — Python-модуль
   Классы: нет
   Функции: `test_default_template_renders_clean_for_every_language`, `captured_send` — Перехватывает send_email и притворяется, что SMTP настроен., `test_verification_email_uses_unified_template`, `test_password_reset_email_uses_unified_template`, `test_email_change_code_uses_unified_template`, `test_custom_override_bypasses_default_rendering`, `test_wrap_full_document_is_not_double_wrapped`, `test_wrap_fragment_gets_base_template_once`, `test_wrap_styled_fragment_gets_minimal_wrapper`, `test_editor_default_roundtrips_through_override_render` — Сохранение дефолта из редактора как override не ломает письмо.
@@ -3086,6 +3158,9 @@
 - `tests/cabinet/test_traffic_packages_discount.py` — Python-модуль
   Классы: нет
   Функции: `classic_mode` — Drive ``get_traffic_packages`` down the classic (non-tariff) branch., `test_traffic_packages_expose_promo_group_discount` — A 20% traffic promo-group discount surfaces on every package., `test_traffic_packages_no_discount_when_group_has_none` — No promo discount → no discount fields, raw price unchanged., `test_traffic_packages_respect_apply_discounts_to_addons_flag` — When the promo group opts out of addon discounts, traffic stays full price., `test_traffic_packages_apply_discount_in_tariff_mode` — Tariff-mode packages go through the same discount path as classic mode., `test_traffic_packages_floor_displayed_price_at_one_ruble` — An extreme discount never displays below 1₽ — matching POST's max(100,...) floor., `test_traffic_packages_default_group_uses_prorated_period_hint` — Default group period-based traffic discount uses the same ceil(remaining days)
+- `tests/cabinet/test_verification_resend.py` — Python-модуль
+  Классы: нет
+  Функции: `test_windows_come_from_settings`, `test_address_key_is_a_digest_and_ignores_case` — Ключ лимита оседает в Redis и в его логах — сам адрес туда попадать не должен., `test_one_inbox_is_protected_across_addresses` — Лимит по IP не спасает чужой ящик: окно по адресу отдаёт 429 само по себе., `test_zero_disables_the_address_window`, `test_pending_address_gets_a_fresh_link`, `test_unknown_address_answers_the_same_and_sends_nothing`, `test_verified_address_answers_the_same_and_keeps_its_token`, `test_throttle_stops_the_send`
 - `tests/cabinet/test_webhook_email_templates.py` — Python-модуль
   Классы: нет
   Функции: `test_every_webhook_type_has_email_template_in_every_language` — Новый WEBHOOK_* тип без email-шаблона — регресс к «почта молча пропущена»., `test_webhook_email_language_fallback_to_ru`, `test_webhook_email_localized_subjects_differ_from_ru` — zh/ua — не заглушки: тема отличается от русской., `test_device_name_substitution_and_placeholder_hygiene`, `test_device_name_is_html_escaped`, `test_winback_types_have_email_template_in_every_language`, `test_winback_discount_renders_percent_everywhere`, `test_winback_expired_1d_escapes_end_date`
@@ -3186,6 +3261,9 @@
 - `tests/database/test_postgres_fixture_guard.py` — Python-модуль
   Классы: нет
   Функции: `test_missing_url_skips_by_default` — Окружение без PostgreSQL не должно ронять прогон., `test_missing_url_fails_when_postgres_is_required` — С поднятым флагом отсутствие базы — падение, а не пропуск., `test_requirement_flag_accepts_usual_spellings`, `test_requirement_flag_ignores_everything_else`, `test_blank_url_counts_as_absent` — Пустая переменная — это отсутствие базы, а не адрес из пробелов., `test_ci_workflow_runs_postgres_tests_for_real` — CI обязан поднимать базу и требовать, чтобы тесты на ней прошли.
+- `tests/database/test_reachability_batches_schema_parity.py` — Python-модуль
+  Классы: нет
+  Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match`, `test_jobs_reference_batches`, `test_downgrade_removes_batches`
 - `tests/database/test_reachability_crud.py` — Python-модуль
   Классы: нет
   Функции: `test_create_get_and_update_job`, `test_idempotency_key_is_unique`, `test_active_job_is_found_per_kind_only_while_running`, `test_list_jobs_filters_and_counts`, `test_latest_legs_returns_newest_per_target_and_unit`, `test_replace_legs_drops_previous_legs_of_the_job`, `test_prefs_upsert_and_list`, `test_last_vless_leg_price_uses_latest_done_vless_job`
@@ -3203,10 +3281,10 @@
 
 - `tests/database/crud/test_subscription.py` — Python-модуль
   Классы: нет
-  Функции: `test_create_trial_subscription_uses_all_available_squads_by_default`, `test_extend_subscription_convert_trial_false_keeps_trial` — Bug #629889 guardrail: extend_subscription(tariff_id=..., convert_trial=False), `test_extend_subscription_default_converts_trial_on_purchase` — Default convert_trial=True (a real tariff purchase) still clears is_trial., `test_reset_trials_deletes_panel_first_and_skips_panel_failures` — #630055-trial: панель удаляется ПЕРВОЙ; если удалить в панели не удалось —, `test_reset_trials_keeps_row_when_panel_id_is_unusable` — Непригодный локальный идентификатор (RemnaWaveInvalidUserIdError) — это битая, `test_reset_trials_panel_not_configured_db_only` — Панель не настроена → orphan'ить нечего, чистим только БД, без вызовов панели., `test_is_trial_already_used_gate` — Единый гейт триала (раньше дублировался в 4 местах purchase.py)., `test_subscription_property_ignores_pending_trial_draft` — Незавершённый платный триал не должен подставляться как основная подписка.
+  Функции: `test_create_trial_subscription_uses_all_available_squads_by_default`, `test_extend_subscription_convert_trial_false_keeps_trial` — Bug #629889 guardrail: subscription_crud.extend_subscription(tariff_id=..., convert_trial=False), `test_extend_subscription_default_converts_trial_on_purchase` — Default convert_trial=True (a real tariff purchase) still clears is_trial., `test_reset_trials_deletes_panel_first_and_skips_panel_failures` — #630055-trial: панель удаляется ПЕРВОЙ; если удалить в панели не удалось —, `test_reset_trials_keeps_row_when_panel_id_is_unusable` — Непригодный локальный идентификатор (RemnaWaveInvalidUserIdError) — это битая, `test_reset_trials_disable_mode_keeps_panel_account` — REMNAWAVE_USER_DELETE_MODE=disable: аккаунт в панели отключается, а не удаляется,, `test_reset_trials_panel_not_configured_db_only` — Панель не настроена → orphan'ить нечего, чистим только БД, без вызовов панели., `test_is_trial_already_used_gate` — Единый гейт триала (раньше дублировался в 4 местах purchase.py)., `test_subscription_property_ignores_pending_trial_draft` — Незавершённый платный триал не должен подставляться как основная подписка.
 - `tests/database/crud/test_wipe_trial_panel_lookup.py` — Python-модуль
   Классы: нет
-  Функции: `api`, `patched_service` — Подменяем SubscriptionService целиком: нужен только его API-клиент., `db`, `test_adopts_by_short_uuid_and_deletes_the_right_account` — Ключевой сценарий: id ещё не пробэкфилен, но панель знает shortUuid., `test_does_not_orphan_a_live_panel_account` — Пропустить панель и удалить строку — значит оставить ACTIVE-сироту., `test_panel_error_during_lookup_does_not_wipe_the_row` — Таймаут — не доказательство. Строку оставляем следующему запуску., `test_unknown_short_uuid_does_not_block_the_reset_forever` — Панель этот shortUuid забыла — удалять нечего, но и застревать нельзя., `test_row_that_never_had_a_panel_user_needs_no_lookup`, `test_existing_numeric_id_is_used_directly`
+  Функции: `api`, `patched_service` — Подменяем SubscriptionService целиком: нужен только его API-клиент., `db`, `test_adopts_by_short_uuid_and_deletes_the_right_account` — Ключевой сценарий: id ещё не пробэкфилен, но панель знает shortUuid., `test_does_not_orphan_a_live_panel_account` — Пропустить панель и удалить строку — значит оставить ACTIVE-сироту., `test_panel_error_during_lookup_does_not_wipe_the_row` — Таймаут — не доказательство. Строку оставляем следующему запуску., `test_unknown_short_uuid_does_not_block_the_reset_forever` — Панель этот shortUuid забыла — удалять нечего, но и застревать нельзя., `test_row_that_never_had_a_panel_user_needs_no_lookup`, `test_existing_numeric_id_is_used_directly`, `test_disable_mode_deactivates_instead_of_deleting`, `test_disable_mode_keeps_single_tariff_user_identity` — Аккаунт остаётся (отключённым) — users.remnawave_id обязан остаться с ним:, `test_delete_mode_still_clears_single_tariff_user_identity` — Регресс-стража: в режиме delete аккаунта больше нет — ссылку на него стираем., `test_disable_mode_treats_gone_or_already_disabled_as_success`
 
 ### tests/external
 
@@ -3395,6 +3473,9 @@
 - `tests/handlers/test_admin_tariff_custom_traffic_contract.py` — Python-модуль
   Классы: нет
   Функции: `test_tariff_card_exposes_custom_traffic_entry`, `test_tariff_summary_includes_custom_traffic_block`, `test_custom_traffic_module_is_registered_from_tariff_router`, `test_custom_traffic_screen_and_handlers_are_registered`, `test_generic_tariff_toggle_excludes_custom_traffic_callback`, `test_custom_traffic_fsm_states_exist`, `test_disable_path_updates_only_enabled_flag`, `test_field_handlers_use_existing_crud_boundary`
+- `tests/handlers/test_balance_quick_topup.py` — Python-модуль
+  Классы: нет
+  Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
 - `tests/handlers/test_broadcast_custom_buttons.py` — Python-модуль
   Классы: нет
   Функции: `test_keyboard_passes_icon_custom_emoji_id`, `test_schema_roundtrips_icon_custom_emoji_id`, `test_schema_defaults_to_none_and_rejects_garbage`
@@ -3410,6 +3491,9 @@
 - `tests/handlers/test_info_menu_keyboard.py` — Python-модуль
   Классы: нет
   Функции: `test_rules_button_shown_by_default`, `test_rules_button_hidden_when_disabled`, `test_custom_page_buttons_added`, `test_no_custom_buttons_without_pages`
+- `tests/handlers/test_my_subscriptions_delete_uses_shared_service.py` — Python-модуль
+  Классы: нет
+  Функции: `handler_env`, `test_delete_delegates_to_shared_service`, `test_open_grace_is_reported_not_swallowed`
 - `tests/handlers/test_no_undefined_texts_in_handlers.py` — Python-модуль
   Классы: нет
   Функции: `test_handlers_never_use_undefined_texts`
@@ -3539,6 +3623,9 @@
 - `tests/middlewares/test_rich_error_report.py` — Python-модуль
   Классы: нет
   Функции: `test_rich_error_report_structure`, `test_rich_error_report_none_when_oversized`, `test_send_error_uses_rich_and_clears_buffer`, `test_send_error_falls_back_to_document_when_rich_unavailable`
+- `tests/middlewares/test_stale_callback_answer.py` — Python-модуль
+  Классы: нет
+  Функции: `test_phrase_matcher_covers_both_telegram_wordings`, `test_stale_answer_becomes_warning_and_returns_true`, `test_other_errors_on_answer_still_raise`, `test_stale_phrases_on_other_methods_are_not_swallowed` — Middleware узкий: только ответ на нажатие. Редактирование сообщения — не его дело., `test_successful_request_passes_through`, `test_bot_factory_installs_the_middleware_for_every_bot` — Все боты (основной, из кабинета, из фоновых задач) создаются фабрикой — защита общая.
 
 ### tests/services
 
@@ -3547,7 +3634,7 @@
   Функции: нет
 - `tests/services/reachability/`
 - `tests/services/test_account_merge_service.py` — Python-модуль
-  Классы: `TestComputeAuthMethods` (6 методов), `TestBuildSubscriptionPreview` (3 методов), `TestBuildUserPreview` (2 методов), `TestGetMergePreview` (4 методов), `TestExecuteMergeValidation` (6 методов), `TestExecuteMergeOAuthTransfer` (2 методов), `TestExecuteMergeTelegramTransfer` (2 методов), `TestExecuteMergeEmailTransfer` (2 методов), `TestExecuteMergeBalance` (3 методов), `TestExecuteMergePartnerStatus` (4 методов), `TestExecuteMergeReferralCommission` (2 методов), `TestExecuteMergeSecondaryDeleted` (3 методов), `TestExecuteMergeSubscription` (7 методов), `TestExecuteMergeSubscriptionMultiTariff` (2 методов), `TestExecuteMergeBulkUpdates` (1 методов), `TestExecuteMergeSelfReferralPrevention` (6 методов)
+  Классы: `TestComputeAuthMethods` (6 методов), `TestBuildSubscriptionPreview` (3 методов), `TestBuildUserPreview` (2 методов), `TestGetMergePreview` (4 методов), `TestExecuteMergeValidation` (6 методов), `TestExecuteMergeOAuthTransfer` (2 методов), `TestExecuteMergeTelegramTransfer` (2 методов), `TestExecuteMergeEmailTransfer` (2 методов), `TestExecuteMergeBalance` (3 методов), `TestExecuteMergePartnerStatus` (4 методов), `TestExecuteMergeReferralCommission` (2 методов), `TestExecuteMergeSecondaryDeleted` (3 методов), `TestExecuteMergeSubscription` (7 методов), `TestExecuteMergeSubscriptionMultiTariff` (2 методов), `TestExecuteMergeBulkUpdates` (1 методов), `TestExecuteMergeSelfReferralPrevention` (6 методов), `TestRemnawaveDeleteMode` (4 методов)
   Функции: нет
 - `tests/services/test_admin_notification_hardening.py` — Python-модуль
   Классы: нет
@@ -3633,9 +3720,12 @@
 - `tests/services/test_daily_subscription_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `test_defers_drop_when_panel_resets_and_user_over_limit` — MONTH + used 130 > нового лимита 100 → понижение ОТКЛАДЫВАЕТСЯ до сброса панели., `test_applies_drop_cleanly_when_user_under_limit` — MONTH + used 40 <= нового лимита 100 → лимит понижается, сброса used нет., `test_no_reset_tariff_resets_used_when_over_limit` — NO_RESET (панель сама не сбрасывает) + used 130 > 100 → лимит вниз + сброс used (clamp)., `test_forces_drop_after_grace_even_if_panel_resets` — MONTH, но докупка просрочена >40д → не ждём вечно: понижаем + добиваем used., `test_traffic_reset_only_loop_runs_processor` — #630055: с ВЫКЛЮЧЕННЫМИ суточными тарифами джоба сброса докупок всё равно
+- `tests/services/test_disposable_email_service.py` — Python-модуль
+  Классы: нет
+  Функции: `test_parse_extra_domains_tolerates_separators_case_and_at_sign`, `test_operator_extra_domains_block_even_without_fetched_list`, `test_parent_domain_matches_for_both_lists`, `test_disabled_flag_and_malformed_email`
 - `tests/services/test_email_retry_service.py` — Python-модуль
   Классы: нет
-  Функции: `test_backoff_outlives_short_lived_codes` — Фиксируем сам факт расхождения: без срока бэкофф шлёт письма после смерти кода., `test_expired_item_is_killed_without_sending`, `test_live_item_is_still_sent`, `test_item_without_expiry_is_unrestricted`, `test_auth_emails_declare_a_deadline` — Три письма с секретом внутри обязаны передавать срок годности в очередь., `test_body_is_purged_after_successful_delivery`, `test_body_is_purged_when_attempts_run_out`, `test_body_survives_between_attempts` — Пока попытки не исчерпаны, тело нужно — иначе повторять будет нечего., `test_stop_is_safe_without_start`
+  Функции: `test_backoff_outlives_short_lived_codes` — Фиксируем сам факт расхождения: без срока бэкофф шлёт письма после смерти кода., `test_expired_item_is_killed_without_sending`, `test_live_item_is_still_sent`, `test_item_without_expiry_is_unrestricted`, `test_auth_emails_declare_a_deadline` — Три письма с секретом внутри обязаны передавать срок годности в очередь., `test_body_is_purged_after_successful_delivery`, `test_body_is_purged_when_attempts_run_out`, `test_body_survives_between_attempts` — Пока попытки не исчерпаны, тело нужно — иначе повторять будет нечего., `test_stop_is_safe_without_start`, `test_pending_letters_are_closed_when_smtp_is_absent`, `test_absent_smtp_is_reported_once_not_per_letter` — Одно сообщение на всё время, и не ошибкой: это настройка, а не сбой доставки., `test_queue_resumes_after_smtp_appears`
 - `tests/services/test_email_topup_notifications.py` — Python-модуль
   Классы: нет
   Функции: `sent` — Перехватывает send_notification роутера., `test_topup_notification_sent_for_email_user`, `test_topup_notification_skipped_for_telegram_user`, `test_topup_notification_skipped_without_email`, `test_topup_notification_swallows_router_errors`, `test_topup_hook_notifies_before_auto_purchase` — Порядок каналов: письмо о пополнении уходит ДО автопокупки из корзины,, `test_auto_purchase_notification_activated`, `test_auto_purchase_notification_renewed`, `test_auto_purchase_notification_skipped_for_telegram_user`, `test_auto_purchase_notification_swallows_errors`, `test_real_topup_template_renders_with_helper_context`, `test_real_activated_template_renders_with_helper_context`, `test_real_renewed_template_renders_with_helper_context`, `test_trial_conversion_labeled_activated_not_renewed` — Пин: сайты автопокупки тарифа/суточного/extend не должны помечать
@@ -3768,6 +3858,9 @@
 - `tests/services/test_pal24_service_adapter.py` — Python-модуль
   Классы: `StubPal24Client` (5 методов)
   Функции: `anyio_backend`, `test_create_bill_success`, `test_create_bill_requires_configuration`, `test_get_bill_payments`, `test_parse_callback_success`, `test_parse_callback_missing_fields`, `test_convert_to_kopeks_and_expiration`
+- `tests/services/test_panel_deletion_respects_delete_mode.py` — Python-модуль
+  Классы: нет
+  Функции: `test_panel_deletion_is_gated_or_explicitly_deliberate`, `test_deliberate_list_has_no_stale_entries` — Список исключений не должен пережить сами удаления.
 - `tests/services/test_paritypay_client.py` — Python-модуль
   Классы: `RecordingService` (2 методов)
   Функции: `anyio_backend`, `test_create_invoice_sends_rubles_not_kopeks` — 125000 копеек обязаны уйти как 1250.0 — иначе счёт будет на 125 000 ₽., `test_create_invoice_request_shape`, `test_create_invoice_never_sends_subscription_block` — Подписки не оформляем: блок subscription не должен появляться никогда., `test_create_invoice_omits_empty_optionals`, `test_create_invoice_rejects_response_without_link`, `test_create_invoice_rejects_response_without_id`, `test_get_invoice_by_id_and_by_order_id`, `test_get_invoice_prefers_id_over_order_id` — Спека: передаётся ОДИН из параметров, не оба., `test_get_invoice_without_identifiers_raises`, `test_headers_carry_shop_and_secret_key`, `test_base_url_strips_slash_and_falls_back`, `test_error_message_uses_error_field` — Формат ошибки провайдера — объект {"error": "текст"}., `test_request_404_allowed_returns_none`, `test_request_422_raises_business_error`, `test_request_400_raises`, `test_connection_error_and_timeout_become_network_error`
@@ -3880,7 +3973,7 @@
   Классы: нет
   Функции: `temp_log_file` — Создаёт временный лог-файл для тестов., `sample_log_content` — Пример содержимого лог-файла с реферальными событиями., `test_parse_logs_basic` — Тест базового парсинга логов., `test_analyze_period_with_issues` — Тест анализа с проблемными случаями., `test_empty_log_file` — Тест работы с пустым лог-файлом., `test_nonexistent_log_file` — Тест работы с несуществующим лог-файлом., `test_analyze_today` — Тест метода analyze_today.
 - `tests/services/test_referral_grant_days.py` — Python-модуль
-  Классы: `TestDaysLandWhereConfigured` (3 методов), `TestMissingSubscription` (3 методов), `TestTrialIsNeverConverted` (2 методов), `TestPanelSyncFailure` (1 методов), `TestSubscriptionOnAnotherTariff` (3 методов), `TestStatesWhereDaysMustNotLand` (4 методов), `TestManySubscriptionsInMultiTariff` (5 методов), `TestClassicMode` (3 методов)
+  Классы: `TestDaysLandWhereConfigured` (3 методов), `TestMissingSubscription` (3 методов), `TestTrialIsNeverConverted` (2 методов), `TestPanelSyncFailure` (1 методов), `TestPanelRollback` (1 методов), `TestSubscriptionOnAnotherTariff` (3 методов), `TestStatesWhereDaysMustNotLand` (4 методов), `TestManySubscriptionsInMultiTariff` (5 методов), `TestClassicMode` (3 методов), `TestPanelSync` (3 методов)
   Функции: `no_panel_sync` — Remnawave в тестах не поднимается — синхронизация подменяется.
 - `tests/services/test_referral_ledger_orientation.py` — Python-модуль
   Классы: нет
@@ -3888,6 +3981,9 @@
 - `tests/services/test_referral_levels_safety.py` — Python-модуль
   Классы: `TestCacheInvalidation` (2 методов), `TestCacheReload` (1 методов), `TestDiagnosticsGuard` (3 методов), `TestBackupCoverage` (1 методов), `TestMergeChainRepair` (3 методов), `TestAsyncSessionHazards` (2 методов), `TestCacheGeneration` (1 методов), `TestFirstTopupClaim` (1 методов)
   Функции: нет
+- `tests/services/test_referral_notification_kinds.py` — Python-модуль
+  Классы: нет
+  Функции: `test_registered_notice_carries_its_own_type`, `test_welcome_notice_carries_referrer_and_promise`, `test_every_referral_kind_obeys_referral_switch`, `test_registered_template_never_mentions_money`, `test_welcome_template_names_referrer_and_promise`, `test_welcome_template_without_promise_skips_bonus_line`
 - `tests/services/test_referral_reward_levels.py` — Python-модуль
   Классы: `TestChainWalk` (4 методов), `TestSchemeGate` (1 методов), `TestMoneyPerLevel` (6 методов), `TestTriggers` (2 методов), `TestActiveBonusSelection` (3 методов), `TestRefereeSide` (3 методов), `TestGranting` (9 методов), `TestNullPercentIsZero` (2 методов), `TestLevelNotifications` (6 методов), `TestRewardFormatting` (1 методов), `TestProgramDescription` (4 методов), `TestInvitePromise` (2 методов), `TestDepthHonesty` (2 методов), `TestUngrantablePromises` (4 методов), `TestRefereeRowsStayOutOfReferrerTotals` (1 методов), `TestGeneratedTextIsLocalized` (5 методов), `TestLegacyImportPercent` (4 методов), `TestDepthOnThePayoutPath` (2 методов), `TestThresholdGatesThePayout` (4 методов)
   Функции: `chain` — Цепочка 4 → 3 → 2 → 1 и схема 'levels'., `granting` — Обвязка выдачи: начисления и записи ledger'а собираются в списки.
@@ -3896,7 +3992,7 @@
   Функции: `wired` — Общая обвязка: реферал → реферер, без похода в БД и Telegram.
 - `tests/services/test_referral_service.py` — Python-модуль
   Классы: нет
-  Функции: `test_referral_notification_respects_notification_switches`, `test_referral_notification_enabled_sends_telegram_message`, `test_disabled_referral_notifications_skip_email_delivery`, `test_commission_accrues_before_minimum_first_topup`, `test_first_topup_inviter_gets_fixed_plus_commission` — Inviter bonus should be fixed bonus + commission, not max(fixed, commission)., `test_first_payment_commission_percent_overrides_flat_percent`, `test_recurring_commission_percent_uses_paid_referrals_tier`, `test_second_small_topup_uses_recurring_tier_not_first_payment_percent`, `test_parse_recurring_commission_tiers_handles_edge_cases`, `test_calculate_recurring_commission_tier_boundary`
+  Функции: `test_referral_notification_respects_notification_switches`, `test_referral_notification_enabled_sends_telegram_message`, `test_disabled_referral_notifications_skip_email_delivery`, `test_commission_accrues_before_minimum_first_topup`, `test_first_topup_inviter_gets_fixed_plus_commission` — Inviter bonus should be fixed bonus + commission, not max(fixed, commission)., `test_first_payment_commission_percent_overrides_flat_percent`, `test_recurring_commission_percent_uses_paid_referrals_tier`, `test_second_small_topup_uses_recurring_tier_not_first_payment_percent`, `test_parse_recurring_commission_tiers_handles_edge_cases`, `test_calculate_recurring_commission_tier_boundary`, `test_registration_notice_to_email_referrer_uses_registered_template`, `test_welcome_notice_to_email_referee_uses_welcome_template`, `test_reward_notice_keeps_bonus_template_by_default`, `test_non_referral_type_is_rejected`, `test_registration_of_email_only_pair_never_sends_bonus_email` — Сквозной: регистрация реферала, оба участника без Telegram.
 - `tests/services/test_referral_tier_mode.py` — Python-модуль
   Классы: `TestDefaultIsChain` (3 методов), `TestSelection` (5 методов), `TestPayout` (10 методов), `TestReferee` (2 методов), `TestLadderText` (3 методов), `TestProgress` (5 методов), `TestTextMatchesPayout` (9 методов), `TestChainModeIsUntouchedByTheNewArguments` (4 методов), `TestProgressFormatting` (4 методов), `TestModeNormalisation` (2 методов), `TestChainRefereePromise` (3 методов), `TestRestoreInvalidatesLevelCache` (2 методов), `TestImpossiblePercentIsNotPromised` (3 методов)
   Функции: `tiers` — Режим рангов, цепочка 4 → 3 → 2 → 1 и управляемое число рефералов.
@@ -3962,13 +4058,16 @@
   Функции: `test_collapses_report_scenario`, `test_never_removes_alive_even_if_outranked_by_date`, `test_disabled_duplicate_is_removed_active_survives`, `test_single_rows_untouched`
 - `tests/services/test_subscription_deletion_panel_target.py` — Python-модуль
   Классы: нет
-  Функции: `test_multi_tariff_takes_the_subscriptions_own_account` — Мультитариф: у подписки свой аккаунт, его и удаляем., `test_single_tariff_falls_back_to_the_user_account` — Однотарифный: колонка подписки пуста, но аккаунт есть — и его надо снять., `test_single_tariff_spares_account_of_a_live_sibling` — Однотарифный: живая соседка сидит на том же аккаунте — не трогаем его., `test_single_tariff_ignores_dead_sibling` — Мёртвая соседка ничего не держит — аккаунт всё равно отключаем., `test_single_tariff_uses_subscription_id_when_user_has_none` — Историческая строка: id остался только на подписке — работаем по нему., `test_single_tariff_deletion_disables_shared_account` — Однотарифный, соседок нет: доступ снят, аккаунт остался живым для новой покупки., `test_single_tariff_deletion_leaves_live_sibling_alone` — Уборка отработавшей строки не должна трогать аккаунт живой соседки., `test_multi_tariff_deletion_deletes_own_account` — Мультитариф: аккаунт подписки удаляется и помечается намеренным., `test_open_grace_aborts_before_anything_irreversible` — Грейс-гард обязан пробрасываться наружу, а не глохнуть внутри сервиса., `test_step_order_is_pinned` — Порядок шагов удаления — не косметика, каждый стоит там не случайно.
+  Функции: `test_multi_tariff_takes_the_subscriptions_own_account` — Мультитариф: у подписки свой аккаунт, его и удаляем., `test_single_tariff_falls_back_to_the_user_account` — Однотарифный: колонка подписки пуста, но аккаунт есть — и его надо снять., `test_single_tariff_spares_account_of_a_live_sibling` — Однотарифный: живая соседка сидит на том же аккаунте — не трогаем его., `test_single_tariff_ignores_dead_sibling` — Мёртвая соседка ничего не держит — аккаунт всё равно отключаем., `test_single_tariff_uses_subscription_id_when_user_has_none` — Историческая строка: id остался только на подписке — работаем по нему., `test_single_tariff_deletion_disables_shared_account` — Однотарифный, соседок нет: доступ снят, аккаунт остался живым для новой покупки., `test_single_tariff_deletion_leaves_live_sibling_alone` — Уборка отработавшей строки не должна трогать аккаунт живой соседки., `test_multi_tariff_deletion_deletes_own_account` — Мультитариф: аккаунт подписки удаляется и помечается намеренным., `test_open_grace_aborts_before_anything_irreversible` — Грейс-гард обязан пробрасываться наружу, а не глохнуть внутри сервиса., `test_step_order_is_pinned` — Порядок шагов удаления — не косметика, каждый стоит там не случайно., `test_multi_tariff_deletion_honours_disable_mode` — REMNAWAVE_USER_DELETE_MODE=disable: аккаунт подписки отключается, а не удаляется.
 - `tests/services/test_subscription_extend_cabinet_mode.py` — Python-модуль
   Классы: нет
   Функции: `cabinet_mode` — Полностью настроенный cabinet-режим: и режим меню, и URL кабинета., `test_multi_tariff_cabinet_button_opens_that_subscription_renewal` — РЕГРЕССИЯ: раньше здесь была callback-кнопка, уводившая в бота., `test_single_tariff_cabinet_button_opens_cabinet` — Одиночный режим работал и раньше — поведение не должно поменяться., `test_multi_tariff_without_id_falls_back_to_subscription_list` — Без id конкретной подписки вести некуда — открываем список подписок., `test_bot_mode_keeps_callback_button` — Вне cabinet-режима кнопка обязана остаться обычным callback'ом., `test_cabinet_mode_without_url_falls_back_to_callback` — Cabinet-режим без ``MINIAPP_CUSTOM_URL`` не должен ломать кнопку., `test_dynamic_callback_keeps_subscription_section_styling` — Стиль берётся по секции ``subscription``, а не теряется из-за ``se:{id}``., `test_dynamic_callback_is_not_added_to_static_mapping` — ``se:{id}`` динамический — в статическом маппинге ему места нет., `test_call_sites_do_not_build_extend_callback_by_hand` — РЕГРЕССИЯ: каждый ручной ``f'se:{...}'`` — это ещё одна кнопка в бота., `test_expired_notification_keyboard_opens_cabinet` — Сквозная проверка на том самом уведомлении из отчёта пользователя.
 - `tests/services/test_subscription_renewal_reset_traffic.py` — Python-модуль
   Классы: нет
   Функции: `test_active_subscription_renewal_resets_traffic_in_panel` — Issue #3199: раннее продление ещё активной подписки тоже сбрасывает трафик в панели., `test_expired_subscription_renewal_still_resets_traffic_in_panel` — Истёкшая подписка сбрасывала трафик и до фикса — это поведение не меняем., `test_renewal_keeps_traffic_when_reset_disabled` — С выключенным RESET_TRAFFIC_ON_PAYMENT (дефолт) сброс в панель не уходит.
+- `tests/services/test_subscription_service_sync.py` — Python-модуль
+  Классы: нет
+  Функции: `test_sync_picks_create_or_update_by_panel_id`, `test_missing_user_falls_to_create_which_reports_it` — Пользователя нет в базе: не падаем, create сам залогирует и вернёт None.
 - `tests/services/test_support_settings_sync.py` — Python-модуль
   Классы: нет
   Функции: `support_storage` — Изолированное JSON-хранилище + сброс кеша класса на каждый тест., `test_load_syncs_system_mode_into_settings` — REGRESSION: persisted-режим должен доезжать до settings при загрузке —, `test_mode_survives_restart_for_cabinet` — REGRESSION (сквозной сценарий): админ выключил тикеты в боте, бот, `test_load_syncs_menu_enabled_into_settings` — REGRESSION: у menu_enabled была ровно та же проблема., `test_set_support_menu_enabled_syncs_settings` — Сеттер меню тоже обязан обновлять settings (раньше не обновлял вовсе)., `test_absent_json_keeps_env_value` — Без сохранённого значения settings остаётся как задан в .env., `test_invalid_persisted_mode_does_not_clobber_settings` — Мусор в JSON не должен затирать settings невалидным режимом., `test_corrupt_json_does_not_clobber_settings` — Битый JSON: _load глотает ошибку, settings остаётся из .env.
@@ -3990,6 +4089,12 @@
 - `tests/services/test_tariff_purchase_subscription_pinning.py` — Python-модуль
   Классы: нет
   Функции: `test_select_tariff_period_resolves_and_pins_target_subscription_id` — REGRESSION: ``select_tariff_period`` must resolve the existing, `test_confirm_tariff_purchase_reads_target_subscription_id_from_fsm` — REGRESSION: ``confirm_tariff_purchase`` must read, `test_confirm_tariff_purchase_guards_against_tariff_divergence` — If the FSM-pinned subscription's tariff_id no longer matches, `test_confirm_tariff_purchase_does_not_use_only_tariff_lookup` — Pre-fix shape: confirm_tariff_purchase ran a single
+- `tests/services/test_tariff_switch_flows_use_policy.py` — Python-модуль
+  Классы: нет
+  Функции: `test_flow_computes_remaining_days_through_policy`, `test_flow_asks_policy_before_resetting_traffic`, `test_no_new_direct_readers_of_the_traffic_switch` — Новый читатель выключателя обязан объясниться здесь.
+- `tests/services/test_tariff_switch_policy.py` — Python-модуль
+  Классы: `TestTrafficReset` (3 методов)
+  Функции: `test_live_subscription_costs_at_least_one_day` — Остаток в часах — не ноль: иначе переключение бесплатное., `test_expired_subscription_has_no_remaining_days` — Истёкшей подписке путь в покупку, а не в переключение., `test_naive_datetime_is_treated_as_utc` — SQLite отдаёт даты без таймзоны — сравнение не должно падать., `test_defaults_to_current_time`
 - `tests/services/test_telegram_stars_rate.py` — Python-модуль
   Классы: нет
   Функции: `test_default_stars_rate_is_one_ruble_per_star` — REGRESSION: default rate must stay at 1.0 ₽/⭐., `test_integer_ruble_amounts_round_trip_losslessly` — REGRESSION: at rate=1.0, integer ruble top-ups credit back exactly., `test_rubles_to_stars_rejects_invalid_rate` — Defensive check: zero/negative rate must raise rather than divide-by-zero., `test_rubles_to_stars_clamps_to_minimum_one_star` — Even at rate=1.0, a 0 ₽ request must return ≥1 ⭐ (Telegram requires positive amount)., `test_rate_change_is_propagated_through_telegram_stars_service` — `TelegramStarsService.calculate_*` helpers must defer to settings — no hardcoded copies.
@@ -4005,6 +4110,9 @@
 - `tests/services/test_traffic_monitoring_status_filter.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_disabled_and_expired_are_filtered_out` — DISABLED/EXPIRED отсекаются, ACTIVE/LIMITED остаются., `test_all_active_pass_through` — Когда все активны — ничего не теряется., `test_all_inactive_returns_empty` — Сплошь DISABLED/EXPIRED → пустой список (никого не проверяем)., `test_filter_applies_across_paginated_batches` — Фильтр работает на каждом батче; пагинация — по сырому размеру страницы.
+- `tests/services/test_update_links_panel_identity.py` — Python-модуль
+  Классы: нет
+  Функции: `test_update_links_fresh_row_to_the_account_it_updated`, `test_update_leaves_row_unlinked_when_sibling_row_holds_the_account`, `test_link_is_noop_for_already_linked_row`
 - `tests/services/test_user_action_log_service.py` — Python-модуль
   Классы: нет
   Функции: `test_defaults`, `test_normalize_cabinet_path`, `test_should_log_gates`, `test_schedule_skips_when_gated`, `test_write_uses_stats_service`
@@ -4039,17 +4147,23 @@
   Классы: нет
   Функции: `session_factory`
 - `tests/services/reachability/fakes.py` — Python-модуль
-  Классы: `FakeClock` (3 методов), `FakeAPI` (11 методов)
+  Классы: `FakeClock` (3 методов), `FakeAPI` (12 методов)
   Функции: нет
 - `tests/services/reachability/test_background.py` — Python-модуль
   Классы: нет
   Функции: `test_start_background_is_idempotent_and_stop_cancels`, `test_failed_background_is_restarted_on_next_start`, `test_stop_without_start_is_noop`
+- `tests/services/reachability/test_batches.py` — Python-модуль
+  Классы: нет
+  Функции: `test_batch_crud_roundtrip`, `test_jobs_for_batch_are_ordered_and_carry_legs`, `test_chunk_targets_by_ten`, `test_estimate_minutes_grows_with_rounds_and_units`, `test_batch_status_rules`, `test_batch_cost_and_done_targets`, `make_batch`, `test_batch_driver_runs_at_most_three_jobs_at_once`, `test_cancel_batch_stops_pending_jobs_and_finishes_cancelled`, `test_sweep_resumes_unfinished_batch`
+- `tests/services/reachability/test_batches_service.py` — Python-модуль
+  Классы: `ManyHostsPanel` (1 методов)
+  Функции: `payload`, `test_preview_batch_sums_chunks_and_estimates_time`, `test_preview_batch_rejects_empty_and_oversized_scope`, `test_create_batch_makes_one_job_per_chunk_and_spawns_driver`, `test_create_batch_refuses_when_balance_is_short`, `test_cancel_batch_before_start_finishes_it_cancelled`
 - `tests/services/reachability/test_gate.py` — Python-модуль
   Классы: `FakeClock` (3 методов)
   Функции: `test_spaces_calls_by_min_interval`, `test_retries_rate_limited_with_retry_after_and_same_call`, `test_gives_up_after_max_rate_limit_retries`, `test_other_errors_pass_through_immediately`, `test_lock_is_not_held_during_the_call`
 - `tests/services/reachability/test_jobs.py` — Python-модуль
   Классы: нет
-  Функции: `body`, `make_job`, `make_runner`, `load`, `test_probe_happy_path_stores_result_cost_and_legs`, `test_probe_gateway_timeout_then_in_progress_then_result`, `test_probe_left_retrieving_when_result_never_comes`, `test_probe_retrieve_keeps_last_api_answer_on_job` — Пока результат не пришёл, в задаче виден последний ответ API — иначе «идёт» ничего не объясняет., `test_probe_older_than_cap_fails_instead_of_retrying_forever` — Обходчик не должен поднимать пробу вечно: старше потолка — падение с внятной причиной, без вызовов API., `test_probe_younger_than_cap_keeps_retrieving_on_resume`, `test_probe_retrieve_slows_down_after_fast_window`, `test_probe_no_dpi_on_race_fails_without_charge`, `test_probe_validation_error_fails_with_api_message`, `test_probe_transient_503_is_retried_with_same_key`, `test_probe_transient_errors_give_up_after_retries`, `test_unexpected_exception_marks_internal_error`, `test_run_skips_finished_and_missing_jobs`, `test_vless_happy_path`, `test_vless_over_cost_limit_is_cancelled_right_after_submit`, `test_vless_busy_fails_fast_and_retryable`, `test_vless_gateway_error_on_submit_is_replayed_with_same_key`, `test_vless_not_found_state_fails_job`, `test_vless_cancel_marks_phase_and_resume_finalizes_as_cancelled` — Отмена только дёргает API и ставит фазу; финал ставит поллер/обходчик по GET., `test_vless_cancelled_before_any_leg_started_is_cancelled_by_phase` — Незапущенные леги в результате отсутствуют: пустой результат при фазе cancelling — отмена., `test_cancel_tolerates_test_already_finishing`, `test_cancel_rejects_probe_and_finished_jobs`, `test_scan_happy_path`, `test_scan_cancelled_state_from_get`, `test_scan_failed_state_propagates_error_and_retryable`, `test_scan_lost_on_service_side_fails_job`, `test_scan_cancel_calls_api`, `test_poll_timeout_leaves_job_running_and_sweep_resumes_it`, `test_sweep_skips_fresh_and_active_jobs`, `test_sweeper_loop_runs_until_stopped`, `test_spawn_tracks_task_until_done`
+  Функции: `body`, `make_job`, `make_runner`, `load`, `test_probe_happy_path_stores_result_cost_and_legs`, `test_probe_gateway_timeout_then_in_progress_then_result`, `test_probe_left_retrieving_when_result_never_comes`, `test_probe_retrieve_keeps_last_api_answer_on_job` — Пока результат не пришёл, в задаче виден последний ответ API — иначе «идёт» ничего не объясняет., `test_probe_older_than_cap_fails_instead_of_retrying_forever` — Обходчик не должен поднимать пробу вечно: старше потолка — падение с внятной причиной, без вызовов API., `test_probe_younger_than_cap_keeps_retrieving_on_resume`, `test_probe_retrieve_slows_down_after_fast_window`, `test_probe_no_dpi_on_race_fails_without_charge`, `test_probe_validation_error_fails_with_api_message`, `test_probe_transient_503_is_retried_with_same_key`, `test_probe_transient_errors_give_up_after_retries`, `test_unexpected_exception_marks_internal_error`, `test_run_skips_finished_and_missing_jobs`, `test_vless_happy_path`, `test_vless_over_cost_limit_is_cancelled_right_after_submit`, `test_vless_busy_fails_fast_and_retryable`, `test_vless_gateway_error_on_submit_is_replayed_with_same_key`, `test_vless_not_found_state_fails_job`, `test_vless_cancel_marks_phase_and_resume_finalizes_as_cancelled` — Отмена только дёргает API и ставит фазу; финал ставит поллер/обходчик по GET., `test_vless_cancelled_before_any_leg_started_is_cancelled_by_phase` — Незапущенные леги в результате отсутствуют: пустой результат при фазе cancelling — отмена., `test_cancel_tolerates_test_already_finishing`, `test_cancel_rejects_probe_and_finished_jobs`, `test_scan_happy_path`, `test_scan_cancelled_state_from_get`, `test_scan_failed_state_propagates_error_and_retryable`, `test_scan_lost_on_service_side_fails_job`, `test_scan_cancel_calls_api`, `test_poll_timeout_leaves_job_running_and_sweep_resumes_it`, `test_sweep_skips_fresh_and_active_jobs`, `test_sweeper_loop_runs_until_stopped`, `test_spawn_tracks_task_until_done`, `test_scan_progress_is_stored_while_running` — Пока скан идёт, его progress из GET лежит в задаче — кабинет показывает, сколько адресов уже проверено.
 - `tests/services/reachability/test_legs.py` — Python-модуль
   Классы: нет
   Функции: `test_probe_legs_from_recorded_full_response`, `test_probe_legs_for_unknown_target_fall_back_to_api_key`, `test_probe_legs_match_api_target_case_insensitively`, `test_vless_legs_match_by_server_addr_and_compose_op_key`, `test_vless_legs_fall_back_to_server_name_then_raw_address`, `test_vless_op_key_from_leg_fields`, `test_merge_skipped_keeps_ours_and_adds_api_lists_without_mutation`
@@ -4059,9 +4173,15 @@
 - `tests/services/reachability/test_panel_links.py` — Python-модуль
   Классы: `FakePanel` (4 методов)
   Функции: `test_protected_endpoint_wins_when_it_has_links`, `test_falls_back_to_legacy_info_when_protected_fails_or_is_empty`, `test_falls_back_to_public_subscription_with_client_user_agent`, `test_everything_empty_gives_empty_list_not_error`, `test_prefer_public_takes_client_view_first_and_repeats_with_hwid_headers`, `test_decode_subscription_body_understands_xray_json`, `test_decode_subscription_body_accepts_plain_base64_and_garbage`
+- `tests/services/reachability/test_partial_progress.py` — Python-модуль
+  Классы: нет
+  Функции: `test_compact_verdict_prefers_sni_then_tcp_then_icmp`, `test_partial_progress_keeps_order_and_marks_only_done_legs`, `test_partial_progress_tolerates_missing_fields`, `test_runner_stores_partial_progress_while_probe_runs` — Пока результат не пришёл, в задаче лежит частичный результат — кабинет показывает «проверяем…» по симкам., `test_runner_leaves_no_partial_when_api_gave_none` — Голый 409 без легов — след ответа есть, «partial» не выдумывается.
 - `tests/services/reachability/test_pricing.py` — Python-модуль
   Классы: нет
   Функции: `test_credits_are_kopeks`, `test_vless_estimate_uses_last_leg_price_or_default`, `test_cost_limit_zero_means_unlimited`, `test_cost_limit_exceeded_carries_numbers`, `test_format_rubles`
+- `tests/services/reachability/test_probe_cancel.py` — Python-модуль
+  Классы: нет
+  Функции: `test_cancel_probe_marks_cancelled_with_partial_cost`, `test_cancel_probe_when_api_says_already_finished_is_fine`, `test_cancel_probe_before_submit_is_rejected`
 - `tests/services/reachability/test_requests.py` — Python-модуль
   Классы: нет
   Функции: `test_probe_request_has_targets_units_probes_and_sni_hosts`, `test_probe_request_without_sni_omits_sni_hosts_and_skips_cidr_targets`, `test_probe_request_normalizes_partial_probes_dict`, `test_probe_request_rejects_no_probes_and_no_targets`, `test_vless_request_joins_raw_links_and_limits_20`, `test_scan_request`, `test_probe_request_limits_targets_to_api_maximum`, `test_sni_hosts_prefer_sni_and_skip_bare_ip_targets` — Имя для TLS-SNI — SNI цели, а без него домен; у голого IP имени нет (RFC 6066)., `test_probe_request_with_sni_but_only_ip_targets_fails_fast_without_default`, `test_explicit_sni_hosts_win_over_target_names_and_allow_bare_ip_targets`, `test_default_sni_is_used_when_targets_have_no_names`, `test_normalize_sni_hosts_dedupes_lowercases_and_limits_to_five`, `test_scan_request_takes_explicit_names_or_default`
@@ -4073,7 +4193,7 @@
   Функции: `make_service`, `test_disabled_integration_raises`, `test_missing_key_is_reported_as_not_configured`, `test_status_reports_balance_without_secret_and_reference`, `test_status_lists_active_jobs_and_missing_reference`, `test_auth_error_marks_integration_unhealthy_for_a_while`, `test_account_is_cached_between_calls`, `test_units_filters_locally_over_cached_catalog`, `test_hosts_nodes_and_configs_go_through_panel`, `test_panel_failure_becomes_panel_unavailable`, `test_subscription_configs_for_user_without_subscription_explains` — Пользователь без подписки панели — своя ошибка, а не жалоба на эталон из настроек., `test_subscription_configs_without_reference_raise`, `test_preview_probe_expands_units_reports_skipped_and_exact_price`, `test_preview_probe_warns_about_bs_host_without_sni_probe`, `test_preview_unknown_selector_is_rejected_before_api`, `test_preview_unknown_kind_is_rejected`, `test_preview_vless_is_an_estimate`, `test_preview_scan_uses_cidr_and_exact_price`, `test_preview_without_units_left_warns`, `test_create_job_writes_row_and_spawns_runner`, `test_create_job_returns_job_ready_for_response` — Роут сериализует созданную задачу сразу, включая ``legs``., `test_create_job_refuses_second_active_vless`, `test_create_job_enforces_cost_limit_and_units`, `test_create_job_refuses_when_balance_is_short`, `test_get_cancel_and_retrieve_jobs`, `test_retrieve_job_resumes_stuck_probe`, `test_summary_builds_matrix_from_latest_legs`, `test_summary_survives_panel_and_api_outage`, `test_update_pref_persists_and_changes_summary_purpose`, `test_background_sweeper_starts_and_stops`, `test_preview_probe_uses_explicit_sni_hosts_for_bare_ip`, `test_preview_probe_falls_back_to_built_in_default_sni`, `test_preview_scan_with_sni_takes_names_from_payload`, `test_parse_input_direct_links_become_custom_targets`, `test_parse_input_own_panel_url_resolves_through_panel_api`, `test_parse_input_foreign_url_is_fetched_and_referenced_by_url`, `test_parse_input_unreachable_url_is_rejected_not_raised`, `test_parse_input_base64_blob_expands_to_links`
 - `tests/services/reachability/test_subscriptions.py` — Python-модуль
   Классы: `FakeSession` (3 методов)
-  Функции: `test_is_subscription_url_and_validate_public_url`, `test_fetch_decodes_base64_body_with_client_user_agent`, `test_fetch_repeats_with_device_headers_when_panel_requires_hwid`, `test_fetch_accepts_plain_links_and_rejects_pages_errors_and_private_redirects`
+  Функции: `test_is_subscription_url_and_validate_public_url`, `test_fetch_decodes_base64_body_with_client_user_agent`, `test_fetch_repeats_with_device_headers_when_panel_requires_hwid`, `test_fetch_accepts_plain_links_and_rejects_pages_errors_and_private_redirects`, `test_public_only_resolver_passes_public_and_rejects_private`, `test_fetch_uses_public_only_resolver_for_the_real_connection` — Домен, глядящий во внутреннюю сеть, отсекается настоящим aiohttp ещё до соединения.
 - `tests/services/reachability/test_summary.py` — Python-модуль
   Классы: нет
   Функции: `test_rows_follow_panel_order_and_carry_purpose_and_cells`, `test_excluded_hosts_are_hidden_even_if_they_have_legs`, `test_legs_of_targets_missing_from_panel_go_last_with_pref_purpose`, `test_rows_are_new_objects_and_inputs_untouched`

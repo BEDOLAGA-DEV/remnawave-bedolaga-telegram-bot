@@ -12,8 +12,6 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import app.database.crud.overpay as overpay_crud_module
-import app.services.payment.overpay as overpay_mixin_module
-import app.services.payment_service as payment_service_module
 from app.config import settings
 from app.services.overpay_service import OverpayAPIError
 from app.services.payment.overpay import OVERPAY_STATUS_MAP
@@ -100,7 +98,7 @@ def overpay_settings(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
 def _make_service(stub: StubOverpayService, monkeypatch: pytest.MonkeyPatch) -> tuple[PaymentService, dict[str, Any]]:
     service = PaymentService.__new__(PaymentService)
     service.bot = None
-    monkeypatch.setattr(overpay_mixin_module, 'overpay_service', stub, raising=False)
+    monkeypatch.setattr('app.services.payment.overpay.overpay_service', stub, raising=False)
 
     captured: dict[str, Any] = {}
 
@@ -111,7 +109,7 @@ def _make_service(stub: StubOverpayService, monkeypatch: pytest.MonkeyPatch) -> 
         captured.update(kwargs)
         return DummyLocalPayment()
 
-    monkeypatch.setattr(payment_service_module, 'get_user_by_id', fake_get_user_by_id, raising=False)
+    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user_by_id, raising=False)
     monkeypatch.setattr(overpay_crud_module, 'create_overpay_payment', fake_create_overpay_payment, raising=False)
     return service, captured
 

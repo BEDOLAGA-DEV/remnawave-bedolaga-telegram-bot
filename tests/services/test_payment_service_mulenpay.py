@@ -13,7 +13,6 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import app.services.payment_service as payment_service_module
 from app.config import settings
 from app.services.mulenpay_service import MULENPAY_CLIENT_MAX_LENGTH
 from app.services.payment.mulenpay import MulenPayPaymentMixin
@@ -91,8 +90,7 @@ async def test_create_mulenpay_payment_success(monkeypatch: pytest.MonkeyPatch) 
         return DummyLocalPayment(payment_id=999)
 
     monkeypatch.setattr(
-        payment_service_module,
-        'create_mulenpay_payment',
+        'app.services.payment_service.create_mulenpay_payment',
         fake_create_mulenpay_payment,
         raising=False,
     )
@@ -171,7 +169,9 @@ async def test_create_mulenpay_payment_skips_lookup_for_guest(monkeypatch: pytes
     async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
         return DummyLocalPayment()
 
-    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    monkeypatch.setattr(
+        'app.services.payment_service.create_mulenpay_payment', fake_create_mulenpay_payment, raising=False
+    )
     _relax_limits(monkeypatch)
 
     result = await service.create_mulenpay_payment(db=db, user_id=None, amount_kopeks=25000, description='Пополнение')
@@ -193,7 +193,9 @@ async def test_create_mulenpay_payment_survives_contact_lookup_failure(
     async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
         return DummyLocalPayment()
 
-    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    monkeypatch.setattr(
+        'app.services.payment_service.create_mulenpay_payment', fake_create_mulenpay_payment, raising=False
+    )
     _relax_limits(monkeypatch)
 
     result = await service.create_mulenpay_payment(db=db, user_id=77, amount_kopeks=25000, description='Пополнение')
@@ -211,7 +213,9 @@ async def test_create_mulenpay_payment_handles_missing_user(monkeypatch: pytest.
     async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
         return DummyLocalPayment()
 
-    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    monkeypatch.setattr(
+        'app.services.payment_service.create_mulenpay_payment', fake_create_mulenpay_payment, raising=False
+    )
     _relax_limits(monkeypatch)
 
     result = await service.create_mulenpay_payment(db=db, user_id=77, amount_kopeks=25000, description='Пополнение')
@@ -230,7 +234,9 @@ async def test_explicit_client_wins_over_lookup(monkeypatch: pytest.MonkeyPatch)
     async def fake_create_mulenpay_payment(**_kwargs: Any) -> DummyLocalPayment:
         return DummyLocalPayment()
 
-    monkeypatch.setattr(payment_service_module, 'create_mulenpay_payment', fake_create_mulenpay_payment, raising=False)
+    monkeypatch.setattr(
+        'app.services.payment_service.create_mulenpay_payment', fake_create_mulenpay_payment, raising=False
+    )
     _relax_limits(monkeypatch)
 
     result = await service.create_mulenpay_payment(
@@ -400,32 +406,27 @@ async def test_process_mulenpay_callback_avoids_duplicate_transactions(
     monkeypatch.setitem(sys.modules, 'app.services.user_cart_service', user_cart_module)
 
     monkeypatch.setattr(
-        payment_service_module,
-        'get_mulenpay_payment_by_uuid',
+        'app.services.payment_service.get_mulenpay_payment_by_uuid',
         fake_get_mulenpay_payment_by_uuid,
         raising=False,
     )
     monkeypatch.setattr(
-        payment_service_module,
-        'update_mulenpay_payment_status',
+        'app.services.payment_service.update_mulenpay_payment_status',
         fake_update_mulenpay_payment_status,
         raising=False,
     )
     monkeypatch.setattr(
-        payment_service_module,
-        'create_transaction',
+        'app.services.payment_service.create_transaction',
         fake_create_transaction,
         raising=False,
     )
     monkeypatch.setattr(
-        payment_service_module,
-        'link_mulenpay_payment_to_transaction',
+        'app.services.payment_service.link_mulenpay_payment_to_transaction',
         fake_link_payment,
         raising=False,
     )
     monkeypatch.setattr(
-        payment_service_module,
-        'get_user_by_id',
+        'app.services.payment_service.get_user_by_id',
         fake_get_user_by_id,
         raising=False,
     )

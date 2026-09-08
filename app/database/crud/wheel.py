@@ -320,10 +320,6 @@ async def get_wheel_statistics(
     if date_to:
         conditions.append(WheelSpin.created_at <= date_to)
 
-    base_query = select(WheelSpin)
-    if conditions:
-        base_query = base_query.where(and_(*conditions))
-
     # Общие метрики
     result = await db.execute(
         select(

@@ -996,6 +996,8 @@
   "TARIFF_PURCHASE_CHOOSE_PERIOD": "\nدوره اشتراک را انتخاب کنید:",
   "TARIFF_PURCHASE_CONFIRM": "✅ <b>تأیید خرید</b>\n\n📦 تعرفه: <b>{name}</b>\n📊 ترافیک: {traffic}\n📱 دستگاه‌ها: {devices}\n📅 دوره: {period}\n{discount}\n💰 <b>جمع کل: {total}</b>\n\n💳 موجودی شما: {balance}\nپس از پرداخت: {after}",
   "TARIFF_PURCHASE_CONFIRM_BUTTON": "✅ تأیید خرید",
+  "TARIFF_PERIOD_BEST_VALUE_BADGE": "⭐ به‌صرفه",
+  "TARIFF_BEST_VALUE_BADGE": "⭐ به‌صرفه",
   "TARIFF_PURCHASE_CUSTOM_DAYS_LINE": "📅 روزها: <b>{days}</b> (از {min} تا {max})\n",
   "TARIFF_PURCHASE_CUSTOM_PERIOD_LINE": "📅 دوره: <b>{period}</b>\n",
   "TARIFF_PURCHASE_CUSTOM_TITLE": "📦 <b>{name}</b>\n\n<b>پارامترها را تنظیم کنید:</b>\n",

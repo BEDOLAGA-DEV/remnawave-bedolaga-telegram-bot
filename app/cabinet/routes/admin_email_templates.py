@@ -391,6 +391,22 @@ TEMPLATE_TYPES = [
         'context_vars': ['referral_name'],
     },
     {
+        'type': 'referral_welcome',
+        'label': {
+            'ru': 'Приветствие приглашённого',
+            'en': 'Referral Welcome',
+            'zh': '推荐用户欢迎',
+            'ua': 'Привітання запрошеного',
+        },
+        'description': {
+            'ru': 'Письмо новому пользователю, зарегистрировавшемуся по реферальной ссылке',
+            'en': 'Welcome email to a user who signed up via a referral link',
+            'zh': '通过推荐链接注册的新用户的欢迎邮件',
+            'ua': 'Лист новому користувачу, який зареєструвався за реферальним посиланням',
+        },
+        'context_vars': ['referrer_name', 'bonus_promise'],
+    },
+    {
         'type': 'traffic_reset',
         'label': {'ru': 'Сброс трафика', 'en': 'Traffic Reset', 'zh': '流量重置', 'ua': 'Скидання трафіку'},
         'description': {
@@ -750,6 +766,7 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
         'level': 2,
     },
     'referral_registered': {'referral_name': 'John'},
+    'referral_welcome': {'referrer_name': 'John', 'bonus_promise': '100.00 ₽ при первом пополнении от 500.00 ₽'},
     'traffic_reset': {'reset_gb': 50, 'current_limit_gb': 100},
     'payment_received': {'formatted_amount': '500.00 ₽', 'amount_rubles': 500, 'payment_method': 'YooKassa'},
     'ticket_reply': {'ticket_id': 42, 'reply_preview': 'Проверьте настройки подключения', 'has_photo': False},

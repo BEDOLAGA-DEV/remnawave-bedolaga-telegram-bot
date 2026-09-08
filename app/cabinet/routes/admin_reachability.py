@@ -13,9 +13,10 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import User
+from app.database.models import ReachabilityBatch, ReachabilityJob, User
 from app.external.bschek_api import BschekAPIError
 from app.services.permission_service import PermissionService
+from app.services.reachability.batches import BatchPreview, batch_done_targets
 from app.services.reachability.jobs import JobNotCancellable
 from app.services.reachability.pricing import CostLimitExceeded
 from app.services.reachability.requests import RequestBuildError
@@ -35,6 +36,11 @@ from app.services.reachability.units import SelectorError
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.reachability import (
+    BatchCreateRequest,
+    BatchJobOut,
+    BatchListResponse,
+    BatchOut,
+    BatchPreviewResponse,
     ConfigOut,
     HostsResponse,
     HostTargetOut,
@@ -111,7 +117,7 @@ def _target_out(target: dict[str, Any] | Target) -> TargetOut:
     return TargetOut(**{key: value for key, value in data.items() if key in TargetOut.model_fields})
 
 
-_JOB_DERIVED = ('targets', 'probes', 'sni_hosts')
+_JOB_DERIVED = ('targets', 'probes', 'sni_hosts', 'batch_id')
 
 
 def _job_out(job: Any) -> JobOut:
@@ -125,6 +131,50 @@ def _job_out(job: Any) -> JobOut:
         targets=[_target_out(target) for target in job.targets or []],
         probes=dict(probes) if isinstance(probes, dict) else None,
         sni_hosts=[str(name) for name in (request.get('sni_hosts') or [])],
+        batch_id=getattr(job, 'batch_id', None),
+    )
+
+
+def _batch_job_out(job: ReachabilityJob | Any) -> BatchJobOut:
+    result = job.result if isinstance(job.result, dict) else {}
+    return BatchJobOut(
+        id=job.id,
+        status=job.status,
+        phase=job.phase,
+        target_keys=[str(target.get('target_key') or '') for target in job.targets or []],
+        cost_kopeks=job.cost_kopeks,
+        partial=result.get('partial'),
+    )
+
+
+def _batch_out(batch: ReachabilityBatch | Any) -> BatchOut:
+    jobs = list(batch.jobs)
+    return BatchOut(
+        id=batch.id,
+        status=batch.status,
+        phase=batch.phase,
+        scope=dict(batch.scope or {}),
+        total_targets=batch.total_targets,
+        done_targets=batch_done_targets(jobs),
+        estimated_kopeks=batch.estimated_kopeks,
+        cost_kopeks=batch.cost_kopeks,
+        error_message=batch.error_message,
+        created_at=batch.created_at,
+        started_at=batch.started_at,
+        finished_at=batch.finished_at,
+        jobs=[_batch_job_out(job) for job in jobs],
+    )
+
+
+def _batch_preview_out(preview: BatchPreview | Any) -> BatchPreviewResponse:
+    return BatchPreviewResponse(
+        targets=[_target_out(target) for target in preview.targets],
+        units_resolved=list(preview.units_resolved),
+        chunks=len(preview.chunks),
+        cost_kopeks=preview.cost_kopeks,
+        estimated_minutes=preview.estimated_minutes,
+        warnings=list(preview.warnings),
+        balance_kopeks=preview.balance_kopeks,
     )
 
 
@@ -202,12 +252,20 @@ def _csv(value: str | None) -> list[str] | None:
     return items or None
 
 
-async def _audit(db: AsyncSession, admin: User, action: str, job: Any, details: dict | None = None) -> None:
+async def _audit(
+    db: AsyncSession,
+    admin: User,
+    action: str,
+    job: Any,
+    details: dict | None = None,
+    *,
+    resource_type: str = 'reachability_job',
+) -> None:
     await PermissionService.log_action(
         db,
         user_id=admin.id,
         action=action,
-        resource_type='reachability_job',
+        resource_type=resource_type,
         resource_id=str(job.id),
         details=details,
     )
@@ -405,16 +463,79 @@ async def cancel_job(
     return _job_out(job)
 
 
-@router.post('/jobs/{job_id}/retrieve', response_model=JobOut)
-async def retrieve_job(
-    job_id: int,
-    admin: User = Depends(require_permission('reachability:run')),
+# ============ Пачка проверок ============
+
+
+@router.post('/batches/preview', response_model=BatchPreviewResponse)
+async def preview_batch(
+    body: BatchCreateRequest,
+    admin: User = Depends(require_permission('reachability:read')),
     db: AsyncSession = Depends(get_cabinet_db),
-) -> JobOut:
+) -> BatchPreviewResponse:
     try:
-        return _job_out(await _service().retrieve_job(db, job_id))
+        preview = await _service().preview_batch(db, body.model_dump())
     except Exception as exc:
         raise _http(exc) from exc
+    return _batch_preview_out(preview)
+
+
+@router.post('/batches', response_model=BatchOut, status_code=status.HTTP_201_CREATED)
+async def create_batch(
+    body: BatchCreateRequest,
+    admin: User = Depends(require_permission('reachability:run')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BatchOut:
+    try:
+        batch = await _service().create_batch(db, body.model_dump(), admin.id)
+    except Exception as exc:
+        raise _http(exc) from exc
+    details = {
+        'scope': (batch.scope or {}).get('kind'),
+        'targets': batch.total_targets,
+        'estimated_kopeks': batch.estimated_kopeks,
+    }
+    await _audit(db, admin, 'reachability_batch_create', batch, details, resource_type='reachability_batch')
+    return _batch_out(batch)
+
+
+@router.get('/batches', response_model=BatchListResponse)
+async def list_batches(
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    admin: User = Depends(require_permission('reachability:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BatchListResponse:
+    try:
+        items, total = await _service().list_batches(db, offset=offset, limit=limit)
+    except Exception as exc:
+        raise _http(exc) from exc
+    return BatchListResponse(items=[_batch_out(batch) for batch in items], total=total, offset=offset, limit=limit)
+
+
+@router.get('/batches/{batch_id}', response_model=BatchOut)
+async def get_batch(
+    batch_id: int,
+    admin: User = Depends(require_permission('reachability:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BatchOut:
+    try:
+        return _batch_out(await _service().get_batch(db, batch_id))
+    except Exception as exc:
+        raise _http(exc) from exc
+
+
+@router.post('/batches/{batch_id}/cancel', response_model=BatchOut)
+async def cancel_batch(
+    batch_id: int,
+    admin: User = Depends(require_permission('reachability:run')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BatchOut:
+    try:
+        batch = await _service().cancel_batch(db, batch_id)
+    except Exception as exc:
+        raise _http(exc) from exc
+    await _audit(db, admin, 'reachability_batch_cancel', batch, resource_type='reachability_batch')
+    return _batch_out(batch)
 
 
 @router.get('/summary/hosts', response_model=SummaryResponse)

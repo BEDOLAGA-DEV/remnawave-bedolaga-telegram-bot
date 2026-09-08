@@ -2024,6 +2024,8 @@
   "TARIFF_PURCHASE_CHOOSE_PERIOD": "\n请选择订阅周期：",
   "TARIFF_PURCHASE_CONFIRM": "✅ <b>购买确认</b>\n\n📦 套餐：<b>{name}</b>\n📊 流量：{traffic}\n📱 设备：{devices}\n📅 周期：{period}\n{discount}\n💰 <b>总计：{total}</b>\n\n💳 您的余额：{balance}\n支付后：{after}",
   "TARIFF_PURCHASE_CONFIRM_BUTTON": "✅ 确认购买",
+  "TARIFF_PERIOD_BEST_VALUE_BADGE": "⭐ 超值",
+  "TARIFF_BEST_VALUE_BADGE": "⭐ 超值",
   "TARIFF_PURCHASE_CUSTOM_DAYS_LINE": "📅 天数：<b>{days}</b>（{min} 至 {max}）\n",
   "TARIFF_PURCHASE_CUSTOM_PERIOD_LINE": "📅 周期：<b>{period}</b>\n",
   "TARIFF_PURCHASE_CUSTOM_TITLE": "📦 <b>{name}</b>\n\n<b>自定义参数：</b>\n",

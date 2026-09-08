@@ -66,8 +66,10 @@ async def get_renewal_options(
         and subscription.tariff.period_prices
     ):
         periods = sorted(int(k) for k in subscription.tariff.period_prices.keys())
+        highlighted_period = subscription.tariff.highlight_period_days
     else:
         periods = settings.get_available_renewal_periods()
+        highlighted_period = None
 
     options = []
 
@@ -89,6 +91,9 @@ async def get_renewal_options(
                 price_rubles=pricing.final_total / 100,
                 discount_percent=combined_discount,
                 original_price_kopeks=original_price if combined_discount > 0 else None,
+                # Выделение живёт у тарифа. Когда периоды берутся не из тарифа
+                # (скрытый тариф, классический режим), выделять нечего.
+                is_highlighted=bool(highlighted_period is not None and highlighted_period == period),
             )
         )
 

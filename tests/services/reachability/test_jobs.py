@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -13,9 +14,6 @@ from app.database.models import User
 from app.external.bschek_api import BschekAPIError, BschekGatewayError
 from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.jobs import (
-    KIND_PROBE,
-    KIND_SCAN,
-    KIND_VLESS,
     PHASE_CANCELLING,
     PHASE_RETRIEVING,
     STATUS_CANCELLED,
@@ -26,6 +24,7 @@ from app.services.reachability.jobs import (
     JobRunner,
     RunnerConfig,
 )
+from app.services.reachability.kinds import KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.targets import Target
 from tests.fixtures.bschek_fixtures import load_bschek_fixture
 from tests.services.reachability.fakes import FakeAPI, FakeClock
@@ -550,8 +549,7 @@ async def test_poll_timeout_leaves_job_running_and_sweep_resumes_it(session_fact
 
     await runner.sweep()
     assert runner.is_active(job_id)
-    for task in list(runner._tasks.values()):
-        await task
+    await asyncio.gather(*runner._tasks.values())
     assert not runner.is_active(job_id)
     assert (await load(session_factory, job_id)).status == STATUS_DONE
 
@@ -597,6 +595,21 @@ async def test_spawn_tracks_task_until_done(session_factory) -> None:
     job_id = await make_job(session_factory, KIND_PROBE, fx['request'], [EU], ['mts|пфо|on'])
     task = runner.spawn(job_id)
     assert runner.is_active(job_id)
-    await task
+    await asyncio.gather(task)
     assert not runner.is_active(job_id)
     assert (await load(session_factory, job_id)).status == STATUS_DONE
+
+
+async def test_scan_progress_is_stored_while_running(session_factory) -> None:
+    """Пока скан идёт, его progress из GET лежит в задаче — кабинет показывает, сколько адресов уже проверено."""
+    running = {
+        **body('s1_poll_00'),
+        'progress': {'done_ips': 128, 'total_ips': 512, 'percent': 25, 'units_done': 0, 'units_total': 2},
+    }
+    api = FakeAPI({'start_scan': [body('s1_submit')], 'get_scan': [running, body('s1_poll_03')]})
+    job_id = await make_job(session_factory, KIND_SCAN, {'cidr': '192.0.2.0/24'}, CIDR, ['dobro|цфо|on'])
+    await make_runner(session_factory, api, FakeClock()).run(job_id)
+
+    job = await load(session_factory, job_id)
+    assert job.status == STATUS_DONE
+    assert job.result['progress'] == running['progress']

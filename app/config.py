@@ -451,6 +451,9 @@ class Settings(BaseSettings):
     BLACKLIST_IGNORE_ADMINS: bool = True
 
     DISPOSABLE_EMAIL_CHECK_ENABLED: bool = True
+    # Свои одноразовые домены поверх скачиваемого списка (через запятую, пробел или перенос строки).
+    # Совпадение и по поддоменам: x.mail.tm ловится записью mail.tm. Работает и без скачанного списка.
+    DISPOSABLE_EMAIL_EXTRA_DOMAINS: str = ''
 
     # Настройки перевыпуска подписки (revoke + regenerate link)
     SUBSCRIPTION_REVOKE_ENABLED: bool = True
@@ -1443,6 +1446,17 @@ class Settings(BaseSettings):
     CABINET_PASSWORD_RESET_EXPIRE_HOURS: int = 1
     CABINET_EMAIL_CHANGE_CODE_EXPIRE_MINUTES: int = 15  # Email change verification code expiration
     CABINET_EMAIL_AUTH_ENABLED: bool = True  # Enable email registration/login in cabinet
+    # Регистрация по email с одного IP. Минутное окно ловит всплеск; часовое и суточное —
+    # скрипт, который ждёт минуту и продолжает (волна одноразовых почт за триалами). 0 выключает окно.
+    CABINET_EMAIL_REGISTER_LIMIT_PER_MINUTE: int = 5
+    CABINET_EMAIL_REGISTER_LIMIT_PER_HOUR: int = 10
+    CABINET_EMAIL_REGISTER_LIMIT_PER_DAY: int = 30
+    # Повторная отправка письма подтверждения с экрана «Проверьте почту» (без входа).
+    # Лимит по IP защищает от рассылки чужими руками, лимит по адресу — от заваливания
+    # одного ящика письмами с разных адресов. 0 выключает окно.
+    CABINET_EMAIL_RESEND_LIMIT_PER_MINUTE: int = 2
+    CABINET_EMAIL_RESEND_LIMIT_PER_HOUR: int = 10
+    CABINET_EMAIL_RESEND_PER_ADDRESS_PER_HOUR: int = 5
     # Согласие с офертой и политикой при ПЕРВОЙ авторизации в кабинете (для новых юзеров).
     # False — чекбоксы не показываются и ничего не требуется (прежнее поведение).
     # Гейт сам собой отключается, если ни оферта, ни политика не включены для веба:

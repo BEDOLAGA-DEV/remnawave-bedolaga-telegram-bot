@@ -39,7 +39,7 @@ from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
 )
-from app.services.pricing_engine import pricing_engine
+from app.services.pricing_engine import PricingEngine, pricing_engine
 from app.services.subscription_purchase_service import (
     MiniAppSubscriptionPurchaseService,
     PurchaseBalanceError,
@@ -203,6 +203,9 @@ async def _build_tariff_response(
                 'price_label': settings.format_price(final_price),
                 'price_per_month_kopeks': per_month,
                 'price_per_month_label': settings.format_price(per_month),
+                # Период, отмеченный оператором как самый выгодный: кабинет
+                # обводит его рамкой, бот ставит подпись в кнопке.
+                'is_highlighted': tariff.highlight_period_days == period_days,
             }
 
             # Информация о доп. устройствах в цене
@@ -227,24 +230,13 @@ async def _build_tariff_response(
 
     traffic_label = '♾️ Безлимит' if tariff.traffic_limit_gb == 0 else f'{tariff.traffic_limit_gb} ГБ'
 
-    # Apply discount to daily price if applicable (group + promo-offer)
-    daily_price = getattr(tariff, 'daily_price_kopeks', 0)
-    original_daily_price = daily_price
-    daily_discount_percent = 0
-    if daily_price > 0:
-        from app.services.pricing_engine import PricingEngine
-        from app.utils.promo_offer import get_user_active_promo_discount_percent
-
-        daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-        daily_offer_pct = get_user_active_promo_discount_percent(user) if user else 0
-        if daily_group_pct > 0 or daily_offer_pct > 0:
-            daily_price, _, _ = PricingEngine.apply_stacked_discounts(daily_price, daily_group_pct, daily_offer_pct)
-            # Комбинированный процент для отображения
-            remaining = (100 - daily_group_pct) * (100 - daily_offer_pct)
-            daily_discount_percent = 100 - remaining // 100
+    # Суточная цена — как и периоды, только со скидкой группы: промокод накладывает
+    # кабинет для показа и сервер при списании (PricingEngine.daily_group_price).
+    original_daily_price = getattr(tariff, 'daily_price_kopeks', 0) or 0
+    daily_price, daily_discount_percent = PricingEngine.daily_group_price(original_daily_price, user)
 
     # Apply discount to custom price_per_day if applicable
-    price_per_day = tariff.price_per_day_kopeks
+    price_per_day = tariff.price_per_day_kopeks or 0
     original_price_per_day = price_per_day
     custom_days_discount_percent = 0
     if promo_group and price_per_day > 0:
@@ -270,6 +262,9 @@ async def _build_tariff_response(
         'id': tariff.id,
         'name': tariff.name,
         'description': tariff.description,
+        # Тариф отмечен оператором как выгодный: кабинет обводит карточку рамкой,
+        # бот ставит подпись в кнопке списка.
+        'is_highlighted': bool(tariff.is_highlighted),
         'tier_level': tariff.tier_level,
         'traffic_limit_gb': tariff.traffic_limit_gb,
         'traffic_limit_label': traffic_label,

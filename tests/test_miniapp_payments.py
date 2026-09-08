@@ -20,7 +20,7 @@ os.environ.setdefault('BOT_TOKEN', 'test-token')
 from app.config import settings
 from app.database.models import PaymentMethod
 from app.services.payment.cryptobot import CryptoBotPaymentMixin
-from app.services.pricing_engine import PricingEngine, RenewalPricing
+from app.services.pricing_engine import PricingEngine, RenewalPricing, pricing_engine
 from app.services.subscription_renewal_service import (
     SubscriptionRenewalPricing,
     SubscriptionRenewalResult,
@@ -49,9 +49,7 @@ def _clear_pricing_engine_instance_leak():
     перекрывает патч на УРОВНЕ КЛАССА, на который опираются тесты продления здесь.
     Снимаем его перед каждым тестом, чтобы эндпоинт продления вызвал мок класса.
     """
-    import app.services.pricing_engine as _pe
-
-    _pe.pricing_engine.__dict__.pop('calculate_renewal_price', None)
+    pricing_engine.__dict__.pop('calculate_renewal_price', None)
     yield
 
 

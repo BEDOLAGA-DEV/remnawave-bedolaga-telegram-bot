@@ -43,6 +43,16 @@ def _auth(name: str, value: object):
     return patch(f'app.cabinet.routes.auth.{name}', value)
 
 
+@pytest.fixture(autouse=True)
+def _email_auth_enabled(monkeypatch):
+    """Гейт email-входа первым запросом читает строку флага из БД; болванка db здесь
+    отдаёт один результат на любой execute, поэтому флаг решаем напрямую: включён, строки нет."""
+    from app.cabinet.auth import email_auth_gate
+
+    monkeypatch.setattr(email_auth_gate, 'get_setting_value', AsyncMock(return_value=None))
+    monkeypatch.setattr(email_auth_gate.settings, 'CABINET_EMAIL_AUTH_ENABLED', True)
+
+
 @pytest.mark.asyncio
 async def test_email_conflict_sends_code_not_token() -> None:
     """Knowing the victim's email mails a code to THEM — no merge token is issued."""

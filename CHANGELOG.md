@@ -1,5 +1,60 @@
 # Changelog
 
+## [4.6.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.5.0...v4.6.0) (2026-09-07)
+
+
+### New Features
+
+* **reachability:** вердикт лега и соответствие ожиданию по назначению хоста ([a59845e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a59845e108115c832278ac6c9889d11bc8958267))
+* **reachability:** драйвер пачки — не более трёх проб одновременно, возобновление обходчиком, отмена ([41908ff](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/41908ff60cbe67115387b689ae782f48b0bb2b12))
+* **reachability:** запуск и остановка обходчика задач в main ([f3a15ec](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f3a15eca73b02d29380a9256c718afd281e4a000))
+* **reachability:** каталог симок, селекторы и расчёт пропусков ([1e3626b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1e3626bd237336a1cdeec191c9fa84c0ea838127))
+* **reachability:** клиент API — остановка идущей пробы тем же Idempotency-Key ([0518a29](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0518a290aae152ce9bb0ebfd0f61330f4c50ad15))
+* **reachability:** клиент bschekbot API с разбором конверта ошибок и фикстуры живых ответов ([7c3ee05](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7c3ee05d9c502cfc0df23c377b0c9ace6c5aadcd))
+* **reachability:** настройки BSCHEK_*, категория реестра и права раздела ([188d95a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/188d95ada0827ad0ab160283be360d57b9b395ea))
+* **reachability:** нормализация целей, назначение хоста и подсети /24 ([ad6856a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ad6856a500fbfcc485f06e46ea2ac6e31760f61c))
+* **reachability:** остановка идущей пробы — платим только за проверенные симки ([f26781d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f26781d97d337dfd55a8e5bee8d3c90fae3ad13a))
+* **reachability:** пачка проверок — модель, миграция 0116, CRUD ([1b02ff8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1b02ff80c2ca74ade32eb0bdbc133cbcff1d2833))
+* **reachability:** правила пачки — нарезка по 10 целей, оценка времени, статус из задач ([63c34ef](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/63c34ef536ddb85226fe31b8334496cacac30b7e))
+* **reachability:** прогресс идущего скана в задаче ([7de7119](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/7de71198fc9b0cca264c14c5bf1f9d2b4b3bb787))
+* **reachability:** разбор ссылок vless/vmess/trojan/ss/hysteria2 ([20474f7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/20474f70a72e514ece21923e56b266960626142a))
+* **reachability:** разрешение целей из хостов, нод, подписок и ввода ([444d04a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/444d04ac064a41e4d1d9e59f3ec565dc64d0b66b))
+* **reachability:** раскладка ответов в леги и слияние пропусков ([eacd1c0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/eacd1c006621875221b9eaa96826190c78ddd009))
+* **reachability:** роуты и схемы /admin/reachability для кабинета ([68d8f60](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/68d8f60638f9d037e7a02ad4f47825d4cd963154))
+* **reachability:** ручки пачки проверок для кабинета — превью, запуск, статус, отмена ([4bd07dc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4bd07dc81f0edd734b6439075e321dc1a9fc9665))
+* **reachability:** сервис задач — фон, повтор ключом, опрос, отмена, обходчик ([f6eab38](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f6eab38e159fbc2b5d3c004bca7fea1ef290b7c7))
+* **reachability:** сервис пачки — превью суммой по чашкам, запуск, отмена ([6e82e79](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6e82e799270927b700e2da296d745acc33980a18))
+* **reachability:** таблицы задач, легов и предпочтений целей с CRUD и сводкой ([e107364](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e107364394211636f9c401d08970cfa8c612cde4))
+* **reachability:** тела запросов и фасад сервиса — статус, preview, запуск, сводка ([d62cf8a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d62cf8af1e98223dd546d0cfc2c8dee015a211a9))
+* **reachability:** цены — кредиты в копейки, оценка VLESS, потолок задачи ([f2cc545](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f2cc545980aaa3e39b01b4962ce7c2f325250924))
+* **reachability:** частичный результат идущей пробы в задаче — кабинет видит «проверяем…» по симкам ([ea5b9b6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ea5b9b6b4681a4718b348dc047f4cdbc279d3d8a))
+* **reachability:** шлюз платных вызовов с интервалом и повтором 429 ([aa95a7d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/aa95a7d483b472ca3a4abd27c2c26590224b949f))
+* **remnawave:** чтение хостов панели (GET /api/hosts) ([d8f26ad](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d8f26ad897758097d1da343356e4402b054e6c4f))
+
+
+### Bug Fixes
+
+* **reachability:** POST /jobs падал с MissingGreenlet — задача из CRUD отдаётся с загруженными легами ([1cb5940](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1cb5940bba3e3be9ba7c4db8b78fc774733a114c))
+* **reachability:** probe принимает не больше 10 целей — проверка до обращения к API ([8a1d0af](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8a1d0af3417654bf00ffbf545fc0fd3d29cedd5c))
+* **reachability:** SNI-хост без переменной — дефолт ads.x5.ru зашит в код ([e67ea44](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e67ea441ca0e82f8425886f33836d6a12ccc7a80))
+* **reachability:** без циклических импортов и с DNS только на публичные адреса — по замечаниям CodeQL ([fdb7bef](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fdb7befec49968711a34d99700a8206c0a94d619))
+* **reachability:** версии ядер Xray в статусе, SNI-имена только из доменов, внятная ошибка для пользователя без подписки ([ace7a6d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ace7a6df50e711ae043af3798a6030dac7260178))
+* **reachability:** зависшая проба — след последнего ответа API в задаче и потолок 45 минут вместо вечного «идёт» ([4daf218](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4daf2188dc723dcecbfd4b04b51e83ea1e13bdc4))
+* **reachability:** ошибка зависшей пробы — словами для людей, без кода ответа API; номер запроса для поддержки ([af3decc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/af3decc070dfd9b8eecd9b4f4535df18a1ec36cf))
+* **reachability:** повтор пробы без результата — уровень info, это штатное ожидание провайдера ([e2e54a1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e2e54a1f68514b170b9bf384a0b6ff53b16fddc3))
+* **reachability:** подписка как у клиента — JSON-формат (Happ/HWID), балансировщик «АВТО» по outbound, HWID-повтор ([a26fafe](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a26fafed58add66cde15a6512fdf178f5074b46c))
+* **reachability:** ссылки подписки через рабочие ручки панели, SNI-хост по умолчанию и свои имена, разбор поля «Конфиг или подписка» ([5767656](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5767656e13d0c3817ebf46dd659528f8ab69cdc6))
+* **redis:** убрать шум «Failed to enable maintenance notifications» на каждом соединении ([e4a7b9f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e4a7b9f7dcb88c7bff018382b47bcdb729395090))
+* подчистить старые замечания code scanning — пустые except, ожидание отменённых задач, setuptools в образе ([e9607b5](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e9607b59a3fe1bd98bd8c1dda4f19d5dce75012f))
+* пустые except в тикетах, подписках и панели — причина в лог; из образа убраны системные pip и setuptools ([15a393d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/15a393df3db78435bf09313b76318d4d93a84a32))
+
+
+### Documentation
+
+* **reachability:** рабочие спека и планы вынесены из репозитория, ссылки переписаны ([bfd179b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/bfd179b67514703d2b46f598e26180d4328678dd))
+* **reachability:** спецификация и планы интеграции bschekbot API ([1675b1e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1675b1efae37e7de40e97f2f7df02e5f035f1471))
+* обновить справочник структуры после удаления ручки retrieve ([4bde5b7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4bde5b7e6493a8153cfd4d736d5952b80566b4cc))
+
 ## [4.5.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.4.0...v4.5.0) (2026-09-05)
 
 

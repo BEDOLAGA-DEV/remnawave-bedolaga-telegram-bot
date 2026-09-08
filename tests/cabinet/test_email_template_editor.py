@@ -7,6 +7,8 @@
 """
 
 import html
+import re
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -305,7 +307,9 @@ async def test_preview_default_template_uses_sample_values():
     data = EmailTemplatePreviewRequest(language='ru')
     result = await preview_template('email_verification', data, _admin=None)
     assert '{verification_url}' not in result['body_html']
-    assert 'example.com' in result['body_html']
+    link = re.search(r'https?://[^\s"<>]+', result['body_html'])
+    assert link is not None, 'в превью нет ссылки подтверждения'
+    assert urlsplit(link.group(0)).hostname == 'example.com'
 
 
 # ============ Обязательные плейсхолдеры проверяются при сохранении ============

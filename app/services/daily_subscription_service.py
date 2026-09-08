@@ -149,14 +149,10 @@ class DailySubscriptionService:
 
         user = await lock_user_for_pricing(db, user.id)
 
-        # Apply group discount to daily price (consistent with PricingEngine._calculate_switch_to_daily)
+        # Только скидка группы — тот же расчёт, что показывает кабинет (PricingEngine.daily_group_price).
         from app.services.pricing_engine import PricingEngine
 
-        promo_group = PricingEngine.resolve_promo_group(user)
-        daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-        daily_price = (
-            PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
-        )
+        daily_price, _ = PricingEngine.daily_group_price(raw_daily_price, user)
 
         # Проверяем баланс (при 100% скидке — пропускаем)
         if daily_price > 0 and user.balance_kopeks < daily_price:

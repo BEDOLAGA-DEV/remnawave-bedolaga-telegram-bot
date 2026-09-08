@@ -422,6 +422,20 @@ return c
         key = cache_key('rate_limit', 'ip', ip, action)
         return await RateLimitCache._atomic_rate_check(key, limit, window, fail_closed=fail_closed)
 
+    @staticmethod
+    async def is_subject_rate_limited(
+        subject: str, action: str, limit: int, window: int, *, fail_closed: bool = False
+    ) -> bool:
+        """Rate limiting keyed by a subject other than the caller — an inbox, say.
+
+        An IP limit protects the service from one caller; it does not protect a
+        third party whose address is being mail-bombed from many addresses.
+        Callers are expected to pass an opaque digest, not the raw value: the key
+        lands in Redis and in its logs.
+        """
+        key = cache_key('rate_limit', 'subject', subject, action)
+        return await RateLimitCache._atomic_rate_check(key, limit, window, fail_closed=fail_closed)
+
 
 class TokenReplayCache:
     """Prevents OIDC id_token replay by storing token hashes with TTL."""

@@ -12,6 +12,7 @@ from app.database.crud.referral import create_referral_earning, get_commission_p
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.models import ReferralEarning, TransactionType, User
 from app.services.notification_delivery_service import (
+    NotificationType,
     notification_delivery_service,
 )
 from app.utils.redis_client import create_redis
@@ -500,6 +501,53 @@ async def _is_commission_limit_reached(db: AsyncSession, referrer_id: int, refer
     return False
 
 
+REFERRAL_NOTIFICATION_TYPES = frozenset(
+    {
+        NotificationType.REFERRAL_BONUS,
+        NotificationType.REFERRAL_REGISTERED,
+        NotificationType.REFERRAL_WELCOME,
+    }
+)
+
+
+async def _send_referral_email(
+    user: User,
+    message: str,
+    notification_type: NotificationType,
+    *,
+    bonus_kopeks: int,
+    referral_name: str,
+    bonus_days: int,
+    tariff_name: str,
+    level: int,
+    referrer_name: str,
+    bonus_promise: str,
+) -> bool:
+    """Письмо по виду события; Telegram-текст едет рядом для общего роутера."""
+    if notification_type is NotificationType.REFERRAL_REGISTERED:
+        return await notification_delivery_service.notify_referral_registered(
+            user=user,
+            referral_name=referral_name,
+            telegram_message=message,
+        )
+    if notification_type is NotificationType.REFERRAL_WELCOME:
+        return await notification_delivery_service.notify_referral_welcome(
+            user=user,
+            referrer_name=referrer_name,
+            bonus_promise=bonus_promise,
+            telegram_message=message,
+        )
+    return await notification_delivery_service.notify_referral_bonus(
+        user=user,
+        bonus_kopeks=bonus_kopeks,
+        referral_name=referral_name,
+        telegram_message=message,
+        bonus_days=bonus_days,
+        tariff_name=tariff_name,
+        level=level,
+    )
+
+
 async def send_referral_notification(
     bot: Bot,
     telegram_id: int | None,
@@ -510,6 +558,9 @@ async def send_referral_notification(
     bonus_days: int = 0,
     tariff_name: str = '',
     level: int = 1,
+    notification_type: NotificationType = NotificationType.REFERRAL_BONUS,
+    referrer_name: str = '',
+    bonus_promise: str = '',
 ):
     """
     Отправляет реферальное уведомление в Telegram или по email.
@@ -524,11 +575,23 @@ async def send_referral_notification(
         bonus_days: Начисленные дни подписки
         tariff_name: Тариф, в который легли дни
         level: Уровень цепочки, на котором заработана награда
+        notification_type: Событие — награда (по умолчанию), регистрация
+            реферала у пригласившего или приветствие самого приглашённого
+        referrer_name: Имя пригласившего (только для приветствия)
+        bonus_promise: Что обещано приглашённому, фразой (только для приветствия)
+
+    Telegram получает готовый ``message``, а письмо собирается по своему шаблону —
+    поэтому вид события обязан приходить явно. Выбор по сумме не годится:
+    регистрация и награда днями одинаково дают ноль копеек, и оба события
+    уходили как «Реферальный бонус: +0.00 ₽».
 
     Дни обязаны доехать до email-канала отдельным аргументом: в копейках они
     равны нулю, и без них письмо о выданных семи днях уходит как
     «Реферальный бонус: +0.00 ₽».
     """
+    if notification_type not in REFERRAL_NOTIFICATION_TYPES:
+        raise ValueError(f'Не реферальный тип уведомления: {notification_type.value}')
+
     if not settings.is_notifications_enabled():
         logger.debug(
             'Реферальное уведомление подавлено: уведомления пользователям отключены',
@@ -548,14 +611,17 @@ async def send_referral_notification(
     # Handle email-only users via notification delivery service
     if telegram_id is None:
         if user is not None:
-            success = await notification_delivery_service.notify_referral_bonus(
-                user=user,
+            success = await _send_referral_email(
+                user,
+                message,
+                notification_type,
                 bonus_kopeks=bonus_kopeks,
                 referral_name=referral_name,
-                telegram_message=message,
                 bonus_days=bonus_days,
                 tariff_name=tariff_name,
                 level=level,
+                referrer_name=referrer_name,
+                bonus_promise=bonus_promise,
             )
             if success:
                 logger.info('✅ Email уведомление о реферале отправлено пользователю', user_id=user.id)
@@ -676,18 +742,32 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
                 f'🎉 <b>Добро пожаловать!</b>\n\n'
                 f'Вы перешли по реферальной ссылке пользователя <b>{html.escape(referrer.full_name)}</b>!'
             )
+            # Обещание приглашённому одной фразой — общее для Telegram и письма.
+            referee_promise = ''
             if settings.is_referral_levels_scheme():
                 from app.services.referral_reward_service import describe_referee_bonus
 
-                referee_promise = await describe_referee_bonus(db, referrer=referrer)
+                referee_promise = await describe_referee_bonus(db, referrer=referrer) or ''
                 if referee_promise:
                     referral_notification += f'\n\n🎁 Ваш бонус: {referee_promise}!'
             elif settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+                referee_promise = (
+                    f'{settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)} при первом пополнении '
+                    f'от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)}'
+                )
                 referral_notification += (
                     f'\n\n💰 При первом пополнении от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)} '
                     f'вы получите бонус {settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)}!'
                 )
-            await send_referral_notification(bot, new_user.telegram_id, referral_notification, user=new_user)
+            await send_referral_notification(
+                bot,
+                new_user.telegram_id,
+                referral_notification,
+                user=new_user,
+                notification_type=NotificationType.REFERRAL_WELCOME,
+                referrer_name=referrer.full_name,
+                bonus_promise=referee_promise,
+            )
 
             if settings.is_referral_levels_scheme():
                 from app.services.referral_reward_service import describe_active_levels
@@ -708,6 +788,7 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
                     inviter_notification,
                     user=referrer,
                     referral_name=new_user.full_name,
+                    notification_type=NotificationType.REFERRAL_REGISTERED,
                 )
                 logger.info(
                     '✅ Зарегистрирован реферал (многоуровневая схема)',
@@ -739,7 +820,12 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
                     f'📈 С каждого последующего пополнения вы будете получать {commission_percent}% комиссии.'
                 )
             await send_referral_notification(
-                bot, referrer.telegram_id, inviter_notification, user=referrer, referral_name=new_user.full_name
+                bot,
+                referrer.telegram_id,
+                inviter_notification,
+                user=referrer,
+                referral_name=new_user.full_name,
+                notification_type=NotificationType.REFERRAL_REGISTERED,
             )
 
         logger.info(

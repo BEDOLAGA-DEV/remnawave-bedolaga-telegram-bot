@@ -106,6 +106,12 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str = Field(..., max_length=2048, description='Refresh token')
 
 
+class VerificationResendRequest(BaseModel):
+    """Request to resend the verification email from the «check your inbox» screen."""
+
+    email: EmailStr = Field(..., description='Email address awaiting verification')
+
+
 class PasswordForgotRequest(BaseModel):
     """Request to initiate password reset."""
 

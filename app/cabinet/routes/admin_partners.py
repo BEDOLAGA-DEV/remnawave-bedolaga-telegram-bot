@@ -54,6 +54,7 @@ from ..schemas.referral import (
     ReferralRewardTariffOption,
     ReferralSchemeUpdateRequest,
 )
+from .settings_form import env_locked_fields, form_updates, save_settings_form
 
 
 logger = structlog.get_logger(__name__)
@@ -73,6 +74,8 @@ class PartnerSettingsResponse(BaseModel):
     referral_program_enabled: bool
     first_payment_commission_percent: int | None = None
     recurring_commission_tiers: str = ''
+    # Поля, закреплённые в .env: из кабинета их не изменить, база их не перекрывает.
+    env_locked: list[str] = []
 
 
 class PartnerSettingsUpdateRequest(BaseModel):
@@ -86,6 +89,19 @@ class PartnerSettingsUpdateRequest(BaseModel):
     recurring_commission_tiers: str | None = Field(None, max_length=500)
 
 
+# Поле формы → ключ Settings. Хранение и применение — через system_settings (settings_form).
+PARTNER_SETTING_KEYS: dict[str, str] = {
+    'withdrawal_enabled': 'REFERRAL_WITHDRAWAL_ENABLED',
+    'withdrawal_min_amount_kopeks': 'REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS',
+    'withdrawal_cooldown_days': 'REFERRAL_WITHDRAWAL_COOLDOWN_DAYS',
+    'withdrawal_requisites_text': 'REFERRAL_WITHDRAWAL_REQUISITES_TEXT',
+    'partner_section_visible': 'REFERRAL_PARTNER_SECTION_VISIBLE',
+    'referral_program_enabled': 'REFERRAL_PROGRAM_ENABLED',
+    'first_payment_commission_percent': 'REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT',
+    'recurring_commission_tiers': 'REFERRAL_RECURRING_COMMISSION_TIERS',
+}
+
+
 def _build_partner_settings_response() -> PartnerSettingsResponse:
     return PartnerSettingsResponse(
         withdrawal_enabled=settings.REFERRAL_WITHDRAWAL_ENABLED,
@@ -96,6 +112,7 @@ def _build_partner_settings_response() -> PartnerSettingsResponse:
         referral_program_enabled=settings.REFERRAL_PROGRAM_ENABLED,
         first_payment_commission_percent=settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT,
         recurring_commission_tiers=settings.REFERRAL_RECURRING_COMMISSION_TIERS,
+        env_locked=env_locked_fields(PARTNER_SETTING_KEYS),
     )
 
 
@@ -111,83 +128,12 @@ async def get_partner_settings(
 async def update_partner_settings(
     request: PartnerSettingsUpdateRequest,
     admin: User = Depends(require_permission('partners:settings')),
+    db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Update partner system settings."""
-    import asyncio
-    from pathlib import Path
-
-    # Update in-memory settings
-    if request.withdrawal_enabled is not None:
-        settings.REFERRAL_WITHDRAWAL_ENABLED = request.withdrawal_enabled
-    if request.withdrawal_min_amount_kopeks is not None:
-        settings.REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS = request.withdrawal_min_amount_kopeks
-    if request.withdrawal_cooldown_days is not None:
-        settings.REFERRAL_WITHDRAWAL_COOLDOWN_DAYS = request.withdrawal_cooldown_days
-    if request.withdrawal_requisites_text is not None:
-        settings.REFERRAL_WITHDRAWAL_REQUISITES_TEXT = request.withdrawal_requisites_text
-    if request.partner_section_visible is not None:
-        settings.REFERRAL_PARTNER_SECTION_VISIBLE = request.partner_section_visible
-    if request.referral_program_enabled is not None:
-        settings.REFERRAL_PROGRAM_ENABLED = request.referral_program_enabled
-    if request.first_payment_commission_percent is not None:
-        settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT = request.first_payment_commission_percent
-    if request.recurring_commission_tiers is not None:
-        settings.REFERRAL_RECURRING_COMMISSION_TIERS = request.recurring_commission_tiers
-
-    # Persist to .env file
-    try:
-        env_file = Path('.env')
-        if await asyncio.to_thread(env_file.exists):
-            lines = (await asyncio.to_thread(env_file.read_text)).splitlines()
-            updates: dict[str, str] = {}
-
-            if request.withdrawal_enabled is not None:
-                updates['REFERRAL_WITHDRAWAL_ENABLED'] = str(request.withdrawal_enabled).lower()
-            if request.withdrawal_min_amount_kopeks is not None:
-                updates['REFERRAL_WITHDRAWAL_MIN_AMOUNT_KOPEKS'] = str(request.withdrawal_min_amount_kopeks)
-            if request.withdrawal_cooldown_days is not None:
-                updates['REFERRAL_WITHDRAWAL_COOLDOWN_DAYS'] = str(request.withdrawal_cooldown_days)
-            if request.withdrawal_requisites_text is not None:
-                # Sanitize: replace newlines to prevent .env injection
-                sanitized = (
-                    request.withdrawal_requisites_text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
-                )
-                updates['REFERRAL_WITHDRAWAL_REQUISITES_TEXT'] = sanitized
-            if request.partner_section_visible is not None:
-                updates['REFERRAL_PARTNER_SECTION_VISIBLE'] = str(request.partner_section_visible).lower()
-            if request.referral_program_enabled is not None:
-                updates['REFERRAL_PROGRAM_ENABLED'] = str(request.referral_program_enabled).lower()
-            if request.first_payment_commission_percent is not None:
-                updates['REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT'] = str(request.first_payment_commission_percent)
-            if request.recurring_commission_tiers is not None:
-                sanitized_tiers = (
-                    request.recurring_commission_tiers.replace('\r\n', '').replace('\n', '').replace('\r', '')
-                )
-                updates['REFERRAL_RECURRING_COMMISSION_TIERS'] = sanitized_tiers
-
-            new_lines = []
-            updated_keys: set[str] = set()
-
-            for line in lines:
-                updated = False
-                for key, value in updates.items():
-                    if line.startswith(f'{key}='):
-                        new_lines.append(f'{key}={value}')
-                        updated_keys.add(key)
-                        updated = True
-                        break
-                if not updated:
-                    new_lines.append(line)
-
-            for key, value in updates.items():
-                if key not in updated_keys:
-                    new_lines.append(f'{key}={value}')
-
-            await asyncio.to_thread(env_file.write_text, '\n'.join(new_lines) + '\n')
-            logger.info('Updated partner settings in .env file', admin_id=admin.id)
-    except Exception as e:
-        logger.warning('Failed to update .env file', error=e)
-
+    """Update partner system settings — в system_settings, с применением сразу."""
+    updates = form_updates(PARTNER_SETTING_KEYS, request.model_dump(exclude_none=True))
+    await save_settings_form(db, updates)
+    logger.info('Admin updated partner settings', admin_id=admin.id, keys=sorted(updates))
     return _build_partner_settings_response()
 
 
