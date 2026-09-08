@@ -10,6 +10,7 @@ from functools import partial
 from typing import Any
 
 from app.config import settings
+from app.services.notification_types import NotificationType
 
 
 class EmailNotificationTemplates:
@@ -53,9 +54,6 @@ class EmailNotificationTemplates:
         рукописная копия рядом отставала, и письма уходили со стандартным
         шаблоном, который нельзя было поменять.
         """
-        # Import here to avoid circular imports
-        from app.services.notification_delivery_service import NotificationType
-
         template_map: dict[NotificationType, Callable[[str, dict[str, Any]], dict[str, str]]] = {
             NotificationType.BALANCE_TOPUP: self._balance_topup_template,
             NotificationType.BALANCE_CHANGE: self._balance_change_template,
@@ -76,6 +74,7 @@ class EmailNotificationTemplates:
             NotificationType.WARNING_NOTIFICATION: self._warning_template,
             NotificationType.REFERRAL_BONUS: self._referral_bonus_template,
             NotificationType.REFERRAL_REGISTERED: self._referral_registered_template,
+            NotificationType.REFERRAL_WELCOME: self._referral_welcome_template,
             NotificationType.PARTNER_APPLICATION_APPROVED: self._partner_approved_template,
             NotificationType.PARTNER_APPLICATION_REJECTED: self._partner_rejected_template,
             NotificationType.WITHDRAWAL_APPROVED: self._withdrawal_approved_template,
@@ -1440,6 +1439,53 @@ class EmailNotificationTemplates:
                     <p>A new user registered using your link{f': <strong>{referral_name}</strong>' if referral_name else ''}.</p>
                 </div>
                 <p>You will receive bonuses from their top-ups!</p>
+                {self._get_cabinet_button(language)}
+            """,
+        }
+
+        return {
+            'subject': subjects.get(language, subjects['ru']),
+            'body_html': self._get_base_template(bodies.get(language, bodies['ru']), language),
+        }
+
+    def _referral_welcome_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        """Template for the newcomer who registered by a referral link.
+
+        Приглашённому обещают не выплату, а условие («7 дн. подписки», «100 ₽ при
+        первом пополнении от 500 ₽») — оно приходит готовой фразой в
+        ``bonus_promise``; пустая фраза — блок с бонусом не показывается.
+        """
+        referrer_name = html.escape(context.get('referrer_name', '') or '')
+        bonus_promise = html.escape(context.get('bonus_promise', '') or '')
+        by_whom_ru = f' пользователя <strong>{referrer_name}</strong>' if referrer_name else ''
+        by_whom_en = f' of <strong>{referrer_name}</strong>' if referrer_name else ''
+        promise_ru = f'<p>Ваш бонус: <span class="amount">{bonus_promise}</span></p>' if bonus_promise else ''
+        promise_en = f'<p>Your bonus: <span class="amount">{bonus_promise}</span></p>' if bonus_promise else ''
+
+        subjects = {
+            'ru': 'Добро пожаловать по приглашению',
+            'en': 'Welcome by invitation',
+            'zh': '欢迎通过邀请加入',
+            'ua': 'Ласкаво просимо за запрошенням',
+        }
+
+        bodies = {
+            'ru': f"""
+                <h2>Добро пожаловать!</h2>
+                <div class="highlight success">
+                    <p>Вы зарегистрировались по реферальной ссылке{by_whom_ru}.</p>
+                    {promise_ru}
+                </div>
+                <p>Рады видеть вас среди наших пользователей!</p>
+                {self._get_cabinet_button(language)}
+            """,
+            'en': f"""
+                <h2>Welcome!</h2>
+                <div class="highlight success">
+                    <p>You signed up using the referral link{by_whom_en}.</p>
+                    {promise_en}
+                </div>
+                <p>Glad to have you with us!</p>
                 {self._get_cabinet_button(language)}
             """,
         }

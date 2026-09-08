@@ -10,7 +10,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import app.services.nalogo_service as nalogo_module
 from app.services.nalogo_service import NALOGO_PENDING_VERIFICATION_KEY, NaloGoService
 
 
@@ -67,7 +66,7 @@ def _pending(**overrides) -> dict:
 async def test_pending_verification_entry_keeps_user_email(monkeypatch):
     """Почта покупателя обязана лечь в очередь — иначе при пересылке её нет."""
     cache = _FakeCache()
-    monkeypatch.setattr(nalogo_module, 'cache', cache)
+    monkeypatch.setattr('app.services.nalogo_service.cache', cache)
 
     await _service()._save_pending_verification(
         name='Оплата подписки',
@@ -88,9 +87,9 @@ async def test_pending_verification_entry_keeps_user_email(monkeypatch):
 async def test_retry_delivers_receipt_to_the_buyer(monkeypatch):
     """Чек, созданный ручной пересылкой, доставляется покупателю."""
     cache = _FakeCache({NALOGO_PENDING_VERIFICATION_KEY: [_pending()]})
-    monkeypatch.setattr(nalogo_module, 'cache', cache)
+    monkeypatch.setattr('app.services.nalogo_service.cache', cache)
     notify = AsyncMock()
-    monkeypatch.setattr(nalogo_module, 'send_nalogo_receipt_notifications', notify)
+    monkeypatch.setattr('app.services.nalogo_service.send_nalogo_receipt_notifications', notify)
     service = _service()
     monkeypatch.setattr(service, 'create_receipt', AsyncMock(return_value='uuid-42'))
     bot = SimpleNamespace()
@@ -110,9 +109,9 @@ async def test_retry_delivers_receipt_to_the_buyer(monkeypatch):
 async def test_retry_recovers_amount_from_legacy_entry(monkeypatch):
     """Старые записи очереди без amount_kopeks — сумма берётся из amount."""
     cache = _FakeCache({NALOGO_PENDING_VERIFICATION_KEY: [_pending(amount_kopeks=None)]})
-    monkeypatch.setattr(nalogo_module, 'cache', cache)
+    monkeypatch.setattr('app.services.nalogo_service.cache', cache)
     notify = AsyncMock()
-    monkeypatch.setattr(nalogo_module, 'send_nalogo_receipt_notifications', notify)
+    monkeypatch.setattr('app.services.nalogo_service.send_nalogo_receipt_notifications', notify)
     service = _service()
     monkeypatch.setattr(service, 'create_receipt', AsyncMock(return_value='uuid-42'))
 
@@ -128,10 +127,9 @@ async def test_retry_keeps_receipt_when_delivery_fails(monkeypatch):
     же платёж.
     """
     cache = _FakeCache({NALOGO_PENDING_VERIFICATION_KEY: [_pending()]})
-    monkeypatch.setattr(nalogo_module, 'cache', cache)
+    monkeypatch.setattr('app.services.nalogo_service.cache', cache)
     monkeypatch.setattr(
-        nalogo_module,
-        'send_nalogo_receipt_notifications',
+        'app.services.nalogo_service.send_nalogo_receipt_notifications',
         AsyncMock(side_effect=RuntimeError('telegram down')),
     )
     service = _service()
@@ -144,9 +142,9 @@ async def test_retry_keeps_receipt_when_delivery_fails(monkeypatch):
 async def test_retry_without_bot_still_creates_receipt(monkeypatch):
     """Без bot чек всё равно создаётся — старое поведение не ломаем."""
     cache = _FakeCache({NALOGO_PENDING_VERIFICATION_KEY: [_pending()]})
-    monkeypatch.setattr(nalogo_module, 'cache', cache)
+    monkeypatch.setattr('app.services.nalogo_service.cache', cache)
     notify = AsyncMock()
-    monkeypatch.setattr(nalogo_module, 'send_nalogo_receipt_notifications', notify)
+    monkeypatch.setattr('app.services.nalogo_service.send_nalogo_receipt_notifications', notify)
     service = _service()
     monkeypatch.setattr(service, 'create_receipt', AsyncMock(return_value='uuid-42'))
 

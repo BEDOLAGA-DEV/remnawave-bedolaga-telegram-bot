@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.auth.email_auth_gate import EMAIL_AUTH_ENABLED_KEY, is_email_auth_enabled
 from app.config import settings
 from app.database.crud.system_setting import get_setting_value
 from app.database.models import SystemSetting, User
@@ -38,7 +39,6 @@ THEME_COLORS_KEY = 'CABINET_THEME_COLORS'  # Stores JSON with theme colors
 ENABLED_THEMES_KEY = 'CABINET_ENABLED_THEMES'  # Stores JSON with enabled themes {"dark": true, "light": false}
 ANIMATION_ENABLED_KEY = 'CABINET_ANIMATION_ENABLED'  # Stores "true" or "false"
 FULLSCREEN_ENABLED_KEY = 'CABINET_FULLSCREEN_ENABLED'  # Stores "true" or "false"
-EMAIL_AUTH_ENABLED_KEY = 'CABINET_EMAIL_AUTH_ENABLED'  # Stores "true" or "false"
 YANDEX_METRIKA_ID_KEY = 'CABINET_YANDEX_METRIKA_ID'  # Stores counter ID (numeric string)
 GOOGLE_ADS_ID_KEY = 'CABINET_GOOGLE_ADS_ID'  # Stores conversion ID (e.g. "AW-123456789")
 GOOGLE_ADS_LABEL_KEY = 'CABINET_GOOGLE_ADS_LABEL'  # Stores conversion label (alphanumeric)
@@ -1067,20 +1067,10 @@ async def get_email_auth_enabled(
     """
     Get email auth enabled setting.
     This is a public endpoint - no authentication required.
-    Controls whether email registration/login is available.
+    Тот же резолвер, что гейтит email-роуты: кнопка и API не расходятся.
     """
-    email_auth_value = await get_setting_value(db, EMAIL_AUTH_ENABLED_KEY)
-
-    if email_auth_value is not None:
-        enabled = email_auth_value.lower() == 'true'
-        return EmailAuthEnabledResponse(
-            enabled=enabled,
-            verification_enabled=settings.is_cabinet_email_verification_enabled(),
-        )
-
-    # Default: check config setting
     return EmailAuthEnabledResponse(
-        enabled=settings.is_cabinet_email_auth_enabled(),
+        enabled=await is_email_auth_enabled(db),
         verification_enabled=settings.is_cabinet_email_verification_enabled(),
     )
 

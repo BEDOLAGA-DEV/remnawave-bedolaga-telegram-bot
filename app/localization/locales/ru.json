@@ -996,6 +996,8 @@
   "TARIFF_PURCHASE_CHOOSE_PERIOD": "\nВыберите период подписки:",
   "TARIFF_PURCHASE_CONFIRM": "✅ <b>Подтверждение покупки</b>\n\n📦 Тариф: <b>{name}</b>\n📊 Трафик: {traffic}\n📱 Устройств: {devices}\n📅 Период: {period}\n{discount}\n💰 <b>Итого: {total}</b>\n\n💳 Ваш баланс: {balance}\nПосле оплаты: {after}",
   "TARIFF_PURCHASE_CONFIRM_BUTTON": "✅ Подтвердить покупку",
+  "TARIFF_PERIOD_BEST_VALUE_BADGE": "⭐ выгодно",
+  "TARIFF_BEST_VALUE_BADGE": "⭐ выгодно",
   "TARIFF_PURCHASE_CUSTOM_DAYS_LINE": "📅 Дней: <b>{days}</b> (от {min} до {max})\n",
   "TARIFF_PURCHASE_CUSTOM_PERIOD_LINE": "📅 Период: <b>{period}</b>\n",
   "TARIFF_PURCHASE_CUSTOM_TITLE": "📦 <b>{name}</b>\n\n<b>Настройте параметры:</b>\n",

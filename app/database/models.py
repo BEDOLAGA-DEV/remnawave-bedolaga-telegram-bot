@@ -2015,6 +2015,16 @@ class Tariff(Base):
     # Уровень тарифа (для визуального отображения, 1 = базовый)
     tier_level = Column(Integer, default=1, nullable=False)
 
+    # Период, выделенный оператором как самый выгодный (число дней из period_prices).
+    # Хранится днями, а не индексом: набор периодов правят, и индекс после правки
+    # указывал бы на другой период. None = ничего не выделено.
+    highlight_period_days = Column(Integer, nullable=True, default=None)
+
+    # Сам тариф отмечен оператором как выгодный: выделяется в списке тарифов.
+    # Отдельно от highlight_period_days — это разные экраны: сначала выбирают
+    # тариф, потом период внутри него.
+    is_highlighted = Column(Boolean, default=False, server_default='false', nullable=False)
+
     # Дополнительные настройки
     is_trial_available = Column(Boolean, default=False, nullable=False)  # Можно ли взять триал на этом тарифе
     allow_traffic_topup = Column(Boolean, default=True, nullable=False)  # Разрешена ли докупка трафика для этого тарифа

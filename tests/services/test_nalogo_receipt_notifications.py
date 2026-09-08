@@ -16,14 +16,14 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
 )
 
-import app.services.nalogo_service as _nalogo_module
 from app.config import settings
+from app.services import nalogo_service
 from app.services.nalogo_service import send_nalogo_receipt_notifications
 
 
 # Autouse-фикстура ниже подменяет _download_receipt_file, поэтому настоящую
 # функцию забираем сейчас — иначе тесты самого скачивания проверяли бы мок.
-_REAL_DOWNLOAD = _nalogo_module._download_receipt_file
+_REAL_DOWNLOAD = nalogo_service._download_receipt_file
 
 
 @pytest.fixture(autouse=True)
@@ -597,7 +597,7 @@ async def test_routine_delivery_failures_are_warnings_not_errors(monkeypatch, er
     _patch_user_lookup(monkeypatch, None)
     _patch_email(monkeypatch, configured=False)
     log = MagicMock()
-    monkeypatch.setattr(_nalogo_module, 'logger', log)
+    monkeypatch.setattr('app.services.nalogo_service.logger', log)
     bot = _bot()
     bot.send_message = AsyncMock(side_effect=error)
 

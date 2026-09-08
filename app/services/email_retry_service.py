@@ -56,9 +56,14 @@ STATUS_PENDING = 'pending'
 STATUS_SENT = 'sent'
 STATUS_DEAD = 'dead'
 
+# Причина закрытия письма, которое отправлять некому.
+NO_SMTP_REASON = 'SMTP не настроен — отправлять письмо некому'
+
 
 class EmailRetryService:
     def __init__(self) -> None:
+        # Про отсутствующий SMTP говорим один раз, а не на каждом опросе очереди.
+        self._reported_missing_smtp = False
         self._queue: asyncio.Queue[dict[str, Any]] | None = None
         self._writer: asyncio.Task | None = None
         self._worker: asyncio.Task | None = None
@@ -260,6 +265,13 @@ class EmailRetryService:
                 logger.warning('Сбой цикла повторной отправки писем', error=str(e)[:200])
 
     async def _process_due(self) -> None:
+        from app.cabinet.services.email_service import email_service
+
+        if not email_service.is_configured():
+            await self._close_pending_without_smtp()
+            return
+
+        self._reported_missing_smtp = False
         now = datetime.now(tz=UTC)
         async with AsyncSessionLocal() as session:
             rows = (
@@ -307,6 +319,34 @@ class EmailRetryService:
 
         for item in items:
             await self._attempt(item)
+
+    async def _close_pending_without_smtp(self) -> None:
+        """Закрыть очередь, пока почтовый сервер не настроен.
+
+        Без сервера письмо не уйдёт ни на первой попытке, ни на десятой, поэтому
+        крутить бэкофф сутки и заканчивать ошибкой «письмо потеряно» — только шум
+        в админ-чате. Закрываем сразу, одним сообщением на всю пачку и уровнем
+        предупреждения: это состояние настроек, а не сбой доставки.
+
+        Копить письма «до лучших времён» тоже нельзя: внутри коды и одноразовые
+        ссылки, а доставленное через неделю письмо выглядит настоящим.
+        """
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                update(EmailQueueItem)
+                .where(EmailQueueItem.status == STATUS_PENDING)
+                .values(status=STATUS_DEAD, last_error=NO_SMTP_REASON, **_PURGED_BODY)
+            )
+            await session.commit()
+
+        closed = result.rowcount or 0
+        if closed and not self._reported_missing_smtp:
+            logger.warning(
+                'Письма не отправляются: SMTP не настроен',
+                closed=closed,
+                hint='заполните SMTP_HOST и адрес отправителя либо игнорируйте — почта отключена',
+            )
+            self._reported_missing_smtp = True
 
     async def _attempt(self, item: dict[str, Any]) -> None:
         from app.cabinet.services.email_service import email_service

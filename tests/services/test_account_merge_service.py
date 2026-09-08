@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.config import Settings
+from app.config import Settings, settings
 from app.services import account_merge_service
 from app.services.account_merge_service import (
     _build_subscription_preview,
@@ -993,3 +993,52 @@ class TestExecuteMergeSelfReferralPrevention:
             result = await execute_merge(db, 1, 2)
 
         assert result.referred_by_id is None
+
+
+class TestRemnawaveDeleteMode:
+    """``REMNAWAVE_USER_DELETE_MODE=disable`` запрещает удалять аккаунты панели.
+
+    Мерж убирал аккаунт слитого профиля напрямую, мимо настройки — тот же класс
+    дефекта, что и сброс триала.
+    """
+
+    @staticmethod
+    def _api_spy(monkeypatch):
+        from contextlib import asynccontextmanager
+
+        api = AsyncMock()
+
+        @asynccontextmanager
+        async def fake_api():
+            yield api
+
+        monkeypatch.setattr(account_merge_service, '_get_remnawave_api', fake_api)
+        return api
+
+    async def test_disable_mode_deactivates_merged_account(self, monkeypatch):
+        monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+        api = self._api_spy(monkeypatch)
+
+        await account_merge_service._delete_remnawave_user_with_fallback(1001)
+
+        api.disable_user.assert_awaited_once_with(1001)
+        api.delete_user.assert_not_awaited()
+
+    async def test_delete_mode_still_deletes(self, monkeypatch):
+        monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'delete')
+        api = self._api_spy(monkeypatch)
+
+        await account_merge_service._delete_remnawave_user_with_fallback(1001)
+
+        api.delete_user.assert_awaited_once_with(1001)
+        api.disable_user.assert_not_awaited()
+
+    async def test_disable_failure_is_swallowed(self, monkeypatch):
+        """Мерж уже закоммичен — сбой уборки в панели не должен ронять вызывающего."""
+        monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+        api = self._api_spy(monkeypatch)
+        api.disable_user.side_effect = RuntimeError('panel down')
+
+        await account_merge_service._delete_remnawave_user_with_fallback(1001)
+
+        api.delete_user.assert_not_awaited()

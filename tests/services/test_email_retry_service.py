@@ -45,6 +45,13 @@ def _row(**kw) -> MagicMock:
     return row
 
 
+def _configured_mail() -> MagicMock:
+    """Настроенный SMTP: очередь имеет смысл только при нём (см. блок «SMTP не настроен»)."""
+    mail = MagicMock()
+    mail.is_configured.return_value = True
+    return mail
+
+
 # ============ срок годности содержимого ============
 
 
@@ -68,9 +75,12 @@ async def test_expired_item_is_killed_without_sending():
     session.execute = AsyncMock(return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [row])))
     attempted: list = []
 
-    with patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session):
-        with patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))):
-            await service._process_due()
+    with (
+        patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session),
+        patch('app.cabinet.services.email_service.email_service', _configured_mail()),
+        patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))),
+    ):
+        await service._process_due()
 
     assert attempted == [], 'просроченное письмо отправлять нельзя'
     killed = session.execute.await_args_list[-1].args[0]
@@ -87,9 +97,12 @@ async def test_live_item_is_still_sent():
     session.execute = AsyncMock(return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [row])))
     attempted: list = []
 
-    with patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session):
-        with patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))):
-            await service._process_due()
+    with (
+        patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session),
+        patch('app.cabinet.services.email_service.email_service', _configured_mail()),
+        patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))),
+    ):
+        await service._process_due()
 
     assert len(attempted) == 1
 
@@ -100,9 +113,12 @@ async def test_item_without_expiry_is_unrestricted():
     session.execute = AsyncMock(return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [_row()])))
     attempted: list = []
 
-    with patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session):
-        with patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))):
-            await service._process_due()
+    with (
+        patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session),
+        patch('app.cabinet.services.email_service.email_service', _configured_mail()),
+        patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))),
+    ):
+        await service._process_due()
 
     assert len(attempted) == 1
 
@@ -214,3 +230,85 @@ async def test_body_survives_between_attempts():
 
 async def test_stop_is_safe_without_start():
     await EmailRetryService().stop()
+
+
+# ============ SMTP не настроен ============
+#
+# Отчёт из «Багов»: у владельца нет SMTP, а очередь всё равно крутила по десять
+# попыток на письмо и в конце слала админам «Письмо потеряно: исчерпаны все
+# попытки отправки». Без сервера письмо не уйдёт ни на первой попытке, ни на
+# десятой: очередь обязана закрыть его сразу, одним сообщением и без ошибки.
+
+
+def _unconfigured_mail() -> MagicMock:
+    mail = MagicMock()
+    mail.is_configured.return_value = False
+    mail.send_email = MagicMock(return_value=False)
+    return mail
+
+
+async def test_pending_letters_are_closed_when_smtp_is_absent():
+    service = EmailRetryService()
+    session = _session_mock()
+    session.execute = AsyncMock(return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [_row(), _row(id=2)])))
+    attempted: list = []
+
+    with (
+        patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session),
+        patch('app.cabinet.services.email_service.email_service', _unconfigured_mail()),
+        patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))),
+    ):
+        await service._process_due()
+
+    assert attempted == [], 'без SMTP попыток отправки быть не должно'
+    closed = session.execute.await_args_list[-1].args[0]
+    values = closed.compile().params
+    assert values['status'] == STATUS_DEAD
+    assert 'SMTP' in values['last_error']
+    assert values['body_html'] == '', 'тело письма, которое некому отправить, хранить незачем'
+
+
+async def test_absent_smtp_is_reported_once_not_per_letter():
+    """Одно сообщение на всё время, и не ошибкой: это настройка, а не сбой доставки."""
+    service = EmailRetryService()
+    session = _session_mock()
+    session.execute = AsyncMock(return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [_row(), _row(id=2)])))
+    session.execute.return_value.rowcount = 2
+
+    with (
+        patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session),
+        patch('app.cabinet.services.email_service.email_service', _unconfigured_mail()),
+        patch('app.services.email_retry_service.logger') as log,
+    ):
+        await service._process_due()
+        await service._process_due()
+        await service._process_due()
+
+    assert log.warning.call_count == 1, f'ожидалось одно предупреждение, получено {log.warning.call_count}'
+    log.error.assert_not_called()
+
+
+async def test_queue_resumes_after_smtp_appears():
+    service = EmailRetryService()
+    session = _session_mock()
+    session.execute = AsyncMock(return_value=MagicMock(scalars=lambda: MagicMock(all=lambda: [_row()])))
+    attempted: list = []
+
+    configured = MagicMock()
+    configured.is_configured.return_value = True
+
+    with (
+        patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session),
+        patch('app.cabinet.services.email_service.email_service', _unconfigured_mail()),
+        patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))),
+    ):
+        await service._process_due()
+    assert attempted == []
+
+    with (
+        patch('app.services.email_retry_service.AsyncSessionLocal', return_value=session),
+        patch('app.cabinet.services.email_service.email_service', configured),
+        patch.object(service, '_attempt', AsyncMock(side_effect=lambda item: attempted.append(item))),
+    ):
+        await service._process_due()
+    assert len(attempted) == 1, 'после появления SMTP очередь снова работает'

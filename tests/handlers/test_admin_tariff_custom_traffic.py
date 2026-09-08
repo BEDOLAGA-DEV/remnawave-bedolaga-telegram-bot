@@ -26,6 +26,7 @@ def _tariff(**overrides):
         'tier_level': 1,
         'display_order': 0,
         'period_prices': {'30': 0},
+        'highlight_period_days': None,
         'allowed_squads': [],
         'allowed_promo_groups': [],
         'traffic_topup_enabled': False,

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-import app.services.apple_iap as apple_iap_module
 from app.config import settings
 from app.services.apple_iap import AppleFulfillmentResult, AppleIAPFulfillmentService, AppleIAPNotificationService
 
@@ -111,13 +110,13 @@ async def test_fulfill_verified_transaction_happy_path_credits_balance_after_use
     service = AppleIAPFulfillmentService()
     side_effects = AsyncMock()
     service._emit_credit_side_effects = side_effects  # type: ignore[method-assign]
-    monkeypatch.setattr(apple_iap_module, 'get_apple_transaction_by_transaction_id', AsyncMock(return_value=None))
+    monkeypatch.setattr('app.services.apple_iap.get_apple_transaction_by_transaction_id', AsyncMock(return_value=None))
     monkeypatch.setattr(
-        apple_iap_module, 'get_apple_transaction_by_web_order_line_item_id', AsyncMock(return_value=None)
+        'app.services.apple_iap.get_apple_transaction_by_web_order_line_item_id', AsyncMock(return_value=None)
     )
-    monkeypatch.setattr(apple_iap_module, 'lock_user_for_update', lock_user)
-    monkeypatch.setattr(apple_iap_module, 'create_apple_transaction', create_apple_transaction)
-    monkeypatch.setattr(apple_iap_module, 'create_transaction', create_transaction)
+    monkeypatch.setattr('app.services.apple_iap.lock_user_for_update', lock_user)
+    monkeypatch.setattr('app.services.apple_iap.create_apple_transaction', create_apple_transaction)
+    monkeypatch.setattr('app.services.apple_iap.create_transaction', create_transaction)
 
     result = await service.fulfill_verified_transaction(
         db,
@@ -155,20 +154,18 @@ async def test_fulfill_verified_transaction_insert_race_returns_existing_without
     create_transaction = AsyncMock()
 
     monkeypatch.setattr(
-        apple_iap_module,
-        'get_apple_transaction_by_transaction_id',
+        'app.services.apple_iap.get_apple_transaction_by_transaction_id',
         AsyncMock(side_effect=[None, existing]),
     )
     monkeypatch.setattr(
-        apple_iap_module, 'get_apple_transaction_by_web_order_line_item_id', AsyncMock(return_value=None)
+        'app.services.apple_iap.get_apple_transaction_by_web_order_line_item_id', AsyncMock(return_value=None)
     )
-    monkeypatch.setattr(apple_iap_module, 'lock_user_for_update', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.apple_iap.lock_user_for_update', AsyncMock(return_value=user))
     monkeypatch.setattr(
-        apple_iap_module,
-        'create_apple_transaction',
+        'app.services.apple_iap.create_apple_transaction',
         AsyncMock(side_effect=IntegrityError('insert', {}, Exception('duplicate'))),
     )
-    monkeypatch.setattr(apple_iap_module, 'create_transaction', create_transaction)
+    monkeypatch.setattr('app.services.apple_iap.create_transaction', create_transaction)
 
     result = await AppleIAPFulfillmentService().fulfill_verified_transaction(
         db,
@@ -193,7 +190,7 @@ async def test_one_time_charge_dispatch_fulfills_account_owner(monkeypatch: pyte
     fulfillment = SimpleNamespace(
         fulfill_verified_transaction=AsyncMock(return_value=AppleFulfillmentResult(True, 'credited'))
     )
-    monkeypatch.setattr(apple_iap_module, 'get_apple_iap_account_by_token', AsyncMock(return_value=account))
+    monkeypatch.setattr('app.services.apple_iap.get_apple_iap_account_by_token', AsyncMock(return_value=account))
 
     reason = await AppleIAPNotificationService(fulfillment_service=fulfillment)._handle_one_time_charge(db, _txn_info())
 
@@ -229,11 +226,11 @@ async def test_refund_success_debits_balance_and_marks_transaction_refunded(
     subtract_balance = AsyncMock()
     mark_refunded = AsyncMock()
     monkeypatch.setattr(
-        apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', AsyncMock(return_value=apple_txn)
+        'app.services.apple_iap.get_apple_transaction_by_transaction_id_for_update', AsyncMock(return_value=apple_txn)
     )
-    monkeypatch.setattr(apple_iap_module, 'lock_user_for_pricing', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.apple_iap.lock_user_for_pricing', AsyncMock(return_value=user))
     monkeypatch.setattr('app.database.crud.user.subtract_user_balance', subtract_balance)
-    monkeypatch.setattr(apple_iap_module, 'mark_apple_transaction_refunded', mark_refunded)
+    monkeypatch.setattr('app.services.apple_iap.mark_apple_transaction_refunded', mark_refunded)
 
     reason = await AppleIAPNotificationService()._handle_refund(db, _txn_info())
 
@@ -268,16 +265,14 @@ async def test_notification_payload_hash_insert_race_is_treated_as_replay(
                 'data': {'environment': 'Sandbox'},
             }
 
-    monkeypatch.setattr(apple_iap_module, 'AsyncSessionLocal', lambda: _AsyncContextWithValue(db))
-    monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_uuid', AsyncMock(return_value=None))
+    monkeypatch.setattr('app.services.apple_iap.AsyncSessionLocal', lambda: _AsyncContextWithValue(db))
+    monkeypatch.setattr('app.services.apple_iap.get_apple_notification_by_uuid', AsyncMock(return_value=None))
     monkeypatch.setattr(
-        apple_iap_module,
-        'get_apple_notification_by_payload_hash',
+        'app.services.apple_iap.get_apple_notification_by_payload_hash',
         AsyncMock(side_effect=[None, existing_payload]),
     )
     monkeypatch.setattr(
-        apple_iap_module,
-        'create_apple_notification',
+        'app.services.apple_iap.create_apple_notification',
         AsyncMock(side_effect=IntegrityError('insert', {}, Exception('duplicate'))),
     )
 

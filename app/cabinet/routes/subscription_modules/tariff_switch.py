@@ -22,6 +22,7 @@ from app.database.models import PaymentMethod, Subscription, TransactionType, Us
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
+from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import TariffPurchaseRequest
@@ -132,11 +133,7 @@ async def preview_tariff_switch(
             detail='Tariff not available for your promo group',
         )
 
-    # Calculate remaining days
-    remaining_days = 0
-    if subscription.end_date and subscription.end_date > datetime.now(UTC):
-        delta = subscription.end_date - datetime.now(UTC)
-        remaining_days = max(0, delta.days)
+    remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate switch cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
     switch_result = pricing_engine.calculate_tariff_switch_cost(
@@ -317,11 +314,7 @@ async def switch_tariff(
 
     user = await lock_user_for_pricing(db, user.id)
 
-    # Calculate remaining days
-    remaining_days = 0
-    if subscription.end_date and subscription.end_date > datetime.now(UTC):
-        delta = subscription.end_date - datetime.now(UTC)
-        remaining_days = max(0, delta.days)
+    remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
     switch_result = pricing_engine.calculate_tariff_switch_cost(
@@ -482,7 +475,10 @@ async def switch_tariff(
     subscription.purchased_traffic_gb = 0
     subscription.traffic_reset_at = None
 
-    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+    # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение — иначе прыжок
+    # туда-обратно по бесплатному направлению давал новую квоту каждый раз.
+    reset_used_traffic = should_reset_used_traffic(upgrade_cost)
+    if reset_used_traffic:
         subscription.traffic_used_gb = 0.0
 
     if switching_to_daily:
@@ -511,7 +507,7 @@ async def switch_tariff(
         )
 
     # Sync with RemnaWave (optionally reset traffic based on admin setting)
-    should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
+    should_reset_traffic = reset_used_traffic
     # Refresh subscription after commit (all objects are expired)
     await db.refresh(subscription)
 

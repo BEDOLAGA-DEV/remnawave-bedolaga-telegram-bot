@@ -1975,6 +1975,11 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     """Снимает доступ и удаляет переданные триал-подписки — единый код для ботовой
     кнопки «Сбросить триалы» и кабинетного per-user сброса.
 
+    Что делаем с панельным аккаунтом, решает ``REMNAWAVE_USER_DELETE_MODE``: ``delete``
+    сносит его, ``disable`` только отключает (аккаунт остаётся жить, и следующая
+    покупка/триал включат его же). Раньше режим читался только при полном удалении
+    пользователя, и сброс триала удалял аккаунт вопреки настройке.
+
     Панель-юзер удаляется ПЕРВЫМ, и только при успехе сносится строка в БД. Порядок
     «панель → БД» делает операцию race-safe относительно синка панель→бот: когда удаляем
     строку, панель-юзера уже нет — воскрешать (как is_trial=False) нечего. Удаления в
@@ -2005,6 +2010,7 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     from app.services.subscription_service import SubscriptionService
 
     is_multi = settings.is_multi_tariff_enabled()
+    delete_panel_user = settings.get_remnawave_user_delete_mode() == 'delete'
     service = SubscriptionService()
 
     if service.is_configured:
@@ -2046,7 +2052,10 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
                     panel_user_id = adopted.id
                 async with semaphore:
                     try:
-                        await api.delete_user(panel_user_id)
+                        if delete_panel_user:
+                            await api.delete_user(panel_user_id)
+                        else:
+                            await api.disable_user(panel_user_id)
                         return True
                     except RemnaWaveInvalidUserIdError as error:
                         # Битая ссылка в БД, а не «панель-юзера нет»: удалять по такому
@@ -2061,12 +2070,13 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
                         return False
                     except Exception as error:
                         msg = str(error).lower()
-                        if 'not found' in msg or 'not exist' in msg:
-                            return True  # уже удалён — считаем успехом
+                        if 'not found' in msg or 'not exist' in msg or 'already disabled' in msg:
+                            return True  # уже удалён/отключён — считаем успехом
                         logger.error(
-                            'Не удалось удалить панель-юзера при сбросе триала',
+                            'Не удалось снять панель-юзера при сбросе триала',
                             panel_user_id=panel_user_id,
                             subscription_id=subscription.id,
+                            delete_mode=settings.get_remnawave_user_delete_mode(),
                             error=error,
                         )
                         return False
@@ -2109,7 +2119,9 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     # идентичность, чтобы синк по ней ничего не восстанавливал. Историческую колонку
     # remnawave_uuid обнуляем заодно: панель-юзера больше нет, и её единственный
     # оставшийся потребитель — one-shot бэкфил, который иначе попробует её разрезолвить.
-    if not is_multi:
+    # В режиме disable аккаунт остался жив: связь с ним стирать нельзя, иначе следующая
+    # покупка заведёт рядом дубль вместо того, чтобы включить отключённый аккаунт.
+    if not is_multi and delete_panel_user:
         user_ids = list({subscription.user_id for subscription in to_reset})
         await db.execute(update(User).where(User.id.in_(user_ids)).values(remnawave_id=None, remnawave_uuid=None))
 

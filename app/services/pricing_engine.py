@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import dataclasses
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -122,6 +121,23 @@ class PricingEngine:
         after_offer = PricingEngine.apply_discount(after_group, offer_percent)
         offer_discount_value = after_group - after_offer
         return after_offer, group_discount_value, offer_discount_value
+
+    @staticmethod
+    def daily_group_price(daily_price_kopeks: int, user: User | None) -> tuple[int, int]:
+        """Суточная цена «за день» — только со скидкой промогруппы: (цена, процент группы).
+
+        Ровно столько списывается каждый день (daily_subscription_service) и ровно это
+        показывают опции покупки и ответ о подписке. Скидку промокода сервер сюда не
+        вкладывает: её накладывает кабинет для показа и списание — при покупке, один раз.
+        Иначе карточка накладывала промокод второй раз поверх серверной цены (−36 % вместо −20 %).
+        """
+        if daily_price_kopeks <= 0:
+            return daily_price_kopeks, 0
+        promo_group = PricingEngine.resolve_promo_group(user)
+        group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
+        if group_pct <= 0:
+            return daily_price_kopeks, 0
+        return PricingEngine.apply_discount(daily_price_kopeks, group_pct), group_pct
 
     @staticmethod
     def resolve_promo_group(user: User | None):
@@ -630,7 +646,7 @@ class PricingEngine:
         offer_discount = subtotal - after_offer
         final_total = after_offer
 
-        breakdown = dataclasses.asdict(
+        breakdown = asdict(
             TariffBreakdown(
                 tariff_id=tariff.id,
                 extra_devices=extra_devices,
@@ -785,7 +801,7 @@ class PricingEngine:
         )
 
         valid_servers = [d for d in server_details if d.get('id') is not None]
-        breakdown = dataclasses.asdict(
+        breakdown = asdict(
             ClassicBreakdown(
                 months_in_period=months,
                 servers=server_details,

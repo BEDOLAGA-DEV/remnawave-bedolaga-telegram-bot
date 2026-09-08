@@ -17,10 +17,8 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import app.config as config_module
-import app.services.apple_iap as apple_iap_module
 from app.cabinet.schemas.apple_iap import AppleAccountTokenResponse, ApplePurchaseRequest
-from app.config import settings
+from app.config import logger as config_logger, settings
 from app.external.apple_iap import AppleIAPService, parse_apple_timestamp
 from app.services.apple_iap import AppleFulfillmentResult, AppleIAPFulfillmentService, AppleIAPNotificationService
 
@@ -104,7 +102,7 @@ class TestSettings:
         error_log = MagicMock()
         monkeypatch.setattr(settings, 'APPLE_IAP_PRIVATE_KEY', '', raising=False)
         monkeypatch.setattr(settings, 'APPLE_IAP_PRIVATE_KEY_PATH', str(missing_key_path), raising=False)
-        monkeypatch.setattr(config_module.logger, 'error', error_log)
+        monkeypatch.setattr(config_logger, 'error', error_log)
 
         assert settings.get_apple_iap_private_key() is None
 
@@ -461,7 +459,7 @@ class TestFulfillmentService:
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
         monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', False, raising=False)
         abuse_event = AsyncMock()
-        monkeypatch.setattr(apple_iap_module, 'create_apple_abuse_event', abuse_event)
+        monkeypatch.setattr('app.services.apple_iap.create_apple_abuse_event', abuse_event)
 
         result = await AppleIAPFulfillmentService().fulfill_verified_transaction(
             _FakeDB(),
@@ -523,7 +521,7 @@ class TestFulfillmentService:
         _enable_apple_iap(monkeypatch, tmp_path)
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
         monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', False, raising=False)
-        monkeypatch.setattr(apple_iap_module, 'create_apple_abuse_event', AsyncMock())
+        monkeypatch.setattr('app.services.apple_iap.create_apple_abuse_event', AsyncMock())
 
         class FakeAppleService:
             def __init__(self):
@@ -558,14 +556,15 @@ class TestFulfillmentService:
             web_order_line_item_id='2000000099999999',
         )
         create_transaction = AsyncMock()
-        monkeypatch.setattr(apple_iap_module, 'get_apple_transaction_by_transaction_id', AsyncMock(return_value=None))
         monkeypatch.setattr(
-            apple_iap_module,
-            'get_apple_transaction_by_web_order_line_item_id',
+            'app.services.apple_iap.get_apple_transaction_by_transaction_id', AsyncMock(return_value=None)
+        )
+        monkeypatch.setattr(
+            'app.services.apple_iap.get_apple_transaction_by_web_order_line_item_id',
             AsyncMock(return_value=existing),
         )
-        monkeypatch.setattr(apple_iap_module, 'create_transaction', create_transaction)
-        monkeypatch.setattr(apple_iap_module, 'lock_user_for_update', AsyncMock())
+        monkeypatch.setattr('app.services.apple_iap.create_transaction', create_transaction)
+        monkeypatch.setattr('app.services.apple_iap.lock_user_for_update', AsyncMock())
 
         result = await AppleIAPFulfillmentService().fulfill_verified_transaction(
             _FakeDB(),
@@ -630,15 +629,16 @@ class TestFulfillmentService:
 
         service = AppleIAPFulfillmentService()
         service._emit_credit_side_effects = AsyncMock()  # type: ignore[method-assign]
-        monkeypatch.setattr(apple_iap_module, 'get_apple_transaction_by_transaction_id', AsyncMock(return_value=None))
         monkeypatch.setattr(
-            apple_iap_module,
-            'get_apple_transaction_by_web_order_line_item_id',
+            'app.services.apple_iap.get_apple_transaction_by_transaction_id', AsyncMock(return_value=None)
+        )
+        monkeypatch.setattr(
+            'app.services.apple_iap.get_apple_transaction_by_web_order_line_item_id',
             AsyncMock(return_value=None),
         )
-        monkeypatch.setattr(apple_iap_module, 'lock_user_for_update', lock_user)
-        monkeypatch.setattr(apple_iap_module, 'create_apple_transaction', create_apple_txn)
-        monkeypatch.setattr(apple_iap_module, 'create_transaction', create_financial_txn)
+        monkeypatch.setattr('app.services.apple_iap.lock_user_for_update', lock_user)
+        monkeypatch.setattr('app.services.apple_iap.create_apple_transaction', create_apple_txn)
+        monkeypatch.setattr('app.services.apple_iap.create_transaction', create_financial_txn)
 
         result = await service.fulfill_verified_transaction(
             db,
@@ -680,7 +680,7 @@ class TestFulfillmentService:
         async def send_cart_notification_after_topup(_user, _amount_kopeks, _db, cart_bot):
             cart_notifications.append(cart_bot)
 
-        monkeypatch.setattr(apple_iap_module, 'emit_transaction_side_effects', AsyncMock())
+        monkeypatch.setattr('app.services.apple_iap.emit_transaction_side_effects', AsyncMock())
         monkeypatch.setattr('app.services.referral_service.process_referral_topup', AsyncMock())
         monkeypatch.setattr(
             'app.services.admin_notification_service.AdminNotificationService',
@@ -758,12 +758,16 @@ class TestNotificationService:
             def verify_signed_transaction_info(self, signed_transaction_info: str, environment: str):
                 return None
 
-        monkeypatch.setattr(apple_iap_module, 'AsyncSessionLocal', lambda: _AsyncContext(db))
-        monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_uuid', AsyncMock(return_value=None))
-        monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_payload_hash', AsyncMock(return_value=None))
-        monkeypatch.setattr(apple_iap_module, 'create_apple_notification', AsyncMock(return_value=notification_row))
+        monkeypatch.setattr('app.services.apple_iap.AsyncSessionLocal', lambda: _AsyncContext(db))
+        monkeypatch.setattr('app.services.apple_iap.get_apple_notification_by_uuid', AsyncMock(return_value=None))
+        monkeypatch.setattr(
+            'app.services.apple_iap.get_apple_notification_by_payload_hash', AsyncMock(return_value=None)
+        )
+        monkeypatch.setattr(
+            'app.services.apple_iap.create_apple_notification', AsyncMock(return_value=notification_row)
+        )
         mark_processed = AsyncMock()
-        monkeypatch.setattr(apple_iap_module, 'mark_apple_notification_processed', mark_processed)
+        monkeypatch.setattr('app.services.apple_iap.mark_apple_notification_processed', mark_processed)
 
         ok, reason = await AppleIAPNotificationService(FakeAppleService()).process_signed_payload(
             'signed.payload',
@@ -816,18 +820,21 @@ class TestNotificationService:
         lock_user = AsyncMock()
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
         monkeypatch.setattr(settings, 'APPLE_IAP_ALLOW_SANDBOX_ON_PRODUCTION', False, raising=False)
-        monkeypatch.setattr(apple_iap_module, 'AsyncSessionLocal', lambda: _AsyncContext(db))
-        monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_uuid', AsyncMock(return_value=None))
-        monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_payload_hash', AsyncMock(return_value=None))
-        monkeypatch.setattr(apple_iap_module, 'create_apple_notification', AsyncMock(return_value=notification_row))
-        monkeypatch.setattr(apple_iap_module, 'mark_apple_notification_processed', AsyncMock())
+        monkeypatch.setattr('app.services.apple_iap.AsyncSessionLocal', lambda: _AsyncContext(db))
+        monkeypatch.setattr('app.services.apple_iap.get_apple_notification_by_uuid', AsyncMock(return_value=None))
         monkeypatch.setattr(
-            apple_iap_module,
-            'get_apple_transaction_by_transaction_id_for_update',
+            'app.services.apple_iap.get_apple_notification_by_payload_hash', AsyncMock(return_value=None)
+        )
+        monkeypatch.setattr(
+            'app.services.apple_iap.create_apple_notification', AsyncMock(return_value=notification_row)
+        )
+        monkeypatch.setattr('app.services.apple_iap.mark_apple_notification_processed', AsyncMock())
+        monkeypatch.setattr(
+            'app.services.apple_iap.get_apple_transaction_by_transaction_id_for_update',
             AsyncMock(return_value=apple_txn),
         )
-        monkeypatch.setattr(apple_iap_module, 'create_apple_abuse_event', create_abuse_event)
-        monkeypatch.setattr(apple_iap_module, 'lock_user_for_pricing', lock_user)
+        monkeypatch.setattr('app.services.apple_iap.create_apple_abuse_event', create_abuse_event)
+        monkeypatch.setattr('app.services.apple_iap.lock_user_for_pricing', lock_user)
 
         ok, reason = await AppleIAPNotificationService(FakeAppleService()).process_signed_payload(
             'signed.payload',
@@ -859,10 +866,12 @@ class TestNotificationService:
 
         get_by_uuid = AsyncMock(side_effect=[None, processed_row])
         create_notification = AsyncMock(side_effect=IntegrityError('insert', {}, Exception('duplicate')))
-        monkeypatch.setattr(apple_iap_module, 'AsyncSessionLocal', lambda: _AsyncContext(db))
-        monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_uuid', get_by_uuid)
-        monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_payload_hash', AsyncMock(return_value=None))
-        monkeypatch.setattr(apple_iap_module, 'create_apple_notification', create_notification)
+        monkeypatch.setattr('app.services.apple_iap.AsyncSessionLocal', lambda: _AsyncContext(db))
+        monkeypatch.setattr('app.services.apple_iap.get_apple_notification_by_uuid', get_by_uuid)
+        monkeypatch.setattr(
+            'app.services.apple_iap.get_apple_notification_by_payload_hash', AsyncMock(return_value=None)
+        )
+        monkeypatch.setattr('app.services.apple_iap.create_apple_notification', create_notification)
 
         ok, reason = await AppleIAPNotificationService(FakeAppleService()).process_signed_payload(
             'signed.payload',
@@ -895,14 +904,13 @@ class TestNotificationService:
                     'data': {'environment': 'Sandbox'},
                 }
 
-        monkeypatch.setattr(apple_iap_module, 'AsyncSessionLocal', lambda: _AsyncContext(db))
-        monkeypatch.setattr(apple_iap_module, 'get_apple_notification_by_uuid', AsyncMock(return_value=None))
+        monkeypatch.setattr('app.services.apple_iap.AsyncSessionLocal', lambda: _AsyncContext(db))
+        monkeypatch.setattr('app.services.apple_iap.get_apple_notification_by_uuid', AsyncMock(return_value=None))
         monkeypatch.setattr(
-            apple_iap_module,
-            'get_apple_notification_by_payload_hash',
+            'app.services.apple_iap.get_apple_notification_by_payload_hash',
             AsyncMock(return_value=existing_payload),
         )
-        monkeypatch.setattr(apple_iap_module, 'create_apple_notification', create_notification)
+        monkeypatch.setattr('app.services.apple_iap.create_apple_notification', create_notification)
 
         ok, reason = await AppleIAPNotificationService(FakeAppleService()).process_signed_payload(
             'signed.payload',
@@ -930,9 +938,11 @@ class TestNotificationService:
         create_abuse_event = AsyncMock()
         lock_user = AsyncMock()
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Sandbox', raising=False)
-        monkeypatch.setattr(apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', get_transaction)
-        monkeypatch.setattr(apple_iap_module, 'create_apple_abuse_event', create_abuse_event)
-        monkeypatch.setattr(apple_iap_module, 'lock_user_for_pricing', lock_user)
+        monkeypatch.setattr(
+            'app.services.apple_iap.get_apple_transaction_by_transaction_id_for_update', get_transaction
+        )
+        monkeypatch.setattr('app.services.apple_iap.create_apple_abuse_event', create_abuse_event)
+        monkeypatch.setattr('app.services.apple_iap.lock_user_for_pricing', lock_user)
 
         reason = await AppleIAPNotificationService()._handle_refund(
             _FakeDB(),
@@ -968,9 +978,11 @@ class TestNotificationService:
         create_abuse_event = AsyncMock()
         lock_user = AsyncMock()
         monkeypatch.setattr(settings, 'APPLE_IAP_ENVIRONMENT', 'Production', raising=False)
-        monkeypatch.setattr(apple_iap_module, 'get_apple_transaction_by_transaction_id_for_update', get_transaction)
-        monkeypatch.setattr(apple_iap_module, 'create_apple_abuse_event', create_abuse_event)
-        monkeypatch.setattr(apple_iap_module, 'lock_user_for_pricing', lock_user)
+        monkeypatch.setattr(
+            'app.services.apple_iap.get_apple_transaction_by_transaction_id_for_update', get_transaction
+        )
+        monkeypatch.setattr('app.services.apple_iap.create_apple_abuse_event', create_abuse_event)
+        monkeypatch.setattr('app.services.apple_iap.lock_user_for_pricing', lock_user)
 
         reason = await AppleIAPNotificationService()._handle_refund(
             _FakeDB(),
@@ -1007,8 +1019,7 @@ class TestNotificationService:
         )
         add_balance = AsyncMock(return_value=True)
         monkeypatch.setattr(
-            apple_iap_module,
-            'get_apple_transaction_by_transaction_id_for_update',
+            'app.services.apple_iap.get_apple_transaction_by_transaction_id_for_update',
             AsyncMock(return_value=apple_txn),
         )
         monkeypatch.setattr('app.database.crud.user.get_user_by_id', AsyncMock(return_value=SimpleNamespace(id=1)))

@@ -918,15 +918,24 @@ async def grant_reward_days(db: AsyncSession, user: User, days: int, tariff_id: 
     if not created:
         await extend_subscription(db, subscription, days)
 
+    # Всё, что нужно после похода в панель, снимаем ДО него: при ошибке панельный
+    # вызов откатывает сессию, ORM-объекты протухают, и даже ``subscription.id``
+    # становится неявным запросом — в async-сессии это MissingGreenlet.
+    subscription_id = subscription.id
+    subscription_tariff_id = subscription.tariff_id
+    user_id = user.id
     try:
-        await SubscriptionService().update_remnawave_user(db, subscription)
+        # Подписка, заведённая с нуля, панели ещё не известна: update падал бы с
+        # «RemnaWave id не найден», и человек оставался без пользователя в панели.
+        # sync сам выбирает create или update по наличию id панели.
+        await SubscriptionService().sync_remnawave_user(db, subscription)
     except Exception as error:
-        # Дни в базе уже есть — молча их не откатываем: расхождение с панелью
+        # Дни в базе уже закоммичены — молча их не откатываем: расхождение с панелью
         # чинится следующей синхронизацией, а потеря начисленных дней — нет.
         logger.error(
             'Не удалось синхронизировать выданные дни с панелью',
-            user_id=user.id,
-            subscription_id=subscription.id,
+            user_id=user_id,
+            subscription_id=subscription_id,
             error=str(error),
         )
 
@@ -935,14 +944,14 @@ async def grant_reward_days(db: AsyncSession, user: User, days: int, tariff_id: 
     # загружена, и обращение к ней — неявный запрос в базу: в async-сессии это
     # MissingGreenlet, то есть дни выданы, а строка ledger'а уже не записана.
     tariff_name = None
-    tariff_id_for_name = subscription.tariff_id or tariff_id
+    tariff_id_for_name = subscription_tariff_id or tariff_id
     if tariff_id_for_name:
         from app.database.models import Tariff
 
         name_result = await db.execute(select(Tariff.name).where(Tariff.id == tariff_id_for_name))
         tariff_name = name_result.scalar_one_or_none()
 
-    return DaysGrant(days=days, subscription_id=subscription.id, tariff_name=tariff_name)
+    return DaysGrant(days=days, subscription_id=subscription_id, tariff_name=tariff_name)
 
 
 # Причины начислений. Денежные намеренно совпадают с легаси-строками: на них

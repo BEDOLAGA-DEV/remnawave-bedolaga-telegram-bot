@@ -14,6 +14,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from app.config import settings
 from app.services.startup_notification_service import _get_error_recommendations
 from app.utils.rich_admin import RICH_TEXT_LIMIT, rich_footer_now, rich_traceback_details, try_send_rich_admin_message
+from app.utils.telegram_errors import STALE_CALLBACK_QUERY_PHRASES
 from app.utils.timezone import format_local_datetime
 
 
@@ -29,11 +30,7 @@ DATETIME_FORMAT_FILENAME: Final[str] = '%Y%m%d_%H%M%S'
 DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/fringg'
 
 # Фразы ошибок Telegram API
-OLD_QUERY_PHRASES: Final[tuple[str, ...]] = (
-    'query is too old',
-    'query id is invalid',
-    'response timeout expired',
-)
+OLD_QUERY_PHRASES: Final[tuple[str, ...]] = STALE_CALLBACK_QUERY_PHRASES
 BAD_REQUEST_PHRASES: Final[tuple[str, ...]] = (
     'message not found',
     'chat not found',

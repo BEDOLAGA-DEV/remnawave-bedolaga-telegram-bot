@@ -80,6 +80,48 @@ class PropagateSquadsResult:
     failed_ids: list[int] = field(default_factory=list)
 
 
+async def panel_id_is_free_for(db: AsyncSession, subscription, panel_id: int | None) -> bool:
+    """Не держит ли этот панельный id уже ДРУГАЯ строка подписок.
+
+    Колонка частично уникальна, и в single-tariff все подписки одного человека
+    адресуют один и тот же панельный аккаунт, поэтому конфликт — штатная
+    ситуация, а не аномалия. Единственная проверка перед записью
+    ``subscriptions.remnawave_id`` — и для сервиса, и для админских роутов.
+    """
+    if panel_id is None:
+        return False
+    other = (
+        await db.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.remnawave_id == int(panel_id),
+                Subscription.id != getattr(subscription, 'id', None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return other is None
+
+
+async def link_subscription_panel_identity(db: AsyncSession, subscription, panel_id: int | None) -> bool:
+    """Проставить строке id панельного аккаунта, который только что обновили.
+
+    В single-tariff панель адресуется через ``users.remnawave_id``, и свежая строка
+    подписки (создана после удаления старой или повторной покупкой) оставалась с
+    пустым ``subscriptions.remnawave_id`` — а админские экраны по выбранной подписке
+    (panel-info, устройства, трафик) читают строго его: «пользователь не найден в
+    панели». Пишем только в пустую строку и только если id не держит соседняя —
+    колонка частично уникальна, и IntegrityError после успешного PATCH откатил бы
+    всё сделанное. True — привязали.
+    """
+    if getattr(subscription, 'remnawave_id', None) or panel_id is None:
+        return False
+    if not await panel_id_is_free_for(db, subscription, panel_id):
+        return False
+    subscription.remnawave_id = int(panel_id)
+    return True
+
+
 class SubscriptionService:
     def __init__(self):
         self._config_error: str | None = None
@@ -163,6 +205,34 @@ class SubscriptionService:
         assert self.api is not None
         async with self.api as api:
             yield api
+
+    async def sync_remnawave_user(
+        self,
+        db: AsyncSession,
+        subscription: Subscription,
+        *,
+        reset_traffic: bool = False,
+        reset_reason: str | None = None,
+    ) -> RemnaWaveUser | None:
+        """Создать пользователя панели или обновить — по тому, известен ли панели его id.
+
+        В мультитарифе id панели живёт у подписки, вне его — у пользователя (аккаунт в
+        панели один на человека). Нет id — create_remnawave_user (это upsert: пользователя,
+        которого панель уже знает, он обновит); есть — update_remnawave_user. Свежая подписка
+        (награда за реферала, купон, покупка) id ещё не имеет, и update для неё падал с
+        «RemnaWave id не найден»: человек оставался без пользователя в панели и без ссылки.
+        """
+        panel_id = subscription.remnawave_id
+        if not settings.is_multi_tariff_enabled():
+            user = await get_user_by_id(db, subscription.user_id)
+            panel_id = getattr(user, 'remnawave_id', None)
+        if panel_id:
+            return await self.update_remnawave_user(
+                db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
+            )
+        return await self.create_remnawave_user(
+            db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
+        )
 
     async def create_remnawave_user(
         self,
@@ -343,25 +413,7 @@ class SubscriptionService:
         return panel_user
 
     async def _panel_id_is_free_for(self, db: AsyncSession, subscription, panel_id: int | None) -> bool:
-        """Не держит ли этот панельный id уже ДРУГАЯ строка подписок.
-
-        Колонка частично уникальна, и в single-tariff все подписки одного
-        человека адресуют один и тот же панельный аккаунт, поэтому конфликт —
-        штатная ситуация, а не аномалия.
-        """
-        if panel_id is None:
-            return False
-        other = (
-            await db.execute(
-                select(Subscription.id)
-                .where(
-                    Subscription.remnawave_id == int(panel_id),
-                    Subscription.id != getattr(subscription, 'id', None),
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        return other is None
+        return await panel_id_is_free_for(db, subscription, panel_id)
 
     async def _adopt_panel_id_for_update(self, db: AsyncSession, subscription, user, multi_tariff: bool) -> int | None:
         """Достать числовой id панели по shortUuid и сохранить его на строке.
@@ -890,6 +942,7 @@ class SubscriptionService:
 
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
+                await link_subscription_panel_identity(db, subscription, remnawave_id)
                 await db.commit()
 
                 status_text = 'активным' if is_actually_active else 'истёкшим'

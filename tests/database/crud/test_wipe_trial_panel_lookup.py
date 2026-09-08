@@ -18,7 +18,7 @@ import pytest
 
 import app.services.grace_access_runtime as grace_runtime_mod
 import app.services.subscription_service as subscription_service_mod
-from app.config import Settings
+from app.config import Settings, settings
 from app.database.crud.subscription import wipe_trial_subscriptions
 
 
@@ -145,3 +145,68 @@ async def test_existing_numeric_id_is_used_directly(monkeypatch, patched_service
 
     patched_service.get_user_by_short_uuid.assert_not_awaited()
     patched_service.delete_user.assert_awaited_once_with(8812)
+
+
+# ---------------------------------------------------------------------------
+# REMNAWAVE_USER_DELETE_MODE. Отчёт из «Багов»: при сбросе триала аккаунт
+# удалялся из панели, хотя в .env стоял disable. Режим читался только при
+# полном удалении пользователя; сброс триала всегда звал delete_user.
+# ---------------------------------------------------------------------------
+
+
+def _executed_updates(db) -> list:
+    from sqlalchemy.sql.dml import Update
+
+    return [call.args[0] for call in db.execute.await_args_list if isinstance(call.args[0], Update)]
+
+
+@pytest.mark.asyncio
+async def test_disable_mode_deactivates_instead_of_deleting(monkeypatch, patched_service, db):
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+
+    wiped = await wipe_trial_subscriptions(db, [_sub(42, panel_id=9001)])
+
+    assert wiped == 1
+    patched_service.disable_user.assert_awaited_once_with(9001)
+    patched_service.delete_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disable_mode_keeps_single_tariff_user_identity(monkeypatch, patched_service, db):
+    """Аккаунт остаётся (отключённым) — users.remnawave_id обязан остаться с ним:
+    следующий триал или покупка включат тот же аккаунт заново."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+
+    wiped = await wipe_trial_subscriptions(db, [_sub(42, user_panel_id=555)])
+
+    assert wiped == 1
+    patched_service.disable_user.assert_awaited_once_with(555)
+    patched_service.delete_user.assert_not_awaited()
+    assert _executed_updates(db) == []
+
+
+@pytest.mark.asyncio
+async def test_delete_mode_still_clears_single_tariff_user_identity(monkeypatch, patched_service, db):
+    """Регресс-стража: в режиме delete аккаунта больше нет — ссылку на него стираем."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'delete')
+
+    wiped = await wipe_trial_subscriptions(db, [_sub(42, user_panel_id=555)])
+
+    assert wiped == 1
+    patched_service.delete_user.assert_awaited_once_with(555)
+    assert len(_executed_updates(db)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('panel_message', ['User not found', 'User already disabled'])
+async def test_disable_mode_treats_gone_or_already_disabled_as_success(monkeypatch, patched_service, db, panel_message):
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+    patched_service.disable_user.side_effect = RuntimeError(panel_message)
+
+    wiped = await wipe_trial_subscriptions(db, [_sub(42, panel_id=9001)])
+
+    assert wiped == 1

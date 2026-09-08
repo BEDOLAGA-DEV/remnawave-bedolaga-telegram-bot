@@ -22,7 +22,6 @@ if str(ROOT_DIR) not in sys.path:
 
 import app.database.crud.cispay as cispay_crud_module
 import app.services.payment.cispay as cispay_mixin_module
-import app.services.payment_service as payment_service_module
 from app.config import settings
 from app.services.cispay_service import CisPayService
 from app.services.payment_service import PaymentService
@@ -122,7 +121,7 @@ async def test_create_cispay_payment_success(monkeypatch: pytest.MonkeyPatch) ->
 
         return _User()
 
-    monkeypatch.setattr(payment_service_module, 'get_user_by_id', fake_get_user_by_id, raising=False)
+    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user_by_id, raising=False)
 
     captured: dict[str, Any] = {}
 
@@ -163,7 +162,7 @@ async def test_create_cispay_payment_sbp_sub_method(monkeypatch: pytest.MonkeyPa
     async def fake_get_user_by_id(_db: Any, _user_id: int) -> None:
         return None
 
-    monkeypatch.setattr(payment_service_module, 'get_user_by_id', fake_get_user_by_id, raising=False)
+    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user_by_id, raising=False)
 
     async def fake_create_cispay_payment(**_kwargs: Any) -> DummyLocalPayment:
         return DummyLocalPayment()
@@ -391,7 +390,7 @@ async def test_generic_method_falls_back_to_sbp_when_card_disabled(monkeypatch: 
     async def fake_get_user_by_id(_db: Any, _user_id: int) -> None:
         return None
 
-    monkeypatch.setattr(payment_service_module, 'get_user_by_id', fake_get_user_by_id, raising=False)
+    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user_by_id, raising=False)
 
     async def fake_create_cispay_payment(**_kwargs: Any) -> DummyLocalPayment:
         return DummyLocalPayment()
