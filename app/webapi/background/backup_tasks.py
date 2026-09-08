@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from app.localization.texts import get_texts
 from app.services.backup_service import backup_service
 
 
@@ -45,7 +46,7 @@ class BackupTaskManager:
             state.status = 'completed' if success else 'failed'
         except Exception as exc:
             state.status = 'failed'
-            state.message = f'Unexpected error: {exc}'
+            state.message = get_texts().t('BACKUP_TASK_UNEXPECTED_ERROR', 'Unexpected error: {error}').format(error=exc)
         finally:
             state.updated_at = datetime.now(UTC)
 

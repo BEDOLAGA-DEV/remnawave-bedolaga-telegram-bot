@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, validator
 
+from app.localization.texts import get_texts
+
 
 def _normalize_period_discounts(value: dict[object, object] | None) -> dict[int, int] | None:
     if value is None:
@@ -43,9 +45,10 @@ class PromoGroupResponse(BaseModel):
 class _PromoGroupBase(BaseModel):
     period_discounts: dict[int, int] | None = Field(
         default=None,
-        description=(
+        description=get_texts().t(
+            'PROMO_GROUP_PERIOD_DISCOUNTS_DESCRIPTION',
             'Словарь скидок по длительности подписки. Ключ — количество месяцев, '
-            'значение — скидка в процентах. Например: {1: 10, 6: 20}.'
+            'значение — скидка в процентах. Например: {1: 10, 6: 20}.',
         ),
         example={1: 10, 6: 20},
     )

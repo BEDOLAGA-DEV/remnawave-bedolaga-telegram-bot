@@ -4,11 +4,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, validator
 
+from app.localization.texts import get_texts
+
 
 def _normalize_text(value: str) -> str:
     cleaned = (value or '').strip()
     if not cleaned:
-        raise ValueError('Text cannot be empty')
+        raise ValueError(get_texts().t('WELCOME_TEXT_EMPTY', 'Text cannot be empty'))
     return cleaned
 
 

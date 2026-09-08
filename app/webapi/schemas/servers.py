@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.localization.texts import get_texts
+
 from .users import PromoGroupSummary
 
 
@@ -57,7 +59,10 @@ class ServerCreateRequest(BaseModel):
     promo_group_ids: list[int] | None = Field(
         default=None,
         alias='promoGroupIds',
-        description='Список идентификаторов промогрупп, доступных на сервере.',
+        description=get_texts().t(
+            'SERVER_PROMO_GROUP_IDS_CREATE_DESCRIPTION',
+            'Список идентификаторов промогрупп, доступных на сервере.',
+        ),
     )
 
 
@@ -76,7 +81,10 @@ class ServerUpdateRequest(BaseModel):
     promo_group_ids: list[int] | None = Field(
         default=None,
         alias='promoGroupIds',
-        description='Если передан список, он заменит текущие промогруппы сервера.',
+        description=get_texts().t(
+            'SERVER_PROMO_GROUP_IDS_UPDATE_DESCRIPTION',
+            'Если передан список, он заменит текущие промогруппы сервера.',
+        ),
     )
 
 

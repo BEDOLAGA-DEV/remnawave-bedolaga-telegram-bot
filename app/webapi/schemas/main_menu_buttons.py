@@ -5,21 +5,27 @@ from datetime import datetime
 from pydantic import BaseModel, Field, validator
 
 from app.database.models import MainMenuButtonActionType, MainMenuButtonVisibility
+from app.localization.texts import get_texts
 
 
 def _clean_text(value: str) -> str:
     cleaned = (value or '').strip()
     if not cleaned:
-        raise ValueError('Text cannot be empty')
+        raise ValueError(get_texts().t('MAIN_MENU_BUTTON_TEXT_EMPTY', 'Text cannot be empty'))
     return cleaned
 
 
 def _validate_action_value(value: str) -> str:
     cleaned = (value or '').strip()
     if not cleaned:
-        raise ValueError('Action value cannot be empty')
+        raise ValueError(get_texts().t('MAIN_MENU_BUTTON_ACTION_VALUE_EMPTY', 'Action value cannot be empty'))
     if not cleaned.lower().startswith(('http://', 'https://')):
-        raise ValueError('Action value must start with http:// or https://')
+        raise ValueError(
+            get_texts().t(
+                'MAIN_MENU_BUTTON_ACTION_VALUE_INVALID_SCHEME',
+                'Action value must start with http:// or https://',
+            )
+        )
     return cleaned
 
 

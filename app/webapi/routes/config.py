@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.services.system_settings_service import (
     ReadOnlySettingError,
     bot_configuration_service,
@@ -38,7 +39,7 @@ def _coerce_value(key: str, value: Any) -> Any:
     if value is None:
         if definition.is_optional:
             return None
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Value is required')
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, get_texts().t('SETTING_VALUE_REQUIRED', 'Value is required'))
 
     python_type = definition.python_type
 
@@ -64,7 +65,10 @@ def _coerce_value(key: str, value: Any) -> Any:
         else:
             normalized = str(value)
     except ValueError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid value type') from None
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('SETTING_INVALID_VALUE_TYPE', 'Invalid value type'),
+        ) from None
 
     # Сравнение через as_choice_key: варианты описаны строками, а значение уже
     # приведено к типу настройки. У булевой это True/False, и прямое сравнение
@@ -75,7 +79,10 @@ def _coerce_value(key: str, value: Any) -> Any:
         readable = ', '.join(bot_configuration_service.format_value(opt.value) for opt in choices)
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            detail=f'Value must be one of: {readable}',
+            detail=get_texts().t(
+                'SETTING_VALUE_NOT_ALLOWED',
+                'Value must be one of: {choices}',
+            ).format(choices=readable),
         )
 
     return normalized
@@ -156,7 +163,10 @@ async def get_setting(
     try:
         definition = bot_configuration_service.get_definition(key)
     except KeyError as error:  # pragma: no cover - защита от некорректного ключа
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('SETTING_NOT_FOUND', 'Setting not found'),
+        ) from error
 
     return _serialize_definition(definition)
 
@@ -171,7 +181,10 @@ async def update_setting(
     try:
         definition = bot_configuration_service.get_definition(key)
     except KeyError as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('SETTING_NOT_FOUND', 'Setting not found'),
+        ) from error
 
     # Re-sent mask sentinel means the secret was left untouched — don't overwrite it.
     if bot_configuration_service.is_secret_key(key) and payload.value == bot_configuration_service.SECRET_MASK:
@@ -197,7 +210,10 @@ async def reset_setting(
     try:
         definition = bot_configuration_service.get_definition(key)
     except KeyError as error:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('SETTING_NOT_FOUND', 'Setting not found'),
+        ) from error
 
     try:
         await bot_configuration_service.reset_value(db, key)

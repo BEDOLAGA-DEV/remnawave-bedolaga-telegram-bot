@@ -14,6 +14,7 @@ from app.database.crud.main_menu_button import (
     update_main_menu_button,
 )
 from app.database.models import MainMenuButton
+from app.localization.texts import get_texts
 from app.services.main_menu_button_service import MainMenuButtonService
 
 from ..dependencies import get_db_session, require_api_token
@@ -89,7 +90,10 @@ async def update_main_menu_button_endpoint(
 ) -> MainMenuButtonResponse:
     button = await get_main_menu_button_by_id(db, button_id)
     if not button:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Main menu button not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('MAIN_MENU_BUTTON_NOT_FOUND', 'Main menu button not found'),
+        )
 
     update_payload = payload.dict(exclude_unset=True)
     button = await update_main_menu_button(db, button, **update_payload)
@@ -106,7 +110,10 @@ async def delete_main_menu_button_endpoint(
 ) -> Response:
     button = await get_main_menu_button_by_id(db, button_id)
     if not button:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Main menu button not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('MAIN_MENU_BUTTON_NOT_FOUND', 'Main menu button not found'),
+        )
 
     await delete_main_menu_button(db, button)
     MainMenuButtonService.invalidate_cache()

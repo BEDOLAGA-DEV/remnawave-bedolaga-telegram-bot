@@ -24,6 +24,7 @@ from app.database.crud.poll import (
 )
 from app.database.models import Poll, PollAnswer, PollOption, PollQuestion, PollResponse
 from app.handlers.admin.messages import get_custom_users, get_target_users
+from app.localization.texts import get_texts
 from app.services.poll_service import send_poll_to_users
 
 from ..dependencies import get_db_session, require_api_token
@@ -182,7 +183,7 @@ async def get_poll(
 ) -> PollDetailResponse:
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Poll not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('POLL_NOT_FOUND', 'Poll not found'))
 
     return _serialize_poll_detail(poll)
 
@@ -221,7 +222,7 @@ async def delete_poll(
 ) -> Response:
     success = await delete_poll_record(db, poll_id)
     if not success:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Poll not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('POLL_NOT_FOUND', 'Poll not found'))
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -234,7 +235,7 @@ async def get_poll_stats(
 ) -> PollStatisticsResponse:
     poll = await db.get(Poll, poll_id)
     if not poll:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Poll not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('POLL_NOT_FOUND', 'Poll not found'))
 
     stats = await get_poll_statistics(db, poll_id)
 
@@ -276,7 +277,7 @@ async def get_poll_responses(
 ) -> PollResponsesListResponse:
     poll_exists = await db.get(Poll, poll_id)
     if not poll_exists:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Poll not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('POLL_NOT_FOUND', 'Poll not found'))
 
     responses, total = await get_poll_responses_with_answers(
         db,
@@ -304,11 +305,14 @@ async def send_poll(
 ) -> PollSendResponse:
     poll = await get_poll_by_id(db, poll_id)
     if not poll:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Poll not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('POLL_NOT_FOUND', 'Poll not found'))
 
     target = payload.target.strip()
     if not target:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Target must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('POLL_TARGET_EMPTY', 'Target must not be empty'),
+        )
 
     if target.startswith('custom_'):
         users = await get_custom_users(db, target.replace('custom_', ''))

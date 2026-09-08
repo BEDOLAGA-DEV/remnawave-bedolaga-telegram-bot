@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.localization.texts import get_texts
 from app.services.ban_notification_service import ban_notification_service
 from app.webapi.dependencies import get_db_session, require_api_token
 from app.webapi.schemas.ban_notifications import (
@@ -24,10 +25,11 @@ router = APIRouter()
 @router.post(
     '/send',
     response_model=BanNotificationResponse,
-    summary='Отправить уведомление от ban системы',
-    description=(
+    summary=get_texts().t('BAN_NOTIFICATION_SEND_SUMMARY', 'Отправить уведомление от ban системы'),
+    description=get_texts().t(
+        'BAN_NOTIFICATION_SEND_DESCRIPTION',
         'Эндпоинт для отправки уведомлений пользователям от системы мониторинга ban. '
-        'Поддерживает уведомления о блокировке, разблокировке и предупреждения.'
+        'Поддерживает уведомления о блокировке, разблокировке и предупреждения.',
     ),
 )
 async def send_ban_notification(
@@ -57,7 +59,10 @@ async def send_ban_notification(
             if request.ip_count is None or request.limit is None or request.ban_minutes is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Для типа '{request.notification_type}' требуются поля: ip_count, limit, ban_minutes",
+                    detail=get_texts().t(
+                        'BAN_NOTIFICATION_FIELDS_REQUIRED',
+                        "Для типа '{type}' требуются поля: ip_count, limit, ban_minutes",
+                    ).format(type=request.notification_type),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_punishment_notification(
@@ -81,7 +86,11 @@ async def send_ban_notification(
         elif request.notification_type == 'warning':
             if not request.warning_message:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, detail="Для типа 'warning' требуется поле: warning_message"
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=get_texts().t(
+                        'BAN_NOTIFICATION_WARNING_MESSAGE_REQUIRED',
+                        "Для типа 'warning' требуется поле: warning_message",
+                    ),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_warning_notification(
@@ -95,7 +104,10 @@ async def send_ban_notification(
             if request.ban_minutes is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Для типа 'network_wifi' требуется поле: ban_minutes",
+                    detail=get_texts().t(
+                        'BAN_NOTIFICATION_BAN_MINUTES_REQUIRED',
+                        "Для типа '{type}' требуется поле: ban_minutes",
+                    ).format(type='network_wifi'),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_network_wifi_notification(
@@ -111,7 +123,10 @@ async def send_ban_notification(
             if request.ban_minutes is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Для типа 'network_mobile' требуется поле: ban_minutes",
+                    detail=get_texts().t(
+                        'BAN_NOTIFICATION_BAN_MINUTES_REQUIRED',
+                        "Для типа '{type}' требуется поле: ban_minutes",
+                    ).format(type='network_mobile'),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_network_mobile_notification(
@@ -133,7 +148,10 @@ async def send_ban_notification(
             if request.ban_minutes is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Для типа '{request.notification_type}' требуется поле: ban_minutes",
+                    detail=get_texts().t(
+                        'BAN_NOTIFICATION_BAN_MINUTES_REQUIRED',
+                        "Для типа '{type}' требуется поле: ban_minutes",
+                    ).format(type=request.notification_type),
                 )
 
             success, message, telegram_id = await ban_notification_service.send_typed_ban_notification(
@@ -149,7 +167,10 @@ async def send_ban_notification(
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Неизвестный тип уведомления: {request.notification_type}',
+                detail=get_texts().t(
+                    'BAN_NOTIFICATION_UNKNOWN_TYPE',
+                    'Неизвестный тип уведомления: {type}',
+                ).format(type=request.notification_type),
             )
 
         return BanNotificationResponse(success=success, message=message, telegram_id=telegram_id, sent=success)
@@ -159,5 +180,9 @@ async def send_ban_notification(
     except Exception as e:
         logger.exception('Ошибка при отправке уведомления', error=e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f'Внутренняя ошибка сервера: {e!s}'
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=get_texts().t(
+                'API_INTERNAL_SERVER_ERROR',
+                'Внутренняя ошибка сервера: {error}',
+            ).format(error=e),
         ) from e

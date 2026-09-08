@@ -15,6 +15,7 @@ from app.database.crud.user import (
     update_user,
 )
 from app.database.models import User
+from app.localization.texts import get_texts
 from app.services.partner_stats_service import PartnerStatsService
 from app.utils.text_search import contains_conditions
 from app.utils.user_utils import (
@@ -174,7 +175,7 @@ async def get_referrer_detail(
         user = await get_user_by_id(db, user_id)
 
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PARTNER_USER_NOT_FOUND', 'User not found'))
 
     stats = await get_user_referral_stats(db, user.id)
     referrer_item = _serialize_referrer(user, stats)
@@ -208,7 +209,7 @@ async def update_referrer_commission(
         user = await get_user_by_id(db, user_id)
 
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PARTNER_USER_NOT_FOUND', 'User not found'))
 
     await update_user(
         db,
@@ -286,7 +287,7 @@ async def get_referrer_detailed_stats(
         user = await get_user_by_id(db, user_id)
 
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PARTNER_USER_NOT_FOUND', 'User not found'))
 
     data = await PartnerStatsService.get_referrer_detailed_stats(db, user.id)
 
@@ -312,7 +313,7 @@ async def get_referrer_daily_stats(
         user = await get_user_by_id(db, user_id)
 
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PARTNER_USER_NOT_FOUND', 'User not found'))
 
     data = await PartnerStatsService.get_referrer_daily_stats(db, user.id, days)
 
@@ -336,7 +337,7 @@ async def get_referrer_top_referrals(
         user = await get_user_by_id(db, user_id)
 
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PARTNER_USER_NOT_FOUND', 'User not found'))
 
     data = await PartnerStatsService.get_referrer_top_referrals(db, user.id, limit)
 
@@ -360,7 +361,7 @@ async def get_referrer_period_comparison(
         user = await get_user_by_id(db, user_id)
 
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PARTNER_USER_NOT_FOUND', 'User not found'))
 
     data = await PartnerStatsService.get_referrer_period_comparison(db, user.id, current_days, previous_days)
 

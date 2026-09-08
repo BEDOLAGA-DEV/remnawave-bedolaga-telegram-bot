@@ -4,11 +4,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.localization.texts import get_texts
+
 
 class TokenResponse(BaseModel):
     id: int
     name: str
-    prefix: str = Field(..., description='Первые символы токена для идентификации')
+    prefix: str = Field(
+        ...,
+        description=get_texts().t('API_TOKEN_PREFIX_DESCRIPTION', 'Первые символы токена для идентификации'),
+    )
     description: str | None = None
     is_active: bool
     created_at: datetime
@@ -26,4 +31,7 @@ class TokenCreateRequest(BaseModel):
 
 
 class TokenCreateResponse(TokenResponse):
-    token: str = Field(..., description='Полное значение токена (возвращается один раз)')
+    token: str = Field(
+        ...,
+        description=get_texts().t('API_TOKEN_VALUE_DESCRIPTION', 'Полное значение токена (возвращается один раз)'),
+    )

@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.localization.texts import get_texts
+
 
 class PollOptionCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
@@ -13,7 +15,7 @@ class PollOptionCreate(BaseModel):
     def strip_text(cls, value: str) -> str:
         text = value.strip()
         if not text:
-            raise ValueError('Option text cannot be empty')
+            raise ValueError(get_texts().t('POLL_OPTION_TEXT_EMPTY', 'Option text cannot be empty'))
         return text
 
 
@@ -26,7 +28,7 @@ class PollQuestionCreate(BaseModel):
     def strip_question_text(cls, value: str) -> str:
         text = value.strip()
         if not text:
-            raise ValueError('Question text cannot be empty')
+            raise ValueError(get_texts().t('POLL_QUESTION_TEXT_EMPTY', 'Question text cannot be empty'))
         return text
 
     @field_validator('options')
@@ -36,7 +38,9 @@ class PollQuestionCreate(BaseModel):
         for option in value:
             normalized = option.text.lower()
             if normalized in seen:
-                raise ValueError('Option texts must be unique within a question')
+                raise ValueError(
+                    get_texts().t('POLL_OPTION_TEXTS_NOT_UNIQUE', 'Option texts must be unique within a question')
+                )
             seen.add(normalized)
         return value
 
@@ -53,7 +57,7 @@ class PollCreateRequest(BaseModel):
     def strip_title(cls, value: str) -> str:
         title = value.strip()
         if not title:
-            raise ValueError('Title cannot be empty')
+            raise ValueError(get_texts().t('POLL_TITLE_EMPTY', 'Title cannot be empty'))
         return title
 
     @field_validator('description')
@@ -67,7 +71,11 @@ class PollCreateRequest(BaseModel):
     @model_validator(mode='after')
     def validate_reward(self) -> PollCreateRequest:
         if self.reward_enabled and self.reward_amount_kopeks <= 0:
-            raise ValueError('Reward amount must be positive when rewards are enabled')
+            raise ValueError(
+                get_texts().t(
+                    'POLL_REWARD_AMOUNT_MUST_BE_POSITIVE', 'Reward amount must be positive when rewards are enabled'
+                )
+            )
         if not self.reward_enabled:
             self.reward_amount_kopeks = 0
         return self
@@ -173,7 +181,10 @@ class PollResponsesListResponse(BaseModel):
 class PollSendRequest(BaseModel):
     target: str = Field(
         ...,
-        description=('Аудитория для отправки опроса (например: all, active, trial, custom_today и т.д.)'),
+        description=get_texts().t(
+            'POLL_SEND_TARGET_DESCRIPTION',
+            'Аудитория для отправки опроса (например: all, active, trial, custom_today и т.д.)',
+        ),
         max_length=100,
     )
 

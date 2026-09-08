@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.localization.texts import get_texts
+
 
 class PromoGroupSummary(BaseModel):
     id: int
@@ -87,7 +89,9 @@ class UserUpdateRequest(BaseModel):
 
 class BalanceUpdateRequest(BaseModel):
     amount_kopeks: int = Field(..., ge=-100_000_000, le=100_000_000)
-    description: str | None = Field(default='Корректировка через веб-API')
+    description: str | None = Field(
+        default=get_texts().t('API_USER_BALANCE_ADJUSTMENT', 'Корректировка через веб-API')
+    )
     create_transaction: bool = True
 
 
@@ -98,34 +102,45 @@ class BalanceDepositRequest(BaseModel):
         ...,
         gt=0,
         le=100_000_000,
-        description='Сумма пополнения в копейках. Только положительная: эндпоинт умеет лишь зачислять.',
+        description=get_texts().t(
+            'API_USER_DEPOSIT_AMOUNT_DESCRIPTION',
+            'Сумма пополнения в копейках. Только положительная: эндпоинт умеет лишь зачислять.',
+        ),
     )
     idempotency_key: str | None = Field(
         default=None,
         min_length=1,
         max_length=200,
-        description=(
+        description=get_texts().t(
+            'API_USER_DEPOSIT_IDEMPOTENCY_KEY_DESCRIPTION',
             'Ключ идемпотентности (номер тикета, uuid попытки). Повторный запрос с тем же ключом '
             'не начислит деньги второй раз и вернёт исходный результат с duplicate=true. '
             'Обязателен по-хорошему для любой автоматической интеграции: без него сетевой таймаут '
-            'и ретрай приведут к двойному начислению.'
+            'и ретрай приведут к двойному начислению.',
         ),
     )
     description: str | None = Field(
         default=None,
         max_length=500,
-        description='Описание транзакции. Видно пользователю в истории операций.',
+        description=get_texts().t(
+            'API_USER_DEPOSIT_TRANSACTION_DESCRIPTION',
+            'Описание транзакции. Видно пользователю в истории операций.',
+        ),
     )
     notify_user: bool = Field(
         default=True,
-        description='Отправить пользователю уведомление о пополнении (Telegram или email).',
+        description=get_texts().t(
+            'API_USER_DEPOSIT_NOTIFY_USER_DESCRIPTION',
+            'Отправить пользователю уведомление о пополнении (Telegram или email).',
+        ),
     )
     apply_topup_bonuses: bool = Field(
         default=True,
-        description=(
+        description=get_texts().t(
+            'API_USER_DEPOSIT_APPLY_BONUSES_DESCRIPTION',
             'Запустить те же авто-действия, что и настоящий платёж: реферальная комиссия, '
             'отметка первого пополнения, возобновление приостановленной суточной подписки, '
-            'автопокупка сохранённой корзины. Выключайте, только если нужно именно «просто деньги».'
+            'автопокупка сохранённой корзины. Выключайте, только если нужно именно «просто деньги».',
         ),
     )
 
@@ -134,12 +149,17 @@ class BalanceDepositResponse(BaseModel):
     success: bool
     duplicate: bool = Field(
         ...,
-        description='true — запрос с таким idempotency_key уже был обработан, баланс не менялся.',
+        description=get_texts().t(
+            'API_USER_DEPOSIT_DUPLICATE_DESCRIPTION',
+            'true — запрос с таким idempotency_key уже был обработан, баланс не менялся.',
+        ),
     )
     user_id: int
     telegram_id: int | None = None
     transaction_id: int
-    amount_kopeks: int = Field(..., description='Сумма проведённой транзакции.')
+    amount_kopeks: int = Field(
+        ..., description=get_texts().t('API_USER_DEPOSIT_AMOUNT_RESULT_DESCRIPTION', 'Сумма проведённой транзакции.')
+    )
     old_balance_kopeks: int
     new_balance_kopeks: int
     new_balance_rubles: float
@@ -157,5 +177,8 @@ class UserSubscriptionCreateRequest(BaseModel):
     replace_existing: bool = False
     subscription_id: int | None = Field(
         default=None,
-        description='ID of existing subscription to replace (required in multi-tariff mode when replace_existing=true)',
+        description=get_texts().t(
+            'API_SUBSCRIPTION_REPLACE_ID_DESCRIPTION',
+            'ID of existing subscription to replace (required in multi-tariff mode when replace_existing=true)',
+        ),
     )

@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.localization.texts import get_texts
+
 
 class ContestTemplateResponse(BaseModel):
     id: int
@@ -132,7 +134,11 @@ class ReferralContestCreateRequest(BaseModel):
     end_at: datetime
     daily_summary_time: time = Field(default=time(hour=12))
     daily_summary_times: str | None = Field(
-        default=None, description='Список времён ЧЧ:ММ через запятую (например, 12:00,18:00)'
+        default=None,
+        description=get_texts().t(
+            'REFERRAL_CONTEST_DAILY_SUMMARY_TIMES_EXAMPLE_DESCRIPTION',
+            'Список времён ЧЧ:ММ через запятую (например, 12:00,18:00)',
+        ),
     )
     timezone: str = Field(default='UTC')
     is_active: bool = True
@@ -147,7 +153,13 @@ class ReferralContestUpdateRequest(BaseModel):
     start_at: datetime | None = None
     end_at: datetime | None = None
     daily_summary_time: time | None = None
-    daily_summary_times: str | None = Field(default=None, description='Список времён ЧЧ:ММ через запятую')
+    daily_summary_times: str | None = Field(
+        default=None,
+        description=get_texts().t(
+            'REFERRAL_CONTEST_DAILY_SUMMARY_TIMES_DESCRIPTION',
+            'Список времён ЧЧ:ММ через запятую',
+        ),
+    )
     timezone: str | None = None
     is_active: bool | None = None
     final_summary_sent: bool | None = None

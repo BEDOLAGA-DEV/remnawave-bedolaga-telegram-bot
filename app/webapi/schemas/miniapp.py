@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.localization.texts import get_texts
+
 
 class MiniAppBranding(BaseModel):
     service_name: dict[str, str | None] = Field(default_factory=dict)
@@ -443,11 +445,18 @@ class MiniAppPaymentIframeConfig(BaseModel):
     def _normalize_expected_origin(cls, values: MiniAppPaymentIframeConfig) -> MiniAppPaymentIframeConfig:
         origin = (values.expected_origin or '').strip()
         if not origin:
-            raise ValueError('expected_origin must not be empty')
+            raise ValueError(
+                get_texts().t('MINIAPP_PAYMENT_EXPECTED_ORIGIN_EMPTY', 'expected_origin must not be empty')
+            )
 
         parsed = urlparse(origin)
         if not parsed.scheme or not parsed.netloc:
-            raise ValueError('expected_origin must include scheme and host')
+            raise ValueError(
+                get_texts().t(
+                    'MINIAPP_PAYMENT_EXPECTED_ORIGIN_INVALID',
+                    'expected_origin must include scheme and host',
+                )
+            )
 
         values.expected_origin = f'{parsed.scheme}://{parsed.netloc}'
         return values
@@ -469,7 +478,12 @@ class MiniAppPaymentMethod(BaseModel):
     @model_validator(mode='after')
     def _ensure_iframe_config(cls, values: MiniAppPaymentMethod) -> MiniAppPaymentMethod:
         if values.integration_type == MiniAppPaymentIntegrationType.IFRAME and values.iframe_config is None:
-            raise ValueError("iframe_config is required when integration_type is 'iframe'")
+            raise ValueError(
+                get_texts().t(
+                    'MINIAPP_PAYMENT_IFRAME_CONFIG_REQUIRED',
+                    "iframe_config is required when integration_type is 'iframe'",
+                )
+            )
         return values
 
 

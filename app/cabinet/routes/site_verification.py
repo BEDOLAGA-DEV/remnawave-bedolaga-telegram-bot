@@ -19,6 +19,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.config import settings
+from app.localization.texts import get_texts
 
 
 router = APIRouter(prefix='/public', tags=['Cabinet:Public'])
@@ -29,7 +30,10 @@ def _resolved_apay_tag() -> str:
     return (settings.ANTILOPAY_APAY_VERIFICATION_TAG or '').strip()
 
 
-@router.get('/site-verification', summary='Site verification tags for payment providers')
+@router.get(
+    '/site-verification',
+    summary=get_texts().t('CABINET_SITE_VERIFICATION_SUMMARY', 'Site verification tags for payment providers'),
+)
 async def get_site_verification() -> dict[str, str | None]:
     """Return all configured site-verification tokens.
 

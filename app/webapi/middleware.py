@@ -9,6 +9,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from structlog.contextvars import bound_contextvars
 
+from app.localization.texts import get_texts
+
 
 logger = structlog.get_logger('web_api')
 
@@ -32,7 +34,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 )
                 response = JSONResponse(
                     status_code=503,
-                    content={'detail': 'Service temporarily unavailable. Please try again later.'},
+                    content={
+                        'detail': get_texts().t(
+                            'API_SERVICE_UNAVAILABLE',
+                            'Service temporarily unavailable. Please try again later.',
+                        )
+                    },
                 )
                 return response
             finally:

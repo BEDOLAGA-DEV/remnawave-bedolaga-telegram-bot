@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot_factory import create_bot
 from app.database.crud.ticket import TicketCRUD, TicketMessageCRUD
 from app.database.models import Ticket, TicketMessage, TicketStatus
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.tickets import (
@@ -102,7 +103,7 @@ async def get_ticket(
 ) -> TicketResponse:
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
     if not ticket:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Ticket not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TICKET_NOT_FOUND', 'Ticket not found'))
     return _serialize_ticket(ticket, include_messages=True)
 
 
@@ -116,12 +117,15 @@ async def update_ticket_status(
     try:
         status_value = TicketStatus(payload.status).value
     except ValueError as error:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid ticket status') from error
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('API_TICKET_INVALID_STATUS', 'Invalid ticket status'),
+        ) from error
 
     closed_at = datetime.now(UTC) if status_value == TicketStatus.CLOSED.value else None
     success = await TicketCRUD.update_ticket_status(db, ticket_id, status_value, closed_at)
     if not success:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Ticket not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TICKET_NOT_FOUND', 'Ticket not found'))
 
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
     return _serialize_ticket(ticket, include_messages=True)
@@ -136,11 +140,14 @@ async def update_ticket_priority(
 ) -> TicketResponse:
     allowed_priorities = {'low', 'normal', 'high', 'urgent'}
     if payload.priority not in allowed_priorities:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid priority')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('API_TICKET_INVALID_PRIORITY', 'Invalid priority'),
+        )
 
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
     if not ticket:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Ticket not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TICKET_NOT_FOUND', 'Ticket not found'))
 
     ticket.priority = payload.priority
     ticket.updated_at = datetime.now(UTC)
@@ -159,7 +166,10 @@ async def update_reply_block(
 ) -> TicketResponse:
     until = payload.until
     if not payload.permanent and until and until <= datetime.now(UTC):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Block expiration must be in the future')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('API_TICKET_BLOCK_EXPIRATION_IN_PAST', 'Block expiration must be in the future'),
+        )
 
     success = await TicketCRUD.set_user_reply_block(
         db,
@@ -168,7 +178,7 @@ async def update_reply_block(
         until=until,
     )
     if not success:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Ticket not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TICKET_NOT_FOUND', 'Ticket not found'))
 
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
     return _serialize_ticket(ticket, include_messages=True)
@@ -187,7 +197,7 @@ async def clear_reply_block(
         until=None,
     )
     if not success:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Ticket not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TICKET_NOT_FOUND', 'Ticket not found'))
 
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
     return _serialize_ticket(ticket, include_messages=True)
@@ -202,13 +212,17 @@ async def reply_to_ticket(
 ) -> TicketReplyResponse:
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=False, load_user=True)
     if not ticket:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Ticket not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TICKET_NOT_FOUND', 'Ticket not found'))
 
     message_text = (payload.message_text or '').strip()
     if not message_text and not payload.media_file_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Message text or media is required')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('API_TICKET_MESSAGE_OR_MEDIA_REQUIRED', 'Message text or media is required'),
+        )
 
-    final_message_text = message_text or (payload.media_caption or '').strip() or '[media]'
+    media_placeholder = get_texts().t('API_TICKET_MEDIA_PLACEHOLDER', '[media]')
+    final_message_text = message_text or (payload.media_caption or '').strip() or media_placeholder
 
     message = await TicketMessageCRUD.add_message(
         db,
@@ -273,14 +287,20 @@ async def get_ticket_message_media(
 ) -> TicketMediaResponse:
     ticket = await TicketCRUD.get_ticket_by_id(db, ticket_id, load_messages=True, load_user=False)
     if not ticket:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Ticket not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TICKET_NOT_FOUND', 'Ticket not found'))
 
     message = next((m for m in ticket.messages if m.id == message_id), None)
     if not message:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Message not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('API_TICKET_MESSAGE_NOT_FOUND', 'Message not found'),
+        )
 
     if not message.has_media or not message.media_file_id or not message.media_type:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Media not found for this message')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('API_TICKET_MEDIA_NOT_FOUND', 'Media not found for this message'),
+        )
 
     media_url: str | None = None
     bot = create_bot()

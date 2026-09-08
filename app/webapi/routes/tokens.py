@@ -9,6 +9,7 @@ from app.database.crud.web_api_token import (
     list_tokens,
 )
 from app.database.models import WebApiToken
+from app.localization.texts import get_texts
 from app.services.web_api_token_service import web_api_token_service
 
 from ..dependencies import get_db_session, require_api_token
@@ -71,7 +72,7 @@ async def revoke_token(
 ) -> TokenResponse:
     token = await get_token_by_id(db, token_id)
     if not token:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Token not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TOKEN_NOT_FOUND', 'Token not found'))
 
     await web_api_token_service.revoke_token(db, token)
     await db.commit()
@@ -86,7 +87,7 @@ async def activate_token(
 ) -> TokenResponse:
     token = await get_token_by_id(db, token_id)
     if not token:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Token not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TOKEN_NOT_FOUND', 'Token not found'))
 
     await web_api_token_service.activate_token(db, token)
     await db.commit()
@@ -101,7 +102,7 @@ async def delete_token_endpoint(
 ) -> Response:
     token = await get_token_by_id(db, token_id)
     if not token:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Token not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_TOKEN_NOT_FOUND', 'Token not found'))
 
     await delete_token(db, token)
     await db.commit()

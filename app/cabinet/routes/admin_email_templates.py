@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
+from app.localization.texts import get_texts
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..services.email_template_overrides import (
@@ -587,7 +588,10 @@ def _validate_template_type(notification_type: str) -> dict[str, Any]:
     if type_meta is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f'Unknown template type: {notification_type}',
+            detail=get_texts().t(
+                'CABINET_EMAIL_TEMPLATES_UNKNOWN_TYPE',
+                'Unknown template type: {notification_type}',
+            ).format(notification_type=notification_type),
         )
     return type_meta
 
@@ -668,7 +672,7 @@ class EmailTemplateSendTestRequest(BaseModel):
 # ============ Endpoints ============
 
 
-@router.get('', summary='List all email template types')
+@router.get('', summary=get_texts().t('CABINET_EMAIL_TEMPLATES_LIST_SUMMARY', 'List all email template types'))
 async def list_template_types(
     _admin: User = Depends(require_permission('email_templates:read')),
     db: AsyncSession = Depends(get_cabinet_db),
@@ -706,7 +710,10 @@ async def list_template_types(
     }
 
 
-@router.get('/{notification_type}', summary='Get templates for a notification type')
+@router.get(
+    '/{notification_type}',
+    summary=get_texts().t('CABINET_EMAIL_TEMPLATES_GET_SUMMARY', 'Get templates for a notification type'),
+)
 async def get_templates_for_type(
     notification_type: str,
     _admin: User = Depends(require_permission('email_templates:read')),
@@ -766,7 +773,10 @@ async def get_templates_for_type(
     }
 
 
-@router.put('/{notification_type}/{language}', summary='Save custom template')
+@router.put(
+    '/{notification_type}/{language}',
+    summary=get_texts().t('CABINET_EMAIL_TEMPLATES_SAVE_SUMMARY', 'Save custom template'),
+)
 async def update_template(
     notification_type: str,
     language: str,
@@ -780,7 +790,10 @@ async def update_template(
     if language not in AVAILABLE_LANGUAGES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Invalid language: {language}. Available: {AVAILABLE_LANGUAGES}',
+            detail=get_texts().t(
+                'CABINET_EMAIL_TEMPLATES_INVALID_LANGUAGE',
+                'Invalid language: {language}. Available: {available}',
+            ).format(language=language, available=AVAILABLE_LANGUAGES),
         )
 
     result = await save_template_override(
@@ -798,7 +811,10 @@ async def update_template(
     return {'status': 'ok', 'template': result}
 
 
-@router.delete('/{notification_type}/{language}', summary='Reset template to default')
+@router.delete(
+    '/{notification_type}/{language}',
+    summary=get_texts().t('CABINET_EMAIL_TEMPLATES_RESET_SUMMARY', 'Reset template to default'),
+)
 async def reset_template(
     notification_type: str,
     language: str,
@@ -821,7 +837,10 @@ async def reset_template(
     return {'status': 'ok', 'was_custom': deleted}
 
 
-@router.post('/{notification_type}/preview', summary='Preview rendered template')
+@router.post(
+    '/{notification_type}/preview',
+    summary=get_texts().t('CABINET_EMAIL_TEMPLATES_PREVIEW_SUMMARY', 'Preview rendered template'),
+)
 async def preview_template(
     notification_type: str,
     data: EmailTemplatePreviewRequest,
@@ -850,8 +869,8 @@ async def preview_template(
             rendered_html = default_template['body_html']
             subject = default_template['subject']
         else:
-            rendered_html = '<p>Template not found</p>'
-            subject = 'N/A'
+            rendered_html = get_texts().t('CABINET_EMAIL_TEMPLATES_PREVIEW_NOT_FOUND', '<p>Template not found</p>')
+            subject = get_texts().t('CABINET_EMAIL_TEMPLATES_PREVIEW_SUBJECT_NA', 'N/A')
 
     return {
         'subject': subject,
@@ -859,7 +878,10 @@ async def preview_template(
     }
 
 
-@router.post('/{notification_type}/test', summary='Send test email')
+@router.post(
+    '/{notification_type}/test',
+    summary=get_texts().t('CABINET_EMAIL_TEMPLATES_TEST_SUMMARY', 'Send test email'),
+)
 async def send_test_email(
     notification_type: str,
     data: EmailTemplateSendTestRequest,
@@ -872,14 +894,17 @@ async def send_test_email(
     if not email_service.is_configured():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='SMTP is not configured',
+            detail=get_texts().t('CABINET_EMAIL_TEMPLATES_SMTP_NOT_CONFIGURED', 'SMTP is not configured'),
         )
 
     to_email = data.email or admin.email
     if not to_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail='No email address provided and admin has no email',
+            detail=get_texts().t(
+                'CABINET_EMAIL_TEMPLATES_NO_EMAIL_ADDRESS',
+                'No email address provided and admin has no email',
+            ),
         )
 
     _validate_template_type(notification_type)
@@ -908,10 +933,10 @@ async def send_test_email(
             else:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail='Template not found',
+                    detail=get_texts().t('CABINET_EMAIL_TEMPLATES_NOT_FOUND', 'Template not found'),
                 )
 
-    subject = f'[TEST] {subject}'
+    subject = get_texts().t('CABINET_EMAIL_TEMPLATES_TEST_SUBJECT_PREFIX', '[TEST] {subject}').format(subject=subject)
 
     try:
         success = await asyncio.to_thread(
@@ -924,13 +949,16 @@ async def send_test_email(
         logger.error('Ошибка отправки тестового email', e=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f'Failed to send test email: {e!s}',
+            detail=get_texts().t(
+                'CABINET_EMAIL_TEMPLATES_TEST_SEND_ERROR',
+                'Failed to send test email: {error}',
+            ).format(error=e),
         )
 
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Failed to send test email',
+            detail=get_texts().t('CABINET_EMAIL_TEMPLATES_TEST_SEND_FAILED', 'Failed to send test email'),
         )
 
     logger.info(

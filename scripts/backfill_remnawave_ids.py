@@ -30,6 +30,7 @@ import structlog
 
 from app.config import settings
 from app.database.database import AsyncSessionLocal
+from app.localization.texts import get_texts
 from app.services.remnawave_identity_backfill import backfill_remnawave_ids
 from app.services.system_settings_service import bot_configuration_service
 
@@ -69,48 +70,102 @@ def _write_audit(report, *, committed: bool) -> str | None:
     except OSError as error:
         # Отчёт — не причина ронять прогон, но молчать о потере следа нельзя.
         logger.warning('backfill: не удалось записать полный отчёт', path=path, error=str(error))
-        print(f'  !! полный отчёт записать не удалось: {error}')
+        print(
+            '  '
+            + get_texts()
+            .t('BACKFILL_AUDIT_WRITE_FAILED', '!! полный отчёт записать не удалось: {error}')
+            .format(error=error)
+        )
         return None
     return str(path)
 
 
 def _print_report(report) -> None:
+    texts = get_texts()
     data = report.as_dict()
     print()
     print('=' * 62)
-    print('  DRY RUN — ничего не записано' if data['dry_run'] else '  APPLIED')
+    print(
+        '  ' + texts.t('BACKFILL_REPORT_DRY_RUN', 'DRY RUN — ничего не записано')
+        if data['dry_run']
+        else '  ' + texts.t('BACKFILL_REPORT_APPLIED', 'APPLIED')
+    )
     print('=' * 62)
-    print(f'  пользователей в панели      : {data["panel_users"]}')
-    print(f'  подписок к резолву          : {data["subscriptions_total"]}')
-    print(f'  подписок связано            : {data["subscriptions_resolved"]}')
-    print(f'  пользователей связано       : {data["users_resolved"]}')
-    print(f'  grace-сессий связано        : {data["grace_sessions_resolved"]}')
+    print(
+        '  '
+        + texts.t('BACKFILL_REPORT_PANEL_USERS', 'пользователей в панели      : {count}').format(
+            count=data['panel_users']
+        )
+    )
+    print(
+        '  '
+        + texts.t('BACKFILL_REPORT_SUBSCRIPTIONS_TOTAL', 'подписок к резолву          : {count}').format(
+            count=data['subscriptions_total']
+        )
+    )
+    print(
+        '  '
+        + texts.t('BACKFILL_REPORT_SUBSCRIPTIONS_RESOLVED', 'подписок связано            : {count}').format(
+            count=data['subscriptions_resolved']
+        )
+    )
+    print(
+        '  '
+        + texts.t('BACKFILL_REPORT_USERS_RESOLVED', 'пользователей связано       : {count}').format(
+            count=data['users_resolved']
+        )
+    )
+    print(
+        '  '
+        + texts.t('BACKFILL_REPORT_GRACE_SESSIONS_RESOLVED', 'grace-сессий связано        : {count}').format(
+            count=data['grace_sessions_resolved']
+        )
+    )
     print()
     if data['by_strategy']:
-        print('  по стратегии сопоставления:')
+        print('  ' + texts.t('BACKFILL_REPORT_BY_STRATEGY', 'по стратегии сопоставления:'))
         for strategy, count in sorted(data['by_strategy'].items(), key=lambda kv: -kv[1]):
             print(f'    {strategy:<32} {count}')
         print()
     if report.conflicts:
-        print(f'  !! КОНФЛИКТЫ: {len(report.conflicts)} — коммита не будет, пока не разберёте')
+        print(
+            '  '
+            + texts.t(
+                'BACKFILL_REPORT_CONFLICTS',
+                '!! КОНФЛИКТЫ: {count} — коммита не будет, пока не разберёте',
+            ).format(count=len(report.conflicts))
+        )
         for line in report.conflicts[:20]:
             print(f'     {line}')
         if len(report.conflicts) > 20:
-            print(f'     ...и ещё {len(report.conflicts) - 20}')
+            print(
+                '     '
+                + texts.t('BACKFILL_REPORT_MORE_ROWS', '...и ещё {count}').format(count=len(report.conflicts) - 20)
+            )
         print()
     if report.unresolved:
-        print(f'  не разрешено: {len(report.unresolved)}')
+        print(
+            '  '
+            + texts.t('BACKFILL_REPORT_UNRESOLVED', 'не разрешено: {count}').format(count=len(report.unresolved))
+        )
         by_reason: dict[str, int] = {}
         for row in report.unresolved:
             by_reason[row.reason] = by_reason.get(row.reason, 0) + 1
         for reason, count in sorted(by_reason.items(), key=lambda kv: -kv[1]):
             print(f'    {reason:<40} {count}')
         print()
-        print('  первые 20 строк:')
+        print('  ' + texts.t('BACKFILL_REPORT_FIRST_ROWS', 'первые 20 строк:'))
         for row in report.unresolved[:20]:
             print(f'    {row.kind} #{row.row_id}: {row.reason} (uuid={row.remnawave_uuid})')
         print()
-    print(f'  ИТОГ: {"полный" if report.complete else "ЧАСТИЧНЫЙ — см. выше"}')
+    print(
+        '  '
+        + texts.t('BACKFILL_REPORT_TOTAL', 'ИТОГ: {status}').format(
+            status=texts.t('BACKFILL_REPORT_TOTAL_COMPLETE', 'полный')
+            if report.complete
+            else texts.t('BACKFILL_REPORT_TOTAL_PARTIAL', 'ЧАСТИЧНЫЙ — см. выше')
+        )
+    )
     print('=' * 62)
 
 
@@ -126,7 +181,15 @@ async def _run(apply: bool) -> int:
         multi_tariff=settings.is_multi_tariff_enabled(),
         sales_mode=settings.SALES_MODE,
     )
-    print(f'  режим: {"МУЛЬТИТАРИФ" if settings.is_multi_tariff_enabled() else "однотарифный"}')
+    texts = get_texts()
+    print(
+        '  '
+        + texts.t('BACKFILL_MODE', 'режим: {mode}').format(
+            mode=texts.t('BACKFILL_MODE_MULTI_TARIFF', 'МУЛЬТИТАРИФ')
+            if settings.is_multi_tariff_enabled()
+            else texts.t('BACKFILL_MODE_SINGLE_TARIFF', 'однотарифный')
+        )
+    )
 
     async with AsyncSessionLocal() as db:
         report = await backfill_remnawave_ids(db, dry_run=not apply)
@@ -137,7 +200,7 @@ async def _run(apply: bool) -> int:
     # и ответить потом на вопрос «какие строки прогон изменил и на что».
     audit_path = _write_audit(report, committed=apply and not report.conflicts)
     if audit_path:
-        print(f'  полный отчёт: {audit_path}')
+        print('  ' + texts.t('BACKFILL_AUDIT_PATH', 'полный отчёт: {path}').format(path=audit_path))
 
     if report.conflicts:
         return 2
@@ -145,8 +208,15 @@ async def _run(apply: bool) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Backfill numeric Remnawave panel ids (3.0.0 migration)')
-    parser.add_argument('--apply', action='store_true', help='persist changes (default is a dry run)')
+    texts = get_texts()
+    parser = argparse.ArgumentParser(
+        description=texts.t('BACKFILL_CLI_DESCRIPTION', 'Backfill numeric Remnawave panel ids (3.0.0 migration)')
+    )
+    parser.add_argument(
+        '--apply',
+        action='store_true',
+        help=texts.t('BACKFILL_CLI_APPLY_HELP', 'persist changes (default is a dry run)'),
+    )
     args = parser.parse_args()
     return asyncio.run(_run(args.apply))
 

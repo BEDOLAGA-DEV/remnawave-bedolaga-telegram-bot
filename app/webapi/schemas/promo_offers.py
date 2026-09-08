@@ -5,6 +5,8 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, validator
 
+from app.localization.texts import get_texts
+
 
 class PromoOfferUserInfo(BaseModel):
     id: int
@@ -53,7 +55,9 @@ class PromoOfferCreateRequest(BaseModel):
     user_id: int | None = Field(None, ge=1)
     telegram_id: int | None = Field(None, ge=1)
     notification_type: str = Field(..., min_length=1)
-    valid_hours: int = Field(..., ge=1, description='Срок действия предложения в часах')
+    valid_hours: int = Field(
+        ..., ge=1, description=get_texts().t('PROMO_OFFER_VALID_HOURS_DESCRIPTION', 'Срок действия предложения в часах')
+    )
     discount_percent: int = Field(0, ge=0)
     bonus_amount_kopeks: int = Field(0, ge=0)
     subscription_id: int | None = None
@@ -64,9 +68,10 @@ class PromoOfferCreateRequest(BaseModel):
 class PromoOfferBroadcastRequest(PromoOfferCreateRequest):
     target: str | None = Field(
         None,
-        description=(
+        description=get_texts().t(
+            'PROMO_OFFER_BROADCAST_TARGET_DESCRIPTION',
             'Категория пользователей для рассылки. Поддерживает те же сегменты, что '
-            'и API рассылок (all, active, trial, custom_today и т.д.).'
+            'и API рассылок (all, active, trial, custom_today и т.д.).',
         ),
     )
 
@@ -124,7 +129,7 @@ class PromoOfferBroadcastRequest(PromoOfferCreateRequest):
             if criteria in cls._CUSTOM_TARGETS:
                 return normalized
 
-        raise ValueError('Unsupported target value')
+        raise ValueError(get_texts().t('BROADCAST_UNSUPPORTED_TARGET', 'Unsupported target value'))
 
 
 class PromoOfferBroadcastResponse(BaseModel):

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import AsyncSessionLocal
 from app.database.models import WebApiToken
+from app.localization.texts import get_texts
 from app.services.web_api_token_service import web_api_token_service
 
 
@@ -39,7 +40,7 @@ async def require_api_token(
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Missing API key',
+            detail=get_texts().t('API_MISSING_API_KEY', 'Missing API key'),
         )
 
     token = await web_api_token_service.authenticate(
@@ -52,7 +53,7 @@ async def require_api_token(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Invalid or expired API key',
+            detail=get_texts().t('API_INVALID_API_KEY', 'Invalid or expired API key'),
         )
 
     await db.commit()

@@ -20,6 +20,7 @@ from app.database.models import (
     User,
     UserStatus,
 )
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 
@@ -109,8 +110,11 @@ async def _get_overview(db: AsyncSession) -> dict[str, object]:
 
 @router.get(
     '/overview',
-    summary='Общая статистика',
-    response_description='Агрегированные показатели пользователей, подписок, саппорта и платежей',
+    summary=get_texts().t('STATS_OVERVIEW_SUMMARY', 'Общая статистика'),
+    response_description=get_texts().t(
+        'STATS_OVERVIEW_RESPONSE_DESCRIPTION',
+        'Агрегированные показатели пользователей, подписок, саппорта и платежей',
+    ),
     responses={
         200: {
             'content': {
@@ -149,8 +153,11 @@ async def stats_overview(
 
 @router.get(
     '/full',
-    summary='Полная статистика',
-    response_description='Расширенные показатели пользователей, подписок, платежей и рефералов',
+    summary=get_texts().t('STATS_FULL_SUMMARY', 'Полная статистика'),
+    response_description=get_texts().t(
+        'STATS_FULL_RESPONSE_DESCRIPTION',
+        'Расширенные показатели пользователей, подписок, платежей и рефералов',
+    ),
     responses={
         200: {
             'content': {

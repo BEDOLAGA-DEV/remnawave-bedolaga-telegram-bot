@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.localization.texts import get_texts
+
 
 class PartnerReferrerItem(BaseModel):
     id: int
@@ -70,7 +72,10 @@ class PartnerReferralCommissionUpdate(BaseModel):
         default=None,
         ge=0,
         le=100,
-        description='Индивидуальный процент реферальной комиссии для пользователя',
+        description=get_texts().t(
+            'PARTNER_REFERRAL_COMMISSION_PERCENT_DESCRIPTION',
+            'Индивидуальный процент реферальной комиссии для пользователя',
+        ),
     )
 
 

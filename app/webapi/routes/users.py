@@ -28,6 +28,7 @@ from app.database.crud.user import (
     update_user,
 )
 from app.database.models import PaymentMethod, PromoGroup, Subscription, User, UserStatus
+from app.localization.texts import get_texts
 from app.services.manual_topup_service import ManualTopupKeyConflict, credit_manual_topup
 from app.services.subscription_service import SubscriptionService
 from app.utils.text_search import contains_conditions
@@ -192,7 +193,7 @@ async def get_user(
     # If not found as telegram_id, check as internal user ID
     user = await get_user_by_id(db, user_id)
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_USER_NOT_FOUND', 'User not found'))
 
     return _serialize_user(user)
 
@@ -208,7 +209,7 @@ async def get_user_by_telegram_id_endpoint(
     """
     user = await get_user_by_telegram_id(db, telegram_id)
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_USER_NOT_FOUND', 'User not found'))
 
     return _serialize_user(user)
 
@@ -223,7 +224,10 @@ async def create_user_endpoint(
     if payload.telegram_id is not None:
         existing = await get_user_by_telegram_id(db, payload.telegram_id)
         if existing:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'User with this telegram_id already exists')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                get_texts().t('API_USER_TELEGRAM_ID_EXISTS', 'User with this telegram_id already exists'),
+            )
 
     user = await create_user(
         db,
@@ -238,7 +242,10 @@ async def create_user_endpoint(
     if payload.promo_group_id and payload.promo_group_id != user.promo_group_id:
         promo_group = await get_promo_group_by_id(db, payload.promo_group_id)
         if not promo_group:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Promo group not found')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                get_texts().t('API_USER_PROMO_GROUP_NOT_FOUND', 'Promo group not found'),
+            )
         user = await update_user(db, user, promo_group_id=promo_group.id)
 
     user = await get_user_by_id(db, user.id)
@@ -261,7 +268,7 @@ async def update_user_endpoint(
         found_user = await get_user_by_id(db, user_id)
 
     if not found_user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_USER_NOT_FOUND', 'User not found'))
 
     updates: dict[str, Any] = {}
 
@@ -282,19 +289,28 @@ async def update_user_endpoint(
         try:
             status_value = UserStatus(payload.status).value
         except ValueError as error:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid status') from error
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                get_texts().t('API_USER_INVALID_STATUS', 'Invalid status'),
+            ) from error
         updates['status'] = status_value
 
     if payload.promo_group_id is not None:
         promo_group = await get_promo_group_by_id(db, payload.promo_group_id)
         if not promo_group:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Promo group not found')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                get_texts().t('API_USER_PROMO_GROUP_NOT_FOUND', 'Promo group not found'),
+            )
         updates['promo_group_id'] = promo_group.id
 
     if payload.referral_code is not None and payload.referral_code != found_user.referral_code:
         existing_code_owner = await get_user_by_referral_code(db, payload.referral_code)
         if existing_code_owner and existing_code_owner.id != found_user.id:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Referral code already in use')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                get_texts().t('API_USER_REFERRAL_CODE_IN_USE', 'Referral code already in use'),
+            )
         updates['referral_code'] = payload.referral_code
 
     if not updates:
@@ -318,7 +334,10 @@ async def update_balance(
     db: AsyncSession = Depends(get_db_session),
 ) -> UserResponse:
     if payload.amount_kopeks == 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Amount must be non-zero')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('API_USER_AMOUNT_NON_ZERO', 'Amount must be non-zero'),
+        )
 
     # First check if the provided ID is a telegram_id
     user = await get_user_by_telegram_id(db, user_id)
@@ -329,14 +348,15 @@ async def update_balance(
         found_user = await get_user_by_id(db, user_id)
 
     if not found_user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_USER_NOT_FOUND', 'User not found'))
 
     if payload.amount_kopeks > 0:
         success = await add_user_balance(
             db,
             found_user,
             amount_kopeks=payload.amount_kopeks,
-            description=payload.description or 'Корректировка через веб-API',
+            description=payload.description
+            or get_texts().t('API_USER_BALANCE_ADJUSTMENT', 'Корректировка через веб-API'),
             create_transaction=payload.create_transaction,
             payment_method=PaymentMethod.MANUAL,
         )
@@ -345,13 +365,17 @@ async def update_balance(
             db,
             found_user,
             amount_kopeks=abs(payload.amount_kopeks),
-            description=payload.description or 'Корректировка через веб-API',
+            description=payload.description
+            or get_texts().t('API_USER_BALANCE_ADJUSTMENT', 'Корректировка через веб-API'),
             create_transaction=payload.create_transaction,
             payment_method=PaymentMethod.MANUAL,
         )
 
     if not success:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, 'Failed to update balance')
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            get_texts().t('API_USER_BALANCE_UPDATE_FAILED', 'Failed to update balance'),
+        )
 
     # Reload the user to ensure we have the latest data
     if found_user.telegram_id == user_id:
@@ -397,10 +421,14 @@ async def deposit_balance(
     """
     max_kopeks = settings.WEB_API_MANUAL_DEPOSIT_MAX_KOPEKS
     if max_kopeks and payload.amount_kopeks > max_kopeks:
+        limit_message = get_texts().t(
+            'API_USER_DEPOSIT_LIMIT_EXCEEDED',
+            'Amount {amount_kopeks} exceeds the manual deposit limit of {max_kopeks} kopeks '
+            '(raise WEB_API_MANUAL_DEPOSIT_MAX_KOPEKS or use POST /users/{{id}}/balance)',
+        )
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f'Amount {payload.amount_kopeks} exceeds the manual deposit limit of {max_kopeks} kopeks '
-            f'(raise WEB_API_MANUAL_DEPOSIT_MAX_KOPEKS or use POST /users/{{id}}/balance)',
+            limit_message.format(amount_kopeks=payload.amount_kopeks, max_kopeks=max_kopeks),
         )
 
     found_user = await _get_user_by_id_or_telegram_id(db, user_id)
@@ -416,7 +444,7 @@ async def deposit_balance(
             db,
             found_user,
             amount_kopeks=payload.amount_kopeks,
-            description=payload.description or 'Ручное пополнение',
+            description=payload.description or get_texts().t('API_USER_MANUAL_DEPOSIT', 'Ручное пополнение'),
             idempotency_key=payload.idempotency_key,
             bot=bot,
             notify_user=payload.notify_user,
@@ -425,10 +453,18 @@ async def deposit_balance(
     except ManualTopupKeyConflict as conflict:
         # Тот же ключ, но другая сумма или другой пользователь — ошибка вызывающего.
         # Молчаливое «duplicate, ничего не начислено» агент прочитал бы как успех.
+        conflict_message = get_texts().t(
+            'API_USER_IDEMPOTENCY_KEY_USED',
+            'Idempotency key already used by transaction {transaction_id} '
+            '(user {user_id}, {amount_kopeks} kopeks)',
+        )
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f'Idempotency key already used by transaction {conflict.transaction.id} '
-            f'(user {conflict.transaction.user_id}, {conflict.transaction.amount_kopeks} kopeks)',
+            conflict_message.format(
+                transaction_id=conflict.transaction.id,
+                user_id=conflict.transaction.user_id,
+                amount_kopeks=conflict.transaction.amount_kopeks,
+            ),
         ) from conflict
     finally:
         if bot is not None:
@@ -470,7 +506,7 @@ async def _get_user_by_id_or_telegram_id(db: AsyncSession, user_id: int) -> User
 
     user = await get_user_by_id(db, user_id)
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('API_USER_NOT_FOUND', 'User not found'))
     return user
 
 
@@ -505,7 +541,10 @@ async def create_user_subscription(
 
             existing = await get_subscription_by_id(db, payload.subscription_id)
             if existing and existing.user_id != user.id:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription does not belong to this user')
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    get_texts().t('API_SUBSCRIPTION_FOREIGN_USER', 'Subscription does not belong to this user'),
+                )
         elif payload.replace_existing and active_subs:
             if len(active_subs) == 1:
                 existing = active_subs[0]
@@ -518,14 +557,20 @@ async def create_user_subscription(
         if active_subs and not payload.replace_existing:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'User already has a subscription. Use replace_existing=true to replace it',
+                get_texts().t(
+                    'API_USER_SUBSCRIPTION_EXISTS_REPLACE',
+                    'User already has a subscription. Use replace_existing=true to replace it',
+                ),
             )
     else:
         existing = await get_subscription_by_user_id(db, user.id)
         if existing and not payload.replace_existing:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'User already has a subscription. Use replace_existing=true to replace it',
+                get_texts().t(
+                    'API_USER_SUBSCRIPTION_EXISTS_REPLACE',
+                    'User already has a subscription. Use replace_existing=true to replace it',
+                ),
             )
     previous_state = _snapshot_subscription_state(existing) if existing else None
 
@@ -573,7 +618,13 @@ async def create_user_subscription(
                 )
         else:
             if payload.duration_days is None:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'duration_days is required for paid subscriptions')
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    get_texts().t(
+                        'API_SUBSCRIPTION_DURATION_REQUIRED',
+                        'duration_days is required for paid subscriptions',
+                    ),
+                )
             device_limit = payload.device_limit
             if device_limit is None:
                 if forced_devices is not None:
@@ -622,7 +673,7 @@ async def create_user_subscription(
             logger.exception('Failed to rollback user subscription mutation', user_id=user.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Failed to sync with Remnawave',
+            detail=get_texts().t('API_SUBSCRIPTION_SYNC_FAILED', 'Failed to sync with Remnawave'),
         )
 
     # Перезагружаем пользователя с подпиской
@@ -660,7 +711,10 @@ async def delete_user_subscription(
 
             subscription = await get_subscription_by_id(db, subscription_id)
             if subscription and subscription.user_id != user.id:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription does not belong to this user')
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    get_texts().t('API_SUBSCRIPTION_FOREIGN_USER', 'Subscription does not belong to this user'),
+                )
         else:
             from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
@@ -676,7 +730,10 @@ async def delete_user_subscription(
     else:
         subscription = await get_subscription_by_user_id(db, user.id)
     if not subscription:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User has no subscription')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('API_USER_NO_SUBSCRIPTION', 'User has no subscription'),
+        )
 
     # Подписка деактивируется — СБП-автопродление Platega обязано быть отменено,
     # иначе следующий push-коллбек продлит и заново включит её, а банк продолжит списывать.

@@ -20,6 +20,7 @@ from app.database.crud.promo_offer_template import (
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.models import DiscountOffer, PromoOfferLog, PromoOfferTemplate, Subscription, User
 from app.handlers.admin.messages import get_custom_users, get_target_users
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.promo_offers import (
@@ -165,12 +166,18 @@ async def list_promo_offers(
     if telegram_id is not None:
         user = await get_user_by_telegram_id(db, telegram_id)
         if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, detail='User not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail=get_texts().t('PROMO_OFFER_USER_NOT_FOUND', 'User not found'),
+            )
 
         if resolved_user_id and resolved_user_id != user.id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                detail='telegram_id does not match the provided user_id',
+                detail=get_texts().t(
+                    'PROMO_OFFER_TELEGRAM_ID_MISMATCH',
+                    'telegram_id does not match the provided user_id',
+                ),
             )
 
         resolved_user_id = user.id
@@ -205,45 +212,72 @@ async def create_promo_offer(
     db: AsyncSession = Depends(get_db_session),
 ) -> PromoOfferResponse:
     if payload.discount_percent < 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'discount_percent must be non-negative')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_DISCOUNT_PERCENT_NEGATIVE', 'discount_percent must be non-negative'),
+        )
     if payload.bonus_amount_kopeks < 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'bonus_amount_kopeks must be non-negative')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_BONUS_AMOUNT_NEGATIVE', 'bonus_amount_kopeks must be non-negative'),
+        )
     if payload.valid_hours <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'valid_hours must be positive')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_VALID_HOURS_NOT_POSITIVE', 'valid_hours must be positive'),
+        )
     if not payload.notification_type.strip():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'notification_type must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_NOTIFICATION_TYPE_EMPTY', 'notification_type must not be empty'),
+        )
     if not payload.effect_type.strip():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'effect_type must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_EFFECT_TYPE_EMPTY', 'effect_type must not be empty'),
+        )
 
     target_user_id = payload.user_id
     user: User | None = None
     if payload.telegram_id is not None:
         user = await get_user_by_telegram_id(db, payload.telegram_id)
         if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                get_texts().t('PROMO_OFFER_USER_NOT_FOUND', 'User not found'),
+            )
 
         if target_user_id and target_user_id != user.id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'Provided user_id does not match telegram_id',
+                get_texts().t('PROMO_OFFER_USER_ID_MISMATCH', 'Provided user_id does not match telegram_id'),
             )
 
         target_user_id = user.id
 
     if target_user_id is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'user_id or telegram_id is required')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_USER_IDENTIFIER_REQUIRED', 'user_id or telegram_id is required'),
+        )
 
     if user is None:
         user = await db.get(User, target_user_id)
     if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PROMO_OFFER_USER_NOT_FOUND', 'User not found'))
 
     if payload.subscription_id is not None:
         subscription = await db.get(Subscription, payload.subscription_id)
         if not subscription:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'Subscription not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                get_texts().t('PROMO_OFFER_SUBSCRIPTION_NOT_FOUND', 'Subscription not found'),
+            )
         if subscription.user_id != target_user_id:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Subscription does not belong to the user')
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                get_texts().t('PROMO_OFFER_SUBSCRIPTION_FOREIGN', 'Subscription does not belong to the user'),
+            )
 
     offer = await upsert_discount_offer(
         db,
@@ -273,15 +307,30 @@ async def broadcast_promo_offers(
     db: AsyncSession = Depends(get_db_session),
 ) -> PromoOfferBroadcastResponse:
     if payload.discount_percent < 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'discount_percent must be non-negative')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_DISCOUNT_PERCENT_NEGATIVE', 'discount_percent must be non-negative'),
+        )
     if payload.bonus_amount_kopeks < 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'bonus_amount_kopeks must be non-negative')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_BONUS_AMOUNT_NEGATIVE', 'bonus_amount_kopeks must be non-negative'),
+        )
     if payload.valid_hours <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'valid_hours must be positive')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_VALID_HOURS_NOT_POSITIVE', 'valid_hours must be positive'),
+        )
     if not payload.notification_type.strip():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'notification_type must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_NOTIFICATION_TYPE_EMPTY', 'notification_type must not be empty'),
+        )
     if not payload.effect_type.strip():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'effect_type must not be empty')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_EFFECT_TYPE_EMPTY', 'effect_type must not be empty'),
+        )
 
     recipients: dict[int, User] = {}
 
@@ -295,12 +344,15 @@ async def broadcast_promo_offers(
     if payload.telegram_id is not None:
         user = await get_user_by_telegram_id(db, payload.telegram_id)
         if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                get_texts().t('PROMO_OFFER_USER_NOT_FOUND', 'User not found'),
+            )
 
         if target_user_id and target_user_id != user.id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'Provided user_id does not match telegram_id',
+                get_texts().t('PROMO_OFFER_USER_ID_MISMATCH', 'Provided user_id does not match telegram_id'),
             )
 
         target_user_id = user.id
@@ -309,29 +361,41 @@ async def broadcast_promo_offers(
         if user is None:
             user = await db.get(User, target_user_id)
         if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                get_texts().t('PROMO_OFFER_USER_NOT_FOUND', 'User not found'),
+            )
         recipients[target_user_id] = user
 
     if not recipients:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Пустая аудитория: укажите target или конкретного пользователя',
+            get_texts().t(
+                'PROMO_OFFER_EMPTY_AUDIENCE',
+                'Пустая аудитория: укажите target или конкретного пользователя',
+            ),
         )
 
     if payload.subscription_id is not None:
         if len(recipients) > 1:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'subscription_id можно использовать только при отправке одному пользователю',
+                get_texts().t(
+                    'PROMO_OFFER_SUBSCRIPTION_ID_SINGLE_USER_ONLY',
+                    'subscription_id можно использовать только при отправке одному пользователю',
+                ),
             )
         sole_user = next(iter(recipients.values()))
         subscription = await db.get(Subscription, payload.subscription_id)
         if not subscription:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, 'Subscription not found')
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                get_texts().t('PROMO_OFFER_SUBSCRIPTION_NOT_FOUND', 'Subscription not found'),
+            )
         if subscription.user_id != sole_user.id:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
-                'Subscription does not belong to the user',
+                get_texts().t('PROMO_OFFER_SUBSCRIPTION_FOREIGN', 'Subscription does not belong to the user'),
             )
 
     created_offers = 0
@@ -403,7 +467,10 @@ async def get_promo_offer_template_endpoint(
 ) -> PromoOfferTemplateResponse:
     template = await get_promo_offer_template_by_id(db, template_id)
     if not template:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo offer template not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('PROMO_OFFER_TEMPLATE_NOT_FOUND', 'Promo offer template not found'),
+        )
     return _serialize_template(template)
 
 
@@ -416,18 +483,36 @@ async def update_promo_offer_template_endpoint(
 ) -> PromoOfferTemplateResponse:
     template = await get_promo_offer_template_by_id(db, template_id)
     if not template:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo offer template not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('PROMO_OFFER_TEMPLATE_NOT_FOUND', 'Promo offer template not found'),
+        )
 
     if payload.valid_hours is not None and payload.valid_hours <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'valid_hours must be positive')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_VALID_HOURS_NOT_POSITIVE', 'valid_hours must be positive'),
+        )
     if payload.active_discount_hours is not None and payload.active_discount_hours <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'active_discount_hours must be positive')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_ACTIVE_DISCOUNT_HOURS_NOT_POSITIVE', 'active_discount_hours must be positive'),
+        )
     if payload.test_duration_hours is not None and payload.test_duration_hours <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'test_duration_hours must be positive')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_TEST_DURATION_HOURS_NOT_POSITIVE', 'test_duration_hours must be positive'),
+        )
     if payload.discount_percent is not None and payload.discount_percent < 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'discount_percent must be non-negative')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_DISCOUNT_PERCENT_NEGATIVE', 'discount_percent must be non-negative'),
+        )
     if payload.bonus_amount_kopeks is not None and payload.bonus_amount_kopeks < 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'bonus_amount_kopeks must be non-negative')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_OFFER_BONUS_AMOUNT_NEGATIVE', 'bonus_amount_kopeks must be non-negative'),
+        )
 
     if payload.test_squad_uuids is not None:
         normalized_squads = [str(uuid).strip() for uuid in payload.test_squad_uuids if str(uuid).strip()]
@@ -460,6 +545,6 @@ async def get_promo_offer_endpoint(
 ) -> PromoOfferResponse:
     offer = await get_offer_by_id(db, offer_id)
     if not offer:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo offer not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PROMO_OFFER_NOT_FOUND', 'Promo offer not found'))
 
     return _serialize_offer(offer)

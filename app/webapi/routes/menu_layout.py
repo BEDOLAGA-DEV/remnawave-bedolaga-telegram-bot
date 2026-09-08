@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, Security, statu
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.localization.texts import get_texts
 from app.services.menu_layout_service import (
     MenuContext,
     MenuLayoutService,
@@ -723,7 +724,13 @@ async def get_history_entry(
     """Получить конкретную запись истории с полной конфигурацией."""
     entry = await MenuLayoutService.get_history_entry(db, history_id)
     if not entry:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f'History entry {history_id} not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t(
+                'MENU_LAYOUT_HISTORY_ENTRY_NOT_FOUND',
+                'History entry {history_id} not found',
+            ).format(history_id=history_id),
+        )
 
     return {
         'id': entry['id'],
@@ -858,7 +865,13 @@ async def get_stats_by_button_type(
         )
     except Exception as e:
         logger.error('Error getting stats by type', error=e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f'Internal server error: {e!s}')
+        raise HTTPException(
+            status_code=500,
+            detail=get_texts().t(
+                'MENU_LAYOUT_INTERNAL_ERROR',
+                'Internal server error: {error}',
+            ).format(error=e),
+        )
 
 
 @router.get('/stats/by-hour', response_model=HourlyStatsResponse)
@@ -919,7 +932,13 @@ async def get_top_users(
         )
     except Exception as e:
         logger.error('Error getting top users', error=e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f'Internal server error: {e!s}')
+        raise HTTPException(
+            status_code=500,
+            detail=get_texts().t(
+                'MENU_LAYOUT_INTERNAL_ERROR',
+                'Internal server error: {error}',
+            ).format(error=e),
+        )
 
 
 @router.get('/stats/compare', response_model=PeriodComparisonResponse)
@@ -950,7 +969,13 @@ async def get_period_comparison(
         )
     except Exception as e:
         logger.error('Error getting period comparison', error=e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f'Internal server error: {e!s}')
+        raise HTTPException(
+            status_code=500,
+            detail=get_texts().t(
+                'MENU_LAYOUT_INTERNAL_ERROR',
+                'Internal server error: {error}',
+            ).format(error=e),
+        )
 
 
 @router.get('/stats/users/{user_id}/sequences', response_model=UserClickSequencesResponse)
@@ -985,4 +1010,10 @@ async def get_user_click_sequences(
         )
     except Exception as e:
         logger.error('Error getting user sequences: user_id=, error', user_id=user_id, error=e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f'Internal server error: {e!s}')
+        raise HTTPException(
+            status_code=500,
+            detail=get_texts().t(
+                'MENU_LAYOUT_INTERNAL_ERROR',
+                'Internal server error: {error}',
+            ).format(error=e),
+        )

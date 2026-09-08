@@ -24,6 +24,7 @@ from app.database.crud.rules import (
     restore_rules_version,
 )
 from app.database.models import ServiceRule
+from app.localization.texts import get_texts
 from app.services.faq_service import FaqService
 from app.services.privacy_policy_service import PrivacyPolicyService
 from app.services.public_offer_service import PublicOfferService
@@ -111,10 +112,16 @@ async def get_public_offer(
     offer = await PublicOfferService.get_offer(db, requested_lang, fallback=fallback)
 
     if not offer:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Public offer not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('PUBLIC_OFFER_NOT_FOUND', 'Public offer not found'),
+        )
 
     if not include_disabled and not offer.is_enabled:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Public offer disabled')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('PUBLIC_OFFER_DISABLED_ERROR', 'Public offer disabled'),
+        )
 
     return _serialize_rich_page(
         requested_language=requested_lang,
@@ -165,10 +172,16 @@ async def get_privacy_policy(
     policy = await PrivacyPolicyService.get_policy(db, requested_lang, fallback=fallback)
 
     if not policy:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Privacy policy not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('PRIVACY_POLICY_NOT_FOUND', 'Privacy policy not found'),
+        )
 
     if not include_disabled and not policy.is_enabled:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Privacy policy disabled')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('PRIVACY_POLICY_DISABLED_ERROR', 'Privacy policy disabled'),
+        )
 
     return _serialize_rich_page(
         requested_language=requested_lang,
@@ -278,7 +291,10 @@ async def update_faq_status(
 
     enabled_status = payload.is_enabled if payload else is_enabled
     if enabled_status is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Parameter 'is_enabled' is required")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('FAQ_STATUS_PARAMETER_REQUIRED', "Parameter 'is_enabled' is required"),
+        )
 
     setting = await FaqService.set_enabled(db, resolved_language, enabled_status)
 
@@ -328,7 +344,10 @@ async def get_faq_page(
     )
 
     if not page:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'FAQ page not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('FAQ_PAGE_NOT_FOUND', 'FAQ page not found'),
+        )
 
     return _serialize_faq_page(page)
 
@@ -343,7 +362,10 @@ async def update_faq_page(
     page = await get_faq_page_by_id(db, page_id)
 
     if not page:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'FAQ page not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('FAQ_PAGE_NOT_FOUND', 'FAQ page not found'),
+        )
 
     updated = await FaqService.update_page(
         db,
@@ -365,7 +387,10 @@ async def delete_faq_page(
 ) -> Response:
     page = await get_faq_page_by_id(db, page_id)
     if not page:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'FAQ page not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('FAQ_PAGE_NOT_FOUND', 'FAQ page not found'),
+        )
 
     await FaqService.delete_page(db, page_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -395,7 +420,9 @@ async def reorder_faq_pages(
         if not page:
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,
-                f'FAQ page {item.id} not found for language {lang}',
+                get_texts()
+                .t('FAQ_PAGE_NOT_FOUND_FOR_LANGUAGE', 'FAQ page {page_id} not found for language {language}')
+                .format(page_id=item.id, language=lang),
             )
         pages.append(page)
 
@@ -438,7 +465,10 @@ async def get_service_rules(
             rules = await get_rules_by_language(db, default_lang)
 
     if not rules:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Service rules not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('SERVICE_RULES_NOT_FOUND', 'Service rules not found'),
+        )
 
     return _serialize_rules(rules)
 
@@ -450,7 +480,7 @@ async def update_service_rules(
     db: AsyncSession = Depends(get_db_session),
 ) -> ServiceRulesResponse:
     lang = payload.language.split('-')[0].lower()
-    title = payload.title or 'Правила сервиса'
+    title = payload.title or get_texts().t('SERVICE_RULES_DEFAULT_TITLE', 'Правила сервиса')
     rules = await create_or_update_rules(
         db,
         content=payload.content,
@@ -503,5 +533,8 @@ async def restore_service_rules_version(
     lang = language.split('-', maxsplit=1)[0].lower()
     restored = await restore_rules_version(db, rule_id, language=lang)
     if not restored:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Rules version not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('SERVICE_RULES_VERSION_NOT_FOUND', 'Rules version not found'),
+        )
     return _serialize_rules(restored)

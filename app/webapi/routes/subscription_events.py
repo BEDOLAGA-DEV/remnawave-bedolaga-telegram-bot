@@ -12,6 +12,7 @@ from app.database.crud.subscription_event import (
     list_subscription_events,
 )
 from app.database.models import Subscription, SubscriptionEvent, Transaction, User
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.subscription_events import (
@@ -27,7 +28,10 @@ router = APIRouter()
 async def _get_user_or_error(db: AsyncSession, user_id: int) -> User:
     user = await db.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=get_texts().t('SUBSCRIPTION_EVENT_USER_NOT_FOUND', 'User not found'),
+        )
     return user
 
 
@@ -39,7 +43,7 @@ async def _ensure_subscription_exists(db: AsyncSession, subscription_id: int | N
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Subscription not found',
+            detail=get_texts().t('SUBSCRIPTION_EVENT_SUBSCRIPTION_NOT_FOUND', 'Subscription not found'),
         )
 
 
@@ -51,7 +55,7 @@ async def _ensure_transaction_exists(db: AsyncSession, transaction_id: int | Non
     if not transaction_exists:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail='Transaction not found',
+            detail=get_texts().t('SUBSCRIPTION_EVENT_TRANSACTION_NOT_FOUND', 'Transaction not found'),
         )
 
 

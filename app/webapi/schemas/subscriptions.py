@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.localization.texts import get_texts
+
 
 class SubscriptionResponse(BaseModel):
     id: int
@@ -36,7 +38,10 @@ class SubscriptionCreateRequest(BaseModel):
     replace_existing: bool = False
     subscription_id: int | None = Field(
         default=None,
-        description='ID of existing subscription to replace (required in multi-tariff mode when replace_existing=true)',
+        description=get_texts().t(
+            'API_SUBSCRIPTION_REPLACE_ID_DESCRIPTION',
+            'ID of existing subscription to replace (required in multi-tariff mode when replace_existing=true)',
+        ),
     )
 
 

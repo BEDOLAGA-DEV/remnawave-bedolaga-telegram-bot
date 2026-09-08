@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Query, Security, UploadFile, status
 from fastapi.responses import FileResponse
 
+from app.localization.texts import get_texts
 from app.services.backup_service import backup_service
 
 from ..background.backup_tasks import backup_task_manager
@@ -79,7 +80,7 @@ def _serialize_backup(raw: dict) -> BackupInfo:
     '',
     response_model=BackupCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary='Запустить создание резервной копии',
+    summary=get_texts().t('BACKUP_CREATE_SUMMARY', 'Запустить создание резервной копии'),
 )
 async def create_backup_endpoint(
     token: Any = Security(require_api_token),
@@ -92,7 +93,7 @@ async def create_backup_endpoint(
 @router.get(
     '',
     response_model=BackupListResponse,
-    summary='Список резервных копий',
+    summary=get_texts().t('BACKUP_LIST_SUMMARY', 'Список резервных копий'),
 )
 async def list_backups(
     _: Any = Security(require_api_token),
@@ -116,7 +117,7 @@ async def list_backups(
 @router.get(
     '/status/{task_id}',
     response_model=BackupStatusResponse,
-    summary='Статус создания резервной копии',
+    summary=get_texts().t('BACKUP_STATUS_SUMMARY', 'Статус создания резервной копии'),
 )
 async def get_backup_status(
     task_id: str,
@@ -124,7 +125,7 @@ async def get_backup_status(
 ) -> BackupStatusResponse:
     state = await backup_task_manager.get(task_id)
     if not state:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Task not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('BACKUP_TASK_NOT_FOUND', 'Task not found'))
 
     return BackupStatusResponse(
         task_id=state.task_id,
@@ -140,11 +141,14 @@ async def get_backup_status(
 @router.get(
     '/tasks',
     response_model=BackupTaskListResponse,
-    summary='Список фоновых задач бекапов',
+    summary=get_texts().t('BACKUP_TASKS_LIST_SUMMARY', 'Список фоновых задач бекапов'),
 )
 async def list_backup_tasks(
     _: Any = Security(require_api_token),
-    active_only: bool = Query(False, description='Вернуть только активные задачи'),
+    active_only: bool = Query(
+        False,
+        description=get_texts().t('BACKUP_TASKS_ACTIVE_ONLY_DESCRIPTION', 'Вернуть только активные задачи'),
+    ),
 ) -> BackupTaskListResponse:
     states = await backup_task_manager.list(active_only=active_only)
 
@@ -166,11 +170,11 @@ async def list_backup_tasks(
 
 @router.get(
     '/download/{filename:path}',
-    summary='Скачать файл резервной копии',
+    summary=get_texts().t('BACKUP_DOWNLOAD_SUMMARY', 'Скачать файл резервной копии'),
     responses={
         200: {
             'content': {'application/octet-stream': {}},
-            'description': 'Файл резервной копии',
+            'description': get_texts().t('BACKUP_DOWNLOAD_FILE_DESCRIPTION', 'Файл резервной копии'),
         }
     },
 )
@@ -181,15 +185,15 @@ async def download_backup(
     backup_path = backup_service.backup_dir / filename
 
     if not backup_path.exists():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Backup file not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('BACKUP_FILE_NOT_FOUND', 'Backup file not found'))
 
     if not backup_path.is_file():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid backup path')
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, get_texts().t('BACKUP_INVALID_PATH', 'Invalid backup path'))
 
     resolved_path = backup_path.resolve()
     backup_dir_resolved = backup_service.backup_dir.resolve()
     if not str(resolved_path).startswith(str(backup_dir_resolved)):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, 'Access denied')
+        raise HTTPException(status.HTTP_403_FORBIDDEN, get_texts().t('API_ACCESS_DENIED', 'Access denied'))
 
     return FileResponse(
         path=str(backup_path),
@@ -201,7 +205,7 @@ async def download_backup(
 @router.post(
     '/restore/{filename:path}',
     response_model=BackupRestoreResponse,
-    summary='Восстановить из резервной копии',
+    summary=get_texts().t('BACKUP_RESTORE_SUMMARY', 'Восстановить из резервной копии'),
 )
 async def restore_backup(
     filename: str,
@@ -211,12 +215,12 @@ async def restore_backup(
     backup_path = backup_service.backup_dir / filename
 
     if not backup_path.exists():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Backup file not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('BACKUP_FILE_NOT_FOUND', 'Backup file not found'))
 
     resolved_path = backup_path.resolve()
     backup_dir_resolved = backup_service.backup_dir.resolve()
     if not str(resolved_path).startswith(str(backup_dir_resolved)):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, 'Access denied')
+        raise HTTPException(status.HTTP_403_FORBIDDEN, get_texts().t('API_ACCESS_DENIED', 'Access denied'))
 
     success, message = await backup_service.restore_backup(str(backup_path), clear_existing=payload.clear_existing)
 
@@ -229,30 +233,44 @@ async def restore_backup(
 @router.post(
     '/upload',
     response_model=BackupRestoreResponse,
-    summary='Загрузить и восстановить из файла резервной копии',
+    summary=get_texts().t('BACKUP_UPLOAD_RESTORE_SUMMARY', 'Загрузить и восстановить из файла резервной копии'),
 )
 async def upload_and_restore_backup(
-    file: UploadFile = File(..., description='Файл резервной копии (.tar.gz, .json, .json.gz)'),
-    clear_existing: bool = Query(False, description='Очистить существующие данные'),
+    file: UploadFile = File(
+        ...,
+        description=get_texts().t('BACKUP_UPLOAD_FILE_DESCRIPTION', 'Файл резервной копии (.tar.gz, .json, .json.gz)'),
+    ),
+    clear_existing: bool = Query(
+        False,
+        description=get_texts().t('BACKUP_CLEAR_EXISTING_DESCRIPTION', 'Очистить существующие данные'),
+    ),
     _: Any = Security(require_api_token),
 ) -> BackupRestoreResponse:
     if not file.filename:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Filename is required')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('BACKUP_FILENAME_REQUIRED', 'Filename is required'),
+        )
 
     safe_filename = Path(file.filename).name
     if not safe_filename or safe_filename in ('.', '..'):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid filename')
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, get_texts().t('BACKUP_INVALID_FILENAME', 'Invalid filename'))
 
     allowed_extensions = ('.tar.gz', '.json', '.json.gz', '.tar')
     if not any(safe_filename.endswith(ext) for ext in allowed_extensions):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f'Invalid file type. Allowed: {", ".join(allowed_extensions)}')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('BACKUP_INVALID_FILE_TYPE', 'Invalid file type. Allowed: {allowed}').format(
+                allowed=', '.join(allowed_extensions)
+            ),
+        )
 
     temp_path = backup_service.backup_dir / f'uploaded_{safe_filename}'
 
     resolved_path = temp_path.resolve()
     backup_dir_resolved = backup_service.backup_dir.resolve()
     if not str(resolved_path).startswith(str(backup_dir_resolved)):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, 'Invalid file path')
+        raise HTTPException(status.HTTP_403_FORBIDDEN, get_texts().t('BACKUP_INVALID_FILE_PATH', 'Invalid file path'))
 
     try:
         content = await file.read()
@@ -277,7 +295,7 @@ async def upload_and_restore_backup(
 @router.delete(
     '/{filename:path}',
     response_model=BackupDeleteResponse,
-    summary='Удалить резервную копию',
+    summary=get_texts().t('BACKUP_DELETE_SUMMARY', 'Удалить резервную копию'),
 )
 async def delete_backup(
     filename: str,
@@ -288,7 +306,7 @@ async def delete_backup(
     resolved_path = backup_path.resolve()
     backup_dir_resolved = backup_service.backup_dir.resolve()
     if not str(resolved_path).startswith(str(backup_dir_resolved)):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, 'Access denied')
+        raise HTTPException(status.HTTP_403_FORBIDDEN, get_texts().t('API_ACCESS_DENIED', 'Access denied'))
 
     success, message = await backup_service.delete_backup(filename)
 

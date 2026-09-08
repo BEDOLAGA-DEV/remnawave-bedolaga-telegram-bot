@@ -16,6 +16,7 @@ from app.database.crud.promo_group import (
     update_promo_group,
 )
 from app.database.models import PromoGroup
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.promo_groups import (
@@ -88,7 +89,7 @@ async def get_promo_group(
 ) -> PromoGroupResponse:
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo group not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PROMO_GROUP_NOT_FOUND', 'Promo group not found'))
 
     members_count = await count_promo_group_members(db, group_id)
     return _serialize(group, members_count=members_count)
@@ -121,7 +122,7 @@ async def create_promo_group_endpoint(
         await db.rollback()
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Promo group with this name already exists',
+            get_texts().t('PROMO_GROUP_NAME_ALREADY_EXISTS', 'Promo group with this name already exists'),
         ) from exc
     return _serialize(group, members_count=0)
 
@@ -139,7 +140,7 @@ async def update_promo_group_endpoint(
 ) -> PromoGroupResponse:
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo group not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PROMO_GROUP_NOT_FOUND', 'Promo group not found'))
 
     try:
         group = await update_promo_group(
@@ -158,7 +159,7 @@ async def update_promo_group_endpoint(
         await db.rollback()
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Promo group with this name already exists',
+            get_texts().t('PROMO_GROUP_NAME_ALREADY_EXISTS', 'Promo group with this name already exists'),
         ) from exc
     members_count = await count_promo_group_members(db, group_id)
     return _serialize(group, members_count=members_count)
@@ -172,10 +173,13 @@ async def delete_promo_group_endpoint(
 ) -> Response:
     group = await get_promo_group_by_id(db, group_id)
     if not group:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Promo group not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('PROMO_GROUP_NOT_FOUND', 'Promo group not found'))
 
     success = await delete_promo_group(db, group)
     if not success:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Cannot delete default promo group')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('PROMO_GROUP_DELETE_DEFAULT_FORBIDDEN', 'Cannot delete default promo group'),
+        )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

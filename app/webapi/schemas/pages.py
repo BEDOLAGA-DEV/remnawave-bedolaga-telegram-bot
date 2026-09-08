@@ -4,28 +4,42 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.localization.texts import get_texts
+
 
 class RichTextPageResponse(BaseModel):
     """Generic representation for rich text informational pages."""
 
-    requested_language: str = Field(..., description='Язык, запрошенный клиентом')
-    language: str = Field(..., description='Фактический язык найденной записи')
+    requested_language: str = Field(
+        ..., description=get_texts().t('RICH_TEXT_PAGE_REQUESTED_LANGUAGE_DESCRIPTION', 'Язык, запрошенный клиентом')
+    )
+    language: str = Field(
+        ..., description=get_texts().t('RICH_TEXT_PAGE_LANGUAGE_DESCRIPTION', 'Фактический язык найденной записи')
+    )
     is_enabled: bool | None = Field(
         default=None,
-        description='Текущий статус публикации страницы (если применимо)',
+        description=get_texts().t(
+            'RICH_TEXT_PAGE_IS_ENABLED_DESCRIPTION',
+            'Текущий статус публикации страницы (если применимо)',
+        ),
     )
-    content: str = Field(..., description='Полное содержимое страницы')
+    content: str = Field(
+        ..., description=get_texts().t('RICH_TEXT_PAGE_CONTENT_DESCRIPTION', 'Полное содержимое страницы')
+    )
     content_pages: list[str] = Field(
         default_factory=list,
-        description='Содержимое, разбитое на страницы фиксированной длины',
+        description=get_texts().t(
+            'RICH_TEXT_PAGE_CONTENT_PAGES_DESCRIPTION',
+            'Содержимое, разбитое на страницы фиксированной длины',
+        ),
     )
     created_at: datetime | None = Field(
         default=None,
-        description='Дата создания записи',
+        description=get_texts().t('RICH_TEXT_PAGE_CREATED_AT_DESCRIPTION', 'Дата создания записи'),
     )
     updated_at: datetime | None = Field(
         default=None,
-        description='Дата последнего обновления записи',
+        description=get_texts().t('RICH_TEXT_PAGE_UPDATED_AT_DESCRIPTION', 'Дата последнего обновления записи'),
     )
 
 
@@ -34,12 +48,20 @@ class RichTextPageUpdateRequest(BaseModel):
         default='ru',
         min_length=2,
         max_length=10,
-        description='Язык, для которого выполняется обновление',
+        description=get_texts().t(
+            'RICH_TEXT_PAGE_UPDATE_LANGUAGE_DESCRIPTION',
+            'Язык, для которого выполняется обновление',
+        ),
     )
-    content: str = Field(..., description='Новое содержимое страницы')
+    content: str = Field(
+        ..., description=get_texts().t('RICH_TEXT_PAGE_UPDATE_CONTENT_DESCRIPTION', 'Новое содержимое страницы')
+    )
     is_enabled: bool | None = Field(
         default=None,
-        description='Если указано — обновить статус публикации',
+        description=get_texts().t(
+            'RICH_TEXT_PAGE_UPDATE_IS_ENABLED_DESCRIPTION',
+            'Если указано — обновить статус публикации',
+        ),
     )
 
 
@@ -68,18 +90,21 @@ class FaqPageCreateRequest(BaseModel):
         default='ru',
         min_length=2,
         max_length=10,
-        description='Язык создаваемой страницы',
+        description=get_texts().t('FAQ_PAGE_CREATE_LANGUAGE_DESCRIPTION', 'Язык создаваемой страницы'),
     )
     title: str = Field(..., min_length=1, max_length=255)
     content: str = Field(...)
     display_order: int | None = Field(
         default=None,
         ge=0,
-        description='Порядок отображения (если не указан — будет рассчитан автоматически)',
+        description=get_texts().t(
+            'FAQ_PAGE_CREATE_DISPLAY_ORDER_DESCRIPTION',
+            'Порядок отображения (если не указан — будет рассчитан автоматически)',
+        ),
     )
     is_active: bool | None = Field(
         default=True,
-        description='Начальный статус активности страницы',
+        description=get_texts().t('FAQ_PAGE_CREATE_IS_ACTIVE_DESCRIPTION', 'Начальный статус активности страницы'),
     )
 
 
@@ -100,7 +125,7 @@ class FaqReorderRequest(BaseModel):
         default='ru',
         min_length=2,
         max_length=10,
-        description='Язык, для которого применяется сортировка',
+        description=get_texts().t('FAQ_REORDER_LANGUAGE_DESCRIPTION', 'Язык, для которого применяется сортировка'),
     )
     items: list[FaqReorderItem]
 
@@ -135,7 +160,10 @@ class ServiceRulesUpdateRequest(BaseModel):
         default='ru',
         min_length=2,
         max_length=10,
-        description='Язык, для которого обновляются правила',
+        description=get_texts().t(
+            'SERVICE_RULES_UPDATE_LANGUAGE_DESCRIPTION',
+            'Язык, для которого обновляются правила',
+        ),
     )
     title: str | None = Field(
         default='Правила сервиса',

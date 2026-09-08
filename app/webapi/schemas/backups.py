@@ -4,10 +4,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.localization.texts import get_texts
+
 
 class BackupCreateResponse(BaseModel):
     task_id: str
-    status: str = Field(..., description='Текущий статус задачи')
+    status: str = Field(..., description=get_texts().t('BACKUP_TASK_STATUS_DESCRIPTION', 'Текущий статус задачи'))
 
 
 class BackupInfo(BaseModel):
@@ -38,7 +40,10 @@ class BackupStatusResponse(BaseModel):
     message: str | None = None
     file_path: str | None = Field(
         default=None,
-        description='Полный путь до созданного бекапа, если задача завершена',
+        description=get_texts().t(
+            'BACKUP_FILE_PATH_DESCRIPTION',
+            'Полный путь до созданного бекапа, если задача завершена',
+        ),
     )
     created_by: int | None = None
     created_at: datetime
@@ -55,7 +60,13 @@ class BackupTaskListResponse(BaseModel):
 
 
 class BackupRestoreRequest(BaseModel):
-    clear_existing: bool = Field(default=False, description='Очистить существующие данные перед восстановлением')
+    clear_existing: bool = Field(
+        default=False,
+        description=get_texts().t(
+            'BACKUP_RESTORE_CLEAR_EXISTING_DESCRIPTION',
+            'Очистить существующие данные перед восстановлением',
+        ),
+    )
 
 
 class BackupRestoreResponse(BaseModel):

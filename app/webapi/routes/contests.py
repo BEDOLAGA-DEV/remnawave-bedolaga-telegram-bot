@@ -38,6 +38,7 @@ from app.database.models import (
     ReferralContestEvent,
     User,
 )
+from app.localization.texts import get_texts
 from app.services.contest_rotation_service import contest_rotation_service
 from app.webapi.dependencies import get_db_session, require_api_token
 from app.webapi.schemas.contests import (
@@ -246,7 +247,10 @@ async def get_daily_template(
 ) -> ContestTemplateResponse:
     tpl = await get_template_by_id(db, template_id)
     if not tpl:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Template not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('CONTEST_TEMPLATE_NOT_FOUND', 'Template not found'),
+        )
     return _serialize_template(tpl)
 
 
@@ -263,7 +267,10 @@ async def update_daily_template(
 ) -> ContestTemplateResponse:
     tpl = await get_template_by_id(db, template_id)
     if not tpl:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Template not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('CONTEST_TEMPLATE_NOT_FOUND', 'Template not found'),
+        )
 
     update_fields = payload.model_dump(exclude_none=True)
     if not update_fields:
@@ -287,7 +294,10 @@ async def start_round_now(
 ) -> ContestRoundResponse:
     tpl = await get_template_by_id(db, template_id)
     if not tpl:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Template not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('CONTEST_TEMPLATE_NOT_FOUND', 'Template not found'),
+        )
 
     if not tpl.is_enabled:
         tpl = await update_template_fields(db, tpl, is_enabled=True)
@@ -296,7 +306,10 @@ async def start_round_now(
     if existing and not payload.force:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            'Active round already exists for this template. Set force=true to start a new one.',
+            get_texts().t(
+                'CONTEST_ROUND_ACTIVE_EXISTS',
+                'Active round already exists for this template. Set force=true to start a new one.',
+            ),
         )
     if existing and payload.force:
         await finish_round(db, existing)
@@ -391,7 +404,7 @@ async def get_round(
     )
     round_obj = result.scalar_one_or_none()
     if not round_obj:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Round not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('CONTEST_ROUND_NOT_FOUND', 'Round not found'))
     return _serialize_round(round_obj)
 
 
@@ -410,7 +423,7 @@ async def finish_round_now(
     )
     round_obj = result.scalar_one_or_none()
     if not round_obj:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Round not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('CONTEST_ROUND_NOT_FOUND', 'Round not found'))
     if round_obj.status != 'finished':
         round_obj = await finish_round(db, round_obj)
     return _serialize_round(round_obj)
@@ -498,7 +511,10 @@ async def create_referral(
     start_at = _to_utc_naive(payload.start_at, payload.timezone)
     end_at = _to_utc_naive(payload.end_at, payload.timezone)
     if end_at <= start_at:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'end_at must be after start_at')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('REFERRAL_CONTEST_END_BEFORE_START', 'end_at must be after start_at'),
+        )
 
     summary_time = _primary_time(payload.daily_summary_times, payload.daily_summary_time)
 
@@ -535,7 +551,7 @@ async def get_referral(
 ) -> ReferralContestDetailResponse:
     contest = await get_referral_contest(db, contest_id)
     if not contest:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Contest not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('REFERRAL_CONTEST_NOT_FOUND', 'Contest not found'))
 
     total_events = await get_contest_events_count(db, contest.id)
     leaderboard_rows = await get_contest_leaderboard(db, contest.id, limit=leaderboard_limit)
@@ -561,7 +577,7 @@ async def update_referral(
 ) -> ReferralContestResponse:
     contest = await get_referral_contest(db, contest_id)
     if not contest:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Contest not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('REFERRAL_CONTEST_NOT_FOUND', 'Contest not found'))
 
     fields = payload.model_dump(exclude_none=True)
 
@@ -580,7 +596,10 @@ async def update_referral(
     new_start = fields.get('start_at', contest.start_at)
     new_end = fields.get('end_at', contest.end_at)
     if new_end <= new_start:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'end_at must be after start_at')
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            get_texts().t('REFERRAL_CONTEST_END_BEFORE_START', 'end_at must be after start_at'),
+        )
 
     if fields:
         contest = await update_referral_contest(db, contest, **fields)
@@ -601,7 +620,7 @@ async def toggle_referral(
 ) -> ReferralContestResponse:
     contest = await get_referral_contest(db, contest_id)
     if not contest:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Contest not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('REFERRAL_CONTEST_NOT_FOUND', 'Contest not found'))
     contest = await toggle_referral_contest(db, contest, is_active)
     return _serialize_referral_contest(contest)
 
@@ -618,12 +637,12 @@ async def delete_referral(
 ) -> dict[str, str]:
     contest = await get_referral_contest(db, contest_id)
     if not contest:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Contest not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('REFERRAL_CONTEST_NOT_FOUND', 'Contest not found'))
     now_utc = datetime.now(UTC)
     if contest.is_active or contest.end_at > now_utc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            'Можно удалять только завершённые конкурсы',
+            get_texts().t('REFERRAL_CONTEST_DELETE_ONLY_FINISHED', 'Можно удалять только завершённые конкурсы'),
         )
     await delete_referral_contest(db, contest)
     return {'status': 'deleted'}
@@ -643,7 +662,7 @@ async def list_referral_events(
 ) -> ReferralContestEventListResponse:
     contest = await get_referral_contest(db, contest_id)
     if not contest:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Contest not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('REFERRAL_CONTEST_NOT_FOUND', 'Contest not found'))
 
     referrer_user = aliased(User)
     referral_user = aliased(User)
@@ -683,7 +702,7 @@ async def get_referral_detailed_stats(
 ) -> ReferralContestDetailedStatsResponse:
     contest = await get_referral_contest(db, contest_id)
     if not contest:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Contest not found')
+        raise HTTPException(status.HTTP_404_NOT_FOUND, get_texts().t('REFERRAL_CONTEST_NOT_FOUND', 'Contest not found'))
 
     from app.services.referral_contest_service import referral_contest_service
 

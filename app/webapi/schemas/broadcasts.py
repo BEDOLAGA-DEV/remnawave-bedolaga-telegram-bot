@@ -6,6 +6,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, validator
 
 from app.keyboards.admin import BROADCAST_BUTTONS, DEFAULT_BROADCAST_BUTTONS
+from app.localization.texts import get_texts
 
 
 class BroadcastMedia(BaseModel):
@@ -58,14 +59,14 @@ class BroadcastCreateRequest(BaseModel):
             if criteria in cls._CUSTOM_TARGETS:
                 return normalized
 
-        raise ValueError('Unsupported target value')
+        raise ValueError(get_texts().t('BROADCAST_UNSUPPORTED_TARGET', 'Unsupported target value'))
 
     @validator('selected_buttons', pre=True)
     def validate_selected_buttons(cls, value):
         if value is None:
             return []
         if not isinstance(value, (list, tuple)):
-            raise TypeError('selected_buttons must be an array')
+            raise TypeError(get_texts().t('BROADCAST_SELECTED_BUTTONS_NOT_ARRAY', 'selected_buttons must be an array'))
 
         seen = set()
         ordered: list[str] = []
@@ -74,7 +75,8 @@ class BroadcastCreateRequest(BaseModel):
             if not button:
                 continue
             if button not in BROADCAST_BUTTONS:
-                raise ValueError(f"Unsupported button '{button}'")
+                message = get_texts().t('BROADCAST_UNSUPPORTED_BUTTON', "Unsupported button '{button}'")
+                raise ValueError(message.format(button=button))
             if button in seen:
                 continue
             ordered.append(button)

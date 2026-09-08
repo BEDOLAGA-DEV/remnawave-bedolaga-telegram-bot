@@ -13,6 +13,7 @@ from app.database.crud.welcome_text import (
     list_welcome_texts,
     update_welcome_text,
 )
+from app.localization.texts import get_texts
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.welcome_texts import (
@@ -44,7 +45,10 @@ async def list_welcome_texts_endpoint(
     db: AsyncSession = Depends(get_db_session),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    include_inactive: bool = Query(True, description='Включать неактивные тексты'),
+    include_inactive: bool = Query(
+        True,
+        description=get_texts().t('WELCOME_TEXT_INCLUDE_INACTIVE_DESCRIPTION', 'Включать неактивные тексты'),
+    ),
 ) -> WelcomeTextListResponse:
     total = await count_welcome_texts(db, include_inactive=include_inactive)
     records = await list_welcome_texts(
@@ -88,7 +92,10 @@ async def get_welcome_text_endpoint(
 ) -> WelcomeTextResponse:
     record = await get_welcome_text_by_id(db, welcome_text_id)
     if not record:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Welcome text not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('API_WELCOME_TEXT_NOT_FOUND', 'Welcome text not found'),
+        )
 
     return _serialize(record)
 
@@ -102,7 +109,10 @@ async def update_welcome_text_endpoint(
 ) -> WelcomeTextResponse:
     record = await get_welcome_text_by_id(db, welcome_text_id)
     if not record:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Welcome text not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('API_WELCOME_TEXT_NOT_FOUND', 'Welcome text not found'),
+        )
 
     update_payload = payload.dict(exclude_unset=True)
     if 'text' in update_payload:
@@ -119,7 +129,10 @@ async def delete_welcome_text_endpoint(
 ) -> Response:
     record = await get_welcome_text_by_id(db, welcome_text_id)
     if not record:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'Welcome text not found')
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            get_texts().t('API_WELCOME_TEXT_NOT_FOUND', 'Welcome text not found'),
+        )
 
     await delete_welcome_text(db, record)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
