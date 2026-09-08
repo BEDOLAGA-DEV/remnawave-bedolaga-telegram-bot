@@ -1398,6 +1398,13 @@ async def register_email_standalone(
 
     If TEST_EMAIL is configured, test email accounts are auto-verified.
     """
+    # Check if email auth is enabled
+    if not settings.is_cabinet_email_auth_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Email registration is disabled'
+        )
+
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_register', limit=5, window=60, fail_closed=True):
         raise HTTPException(
@@ -1737,6 +1744,13 @@ async def login_email(
 
     Test email accounts (configured via TEST_EMAIL) bypass email verification.
     """
+    # Chrck if email auth is enabled
+    if not settings.is_cabinet_email_auth_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Email login is disabled'
+        )
+    
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_login', limit=10, window=60, fail_closed=True):
         raise HTTPException(
