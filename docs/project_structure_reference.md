@@ -4379,6 +4379,9 @@
 - `tests/webapi/test_broadcast_list_nullable_text.py` — Python-модуль
   Классы: нет
   Функции: `test_row_without_text_serializes` — Email-рассылка без текста отдаётся как есть, а не ломает сериализацию., `test_one_empty_row_does_not_break_the_whole_list` — Соседние рассылки обязаны доехать до ответа вместе с пустой., `test_list_endpoint_returns_rows_with_null_text` — Сам маршрут отвечает 200, а не 500, когда в выборку попала пустая строка.
+- `tests/webapi/test_miniapp_zero_price_traffic_package.py` — Python-модуль
+  Классы: нет
+  Функции: `tariffs_mode`, `test_zero_price_package_is_not_offered` — Список докупки в Mini App не показывает пакет без цены., `test_zero_price_package_cannot_be_bought` — Купить пакет без цены нельзя — иначе это бесплатный трафик.
 - `tests/webapi/test_promocode_traffic_roundtrip.py` — Python-модуль
   Классы: нет
   Функции: `test_traffic_survives_create_and_read_back` — Созданный через API код хранит трафик и отдаёт его обратно., `test_traffic_is_updatable` — PATCH меняет трафик, а не молча отвечает 200 со старым значением., `test_traffic_only_set_is_not_created_empty` — Набор из одного трафика создаётся именно трафиком, а не пустышкой., `test_update_cannot_empty_a_live_bonus_set` — Правка не должна обнулять живой набор до кода, который ничего не даёт., `test_update_may_empty_days_when_traffic_remains` — Обнулить дни можно, если в наборе остаётся трафик — набор непустой., `test_negative_traffic_rejected` — Отрицательный трафик отклоняется и на создании, и на правке.

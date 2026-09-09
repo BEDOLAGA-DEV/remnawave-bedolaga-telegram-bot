@@ -3665,6 +3665,11 @@ async def _get_current_tariff_model(db: AsyncSession, subscription, user=None) -
                 continue
 
             base_price = packages[gb]
+            # Нулевая цена = «цена не задана»: так этот пакет трактуют бот
+            # (клавиатура докупки его исключает) и кабинет (прячет из списка и
+            # не продаёт). Здесь фильтра не было, и пакет предлагался за 0 ₽.
+            if not base_price or base_price <= 0:
+                continue
             # Применяем скидку через PricingEngine
             discounted_price, _discount_val, traffic_discount_pct = pricing_engine.calculate_traffic_discount(
                 base_price,
@@ -7361,6 +7366,18 @@ async def purchase_traffic_topup_endpoint(
         )
 
     base_price_kopeks = packages[payload.gb]
+    if not base_price_kopeks or base_price_kopeks <= 0:
+        # Без этой проверки пакет с непроставленной ценой продавался за 0 ₽ —
+        # трафик выдавался бесплатно. Бот и кабинет такой пакет не показывают
+        # и не продают; список Mini App теперь тоже, но запрос приходит извне
+        # и на список не опирается.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                'code': 'package_not_priced',
+                'message': f'Traffic package {payload.gb}GB has no price configured',
+            },
+        )
 
     # Lock user BEFORE price computation to prevent TOCTOU on promo discount
     from app.database.crud.user import lock_user_for_pricing
