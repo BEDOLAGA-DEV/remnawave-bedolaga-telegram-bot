@@ -153,12 +153,7 @@ def test_nobody_builds_the_date_by_hand(path):
 #: Ещё не переведённые на общий сервис. Список обязан только уменьшаться:
 #: пока модуль здесь, он собирает панельный запрос сам и рискует разойтись с
 #: остальными — ровно так появлялись все расхождения, которые мы чинили.
-_STILL_BUILDING_BY_HAND = frozenset(
-    {
-        'app/handlers/admin/users.py',
-        'app/services/grace_access_runtime.py',
-    }
-)
+_STILL_BUILDING_BY_HAND = frozenset({'app/services/grace_access_runtime.py'})
 
 
 def test_the_debt_list_only_names_modules_that_still_build_the_request():
