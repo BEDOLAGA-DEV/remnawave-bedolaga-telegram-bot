@@ -525,9 +525,11 @@ async def update_grace_access(
     merged = current.model_copy(update=changed)
     _validate_for_mode(merged, running_mode=grace_access_runtime.mode.value)
 
+    # commit=False + один коммит в конце: набор полей грейса применяется
+    # целиком, иначе половина правил осталась бы от прежней настройки.
     for field, value in changed.items():
         try:
-            await bot_configuration_service.set_value(db, FIELD_KEYS[field], value)
+            await bot_configuration_service.set_value(db, FIELD_KEYS[field], value, commit=False)
         except ReadOnlySettingError as error:
             raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
     await db.commit()

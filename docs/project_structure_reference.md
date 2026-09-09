@@ -3165,6 +3165,9 @@
 - `tests/cabinet/test_settings_choice_types.py` — Python-модуль
   Классы: `TestChoiceKeyNormalisation` (2 методов)
   Функции: `test_every_listed_option_is_accepted` — Вариант, показанный админу, обязан сохраняться., `test_boolean_setting_accepts_both_shapes` — Кабинет шлёт настоящий bool, бот — строку. Принимать надо обе формы., `test_string_choices_still_reject_unknown_values` — Контроль: смягчение сравнения не должно открыть дорогу чему угодно., `test_setting_without_choices_is_not_restricted` — Ограничение задаётся списком, а не самим фактом проверки.
+- `tests/cabinet/test_settings_writes_are_committed.py` — Python-модуль
+  Классы: нет
+  Функции: `isolated_settings` — Настройки — глобальный объект: возвращаем значения после теста., `test_set_value_survives_a_session_without_commit` — Сама запись настройки обязана коммитить — на неё полагаются все вызовы., `test_levels_mode_route_persists` — Переключение режима из кабинета доезжает до базы., `test_chain_depth_route_persists` — Глубина цепочки — та же поверхность, тот же дефект., `test_reward_scheme_route_persists` — Схема наград — и она тоже., `test_email_type_switch_persists` — Выключатель писем по типу — четвёртое место с тем же дефектом., `test_batch_writers_commit_themselves` — Кто отказался от коммита внутри записи — обязан коммитить сам.
 - `tests/cabinet/test_support_config_external_url.py` — Python-модуль
   Классы: нет
   Функции: `test_contact_mode_with_telegram_username`, `test_contact_mode_with_external_url`, `test_both_mode_exposes_external_url`, `test_both_mode_with_telegram_username`, `test_tickets_mode_ignores_contact`, `test_empty_contact_yields_no_url`
