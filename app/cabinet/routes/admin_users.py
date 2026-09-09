@@ -3410,13 +3410,27 @@ def _activity_sources(user_id: int) -> dict[str, tuple]:
             meta={'path': c.callback_data} if c.callback_data else None,
         )
 
-    # button_click_logs делится на нажатия кнопок бота (пишет ButtonStatsMiddleware)
-    # и действия в кабинете (button_type='cabinet', пишет user_action_log_service).
+    def _map_miniapp_action(c: ButtonClickLog) -> UserActivityItem:
+        return UserActivityItem(
+            type='miniapp_action',
+            source='miniapp',
+            title=c.button_id,
+            timestamp=c.clicked_at,
+            meta={'path': c.callback_data} if c.callback_data else None,
+        )
+
+    # button_click_logs делится на три источника: нажатия кнопок бота (пишет
+    # ButtonStatsMiddleware), действия в кабинете (button_type='cabinet') и
+    # действия в Mini App (button_type='miniapp') — оба пишет
+    # user_action_log_service. Раньше третьего не было вовсе, и человек,
+    # живущий в Mini App, выглядел в таймлайне неактивным.
+    _WEB_SURFACES = ('cabinet', 'miniapp')
     bot_clicks_where = and_(
         ButtonClickLog.user_id == user_id,
-        or_(ButtonClickLog.button_type.is_(None), ButtonClickLog.button_type != 'cabinet'),
+        or_(ButtonClickLog.button_type.is_(None), ButtonClickLog.button_type.not_in(_WEB_SURFACES)),
     )
     cabinet_actions_where = and_(ButtonClickLog.user_id == user_id, ButtonClickLog.button_type == 'cabinet')
+    miniapp_actions_where = and_(ButtonClickLog.user_id == user_id, ButtonClickLog.button_type == 'miniapp')
 
     return {
         'transaction': (
@@ -3510,6 +3524,12 @@ def _activity_sources(user_id: int) -> dict[str, tuple]:
             select(func.count(ButtonClickLog.id)).where(cabinet_actions_where),
             ButtonClickLog.clicked_at,
             _map_cabinet_action,
+        ),
+        'miniapp_action': (
+            select(ButtonClickLog).where(miniapp_actions_where),
+            select(func.count(ButtonClickLog.id)).where(miniapp_actions_where),
+            ButtonClickLog.clicked_at,
+            _map_miniapp_action,
         ),
     }
 

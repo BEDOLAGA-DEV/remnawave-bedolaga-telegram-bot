@@ -11,6 +11,21 @@ from app.config import settings
 from app.services.system_settings_service import bot_configuration_service
 
 
+class _StubSession:
+    """Заглушка сессии: запись настройки коммитит сама, и это часть контракта.
+
+    Раньше сюда передавали голый ``object()`` — запись только флашила, а коммит
+    оставался на вызывающем. Из-за этого настройки, сохранённые из кабинета,
+    не переживали перезапуск (сессия кабинета закрывается без коммита).
+    """
+
+    def __init__(self) -> None:
+        self.commits = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
 async def test_env_override_prevents_set_value(monkeypatch):
     bot_configuration_service.initialize_definitions()
 
@@ -34,7 +49,7 @@ async def test_env_override_prevents_set_value(monkeypatch):
     )
 
     await bot_configuration_service.set_value(
-        object(),
+        _StubSession(),
         'SUPPORT_USERNAME',
         'db_support',
     )
@@ -66,7 +81,7 @@ async def test_env_override_prevents_reset_value(monkeypatch):
     )
 
     await bot_configuration_service.reset_value(
-        object(),
+        _StubSession(),
         'SUPPORT_USERNAME',
     )
 
@@ -149,7 +164,7 @@ async def test_set_value_applies_without_env_override(monkeypatch):
     )
 
     await bot_configuration_service.set_value(
-        object(),
+        _StubSession(),
         'SUPPORT_MENU_ENABLED',
         target_value,
     )

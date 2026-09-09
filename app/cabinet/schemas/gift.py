@@ -18,6 +18,9 @@ class GiftConfigTariffPeriod(BaseModel):
     price_label: str
     original_price_kopeks: int | None = None
     discount_percent: int | None = None
+    # Период, отмеченный оператором как самый выгодный: кабинет обводит его
+    # рамкой и выбирает сразу, вместо первого по счёту.
+    is_highlighted: bool = False
 
 
 class GiftConfigTariff(BaseModel):
@@ -27,6 +30,8 @@ class GiftConfigTariff(BaseModel):
     traffic_limit_gb: int
     device_limit: int
     periods: list[GiftConfigTariffPeriod]
+    # Тариф, отмеченный оператором как выгодный.
+    is_highlighted: bool = False
 
 
 class GiftConfigPaymentMethod(BaseModel):

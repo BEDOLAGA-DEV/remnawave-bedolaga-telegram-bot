@@ -1733,7 +1733,7 @@
   Функции: нет
 - `app/services/user_action_log_service.py` — Python-модуль
   Классы: нет
-  Функции: `normalize_cabinet_path` — Сворачивает числовые сегменты пути в {id} для группировки однотипных действий., `should_log_cabinet_action`, `schedule_cabinet_action_log` — Fire-and-forget запись действия юзера в кабинете — не задерживает запрос.
+  Функции: `bind_request_path` — Запомнить путь текущего запроса на время его обработки., `reset_request_path`, `current_request_path`, `normalize_cabinet_path` — Сворачивает числовые сегменты пути в {id} для группировки однотипных действий., `should_log_cabinet_action`, `should_log_miniapp_action`, `schedule_cabinet_action_log` — Fire-and-forget запись действия юзера в кабинете — не задерживает запрос., `schedule_miniapp_action_log` — Fire-and-forget запись действия юзера в Mini App., `drain_pending_actions` — Дождаться фоновых записей (нужно тестам и корректному завершению).
 - `app/services/user_avatar_service.py` — Python-модуль
   Классы: нет
   Функции: `pick_avatar_file_id` — Самый маленький размер, который ещё не мылится в шапке; иначе самый крупный., `get_avatar_file_id` — file_id текущего фото профиля или None. Никогда не бросает: аватар — не повод ронять кабинет.
@@ -2162,7 +2162,7 @@
   Классы: нет
   Функции: `add_redoc_endpoint` — Attach a ReDoc endpoint if docs are enabled.
 - `app/webapi/middleware.py` — Python-модуль
-  Классы: `RequestLoggingMiddleware` (1 методов)
+  Классы: `RequestLoggingMiddleware` (1 методов), `RequestPathContextMiddleware` (1 методов)
   Функции: нет
 - `app/webapi/routes/`
 - `app/webapi/schemas/`
@@ -2892,6 +2892,9 @@
 - `tests/test_readme_payment_providers.py` — Python-модуль
   Классы: нет
   Функции: `test_every_gateway_is_listed_in_readme`, `test_table_has_no_rows_for_unknown_providers` — Каждая строка таблицы указывает на существующий шлюз., `test_claimed_provider_count_matches_reality` — Число провайдеров в тексте не должно отставать от кода.
+- `tests/test_redis_client_contract.py` — Python-модуль
+  Классы: нет
+  Функции: `redis_client_module`, `test_every_injected_kwarg_is_accepted_by_async_connection` — Каждый добавленный аргумент обязан приниматься асинхронным соединением., `test_connection_is_actually_creatable` — Соединение создаётся (не подключается) — ровно там падал TypeError., `test_connect_is_retried` — У подключения есть повторы: разовая заминка на старте не должна быть ошибкой., `test_transient_connect_failure_is_retried` — Первая попытка упала по таймауту — вторая доводит подключение до конца.
 - `tests/test_rich_menu_pins.py` — Python-модуль
   Классы: нет
   Функции: `test_show_main_menu_tries_rich_before_classic`, `test_back_to_menu_tries_rich_before_classic`, `test_start_menu_sites_guarded_by_rich_helpers`, `test_single_subscription_block_reuses_menu_status_builder`, `test_trial_deeplink_wired_in_start` — Диплинк /start trial: ветка сташит pending_trial, drain — рядом с купонным
@@ -3009,6 +3012,9 @@
 - `tests/cabinet/test_autopay_cancels_sbp.py` — Python-модуль
   Классы: нет
   Функции: `test_enable_autopay_cancels_active_sbp_recurring`, `test_disable_autopay_does_not_cancel_sbp` — Disabling balance-autopay must NOT touch SBP — only the enable path, `test_enable_autopay_rejected_for_trial_does_not_cancel_sbp` — A rejected enable (trial subscription -> 400) must not fire the
+- `tests/cabinet/test_best_value_reaches_every_showcase.py` — Python-модуль
+  Классы: нет
+  Функции: `test_gift_config_marks_the_highlighted_period`, `test_gift_config_marks_the_highlighted_tariff`, `test_gift_config_marks_nothing_without_a_highlight` — Без отметки оператора витрина остаётся ровной — как была., `test_landing_marks_the_highlighted_period_and_tariff`, `test_landing_marks_nothing_when_the_highlighted_period_is_not_offered` — Лендинг вправе сузить набор периодов: отметка на выброшенном периоде, `test_every_client_period_model_carries_the_best_value_flag`, `test_admin_only_exceptions_still_exist` — Список исключений не должен гнить: исчезнувшая модель прячет новую слепую., `test_the_guard_actually_sees_the_showcases` — Сторож бесполезен, если ничего не находит: три известные витрины обязаны
 - `tests/cabinet/test_branding_favicon.py` — Python-модуль
   Классы: нет
   Функции: `test_without_logo_returns_png_monogram_of_the_first_letter`, `test_empty_name_falls_back_to_v`, `test_unset_name_uses_build_default`, `test_render_failure_falls_back_to_svg`, `test_monogram_png_is_a_square_raster_with_the_letter_drawn`, `test_corner_ratio_stays_below_the_safari_plate_threshold`, `test_with_logo_serves_a_rounded_tile_with_short_cache`, `test_rounded_tile_is_cached_until_the_logo_file_changes`, `test_svg_logo_is_served_as_is`, `test_unreadable_logo_falls_back_to_the_raw_file`, `test_logo_endpoint_keeps_its_hour_cache`, `test_monogram_escapes_and_uppercases`
@@ -3177,6 +3183,9 @@
 - `tests/cabinet/test_purchase_tariff_refund_on_failure.py` — Python-модуль
   Классы: нет
   Функции: `test_persistence_wrapped_in_refund_guard` — REGRESSION: both persistence branches (extend + create) must sit inside, `test_refund_helper_uses_fresh_user_and_refund_transaction` — REGRESSION: ``_refund_charge`` must re-fetch the user via, `test_refund_helper_records_failed_refund_when_credit_fails` — REGRESSION: ``add_user_balance`` swallows its own errors and returns False, `test_extend_subscription_post_commit_cleanup_is_best_effort` — REGRESSION: ``extend_subscription`` commits the extension, then runs, `test_charge_precedes_guard_and_delivery_steps_stay_outside` — REGRESSION: the guard must start AFTER the committed charge (so it covers, `test_trial_conversion_stays_enabled_in_extend_branch` — REGRESSION: the ``extend_subscription`` call must NOT pass
+- `tests/cabinet/test_recurrent_flags_in_purchase_options.py` — Python-модуль
+  Классы: нет
+  Функции: `stub_purchase_service` — Классическая ветка строит ответ сервисом — подменяем его целиком., `test_classic_mode_reports_recurrent_flags`
 - `tests/cabinet/test_referral_reward_choice.py` — Python-модуль
   Классы: `TestPermissionIsEnforcedServerSide` (2 методов), `TestOwnership` (2 методов), `TestNullIsAValue` (4 методов)
   Функции: `allowed`, `stub_terms` — Ответ эндпоинта собирается тем же get_referral_terms — здесь он не предмет., `options`
@@ -3198,6 +3207,9 @@
 - `tests/cabinet/test_settings_choice_types.py` — Python-модуль
   Классы: `TestChoiceKeyNormalisation` (2 методов)
   Функции: `test_every_listed_option_is_accepted` — Вариант, показанный админу, обязан сохраняться., `test_boolean_setting_accepts_both_shapes` — Кабинет шлёт настоящий bool, бот — строку. Принимать надо обе формы., `test_string_choices_still_reject_unknown_values` — Контроль: смягчение сравнения не должно открыть дорогу чему угодно., `test_setting_without_choices_is_not_restricted` — Ограничение задаётся списком, а не самим фактом проверки.
+- `tests/cabinet/test_settings_writes_are_committed.py` — Python-модуль
+  Классы: нет
+  Функции: `isolated_settings` — Настройки — глобальный объект: возвращаем значения после теста., `test_set_value_survives_a_session_without_commit` — Сама запись настройки обязана коммитить — на неё полагаются все вызовы., `test_levels_mode_route_persists` — Переключение режима из кабинета доезжает до базы., `test_chain_depth_route_persists` — Глубина цепочки — та же поверхность, тот же дефект., `test_reward_scheme_route_persists` — Схема наград — и она тоже., `test_email_type_switch_persists` — Выключатель писем по типу — четвёртое место с тем же дефектом., `test_batch_writers_commit_themselves` — Кто отказался от коммита внутри записи — обязан коммитить сам.
 - `tests/cabinet/test_support_config_external_url.py` — Python-модуль
   Классы: нет
   Функции: `test_contact_mode_with_telegram_username`, `test_contact_mode_with_external_url`, `test_both_mode_exposes_external_url`, `test_both_mode_with_telegram_username`, `test_tickets_mode_ignores_contact`, `test_empty_contact_yields_no_url`
@@ -3413,6 +3425,9 @@
 - `tests/fixtures/promocode_fixtures.py` — Python-модуль
   Классы: нет
   Функции: `sample_promo_group` — Sample PromoGroup object for testing, `sample_user` — Sample User object for testing, `sample_promocode_balance` — Balance type promocode, `sample_promocode_subscription` — Subscription days type promocode, `sample_promocode_promo_group` — Promo group type promocode, `sample_promocode_invalid` — Invalid/expired promocode, `mock_db_session` — Mock AsyncSession, `mock_has_user_promo_group` — Mock has_user_promo_group function, `mock_add_user_to_promo_group` — Mock add_user_to_promo_group function, `mock_get_promo_group_by_id` — Mock get_promo_group_by_id function, `mock_get_user_by_id` — Mock get_user_by_id function, `mock_get_promocode_by_code` — Mock get_promocode_by_code function, `mock_check_user_promocode_usage` — Mock check_user_promocode_usage function, `mock_create_promocode_use` — Mock create_promocode_use function, `mock_remnawave_service` — Mock RemnaWaveService, `mock_subscription_service` — Mock SubscriptionService, `make_promocode_valid` — Helper to make promocode appear valid (is_valid property)
+- `tests/fixtures/real_redis.py` — Python-модуль
+  Классы: нет
+  Функции: `ensure_real_redis` — Снять заглушку и вернуть перезагруженный ``app.utils.redis_client``.
 - `tests/fixtures/sqlite_memory.py` — Python-модуль
   Классы: нет
   Функции: `ensure_real_aiosqlite` — Снять заглушку sys.modules['aiosqlite'] из conftest перед созданием engine., `memory_session` — Сессия к :memory: БД, где созданы только переданные таблицы.
@@ -3908,6 +3923,9 @@
 - `tests/services/test_menu_layout_service.py` — Python-модуль
   Классы: нет
   Функции: `test_build_button_connect_direct_mode_with_url` — Тест: кнопка connect с open_mode=direct и валидным URL должна создавать WebAppInfo., `test_build_button_connect_direct_mode_with_subscription_url` — Тест: кнопка connect с open_mode=direct должна получать URL из подписки., `test_build_button_connect_callback_mode` — Тест: кнопка connect с open_mode=callback должна создавать callback кнопку., `test_build_button_connect_direct_mode_fallback_to_callback` — Тест: кнопка connect с open_mode=direct без URL должна fallback на callback.
+- `tests/services/test_miniapp_action_log.py` — Python-модуль
+  Классы: нет
+  Функции: `test_every_miniapp_route_is_classified` — Каждый маршрут Mini App отнесён либо к действиям, либо к чтениям., `test_classification_has_no_stale_paths` — В списках нет путей, которых у роутера больше нет., `test_actions_are_logged_and_reads_are_not` — Покупка — действие, просмотр подписки — нет., `test_path_normalization_keeps_prefix`, `test_authorize_writes_action_for_mutating_request` — Авторизация запроса Mini App пишет действие в тот же журнал., `test_authorize_does_not_write_for_reads` — Просмотр экрана журнал не засоряет., `test_timeline_shows_miniapp_actions` — Записанное действие Mini App видно в «Активности» и не смешано с ботом.
 - `tests/services/test_monitoring_notification_switches.py` — Python-модуль
   Классы: нет
   Функции: `test_global_switch_stops_monitoring_notification_queries`, `test_expiration_state_updates_even_when_notifications_are_disabled`

@@ -189,7 +189,7 @@ class EmailRetryService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _encode_attachments(attachments: list[tuple[str, bytes, str]] | None) -> list[dict[str, str]] | None | bool:
+    def _encode_attachments(attachments: list[tuple[str, bytes, str]] | None) -> list[dict[str, str]] | bool | None:
         """Возвращает список для JSON, None если вложений нет, False если великоваты."""
         if not attachments:
             return None

@@ -1,66 +1,50 @@
 [project]
 name = 'remnawave-bedolaga-telegram-bot'
-version = "4.7.1"
+version = "4.8.0"
 description = 'Telegram bot for RemnaWave VPN service'
 readme = 'README.md'
 license = { text = 'MIT' }
 requires-python = '==3.13.*'
 dependencies = [
-    "aiogram>=3.31.0",
-    'sqlalchemy>=2.0.46',
-    # Нужен асинхронному SQLAlchemy. Сам он тянет greenlet по маркеру
-    # platform_machine, где есть aarch64, но НЕТ arm64 — на Apple Silicon пакет
-    # не ставился, и весь пласт тестов с БД падал локально. На Linux это ничего
-    # не меняет: туда greenlet приходил и раньше.
-    'greenlet>=3.0',
-    'alembic>=1.18.4',
-    'asyncpg>=0.31.0',
-    'aiosqlite>=0.22.1',
-    'fastapi[standard]>=0.139.2',
-    'redis>=7.1.1',
-    'pyyaml>=6.0.3',
-    'yookassa>=3.10.0',
-    'python-dateutil>=2.9.0.post0',
-    'cryptography>=48.0.1',
-    'qrcode[pil]>=8.0',
-    'packaging>=26.0',
-    'bcrypt>=5.0.0',
-    'pyjwt>=2.13.0',
-    'pyzipper>=0.3.6',
-    'structlog>=25.1.0,<26',
-    'rich>=14.0',
-    'aiohttp-socks>=0.10.1',
-    'httpx[socks]>=0.27.0',
-    'pycryptodome>=3.21.0',
-    "app-store-server-library[async]>=3.1.1",
-    # Импортируются кодом напрямую, но до сих пор приезжали только транзитивно:
-    # aiohttp/pydantic/aiofiles через aiogram, а pydantic-settings и uvicorn —
-    # через ЭКСТРУ `standard` у fastapi. Стоит зависимости перетасовать свои
-    # extras, и бот перестанет стартовать на ImportError в app/config.py, причём
-    # установка пройдёт успешно. Прямой импорт — прямая зависимость.
-    'aiohttp>=3.14.3',
-    'aiofiles>=25.1.0',
-    'pydantic>=2.13.4',
-    'pydantic-settings>=2.15.0',
-    'uvicorn>=0.52.4',
-    'starlette>=1.6.0',
-    'attrs>=26.1.0',
-    # Pillow приезжала экстрой `pil` у qrcode, хотя код работает с изображениями
-    # напрямую: app/services/news_media_service.py и соседние.
-    'pillow>=12.3.0',
+    'aiogram==3.31.0',
+    'sqlalchemy==2.0.52',
+    'greenlet==3.5.5',
+    'alembic==1.19.2',
+    'asyncpg==0.31.0',
+    'aiosqlite==0.22.1',
+    'fastapi[standard]==0.141.1',
+    'redis==8.1.0',
+    'pyyaml==6.0.3',
+    'yookassa==3.12.1',
+    'python-dateutil==2.9.0.post0',
+    'cryptography==50.0.1',
+    'qrcode[pil]==8.2',
+    'packaging==26.3',
+    'bcrypt==5.0.0',
+    'pyjwt==2.13.0',
+    'pyzipper==0.4.0',
+    'structlog==26.1.0',
+    'rich==15.0.0',
+    'aiohttp-socks==0.12.0',
+    'httpx[socks]==0.28.1',
+    'pycryptodome==3.23.0',
+    'app-store-server-library[async]==3.1.2',
+    'aiohttp==3.14.3',
+    'aiofiles==25.1.0',
+    'pydantic==2.13.5',
+    'pydantic-settings==2.15.0',
+    'uvicorn==0.52.4',
+    'starlette==1.6.0',
+    'attrs==26.1.0',
+    'pillow==12.3.0',
 ]
 
 [dependency-groups]
 dev = [
-    # Закреплён на 0.14.x. В 0.15 расширили стилевые правила: на текущем коде
-    # это 48 замечаний, в 0.16 — 58. Больше половины (PLW0108) имеют только
-    # небезопасный фикс — он меняет момент вычисления аргументов, применять
-    # пачкой в хендлерах нельзя. Бампать отдельной задачей, не вместе с
-    # обновлением безопасности.
-    'ruff<0.15',
-    'pytest',
-    'pytest-asyncio',
-    'pytest-cov',
+    'ruff==0.16.6',
+    'pytest==9.1.1',
+    'pytest-asyncio==1.4.0',
+    'pytest-cov==7.1.0',
 ]
 
 [tool.uv]
@@ -245,6 +229,8 @@ ignore = [
     'S202',
     'S106',
     'COM818',
+    'PLW0108',
+    'PLR0917',
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -330,8 +316,6 @@ docstring-code-line-length = 'dynamic'
 
 [tool.pytest.ini_options]
 testpaths = ['tests']
-# strict-markers ловит опечатку в имени маркера: без него `-m postgres` тихо
-# не выберет ничего, и прогон «пройдёт», не запустив ни одного теста.
 addopts = '--strict-markers --strict-config'
 markers = [
     'asyncio: запуск асинхронного теста через встроенный цикл событий',

@@ -1802,7 +1802,7 @@ class RemnaWaveWebhookService:
             user,
             'WEBHOOK_USER_NOT_CONNECTED',
             reply_markup=self._get_connect_keyboard(user),
-            format_kwargs=format_kwargs if format_kwargs else None,
+            format_kwargs=format_kwargs or None,
             subscription=subscription,
         )
 

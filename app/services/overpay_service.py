@@ -131,7 +131,7 @@ class OverpayService:
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(30.0),
             auth=httpx.BasicAuth(self.username, self.password),
-            verify=ssl_context if ssl_context else True,
+            verify=ssl_context or True,
         )
         return self._client
 
@@ -147,7 +147,7 @@ class OverpayService:
         for path in (self._temp_cert_file, self._temp_key_file):
             if path:
                 try:
-                    Path(path).unlink()
+                    Path(path).unlink()  # noqa: ASYNC240 — снос временного файла, один системный вызов
                 except OSError:
                     pass
         self._temp_cert_file = None

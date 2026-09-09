@@ -4322,8 +4322,11 @@ async def _push_narrow_change_to_panel(db, user, subscription, *, fields: set[st
     remnawave_service = RemnaWaveService()
     try:
         await db.refresh(subscription, ['tariff'])
-    except Exception:
-        pass
+    except Exception as error:
+        # Тариф нужен запросу к панели только для сквадов. Строка могла быть
+        # отцеплена от сессии или удалена соседним проходом — тогда идём без
+        # него: узкий PATCH трогает лишь то поле, ради которого позван.
+        logger.debug('Не удалось догрузить тариф подписки перед PATCH', error=error)
 
     async with remnawave_service.get_api_client() as api:
         await push_subscription(

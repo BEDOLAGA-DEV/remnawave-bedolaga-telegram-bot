@@ -12,7 +12,7 @@ from app.utils.telegram_html import split_telegram_text
 
 def _split(text: str) -> list[str]:
     chunks = split_telegram_text(text)
-    return chunks if chunks else [text]
+    return chunks or [text]
 
 
 async def answer_long_text(

@@ -476,7 +476,7 @@ def _is_riopay_pending(payment: RioPayPayment) -> bool:
     if payment.is_paid:
         return False
     status = (payment.status or '').lower()
-    return status in {'pending'}
+    return status == 'pending'
 
 
 def _is_paypear_pending(payment: PayPearPayment) -> bool:
