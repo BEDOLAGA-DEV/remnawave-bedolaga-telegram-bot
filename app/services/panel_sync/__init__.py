@@ -13,6 +13,11 @@ from app.services.panel_sync.expiry import panel_expire_at, stale_panel_expire_a
 from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identity
 from app.services.panel_sync.liveness import is_subscription_live
 from app.services.panel_sync.payload import PanelPayload, build_panel_payload
+from app.services.panel_sync.projection import (
+    PanelSnapshot,
+    project_onto_subscription,
+    read_panel_user,
+)
 from app.services.panel_sync.runner import SyncStats, push_all_subscriptions
 from app.services.panel_sync.writer import (
     PanelWriteResult,
@@ -25,6 +30,7 @@ from app.services.panel_sync.writer import (
 __all__ = [
     'PanelIdentity',
     'PanelPayload',
+    'PanelSnapshot',
     'PanelWriteResult',
     'SyncStats',
     'build_panel_payload',
@@ -32,8 +38,10 @@ __all__ = [
     'panel_expire_at',
     'patch_panel_account',
     'patch_panel_squads',
+    'project_onto_subscription',
     'push_all_subscriptions',
     'push_subscription',
+    'read_panel_user',
     'resolve_panel_identity',
     'stale_panel_expire_at',
 ]
