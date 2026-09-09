@@ -36,6 +36,9 @@ class PanelWriteResult:
     action: str
     #: Пришлось ли гасить дату, которую панель держала в будущем.
     expiry_extinguished: bool = False
+    #: Адрес аккаунта в панели. Отдельным полем, потому что обёртки грейс-доступа
+    #: возвращают урезанный объект без id.
+    panel_user_id: int | None = None
 
 
 async def push_subscription(
@@ -52,6 +55,8 @@ async def push_subscription(
     only_fields: set[str] | None = None,
     reset_devices: bool | None = None,
     verify_recorded_id: bool = True,
+    update_call=None,
+    create_call=None,
     now: datetime | None = None,
 ) -> PanelWriteResult:
     """Отправить состояние подписки в панель.
@@ -61,6 +66,11 @@ async def push_subscription(
     проверить занятость id без базы нельзя).
 
     ``only_fields`` — узкая правка: в панель уедут лишь перечисленные поля.
+
+    ``update_call``/``create_call`` — чем именно писать. По умолчанию это методы
+    клиента панели, а кабинет и админка бота подставляют обёртки грейс-доступа:
+    у них своя блокировка и свои переходы, но собирать запрос они должны так же,
+    как все остальные.
     """
     moment = now or datetime.now(UTC)
     if multi_tariff is None:
@@ -79,13 +89,15 @@ async def push_subscription(
 
     if reset_devices is None:
         reset_devices = settings.RESET_DEVICES_ON_RENEWAL
+    update = update_call or api.update_user
+    create = create_call or api.create_user
 
     panel_user_id = identity.user_id
     if panel_user_id is not None:
         if reset_devices and not await api.reset_user_devices(panel_user_id):
             logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=panel_user_id)
         try:
-            panel_user = await api.update_user(
+            panel_user = await update(
                 **payload.update_kwargs(
                     user_id=panel_user_id,
                     panel_current=identity.expire_at,
@@ -104,28 +116,37 @@ async def push_subscription(
                 subscription_id=getattr(subscription, 'id', None),
                 panel_user_id=panel_user_id,
             )
-            panel_user = await api.create_user(**payload.create_kwargs(now=moment))
+            panel_user = await create(**payload.create_kwargs(now=moment))
             await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff)
-            return PanelWriteResult(panel_user=panel_user, action='created')
+            return PanelWriteResult(
+                panel_user=panel_user, action='created', panel_user_id=getattr(panel_user, 'id', None)
+            )
 
         extinguished = await _extinguish_stale_date(
-            api,
+            update,
             subscription,
             panel_user,
             panel_user_id=panel_user_id,
             already_sent=identity.expire_at,
             now=moment,
         )
-        await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff)
-        return PanelWriteResult(panel_user=panel_user, action='updated', expiry_extinguished=extinguished)
+        await _record_identity(
+            db, user, subscription, panel_user, multi_tariff=multi_tariff, panel_user_id=panel_user_id
+        )
+        return PanelWriteResult(
+            panel_user=panel_user,
+            action='updated',
+            expiry_extinguished=extinguished,
+            panel_user_id=getattr(panel_user, 'id', None) or panel_user_id,
+        )
 
-    panel_user = await api.create_user(**payload.create_kwargs(now=moment))
+    panel_user = await create(**payload.create_kwargs(now=moment))
     await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff)
-    return PanelWriteResult(panel_user=panel_user, action='created')
+    return PanelWriteResult(panel_user=panel_user, action='created', panel_user_id=getattr(panel_user, 'id', None))
 
 
 async def _extinguish_stale_date(
-    api,
+    update,
     subscription,
     panel_user,
     *,
@@ -150,18 +171,30 @@ async def _extinguish_stale_date(
     if already_sent is not None:
         # Дата была известна до запроса — гашение уже уехало тем же PATCH.
         return True
-    await api.update_user(user_id=panel_user_id, expire_at=extinguish_at)
+    await update(user_id=panel_user_id, expire_at=extinguish_at)
     return True
 
 
-async def _record_identity(db, user, subscription, panel_user, *, multi_tariff: bool) -> None:
+async def _record_identity(
+    db,
+    user,
+    subscription,
+    panel_user,
+    *,
+    multi_tariff: bool,
+    panel_user_id: int | None = None,
+) -> None:
     """Записать в базу, каким аккаунтом панели закрыта эта подписка.
 
     Без этого следующий проход не найдёт аккаунт точным ключом и заведёт дубль.
+
+    ``panel_user_id`` — адрес, по которому мы только что писали. Он нужен,
+    потому что обёртки грейс-доступа возвращают урезанный объект без id: сам
+    аккаунт от этого не меняется, а связь потерять нельзя.
     """
     from app.services.subscription_service import link_subscription_panel_identity
 
-    panel_user_id = getattr(panel_user, 'id', None)
+    panel_user_id = getattr(panel_user, 'id', None) or panel_user_id
     if panel_user_id is None:
         return
 
