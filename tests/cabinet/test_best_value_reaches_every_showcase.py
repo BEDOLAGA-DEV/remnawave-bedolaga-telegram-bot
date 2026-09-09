@@ -170,8 +170,7 @@ _ADMIN_ONLY_PERIOD_MODELS = frozenset(
 
 def _period_models() -> dict[str, set[str]]:
     """Все модели кабинета, описывающие период с ценой."""
-    import app.cabinet.routes as routes_pkg
-    import app.cabinet.schemas as schemas_pkg
+    from app.cabinet import routes as routes_pkg, schemas as schemas_pkg
 
     found: dict[str, set[str]] = {}
     for package in (routes_pkg, schemas_pkg):

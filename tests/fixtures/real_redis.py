@@ -14,9 +14,6 @@ import sys
 from types import ModuleType
 
 
-_STUBBED = ('redis', 'redis.asyncio', 'redis.exceptions')
-
-
 def ensure_real_redis(monkeypatch) -> ModuleType:
     """Снять заглушку и вернуть перезагруженный ``app.utils.redis_client``.
 

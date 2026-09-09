@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import app.services.remnawave_webhook_service as webhook_mod
 from app.database.models import SubscriptionStatus
+from app.services import remnawave_webhook_service as webhook_mod
 from app.services.remnawave_webhook_service import RemnaWaveWebhookService
 
 

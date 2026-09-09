@@ -81,8 +81,8 @@ async def test_authorize_writes_action_for_mutating_request(monkeypatch):
     """Авторизация запроса Mini App пишет действие в тот же журнал."""
     from datetime import UTC, datetime
 
-    import app.services.user_action_log_service as log_module
     from app.database.models import Base, ButtonClickLog, User
+    from app.services import user_action_log_service as log_module
     from app.webapi.routes import miniapp
     from tests.fixtures.sqlite_memory import memory_session
 
@@ -138,8 +138,8 @@ async def test_authorize_does_not_write_for_reads(monkeypatch):
     """Просмотр экрана журнал не засоряет."""
     from datetime import UTC, datetime
 
-    import app.services.user_action_log_service as log_module
     from app.database.models import Base, User
+    from app.services import user_action_log_service as log_module
     from app.webapi.routes import miniapp
     from tests.fixtures.sqlite_memory import memory_session
 
