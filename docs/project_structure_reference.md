@@ -1527,9 +1527,7 @@
 - `app/services/pal24_service.py` — Python-модуль
   Классы: `Pal24Service` (9 методов)
   Функции: нет
-- `app/services/panel_expiry.py` — Python-модуль
-  Классы: нет
-  Функции: `panel_expire_at` — Что положить в ``expireAt`` панели. ``None`` — не отправлять поле вовсе., `stale_panel_expire_at` — Чем погасить дату истёкшей подписки в панели. ``None`` — не трогать.
+- `app/services/panel_sync/`
 - `app/services/paritypay_service.py` — Python-модуль
   Классы: `ParityPayAPIError` (1 методов), `ParityPayNetworkError`, `ParityPayService` (18 методов)
   Функции: `amount_to_kopeks` — Сумма провайдера (рубли) -> целые копейки., `kopeks_to_amount` — Копейки -> рубли для тела запроса.
@@ -1793,6 +1791,15 @@
 - `app/services/menu_layout/stats_service.py` — Python-модуль
   Классы: `MenuLayoutStatsService` (14 методов)
   Функции: нет
+
+#### app/services/panel_sync
+
+- `app/services/panel_sync/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `app/services/panel_sync/expiry.py` — Python-модуль
+  Классы: нет
+  Функции: `panel_expire_at` — Что положить в ``expireAt`` панели. ``None`` — не отправлять поле вовсе., `stale_panel_expire_at` — Чем погасить дату истёкшей подписки в панели. ``None`` — не трогать.
 
 #### app/services/payment
 
@@ -3638,6 +3645,7 @@
 - `tests/services/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/services/panel_sync/`
 - `tests/services/reachability/`
 - `tests/services/test_account_merge_service.py` — Python-модуль
   Классы: `TestComputeAuthMethods` (6 методов), `TestBuildSubscriptionPreview` (3 методов), `TestBuildUserPreview` (2 методов), `TestGetMergePreview` (4 методов), `TestExecuteMergeValidation` (6 методов), `TestExecuteMergeOAuthTransfer` (2 методов), `TestExecuteMergeTelegramTransfer` (2 методов), `TestExecuteMergeEmailTransfer` (2 методов), `TestExecuteMergeBalance` (3 методов), `TestExecuteMergePartnerStatus` (4 методов), `TestExecuteMergeReferralCommission` (2 методов), `TestExecuteMergeSecondaryDeleted` (3 методов), `TestExecuteMergeSubscription` (7 методов), `TestExecuteMergeSubscriptionMultiTariff` (2 методов), `TestExecuteMergeBulkUpdates` (1 методов), `TestExecuteMergeSelfReferralPrevention` (6 методов), `TestRemnawaveDeleteMode` (4 методов)
@@ -3867,9 +3875,6 @@
 - `tests/services/test_panel_deletion_respects_delete_mode.py` — Python-модуль
   Классы: нет
   Функции: `test_panel_deletion_is_gated_or_explicitly_deliberate`, `test_deliberate_list_has_no_stale_entries` — Список исключений не должен пережить сами удаления.
-- `tests/services/test_panel_expire_at_not_rewritten.py` — Python-модуль
-  Классы: нет
-  Функции: `test_live_subscription_keeps_its_own_date`, `test_expired_subscription_does_not_touch_the_date_on_update` — Главное свойство: поле не отправляется, панель хранит настоящую дату., `test_new_panel_account_gets_the_real_date_even_if_it_has_passed` — При СОЗДАНИИ панель принимает прошедшую дату — выдумывать не надо., `test_future_date_survives_even_for_an_inactive_subscription` — Заблокированный пользователь с ещё не истёкшей подпиской: дату не занижаем., `test_blocked_but_not_expired_subscription_still_pushes_its_real_date` — Блокировка — не истечение: дата в будущем, панель её примет и должна знать., `test_expired_subscription_extinguishes_a_future_date_in_the_panel` — Панель держит будущее — гасим ближайшим допустимым моментом., `test_expired_subscription_leaves_a_past_date_in_the_panel_alone` — В панели уже прошлое — это и есть настоящая история, переписывать нечего., `test_expired_subscription_without_a_known_panel_date_is_left_alone` — Что стоит в панели, неизвестно — молчим, как и раньше., `test_naive_panel_date_is_read_as_utc` — Панель отдаёт UTC; наивное значение нельзя считать локальным временем., `test_no_writer_builds_the_date_by_hand`, `test_every_writer_uses_the_shared_rule`, `test_billing_target_leaves_the_date_alone_for_disabled`, `test_billing_target_keeps_the_real_date_for_a_live_subscription`, `test_restore_target_leaves_the_date_alone_for_disabled`, `test_payload_without_a_date_does_not_carry_it_from_the_base` — Базовый набор собран для другого перехода: оставленная дата затёрла бы настоящую.
 - `tests/services/test_paritypay_client.py` — Python-модуль
   Классы: `RecordingService` (2 методов)
   Функции: `anyio_backend`, `test_create_invoice_sends_rubles_not_kopeks` — 125000 копеек обязаны уйти как 1250.0 — иначе счёт будет на 125 000 ₽., `test_create_invoice_request_shape`, `test_create_invoice_never_sends_subscription_block` — Подписки не оформляем: блок subscription не должен появляться никогда., `test_create_invoice_omits_empty_optionals`, `test_create_invoice_rejects_response_without_link`, `test_create_invoice_rejects_response_without_id`, `test_get_invoice_by_id_and_by_order_id`, `test_get_invoice_prefers_id_over_order_id` — Спека: передаётся ОДИН из параметров, не оба., `test_get_invoice_without_identifiers_raises`, `test_headers_carry_shop_and_secret_key`, `test_base_url_strips_slash_and_falls_back`, `test_error_message_uses_error_field` — Формат ошибки провайдера — объект {"error": "текст"}., `test_request_404_allowed_returns_none`, `test_request_422_raises_business_error`, `test_request_400_raises`, `test_connection_error_and_timeout_become_network_error`
@@ -4146,6 +4151,12 @@
 - `tests/services/test_yookassa_timeout_hardening.py` — Python-модуль
   Классы: нет
   Функции: `test_apiclient_patch_helper_exists_and_runs_at_import` — Source-level pin: ``_patch_yookassa_timeout`` must be DEFINED, `test_patched_execute_passes_timeout_to_session_request` — Negative-control against upstream regression: the patched, `test_patch_idempotency_guard_exists` — The patch helper must check ``ApiClient._timeout_patched`` to, `test_patch_respects_settings_overrides` — An operator who sets YOOKASSA_HTTP_CONNECT_TIMEOUT or, `test_dedicated_executor_exists_with_bounded_max_workers` — The bug-report's "обязательное" fix #2: dedicated executor with, `test_max_workers_resolver_respects_setting` — REGRESSION: ``YOOKASSA_MAX_CONCURRENT_REQUESTS`` env var must flow, `test_max_workers_resolver_floors_at_one` — A misconfigured ``YOOKASSA_MAX_CONCURRENT_REQUESTS=0`` must NOT, `test_dedicated_executor_thread_name_prefix` — Threads in the YK executor must be identifiable in py-spy /, `test_all_run_in_executor_callsites_use_dedicated_pool` — Source-level pin: every ``run_in_executor`` in, `test_webhook_uses_wait_for_with_tight_budget` — ``process_yookassa_webhook`` cross-check of payment status must, `test_webhook_handles_timeout_with_payload_fallback` — When the API cross-check times out, the handler must NOT raise.
+
+#### tests/services/panel_sync
+
+- `tests/services/panel_sync/test_expiry.py` — Python-модуль
+  Классы: нет
+  Функции: `test_live_subscription_keeps_its_own_date`, `test_expired_subscription_does_not_touch_the_date_on_update` — Главное свойство: поле не отправляется, панель хранит настоящую дату., `test_new_panel_account_gets_the_real_date_even_if_it_has_passed` — При СОЗДАНИИ панель принимает прошедшую дату — выдумывать не надо., `test_future_date_survives_even_for_an_inactive_subscription` — Заблокированный пользователь с ещё не истёкшей подпиской: дату не занижаем., `test_blocked_but_not_expired_subscription_still_pushes_its_real_date` — Блокировка — не истечение: дата в будущем, панель её примет и должна знать., `test_expired_subscription_extinguishes_a_future_date_in_the_panel` — Панель держит будущее — гасим ближайшим допустимым моментом., `test_expired_subscription_leaves_a_past_date_in_the_panel_alone` — В панели уже прошлое — это и есть настоящая история, переписывать нечего., `test_expired_subscription_without_a_known_panel_date_is_left_alone` — Что стоит в панели, неизвестно — молчим, как и раньше., `test_naive_panel_date_is_read_as_utc` — Панель отдаёт UTC; наивное значение нельзя считать локальным временем., `test_no_writer_builds_the_date_by_hand`, `test_every_writer_uses_the_shared_rule`, `test_billing_target_leaves_the_date_alone_for_disabled`, `test_billing_target_keeps_the_real_date_for_a_live_subscription`, `test_restore_target_leaves_the_date_alone_for_disabled`, `test_payload_without_a_date_does_not_carry_it_from_the_base` — Базовый набор собран для другого перехода: оставленная дата затёрла бы настоящую.
 
 #### tests/services/reachability
 

@@ -60,7 +60,7 @@ from app.database.models import (
     WheelSpin,
     WithdrawalRequest,
 )
-from app.services.panel_expiry import panel_expire_at
+from app.services.panel_sync import panel_expire_at
 from app.services.permission_service import PermissionService
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc

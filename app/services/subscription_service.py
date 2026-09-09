@@ -22,7 +22,7 @@ from app.external.remnawave_api import (
     UserStatus,
     is_user_not_found_error,
 )
-from app.services.panel_expiry import panel_expire_at
+from app.services.panel_sync import panel_expire_at
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )

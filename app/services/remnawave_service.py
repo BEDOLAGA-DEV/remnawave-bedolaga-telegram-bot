@@ -36,7 +36,7 @@ from app.external.remnawave_api import (
     coerce_panel_user_id,
     is_user_not_found_error,
 )
-from app.services.panel_expiry import panel_expire_at, stale_panel_expire_at
+from app.services.panel_sync import panel_expire_at, stale_panel_expire_at
 from app.services.subscription_service import get_traffic_reset_strategy
 from app.utils.subscription_utils import (
     coerce_panel_device_limit,

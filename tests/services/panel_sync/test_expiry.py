@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.services.panel_expiry import panel_expire_at
+from app.services.panel_sync import panel_expire_at
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -119,7 +119,7 @@ def test_no_writer_builds_the_date_by_hand(path):
     source = pathlib.Path(path).read_text(encoding='utf-8')
 
     assert not OLD_FORMULA.search(source), (
-        f'{path}: дата окончания для панели снова считается на месте — правило живёт в app/services/panel_expiry.py'
+        f'{path}: дата окончания для панели снова считается на месте — правило живёт в app/services/panel_sync/expiry.py'
     )
 
 
@@ -134,7 +134,7 @@ def test_every_writer_uses_the_shared_rule(path):
     imported = {
         alias.name
         for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module == 'app.services.panel_expiry'
+        if isinstance(node, ast.ImportFrom) and node.module == 'app.services.panel_sync'
         for alias in node.names
     }
 

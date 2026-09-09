@@ -60,7 +60,7 @@ from app.services.notification_delivery_service import (
     notification_delivery_service,
 )
 from app.services.notification_settings_service import NotificationSettingsService
-from app.services.panel_expiry import panel_expire_at
+from app.services.panel_sync import panel_expire_at
 from app.services.promo_offer_service import promo_offer_service
 from app.services.subscription_service import SubscriptionService, get_traffic_reset_strategy
 from app.utils.cache import cache
