@@ -83,11 +83,17 @@ async def push_all_subscriptions(
                 # Канонический PATCH собирается только из объекта, прочитанного
                 # ПОСЛЕ ожидания блокировки, — иначе уедет устаревшее состояние.
                 locked = lease.subscription
+                # Писать связь нужно в ТУ ЖЕ сессию, которой принадлежит объект под
+                # блокировкой: у лизы она своя. Иначе, во-первых, изменения уезжают
+                # мимо той транзакции, которая их коммитит, а во-вторых, пять задач
+                # прохода одновременно ходят в одну общую сессию — SQLAlchemy этого
+                # не допускает, и однажды это упало бы на живой базе.
+                locked_db = getattr(lease, 'db', None) or db
                 try:
                     # Записанный id не проверяем отдельным запросом: на большой
                     # базе это удвоило бы число обращений к панели, а протухший
                     # id обнаружится по ответу на PATCH и приведёт к пересозданию.
-                    result = await push_subscription(api, locked.user, locked, db=db, verify_recorded_id=False)
+                    result = await push_subscription(api, locked.user, locked, db=locked_db, verify_recorded_id=False)
                 except Exception as error:
                     logger.error(
                         'Ошибка синхронизации подписки в панель',

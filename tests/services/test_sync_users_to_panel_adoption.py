@@ -186,3 +186,35 @@ async def test_update_branch_forwards_a_non_empty_squad_list(monkeypatch, harnes
     await harness.service.sync_users_to_panel(_db())
 
     assert harness.api.update_user.await_args.kwargs['active_internal_squads'] == ['squad-1']
+
+
+@pytest.mark.asyncio
+async def test_identity_is_written_into_the_session_that_owns_the_locked_row(monkeypatch, harness):
+    """Связь пишется в сессию лизы, а не в общую сессию прохода.
+
+    Лиза грейса открывает СВОЮ сессию и отдаёт подписку, привязанную к ней:
+    так продление, закоммиченное пока проход ждал блокировку, побеждает. Если
+    писать связь в общую сессию прохода, изменения уезжают мимо транзакции,
+    которая их коммитит, а пять параллельных задач начинают одновременно ходить
+    в один объект сессии — SQLAlchemy этого не допускает.
+    """
+    lease_db = _db()
+    shared_db = _db()
+
+    @asynccontextmanager
+    async def fake_lease(subscription_id):
+        yield SimpleNamespace(allowed=True, subscription=harness.subscription, has_open_grace=False, db=lease_db)
+
+    monkeypatch.setattr(grace_runtime_mod, 'grace_sensitive_panel_update', fake_lease)
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    harness.api.get_user_by_short_uuid.return_value = SimpleNamespace(
+        id=8812, short_uuid='aBcD12', subscription_url='https://s/aBcD12'
+    )
+    harness.api.update_user.return_value = SimpleNamespace(
+        id=8812, short_uuid='aBcD12', subscription_url='https://s/aBcD12', happ_crypto_link=None, expire_at=None
+    )
+
+    await harness.service.sync_users_to_panel(shared_db)
+
+    assert lease_db.execute.await_count, 'проверка занятости id ушла не в сессию лизы'
+    assert not shared_db.execute.await_count, 'общая сессия прохода не должна получать запросы из задач'
