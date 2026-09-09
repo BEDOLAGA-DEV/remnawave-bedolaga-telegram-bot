@@ -62,19 +62,31 @@ def panel_expire_at(
         return end_date
     if creating:
         return end_date
-    return stale_panel_expire_at(panel_current, now=moment)
+    return stale_panel_expire_at(panel_current, end_date=end_date, now=moment)
 
 
-def stale_panel_expire_at(panel_current: datetime | None, *, now: datetime | None = None) -> datetime | None:
-    """Чем погасить дату истёкшей подписки в панели. ``None`` — не трогать.
+def stale_panel_expire_at(
+    panel_current: datetime | None,
+    *,
+    end_date: datetime,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Чем погасить дату подписки в панели. ``None`` — не трогать.
 
     Отдельной функцией, потому что массовая синхронизация узнаёт дату панели уже
     из ответа на ``PATCH``: там сравнивать нечего заранее, а правило должно быть
     одно и то же.
+
+    Гасим ТОЛЬКО у подписки, чья дата окончания уже прошла. Заблокированный
+    пользователь с ещё не истёкшей подпиской тоже уходит в панель отключённым,
+    но его настоящая дата окончания — в будущем, и подменять её «ближайшей
+    минутой» значило бы терять срок, за который человек заплатил.
     """
     if panel_current is None:
         return None
     moment = now or datetime.now(UTC)
+    if panel_datetime_to_utc(end_date) > moment:
+        return None
     if panel_datetime_to_utc(panel_current) <= moment:
         return None
     return moment + _MINIMUM_FUTURE

@@ -60,7 +60,7 @@ from app.services.notification_delivery_service import (
     notification_delivery_service,
 )
 from app.services.notification_settings_service import NotificationSettingsService
-from app.services.panel_sync import panel_expire_at
+from app.services.panel_sync import is_subscription_live, panel_expire_at
 from app.services.promo_offer_service import promo_offer_service
 from app.services.subscription_service import SubscriptionService, get_traffic_reset_strategy
 from app.utils.cache import cache
@@ -657,7 +657,7 @@ class MonitoringService:
                 return None
 
             current_time = datetime.now(UTC)
-            is_active = subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date > current_time
+            is_active = is_subscription_live(user, subscription, now=current_time)
 
             if subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date <= current_time:
                 # Суточные подписки управляются DailySubscriptionService — не экспайрим
@@ -735,7 +735,7 @@ class MonitoringService:
                 # RemnaWaveInvalidUserIdError сюда намеренно не попадает: битый
                 # локальный идентификатор — баг в данных бота, а не «юзера нет»,
                 # и уход в пересоздание плодил бы дубли в панели.
-                return await self.subscription_service.recreate_deleted_panel_user(db, subscription)
+                return await self.subscription_service.recreate_deleted_panel_user(db, subscription, user=user)
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
             return None
         except Exception as e:

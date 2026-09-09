@@ -60,7 +60,7 @@ from app.database.models import (
     WheelSpin,
     WithdrawalRequest,
 )
-from app.services.panel_sync import panel_expire_at
+from app.services.panel_sync import is_subscription_live, panel_expire_at
 from app.services.permission_service import PermissionService
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
@@ -412,11 +412,7 @@ async def _sync_subscription_to_panel(
             logger.warning('Remnawave not configured, skipping panel sync for user', user_id=user.id)
             return {'skipped': True, 'reason': 'Remnawave not configured'}
 
-        is_active = (
-            subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
-            and subscription.end_date
-            and subscription.end_date > datetime.now(UTC)
-        )
+        is_active = is_subscription_live(user, subscription)
         panel_status = PanelUserStatus.ACTIVE if is_active else PanelUserStatus.DISABLED
 
         # Живой подписке — её дата; истёкшей при обновлении она зависит от того,
@@ -4322,11 +4318,7 @@ async def sync_user_to_panel(
         )
 
         # Prepare data for panel
-        is_active = (
-            sub.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
-            and sub.end_date
-            and sub.end_date > datetime.now(UTC)
-        )
+        is_active = is_subscription_live(user, sub)
         panel_status = PanelUserStatus.ACTIVE if is_active else PanelUserStatus.DISABLED
 
         # Дата для обновления зависит от того, что сейчас стоит в панели, —

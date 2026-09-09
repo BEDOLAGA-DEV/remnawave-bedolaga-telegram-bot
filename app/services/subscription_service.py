@@ -22,7 +22,7 @@ from app.external.remnawave_api import (
     UserStatus,
     is_user_not_found_error,
 )
-from app.services.panel_sync import panel_expire_at
+from app.services.panel_sync import is_subscription_live, panel_expire_at
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -490,11 +490,7 @@ class SubscriptionService:
             user_id=user.id,
         )
         now = datetime.now(UTC)
-        is_actually_active = (
-            user.status == 'active'
-            and subscription.actual_status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
-            and subscription.end_date > now
-        )
+        is_actually_active = is_subscription_live(user, subscription, now=now)
         common_kwargs = dict(
             status=UserStatus.ACTIVE if is_actually_active else UserStatus.DISABLED,
             traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
@@ -694,11 +690,7 @@ class SubscriptionService:
             )
 
         now = datetime.now(UTC)
-        is_actually_active = (
-            user.status == 'active'
-            and subscription.actual_status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
-            and subscription.end_date > now
-        )
+        is_actually_active = is_subscription_live(user, subscription, now=now)
         common_kwargs = dict(
             status=UserStatus.ACTIVE if is_actually_active else UserStatus.DISABLED,
             traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
@@ -848,10 +840,7 @@ class SubscriptionService:
             current_time = datetime.now(UTC)
             # Определяем актуальный статус для отправки в RemnaWave
             # НЕ меняем статус подписки здесь - это задача scheduled job
-            is_actually_active = (
-                subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
-                and subscription.end_date > current_time
-            )
+            is_actually_active = is_subscription_live(user, subscription, now=current_time)
 
             # Логируем если статус и end_date не согласованы (для отладки)
             if (
@@ -971,7 +960,7 @@ class SubscriptionService:
                 # пересоздаём вместо ошибки (create-флоу сам найдёт/создаст
                 # панель-юзера и сохранит новый id и ссылки в подписку).
                 return await self.recreate_deleted_panel_user(
-                    db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
+                    db, subscription, user=user, reset_traffic=reset_traffic, reset_reason=reset_reason
                 )
             logger.error('Ошибка RemnaWave API', error=e)
             return None
@@ -985,6 +974,7 @@ class SubscriptionService:
         db: AsyncSession,
         subscription: Subscription,
         *,
+        user: User | None = None,
         reset_traffic: bool = False,
         reset_reason: str | None = None,
     ) -> RemnaWaveUser | None:
@@ -993,10 +983,7 @@ class SubscriptionService:
         Только для действующих подписок: пересоздавать DISABLED-юзера ради
         истёкшей подписки не нужно — админ удалил его намеренно.
         """
-        is_actually_active = subscription.status in (
-            SubscriptionStatus.ACTIVE.value,
-            SubscriptionStatus.TRIAL.value,
-        ) and subscription.end_date > datetime.now(UTC)
+        is_actually_active = is_subscription_live(user, subscription)
         if not is_actually_active:
             logger.info(
                 'Панель-юзер удалён из RemnaWave, подписка неактивна — пересоздание не требуется',

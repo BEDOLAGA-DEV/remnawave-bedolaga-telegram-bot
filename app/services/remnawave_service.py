@@ -36,7 +36,7 @@ from app.external.remnawave_api import (
     coerce_panel_user_id,
     is_user_not_found_error,
 )
-from app.services.panel_sync import panel_expire_at, stale_panel_expire_at
+from app.services.panel_sync import is_subscription_live, panel_expire_at, stale_panel_expire_at
 from app.services.subscription_service import get_traffic_reset_strategy
 from app.utils.subscription_utils import (
     coerce_panel_device_limit,
@@ -2636,10 +2636,7 @@ class RemnaWaveService:
                                 user = sub.user
                                 hwid_limit = resolve_hwid_device_limit_for_payload(sub)
                                 # Определяем статус для панели
-                                is_subscription_active = sub.status in (
-                                    SubscriptionStatus.ACTIVE.value,
-                                    SubscriptionStatus.TRIAL.value,
-                                ) and sub.end_date > datetime.now(UTC)
+                                is_subscription_active = is_subscription_live(user, sub)
                                 status = UserStatus.ACTIVE if is_subscription_active else UserStatus.DISABLED
 
                                 # multi-tariff create-path в bulk-sync приклеивает
@@ -2791,7 +2788,8 @@ class RemnaWaveService:
                                         # прогон увидит там прошлое и уже ничего не тронет.
                                         if not is_subscription_active:
                                             extinguish_at = stale_panel_expire_at(
-                                                getattr(panel_user, 'expire_at', None)
+                                                getattr(panel_user, 'expire_at', None),
+                                                end_date=sub.end_date,
                                             )
                                             if extinguish_at is not None:
                                                 await api.update_user(user_id=panel_user_id, expire_at=extinguish_at)

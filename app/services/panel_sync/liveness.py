@@ -24,10 +24,16 @@ _LIVE_STATUSES = frozenset({SubscriptionStatus.ACTIVE.value, SubscriptionStatus.
 
 
 def is_subscription_live(user, subscription, *, now: datetime | None = None) -> bool:
-    """Включать ли пользователя в панели ради этой подписки."""
+    """Включать ли пользователя в панели ради этой подписки.
+
+    ``user=None`` означает «владелец неизвестен»: проверяем только подписку.
+    Так зовут те немногие места, где объект пользователя не загружен, а
+    подтягивать его ради одной проверки дороже, чем польза, — блокировку там
+    всё равно донесёт статус, собранный писателем.
+    """
     moment = now or datetime.now(UTC)
 
-    if getattr(user, 'status', UserStatus.ACTIVE.value) != UserStatus.ACTIVE.value:
+    if user is not None and getattr(user, 'status', UserStatus.ACTIVE.value) != UserStatus.ACTIVE.value:
         return False
 
     if getattr(subscription, 'status', None) not in _LIVE_STATUSES:
