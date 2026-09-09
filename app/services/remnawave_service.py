@@ -2210,79 +2210,19 @@ class RemnaWaveService:
                     continue
 
                 try:
-                    # Update traffic
-                    used_traffic_bytes = panel_user.get('usedTrafficBytes', 0) or 0
-                    traffic_used_gb = used_traffic_bytes / (1024**3)
-                    if abs(subscription.traffic_used_gb - traffic_used_gb) > 0.01:
-                        subscription.traffic_used_gb = traffic_used_gb
-
-                    # Persist only trusted status observations for the grace
-                    # worker. Generic updated_at must never resurrect old rows.
-                    # Полный проход по панели занимает минуты (cursor-пагинация
-                    # всего списка ДО применения) — снапшот статуса может быть
-                    # протухшим. Свежее webhook-обновление (оплата/продление во
-                    # время прохода) важнее снапшота, иначе только что оплаченная
-                    # подписка откатывается в LIMITED/EXPIRED и уезжает в grace.
+                    # Полный проход выгружает весь список панели и применяет его
+                    # минутами позже, поэтому снимку нельзя верить на слово:
+                    # свежее webhook-обновление (оплата во время прохода) важнее.
                     from app.database.crud.subscription import is_recently_updated_by_webhook
 
-                    if not grace_open and not is_recently_updated_by_webhook(subscription):
-                        panel_status = str(panel_user.get('status') or '').upper()
-                        now = self._now_utc()
-                        if panel_status == 'LIMITED':
-                            # Флип только когда bot-side данные согласны с панелью
-                            # (трафик действительно исчерпан) и подписка живая:
-                            # DISABLED — намеренное решение админа, не воскрешаем.
-                            traffic_exhausted = bool(subscription.traffic_limit_gb) and (
-                                subscription.traffic_used_gb >= subscription.traffic_limit_gb - 0.01
-                            )
-                            if traffic_exhausted and subscription.status in (
-                                SubscriptionStatus.ACTIVE.value,
-                                SubscriptionStatus.TRIAL.value,
-                            ):
-                                subscription.status = SubscriptionStatus.LIMITED.value
-                                subscription.grace_candidate_reason = 'limited'
-                                subscription.grace_candidate_at = now
-                        elif panel_status == 'EXPIRED' and subscription.end_date:
-                            local_end = self._local_to_utc(subscription.end_date)
-                            if local_end <= now and subscription.status in (
-                                SubscriptionStatus.ACTIVE.value,
-                                SubscriptionStatus.TRIAL.value,
-                                SubscriptionStatus.LIMITED.value,
-                            ):
-                                is_fresh = local_end >= now - timedelta(
-                                    minutes=settings.GRACE_ACCESS_CANDIDATE_LOOKBACK_MINUTES
-                                )
-                                subscription.status = SubscriptionStatus.EXPIRED.value
-                                if is_fresh:
-                                    subscription.grace_candidate_reason = 'expired'
-                                    subscription.grace_candidate_at = now
-
-                    # traffic_limit_gb: bot is source of truth, do not overwrite from panel
-
-                    # Update subscription URL
-                    sub_url = panel_user.get('subscriptionUrl')
-                    if sub_url and subscription.subscription_url != sub_url:
-                        subscription.subscription_url = sub_url
-
-                    crypto_link = panel_user.get('subscriptionCryptoLink')
-                    if crypto_link and subscription.subscription_crypto_link != crypto_link:
-                        subscription.subscription_crypto_link = crypto_link
-
-                    # Update squads from panel
-                    _panel_squads = panel_user.get('activeInternalSquads', []) or []
-                    _squad_uuids = []
-                    if isinstance(_panel_squads, list):
-                        for _sq in _panel_squads:
-                            if isinstance(_sq, dict) and 'uuid' in _sq:
-                                _squad_uuids.append(_sq['uuid'])
-                            elif isinstance(_sq, str):
-                                _squad_uuids.append(_sq)
-                    if (
-                        not grace_open
-                        and _squad_uuids
-                        and set(_squad_uuids) != set(subscription.connected_squads or [])
-                    ):
-                        subscription.connected_squads = _squad_uuids
+                    project_onto_subscription(
+                        subscription,
+                        read_panel_user(panel_user),
+                        now=self._now_utc(),
+                        grace_open=grace_open,
+                        stale_snapshot=True,
+                        trust_status=not is_recently_updated_by_webhook(subscription),
+                    )
 
                     stats['updated'] += 1
                 except Exception as e:

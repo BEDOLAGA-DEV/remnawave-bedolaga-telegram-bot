@@ -235,6 +235,98 @@ def test_open_grace_freezes_the_billing_state_but_keeps_links():
     )
 
     assert subscription.status == SubscriptionStatus.ACTIVE.value
-    assert subscription.traffic_used_gb == 1.0
+    assert subscription.end_date == NOW + timedelta(days=30)
+    assert subscription.connected_squads == ['squad-a']
     assert subscription.remnawave_short_uuid == 'new-short'
-    assert changed == {'remnawave_short_uuid'}
+    # Трафик и ссылки ничего не решают: показывать устаревшие цифры незачем.
+    assert subscription.traffic_used_gb == 99.0
+    assert changed == {'remnawave_short_uuid', 'traffic_used_gb'}
+
+
+def test_status_can_be_frozen_for_a_subscription_just_touched_by_a_webhook():
+    """Свежая оплата важнее любого снимка панели."""
+    subscription = _sub(status=SubscriptionStatus.ACTIVE.value)
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='DISABLED', traffic_used_gb=3.0),
+        now=NOW,
+        trust_status=False,
+    )
+
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
+    assert subscription.traffic_used_gb == 3.0
+
+
+# ==================== снимок, которому нельзя верить на слово ====================
+
+# Полный проход по панели выгружает весь список и применяет его минутами позже.
+# К этому моменту подписка могла быть оплачена — и доверчивое применение снимка
+# откатывало её в LIMITED/EXPIRED и отправляло в грейс.
+
+
+def test_stale_snapshot_never_moves_the_end_date():
+    subscription = _sub()
+    original = subscription.end_date
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='ACTIVE', expire_at=NOW + timedelta(days=90)),
+        now=NOW,
+        stale_snapshot=True,
+    )
+
+    assert subscription.end_date == original
+
+
+def test_stale_limited_needs_the_traffic_to_be_actually_spent():
+    fresh = _sub(traffic_used_gb=1.0, traffic_limit_gb=100)
+    spent = _sub(traffic_used_gb=100.0, traffic_limit_gb=100)
+
+    project_onto_subscription(fresh, PanelSnapshot(status='LIMITED'), now=NOW, stale_snapshot=True)
+    project_onto_subscription(spent, PanelSnapshot(status='LIMITED'), now=NOW, stale_snapshot=True)
+
+    assert fresh.status == SubscriptionStatus.ACTIVE.value, 'только что оплаченную не гасим'
+    assert spent.status == SubscriptionStatus.LIMITED.value
+
+
+def test_stale_limited_does_not_resurrect_a_disabled_subscription():
+    subscription = _sub(status=SubscriptionStatus.DISABLED.value, traffic_used_gb=100.0, traffic_limit_gb=100)
+
+    project_onto_subscription(subscription, PanelSnapshot(status='LIMITED'), now=NOW, stale_snapshot=True)
+
+    assert subscription.status == SubscriptionStatus.DISABLED.value
+
+
+def test_stale_expired_needs_the_date_to_have_passed():
+    renewed = _sub(end_date=NOW + timedelta(days=30))
+    over = _sub(end_date=NOW - timedelta(days=1))
+
+    project_onto_subscription(renewed, PanelSnapshot(status='EXPIRED'), now=NOW, stale_snapshot=True)
+    project_onto_subscription(over, PanelSnapshot(status='EXPIRED'), now=NOW, stale_snapshot=True)
+
+    assert renewed.status == SubscriptionStatus.ACTIVE.value, 'продление важнее протухшего снимка'
+    assert over.status == SubscriptionStatus.EXPIRED.value
+
+
+def test_stale_disabled_is_ignored():
+    """DISABLED — решение админа; по протухшему снимку его не применяем."""
+    subscription = _sub()
+
+    project_onto_subscription(subscription, PanelSnapshot(status='DISABLED'), now=NOW, stale_snapshot=True)
+
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
+
+
+def test_stale_snapshot_still_carries_traffic_and_links():
+    subscription = _sub()
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='ACTIVE', traffic_used_gb=5.0, subscription_url='https://new'),
+        now=NOW,
+        stale_snapshot=True,
+    )
+
+    assert subscription.traffic_used_gb == 5.0
+    assert subscription.subscription_url == 'https://new'
