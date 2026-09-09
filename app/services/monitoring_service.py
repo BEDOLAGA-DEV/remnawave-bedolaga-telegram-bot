@@ -1573,7 +1573,12 @@ class MonitoringService:
                         failed_count += 1
                         continue
 
-                    if renewal_cost <= 0:
+                    # Ноль сам по себе не повод отказать: бесплатный период —
+                    # штатная настройка тарифа, и подписку на нём покупают как
+                    # любую другую. Отказ остаётся для случая, ради которого
+                    # проверка и появилась, — цена периода не проставлена вовсе.
+                    autopay_period_is_priced = bool(tariff and tariff.has_configured_price_for_period(autopay_period))
+                    if renewal_cost <= 0 and not autopay_period_is_priced:
                         logger.warning(
                             'Нулевая стоимость автопродления, пропускаем',
                             subscription_id=subscription.id,
