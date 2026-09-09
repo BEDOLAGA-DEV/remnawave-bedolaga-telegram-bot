@@ -1800,6 +1800,9 @@
 - `app/services/panel_sync/expiry.py` — Python-модуль
   Классы: нет
   Функции: `panel_expire_at` — Что положить в ``expireAt`` панели. ``None`` — не отправлять поле вовсе., `stale_panel_expire_at` — Чем погасить дату истёкшей подписки в панели. ``None`` — не трогать.
+- `app/services/panel_sync/liveness.py` — Python-модуль
+  Классы: нет
+  Функции: `is_subscription_live` — Включать ли пользователя в панели ради этой подписки.
 
 #### app/services/payment
 
@@ -4157,6 +4160,9 @@
 - `tests/services/panel_sync/test_expiry.py` — Python-модуль
   Классы: нет
   Функции: `test_live_subscription_keeps_its_own_date`, `test_expired_subscription_does_not_touch_the_date_on_update` — Главное свойство: поле не отправляется, панель хранит настоящую дату., `test_new_panel_account_gets_the_real_date_even_if_it_has_passed` — При СОЗДАНИИ панель принимает прошедшую дату — выдумывать не надо., `test_future_date_survives_even_for_an_inactive_subscription` — Заблокированный пользователь с ещё не истёкшей подпиской: дату не занижаем., `test_blocked_but_not_expired_subscription_still_pushes_its_real_date` — Блокировка — не истечение: дата в будущем, панель её примет и должна знать., `test_expired_subscription_extinguishes_a_future_date_in_the_panel` — Панель держит будущее — гасим ближайшим допустимым моментом., `test_expired_subscription_leaves_a_past_date_in_the_panel_alone` — В панели уже прошлое — это и есть настоящая история, переписывать нечего., `test_expired_subscription_without_a_known_panel_date_is_left_alone` — Что стоит в панели, неизвестно — молчим, как и раньше., `test_naive_panel_date_is_read_as_utc` — Панель отдаёт UTC; наивное значение нельзя считать локальным временем., `test_no_writer_builds_the_date_by_hand`, `test_every_writer_uses_the_shared_rule`, `test_billing_target_leaves_the_date_alone_for_disabled`, `test_billing_target_keeps_the_real_date_for_a_live_subscription`, `test_restore_target_leaves_the_date_alone_for_disabled`, `test_payload_without_a_date_does_not_carry_it_from_the_base` — Базовый набор собран для другого перехода: оставленная дата затёрла бы настоящую.
+- `tests/services/panel_sync/test_liveness.py` — Python-модуль
+  Классы: нет
+  Функции: `test_active_subscription_of_an_active_user_is_live`, `test_trial_counts_as_live`, `test_blocked_user_is_never_live` — Блокировка обязана доезжать до панели: иначе синхронизация снимает бан., `test_deleted_user_is_never_live`, `test_expired_by_date_is_not_live_even_with_active_column`, `test_disabled_and_limited_columns_are_not_live`, `test_missing_end_date_is_not_live`, `test_naive_end_date_is_read_as_utc` — В базах до TIMESTAMPTZ дата приходит наивной — считаем её UTC, а не локальной., `test_user_without_status_attribute_is_treated_as_active` — Часть вызывающих отдаёт облегчённый объект без статуса — синк не роняем., `test_matches_actual_status_of_the_model` — Правило обязано совпадать с Subscription.actual_status — иначе разъедутся снова.
 
 #### tests/services/reachability
 

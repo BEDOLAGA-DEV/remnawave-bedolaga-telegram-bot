@@ -10,6 +10,7 @@
 """
 
 from app.services.panel_sync.expiry import panel_expire_at, stale_panel_expire_at
+from app.services.panel_sync.liveness import is_subscription_live
 
 
-__all__ = ['panel_expire_at', 'stale_panel_expire_at']
+__all__ = ['is_subscription_live', 'panel_expire_at', 'stale_panel_expire_at']
