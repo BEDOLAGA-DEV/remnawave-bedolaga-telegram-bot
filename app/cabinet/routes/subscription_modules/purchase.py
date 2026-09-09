@@ -419,6 +419,11 @@ async def get_purchase_options(
         context = await purchase_service.build_options(db, user, subscription_id=subscription_id)
         payload = context.payload
         payload['sales_mode'] = 'classic'
+        # Автооплата — свойство системы, а не режима продаж. Без этих признаков
+        # кабинет спрашивал состояние автооплаты у каждой подписки и узнавал об
+        # отключённой фиче из ответа 403 — по красной строке в консоли на запрос.
+        payload['platega_recurrent_enabled'] = settings.is_platega_recurrent_enabled()
+        payload['lava_recurrent_enabled'] = settings.is_lava_recurrent_enabled()
         return payload
 
     except PurchaseValidationError as e:
@@ -796,10 +801,20 @@ async def purchase_tariff(
         promo_offer_discount_value = result.promo_offer_discount
         price_before_promo_offer = price_kopeks + promo_offer_discount_value
 
-        # Safety guard: reject zero-price purchases for non-daily tariffs (defense in depth).
-        # Use original_total (pre-discount price) — base_price is already discounted,
-        # so a 100% group discount legitimately makes it 0.
-        if price_kopeks <= 0 and result.original_total <= 0 and not is_daily_tariff:
+        # Safety guard: reject purchases whose price is zero because nothing is
+        # configured. Use original_total (pre-discount price) — base_price is
+        # already discounted, so a 100% group discount legitimately makes it 0.
+        #
+        # Нулевая цена сама по себе поломкой НЕ является: бесплатный тариф в
+        # проекте штатный, и бот его продаёт. Признак настроенности — наличие
+        # цены периода, а не её величина; раньше здесь стояла проверка «> 0», и
+        # тариф, показанный кабинетом как «Бесплатно», купить было нельзя.
+        if (
+            price_kopeks <= 0
+            and result.original_total <= 0
+            and not is_daily_tariff
+            and not tariff.has_configured_price_for_period(period_days)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Invalid tariff period or pricing configuration',
@@ -1167,6 +1182,11 @@ async def purchase_tariff(
 
         await db.refresh(user)
         await db.refresh(subscription)
+        # refresh обнуляет загруженные связи, а ответ читает тариф подписки
+        # (суточность, цена дня, режим сброса трафика). Дочитывать его лениво
+        # в async-роуте нельзя: получится MissingGreenlet и HTTP 500 уже ПОСЛЕ
+        # списания и создания подписки — человек заплатил и увидел ошибку.
+        await db.refresh(subscription, ['tariff'])
 
         # Yandex.Metrika offline conversion — see /purchase endpoint for context (#558449).
         try:

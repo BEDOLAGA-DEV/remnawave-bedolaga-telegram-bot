@@ -127,5 +127,5 @@ def expand_raw_input(text: str) -> list[str]:
             lines.append(line)
             continue
         decoded = decode_subscription_body(line)
-        lines.extend(decoded if decoded else [line])
+        lines.extend(decoded or [line])
     return lines

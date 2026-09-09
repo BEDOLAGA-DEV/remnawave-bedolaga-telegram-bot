@@ -21,8 +21,10 @@ from app.services.system_settings_service import bot_configuration_service
 
 async def save_settings_form(db: AsyncSession, updates: Mapping[str, Any]) -> None:
     """Записать значения по ключам Settings; ``set_value`` сам применяет их в памяти."""
+    # commit=False + один коммит в конце: значения формы должны лечь целиком
+    # или не лечь вовсе, а не половиной при ошибке на третьем ключе.
     for key, value in updates.items():
-        await bot_configuration_service.set_value(db, key, value)
+        await bot_configuration_service.set_value(db, key, value, commit=False)
     await db.commit()
 
 

@@ -25,7 +25,7 @@ TABLES = ('reachability_batches', 'reachability_jobs')
 
 
 def _load_migration(name: str):
-    spec = importlib.util.spec_from_file_location(name.split('_')[0], VERSIONS / name)
+    spec = importlib.util.spec_from_file_location(name.split('_', maxsplit=1)[0], VERSIONS / name)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

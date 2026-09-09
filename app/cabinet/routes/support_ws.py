@@ -1422,7 +1422,9 @@ def _map_exception(command: str, exc: Exception) -> dict[str, Any]:
             'upload' if message.startswith('UPLOAD_') else 'download' if message.startswith('DOWNLOAD_') else 'ticket'
         )
         return _shared_error(message, message.replace('_', ' ').title(), resource_type=resource_type)
-    logger.exception('Support WS command failed', command=command, error=message)
+    # exception() вне блока except печатает пустой traceback «NoneType: None» —
+    # исключение сюда приходит аргументом, поэтому передаём его явно.
+    logger.error('Support WS command failed', command=command, error=message, exc_info=exc)
     return _shared_error('INTERNAL_ERROR', 'Internal support websocket error', retryable=True)
 
 

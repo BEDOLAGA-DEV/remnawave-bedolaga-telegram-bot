@@ -840,7 +840,7 @@ class RemnaWaveAPI:
         description: str | None = None,
         tag: str | None = None,
         active_internal_squads: list[str] | None = None,
-        external_squad_uuid: str | None | type(...) = ...,
+        external_squad_uuid: str | type(...) | None = ...,
     ) -> RemnaWaveUser:
         # 3.0.0: UpdateUserCommand.RequestBodySchema не имеет поля `uuid`, а
         # .refine((d) => d.username ?? d.id) требует хотя бы один из двух —

@@ -116,12 +116,12 @@
 **Защита в коде:**
 ```python
 # ✅ Правильно
-logger.info(f"User {user_id} created subscription")
-logger.debug(f"Payment webhook received for order {order_id}")
+logger.info(f'User {user_id} created subscription')
+logger.debug(f'Payment webhook received for order {order_id}')
 
 # ❌ Неправильно
-logger.info(f"API key: {api_key}")
-logger.debug(f"Webhook payload: {webhook_data}")
+logger.info(f'API key: {api_key}')
+logger.debug(f'Webhook payload: {webhook_data}')
 ```
 
 ### 🌐 Сетевая безопасность
@@ -162,45 +162,44 @@ ufw deny 8080/tcp  # Unified FastAPI сервер доступен только 
 # ✅ Правильно
 def validate_user_id(user_id: str) -> int:
     if not user_id.isdigit():
-        raise ValueError("Invalid user ID format")
+        raise ValueError('Invalid user ID format')
     uid = int(user_id)
     if uid <= 0:
-        raise ValueError("User ID must be positive")
+        raise ValueError('User ID must be positive')
     return uid
 
-# ❌ Неправильно  
+
+# ❌ Неправильно
 def get_user(user_id):
-    return session.execute(f"SELECT * FROM users WHERE id = {user_id}")
+    return session.execute(f'SELECT * FROM users WHERE id = {user_id}')
 ```
 
 **SQL Injection Prevention:**
 ```python
 # ✅ Правильно - используйте SQLAlchemy ORM
 async def get_user_subscriptions(user_id: int):
-    result = await session.execute(
-        select(Subscription).where(Subscription.user_id == user_id)
-    )
+    result = await session.execute(select(Subscription).where(Subscription.user_id == user_id))
     return result.scalars().all()
+
 
 # ❌ Неправильно - raw SQL без параметров
 async def get_user_subscriptions(user_id: int):
-    result = await session.execute(
-        f"SELECT * FROM subscriptions WHERE user_id = {user_id}"
-    )
+    result = await session.execute(f'SELECT * FROM subscriptions WHERE user_id = {user_id}')
 ```
 
 **API Keys Management:**
 ```python
 # ✅ Правильно
 class Config:
-    REMNAWAVE_API_KEY: str = os.getenv("REMNAWAVE_API_KEY", "")
-    
+    REMNAWAVE_API_KEY: str = os.getenv('REMNAWAVE_API_KEY', '')
+
     def validate_required_env(self):
         if not self.REMNAWAVE_API_KEY:
-            raise ValueError("REMNAWAVE_API_KEY is required")
+            raise ValueError('REMNAWAVE_API_KEY is required')
+
 
 # ❌ Неправильно
-API_KEY = "your_api_key_here"  # Никогда не хардкодьте ключи
+API_KEY = 'your_api_key_here'  # Никогда не хардкодьте ключи
 ```
 
 **Error Handling:**
@@ -209,12 +208,12 @@ API_KEY = "your_api_key_here"  # Никогда не хардкодьте клю
 try:
     result = await remnawave_api.create_subscription(data)
 except RemnaWaveAPIError as e:
-    logger.error(f"RemnaWave API error: {e}")
-    await message.answer("Временные проблемы с сервисом. Попробуйте позже.")
+    logger.error(f'RemnaWave API error: {e}')
+    await message.answer('Временные проблемы с сервисом. Попробуйте позже.')
 
 # ❌ Неправильно - раскрытие внутренних деталей
 except Exception as e:
-    await message.answer(f"Error: {str(e)}")
+    await message.answer(f'Error: {str(e)}')
 ```
 
 ### 🔍 Code Review Security Checklist

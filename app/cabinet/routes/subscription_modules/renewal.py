@@ -73,11 +73,16 @@ async def get_renewal_options(
 
     options = []
 
+    # Нулевая цена — не всегда поломка: у бесплатного тарифа она настроена
+    # намеренно. Пропускаем период, только если цена не проставлена вовсе.
+    renewal_tariff = subscription.tariff if subscription.tariff_id else None
+
     for period in periods:
         pricing = await pricing_engine.calculate_renewal_price(db, subscription, period, user=user)
 
         if pricing.final_total <= 0 and pricing.original_total <= 0:
-            continue
+            if renewal_tariff is None or not renewal_tariff.has_configured_price_for_period(period):
+                continue
 
         original_price = pricing.original_total
         combined_discount = 0
@@ -173,10 +178,13 @@ async def renew_subscription(
     promo_offer_discount_percent = pricing.breakdown.get('offer_discount_pct', 0)
 
     if price_kopeks <= 0 and pricing.original_total <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Invalid renewal period',
-        )
+        # Бесплатный тариф продлевается штатно — см. get_renewal_options.
+        renewal_tariff = subscription.tariff if subscription.tariff_id else None
+        if renewal_tariff is None or not renewal_tariff.has_configured_price_for_period(request.period_days):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Invalid renewal period',
+            )
 
     original_price_kopeks = pricing.original_total
     discount_percent = 0

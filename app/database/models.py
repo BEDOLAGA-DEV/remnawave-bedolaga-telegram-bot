@@ -2088,6 +2088,25 @@ class Tariff(Base):
         prices = self.period_prices or {}
         return prices.get(str(period_days))
 
+    def has_configured_price_for_period(self, period_days: int) -> bool:
+        """Настроена ли цена этого периода — бесплатный (0 ₽) считается настроенным.
+
+        Признак верной настройки — наличие цены, а не её величина. Бесплатный
+        тариф в проекте штатный (см. ``is_free``), и бот продаёт его, проверяя
+        только наличие периода в ``period_prices``. Кабинет же считал нулевую
+        цену признаком поломанной конфигурации и отказывал в покупке тарифа,
+        который сам же показывал как «Бесплатно».
+
+        Непроставленная цена (``None``) настроенной не считается — это и есть
+        тот случай, ради которого проверка появилась.
+        """
+        if self.is_daily:
+            return period_days <= 1
+        prices = self.period_prices or {}
+        if prices.get(str(period_days)) is not None:
+            return True
+        return self.can_purchase_custom_days() and self.get_price_for_custom_days(period_days) is not None
+
     @property
     def is_free(self) -> bool:
         """Тариф полностью бесплатный (все доступные цены = 0).

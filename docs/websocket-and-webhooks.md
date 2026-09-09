@@ -131,11 +131,7 @@ Webhook отправляет POST запрос с JSON payload:
 import hmac
 import hashlib
 
-signature = hmac.new(
-    secret.encode('utf-8'),
-    payload_json.encode('utf-8'),
-    hashlib.sha256
-).hexdigest()
+signature = hmac.new(secret.encode('utf-8'), payload_json.encode('utf-8'), hashlib.sha256).hexdigest()
 ```
 
 Заголовок: `X-Webhook-Signature: sha256={signature}`
@@ -147,14 +143,11 @@ import hmac
 import hashlib
 import json
 
+
 def verify_webhook_signature(payload: dict, signature_header: str, secret: str) -> bool:
     payload_json = json.dumps(payload, sort_keys=True)
-    expected_signature = hmac.new(
-        secret.encode('utf-8'),
-        payload_json.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-    
+    expected_signature = hmac.new(secret.encode('utf-8'), payload_json.encode('utf-8'), hashlib.sha256).hexdigest()
+
     received_signature = signature_header.replace('sha256=', '')
     return hmac.compare_digest(expected_signature, received_signature)
 ```
@@ -260,7 +253,8 @@ import hashlib
 import json
 
 app = FastAPI()
-WEBHOOK_SECRET = "your-secret"
+WEBHOOK_SECRET = 'your-secret'
+
 
 @app.post('/webhook')
 async def webhook(request: Request):
@@ -280,13 +274,10 @@ async def webhook(request: Request):
 
     return {'status': 'ok'}
 
+
 def verify_signature(payload, signature, secret):
     payload_json = json.dumps(payload, sort_keys=True)
-    expected = hmac.new(
-        secret.encode(),
-        payload_json.encode(),
-        hashlib.sha256
-    ).hexdigest()
+    expected = hmac.new(secret.encode(), payload_json.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature.replace('sha256=', ''))
 ```
 

@@ -567,7 +567,7 @@ def _setup_monitoring_service(monkeypatch, api):
     service.subscription_service._config_error = None  # is_configured → True
 
     monkeypatch.setattr('app.services.monitoring_service.get_user_by_id', AsyncMock(return_value=_make_user()))
-    monkeypatch.setattr('app.services.monitoring_service.resolve_hwid_device_limit_for_payload', lambda s: None)
+    monkeypatch.setattr('app.services.panel_sync.payload.resolve_hwid_device_limit_for_payload', lambda s: None)
     _patch_api_client(monkeypatch, service.subscription_service, api)
     return service
 

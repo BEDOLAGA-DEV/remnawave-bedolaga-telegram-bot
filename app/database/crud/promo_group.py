@@ -166,7 +166,7 @@ async def update_promo_group(
         group.device_discount_percent = max(0, min(100, device_discount_percent))
     if period_discounts is not None:
         normalized_period_discounts = _normalize_period_discounts(period_discounts)
-        group.period_discounts = normalized_period_discounts if normalized_period_discounts else None
+        group.period_discounts = normalized_period_discounts or None
     if auto_assign_total_spent_kopeks is not None:
         value = max(0, auto_assign_total_spent_kopeks)
         group.auto_assign_total_spent_kopeks = value if value > 0 else None
