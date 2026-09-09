@@ -308,3 +308,18 @@ def project_onto_subscription(
         changed.add('connected_squads')
 
     return changed
+
+
+def panel_status_for_new_subscription(snapshot: PanelSnapshot, *, now: datetime | None = None) -> str:
+    """Статус подписки, которую бот заводит по уже существующему аккаунту панели.
+
+    Отдельная функция, потому что подписки ещё нет — сравнивать не с чем, и всё
+    решает панель: живая с будущей датой активна, с прошедшей истекла, остальное
+    отключено.
+    """
+    moment = now or datetime.now(UTC)
+    if snapshot.status == 'ACTIVE' and snapshot.expire_at is not None and snapshot.expire_at > moment:
+        return SubscriptionStatus.ACTIVE.value
+    if snapshot.expire_at is not None and snapshot.expire_at <= moment:
+        return SubscriptionStatus.EXPIRED.value
+    return SubscriptionStatus.DISABLED.value

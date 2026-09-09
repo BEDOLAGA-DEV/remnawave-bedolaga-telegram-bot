@@ -40,6 +40,12 @@ from app.database.models import CabinetRefreshToken, User, UserStatus
 from app.services import legal_consent_service
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
+from app.services.panel_sync import (
+    ADMIN_PULL,
+    panel_status_for_new_subscription,
+    project_onto_subscription,
+    read_panel_user,
+)
 from app.services.rbac_bootstrap_service import (
     ensure_superadmin_role_on_login,
     is_user_admin_by_env,
@@ -57,7 +63,6 @@ from app.services.web_auth_service import (
 )
 from app.utils.cache import RateLimitCache, TokenReplayCache
 from app.utils.subscription_utils import coerce_panel_device_limit
-from app.utils.timezone import panel_datetime_to_utc
 
 from ..auth import (
     create_access_token,
@@ -533,7 +538,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
             # In multi-tariff mode, sync ALL panel users (each = one subscription)
             # In single-tariff mode, process only the first
             from app.database.crud.subscription import get_active_subscriptions_by_user_id, get_subscription_by_user_id
-            from app.database.models import Subscription, SubscriptionStatus
+            from app.database.models import Subscription
 
             panel_users_to_sync = panel_users if settings.is_multi_tariff_enabled() else panel_users[:1]
 
@@ -585,40 +590,23 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                 else:
                     existing_sub = await get_subscription_by_user_id(db, user.id)
 
-                # Parse panel data
-                expire_at = panel_datetime_to_utc(panel_user.expire_at)
-                traffic_limit_gb = (
-                    panel_user.traffic_limit_bytes // (1024**3) if panel_user.traffic_limit_bytes > 0 else 0
-                )
-                traffic_used_gb = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes > 0 else 0
-                connected_squads = [
-                    s.get('uuid', '') for s in (panel_user.active_internal_squads or []) if s.get('uuid')
-                ]
+                snapshot = read_panel_user(panel_user)
+                current_time = datetime.now(UTC)
+                expire_at = snapshot.expire_at or current_time
+                connected_squads = list(snapshot.squads)
+                traffic_limit_gb = snapshot.traffic_limit_gb or 0
+                traffic_used_gb = snapshot.traffic_used_gb or 0
                 device_limit = coerce_panel_device_limit(panel_user.hwid_device_limit, default=0)
 
-                # Determine status
-                current_time = datetime.now(UTC)
-                if panel_user.status.value == 'ACTIVE' and expire_at > current_time:
-                    sub_status = SubscriptionStatus.ACTIVE
-                elif expire_at <= current_time:
-                    sub_status = SubscriptionStatus.EXPIRED
-                else:
-                    sub_status = SubscriptionStatus.DISABLED
-
                 if existing_sub:
-                    existing_sub.end_date = expire_at
-                    existing_sub.traffic_limit_gb = traffic_limit_gb
-                    existing_sub.traffic_used_gb = traffic_used_gb
-                    existing_sub.status = sub_status.value
-                    existing_sub.remnawave_short_uuid = panel_user.short_uuid
-                    existing_sub.subscription_url = panel_user.subscription_url
-                    # Не затираем рабочую ссылку пустым значением: панель
-                    # отдаёт happ-ссылку не на всех путях, а потеря сохранённой
-                    # ломает кнопку подключения у живого клиента.
-                    if panel_user.happ_crypto_link:
-                        existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
-                    existing_sub.connected_squads = connected_squads
-                    existing_sub.device_limit = device_limit
+                    # Вход по почте усыновляет уже существующий аккаунт панели:
+                    # здесь панель — источник истины целиком, включая лимиты.
+                    project_onto_subscription(
+                        existing_sub,
+                        snapshot,
+                        policy=ADMIN_PULL,
+                        now=current_time,
+                    )
                     existing_sub.is_trial = False
                     logger.info(
                         'Updated subscription for email user',
@@ -635,7 +623,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                         end_date=expire_at,
                         traffic_limit_gb=traffic_limit_gb,
                         traffic_used_gb=traffic_used_gb,
-                        status=sub_status.value,
+                        status=panel_status_for_new_subscription(snapshot, now=current_time),
                         is_trial=False,
                         remnawave_id=panel_user.id if settings.is_multi_tariff_enabled() else None,
                         remnawave_short_id=_short_id,

@@ -1811,7 +1811,7 @@
   Функции: `build_panel_payload` — Собрать поля запроса из пользователя, подписки и её тарифа.
 - `app/services/panel_sync/projection.py` — Python-модуль
   Классы: `ProjectionPolicy`, `PanelSnapshot`
-  Функции: `read_panel_user` — Разобрать ответ панели — словарь или объект клиента — в снимок., `project_onto_subscription` — Перенести состояние панели в подписку. Возвращает имена изменённых полей.
+  Функции: `read_panel_user` — Разобрать ответ панели — словарь или объект клиента — в снимок., `project_onto_subscription` — Перенести состояние панели в подписку. Возвращает имена изменённых полей., `panel_status_for_new_subscription` — Статус подписки, которую бот заводит по уже существующему аккаунту панели.
 - `app/services/panel_sync/runner.py` — Python-модуль
   Классы: `SyncStats` (1 методов)
   Функции: `push_all_subscriptions` — Отправить в панель все подписки бота.

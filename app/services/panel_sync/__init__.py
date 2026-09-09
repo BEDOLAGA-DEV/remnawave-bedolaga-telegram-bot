@@ -19,6 +19,7 @@ from app.services.panel_sync.projection import (
     ROUTINE,
     PanelSnapshot,
     ProjectionPolicy,
+    panel_status_for_new_subscription,
     project_onto_subscription,
     read_panel_user,
 )
@@ -44,6 +45,7 @@ __all__ = [
     'build_panel_payload',
     'is_subscription_live',
     'panel_expire_at',
+    'panel_status_for_new_subscription',
     'patch_panel_account',
     'patch_panel_squads',
     'project_onto_subscription',
