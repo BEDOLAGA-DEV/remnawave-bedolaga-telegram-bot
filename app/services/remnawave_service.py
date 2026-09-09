@@ -36,7 +36,7 @@ from app.external.remnawave_api import (
     coerce_panel_user_id,
     is_user_not_found_error,
 )
-from app.services.panel_expiry import panel_expire_at
+from app.services.panel_expiry import panel_expire_at, stale_panel_expire_at
 from app.services.subscription_service import get_traffic_reset_strategy
 from app.utils.subscription_utils import (
     coerce_panel_device_limit,
@@ -2781,7 +2781,20 @@ class RemnaWaveService:
                                         update_kwargs['external_squad_uuid'] = sub.tariff.external_squad_uuid
 
                                     try:
-                                        await api.update_user(**update_kwargs)
+                                        panel_user = await api.update_user(**update_kwargs)
+                                        # Панель могла держать дату из будущего у подписки,
+                                        # которая в боте давно истекла (ручная правка, импорт,
+                                        # перенос базы). Тогда пользователь гаснет статусом, но
+                                        # панель до этой даты показывает живую подписку — гасим
+                                        # и дату. Прошедшую панель при обновлении не примет,
+                                        # поэтому ставим ближайший допустимый момент; следующий
+                                        # прогон увидит там прошлое и уже ничего не тронет.
+                                        if not is_subscription_active:
+                                            extinguish_at = stale_panel_expire_at(
+                                                getattr(panel_user, 'expire_at', None)
+                                            )
+                                            if extinguish_at is not None:
+                                                await api.update_user(user_id=panel_user_id, expire_at=extinguish_at)
                                         # Сохраняем панельный id если его не было
                                         if settings.is_multi_tariff_enabled():
                                             if not sub.remnawave_id:

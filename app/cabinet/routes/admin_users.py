@@ -419,9 +419,9 @@ async def _sync_subscription_to_panel(
         )
         panel_status = PanelUserStatus.ACTIVE if is_active else PanelUserStatus.DISABLED
 
-        # Живой подписке — её дата; истёкшей при обновлении дату в панели не
-        # трогаем (см. panel_expire_at), при создании ставим допустимый минимум.
-        expire_at_update = panel_expire_at(subscription.end_date, is_active=is_active, creating=False)
+        # Живой подписке — её дата; истёкшей при обновлении она зависит от того,
+        # что сейчас стоит в панели, поэтому считается ниже, когда панельный
+        # пользователь уже в руках (см. panel_expire_at).
         expire_at_create = panel_expire_at(subscription.end_date, is_active=is_active, creating=True)
 
         # При multi-tariff create-path ниже приклеивается `_<remnawave_short_id>`.
@@ -472,6 +472,10 @@ async def _sync_subscription_to_panel(
             # действительно нет. Непригодный локальный идентификатор и транспортная
             # ошибка приходят исключением и уходят в общий except, НЕ обнуляя связь:
             # её обнуление необратимо, а в панели после него остаётся дубль.
+            #: Что панель думает про подписку прямо сейчас. Нужно, чтобы понять,
+            #: держит ли она дату из будущего у подписки, которая в боте истекла.
+            panel_user_now = None
+
             if panel_user_id:
                 existing_user = await api.get_user_by_id(panel_user_id)
                 if not existing_user:
@@ -481,6 +485,8 @@ async def _sync_subscription_to_panel(
                         subscription.remnawave_id = None
                     else:
                         user.remnawave_id = None
+                else:
+                    panel_user_now = existing_user
 
             # Fallback: search by telegram_id (single-tariff only)
             if (
@@ -491,7 +497,8 @@ async def _sync_subscription_to_panel(
             ):
                 existing_users = await api.find_users_by_telegram_id(user.telegram_id)
                 if existing_users:
-                    panel_user_id = existing_users[0].id
+                    panel_user_now = existing_users[0]
+                    panel_user_id = panel_user_now.id
                     user.remnawave_id = panel_user_id
                     changes['remnawave_id_discovered'] = panel_user_id
 
@@ -504,9 +511,17 @@ async def _sync_subscription_to_panel(
             ):
                 existing_users = await api.find_users_by_email(user.email)
                 if existing_users:
-                    panel_user_id = existing_users[0].id
+                    panel_user_now = existing_users[0]
+                    panel_user_id = panel_user_now.id
                     user.remnawave_id = panel_user_id
                     changes['remnawave_id_discovered'] = panel_user_id
+
+            expire_at_update = panel_expire_at(
+                subscription.end_date,
+                is_active=is_active,
+                creating=False,
+                panel_current=getattr(panel_user_now, 'expire_at', None),
+            )
 
             if panel_user_id:
                 # Update existing user
@@ -4314,7 +4329,8 @@ async def sync_user_to_panel(
         )
         panel_status = PanelUserStatus.ACTIVE if is_active else PanelUserStatus.DISABLED
 
-        expire_at_update = panel_expire_at(sub.end_date, is_active=is_active, creating=False)
+        # Дата для обновления зависит от того, что сейчас стоит в панели, —
+        # считается ниже, когда панельный пользователь уже в руках.
         expire_at_create = panel_expire_at(sub.end_date, is_active=is_active, creating=True)
 
         # Same precaution as the per-user sync above: multi-tariff create-path
@@ -4357,6 +4373,10 @@ async def sync_user_to_panel(
             # Непригодный локальный идентификатор и транспортная ошибка приходят
             # исключением и уходят в общий except, НЕ обнуляя связь: её обнуление
             # необратимо, а в панели после него остаётся дубль.
+            #: Что панель думает про подписку прямо сейчас: держит ли она дату из
+            #: будущего у подписки, которая в боте уже истекла.
+            panel_user_now = None
+
             if panel_user_id:
                 existing_user = await api.get_user_by_id(panel_user_id)
                 if not existing_user:
@@ -4366,12 +4386,15 @@ async def sync_user_to_panel(
                         sub.remnawave_id = None
                     else:
                         user.remnawave_id = None
+                else:
+                    panel_user_now = existing_user
 
             # Fallback: search by telegram_id (single-tariff only)
             if not panel_user_id and not settings.is_multi_tariff_enabled() and user.telegram_id:
                 existing_users = await api.find_users_by_telegram_id(user.telegram_id)
                 if existing_users:
-                    panel_user_id = existing_users[0].id
+                    panel_user_now = existing_users[0]
+                    panel_user_id = panel_user_now.id
                     user.remnawave_id = panel_user_id
                     changes['remnawave_id_discovered'] = panel_user_id
 
@@ -4379,9 +4402,17 @@ async def sync_user_to_panel(
             if not panel_user_id and not settings.is_multi_tariff_enabled() and user.email:
                 existing_users = await api.find_users_by_email(user.email)
                 if existing_users:
-                    panel_user_id = existing_users[0].id
+                    panel_user_now = existing_users[0]
+                    panel_user_id = panel_user_now.id
                     user.remnawave_id = panel_user_id
                     changes['remnawave_id_discovered'] = panel_user_id
+
+            expire_at_update = panel_expire_at(
+                sub.end_date,
+                is_active=is_active,
+                creating=False,
+                panel_current=getattr(panel_user_now, 'expire_at', None),
+            )
 
             if panel_user_id:
                 # Update existing user

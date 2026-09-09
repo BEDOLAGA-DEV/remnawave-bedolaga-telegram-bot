@@ -40,16 +40,62 @@ def test_expired_subscription_does_not_touch_the_date_on_update():
     assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW) is None
 
 
-def test_new_panel_account_still_gets_an_acceptable_date():
-    """При создании без даты нельзя, а прошедшую панель не примет."""
-    created = panel_expire_at(PAST, is_active=False, creating=True, now=NOW)
+def test_new_panel_account_gets_the_real_date_even_if_it_has_passed():
+    """При СОЗДАНИИ панель принимает прошедшую дату — выдумывать не надо.
 
-    assert created == NOW + timedelta(minutes=1)
+    Запрет «дата не может быть в прошлом» стоит только в UpdateUserCommand;
+    в CreateUserCommand у поля нет проверки — одинаково в 3.0.0 и 3.4.3
+    (libs/contract/commands/users/*.command.ts). Раньше сюда уходило «сейчас
+    плюс минута», и заведённая синхронизацией истёкшая подписка появлялась в
+    панели как «истекла минуту назад» вместо своей настоящей даты.
+    """
+    assert panel_expire_at(PAST, is_active=False, creating=True, now=NOW) == PAST
 
 
 def test_future_date_survives_even_for_an_inactive_subscription():
     """Заблокированный пользователь с ещё не истёкшей подпиской: дату не занижаем."""
     assert panel_expire_at(FUTURE, is_active=False, creating=True, now=NOW) == FUTURE
+
+
+def test_blocked_but_not_expired_subscription_still_pushes_its_real_date():
+    """Блокировка — не истечение: дата в будущем, панель её примет и должна знать."""
+    assert panel_expire_at(FUTURE, is_active=False, creating=False, now=NOW) == FUTURE
+
+
+# ==================== панель разошлась с ботом ====================
+
+# Отчёт владельца: в панели подписка активна, в боте истекла. Синхронизация
+# «из бота в панель» гасила пользователя статусом, а дата окончания в панели
+# оставалась прежней — будущей. Панель продолжала показывать живую подписку, и
+# настоящая дата из бота туда не попадала никогда.
+
+
+def test_expired_subscription_extinguishes_a_future_date_in_the_panel():
+    """Панель держит будущее — гасим ближайшим допустимым моментом."""
+    assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=FUTURE) == NOW + timedelta(
+        minutes=1
+    )
+
+
+def test_expired_subscription_leaves_a_past_date_in_the_panel_alone():
+    """В панели уже прошлое — это и есть настоящая история, переписывать нечего."""
+    panel_says = NOW - timedelta(days=3)
+
+    assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=panel_says) is None
+
+
+def test_expired_subscription_without_a_known_panel_date_is_left_alone():
+    """Что стоит в панели, неизвестно — молчим, как и раньше."""
+    assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=None) is None
+
+
+def test_naive_panel_date_is_read_as_utc():
+    """Панель отдаёт UTC; наивное значение нельзя считать локальным временем."""
+    naive_future = FUTURE.replace(tzinfo=None)
+
+    assert panel_expire_at(
+        PAST, is_active=False, creating=False, now=NOW, panel_current=naive_future
+    ) == NOW + timedelta(minutes=1)
 
 
 # ==================== сторож на все точки записи ====================
