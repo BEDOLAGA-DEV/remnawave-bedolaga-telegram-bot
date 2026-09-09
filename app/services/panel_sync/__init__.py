@@ -14,7 +14,12 @@ from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identi
 from app.services.panel_sync.liveness import is_subscription_live
 from app.services.panel_sync.payload import PanelPayload, build_panel_payload
 from app.services.panel_sync.runner import SyncStats, push_all_subscriptions
-from app.services.panel_sync.writer import PanelWriteResult, patch_panel_account, push_subscription
+from app.services.panel_sync.writer import (
+    PanelWriteResult,
+    patch_panel_account,
+    patch_panel_squads,
+    push_subscription,
+)
 
 
 __all__ = [
@@ -26,6 +31,7 @@ __all__ = [
     'is_subscription_live',
     'panel_expire_at',
     'patch_panel_account',
+    'patch_panel_squads',
     'push_all_subscriptions',
     'push_subscription',
     'resolve_panel_identity',

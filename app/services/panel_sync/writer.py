@@ -259,3 +259,29 @@ async def patch_panel_account(
     if email is not None:
         kwargs['email'] = email
     return await update(**kwargs)
+
+
+async def patch_panel_squads(
+    api,
+    *,
+    user_id: int,
+    squads: list[str],
+    external_squad_uuid: str | None,
+    update_call=None,
+) -> RemnaWaveUser:
+    """Переназначить аккаунту сквады тарифа.
+
+    Отдельный вход, потому что источник здесь не подписка, а тариф: сквады
+    приходят из его новой конфигурации, а строка подписки узнаёт о них только
+    после успешного ответа панели. Собирать ради этого состояние подписки нельзя
+    — уехали бы старые сквады.
+
+    ``external_squad_uuid=None`` отправляется как null намеренно: у тарифа сняли
+    внешний сквад, и в панели он тоже должен исчезнуть.
+    """
+    update = update_call or api.update_user
+    return await update(
+        user_id=user_id,
+        active_internal_squads=squads,
+        external_squad_uuid=external_squad_uuid,
+    )
