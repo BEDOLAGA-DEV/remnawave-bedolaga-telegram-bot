@@ -99,8 +99,15 @@ async def push_all_subscriptions(
                 return result.action
 
         outcomes = await asyncio.gather(*(process(s) for s in valid), return_exceptions=True)
-        for outcome in outcomes:
-            if isinstance(outcome, Exception):
+        for subscription, outcome in zip(valid, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                # Падение ДО тела задачи (взятие грейс-лизы, отмена) иначе
+                # молча превращалось в «errors += 1» без единой строки в логе.
+                logger.error(
+                    'Подписку не удалось отправить в панель',
+                    subscription_id=getattr(subscription, 'id', None),
+                    error=outcome,
+                )
                 errors += 1
             elif outcome == 'created':
                 created += 1

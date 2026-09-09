@@ -269,3 +269,31 @@ def test_payload_without_a_date_does_not_carry_it_from_the_base():
     payload = _serialize_panel_target(42, target, base_kwargs={'expire_at': NOW})
 
     assert 'expire_at' not in payload
+
+
+# ==================== повторная синхронизация ====================
+
+# Живой прогон против локальной панели показал: гашение ставит дату на минуту
+# вперёд, и следующий прогон, пришедший раньше этой минуты, видел в панели
+# будущее и двигал дату снова. Получалось ровно то самое «истекла минуту назад»
+# на каждый прогон, ради избавления от которого всё и затевалось.
+
+
+def test_our_own_extinguished_date_is_not_moved_again():
+    just_extinguished = NOW + timedelta(seconds=59)
+
+    assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=just_extinguished) is None
+
+
+def test_a_date_a_few_minutes_ahead_is_left_alone_too():
+    """Отключённой подписке пять минут ничего не решают: доступ закрывает статус."""
+    assert (
+        panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=NOW + timedelta(minutes=4))
+        is None
+    )
+
+
+def test_a_genuinely_live_panel_date_is_still_extinguished():
+    assert panel_expire_at(
+        PAST, is_active=False, creating=False, now=NOW, panel_current=NOW + timedelta(hours=2)
+    ) == NOW + timedelta(minutes=1)

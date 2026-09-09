@@ -27,6 +27,13 @@ from app.utils.timezone import panel_datetime_to_utc
 #: панель при обновлении не примет, а минута вперёд сразу становится прошлым.
 _MINIMUM_FUTURE = timedelta(minutes=1)
 
+#: Насколько близкая к «сейчас» дата в панели считается уже погашенной.
+#: Погашенная дата стоит на минуту вперёд и почти сразу становится прошлым, но
+#: следующая синхронизация может прийти раньше — и, не будь этого окна, снова
+#: двигала бы дату вперёд. Так и появлялось «истекла минуту назад» на каждый
+#: прогон, ради избавления от которого всё и затевалось.
+_ALREADY_EXTINGUISHED = _MINIMUM_FUTURE + timedelta(minutes=4)
+
 
 def panel_expire_at(
     end_date: datetime,
@@ -87,6 +94,9 @@ def stale_panel_expire_at(
     moment = now or datetime.now(UTC)
     if panel_datetime_to_utc(end_date) > moment:
         return None
-    if panel_datetime_to_utc(panel_current) <= moment:
+    if panel_datetime_to_utc(panel_current) <= moment + _ALREADY_EXTINGUISHED:
+        # Либо там уже прошлое, либо это наше собственное гашение — двигать
+        # нечего. Разница в пять минут для отключённой подписки ничего не решает:
+        # доступ закрывает статус.
         return None
     return moment + _MINIMUM_FUTURE
