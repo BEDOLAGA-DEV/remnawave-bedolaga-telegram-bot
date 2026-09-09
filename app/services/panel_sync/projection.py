@@ -37,6 +37,11 @@
   переносится при любом статусе, лимиты трафика и устройств тоже. Это
   единственный случай, когда правка в панели меняет оплаченный тариф, и она
   сделана осознанно.
+* ``WEBHOOK`` — панель прислала событие. Оно свежее любого снимка, поэтому дата
+  и лимит трафика берутся при любом статусе. Но подписку, намеренно отключённую
+  в боте (обнуление админом), вебхук не воскрешает: у панели могла остаться
+  старая дата, и списанные дни «вернулись» бы. Истёкшей вебхук подписку не
+  делает — это работа мониторинга.
 """
 
 from __future__ import annotations
@@ -71,24 +76,35 @@ class ProjectionPolicy:
     takes_date: bool = True
     #: Брать дату только у ACTIVE (у остальных там бывает искусственная дата).
     date_only_from_active: bool = True
-    #: Считать снимок возможно протухшим и менять статус осторожно.
-    stale_status: bool = False
-    #: Брать из панели лимиты трафика и устройств (обычно их задаёт тариф).
-    takes_limits: bool = False
-    #: Панель авторитетна для статуса целиком.
-    panel_owns_status: bool = False
+    #: Как выводить статус: 'routine' | 'stale' | 'panel_wins' | 'webhook'.
+    status_mode: str = 'routine'
+    #: Брать из панели лимит трафика (обычно его задаёт тариф).
+    takes_traffic_limit: bool = False
+    #: Брать из панели лимит устройств.
+    takes_device_limit: bool = False
+    #: Не переносить дату, пока подписка намеренно отключена в боте.
+    respects_local_disable: bool = False
 
 
 #: Фоновая синхронизация: панель — подсказка.
 ROUTINE = ProjectionPolicy('routine')
 #: Полный проход: снимок мог протухнуть, пока список выгружался.
-BULK_SNAPSHOT = ProjectionPolicy('bulk_snapshot', takes_date=False, stale_status=True)
+BULK_SNAPSHOT = ProjectionPolicy('bulk_snapshot', takes_date=False, status_mode='stale')
 #: Админ нажал «из панели в бота»: панель побеждает.
 ADMIN_PULL = ProjectionPolicy(
     'admin_pull',
     date_only_from_active=False,
-    takes_limits=True,
-    panel_owns_status=True,
+    status_mode='panel_wins',
+    takes_traffic_limit=True,
+    takes_device_limit=True,
+)
+#: Событие от панели: свежее любого снимка, но отключённую подписку не воскрешает.
+WEBHOOK = ProjectionPolicy(
+    'webhook',
+    date_only_from_active=False,
+    status_mode='webhook',
+    takes_traffic_limit=True,
+    respects_local_disable=True,
 )
 
 
@@ -146,6 +162,11 @@ def _squads(value) -> tuple[str, ...]:
 def read_panel_user(panel_user) -> PanelSnapshot:
     """Разобрать ответ панели — словарь или объект клиента — в снимок."""
     used_bytes = _field(panel_user, 'usedTrafficBytes', 'used_traffic_bytes')
+    if used_bytes is None:
+        # Расширенная схема панели прячет расход в userTraffic; плоского поля там нет.
+        nested = _field(panel_user, 'userTraffic')
+        if isinstance(nested, dict):
+            used_bytes = nested.get('usedTrafficBytes')
     limit_bytes = _field(panel_user, 'trafficLimitBytes', 'traffic_limit_bytes')
     device_limit = _field(panel_user, 'hwidDeviceLimit', 'hwid_device_limit')
     crypto = _field(panel_user, 'subscriptionCryptoLink', 'happ_crypto_link')
@@ -168,6 +189,22 @@ def read_panel_user(panel_user) -> PanelSnapshot:
         subscription_url=_field(panel_user, 'subscriptionUrl', 'subscription_url') or None,
         crypto_link=crypto or None,
     )
+
+
+def _next_status_from_webhook(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
+    """Статус по событию панели.
+
+    Вебхук умеет включить подписку (панель сказала ACTIVE, срок ещё не вышел) и
+    отключить (панель сказала DISABLED). Истечение он не объявляет: это делает
+    мониторинг, у которого есть буфер и уведомления.
+    """
+    if snapshot.status == 'ACTIVE':
+        end_date = panel_datetime_to_utc(subscription.end_date) if subscription.end_date else None
+        if end_date is not None and end_date > now:
+            return SubscriptionStatus.ACTIVE.value
+    elif snapshot.status == 'DISABLED':
+        return SubscriptionStatus.DISABLED.value
+    return subscription.status
 
 
 def _next_status_when_panel_wins(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
@@ -266,25 +303,31 @@ def project_onto_subscription(
         # сквады панель в это время не переписывает.
         return changed
 
+    locally_disabled = subscription.status == SubscriptionStatus.DISABLED.value
     if (
         policy.takes_date
         and snapshot.expire_at is not None
         and (snapshot.status == 'ACTIVE' or not policy.date_only_from_active)
         and subscription.end_date is not None
+        # Подписку обнулили в боте намеренно: старая дата из панели вернула бы
+        # списанные дни.
+        and not (policy.respects_local_disable and locally_disabled)
     ):
         end_date = panel_datetime_to_utc(subscription.end_date)
         if abs((end_date - snapshot.expire_at).total_seconds()) > _DATE_TOLERANCE_SECONDS:
             subscription.end_date = snapshot.expire_at
             changed.add('end_date')
 
+    status_rules = {
+        'panel_wins': _next_status_when_panel_wins,
+        'stale': _next_status_from_stale_snapshot,
+        'webhook': _next_status_from_webhook,
+        'routine': _next_status,
+    }
     if not trust_status:
         new_status = subscription.status
-    elif policy.panel_owns_status:
-        new_status = _next_status_when_panel_wins(subscription, snapshot, now=moment)
-    elif policy.stale_status:
-        new_status = _next_status_from_stale_snapshot(subscription, snapshot, now=moment)
     else:
-        new_status = _next_status(subscription, snapshot, now=moment)
+        new_status = status_rules[policy.status_mode](subscription, snapshot, now=moment)
     if new_status != subscription.status:
         subscription.status = new_status
         if new_status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.LIMITED.value):
@@ -292,15 +335,22 @@ def project_onto_subscription(
             subscription.grace_candidate_at = moment
         changed.add('status')
 
-    if policy.takes_limits:
-        # Единственный случай, когда правка в панели меняет оплаченный тариф:
-        # админ нажал «из панели в бота» и хочет ровно этого.
-        if snapshot.traffic_limit_gb is not None and subscription.traffic_limit_gb != snapshot.traffic_limit_gb:
-            subscription.traffic_limit_gb = snapshot.traffic_limit_gb
-            changed.add('traffic_limit_gb')
-        if snapshot.device_limit is not None and subscription.device_limit != snapshot.device_limit:
-            subscription.device_limit = snapshot.device_limit
-            changed.add('device_limit')
+    # Лимиты читаются из панели только там, где это осознанное решение: кнопка
+    # «из панели в бота» и событие от самой панели.
+    if (
+        policy.takes_traffic_limit
+        and snapshot.traffic_limit_gb is not None
+        and subscription.traffic_limit_gb != snapshot.traffic_limit_gb
+    ):
+        subscription.traffic_limit_gb = snapshot.traffic_limit_gb
+        changed.add('traffic_limit_gb')
+    if (
+        policy.takes_device_limit
+        and snapshot.device_limit is not None
+        and subscription.device_limit != snapshot.device_limit
+    ):
+        subscription.device_limit = snapshot.device_limit
+        changed.add('device_limit')
 
     # Пустой список сквадов значит «панель ещё не знает», а не «отобрать все».
     if snapshot.squads and set(snapshot.squads) != set(subscription.connected_squads or []):
