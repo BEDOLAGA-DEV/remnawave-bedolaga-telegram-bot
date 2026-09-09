@@ -78,14 +78,38 @@ if 'redis.asyncio' not in sys.modules:
     def _from_url(url, **kwargs):
         return _FakeRedisClient()
 
+    # Политика повторов подключения: код создания клиента импортирует её жёстко,
+    # чтобы смена пути в библиотеке была видна сразу, а не молча отключала повторы.
+    redis_retry_module = types.ModuleType('redis.asyncio.retry')
+    redis_backoff_module = types.ModuleType('redis.backoff')
+
+    class _FakeRetry:
+        def __init__(self, backoff, retries, supported_errors=()):
+            self._backoff = backoff
+            self._retries = retries
+            self._supported_errors = supported_errors
+
+    class _FakeBackoff:
+        def __init__(self, base=0.008, cap=0.512):
+            self.base = base
+            self.cap = cap
+
+    redis_retry_module.Retry = _FakeRetry
+    redis_backoff_module.ExponentialWithJitterBackoff = _FakeBackoff
+
     redis_module.__path__ = []
+    redis_async_module.__path__ = []
     redis_module.asyncio = redis_async_module
+    redis_module.backoff = redis_backoff_module
+    redis_async_module.retry = redis_retry_module
     redis_async_module.from_url = _from_url
     redis_async_module.Redis = _FakeRedisClient
     redis_exceptions_module.RedisError = _FakeRedisError
     redis_exceptions_module.NoScriptError = _FakeNoScriptError
     sys.modules['redis'] = redis_module
     sys.modules['redis.asyncio'] = redis_async_module
+    sys.modules['redis.asyncio.retry'] = redis_retry_module
+    sys.modules['redis.backoff'] = redis_backoff_module
     sys.modules['redis.exceptions'] = redis_exceptions_module
 
 # Минимальная реализация SDK YooKassa, чтобы импорт сервисов не падал.

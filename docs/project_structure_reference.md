@@ -2868,6 +2868,9 @@
 - `tests/test_readme_payment_providers.py` — Python-модуль
   Классы: нет
   Функции: `test_every_gateway_is_listed_in_readme`, `test_table_has_no_rows_for_unknown_providers` — Каждая строка таблицы указывает на существующий шлюз., `test_claimed_provider_count_matches_reality` — Число провайдеров в тексте не должно отставать от кода.
+- `tests/test_redis_client_contract.py` — Python-модуль
+  Классы: нет
+  Функции: `redis_client_module`, `test_every_injected_kwarg_is_accepted_by_async_connection` — Каждый добавленный аргумент обязан приниматься асинхронным соединением., `test_connection_is_actually_creatable` — Соединение создаётся (не подключается) — ровно там падал TypeError., `test_connect_is_retried` — У подключения есть повторы: разовая заминка на старте не должна быть ошибкой., `test_transient_connect_failure_is_retried` — Первая попытка упала по таймауту — вторая доводит подключение до конца.
 - `tests/test_rich_menu_pins.py` — Python-модуль
   Классы: нет
   Функции: `test_show_main_menu_tries_rich_before_classic`, `test_back_to_menu_tries_rich_before_classic`, `test_start_menu_sites_guarded_by_rich_helpers`, `test_single_subscription_block_reuses_menu_status_builder`, `test_trial_deeplink_wired_in_start` — Диплинк /start trial: ветка сташит pending_trial, drain — рядом с купонным
@@ -3380,6 +3383,9 @@
 - `tests/fixtures/promocode_fixtures.py` — Python-модуль
   Классы: нет
   Функции: `sample_promo_group` — Sample PromoGroup object for testing, `sample_user` — Sample User object for testing, `sample_promocode_balance` — Balance type promocode, `sample_promocode_subscription` — Subscription days type promocode, `sample_promocode_promo_group` — Promo group type promocode, `sample_promocode_invalid` — Invalid/expired promocode, `mock_db_session` — Mock AsyncSession, `mock_has_user_promo_group` — Mock has_user_promo_group function, `mock_add_user_to_promo_group` — Mock add_user_to_promo_group function, `mock_get_promo_group_by_id` — Mock get_promo_group_by_id function, `mock_get_user_by_id` — Mock get_user_by_id function, `mock_get_promocode_by_code` — Mock get_promocode_by_code function, `mock_check_user_promocode_usage` — Mock check_user_promocode_usage function, `mock_create_promocode_use` — Mock create_promocode_use function, `mock_remnawave_service` — Mock RemnaWaveService, `mock_subscription_service` — Mock SubscriptionService, `make_promocode_valid` — Helper to make promocode appear valid (is_valid property)
+- `tests/fixtures/real_redis.py` — Python-модуль
+  Классы: нет
+  Функции: `ensure_real_redis` — Снять заглушку и вернуть перезагруженный ``app.utils.redis_client``.
 - `tests/fixtures/sqlite_memory.py` — Python-модуль
   Классы: нет
   Функции: `ensure_real_aiosqlite` — Снять заглушку sys.modules['aiosqlite'] из conftest перед созданием engine., `memory_session` — Сессия к :memory: БД, где созданы только переданные таблицы.

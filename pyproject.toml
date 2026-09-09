@@ -17,7 +17,11 @@ dependencies = [
     'asyncpg>=0.31.0',
     'aiosqlite>=0.22.1',
     'fastapi[standard]>=0.139.2',
-    'redis>=7.1.1',
+    # 8.1.0 — первая версия, чьё АСИНХРОННОЕ соединение принимает
+    # maint_notifications_config (см. app/utils/redis_client.py). На 7.1.1–8.0.1
+    # from_url проходит молча, а первое создание соединения падает TypeError —
+    # Redis у бота не работает вообще.
+    'redis>=8.1.0',
     'pyyaml>=6.0.3',
     'yookassa>=3.10.0',
     'python-dateutil>=2.9.0.post0',
