@@ -40,10 +40,12 @@ class PanelIdentity:
     panel_user: RemnaWaveUser | None = None
     #: Каким ключом опознали: subscription | user | short_uuid | telegram | email.
     source: str | None = None
+    #: Записанный в базе id, который решили не проверять запросом (массовый проход).
+    known_id: int | None = None
 
     @property
     def user_id(self) -> int | None:
-        return getattr(self.panel_user, 'id', None)
+        return getattr(self.panel_user, 'id', None) or self.known_id
 
     @property
     def expire_at(self):
@@ -88,11 +90,17 @@ async def resolve_panel_identity(
     *,
     multi_tariff: bool,
     pinned: bool = False,
+    verify_recorded_id: bool = True,
 ) -> PanelIdentity:
     """Найти в панели аккаунт этой подписки.
 
     ``pinned`` — синхронизация конкретной выбранной подписки: подменять её
     личность пользовательским аккаунтом нельзя даже в одиночном режиме тарифов.
+
+    ``verify_recorded_id=False`` — не проверять записанный id запросом. Так ходит
+    массовый проход: на большой базе лишний GET к панели на каждую подписку
+    удваивает нагрузку, а протухший id всё равно обнаружится по ответу на PATCH
+    («такого пользователя нет») и приведёт к пересозданию.
     """
     # В одиночном режиме тарифов панель адресуется через пользователя, и его id
     # заполнен у всех старых строк — поэтому он первый. В мультитарифе у каждой
@@ -106,6 +114,8 @@ async def resolve_panel_identity(
     for source, panel_user_id in exact_ids:
         if not panel_user_id:
             continue
+        if not verify_recorded_id:
+            return PanelIdentity(source=source, known_id=panel_user_id)
         # RemnaWaveInvalidUserIdError пробрасываем: это баг в данных бота, а не
         # отсутствие аккаунта, и уход в создание плодил бы дубли.
         panel_user = await api.get_user_by_id(panel_user_id)

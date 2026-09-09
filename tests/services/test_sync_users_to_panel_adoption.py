@@ -54,6 +54,14 @@ def _subscription(*, panel_id=None, short_uuid='aBcD12'):
     )
 
 
+def _db() -> AsyncMock:
+    """Сессия-двойник: единственный запрос сервиса к базе — «не держит ли этот
+    панельный id другая строка подписок»."""
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
+    return db
+
+
 @pytest.fixture
 def harness(monkeypatch):
     """Один батч из одной подписки, gracce-lease разрешён, клиент — мок."""
@@ -92,7 +100,7 @@ async def test_adopts_existing_panel_user_instead_of_creating_a_duplicate(monkey
         id=8812, short_uuid='aBcD12', subscription_url='https://s/aBcD12', happ_crypto_link=None
     )
 
-    stats = await harness.service.sync_users_to_panel(AsyncMock())
+    stats = await harness.service.sync_users_to_panel(_db())
 
     harness.api.create_user.assert_not_awaited()
     harness.api.get_user_by_short_uuid.assert_awaited_once_with('aBcD12')
@@ -112,7 +120,7 @@ async def test_creates_when_the_panel_does_not_know_the_short_uuid(monkeypatch, 
         id=9001, short_uuid='new', subscription_url='https://s/new', happ_crypto_link=None
     )
 
-    stats = await harness.service.sync_users_to_panel(AsyncMock())
+    stats = await harness.service.sync_users_to_panel(_db())
 
     harness.api.create_user.assert_awaited_once()
     assert stats['created'] == 1
@@ -135,10 +143,14 @@ async def test_single_tariff_writes_identity_onto_the_user(monkeypatch, harness)
         id=8812, short_uuid='aBcD12', subscription_url='https://s/aBcD12', happ_crypto_link=None
     )
 
-    await harness.service.sync_users_to_panel(AsyncMock())
+    await harness.service.sync_users_to_panel(_db())
 
     assert harness.subscription.user.remnawave_id == 8812
-    assert harness.subscription.remnawave_id is None
+    # Строке id тоже проставляется — но только если его не держит соседняя
+    # подписка (колонка частично уникальна, проверка живёт в
+    # link_subscription_panel_identity). Именно этот id читают админские экраны
+    # по выбранной подписке; раньше массовый проход оставлял их без адреса.
+    assert harness.subscription.remnawave_id == 8812
 
 
 @pytest.mark.asyncio
@@ -156,7 +168,7 @@ async def test_update_branch_does_not_wipe_squads_when_the_local_list_is_empty(m
         id=8812, short_uuid='aBcD12', subscription_url='https://s/x', happ_crypto_link=None
     )
 
-    await harness.service.sync_users_to_panel(AsyncMock())
+    await harness.service.sync_users_to_panel(_db())
 
     kwargs = harness.api.update_user.await_args.kwargs
     assert 'active_internal_squads' not in kwargs
@@ -171,6 +183,6 @@ async def test_update_branch_forwards_a_non_empty_squad_list(monkeypatch, harnes
         id=8812, short_uuid='aBcD12', subscription_url='https://s/x', happ_crypto_link=None
     )
 
-    await harness.service.sync_users_to_panel(AsyncMock())
+    await harness.service.sync_users_to_panel(_db())
 
     assert harness.api.update_user.await_args.kwargs['active_internal_squads'] == ['squad-1']

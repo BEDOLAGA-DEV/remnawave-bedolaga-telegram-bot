@@ -1809,6 +1809,9 @@
 - `app/services/panel_sync/payload.py` — Python-модуль
   Классы: `PanelPayload` (3 методов)
   Функции: `build_panel_payload` — Собрать поля запроса из пользователя, подписки и её тарифа.
+- `app/services/panel_sync/runner.py` — Python-модуль
+  Классы: `SyncStats` (1 методов)
+  Функции: `push_all_subscriptions` — Отправить в панель все подписки бота.
 - `app/services/panel_sync/writer.py` — Python-модуль
   Классы: `PanelWriteResult`
   Функции: `push_subscription` — Отправить состояние подписки в панель.

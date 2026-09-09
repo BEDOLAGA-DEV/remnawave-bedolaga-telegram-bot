@@ -51,6 +51,7 @@ async def push_subscription(
     user_tag: str | None = None,
     only_fields: set[str] | None = None,
     reset_devices: bool | None = None,
+    verify_recorded_id: bool = True,
     now: datetime | None = None,
 ) -> PanelWriteResult:
     """Отправить состояние подписки в панель.
@@ -65,7 +66,14 @@ async def push_subscription(
     if multi_tariff is None:
         multi_tariff = settings.is_multi_tariff_enabled()
     if identity is None:
-        identity = await resolve_panel_identity(api, user, subscription, multi_tariff=multi_tariff, pinned=pinned)
+        identity = await resolve_panel_identity(
+            api,
+            user,
+            subscription,
+            multi_tariff=multi_tariff,
+            pinned=pinned,
+            verify_recorded_id=verify_recorded_id,
+        )
     if payload is None:
         payload = build_panel_payload(user, subscription, multi_tariff=multi_tariff, user_tag=user_tag, now=moment)
 

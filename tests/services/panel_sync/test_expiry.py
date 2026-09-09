@@ -123,9 +123,16 @@ def test_no_writer_builds_the_date_by_hand(path):
     )
 
 
-#: Грейс строит цель сам (у него своя проверка совпадения с панелью), поэтому
-#: общий помощник ему не нужен — но считать дату на месте нельзя и ему.
-USES_SHARED_RULE = tuple(p for p in WRITERS if p != 'app/services/grace_access_runtime.py')
+#: Правило обязаны импортировать только те, кто ещё собирает запрос сам.
+#: Грейс строит цель сам (у него своя проверка совпадения с панелью), а
+#: `remnawave_service` после консолидации не собирает запрос вовсе — он зовёт
+#: `push_subscription`, и дату считает уже пакет синхронизации. Запрет считать
+#: дату на месте (регуляркой выше) действует на всех.
+_BUILDS_THE_REQUEST_ITSELF = (
+    'app/services/grace_access_runtime.py',
+    'app/services/remnawave_service.py',
+)
+USES_SHARED_RULE = tuple(p for p in WRITERS if p not in _BUILDS_THE_REQUEST_ITSELF)
 
 
 @pytest.mark.parametrize('path', USES_SHARED_RULE)

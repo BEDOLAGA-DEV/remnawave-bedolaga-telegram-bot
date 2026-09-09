@@ -87,6 +87,14 @@ def harness(monkeypatch):
     return SimpleNamespace(service=service, api=api, subscription=subscription)
 
 
+def _db() -> AsyncMock:
+    """Сессия-двойник: единственный запрос сервиса к базе — «не держит ли этот
+    панельный id другая строка подписок»."""
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
+    return db
+
+
 def _panel_answer(expire_at: datetime) -> SimpleNamespace:
     return SimpleNamespace(
         id=PANEL_ID,
@@ -102,7 +110,7 @@ async def test_future_panel_date_of_an_expired_subscription_is_extinguished(harn
     panel_says = datetime.now(UTC) + timedelta(days=300)
     harness.api.update_user.return_value = _panel_answer(panel_says)
 
-    await harness.service.sync_users_to_panel(AsyncMock())
+    await harness.service.sync_users_to_panel(_db())
 
     calls = harness.api.update_user.await_args_list
     assert len(calls) == 2, 'после гашения панели нужен второй PATCH — он и несёт дату'
@@ -123,7 +131,7 @@ async def test_past_panel_date_is_left_alone(harness):
     """Настоящая дата окончания в панели — история, второго запроса быть не должно."""
     harness.api.update_user.return_value = _panel_answer(datetime.now(UTC) - timedelta(days=10))
 
-    await harness.service.sync_users_to_panel(AsyncMock())
+    await harness.service.sync_users_to_panel(_db())
 
     assert len(harness.api.update_user.await_args_list) == 1
 
@@ -135,7 +143,7 @@ async def test_live_subscription_is_not_touched_twice(monkeypatch, harness):
     harness.subscription.end_date = datetime.now(UTC) + timedelta(days=30)
     harness.api.update_user.return_value = _panel_answer(harness.subscription.end_date)
 
-    await harness.service.sync_users_to_panel(AsyncMock())
+    await harness.service.sync_users_to_panel(_db())
 
     calls = harness.api.update_user.await_args_list
     assert len(calls) == 1
