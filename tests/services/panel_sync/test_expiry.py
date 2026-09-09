@@ -100,52 +100,98 @@ def test_naive_panel_date_is_read_as_utc():
 
 # ==================== сторож на все точки записи ====================
 
-WRITERS = (
-    'app/services/subscription_service.py',
-    'app/services/monitoring_service.py',
-    'app/services/remnawave_service.py',
-    'app/cabinet/routes/admin_users.py',
-    # Согласователь грейса — тоже писатель, и именно его я пропустил в первый
-    # раз: он приводит панель к биллинговой реальности раз в минуту.
-    'app/services/grace_access_runtime.py',
-)
-
 #: Прежняя формула. Любая её копия — это ещё одно место, которое затирает дату.
 OLD_FORMULA = re.compile(r'(now|current_time|datetime\.now\(UTC\))\s*\+\s*timedelta\(minutes=1\)')
 
+#: Кто вправе считать дату сам: пакет синхронизации (там правило и живёт) и
+#: согласователь грейса — он строит цель перехода со своей сверкой с панелью, но
+#: дату всё равно берёт из общего правила.
+_RULE_OWNERS = ('app/services/panel_sync/',)
 
-@pytest.mark.parametrize('path', WRITERS)
-def test_no_writer_builds_the_date_by_hand(path):
-    source = pathlib.Path(path).read_text(encoding='utf-8')
 
-    assert not OLD_FORMULA.search(source), (
-        f'{path}: дата окончания для панели снова считается на месте — правило живёт в app/services/panel_sync/expiry.py'
+#: Вызовы, которыми бот пишет в панель.
+_PANEL_WRITE_CALLS = frozenset(
+    {'update_user', 'create_user', 'update_panel_user_grace_safe', 'create_panel_user_grace_safe'}
+)
+#: Поля панельного запроса — по ним узнаём словарь-payload, собранный руками.
+_PANEL_PAYLOAD_KEYS = frozenset({'status', 'traffic_limit_bytes', 'active_internal_squads', 'username'})
+
+
+def _sends_a_date_itself(path: pathlib.Path) -> bool:
+    """Файл сам кладёт дату в запрос к панели — вызовом или словарём-payload."""
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = getattr(node.func, 'attr', getattr(node.func, 'id', ''))
+            if name in _PANEL_WRITE_CALLS and any(kw.arg == 'expire_at' for kw in node.keywords):
+                return True
+            if name == 'dict' and any(kw.arg == 'expire_at' for kw in node.keywords):
+                return True
+        if isinstance(node, ast.Dict):
+            keys = {k.value for k in node.keys if isinstance(k, ast.Constant)}
+            if 'expire_at' in keys and keys & _PANEL_PAYLOAD_KEYS:
+                return True
+    return False
+
+
+def _modules_sending_a_date_to_the_panel() -> list[pathlib.Path]:
+    return [
+        path
+        for path in sorted(pathlib.Path('app').rglob('*.py'))
+        if not any(str(path).startswith(owner) for owner in _RULE_OWNERS) and _sends_a_date_itself(path)
+    ]
+
+
+@pytest.mark.parametrize('path', sorted(pathlib.Path('app').rglob('*.py')), ids=str)
+def test_nobody_builds_the_date_by_hand(path):
+    assert not OLD_FORMULA.search(path.read_text(encoding='utf-8')), (
+        f'{path}: дата окончания для панели снова считается на месте — '
+        f'правило живёт в app/services/panel_sync/expiry.py'
     )
 
 
-#: Правило обязаны импортировать только те, кто ещё собирает запрос сам.
-#: Грейс строит цель сам (у него своя проверка совпадения с панелью), а
-#: `remnawave_service` после консолидации не собирает запрос вовсе — он зовёт
-#: `push_subscription`, и дату считает уже пакет синхронизации. Запрет считать
-#: дату на месте (регуляркой выше) действует на всех.
-_BUILDS_THE_REQUEST_ITSELF = (
-    'app/services/grace_access_runtime.py',
-    'app/services/remnawave_service.py',
+#: Ещё не переведённые на общий сервис. Список обязан только уменьшаться:
+#: пока модуль здесь, он собирает панельный запрос сам и рискует разойтись с
+#: остальными — ровно так появлялись все расхождения, которые мы чинили.
+_STILL_BUILDING_BY_HAND = frozenset(
+    {
+        'app/handlers/admin/users.py',
+        'app/services/grace_access_runtime.py',
+    }
 )
-USES_SHARED_RULE = tuple(p for p in WRITERS if p not in _BUILDS_THE_REQUEST_ITSELF)
 
 
-@pytest.mark.parametrize('path', USES_SHARED_RULE)
-def test_every_writer_uses_the_shared_rule(path):
-    tree = ast.parse(pathlib.Path(path).read_text(encoding='utf-8'))
+def test_the_debt_list_only_names_modules_that_still_build_the_request():
+    """Перевели модуль — убрать его отсюда, иначе список перестанет что-то значить."""
+    building = {str(path) for path in _modules_sending_a_date_to_the_panel()}
+
+    assert building >= _STILL_BUILDING_BY_HAND, (
+        f'в списке долга остались переведённые модули: {sorted(_STILL_BUILDING_BY_HAND - building)}'
+    )
+
+
+@pytest.mark.parametrize(
+    'path',
+    [p for p in _modules_sending_a_date_to_the_panel() if str(p) not in _STILL_BUILDING_BY_HAND],
+    ids=str,
+)
+def test_every_module_sending_a_date_uses_the_shared_rule(path):
+    """Кто сам кладёт дату в запрос к панели — обязан взять её из общего правила.
+
+    Модули, переведённые на ``push_subscription``, дату вообще не собирают и
+    сюда не попадают: это и есть цель консолидации.
+    """
+    tree = ast.parse(path.read_text(encoding='utf-8'))
     imported = {
         alias.name
         for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module == 'app.services.panel_sync'
+        if isinstance(node, ast.ImportFrom) and (node.module or '').startswith('app.services.panel_sync')
         for alias in node.names
     }
 
-    assert 'panel_expire_at' in imported, f'{path} пишет дату в панель мимо общего правила'
+    assert imported & {'panel_expire_at', 'stale_panel_expire_at', 'build_panel_payload', 'push_subscription'}, (
+        f'{path} отправляет дату в панель мимо общего правила'
+    )
 
 
 # ==================== грейс-доступ ====================

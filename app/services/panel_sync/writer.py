@@ -31,8 +31,10 @@ logger = structlog.get_logger(__name__)
 class PanelWriteResult:
     """Чем закончилась запись."""
 
-    panel_user: RemnaWaveUser
-    #: 'updated' — аккаунт нашли и обновили, 'created' — завели новый.
+    #: ``None`` — писать было некуда и создавать не разрешили.
+    panel_user: RemnaWaveUser | None
+    #: 'updated' — аккаунт нашли и обновили, 'created' — завели новый,
+    #: 'no_changes' — аккаунта нет, а создавать его вызывающий запретил.
     action: str
     #: Пришлось ли гасить дату, которую панель держала в будущем.
     expiry_extinguished: bool = False
@@ -55,6 +57,7 @@ async def push_subscription(
     only_fields: set[str] | None = None,
     reset_devices: bool | None = None,
     verify_recorded_id: bool = True,
+    create_if_missing: bool = True,
     update_call=None,
     create_call=None,
     now: datetime | None = None,
@@ -66,6 +69,10 @@ async def push_subscription(
     проверить занятость id без базы нельзя).
 
     ``only_fields`` — узкая правка: в панель уедут лишь перечисленные поля.
+
+    ``create_if_missing=False`` — если аккаунта в панели нет, не заводить новый
+    и вернуть ``action='no_changes'``: так админ в кабинете может починить
+    существующий аккаунт, не создавая его случайно.
 
     ``update_call``/``create_call`` — чем именно писать. По умолчанию это методы
     клиента панели, а кабинет и админка бота подставляют обёртки грейс-доступа:
