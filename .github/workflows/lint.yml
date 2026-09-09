@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.13'
 
-      - run: uv sync --group dev
+      - run: uv sync --frozen --group dev
 
       - name: Check formatting
         run: uv run ruff format --check .
