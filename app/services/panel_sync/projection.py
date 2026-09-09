@@ -30,9 +30,11 @@
 * ``ROUTINE`` — фоновая синхронизация. Панель это подсказка: дату берём только у
   ACTIVE, лимиты не берём вовсе.
 * ``BULK_SNAPSHOT`` — полный проход. Он выгружает весь список и применяет его
-  минутами позже, поэтому снимку нельзя верить на слово: дата не переносится, а
-  статус меняется только когда данные бота согласны с панелью. Иначе только что
-  оплаченная подписка откатывалась бы в LIMITED и уезжала в грейс.
+  минутами позже, поэтому «исчерпана» и «истекла» применяются только когда с
+  панелью согласны данные самого бота: иначе только что оплаченная подписка
+  откатывалась бы в LIMITED и уезжала в грейс. А от снимка, который старше
+  правки в боте, защищает ``snapshot_taken_at`` — тогда не трогаются ни статус,
+  ни дата, ни лимиты.
 * ``ADMIN_PULL`` — админ нажал «из панели в бота». Здесь панель побеждает: дата
   переносится при любом статусе, лимиты трафика и устройств тоже. Это
   единственный случай, когда правка в панели меняет оплаченный тариф, и она
@@ -46,7 +48,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import structlog
@@ -88,8 +90,11 @@ class ProjectionPolicy:
 
 #: Фоновая синхронизация: панель — подсказка.
 ROUTINE = ProjectionPolicy('routine')
-#: Полный проход: снимок мог протухнуть, пока список выгружался.
-BULK_SNAPSHOT = ProjectionPolicy('bulk_snapshot', takes_date=False, status_mode='stale')
+#: Полный проход: снимок мог протухнуть, пока список выгружался. Дату у живого
+#: аккаунта берём — иначе продление, сделанное руками в панели, бот не увидит и
+#: затрёт своим же обратным проходом. От протухшего снимка защищает не отказ от
+#: даты, а его возраст (``snapshot_taken_at``).
+BULK_SNAPSHOT = ProjectionPolicy('bulk_snapshot', status_mode='stale')
 #: Админ нажал «из панели в бота»: панель побеждает.
 ADMIN_PULL = ProjectionPolicy(
     'admin_pull',
@@ -220,10 +225,15 @@ def _next_status_when_panel_wins(subscription, snapshot: PanelSnapshot, *, now: 
 def _next_status_from_stale_snapshot(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
     """Статус по снимку, которому нельзя доверять на слово.
 
-    Меняем только туда, где данные бота согласны с панелью. DISABLED из такого
-    снимка не применяем вовсе: это намеренное решение админа, и воскрешать или
-    гасить подписку по протухшему снимку нельзя.
+    LIMITED и EXPIRED применяются только там, где данные бота согласны с панелью:
+    иначе только что оплаченная подписка откатывалась бы в грейс. А вот DISABLED
+    — это решение админа в панели, и его надо доносить: у многих установок
+    вебхуков нет, и полный проход остаётся единственным путём. От применения
+    поверх свежей правки защищает не статус, а возраст снимка (``snapshot_taken_at``).
     """
+    if snapshot.status == 'DISABLED':
+        return SubscriptionStatus.DISABLED.value
+
     if snapshot.status == 'LIMITED':
         limit_gb = getattr(subscription, 'traffic_limit_gb', 0) or 0
         used_gb = getattr(subscription, 'traffic_used_gb', 0) or 0
@@ -267,6 +277,7 @@ def project_onto_subscription(
     policy: ProjectionPolicy = ROUTINE,
     grace_open: bool = False,
     trust_status: bool = True,
+    snapshot_taken_at: datetime | None = None,
 ) -> set[str]:
     """Перенести состояние панели в подписку. Возвращает имена изменённых полей.
 
@@ -276,11 +287,34 @@ def project_onto_subscription(
     ``trust_status=False`` — статус не трогать вовсе. Так помечают подписку,
     только что обновлённую вебхуком: свежая оплата важнее любого снимка.
 
+    ``snapshot_taken_at`` — когда снимок был снят. Полный проход выгружает весь
+    список панели и применяет его минутами позже; если подписку за это время
+    изменили (оплатили, продлили, обнулили), снимок про неё уже врёт — тогда
+    биллинговые поля не трогаем вовсе, а расход и ссылки переносим.
+
     Ссылки на подписку (``shortUuid``, url, крипто-ссылка) переносятся всегда:
     они описывают аккаунт панели, а не биллинговое состояние, и грейсу не мешают.
     """
     moment = now or datetime.now(UTC)
     changed: set[str] = set()
+
+    if snapshot_taken_at is not None:
+        touched_at = max(
+            (
+                panel_datetime_to_utc(value)
+                for value in (
+                    getattr(subscription, 'updated_at', None),
+                    getattr(subscription, 'last_webhook_update_at', None),
+                )
+                if value is not None
+            ),
+            default=None,
+        )
+        if touched_at is not None and touched_at > snapshot_taken_at:
+            # Подписку изменили уже после того, как снимок был снят: применять
+            # его поверх свежей правки — значит откатывать оплату.
+            trust_status = False
+            policy = replace(policy, takes_date=False, takes_traffic_limit=False, takes_device_limit=False)
 
     if snapshot.short_uuid and subscription.remnawave_short_uuid != snapshot.short_uuid:
         subscription.remnawave_short_uuid = snapshot.short_uuid

@@ -209,3 +209,24 @@ async def test_only_fields_narrows_the_patch():
     )
 
     assert set(api.update_user.await_args.kwargs) == {'user_id', 'description'}
+
+
+@pytest.mark.asyncio
+async def test_recreated_account_replaces_the_stale_link():
+    """Иначе следующий проход снова не найдёт аккаунт и заведёт ещё один дубль.
+
+    Живой прогон против панели: аккаунт удалили из панели, бот пересоздал его —
+    но в колонке остался старый id, и каждый следующий проход плодил новый
+    аккаунт заново.
+    """
+    api = _api(get_user_by_id=_panel_user(user_id=42))
+    api.update_user.side_effect = RemnaWaveAPIError('not found', response_data={'errorCode': 'A018'})
+    api.create_user.return_value = _panel_user(user_id=99)
+    subscription = _sub(remnawave_id=42)
+    user = _user(remnawave_id=42)
+
+    result = await push_subscription(api, user, subscription, db=_db(), multi_tariff=False, now=NOW)
+
+    assert result.action == 'created'
+    assert subscription.remnawave_id == 99, 'в колонке остался id удалённого аккаунта'
+    assert user.remnawave_id == 99

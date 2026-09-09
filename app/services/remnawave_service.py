@@ -1360,6 +1360,11 @@ class RemnaWaveService:
 
             logger.info('🔄 Начинаем синхронизацию типа', sync_type=sync_type)
 
+            # Момент снимка: список панели выгружается целиком и применяется
+            # минутами позже. Всё, что изменилось в боте после этой отметки,
+            # снимок уже не описывает — и переписывать это нельзя.
+            snapshot_taken_at = self._now_utc()
+
             async with self.get_api_client() as api:
                 panel_users = []
                 cursor: str | None = None
@@ -1539,6 +1544,7 @@ class RemnaWaveService:
                                     db_user,
                                     panel_user,
                                     open_grace_ids=open_grace_ids,
+                                    snapshot_taken_at=snapshot_taken_at,
                                 )
                                 stats['updated'] += 1
                                 logger.info('♻️ Обновлена подписка существующего пользователя', telegram_id=telegram_id)
@@ -1596,6 +1602,7 @@ class RemnaWaveService:
                                 db_user,
                                 panel_user,
                                 open_grace_ids=open_grace_ids,
+                                snapshot_taken_at=snapshot_taken_at,
                             )
                         else:
                             await self._create_subscription_from_panel_data(db, db_user, panel_user)
@@ -1726,6 +1733,7 @@ class RemnaWaveService:
                                     db_user,
                                     panel_user,
                                     open_grace_ids=open_grace_ids,
+                                    snapshot_taken_at=snapshot_taken_at,
                                 )
                             else:
                                 await self._create_subscription_from_panel_data(db, db_user, panel_user)
@@ -1965,6 +1973,9 @@ class RemnaWaveService:
         from app.database.models import Subscription
 
         stats = {'created': 0, 'updated': 0, 'errors': 0, 'deleted': 0}
+        # Момент снимка: см. sync_users_from_panel — список выгружается целиком и
+        # применяется минутами позже.
+        snapshot_taken_at = self._now_utc()
         try:
             logger.info('🔄 [multi-tariff] Начинаем синхронизацию типа', sync_type=sync_type)
 
@@ -2212,6 +2223,7 @@ class RemnaWaveService:
                         now=self._now_utc(),
                         grace_open=grace_open,
                         policy=BULK_SNAPSHOT,
+                        snapshot_taken_at=snapshot_taken_at,
                         trust_status=not is_recently_updated_by_webhook(subscription),
                     )
 
@@ -2322,6 +2334,7 @@ class RemnaWaveService:
         panel_user,
         *,
         open_grace_ids: set[int] | None = None,
+        snapshot_taken_at: datetime | None = None,
     ):
         try:
             from app.database.crud.subscription import get_subscription_by_user_id, is_recently_updated_by_webhook
@@ -2369,11 +2382,16 @@ class RemnaWaveService:
                 )
                 return
 
+            # Тот же полный проход, что и в мультитарифе: список панели выгружен
+            # минутами раньше, поэтому снимку нельзя верить на слово, а всё, что
+            # изменилось в боте после снимка, он не трогает.
             changed = project_onto_subscription(
                 subscription,
                 read_panel_user(panel_user),
                 now=self._now_utc(),
                 grace_open=grace_open,
+                policy=BULK_SNAPSHOT,
+                snapshot_taken_at=snapshot_taken_at,
             )
             if changed:
                 logger.debug(

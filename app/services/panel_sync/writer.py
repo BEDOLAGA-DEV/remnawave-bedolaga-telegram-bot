@@ -129,7 +129,10 @@ async def push_subscription(
                 panel_user_id=panel_user_id,
             )
             panel_user = await create(**payload.create_kwargs(now=moment))
-            await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff)
+            # Связь ОБЯЗАНА перезаписаться: в колонке лежит id аккаунта, которого
+            # в панели больше нет. Оставить его — значит на каждом следующем
+            # проходе снова не находить аккаунт и заводить ещё один дубль.
+            await _record_identity(db, user, subscription, panel_user, multi_tariff=multi_tariff, replace_stale=True)
             return PanelWriteResult(
                 panel_user=panel_user, action='created', panel_user_id=getattr(panel_user, 'id', None)
             )
@@ -195,6 +198,7 @@ async def _record_identity(
     *,
     multi_tariff: bool,
     panel_user_id: int | None = None,
+    replace_stale: bool = False,
 ) -> None:
     """Записать в базу, каким аккаунтом панели закрыта эта подписка.
 
@@ -203,12 +207,21 @@ async def _record_identity(
     ``panel_user_id`` — адрес, по которому мы только что писали. Он нужен,
     потому что обёртки грейс-доступа возвращают урезанный объект без id: сам
     аккаунт от этого не меняется, а связь потерять нельзя.
+
+    ``replace_stale`` — в колонке лежит id аккаунта, которого в панели уже нет:
+    его надо затереть, иначе следующий проход снова не найдёт аккаунт и заведёт
+    ещё один дубль.
     """
     from app.services.subscription_service import link_subscription_panel_identity
 
     panel_user_id = getattr(panel_user, 'id', None) or panel_user_id
     if panel_user_id is None:
         return
+
+    if replace_stale:
+        subscription.remnawave_id = None
+        if not multi_tariff:
+            user.remnawave_id = None
 
     short_uuid = getattr(panel_user, 'short_uuid', None)
     if short_uuid:

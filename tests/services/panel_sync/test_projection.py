@@ -34,6 +34,8 @@ def _sub(**kw):
         subscription_crypto_link='old-crypto',
         grace_candidate_reason=None,
         grace_candidate_at=None,
+        updated_at=None,
+        last_webhook_update_at=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -278,9 +280,13 @@ def test_status_can_be_frozen_for_a_subscription_just_touched_by_a_webhook():
 # откатывало её в LIMITED/EXPIRED и отправляло в грейс.
 
 
-def test_stale_snapshot_never_moves_the_end_date():
+def test_stale_snapshot_still_takes_the_date_of_a_live_account():
+    """Продление, сделанное руками в панели, бот обязан увидеть.
+
+    Иначе его же обратный проход затрёт панель старой датой. От снимка, который
+    старше правки в боте, защищает возраст снимка, а не отказ от даты.
+    """
     subscription = _sub()
-    original = subscription.end_date
 
     project_onto_subscription(
         subscription,
@@ -289,7 +295,7 @@ def test_stale_snapshot_never_moves_the_end_date():
         policy=BULK_SNAPSHOT,
     )
 
-    assert subscription.end_date == original
+    assert subscription.end_date == NOW + timedelta(days=90)
 
 
 def test_stale_limited_needs_the_traffic_to_be_actually_spent():
@@ -322,11 +328,71 @@ def test_stale_expired_needs_the_date_to_have_passed():
     assert over.status == SubscriptionStatus.EXPIRED.value
 
 
-def test_stale_disabled_is_ignored():
-    """DISABLED — решение админа; по протухшему снимку его не применяем."""
+def test_stale_disabled_is_applied():
+    """DISABLED — решение админа в панели, и донести его больше некому.
+
+    У многих установок вебхуков нет, и полный проход — единственный путь. От
+    применения поверх свежей правки защищает не отказ от статуса, а возраст
+    снимка (см. тесты ниже).
+    """
     subscription = _sub()
 
     project_onto_subscription(subscription, PanelSnapshot(status='DISABLED'), now=NOW, policy=BULK_SNAPSHOT)
+
+    assert subscription.status == SubscriptionStatus.DISABLED.value
+
+
+# ==================== снимок старше правки ====================
+
+# Полный проход выгружает весь список панели и применяет его минутами позже.
+# Если подписку за это время оплатили или продлили, снимок про неё уже врёт.
+
+
+def test_a_snapshot_older_than_the_row_does_not_touch_billing_fields():
+    subscription = _sub(status=SubscriptionStatus.ACTIVE.value)
+    subscription.updated_at = NOW  # правка пришла уже после снимка
+
+    changed = project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='DISABLED', expire_at=NOW - timedelta(days=5), traffic_used_gb=9.0),
+        now=NOW,
+        policy=BULK_SNAPSHOT,
+        snapshot_taken_at=NOW - timedelta(minutes=3),
+    )
+
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
+    assert subscription.end_date == NOW + timedelta(days=30)
+    assert subscription.traffic_used_gb == 9.0, 'расход всё равно показываем'
+    assert changed == {'traffic_used_gb'}
+
+
+def test_a_snapshot_newer_than_the_row_is_applied():
+    subscription = _sub(status=SubscriptionStatus.ACTIVE.value)
+    subscription.updated_at = NOW - timedelta(hours=2)
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='DISABLED'),
+        now=NOW,
+        policy=BULK_SNAPSHOT,
+        snapshot_taken_at=NOW - timedelta(minutes=3),
+    )
+
+    assert subscription.status == SubscriptionStatus.DISABLED.value
+
+
+def test_a_webhook_stamp_also_counts_as_a_fresh_change():
+    subscription = _sub(status=SubscriptionStatus.ACTIVE.value)
+    subscription.updated_at = NOW - timedelta(hours=2)
+    subscription.last_webhook_update_at = NOW
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='DISABLED'),
+        now=NOW,
+        policy=BULK_SNAPSHOT,
+        snapshot_taken_at=NOW - timedelta(minutes=3),
+    )
 
     assert subscription.status == SubscriptionStatus.ACTIVE.value
 
