@@ -13,6 +13,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -58,6 +59,7 @@ from app.services.grace_access_service import (
     panel_is_safe_pending_source,
     panel_matches_overlay,
 )
+from app.services.panel_sync import is_subscription_live, panel_expire_at
 
 
 logger = structlog.get_logger(__name__)
@@ -328,7 +330,10 @@ class SQLAlchemyGraceBillingGateway:
 @dataclass(frozen=True, slots=True)
 class _PanelTarget:
     status: PanelUserStatus
-    expire_at: datetime
+    #: ``None`` — дату в панели не менять. Так уходят отключённые подписки: их
+    #: настоящую дату окончания затирать нельзя, а проверка совпадения для
+    #: DISABLED дату и не сверяет (см. _panel_matches_target).
+    expire_at: datetime | None
     traffic_limit_bytes: int
     squad_uuids: tuple[str, ...]
     external_squad_uuid: str | None
@@ -1673,7 +1678,8 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
     if status in {'expired', 'disabled'} or expire_at <= now:
         return _PanelTarget(
             status=PanelUserStatus.DISABLED,
-            expire_at=max(expire_at, now + timedelta(minutes=1)),
+            # Общее правило: истёкшей подписке дату при обновлении не шлём.
+            expire_at=panel_expire_at(expire_at, is_active=False, creating=False, now=now),
             traffic_limit_bytes=snapshot.traffic_limit_bytes,
             squad_uuids=snapshot.squad_uuids,
             external_squad_uuid=snapshot.external_squad_uuid,
@@ -1693,17 +1699,27 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
 
 def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _PanelTarget:
     status = _normalize(billing.status)
-    user_active = _normalize(billing.user_status) == DatabaseUserStatus.ACTIVE.value
     expire_at = _as_utc(billing.end_at) if billing.end_at else now
-    if user_active and status in {'active', 'trial'} and expire_at > now:
+    # «Жива ли подписка» — общее правило синхронизации: оно смотрит и на статус
+    # пользователя (заблокированного включать нельзя), и на дату. LIMITED —
+    # надстройка грейса: панель держит пользователя с исчерпанным трафиком в
+    # отдельном статусе, до общего правила это не относится.
+    billing_user = SimpleNamespace(status=_normalize(billing.user_status))
+    billing_subscription = SimpleNamespace(status=status, end_date=expire_at)
+    if is_subscription_live(billing_user, billing_subscription, now=now):
         panel_status = PanelUserStatus.ACTIVE
-        safe_expire_at = expire_at
-    elif user_active and status == 'limited' and expire_at > now:
+    elif _normalize(billing.user_status) == DatabaseUserStatus.ACTIVE.value and status == 'limited' and expire_at > now:
         panel_status = PanelUserStatus.LIMITED
-        safe_expire_at = expire_at
     else:
         panel_status = PanelUserStatus.DISABLED
-        safe_expire_at = max(expire_at, now + timedelta(minutes=1))
+    # Дату считает общее правило: живой — её настоящую, истёкшей при обновлении
+    # поле не отправляется вовсе, чтобы не затирать настоящий срок в панели.
+    safe_expire_at = panel_expire_at(
+        expire_at,
+        is_active=panel_status is not PanelUserStatus.DISABLED,
+        creating=False,
+        now=now,
+    )
     return _PanelTarget(
         status=panel_status,
         expire_at=safe_expire_at,
@@ -1725,7 +1741,6 @@ def _serialize_panel_target(
     kwargs.pop('status', None)
     kwargs.update(
         user_id=remnawave_id,
-        expire_at=target.expire_at,
         traffic_limit_bytes=target.traffic_limit_bytes,
         active_internal_squads=list(target.squad_uuids),
         external_squad_uuid=target.external_squad_uuid,
@@ -1734,6 +1749,12 @@ def _serialize_panel_target(
         kwargs['status'] = target.status
     elif target.status not in {PanelUserStatus.LIMITED, PanelUserStatus.EXPIRED}:
         raise GracePanelError(f'Unsupported canonical panel status {target.status!r}')
+    if target.expire_at is not None:
+        kwargs['expire_at'] = target.expire_at
+    else:
+        # Явно снимаем дату из базового набора: он собран для другого перехода,
+        # и оставленная там дата затёрла бы настоящую.
+        kwargs.pop('expire_at', None)
     if target.device_limit is not None:
         kwargs['hwid_device_limit'] = target.device_limit
     return kwargs
@@ -1746,9 +1767,12 @@ def _panel_matches_limited_intermediate(
     *,
     statuses: frozenset[str] = frozenset({'active', 'limited'}),
 ) -> bool:
+    # Промежуточное состояние строится только для LIMITED, а у него дата есть
+    # всегда: без даты сверять нечего и совпадением это считать нельзя.
     return (
         _normalize(snapshot.status) in statuses
         and snapshot.expire_at is not None
+        and target.expire_at is not None
         and abs((_as_utc(snapshot.expire_at) - _as_utc(target.expire_at)).total_seconds()) <= 2
         and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
         and set(snapshot.squad_uuids) == set(expected_overlay.squad_uuids)
@@ -1865,7 +1889,9 @@ def _panel_matches_target(snapshot: GracePanelSnapshot, target: _PanelTarget) ->
     else:
         status_matches = actual_status == expected_status
         expiry_matches = bool(
-            snapshot.expire_at and abs((_as_utc(snapshot.expire_at) - _as_utc(target.expire_at)).total_seconds()) <= 2
+            snapshot.expire_at
+            and target.expire_at
+            and abs((_as_utc(snapshot.expire_at) - _as_utc(target.expire_at)).total_seconds()) <= 2
         )
     return (
         status_matches

@@ -50,7 +50,6 @@ from app.database.models import (
 from app.external.remnawave_api import (
     RemnaWaveAPIError,
     RemnaWaveUser,
-    UserStatus as RemnaWaveUserStatus,
     is_user_not_found_error,
 )
 from app.localization.texts import get_texts
@@ -60,17 +59,15 @@ from app.services.notification_delivery_service import (
     notification_delivery_service,
 )
 from app.services.notification_settings_service import NotificationSettingsService
+from app.services.panel_sync import is_subscription_live, push_subscription
 from app.services.promo_offer_service import promo_offer_service
-from app.services.subscription_service import SubscriptionService, get_traffic_reset_strategy
+from app.services.subscription_service import SubscriptionService
 from app.utils.cache import cache
 from app.utils.formatters import format_username_link
 from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button, build_subscription_extend_button
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.rich_notify import try_send_rich_notification
-from app.utils.subscription_utils import (
-    resolve_hwid_device_limit_for_payload,
-)
 from app.utils.timezone import format_local_datetime
 
 
@@ -656,7 +653,7 @@ class MonitoringService:
                 return None
 
             current_time = datetime.now(UTC)
-            is_active = subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date > current_time
+            is_active = is_subscription_live(user, subscription, now=current_time)
 
             if subscription.status == SubscriptionStatus.ACTIVE.value and subscription.end_date <= current_time:
                 # Суточные подписки управляются DailySubscriptionService — не экспайрим
@@ -684,41 +681,32 @@ class MonitoringService:
                 return None
 
             async with self.subscription_service.get_api_client() as api:
-                hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
-
-                update_kwargs = dict(
-                    user_id=panel_user_id,
-                    status=RemnaWaveUserStatus.ACTIVE if is_active else RemnaWaveUserStatus.DISABLED,
-                    expire_at=subscription.end_date
-                    if is_active
-                    else max(subscription.end_date, current_time + timedelta(minutes=1)),
-                    # _gb_to_bytes живёт в SubscriptionService — у MonitoringService своего
-                    # никогда не было, и self._gb_to_bytes ронял весь метод AttributeError-ом
-                    # ещё до запроса в панель (молча гасился общим except → return None).
-                    traffic_limit_bytes=self.subscription_service._gb_to_bytes(subscription.traffic_limit_gb),
-                    traffic_limit_strategy=get_traffic_reset_strategy(subscription.tariff),
-                    description=settings.format_remnawave_user_description(
-                        full_name=user.full_name, username=user.username, telegram_id=user.telegram_id
-                    ),
-                )
-
-                # Не пересылаем activeInternalSquads в рутинном sync — сквады уже назначены
-                # при создании подписки, пересылка стейловых UUID вызывает FK violation → A039
-
-                if hwid_limit is not None:
-                    update_kwargs['hwid_device_limit'] = hwid_limit
-
-                # Внешний сквад НЕ пересылаем в рутинном sync — стейловый UUID
-                # вызывает FK violation → A039. Назначается при создании подписки.
-
-                updated_user = await update_panel_user_grace_safe(
+                # Сквады и внешний сквад в рутинном проходе НЕ пересылаем:
+                # устаревший UUID даёт FK violation (A039), а назначаются они при
+                # создании подписки. Отсюда узкий набор полей.
+                result = await push_subscription(
                     api,
-                    subscription.id,
-                    **update_kwargs,
+                    user,
+                    subscription,
+                    db=db,
+                    only_fields={
+                        'status',
+                        'expire_at',
+                        'traffic_limit_bytes',
+                        'traffic_limit_strategy',
+                        'description',
+                        'hwid_device_limit',
+                    },
+                    verify_recorded_id=False,
+                    create_if_missing=False,
+                    # «Пользователя нет» разбирает ветка ниже: у неё своя проверка,
+                    # что подписку вообще стоит воскрешать.
+                    recreate_on_missing=False,
+                    update_call=lambda **kwargs: update_panel_user_grace_safe(api, subscription.id, **kwargs),
+                    now=current_time,
                 )
+                updated_user = result.panel_user
 
-                subscription.subscription_url = updated_user.subscription_url
-                subscription.subscription_crypto_link = updated_user.happ_crypto_link
                 await db.commit()
 
                 status_text = 'активным' if is_active else 'истёкшим'
@@ -736,7 +724,7 @@ class MonitoringService:
                 # RemnaWaveInvalidUserIdError сюда намеренно не попадает: битый
                 # локальный идентификатор — баг в данных бота, а не «юзера нет»,
                 # и уход в пересоздание плодил бы дубли в панели.
-                return await self.subscription_service.recreate_deleted_panel_user(db, subscription)
+                return await self.subscription_service.recreate_deleted_panel_user(db, subscription, user=user)
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
             return None
         except Exception as e:
@@ -1585,7 +1573,12 @@ class MonitoringService:
                         failed_count += 1
                         continue
 
-                    if renewal_cost <= 0:
+                    # Ноль сам по себе не повод отказать: бесплатный период —
+                    # штатная настройка тарифа, и подписку на нём покупают как
+                    # любую другую. Отказ остаётся для случая, ради которого
+                    # проверка и появилась, — цена периода не проставлена вовсе.
+                    autopay_period_is_priced = bool(tariff and tariff.has_configured_price_for_period(autopay_period))
+                    if renewal_cost <= 0 and not autopay_period_is_priced:
                         logger.warning(
                             'Нулевая стоимость автопродления, пропускаем',
                             subscription_id=subscription.id,

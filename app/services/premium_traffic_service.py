@@ -535,16 +535,27 @@ class PremiumTrafficService:
         )
 
     async def _push_squads(self, db: AsyncSession, api: Any, target: _Target) -> None:
-        from app.services.grace_access_runtime import update_panel_user_grace_safe
-        from app.utils.premium_traffic import effective_panel_squads
+        """Переотправить набор сквадов в панель.
 
-        await update_panel_user_grace_safe(
+        Через штатный вход сервиса синхронизации, а не своим запросом: там же
+        живёт фильтр снятых премиум-сквадов, и собирать набор здесь означало бы
+        завести вторую копию правила. Полное состояние подписки не шлём —
+        меняются только сквады.
+
+        Обёртка грейс-доступа обязательна: у него свои двухфазные переходы, и
+        запись мимо неё разъехалась бы с открытой сессией.
+        """
+        from app.services.grace_access_runtime import update_panel_user_grace_safe
+        from app.services.panel_sync import patch_panel_squads
+
+        tariff = getattr(target.subscription, 'tariff', None)
+        await patch_panel_squads(
             api,
-            target.subscription.id,
             user_id=target.panel_user_id,
-            active_internal_squads=await effective_panel_squads(
-                target.subscription.id, target.subscription.connected_squads or [], db=db
-            ),
+            squads=list(target.subscription.connected_squads or []),
+            external_squad_uuid=getattr(tariff, 'external_squad_uuid', None),
+            subscription_id=target.subscription.id,
+            update_call=lambda **kwargs: update_panel_user_grace_safe(api, target.subscription.id, **kwargs),
         )
         # Набор сквадов в панели только что изменился — иначе сверка на
         # следующем проходе увидела бы протухший снимок и отправила бы всё заново.

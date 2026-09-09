@@ -22,7 +22,7 @@ from app.database.crud.tariff import (
     update_tariff,
 )
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, Transaction, TransactionType, User
-from app.utils.premium_traffic import effective_panel_squads
+from app.services.panel_sync import patch_panel_squads
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.tariffs import (
@@ -687,14 +687,13 @@ async def _background_sync_squads(tariff_id: int, admin_id: int) -> None:
                         return
                     async with semaphore:
                         try:
-                            await update_panel_user_grace_safe(
+                            await patch_panel_squads(
                                 api,
-                                sub.id,
                                 user_id=remnawave_id,
-                                # В панель — без снятых за перерасход премиум-сквадов;
-                                # connected_squads ниже остаётся полным набором прав.
-                                active_internal_squads=await effective_panel_squads(sub.id, new_squads),
+                                squads=new_squads,
                                 external_squad_uuid=ext_squad_uuid,
+                                subscription_id=sub.id,
+                                update_call=lambda **kwargs: update_panel_user_grace_safe(api, sub.id, **kwargs),
                             )
                             sub.connected_squads = new_squads
                             updated += 1
@@ -815,13 +814,13 @@ async def sync_tariff_squads(
                     return 'skipped'
 
                 try:
-                    await update_panel_user_grace_safe(
+                    await patch_panel_squads(
                         api,
-                        sub.id,
                         user_id=remnawave_id,
-                        # См. выше: право на сквад и его наличие в панели — разные вещи.
-                        active_internal_squads=await effective_panel_squads(sub.id, new_squads),
+                        squads=new_squads,
                         external_squad_uuid=ext_squad_uuid,
+                        subscription_id=sub.id,
+                        update_call=lambda **kwargs: update_panel_user_grace_safe(api, sub.id, **kwargs),
                     )
                     # Update local DB only on successful API call
                     sub.connected_squads = new_squads

@@ -18,6 +18,7 @@ from app.database.crud.subscription import (
     get_daily_subscriptions_for_charge,
     get_disabled_daily_subscriptions_for_resume,
     get_expired_daily_subscriptions_for_recovery,
+    get_limited_daily_subscriptions_for_recovery,
     suspend_daily_subscription_insufficient_balance,
     update_daily_charge_time,
 )
@@ -30,6 +31,7 @@ from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
 )
+from app.services.traffic_reset_policy import should_reset_traffic_on_daily_charge
 
 
 logger = structlog.get_logger(__name__)
@@ -251,6 +253,12 @@ class DailySubscriptionService:
             try:
                 from app.services.subscription_service import SubscriptionService
 
+                # Суточное списание — такая же оплата, как продление: обнуление
+                # счётчика решает общая политика, а не жёсткая константа. Раньше
+                # здесь стояло «никогда», и расход копился через все автосписания.
+                reset_traffic = should_reset_traffic_on_daily_charge(tariff)
+                reset_reason = 'суточное списание' if reset_traffic else None
+
                 subscription_service = SubscriptionService()
                 _has_panel_user = (
                     getattr(subscription, 'remnawave_id', None)
@@ -261,16 +269,16 @@ class DailySubscriptionService:
                     await subscription_service.update_remnawave_user(
                         db,
                         subscription,
-                        reset_traffic=False,
-                        reset_reason=None,
+                        reset_traffic=reset_traffic,
+                        reset_reason=reset_reason,
                         sync_squads=True,
                     )
                 else:
                     await subscription_service.create_remnawave_user(
                         db,
                         subscription,
-                        reset_traffic=False,
-                        reset_reason=None,
+                        reset_traffic=reset_traffic,
+                        reset_reason=reset_reason,
                     )
                     # POST может игнорировать activeInternalSquads — отправляем PATCH
                     await db.refresh(user)
@@ -281,6 +289,8 @@ class DailySubscriptionService:
                     )
                     if _sync_panel_user_id is not None and subscription.connected_squads:
                         try:
+                            # Досыл сквадов — часть того же события оплаты:
+                            # счётчик уже обнулён вызовом выше, второй раз не надо.
                             await subscription_service.update_remnawave_user(
                                 db,
                                 subscription,
@@ -289,6 +299,13 @@ class DailySubscriptionService:
                             )
                         except Exception as patch_err:
                             logger.warning('Не удалось синхронизировать сквады после создания', error=patch_err)
+
+                if reset_traffic:
+                    # Счётчик бота ведут по данным панели, но до ближайшего прохода
+                    # мониторинга он показывал бы исчерпанный трафик — и блокировал
+                    # реактивацию подписки по своей же проверке лимита.
+                    subscription.traffic_used_gb = 0.0
+                    await db.commit()
             except Exception as e:
                 logger.warning('Не удалось обновить Remnawave', error=e)
                 from app.services.remnawave_retry_queue import remnawave_retry_queue
@@ -749,12 +766,39 @@ class DailySubscriptionService:
         except Exception as e:
             logger.warning('Не удалось отправить уведомление о сбросе трафика', error=e)
 
+    async def _lift_panel_traffic_limit(self, db: AsyncSession, subscription: Subscription) -> None:
+        """Снять с аккаунта в панели статус «трафик исчерпан» после оплаты новых суток.
+
+        Обнуления счётчика обычно достаточно, но PATCH сам по себе статус LIMITED
+        не снимает (та же оговорка стоит во всех админских реактивациях). Явное
+        включение делает возврат независимым от того, как панель обработала сброс.
+        """
+        panel_user_id = (
+            getattr(subscription, 'remnawave_id', None)
+            if settings.is_multi_tariff_enabled()
+            else getattr(await get_user_by_id(db, subscription.user_id), 'remnawave_id', None)
+        )
+        if not panel_user_id:
+            return
+
+        try:
+            from app.services.subscription_service import SubscriptionService
+
+            await SubscriptionService().enable_remnawave_user(panel_user_id, db=db)
+        except Exception as exc:
+            logger.warning(
+                'Не удалось снять лимит трафика в панели после возврата подписки',
+                subscription_id=subscription.id,
+                error=exc,
+            )
+
     async def process_auto_resume(self) -> dict:
         """
         Возобновляет DISABLED суточные подписки, у которых появился достаточный баланс.
-        Также восстанавливает EXPIRED подписки, ошибочно экспайренные другими системами.
+        Также восстанавливает EXPIRED подписки, ошибочно экспайренные другими системами,
+        и LIMITED — те, кого панель зарезала по исчерпанному трафику.
         """
-        stats = {'resumed': 0, 'recovered': 0, 'errors': 0}
+        stats = {'resumed': 0, 'recovered': 0, 'limit_recovered': 0, 'errors': 0}
 
         try:
             async with AsyncSessionLocal() as db:
@@ -829,6 +873,47 @@ class DailySubscriptionService:
                 except Exception as e:
                     logger.error('Ошибка при обработке EXPIRED подписок', error=e, exc_info=True)
 
+                # 3. Возврат LIMITED подписок (панель зарезала по исчерпанному трафику).
+                # Оплата за новые сутки обнуляет счётчик — значит, и лимит снимается.
+                try:
+                    limited_subs = await get_limited_daily_subscriptions_for_recovery(db)
+                    for subscription in limited_subs:
+                        try:
+                            if not should_reset_traffic_on_daily_charge(subscription.tariff):
+                                # Списание счётчик не обнулит: либо это выключено
+                                # настройкой (лимит тарифа задуман накопительным),
+                                # либо обнуляет сама панель и снимет лимит без нас.
+                                # Брать деньги и оставлять человека в лимите нельзя.
+                                continue
+
+                            _sub_id = subscription.id
+                            subscription.status = SubscriptionStatus.ACTIVE.value
+                            await db.commit()
+                            subscription = await self._reload_daily_subscription(db, _sub_id)
+
+                            logger.info(
+                                '🔄 Суточная подписка возвращена из лимита трафика (LIMITED→ACTIVE)',
+                                subscription_id=subscription.id,
+                                user_id=subscription.user_id,
+                            )
+
+                            charge_result = await self._process_single_charge(db, subscription)
+                            if charge_result == 'charged':
+                                await self._lift_panel_traffic_limit(db, subscription)
+                                stats['limit_recovered'] += 1
+                            elif charge_result == 'error':
+                                stats['errors'] += 1
+                        except Exception as e:
+                            logger.error(
+                                'Ошибка возврата LIMITED подписки',
+                                subscription_id=subscription.id,
+                                error=e,
+                                exc_info=True,
+                            )
+                            stats['errors'] += 1
+                except Exception as e:
+                    logger.error('Ошибка при обработке LIMITED подписок', error=e, exc_info=True)
+
         except Exception as e:
             logger.error('Ошибка в process_auto_resume', error=e, exc_info=True)
 
@@ -845,11 +930,12 @@ class DailySubscriptionService:
             try:
                 # Восстановление DISABLED/EXPIRED подписок (до основных списаний!)
                 resume_stats = await self.process_auto_resume()
-                if resume_stats['resumed'] > 0 or resume_stats['recovered'] > 0:
+                if resume_stats['resumed'] > 0 or resume_stats['recovered'] > 0 or resume_stats['limit_recovered'] > 0:
                     logger.info(
                         '📊 Авто-возобновление завершено',
                         resumed=resume_stats['resumed'],
                         recovered=resume_stats['recovered'],
+                        limit_recovered=resume_stats['limit_recovered'],
                         errors=resume_stats['errors'],
                     )
 

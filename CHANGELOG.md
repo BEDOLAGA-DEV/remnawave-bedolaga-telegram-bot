@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.7.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.7.0...v4.7.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **grace:** согласователь грейса тоже перестал переписывать дату окончания ([664ecea](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/664ecea75fa9e2204bef188dd29010a411b670f5))
+* **remnawave:** истёкшей подписке больше не переписывается дата окончания в панели ([5b24d67](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5b24d67a1febe903637875391c96da70f7e5e7bb))
+
 ## [4.7.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.6.0...v4.7.0) (2026-09-08)
 
 
