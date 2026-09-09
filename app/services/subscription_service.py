@@ -19,6 +19,7 @@ from app.external.remnawave_api import (
     is_user_not_found_error,
 )
 from app.services.panel_sync import (
+    PanelIdentity,
     build_panel_payload,
     is_subscription_live,
     patch_panel_account,
@@ -693,7 +694,7 @@ class SubscriptionService:
                 if sync_squads:
                     only_fields.update({'active_internal_squads', 'external_squad_uuid'})
 
-                update_kwargs = replace(
+                panel_payload = replace(
                     build_panel_payload(
                         user,
                         subscription,
@@ -703,7 +704,12 @@ class SubscriptionService:
                     ),
                     hwid_device_limit=hwid_limit,
                     external_squad_uuid=ext_squad_uuid,
-                ).update_kwargs(user_id=remnawave_id, only_fields=only_fields, now=current_time)
+                )
+                # Грейс принимает готовый набор полей: у него своя блокировка и
+                # своя фазовая запись, но собирает запрос всё равно сервис.
+                update_kwargs = panel_payload.update_kwargs(
+                    user_id=remnawave_id, only_fields=only_fields, now=current_time
+                )
 
                 completed_grace = False
                 updated_user = None
@@ -716,7 +722,25 @@ class SubscriptionService:
                         source='subscription_service.update_remnawave_user',
                     )
                 if not completed_grace:
-                    updated_user = await api.update_user(**update_kwargs)
+                    # Аккаунт уже известен: адрес не перепроверяем, а «такого нет»
+                    # разбирает ветка ниже — у неё своя проверка, стоит ли
+                    # воскрешать подписку.
+                    updated_user = (
+                        await push_subscription(
+                            api,
+                            user,
+                            subscription,
+                            db=db,
+                            multi_tariff=multi_tariff,
+                            payload=panel_payload,
+                            only_fields=only_fields,
+                            identity=PanelIdentity(known_id=remnawave_id),
+                            create_if_missing=False,
+                            recreate_on_missing=False,
+                            reset_devices=False,
+                            now=current_time,
+                        )
+                    ).panel_user
                 if updated_user is None:
                     raise RemnaWaveAPIError('Remnawave returned no user after subscription renewal update')
 
