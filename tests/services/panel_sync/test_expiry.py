@@ -165,28 +165,27 @@ def test_the_debt_list_only_names_modules_that_still_build_the_request():
     )
 
 
-@pytest.mark.parametrize(
-    'path',
-    [p for p in _modules_sending_a_date_to_the_panel() if str(p) not in _STILL_BUILDING_BY_HAND],
-    ids=str,
-)
-def test_every_module_sending_a_date_uses_the_shared_rule(path):
+def test_every_module_sending_a_date_uses_the_shared_rule():
     """Кто сам кладёт дату в запрос к панели — обязан взять её из общего правила.
 
     Модули, переведённые на ``push_subscription``, дату вообще не собирают и
     сюда не попадают: это и есть цель консолидации.
     """
-    tree = ast.parse(path.read_text(encoding='utf-8'))
-    imported = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and (node.module or '').startswith('app.services.panel_sync')
-        for alias in node.names
-    }
+    offenders = []
+    for path in _modules_sending_a_date_to_the_panel():
+        if str(path) in _STILL_BUILDING_BY_HAND:
+            continue
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and (node.module or '').startswith('app.services.panel_sync')
+            for alias in node.names
+        }
+        if not imported & {'panel_expire_at', 'stale_panel_expire_at', 'build_panel_payload', 'push_subscription'}:
+            offenders.append(str(path))
 
-    assert imported & {'panel_expire_at', 'stale_panel_expire_at', 'build_panel_payload', 'push_subscription'}, (
-        f'{path} отправляет дату в панель мимо общего правила'
-    )
+    assert not offenders, f'отправляют дату в панель мимо общего правила: {offenders}'
 
 
 # ==================== грейс-доступ ====================

@@ -240,6 +240,8 @@ async def patch_panel_account(
     description: str | None = None,
     telegram_id: int | None = None,
     email: str | None = None,
+    hwid_device_limit: int | None = None,
+    tag: str | None = None,
     update_call=None,
 ) -> RemnaWaveUser:
     """Обновить карточку аккаунта в панели, не трогая состояние подписки.
@@ -258,6 +260,10 @@ async def patch_panel_account(
         kwargs['telegram_id'] = telegram_id
     if email is not None:
         kwargs['email'] = email
+    if hwid_device_limit is not None:
+        kwargs['hwid_device_limit'] = hwid_device_limit
+    if tag is not None:
+        kwargs['tag'] = tag
     return await update(**kwargs)
 
 

@@ -2,7 +2,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any
 
 import structlog
 from sqlalchemy import select
@@ -17,13 +16,12 @@ from app.external.remnawave_api import (
     RemnaWaveAPIError,
     RemnaWaveUser,
     TrafficLimitStrategy,
-    UserStatus,
     is_user_not_found_error,
 )
 from app.services.panel_sync import (
     build_panel_payload,
     is_subscription_live,
-    panel_expire_at,
+    patch_panel_account,
     push_subscription,
 )
 from app.utils.subscription_utils import (
@@ -295,25 +293,23 @@ class SubscriptionService:
                         )
                         await db.commit()
                         return None
-                    metadata_kwargs: dict[str, Any] = {
-                        'user_id': remnawave_id,
-                        'description': settings.format_remnawave_user_description(
+                    # Открыт грейс: состояние подписки трогать нельзя, обновляем
+                    # только карточку аккаунта.
+                    updated_user = await patch_panel_account(
+                        api,
+                        user_id=remnawave_id,
+                        description=settings.format_remnawave_user_description(
                             full_name=user.full_name,
                             username=user.username,
                             telegram_id=user.telegram_id,
                             email=user.email,
                             user_id=user.id,
                         ),
-                    }
-                    if user.telegram_id is not None:
-                        metadata_kwargs['telegram_id'] = user.telegram_id
-                    if user.email is not None:
-                        metadata_kwargs['email'] = user.email
-                    if hwid_limit is not None:
-                        metadata_kwargs['hwid_device_limit'] = hwid_limit
-                    if user_tag is not None:
-                        metadata_kwargs['tag'] = user_tag
-                    updated_user = await api.update_user(**metadata_kwargs)
+                        telegram_id=user.telegram_id,
+                        email=user.email,
+                        hwid_device_limit=hwid_limit,
+                        tag=user_tag,
+                    )
                     subscription.remnawave_short_uuid = updated_user.short_uuid
                     subscription.subscription_url = updated_user.subscription_url
                     subscription.subscription_crypto_link = updated_user.happ_crypto_link
@@ -627,27 +623,23 @@ class SubscriptionService:
                     subscription_id=subscription.id,
                 )
                 async with self.get_api_client() as api:
-                    metadata_kwargs: dict[str, Any] = {
-                        'user_id': remnawave_id,
-                        'description': settings.format_remnawave_user_description(
+                    # Открыт грейс: состояние подписки трогать нельзя, обновляем
+                    # только карточку аккаунта.
+                    updated_user = await patch_panel_account(
+                        api,
+                        user_id=remnawave_id,
+                        description=settings.format_remnawave_user_description(
                             full_name=user.full_name,
                             username=user.username,
                             telegram_id=user.telegram_id,
                             email=user.email,
                             user_id=user.id,
                         ),
-                    }
-                    if user.telegram_id is not None:
-                        metadata_kwargs['telegram_id'] = user.telegram_id
-                    if user.email is not None:
-                        metadata_kwargs['email'] = user.email
-                    hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
-                    if hwid_limit is not None:
-                        metadata_kwargs['hwid_device_limit'] = hwid_limit
-                    user_tag = self._resolve_user_tag(subscription)
-                    if user_tag is not None:
-                        metadata_kwargs['tag'] = user_tag
-                    updated_user = await api.update_user(**metadata_kwargs)
+                        telegram_id=user.telegram_id,
+                        email=user.email,
+                        hwid_device_limit=resolve_hwid_device_limit_for_payload(subscription),
+                        tag=self._resolve_user_tag(subscription),
+                    )
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
                 await db.commit()
@@ -684,40 +676,34 @@ class SubscriptionService:
             async with self.get_api_client() as api:
                 hwid_limit = resolve_hwid_device_limit_for_payload(subscription)
 
-                update_kwargs = dict(
-                    user_id=remnawave_id,
-                    status=UserStatus.ACTIVE if is_actually_active else UserStatus.DISABLED,
-                    expire_at=panel_expire_at(subscription.end_date, is_active=is_actually_active, creating=False),
-                    traffic_limit_bytes=self._gb_to_bytes(subscription.traffic_limit_gb),
-                    traffic_limit_strategy=get_traffic_reset_strategy(subscription.tariff),
-                    telegram_id=user.telegram_id,
-                    email=user.email,
-                    description=settings.format_remnawave_user_description(
-                        full_name=user.full_name,
-                        username=user.username,
-                        telegram_id=user.telegram_id,
-                        email=user.email,
-                        user_id=user.id,
+                # Сквады и внешний сквад уезжают только при явном sync_squads:
+                # в рутинных обновлениях они уже назначены при создании подписки,
+                # а пересылка устаревшего UUID даёт FK violation (A039).
+                only_fields = {
+                    'status',
+                    'expire_at',
+                    'traffic_limit_bytes',
+                    'traffic_limit_strategy',
+                    'telegram_id',
+                    'email',
+                    'description',
+                    'tag',
+                    'hwid_device_limit',
+                }
+                if sync_squads:
+                    only_fields.update({'active_internal_squads', 'external_squad_uuid'})
+
+                update_kwargs = replace(
+                    build_panel_payload(
+                        user,
+                        subscription,
+                        multi_tariff=multi_tariff,
+                        user_tag=user_tag,
+                        now=current_time,
                     ),
-                )
-
-                # Сквады отправляем только при явном sync_squads=True (propagate_squads и пр.)
-                # В рутинных обновлениях пропускаем — сквады уже назначены при создании подписки,
-                # а пересылка стейловых UUID вызывает FK violation → A039 в RemnaWave
-                if sync_squads and subscription.connected_squads:
-                    update_kwargs['active_internal_squads'] = subscription.connected_squads
-
-                if user_tag is not None:
-                    update_kwargs['tag'] = user_tag
-
-                if hwid_limit is not None:
-                    update_kwargs['hwid_device_limit'] = hwid_limit
-
-                # Внешний сквад НЕ пересылаем в рутинных обновлениях — он уже назначен
-                # при создании подписки. Стейловый UUID вызывает FK violation → A039.
-                # Синхронизация сквадов происходит только при sync_squads=True.
-                if sync_squads and ext_squad_uuid is not None:
-                    update_kwargs['external_squad_uuid'] = ext_squad_uuid
+                    hwid_device_limit=hwid_limit,
+                    external_squad_uuid=ext_squad_uuid,
+                ).update_kwargs(user_id=remnawave_id, only_fields=only_fields, now=current_time)
 
                 completed_grace = False
                 updated_user = None
