@@ -266,7 +266,7 @@ class RemnaWaveAutoSyncService:
             if candidate > now:
                 return candidate
 
-        first_time = sorted(times)[0]
+        first_time = min(times)
         next_day = today + timedelta(days=1)
         return datetime.combine(next_day, first_time, tzinfo=UTC)
 

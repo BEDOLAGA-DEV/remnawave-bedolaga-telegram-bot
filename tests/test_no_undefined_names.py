@@ -42,7 +42,7 @@ KNOWN: dict[str, set[str]] = {
 
 
 def _undefined_names() -> dict[str, set[str]]:
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [sys.executable, '-m', 'ruff', 'check', '--select', 'F821', '--no-cache', '--output-format', 'json', 'app'],
         capture_output=True,
         text=True,

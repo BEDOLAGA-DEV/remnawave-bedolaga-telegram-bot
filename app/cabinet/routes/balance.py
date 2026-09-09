@@ -1376,14 +1376,14 @@ def _is_checkable(record: PendingPayment) -> bool:
     if record.method == PaymentMethod.KASSA_AI:
         return status in {'pending', 'created', 'processing'}
     if record.method == PaymentMethod.RIOPAY:
-        return status in {'pending'}
+        return status == 'pending'
     if record.method == PaymentMethod.CISPAY:
-        return status in {'pending'}
+        return status == 'pending'
     if record.method == PaymentMethod.TABPAY:
         # PENDING держится 20 минут после начала оплаты, поэтому проверяем и его.
         return status in {'pending', 'processing'}
     if record.method == PaymentMethod.PARITYPAY:
-        return status in {'pending'}
+        return status == 'pending'
     return False
 
 

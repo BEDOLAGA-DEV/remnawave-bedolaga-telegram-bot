@@ -223,7 +223,7 @@ def _config_out(index: int, target: Target) -> ConfigOut:
 
 def _rejected_preview(raw: str) -> str:
     """Обрезок без учётных данных: всё до «@» отбрасывается, остаток режется."""
-    return raw.split('@')[-1][:REJECTED_PREVIEW_LENGTH]
+    return raw.rsplit('@', maxsplit=1)[-1][:REJECTED_PREVIEW_LENGTH]
 
 
 def _configs_out(configs: SubscriptionConfigs) -> SubscriptionConfigsResponse:

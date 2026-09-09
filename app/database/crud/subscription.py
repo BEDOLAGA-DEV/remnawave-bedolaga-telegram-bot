@@ -1635,7 +1635,7 @@ async def update_subscription_autopay(
     subscription: Subscription,
     enabled: bool,
     days_before: int | None = None,
-    period_days: int | None | object = _AUTOPAY_PERIOD_UNSET,
+    period_days: int | object | None = _AUTOPAY_PERIOD_UNSET,
 ) -> Subscription:
     subscription.autopay_enabled = enabled
     if days_before is not None:
