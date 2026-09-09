@@ -7645,6 +7645,12 @@ async def toggle_daily_subscription_pause_endpoint(
             logger.warning('Failed to restore connected_squads (miniapp)', error=sq_err)
 
         # Sync with RemnaWave
+        # Возобновление списывает суточную оплату — обнуление счётчика решает
+        # общая политика суточного списания, а не жёсткая константа.
+        from app.services.traffic_reset_policy import should_reset_traffic_on_daily_charge
+
+        reset_traffic = should_reset_traffic_on_daily_charge(tariff)
+        reset_reason = 'суточное списание (возобновление)' if reset_traffic else None
         try:
             service = SubscriptionService()
             # Гейт «обновлять или создавать» обязан смотреть на ту же идентичность,
@@ -7660,16 +7666,16 @@ async def toggle_daily_subscription_pause_endpoint(
                 await service.update_remnawave_user(
                     db,
                     subscription,
-                    reset_traffic=False,
-                    reset_reason=None,
+                    reset_traffic=reset_traffic,
+                    reset_reason=reset_reason,
                     sync_squads=True,
                 )
             else:
                 await service.create_remnawave_user(
                     db,
                     subscription,
-                    reset_traffic=False,
-                    reset_reason=None,
+                    reset_traffic=reset_traffic,
+                    reset_reason=reset_reason,
                 )
                 # POST /api/users may ignore activeInternalSquads —
                 # follow up with PATCH to ensure internal squads are assigned
@@ -7682,6 +7688,8 @@ async def toggle_daily_subscription_pause_endpoint(
                 )
                 if _created_panel_user_id and subscription.connected_squads:
                     try:
+                        # Досыл сквадов — часть того же события оплаты:
+                        # счётчик уже обнулён вызовом выше, второй раз не надо.
                         await service.update_remnawave_user(
                             db,
                             subscription,
@@ -7690,6 +7698,12 @@ async def toggle_daily_subscription_pause_endpoint(
                         )
                     except Exception as squad_err:
                         logger.warning('Failed to sync squads after user creation (miniapp)', error=squad_err)
+
+            if reset_traffic:
+                # Счётчик бота ведут по данным панели, но до ближайшего прохода
+                # мониторинга он показывал бы исчерпанный трафик.
+                subscription.traffic_used_gb = 0.0
+                await db.commit()
         except Exception as e:
             logger.error('Ошибка синхронизации с RemnaWave при возобновлении', error=e)
             from app.services.remnawave_retry_queue import remnawave_retry_queue

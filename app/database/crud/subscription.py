@@ -2907,6 +2907,58 @@ async def get_expired_daily_subscriptions_for_recovery(db: AsyncSession) -> list
     return list(subscriptions)
 
 
+async def get_limited_daily_subscriptions_for_recovery(db: AsyncSession) -> list[Subscription]:
+    """Суточные подписки, застрявшие в LIMITED (панель зарезала их по лимиту трафика).
+
+    Списание берёт только ACTIVE, авто-возобновление знает про DISABLED и
+    EXPIRED — LIMITED не подхватывал никто, и оплаченная суточная подписка
+    оставалась в этом статусе навсегда.
+
+    Берём только те, у которых наступили следующие сутки: возврат идёт вместе
+    со списанием за новый день, и обнулять счётчик раньше срока нельзя — это
+    выдало бы за календарный день две квоты вместо одной.
+    """
+    from app.database.models import Tariff
+
+    now = datetime.now(UTC)
+    one_day_ago = now - timedelta(hours=24)
+
+    query = (
+        select(Subscription)
+        .join(Tariff, Subscription.tariff_id == Tariff.id)
+        .join(User, Subscription.user_id == User.id)
+        .options(
+            selectinload(Subscription.user),
+            selectinload(Subscription.tariff),
+        )
+        .where(
+            and_(
+                Tariff.is_daily.is_(True),
+                Tariff.is_active.is_(True),
+                Subscription.status == SubscriptionStatus.LIMITED.value,
+                User.status == UserStatus.ACTIVE.value,
+                # is_(False) не ловит NULL, поэтому добавляем OR is_(None)
+                (Subscription.is_daily_paused.is_(False) | Subscription.is_daily_paused.is_(None)),
+                Subscription.is_trial.is_(False),
+                # Баланс > 0 (грубый пред-фильтр; цену со скидкой считает _process_single_charge)
+                User.balance_kopeks > 0,
+                ((Subscription.last_daily_charge_at.is_(None)) | (Subscription.last_daily_charge_at < one_day_ago)),
+            )
+        )
+    )
+
+    result = await db.execute(query)
+    subscriptions = result.scalars().all()
+
+    if subscriptions:
+        logger.info(
+            '🔍 Найдено суточных подписок с исчерпанным трафиком для возврата',
+            subscriptions_count=len(subscriptions),
+        )
+
+    return list(subscriptions)
+
+
 async def pause_daily_subscription(
     db: AsyncSession,
     subscription: Subscription,
