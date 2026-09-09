@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 import structlog
 
-from app.external.remnawave_api import RemnaWaveInvalidUserIdError, RemnaWaveTransientError, RemnaWaveUser
+from app.external.remnawave_api import RemnaWaveUser
 
 
 logger = structlog.get_logger(__name__)
@@ -94,11 +94,14 @@ async def resolve_panel_identity(
     ``pinned`` — синхронизация конкретной выбранной подписки: подменять её
     личность пользовательским аккаунтом нельзя даже в одиночном режиме тарифов.
     """
-    exact_ids: list[tuple[str, int | None]] = [
-        ('subscription', getattr(subscription, 'remnawave_id', None)),
-    ]
+    # В одиночном режиме тарифов панель адресуется через пользователя, и его id
+    # заполнен у всех старых строк — поэтому он первый. В мультитарифе у каждой
+    # подписки свой аккаунт, и пользовательский id там не адрес, а мусор из
+    # прошлого: подставив его, мы бы переписали чужую подписку.
+    exact_ids: list[tuple[str, int | None]] = []
     if not pinned and not multi_tariff:
         exact_ids.append(('user', getattr(user, 'remnawave_id', None)))
+    exact_ids.append(('subscription', getattr(subscription, 'remnawave_id', None)))
 
     for source, panel_user_id in exact_ids:
         if not panel_user_id:
@@ -120,10 +123,12 @@ async def resolve_panel_identity(
     if short_uuid:
         try:
             panel_user = await api.get_user_by_short_uuid(short_uuid)
-        except (RemnaWaveInvalidUserIdError, RemnaWaveTransientError) as error:
-            # «Панель моргнула» — это «не знаем». Падать сразу нельзя: дальше
-            # аккаунт может опознаться по телеграму. Но если не опознается,
-            # создавать нового тоже нельзя — поднимем эту ошибку в конце.
+        except Exception as error:
+            # Отсутствие аккаунта доказывает ТОЛЬКО 404 (клиент отдаёт его как
+            # None). Любой другой ответ — 5xx на рестарте панели, 429, таймаут —
+            # значит «не знаем». Падать сразу нельзя: дальше аккаунт может
+            # опознаться по телеграму. Но если не опознается, создавать нового
+            # тоже нельзя — поднимем эту ошибку в конце.
             adoption_error = error
             panel_user = None
             logger.warning(

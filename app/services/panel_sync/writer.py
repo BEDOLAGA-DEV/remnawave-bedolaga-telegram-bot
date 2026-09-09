@@ -171,5 +171,10 @@ async def _record_identity(db, user, subscription, panel_user, *, multi_tariff: 
         user.remnawave_id = panel_user_id
 
     if db is None:
+        # Без сессии занятость id не проверить, но и промолчать нельзя: без
+        # записанной связи следующий проход не найдёт аккаунт точным ключом и
+        # заведёт рядом с ним дубль. Пишем в пустую колонку.
+        if not getattr(subscription, 'remnawave_id', None):
+            subscription.remnawave_id = panel_user_id
         return
     await link_subscription_panel_identity(db, subscription, panel_user_id)
