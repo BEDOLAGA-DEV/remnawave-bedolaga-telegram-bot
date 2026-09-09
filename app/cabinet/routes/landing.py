@@ -67,6 +67,9 @@ class LandingTariffPeriod(BaseModel):
     original_price_kopeks: int | None = None  # set if discount active
     original_price_label: str | None = None
     discount_percent: int | None = None  # effective discount for this tariff
+    # Период, отмеченный оператором как самый выгодный: страница обводит его
+    # рамкой и выбирает сразу, вместо первого по счёту.
+    is_highlighted: bool = False
 
 
 class LandingTariff(BaseModel):
@@ -77,6 +80,7 @@ class LandingTariff(BaseModel):
     device_limit: int
     tier_level: int
     periods: list[LandingTariffPeriod]
+    is_highlighted: bool = False  # тариф отмечен оператором как выгодный
     is_daily: bool = False  # суточный тариф: единственный период — 1 день
     daily_price_kopeks: int = 0
 
@@ -486,6 +490,7 @@ async def _load_landing_tariffs(
                     original_price_kopeks=original_price_kopeks,
                     original_price_label=original_price_label,
                     discount_percent=effective_discount,
+                    is_highlighted=tariff.highlight_period_days == days,
                 )
             )
 
@@ -501,6 +506,7 @@ async def _load_landing_tariffs(
                 device_limit=tariff.device_limit,
                 tier_level=tariff.tier_level,
                 periods=periods,
+                is_highlighted=bool(tariff.is_highlighted),
                 is_daily=bool(tariff.is_daily),
                 daily_price_kopeks=tariff.daily_price_kopeks or 0,
             )
