@@ -419,6 +419,11 @@ async def get_purchase_options(
         context = await purchase_service.build_options(db, user, subscription_id=subscription_id)
         payload = context.payload
         payload['sales_mode'] = 'classic'
+        # Автооплата — свойство системы, а не режима продаж. Без этих признаков
+        # кабинет спрашивал состояние автооплаты у каждой подписки и узнавал об
+        # отключённой фиче из ответа 403 — по красной строке в консоли на запрос.
+        payload['platega_recurrent_enabled'] = settings.is_platega_recurrent_enabled()
+        payload['lava_recurrent_enabled'] = settings.is_lava_recurrent_enabled()
         return payload
 
     except PurchaseValidationError as e:

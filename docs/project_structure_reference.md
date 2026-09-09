@@ -3153,6 +3153,9 @@
 - `tests/cabinet/test_purchase_tariff_refund_on_failure.py` — Python-модуль
   Классы: нет
   Функции: `test_persistence_wrapped_in_refund_guard` — REGRESSION: both persistence branches (extend + create) must sit inside, `test_refund_helper_uses_fresh_user_and_refund_transaction` — REGRESSION: ``_refund_charge`` must re-fetch the user via, `test_refund_helper_records_failed_refund_when_credit_fails` — REGRESSION: ``add_user_balance`` swallows its own errors and returns False, `test_extend_subscription_post_commit_cleanup_is_best_effort` — REGRESSION: ``extend_subscription`` commits the extension, then runs, `test_charge_precedes_guard_and_delivery_steps_stay_outside` — REGRESSION: the guard must start AFTER the committed charge (so it covers, `test_trial_conversion_stays_enabled_in_extend_branch` — REGRESSION: the ``extend_subscription`` call must NOT pass
+- `tests/cabinet/test_recurrent_flags_in_purchase_options.py` — Python-модуль
+  Классы: нет
+  Функции: `stub_purchase_service` — Классическая ветка строит ответ сервисом — подменяем его целиком., `test_classic_mode_reports_recurrent_flags`
 - `tests/cabinet/test_referral_reward_choice.py` — Python-модуль
   Классы: `TestPermissionIsEnforcedServerSide` (2 методов), `TestOwnership` (2 методов), `TestNullIsAValue` (4 методов)
   Функции: `allowed`, `stub_terms` — Ответ эндпоинта собирается тем же get_referral_terms — здесь он не предмет., `options`
