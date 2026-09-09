@@ -67,6 +67,7 @@ from app.database.models import (
     YooKassaPayment,
 )
 from app.external.remnawave_api import RemnaWaveAPI
+from app.services.panel_sync import patch_panel_account
 
 
 logger = structlog.get_logger(__name__)
@@ -300,7 +301,8 @@ async def _sync_transferred_subscriptions_to_panel(
         async with _get_remnawave_api() as api:
             for sub in subs_with_panel_id:
                 try:
-                    await api.update_user(
+                    await patch_panel_account(
+                        api,
                         user_id=sub.remnawave_id,
                         description=new_description,
                         telegram_id=primary.telegram_id,

@@ -231,3 +231,31 @@ async def _record_identity(
             subscription.remnawave_id = panel_user_id
         return
     await link_subscription_panel_identity(db, subscription, panel_user_id)
+
+
+async def patch_panel_account(
+    api,
+    *,
+    user_id: int,
+    description: str | None = None,
+    telegram_id: int | None = None,
+    email: str | None = None,
+    update_call=None,
+) -> RemnaWaveUser:
+    """Обновить карточку аккаунта в панели, не трогая состояние подписки.
+
+    Отдельный вход, потому что это другая задача: описание, телеграм и почта
+    описывают человека, а не его подписку. Здесь нет ни статуса, ни даты, ни
+    сквадов — значит, нечему и разъезжаться с остальными писателями. Нужен он
+    там, где подписки под рукой нет вовсе: обновление описания в мидлваре и
+    перенос аккаунтов при слиянии.
+    """
+    update = update_call or api.update_user
+    kwargs: dict = {'user_id': user_id}
+    if description is not None:
+        kwargs['description'] = description
+    if telegram_id is not None:
+        kwargs['telegram_id'] = telegram_id
+    if email is not None:
+        kwargs['email'] = email
+    return await update(**kwargs)
