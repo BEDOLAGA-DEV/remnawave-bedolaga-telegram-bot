@@ -60,16 +60,6 @@ def _get_user_traffic_bytes(panel_user: dict[str, Any]) -> int:
     return panel_user.get('usedTrafficBytes', 0)
 
 
-def _get_lifetime_traffic_bytes(panel_user: dict[str, Any]) -> int:
-    """Извлекает lifetimeUsedTrafficBytes из панельного пользователя (совместимо с новым и старым API)"""
-    # Новый формат: userTraffic.lifetimeUsedTrafficBytes
-    user_traffic = panel_user.get('userTraffic')
-    if user_traffic and isinstance(user_traffic, dict):
-        return user_traffic.get('lifetimeUsedTrafficBytes', 0)
-    # Старый формат: lifetimeUsedTrafficBytes напрямую
-    return panel_user.get('lifetimeUsedTrafficBytes', 0)
-
-
 _PANEL_ID_MAP_MISSING = object()
 _ATTR_NOT_CAPTURED = object()
 
