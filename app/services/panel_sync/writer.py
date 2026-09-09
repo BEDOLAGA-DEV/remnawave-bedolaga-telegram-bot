@@ -309,7 +309,7 @@ async def patch_panel_squads(
     user_id: int,
     squads: list[str],
     external_squad_uuid: str | None,
-    subscription_id: int | None = None,
+    subscription_id: int,
     update_call=None,
 ) -> RemnaWaveUser:
     """Переназначить аккаунту сквады тарифа.
@@ -321,6 +321,10 @@ async def patch_panel_squads(
 
     ``external_squad_uuid=None`` отправляется как null намеренно: у тарифа сняли
     внешний сквад, и в панели он тоже должен исчезнуть.
+
+    ``subscription_id`` обязателен: без него не отфильтровать сквады, снятые за
+    перерасход премиум-лимита. Значение по умолчанию сделало бы пропуск тихим —
+    вызов прошёл бы, а ограничение снялось.
     """
     from app.utils.premium_traffic import effective_panel_squads
 

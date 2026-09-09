@@ -4055,6 +4055,9 @@
 - `tests/services/test_premium_squads_are_filtered_everywhere.py` — Python-модуль
   Классы: нет
   Функции: `test_every_squad_writer_filters_limited_squads`, `test_account_patcher_does_not_touch_squads` — `patch_panel_account` фильтровать нечего — и он не должен знать о сквадах., `test_guard_is_reachable_from_the_writer` — Страховка от обратного: правило есть, а импорт потеряли.
+- `tests/services/test_premium_traffic_multi_tariff.py` — Python-модуль
+  Классы: `TestPanelAccountPerSubscription` (3 методов), `TestStateIsolation` (3 методов), `TestUsageAttribution` (1 методов)
+  Функции: нет
 - `tests/services/test_premium_traffic_purchase.py` — Python-модуль
   Классы: `TestOptions` (4 методов), `TestQuote` (6 методов), `TestApply` (5 методов)
   Функции: нет
