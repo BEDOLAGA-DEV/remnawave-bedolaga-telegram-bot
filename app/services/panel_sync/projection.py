@@ -25,12 +25,18 @@
   переносятся всё равно: они ничего не решают, а показывать устаревшие цифры
   пользователю незачем.
 
-Отдельный режим — ``stale_snapshot``. Полный проход по панели идёт минутами:
-список выгружается целиком, и к моменту применения снимок уже может врать. В
-этом режиме дата не переносится вовсе, а статус меняется только когда данные
-бота согласны с панелью: LIMITED — лишь при действительно исчерпанном трафике,
-EXPIRED — лишь при уже прошедшей дате. Иначе только что оплаченная подписка
-откатывалась бы в LIMITED и уезжала в грейс.
+Политик три, и различаются они тем, насколько панели верят:
+
+* ``ROUTINE`` — фоновая синхронизация. Панель это подсказка: дату берём только у
+  ACTIVE, лимиты не берём вовсе.
+* ``BULK_SNAPSHOT`` — полный проход. Он выгружает весь список и применяет его
+  минутами позже, поэтому снимку нельзя верить на слово: дата не переносится, а
+  статус меняется только когда данные бота согласны с панелью. Иначе только что
+  оплаченная подписка откатывалась бы в LIMITED и уезжала в грейс.
+* ``ADMIN_PULL`` — админ нажал «из панели в бота». Здесь панель побеждает: дата
+  переносится при любом статусе, лимиты трафика и устройств тоже. Это
+  единственный случай, когда правка в панели меняет оплаченный тариф, и она
+  сделана осознанно.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ from datetime import UTC, datetime
 import structlog
 
 from app.database.models import SubscriptionStatus
+from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
 
 
@@ -56,12 +63,44 @@ _RENEWABLE_STATUSES = (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL
 
 
 @dataclass(frozen=True)
+class ProjectionPolicy:
+    """Насколько доверять панели. Готовые политики — ниже."""
+
+    name: str
+    #: Переносить ли дату окончания вообще.
+    takes_date: bool = True
+    #: Брать дату только у ACTIVE (у остальных там бывает искусственная дата).
+    date_only_from_active: bool = True
+    #: Считать снимок возможно протухшим и менять статус осторожно.
+    stale_status: bool = False
+    #: Брать из панели лимиты трафика и устройств (обычно их задаёт тариф).
+    takes_limits: bool = False
+    #: Панель авторитетна для статуса целиком.
+    panel_owns_status: bool = False
+
+
+#: Фоновая синхронизация: панель — подсказка.
+ROUTINE = ProjectionPolicy('routine')
+#: Полный проход: снимок мог протухнуть, пока список выгружался.
+BULK_SNAPSHOT = ProjectionPolicy('bulk_snapshot', takes_date=False, stale_status=True)
+#: Админ нажал «из панели в бота»: панель побеждает.
+ADMIN_PULL = ProjectionPolicy(
+    'admin_pull',
+    date_only_from_active=False,
+    takes_limits=True,
+    panel_owns_status=True,
+)
+
+
+@dataclass(frozen=True)
 class PanelSnapshot:
     """Что панель говорит про аккаунт, в терминах бота."""
 
     status: str | None = None
     expire_at: datetime | None = None
     traffic_used_gb: float | None = None
+    traffic_limit_gb: int | None = None
+    device_limit: int | None = None
     squads: tuple[str, ...] = ()
     short_uuid: str | None = None
     subscription_url: str | None = None
@@ -107,6 +146,8 @@ def _squads(value) -> tuple[str, ...]:
 def read_panel_user(panel_user) -> PanelSnapshot:
     """Разобрать ответ панели — словарь или объект клиента — в снимок."""
     used_bytes = _field(panel_user, 'usedTrafficBytes', 'used_traffic_bytes')
+    limit_bytes = _field(panel_user, 'trafficLimitBytes', 'traffic_limit_bytes')
+    device_limit = _field(panel_user, 'hwidDeviceLimit', 'hwid_device_limit')
     crypto = _field(panel_user, 'subscriptionCryptoLink', 'happ_crypto_link')
     if crypto is None:
         happ = _field(panel_user, 'happ')
@@ -114,15 +155,29 @@ def read_panel_user(panel_user) -> PanelSnapshot:
             crypto = happ.get('cryptoLink')
 
     status = _field(panel_user, 'status')
+    # Клиент отдаёт статус перечислением, сырой ответ панели — строкой.
+    status = getattr(status, 'value', status)
     return PanelSnapshot(
         status=str(status).upper() if status is not None else None,
         expire_at=_parse_date(_field(panel_user, 'expireAt', 'expire_at')),
         traffic_used_gb=(used_bytes / (1024**3)) if isinstance(used_bytes, int | float) else None,
+        traffic_limit_gb=int(limit_bytes / (1024**3)) if isinstance(limit_bytes, int | float) else None,
+        device_limit=coerce_panel_device_limit(device_limit) if device_limit is not None else None,
         squads=_squads(_field(panel_user, 'activeInternalSquads', 'active_internal_squads')),
         short_uuid=_field(panel_user, 'shortUuid', 'short_uuid') or None,
         subscription_url=_field(panel_user, 'subscriptionUrl', 'subscription_url') or None,
         crypto_link=crypto or None,
     )
+
+
+def _next_status_when_panel_wins(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
+    """Статус по решению админа «привести бота к панели»."""
+    expire_at = snapshot.expire_at
+    if snapshot.status == 'ACTIVE' and expire_at is not None and expire_at > now:
+        return SubscriptionStatus.ACTIVE.value
+    if expire_at is not None and expire_at <= now:
+        return SubscriptionStatus.EXPIRED.value
+    return SubscriptionStatus.DISABLED.value
 
 
 def _next_status_from_stale_snapshot(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
@@ -172,15 +227,14 @@ def project_onto_subscription(
     snapshot: PanelSnapshot,
     *,
     now: datetime | None = None,
+    policy: ProjectionPolicy = ROUTINE,
     grace_open: bool = False,
-    stale_snapshot: bool = False,
     trust_status: bool = True,
 ) -> set[str]:
     """Перенести состояние панели в подписку. Возвращает имена изменённых полей.
 
-    ``stale_snapshot=True`` — снимок сделан задолго до применения (полный проход
-    по панели): дата не переносится, статус меняется только при согласии данных
-    бота с панелью.
+    ``policy`` — насколько доверять панели (см. ROUTINE / BULK_SNAPSHOT /
+    ADMIN_PULL в начале модуля).
 
     ``trust_status=False`` — статус не трогать вовсе. Так помечают подписку,
     только что обновлённую вебхуком: свежая оплата важнее любого снимка.
@@ -213,9 +267,9 @@ def project_onto_subscription(
         return changed
 
     if (
-        not stale_snapshot
+        policy.takes_date
         and snapshot.expire_at is not None
-        and snapshot.status == 'ACTIVE'
+        and (snapshot.status == 'ACTIVE' or not policy.date_only_from_active)
         and subscription.end_date is not None
     ):
         end_date = panel_datetime_to_utc(subscription.end_date)
@@ -225,7 +279,9 @@ def project_onto_subscription(
 
     if not trust_status:
         new_status = subscription.status
-    elif stale_snapshot:
+    elif policy.panel_owns_status:
+        new_status = _next_status_when_panel_wins(subscription, snapshot, now=moment)
+    elif policy.stale_status:
         new_status = _next_status_from_stale_snapshot(subscription, snapshot, now=moment)
     else:
         new_status = _next_status(subscription, snapshot, now=moment)
@@ -235,6 +291,16 @@ def project_onto_subscription(
             subscription.grace_candidate_reason = new_status
             subscription.grace_candidate_at = moment
         changed.add('status')
+
+    if policy.takes_limits:
+        # Единственный случай, когда правка в панели меняет оплаченный тариф:
+        # админ нажал «из панели в бота» и хочет ровно этого.
+        if snapshot.traffic_limit_gb is not None and subscription.traffic_limit_gb != snapshot.traffic_limit_gb:
+            subscription.traffic_limit_gb = snapshot.traffic_limit_gb
+            changed.add('traffic_limit_gb')
+        if snapshot.device_limit is not None and subscription.device_limit != snapshot.device_limit:
+            subscription.device_limit = snapshot.device_limit
+            changed.add('device_limit')
 
     # Пустой список сквадов значит «панель ещё не знает», а не «отобрать все».
     if snapshot.squads and set(snapshot.squads) != set(subscription.connected_squads or []):

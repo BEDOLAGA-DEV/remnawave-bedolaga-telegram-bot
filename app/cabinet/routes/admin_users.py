@@ -1,6 +1,7 @@
 """Admin routes for managing users in cabinet."""
 
 import math
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -60,7 +61,13 @@ from app.database.models import (
     WheelSpin,
     WithdrawalRequest,
 )
-from app.services.panel_sync import is_subscription_live
+from app.services.panel_sync import (
+    ADMIN_PULL,
+    ROUTINE,
+    is_subscription_live,
+    project_onto_subscription,
+    read_panel_user,
+)
 from app.services.permission_service import PermissionService
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
@@ -3937,94 +3944,55 @@ async def sync_user_from_panel(
             # Update subscription if requested
             # Use explicitly selected subscription or fall back to first-active
             sync_sub = selected_sub or next((s for s in from_subs if s.is_active), from_subs[0] if from_subs else None)
-            if request.update_subscription and sync_sub:
-                sub = sync_sub
+            if (request.update_subscription or request.update_traffic) and sync_sub:
+                # Кнопка «из панели в бота» — единственный случай, когда панель
+                # побеждает: админ осознанно приводит бота к её состоянию, включая
+                # лимиты. Фоновая синхронизация так не делает.
+                snapshot = read_panel_user(panel_user)
+                if not request.update_subscription:
+                    # Просили только трафик — остальное состояние не трогаем.
+                    snapshot = replace(
+                        snapshot,
+                        expire_at=None,
+                        traffic_limit_gb=None,
+                        device_limit=None,
+                        squads=(),
+                    )
+                before = {
+                    'end_date': sync_sub.end_date,
+                    'status': sync_sub.status,
+                    'traffic_limit_gb': sync_sub.traffic_limit_gb,
+                    'device_limit': sync_sub.device_limit,
+                    'connected_squads': sync_sub.connected_squads,
+                    'traffic_used_gb': sync_sub.traffic_used_gb,
+                    'subscription_url': sync_sub.subscription_url,
+                    'remnawave_short_uuid': sync_sub.remnawave_short_uuid,
+                    'subscription_crypto_link': sync_sub.subscription_crypto_link,
+                }
+                if before['end_date'] and snapshot.expire_at and before['end_date'] > snapshot.expire_at:
+                    # Локальная дата новее панельной: возможно, автопокупка уже
+                    # продлила подписку, а админ откатывает её к панели.
+                    errors.append(
+                        f'Warning: local end_date ({before["end_date"].isoformat()}) is newer than '
+                        f'panel expire_at ({snapshot.expire_at.isoformat()}). '
+                        f'Panel value applied — check if auto-purchase extended subscription.'
+                    )
 
-                # Update end date (normalize timezone)
-                if panel_user.expire_at:
-                    panel_expire_utc = panel_datetime_to_utc(panel_user.expire_at)
-
-                    sub_end_utc = sub.end_date
-                    if sub_end_utc is not None and sub_end_utc.tzinfo is None:
-                        sub_end_utc = sub_end_utc.replace(tzinfo=UTC)
-                    if sub_end_utc != panel_expire_utc:
-                        # Предупреждаем если локальная дата новее панельной
-                        # (например, автопокупка уже продлила подписку)
-                        if sub_end_utc and panel_expire_utc and sub_end_utc > panel_expire_utc:
-                            logger.warning(
-                                'Sync: локальная end_date новее панельной, перезаписываем. '
-                                'Возможно автопокупка уже продлила подписку.',
-                                user_id=user_id,
-                                local_end_date=sub_end_utc.isoformat(),
-                                panel_expire_at=panel_expire_utc.isoformat(),
-                            )
-                            errors.append(
-                                f'Warning: local end_date ({sub_end_utc.isoformat()}) is newer than '
-                                f'panel expire_at ({panel_expire_utc.isoformat()}). '
-                                f'Panel value applied — check if auto-purchase extended subscription.'
-                            )
-                        changes['end_date'] = {
-                            'old': sub.end_date.isoformat() if sub.end_date else None,
-                            'new': panel_expire_utc.isoformat(),
-                        }
-                        sub.end_date = panel_expire_utc
-
-                # Update status
-                panel_status_str = panel_user.status.value if panel_user.status else 'DISABLED'
-                now = datetime.now(UTC)
-                # Compare with normalized panel expire date
-                panel_expire_for_check = panel_expire_utc if panel_user.expire_at else None
-                if panel_status_str == 'ACTIVE' and panel_expire_for_check and panel_expire_for_check > now:
-                    new_status = SubscriptionStatus.ACTIVE.value
-                elif panel_expire_for_check and panel_expire_for_check <= now:
-                    new_status = SubscriptionStatus.EXPIRED.value
-                else:
-                    new_status = SubscriptionStatus.DISABLED.value
-
-                if sub.status != new_status:
-                    changes['status'] = {'old': sub.status, 'new': new_status}
-                    sub.status = new_status
-
-                # Update traffic limit
-                panel_traffic_limit = (
-                    int(panel_user.traffic_limit_bytes / (1024**3)) if panel_user.traffic_limit_bytes else 0
+                changed_fields = project_onto_subscription(
+                    sync_sub,
+                    snapshot,
+                    policy=ADMIN_PULL if request.update_subscription else ROUTINE,
+                    trust_status=request.update_subscription,
                 )
-                if sub.traffic_limit_gb != panel_traffic_limit:
-                    changes['traffic_limit_gb'] = {'old': sub.traffic_limit_gb, 'new': panel_traffic_limit}
-                    sub.traffic_limit_gb = panel_traffic_limit
-
-                # Update device limit
-                panel_device_limit = coerce_panel_device_limit(panel_user.hwid_device_limit)
-                if sub.device_limit != panel_device_limit:
-                    changes['device_limit'] = {'old': sub.device_limit, 'new': panel_device_limit}
-                    sub.device_limit = panel_device_limit
-
-                # Update connected squads
-                if active_squads and sub.connected_squads != active_squads:
-                    changes['connected_squads'] = {'old': sub.connected_squads, 'new': active_squads}
-                    sub.connected_squads = active_squads
-
-                # Update subscription URL
-                if panel_user.subscription_url and sub.subscription_url != panel_user.subscription_url:
-                    changes['subscription_url'] = {'old': sub.subscription_url, 'new': panel_user.subscription_url}
-                    sub.subscription_url = panel_user.subscription_url
-
-                # Update short UUID
-                if panel_user.short_uuid and sub.remnawave_short_uuid != panel_user.short_uuid:
-                    changes['remnawave_short_uuid'] = {'old': sub.remnawave_short_uuid, 'new': panel_user.short_uuid}
-                    sub.remnawave_short_uuid = panel_user.short_uuid
-
-                # Update crypto link
-                if panel_user.happ_crypto_link and sub.subscription_crypto_link != panel_user.happ_crypto_link:
-                    changes['subscription_crypto_link'] = {'old': sub.subscription_crypto_link, 'new': '***'}
-                    sub.subscription_crypto_link = panel_user.happ_crypto_link
-
-            # Update traffic usage if requested
-            if request.update_traffic and sync_sub:
-                panel_traffic_used = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes else 0
-                if abs((sync_sub.traffic_used_gb or 0) - panel_traffic_used) > 0.01:
-                    changes['traffic_used_gb'] = {'old': sync_sub.traffic_used_gb, 'new': panel_traffic_used}
-                    sync_sub.traffic_used_gb = panel_traffic_used
+                for field in sorted(changed_fields):
+                    old_value = before[field]
+                    new_value = getattr(sync_sub, field)
+                    if field == 'subscription_crypto_link':
+                        new_value = '***'
+                    changes[field] = {
+                        'old': old_value.isoformat() if hasattr(old_value, 'isoformat') else old_value,
+                        'new': new_value.isoformat() if hasattr(new_value, 'isoformat') else new_value,
+                    }
 
             # Create subscription if missing but user exists in panel
             if request.create_if_missing and not sync_sub and panel_user.expire_at:

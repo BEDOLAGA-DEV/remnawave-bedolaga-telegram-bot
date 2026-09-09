@@ -14,7 +14,11 @@ from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identi
 from app.services.panel_sync.liveness import is_subscription_live
 from app.services.panel_sync.payload import PanelPayload, build_panel_payload
 from app.services.panel_sync.projection import (
+    ADMIN_PULL,
+    BULK_SNAPSHOT,
+    ROUTINE,
     PanelSnapshot,
+    ProjectionPolicy,
     project_onto_subscription,
     read_panel_user,
 )
@@ -28,10 +32,14 @@ from app.services.panel_sync.writer import (
 
 
 __all__ = [
+    'ADMIN_PULL',
+    'BULK_SNAPSHOT',
+    'ROUTINE',
     'PanelIdentity',
     'PanelPayload',
     'PanelSnapshot',
     'PanelWriteResult',
+    'ProjectionPolicy',
     'SyncStats',
     'build_panel_payload',
     'is_subscription_live',

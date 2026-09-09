@@ -8,7 +8,13 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from app.database.models import SubscriptionStatus
-from app.services.panel_sync import PanelSnapshot, project_onto_subscription, read_panel_user
+from app.services.panel_sync import (
+    ADMIN_PULL,
+    BULK_SNAPSHOT,
+    PanelSnapshot,
+    project_onto_subscription,
+    read_panel_user,
+)
 
 
 NOW = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
@@ -76,6 +82,13 @@ def test_reads_the_parsed_object_shape_of_the_client():
     assert snapshot.traffic_used_gb == 1.0
     assert snapshot.squads == ('squad-d',)
     assert snapshot.crypto_link == 'crypto-2'
+
+
+def test_reads_the_status_enum_of_the_client():
+    """Клиент отдаёт статус перечислением, панель — строкой."""
+    snapshot = read_panel_user(SimpleNamespace(status=SimpleNamespace(value='ACTIVE')))
+
+    assert snapshot.status == 'ACTIVE'
 
 
 def test_unparsable_date_does_not_explode():
@@ -273,7 +286,7 @@ def test_stale_snapshot_never_moves_the_end_date():
         subscription,
         PanelSnapshot(status='ACTIVE', expire_at=NOW + timedelta(days=90)),
         now=NOW,
-        stale_snapshot=True,
+        policy=BULK_SNAPSHOT,
     )
 
     assert subscription.end_date == original
@@ -283,8 +296,8 @@ def test_stale_limited_needs_the_traffic_to_be_actually_spent():
     fresh = _sub(traffic_used_gb=1.0, traffic_limit_gb=100)
     spent = _sub(traffic_used_gb=100.0, traffic_limit_gb=100)
 
-    project_onto_subscription(fresh, PanelSnapshot(status='LIMITED'), now=NOW, stale_snapshot=True)
-    project_onto_subscription(spent, PanelSnapshot(status='LIMITED'), now=NOW, stale_snapshot=True)
+    project_onto_subscription(fresh, PanelSnapshot(status='LIMITED'), now=NOW, policy=BULK_SNAPSHOT)
+    project_onto_subscription(spent, PanelSnapshot(status='LIMITED'), now=NOW, policy=BULK_SNAPSHOT)
 
     assert fresh.status == SubscriptionStatus.ACTIVE.value, 'только что оплаченную не гасим'
     assert spent.status == SubscriptionStatus.LIMITED.value
@@ -293,7 +306,7 @@ def test_stale_limited_needs_the_traffic_to_be_actually_spent():
 def test_stale_limited_does_not_resurrect_a_disabled_subscription():
     subscription = _sub(status=SubscriptionStatus.DISABLED.value, traffic_used_gb=100.0, traffic_limit_gb=100)
 
-    project_onto_subscription(subscription, PanelSnapshot(status='LIMITED'), now=NOW, stale_snapshot=True)
+    project_onto_subscription(subscription, PanelSnapshot(status='LIMITED'), now=NOW, policy=BULK_SNAPSHOT)
 
     assert subscription.status == SubscriptionStatus.DISABLED.value
 
@@ -302,8 +315,8 @@ def test_stale_expired_needs_the_date_to_have_passed():
     renewed = _sub(end_date=NOW + timedelta(days=30))
     over = _sub(end_date=NOW - timedelta(days=1))
 
-    project_onto_subscription(renewed, PanelSnapshot(status='EXPIRED'), now=NOW, stale_snapshot=True)
-    project_onto_subscription(over, PanelSnapshot(status='EXPIRED'), now=NOW, stale_snapshot=True)
+    project_onto_subscription(renewed, PanelSnapshot(status='EXPIRED'), now=NOW, policy=BULK_SNAPSHOT)
+    project_onto_subscription(over, PanelSnapshot(status='EXPIRED'), now=NOW, policy=BULK_SNAPSHOT)
 
     assert renewed.status == SubscriptionStatus.ACTIVE.value, 'продление важнее протухшего снимка'
     assert over.status == SubscriptionStatus.EXPIRED.value
@@ -313,7 +326,7 @@ def test_stale_disabled_is_ignored():
     """DISABLED — решение админа; по протухшему снимку его не применяем."""
     subscription = _sub()
 
-    project_onto_subscription(subscription, PanelSnapshot(status='DISABLED'), now=NOW, stale_snapshot=True)
+    project_onto_subscription(subscription, PanelSnapshot(status='DISABLED'), now=NOW, policy=BULK_SNAPSHOT)
 
     assert subscription.status == SubscriptionStatus.ACTIVE.value
 
@@ -325,8 +338,71 @@ def test_stale_snapshot_still_carries_traffic_and_links():
         subscription,
         PanelSnapshot(status='ACTIVE', traffic_used_gb=5.0, subscription_url='https://new'),
         now=NOW,
-        stale_snapshot=True,
+        policy=BULK_SNAPSHOT,
     )
 
     assert subscription.traffic_used_gb == 5.0
     assert subscription.subscription_url == 'https://new'
+
+
+# ==================== админ нажал «из панели в бота» ====================
+
+# Здесь панель побеждает: админ этого и хочет. Единственный режим, где правка в
+# панели меняет оплаченный тариф.
+
+
+def test_admin_pull_takes_the_date_even_from_a_disabled_account():
+    subscription = _sub()
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='DISABLED', expire_at=NOW - timedelta(days=2)),
+        now=NOW,
+        policy=ADMIN_PULL,
+    )
+
+    assert subscription.end_date == NOW - timedelta(days=2)
+    assert subscription.status == SubscriptionStatus.EXPIRED.value
+
+
+def test_admin_pull_takes_the_limits_from_the_panel():
+    subscription = _sub()
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='ACTIVE', expire_at=NOW + timedelta(days=30), traffic_limit_gb=500, device_limit=10),
+        now=NOW,
+        policy=ADMIN_PULL,
+    )
+
+    assert subscription.traffic_limit_gb == 500
+    assert subscription.device_limit == 10
+
+
+def test_routine_sync_never_takes_the_limits():
+    subscription = _sub()
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='ACTIVE', traffic_limit_gb=500, device_limit=10),
+        now=NOW,
+    )
+
+    assert subscription.traffic_limit_gb == 100
+    assert subscription.device_limit == 3
+
+
+def test_admin_pull_without_a_date_marks_the_account_disabled():
+    subscription = _sub()
+
+    project_onto_subscription(subscription, PanelSnapshot(status='ACTIVE', expire_at=None), now=NOW, policy=ADMIN_PULL)
+
+    assert subscription.status == SubscriptionStatus.DISABLED.value
+
+
+def test_reads_limits_from_both_shapes_of_the_answer():
+    from_dict = read_panel_user({'trafficLimitBytes': 10 * 1024**3, 'hwidDeviceLimit': 4})
+    from_object = read_panel_user(SimpleNamespace(traffic_limit_bytes=10 * 1024**3, hwid_device_limit=4))
+
+    assert from_dict.traffic_limit_gb == 10 and from_dict.device_limit == 4
+    assert from_object.traffic_limit_gb == 10 and from_object.device_limit == 4

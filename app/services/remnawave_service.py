@@ -35,6 +35,7 @@ from app.external.remnawave_api import (
     coerce_panel_user_id,
 )
 from app.services.panel_sync import (
+    BULK_SNAPSHOT,
     project_onto_subscription,
     push_all_subscriptions,
     read_panel_user,
@@ -2220,7 +2221,7 @@ class RemnaWaveService:
                         read_panel_user(panel_user),
                         now=self._now_utc(),
                         grace_open=grace_open,
-                        stale_snapshot=True,
+                        policy=BULK_SNAPSHOT,
                         trust_status=not is_recently_updated_by_webhook(subscription),
                     )
 
