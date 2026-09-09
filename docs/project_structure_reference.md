@@ -1809,6 +1809,9 @@
 - `app/services/panel_sync/payload.py` — Python-модуль
   Классы: `PanelPayload` (3 методов)
   Функции: `build_panel_payload` — Собрать поля запроса из пользователя, подписки и её тарифа.
+- `app/services/panel_sync/writer.py` — Python-модуль
+  Классы: `PanelWriteResult`
+  Функции: `push_subscription` — Отправить состояние подписки в панель.
 
 #### app/services/payment
 
@@ -4178,6 +4181,9 @@
 - `tests/services/panel_sync/test_payload.py` — Python-модуль
   Классы: нет
   Функции: `test_gigabytes_become_bytes`, `test_zero_gigabytes_mean_unlimited`, `test_empty_squads_are_never_sent_on_update` — Пустой список для панели значит «снять все инбаунды» — так подписку глушили., `test_empty_squads_are_sent_as_empty_list_on_create` — У нового аккаунта снимать нечего, а поле обязательно., `test_multi_tariff_username_carries_the_subscription_suffix`, `test_multi_tariff_username_falls_back_to_subscription_id` — Пустой short_id: без запасного суффикса два тарифа получали одно имя,, `test_single_tariff_username_has_no_subscription_suffix`, `test_blocked_user_gets_disabled_status`, `test_live_subscription_gets_active_status_and_its_own_date`, `test_update_of_an_expired_subscription_extinguishes_a_future_panel_date`, `test_update_of_an_expired_subscription_keeps_a_past_panel_date`, `test_create_of_an_expired_subscription_carries_its_real_date` — POST панель принимает с прошедшей датой — выдумывать «минуту вперёд» не надо., `test_external_squad_is_taken_from_the_tariff`, `test_null_external_squad_is_never_sent` — Панель отвечает ошибкой A039 на null в externalSquadUuid., `test_update_payload_never_carries_username` — PATCH с username переименовал бы аккаунт в панели., `test_update_payload_carries_the_panel_user_id`, `test_only_fields_filter_keeps_the_addressee` — Узкие правки (описание, сквады) не должны тащить в панель соседние поля., `test_tag_is_sent_only_when_given`
+- `tests/services/panel_sync/test_writer.py` — Python-модуль
+  Классы: нет
+  Функции: `test_known_account_is_updated_not_created`, `test_unknown_account_is_created`, `test_panel_says_user_is_gone_so_it_is_recreated` — Протухший id в базе не должен ронять синхронизацию., `test_transient_panel_error_is_not_a_reason_to_create_a_duplicate`, `test_expired_subscription_extinguishes_a_future_date_known_in_advance` — Дата панели уже на руках — гасим тем же запросом, без второго., `test_expired_subscription_extinguishes_a_future_date_learned_from_the_answer` — Дату панели узнали только из ответа — гасим вторым запросом., `test_live_subscription_is_written_once`, `test_identity_is_written_onto_the_subscription`, `test_panel_id_taken_by_a_sibling_row_is_not_written` — Колонка частично уникальна: IntegrityError откатил бы уже сделанный PATCH., `test_single_tariff_records_the_account_on_the_user_too`, `test_only_fields_narrows_the_patch` — Узкая правка описания не должна тащить в панель дату и сквады.
 
 #### tests/services/reachability
 
