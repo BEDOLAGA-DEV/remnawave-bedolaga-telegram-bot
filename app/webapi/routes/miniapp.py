@@ -95,6 +95,7 @@ from app.services.trial_activation_service import (
     rollback_trial_subscription_activation,
 )
 from app.services.tribute_service import TributeService
+from app.services.user_action_log_service import schedule_miniapp_action_log
 from app.utils.currency_converter import currency_converter
 from app.utils.pricing_utils import (
     apply_percentage_discount,
@@ -4865,6 +4866,11 @@ async def _authorize_miniapp_user(
             status.HTTP_403_FORBIDDEN,
             detail={'code': 'account_blocked', 'message': 'Account is blocked or deleted'},
         )
+
+    # Единственное место, где запрос Mini App знает пользователя: init_data
+    # приходит телом, поэтому общей зависимости с Request здесь нет. Путь
+    # берётся из контекста запроса, гейты — внутри планировщика.
+    schedule_miniapp_action_log(user.id)
 
     return user
 

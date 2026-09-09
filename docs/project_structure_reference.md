@@ -1721,7 +1721,7 @@
   Функции: нет
 - `app/services/user_action_log_service.py` — Python-модуль
   Классы: нет
-  Функции: `normalize_cabinet_path` — Сворачивает числовые сегменты пути в {id} для группировки однотипных действий., `should_log_cabinet_action`, `schedule_cabinet_action_log` — Fire-and-forget запись действия юзера в кабинете — не задерживает запрос.
+  Функции: `bind_request_path` — Запомнить путь текущего запроса на время его обработки., `reset_request_path`, `current_request_path`, `normalize_cabinet_path` — Сворачивает числовые сегменты пути в {id} для группировки однотипных действий., `should_log_cabinet_action`, `should_log_miniapp_action`, `schedule_cabinet_action_log` — Fire-and-forget запись действия юзера в кабинете — не задерживает запрос., `schedule_miniapp_action_log` — Fire-and-forget запись действия юзера в Mini App., `drain_pending_actions` — Дождаться фоновых записей (нужно тестам и корректному завершению).
 - `app/services/user_avatar_service.py` — Python-модуль
   Классы: нет
   Функции: `pick_avatar_file_id` — Самый маленький размер, который ещё не мылится в шапке; иначе самый крупный., `get_avatar_file_id` — file_id текущего фото профиля или None. Никогда не бросает: аватар — не повод ронять кабинет.
@@ -2144,7 +2144,7 @@
   Классы: нет
   Функции: `add_redoc_endpoint` — Attach a ReDoc endpoint if docs are enabled.
 - `app/webapi/middleware.py` — Python-модуль
-  Классы: `RequestLoggingMiddleware` (1 методов)
+  Классы: `RequestLoggingMiddleware` (1 методов), `RequestPathContextMiddleware` (1 методов)
   Функции: нет
 - `app/webapi/routes/`
 - `app/webapi/schemas/`
@@ -3881,6 +3881,9 @@
 - `tests/services/test_menu_layout_service.py` — Python-модуль
   Классы: нет
   Функции: `test_build_button_connect_direct_mode_with_url` — Тест: кнопка connect с open_mode=direct и валидным URL должна создавать WebAppInfo., `test_build_button_connect_direct_mode_with_subscription_url` — Тест: кнопка connect с open_mode=direct должна получать URL из подписки., `test_build_button_connect_callback_mode` — Тест: кнопка connect с open_mode=callback должна создавать callback кнопку., `test_build_button_connect_direct_mode_fallback_to_callback` — Тест: кнопка connect с open_mode=direct без URL должна fallback на callback.
+- `tests/services/test_miniapp_action_log.py` — Python-модуль
+  Классы: нет
+  Функции: `test_every_miniapp_route_is_classified` — Каждый маршрут Mini App отнесён либо к действиям, либо к чтениям., `test_classification_has_no_stale_paths` — В списках нет путей, которых у роутера больше нет., `test_actions_are_logged_and_reads_are_not` — Покупка — действие, просмотр подписки — нет., `test_path_normalization_keeps_prefix`, `test_authorize_writes_action_for_mutating_request` — Авторизация запроса Mini App пишет действие в тот же журнал., `test_authorize_does_not_write_for_reads` — Просмотр экрана журнал не засоряет., `test_timeline_shows_miniapp_actions` — Записанное действие Mini App видно в «Активности» и не смешано с ботом.
 - `tests/services/test_monitoring_notification_switches.py` — Python-модуль
   Классы: нет
   Функции: `test_global_switch_stops_monitoring_notification_queries`, `test_expiration_state_updates_even_when_notifications_are_disabled`
