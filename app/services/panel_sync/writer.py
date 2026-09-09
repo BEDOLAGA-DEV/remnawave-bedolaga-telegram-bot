@@ -58,6 +58,7 @@ async def push_subscription(
     reset_devices: bool | None = None,
     verify_recorded_id: bool = True,
     create_if_missing: bool = True,
+    recreate_on_missing: bool = True,
     update_call=None,
     create_call=None,
     now: datetime | None = None,
@@ -69,6 +70,10 @@ async def push_subscription(
     проверить занятость id без базы нельзя).
 
     ``only_fields`` — узкая правка: в панель уедут лишь перечисленные поля.
+
+    ``recreate_on_missing=False`` — не пересоздавать аккаунт, если панель на PATCH
+    ответила «такого пользователя нет»: у мониторинга для этого свой путь со
+    своей проверкой, что подписку вообще стоит воскрешать.
 
     ``create_if_missing=False`` — если аккаунта в панели нет, не заводить новый
     и вернуть ``action='no_changes'``: так админ в кабинете может починить
@@ -116,7 +121,7 @@ async def push_subscription(
             # «Пользователя нет» — только явный признак этого (404/A018/A063).
             # Битый локальный идентификатор и транзиентная ошибка сюда намеренно
             # не попадают: уход в создание плодил бы дубли.
-            if not is_user_not_found_error(error):
+            if not is_user_not_found_error(error) or not recreate_on_missing:
                 raise
             logger.warning(
                 'Панельный аккаунт исчез — создаём заново',
