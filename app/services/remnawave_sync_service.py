@@ -226,35 +226,7 @@ class RemnaWaveAutoSyncService:
             raise RemnaWaveConfigurationError(service.configuration_error or 'RemnaWave API не настроен')
 
         async with AsyncSessionLocal() as session:
-            user_stats = await service.sync_users_from_panel(session, 'all')
-            server_stats = await self._sync_servers(session, service)
-
-        return user_stats, server_stats
-
-    async def _sync_servers(
-        self,
-        session: AsyncSession,
-        service: RemnaWaveService,
-    ) -> dict[str, Any]:
-        squads = await service.get_all_squads()
-
-        if not squads:
-            logger.warning('⚠️ Не удалось получить сквады из RemnaWave для автосинхронизации')
-            return {'created': 0, 'updated': 0, 'removed': 0, 'total': 0}
-
-        created, updated, removed = await sync_with_remnawave(session, squads)
-
-        try:
-            await cache.delete_pattern('available_countries*')
-        except Exception as error:
-            logger.warning('⚠️ Не удалось очистить кеш стран после автосинхронизации', error=error)
-
-        return {
-            'created': created,
-            'updated': updated,
-            'removed': removed,
-            'total': len(squads),
-        }
+            return await perform_full_sync(session, service)
 
     @staticmethod
     def _calculate_next_run(times: list[time]) -> datetime:
@@ -269,6 +241,42 @@ class RemnaWaveAutoSyncService:
         first_time = min(times)
         next_day = today + timedelta(days=1)
         return datetime.combine(next_day, first_time, tzinfo=UTC)
+
+
+async def perform_full_sync(session: AsyncSession, service: RemnaWaveService) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Полная синхронизация — одна для бота, кабинета и расписания.
+
+    Три шага по порядку: из панели в бота (импорт), из бота в панель (экспорт —
+    статусы, даты, сквады, тег тарифа), серверы. Раньше «полная» делала только
+    импорт, и в панель не уезжало ничего.
+    """
+    user_stats = dict(await service.sync_users_from_panel(session, 'all'))
+    user_stats['to_panel'] = dict(await service.sync_users_to_panel(session))
+    server_stats = await sync_servers_from_panel(session, service)
+    return user_stats, server_stats
+
+
+async def sync_servers_from_panel(session: AsyncSession, service: RemnaWaveService) -> dict[str, Any]:
+    """Сквады панели → серверы бота; кеш стран сбрасывается."""
+    squads = await service.get_all_squads()
+
+    if not squads:
+        logger.warning('⚠️ Не удалось получить сквады из RemnaWave для синхронизации серверов')
+        return {'created': 0, 'updated': 0, 'removed': 0, 'total': 0}
+
+    created, updated, removed = await sync_with_remnawave(session, squads)
+
+    try:
+        await cache.delete_pattern('available_countries*')
+    except Exception as error:
+        logger.warning('⚠️ Не удалось очистить кеш стран после синхронизации серверов', error=error)
+
+    return {
+        'created': created,
+        'updated': updated,
+        'removed': removed,
+        'total': len(squads),
+    }
 
 
 def _create_service() -> RemnaWaveAutoSyncService:

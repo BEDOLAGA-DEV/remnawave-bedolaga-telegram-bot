@@ -68,6 +68,7 @@ from app.services.panel_sync import (
     project_onto_subscription,
     read_panel_user,
 )
+from app.services.panel_sync.fields import narrow_push_fields
 from app.services.permission_service import PermissionService
 from app.services.user_action_log_service import CLICK_PREFIX, SCREEN_PREFIX
 from app.utils.subscription_utils import coerce_panel_device_limit
@@ -4095,17 +4096,14 @@ async def sync_user_to_panel(
                 detail=service.configuration_error or 'Remnawave API not configured',
             )
 
-        # Что именно админ разрешил отправить. Описание, лимит устройств и
-        # внешний сквад уезжают всегда — они описывают аккаунт, а не подписку.
-        only_fields = {'description', 'hwid_device_limit', 'external_squad_uuid'}
-        if request.update_status:
-            only_fields.add('status')
-        if request.update_expire_date:
-            only_fields.add('expire_at')
-        if request.update_traffic_limit:
-            only_fields.update({'traffic_limit_bytes', 'traffic_limit_strategy'})
-        if request.update_squads:
-            only_fields.add('active_internal_squads')
+        # Что именно админ разрешил отправить; поля аккаунта (описание, лимит
+        # устройств, внешний сквад, тег панели) уезжают всегда — набор общий с ботом.
+        only_fields = narrow_push_fields(
+            status=request.update_status,
+            expire_date=request.update_expire_date,
+            traffic_limit=request.update_traffic_limit,
+            squads=request.update_squads,
+        )
 
         try:
             await db.refresh(push_sub, ['tariff'])

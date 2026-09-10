@@ -30,6 +30,7 @@ from app.localization.texts import get_texts
 from app.services.remnawave_service import RemnaWaveConfigurationError, RemnaWaveService
 from app.services.remnawave_sync_service import (
     RemnaWaveAutoSyncStatus,
+    perform_full_sync,
     remnawave_sync_service,
 )
 from app.services.system_settings_service import bot_configuration_service
@@ -2480,11 +2481,10 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
 🔄 <b>Выполняется полная синхронизация...</b>
 
 📋 Этапы:
-• Загрузка ВСЕХ пользователей из панели Remnawave
-• Создание новых пользователей в боте
-• Обновление существующих пользователей
-• Деактивация подписок отсутствующих пользователей
-• Сохранение балансов
+• Из панели в бота: загрузка ВСЕХ пользователей панели, создание и обновление,
+  деактивация подписок отсутствующих (балансы сохраняются)
+• Из бота в панель: статусы, даты, сквады и теги тарифов всех подписок
+• Серверы: сквады панели → серверы бота
 
 ⏳ Пожалуйста, подождите...
 """
@@ -2492,14 +2492,23 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
     await callback.message.edit_text(progress_text, reply_markup=None)
 
     remnawave_service = RemnaWaveService()
-    stats = await remnawave_service.sync_users_from_panel(db, 'all')
+    # Одна функция на бота, кабинет и расписание: импорт → экспорт → серверы.
+    stats, server_stats = await perform_full_sync(db, remnawave_service)
+    to_panel = stats.get('to_panel') or {}
 
-    total_operations = stats['created'] + stats['updated'] + stats.get('deleted', 0)
+    errors_total = stats['errors'] + to_panel.get('errors', 0)
+    total_operations = (
+        stats['created']
+        + stats['updated']
+        + stats.get('deleted', 0)
+        + to_panel.get('created', 0)
+        + to_panel.get('updated', 0)
+    )
 
-    if stats['errors'] == 0:
+    if errors_total == 0:
         status_emoji = '✅'
         status_text = 'успешно завершена'
-    elif stats['errors'] < total_operations:
+    elif errors_total < total_operations:
         status_emoji = '⚠️'
         status_text = 'завершена с предупреждениями'
     else:
@@ -2509,11 +2518,19 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
     text = f"""
 {status_emoji} <b>Полная синхронизация {status_text}</b>
 
-📊 <b>Результат:</b>
+⬇️ <b>Из панели в бота:</b>
 • 🆕 Создано: {stats['created']}
 • 🔄 Обновлено: {stats['updated']}
 • 🗑️ Деактивировано: {stats.get('deleted', 0)}
 • ❌ Ошибок: {stats['errors']}
+
+⬆️ <b>В панель:</b>
+• 🆕 Создано: {to_panel.get('created', 0)}
+• 🔄 Обновлено: {to_panel.get('updated', 0)}
+• ❌ Ошибок: {to_panel.get('errors', 0)}
+
+🌐 <b>Серверы:</b> создано {server_stats.get('created', 0)}, обновлено {server_stats.get('updated', 0)}, \
+удалено {server_stats.get('removed', 0)} из {server_stats.get('total', 0)}
 """
 
     if stats.get('deleted', 0) > 0:
@@ -2525,7 +2542,7 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
 💰 Балансы пользователей сохранены.
 """
 
-    if stats['errors'] > 0:
+    if errors_total > 0:
         text += """
 
 ⚠️ <b>Внимание:</b>
@@ -2536,14 +2553,13 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
     text += """
 
 💡 <b>Рекомендации:</b>
-• Полная синхронизация выполнена
-• Рекомендуется запускать раз в день
-• Все пользователи из панели синхронизированы
+• Полная синхронизация выполнена в обе стороны
+• По расписанию выполняется она же
 """
 
     keyboard = []
 
-    if stats['errors'] > 0:
+    if errors_total > 0:
         keyboard.append([types.InlineKeyboardButton(text='🔄 Повторить синхронизацию', callback_data='sync_all_users')])
 
     keyboard.extend(
