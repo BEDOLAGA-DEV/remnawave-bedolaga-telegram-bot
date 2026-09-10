@@ -19,6 +19,7 @@ import structlog
 from sqlalchemy.exc import DBAPIError
 
 from app.external.remnawave_api import RemnaWaveTransientError
+from app.services.panel_sync.db_session import rollback_quietly
 from app.services.panel_sync.writer import push_subscription
 
 
@@ -57,10 +58,7 @@ async def _load_batch(db, get_subscriptions_batch, *, offset: int, limit: int):
                 attempt=attempt,
                 error=str(error)[:200],
             )
-            try:
-                await db.rollback()
-            except Exception as rollback_error:
-                logger.debug('Откат после обрыва не удался', error=str(rollback_error)[:200])
+            await rollback_quietly(db)
             if attempt == 2:
                 raise
     return []

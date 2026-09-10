@@ -1821,6 +1821,9 @@
 - `app/services/panel_sync/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/services/panel_sync/db_session.py` — Python-модуль
+  Классы: нет
+  Функции: `release_transaction` — Закрыть транзакцию, которую сессия принесла от вызывающего., `rollback_quietly` — Откатить сессию после сбоя; неудача самого отката — только в debug-лог.
 - `app/services/panel_sync/expiry.py` — Python-модуль
   Классы: нет
   Функции: `panel_expire_at` — Что положить в ``expireAt`` панели. ``None`` — не отправлять поле вовсе., `stale_panel_expire_at` — Чем погасить дату подписки в панели. ``None`` — не трогать.
@@ -2984,7 +2987,7 @@
   Функции: `p12_bytes`, `stubbed_service`, `test_admin_overpay_certificate_routes_registered`, `test_upload_certificate_commits`, `test_upload_certificate_env_locked_warning`, `test_upload_certificate_invalid_returns_422`, `test_upload_certificate_oversize_returns_413`, `test_delete_certificate_commits`
 - `tests/cabinet/test_admin_reachability.py` — Python-модуль
   Классы: нет
-  Функции: `service`, `test_routes_are_registered`, `test_routes_require_expected_permission`, `test_target_in_validation`, `test_status_maps_service_dict`, `test_preview_errors_are_translated`, `test_busy_is_409_with_job_reference`, `test_cancel_not_cancellable_is_409_and_not_found_is_404`, `test_create_job_logs_audit_and_hides_raw_links`, `test_cancel_logs_audit`, `test_list_jobs_passes_filters_and_paginates`, `test_units_splits_csv_filters`, `test_subscription_configs_hide_credentials`, `test_preview_response_omits_request_body`, `test_update_pref_calls_service_with_admin`, `test_summary_maps_rows_and_units`, `test_status_exposes_default_sni`, `test_job_request_accepts_up_to_five_sni_hosts_and_normalizes_them`, `test_target_in_accepts_subscription_config_by_url`, `test_parse_input_route_maps_configs_and_hides_raw_links`, `test_job_out_exposes_probes_and_sni_hosts_from_request`
+  Функции: `service`, `test_routes_are_registered`, `test_routes_require_expected_permission`, `test_target_in_validation`, `test_status_maps_service_dict`, `test_preview_errors_are_translated`, `test_busy_is_409_with_job_reference`, `test_cancel_not_cancellable_is_409_and_not_found_is_404`, `test_create_job_logs_audit_and_hides_raw_links`, `test_cancel_logs_audit`, `test_list_jobs_passes_filters_and_paginates`, `test_units_splits_csv_filters`, `test_subscription_configs_hide_credentials`, `test_preview_response_omits_request_body`, `test_update_pref_calls_service_with_admin`, `test_summary_maps_rows_and_units`, `test_status_exposes_default_sni`, `test_job_request_accepts_up_to_five_sni_hosts_and_normalizes_them`, `test_target_in_accepts_subscription_config_by_url`, `test_parse_input_route_maps_configs_and_hides_raw_links`, `test_job_out_exposes_probes_and_sni_hosts_from_request`, `test_hosts_route_serializes_a_real_panel_host` — Регрессия 2026-09-10 (лог прода): аудит 3.4.3 переименовал у хоста ``tag`` в
 - `tests/cabinet/test_admin_reachability_batches.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_batch_routes_registered`, `test_batch_routes_require_expected_permission`, `test_batch_request_validation`, `test_preview_batch_returns_totals`, `test_create_batch_returns_jobs_with_partial_and_audits`, `test_get_batch_counts_done_targets`, `test_list_batches_paginates`, `test_cancel_and_missing_batch_map_domain_errors`, `test_job_out_carries_batch_id`
@@ -3271,6 +3274,9 @@
 - `tests/contracts/test_public_registration_gate.py` — Python-модуль
   Классы: нет
   Функции: `test_every_public_user_mutation_is_gated_or_narrowly_trusted`, `test_legacy_guest_find_or_create_wrapper_cannot_reappear_in_public_routes`, `test_registration_twins_bind_the_locked_gift_symmetrically`, `test_no_admission_branch_binds_the_locked_gift_twice`, `test_registration_twins_never_bind_the_gift_unguarded` — A raw bind_locked_gift in a twin would surface a lost race as a 500, not a denial.
+- `tests/contracts/test_reachability_route_reads_real_panel_fields.py` — Python-модуль
+  Классы: нет
+  Функции: `test_route_reads_only_fields_that_exist_on_panel_dataclasses`
 - `tests/contracts/test_remnawave_client_paths_match_spec.py` — Python-модуль
   Классы: нет
   Функции: `test_client_calls_only_endpoints_that_exist_in_panel_spec`, `test_legacy_allowlist_entries_are_really_absent_from_spec` — Если ручка из allowlist вернулась в спецификацию, запись устарела — убрать.
@@ -4231,6 +4237,9 @@
 - `tests/services/test_sync_extinguishes_stale_panel_date.py` — Python-модуль
   Классы: нет
   Функции: `harness` — Один батч из одной истёкшей подписки, панельный id уже известен., `test_future_panel_date_of_an_expired_subscription_is_extinguished`, `test_past_panel_date_is_left_alone` — Настоящая дата окончания в панели — история, второго запроса быть не должно., `test_live_subscription_is_not_touched_twice` — У живой подписки дата уходит первым же запросом — гасить нечего.
+- `tests/services/test_sync_from_panel_releases_transaction.py` — Python-модуль
+  Классы: нет
+  Функции: `events`, `db`, `service`, `test_import_releases_callers_transaction_before_loading_panel`, `test_import_rolls_back_after_failure_so_session_stays_usable`
 - `tests/services/test_sync_users_to_panel_adoption.py` — Python-модуль
   Классы: нет
   Функции: `harness` — Один батч из одной подписки, gracce-lease разрешён, клиент — мок., `test_adopts_existing_panel_user_instead_of_creating_a_duplicate`, `test_creates_when_the_panel_does_not_know_the_short_uuid`, `test_single_tariff_writes_identity_onto_the_user` — Мутация «поменять ветки местами» схлопывала все подписки юзера на один id., `test_update_branch_does_not_wipe_squads_when_the_local_list_is_empty` — Сиблинг того же дефекта: ветка обновления по УЖЕ известному id., `test_update_branch_forwards_a_non_empty_squad_list`, `test_identity_is_written_into_the_session_that_owns_the_locked_row` — Связь пишется в сессию лизы, а не в общую сессию прохода.

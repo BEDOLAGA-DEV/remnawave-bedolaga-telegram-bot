@@ -40,6 +40,7 @@ from app.services.panel_sync import (
     push_all_subscriptions,
     read_panel_user,
 )
+from app.services.panel_sync.db_session import release_transaction, rollback_quietly
 from app.utils.subscription_utils import (
     coerce_panel_device_limit,
     device_limit_needs_heal,
@@ -1351,6 +1352,9 @@ class RemnaWaveService:
             await exit_stack.aclose()
 
     async def sync_users_from_panel(self, db: AsyncSession, sync_type: str = 'all') -> dict[str, int]:
+        # Выгрузка панели идёт минутами; транзакцию, с которой пришла сессия
+        # (авторизация кабинета, middleware бота), на это время не держим.
+        await release_transaction(db)
         # In multi-tariff mode, match panel users to subscriptions by remnawave_id
         if settings.is_multi_tariff_enabled():
             return await self._sync_users_from_panel_multi(db, sync_type)
@@ -1963,6 +1967,7 @@ class RemnaWaveService:
 
         except Exception as e:
             logger.error('❌ Критическая ошибка синхронизации пользователей', error=e)
+            await rollback_quietly(db)  # иначе следующий шаг синхронизации упадёт на этой сессии
             return {'created': 0, 'updated': 0, 'errors': 1, 'deleted': 0}
 
     async def _sync_users_from_panel_multi(self, db: AsyncSession, sync_type: str) -> dict[str, int]:
@@ -2247,6 +2252,7 @@ class RemnaWaveService:
 
         except Exception as e:
             logger.error('❌ [multi-tariff] Критическая ошибка синхронизации', error=e)
+            await rollback_quietly(db)  # иначе следующий шаг синхронизации упадёт на этой сессии
             return {'created': 0, 'updated': 0, 'errors': 1, 'deleted': 0}
 
     async def _create_subscription_from_panel_data(self, db: AsyncSession, user, panel_user):
