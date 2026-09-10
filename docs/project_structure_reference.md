@@ -515,7 +515,7 @@
   Классы: `ServerInfo`, `TrafficPurchaseInfo`, `SubscriptionData`, `SubscriptionStatusResponse`, `RenewalOptionResponse`, `RenewalRequest`, `TrafficPackageResponse`, `TrafficPurchaseRequest`, `DevicePurchaseRequest`, `AutopayUpdateRequest`, `TrialActivateRequest`, `TrialInfoResponse`, `PurchaseSelectionRequest`, `PurchasePreviewRequest`, `TariffPurchaseRequest`
   Функции: нет
 - `app/cabinet/schemas/tariffs.py` — Python-модуль
-  Классы: `PeriodPrice` (1 методов), `ServerTrafficLimit`, `ServerInfo`, `PromoGroupInfo`, `TariffListItem`, `TariffListResponse`, `TariffDetailResponse`, `ExternalSquadInfoResponse`, `TariffCreateRequest`, `TariffUpdateRequest`, `TariffSortOrderRequest`, `TariffToggleResponse`, `TariffTrialResponse`, `TariffStatsResponse`, `SyncSquadsResponse`
+  Классы: `PeriodPrice` (1 методов), `ServerTrafficLimit`, `ServerInfo`, `PromoGroupInfo`, `TariffListItem`, `TariffListResponse`, `TariffDetailResponse`, `ExternalSquadInfoResponse`, `TariffCreateRequest` (1 методов), `TariffUpdateRequest` (1 методов), `TariffSortOrderRequest`, `TariffToggleResponse`, `TariffTrialResponse`, `TariffStatsResponse`, `SyncSquadsResponse`
   Функции: нет
 - `app/cabinet/schemas/tickets.py` — Python-модуль
   Классы: `TicketMediaItem` (1 методов), `TicketMessageResponse`, `TicketResponse`, `TicketDetailResponse`, `TicketListResponse`, `TicketCreateRequest` (1 методов), `TicketMessageCreateRequest` (1 методов)
@@ -1046,9 +1046,18 @@
 - `app/handlers/admin/system_logs.py` — Python-модуль
   Классы: нет
   Функции: `show_system_logs`, `refresh_system_logs`, `download_system_logs`, `register_handlers`
+- `app/handlers/admin/tariff_custom_days.py` — Python-модуль
+  Классы: нет
+  Функции: `format_custom_days_settings` — Блок для карточки тарифа., `render_custom_days_settings` — Отдельный экран настроек., `get_custom_days_keyboard`, `show_custom_days_settings`, `toggle_custom_days`, `start_edit_custom_days_price`, `start_edit_custom_days_min`, `start_edit_custom_days_max`, `process_custom_days_price_input`, `process_custom_days_min_input`, `process_custom_days_max_input`, `register_custom_days_handlers`
 - `app/handlers/admin/tariff_custom_traffic.py` — Python-модуль
   Классы: нет
   Функции: `format_custom_traffic_settings` — Format custom-traffic state for the main tariff card., `render_custom_traffic_settings` — Render the dedicated custom-traffic settings screen., `get_custom_traffic_keyboard` — Build the dedicated custom-traffic settings keyboard., `show_custom_traffic_settings` — Show custom-traffic settings for a tariff and leave any field-edit state., `toggle_custom_traffic` — Enable or disable custom traffic after validating stored settings., `start_edit_custom_traffic_price` — Start editing the custom-traffic price per gigabyte., `start_edit_custom_traffic_min` — Start editing the minimum selectable traffic amount., `start_edit_custom_traffic_max` — Start editing the maximum selectable traffic amount., `process_custom_traffic_price_input` — Persist a validated custom-traffic price per gigabyte., `process_custom_traffic_min_input` — Persist a validated minimum selectable traffic amount., `process_custom_traffic_max_input` — Persist a validated maximum selectable traffic amount., `register_custom_traffic_handlers` — Register callbacks and FSM handlers for custom-traffic administration.
+- `app/handlers/admin/tariff_panel_settings.py` — Python-модуль
+  Классы: нет
+  Функции: `format_panel_settings` — Блок для карточки тарифа., `render_panel_settings`, `get_panel_settings_keyboard`, `show_panel_settings`, `toggle_show_in_gift`, `toggle_allow_traffic_topup`, `start_edit_panel_tag`, `start_edit_lava_product`, `start_edit_display_order`, `process_panel_tag_input`, `process_lava_product_input`, `process_display_order_input`, `load_external_squads` — Внешние сквады из панели; при сбое — пустой список (выбор «без сквада» остаётся)., `start_edit_external_squad`, `set_external_squad`, `register_panel_settings_handlers`
+- `app/handlers/admin/tariff_server_limits.py` — Python-модуль
+  Классы: нет
+  Функции: `limit_for` — Лимит сервера в ГБ; 0 = общий лимит тарифа. Терпит старую форму (число вместо объекта)., `format_server_limits_summary` — Строка для карточки тарифа., `render_server_limits`, `get_server_limits_keyboard`, `show_server_limits`, `start_edit_server_limit`, `process_server_limit_input`, `register_server_limits_handlers`
 - `app/handlers/admin/tariffs.py` — Python-модуль
   Классы: нет
   Функции: `get_tariffs_list_keyboard` — Создает клавиатуру списка тарифов., `get_tariff_view_keyboard` — Создает клавиатуру просмотра тарифа., `format_tariff_info` — Форматирует информацию о тарифе., `show_tariffs_list` — Показывает список тарифов., `show_tariffs_page` — Показывает страницу списка тарифов., `view_tariff` — Просмотр тарифа., `toggle_tariff_highlight` — Отмечает тариф как выгодный — в списке тарифов он показывается с подписью., `toggle_tariff` — Переключает активность тарифа., `toggle_trial_tariff` — Переключает тариф как триальный., `toggle_daily_tariff` — Переключает суточный режим тарифа., `start_edit_daily_price` — Начинает редактирование суточной цены., `process_daily_price_input` — Обрабатывает ввод суточной цены (создание и редактирование)., `start_create_tariff` — Начинает создание тарифа., `process_tariff_name` — Обрабатывает название тарифа., `process_tariff_traffic` — Обрабатывает лимит трафика., `process_tariff_devices` — Обрабатывает лимит устройств., `process_tariff_tier` — Обрабатывает уровень тарифа., `select_tariff_type_periodic` — Выбирает периодный тип тарифа., `select_tariff_type_daily` — Выбирает суточный тип тарифа., `process_tariff_prices` — Обрабатывает цены тарифа., `start_edit_tariff_name` — Начинает редактирование названия тарифа., `process_edit_tariff_name` — Обрабатывает новое название тарифа., `start_edit_tariff_description` — Начинает редактирование описания тарифа., `process_edit_tariff_description` — Обрабатывает новое описание тарифа., `start_edit_tariff_traffic` — Начинает редактирование трафика тарифа., `process_edit_tariff_traffic` — Обрабатывает новый лимит трафика., `start_edit_tariff_devices` — Начинает редактирование лимита устройств., `process_edit_tariff_devices` — Обрабатывает новый лимит устройств., `start_edit_tariff_tier` — Начинает редактирование уровня тарифа., `process_edit_tariff_tier` — Обрабатывает новый уровень тарифа., `start_edit_tariff_prices` — Начинает редактирование цен тарифа., `process_edit_tariff_prices` — Обрабатывает новые цены тарифа., `start_edit_tariff_highlight` — Показывает выбор периода, который будет отмечен как самый выгодный., `set_tariff_highlight` — Сохраняет выделенный период. 0 — снять выделение., `start_edit_tariff_device_price` — Начинает редактирование цены за устройство., `process_edit_tariff_device_price` — Обрабатывает новую цену за устройство., `start_edit_tariff_max_devices` — Начинает редактирование макс. устройств., `process_edit_tariff_max_devices` — Обрабатывает новое макс. кол-во устройств., `start_edit_tariff_trial_days` — Начинает редактирование дней триала., `process_edit_tariff_trial_days` — Обрабатывает новое количество дней триала., `start_edit_tariff_traffic_topup` — Показывает меню настройки докупки трафика., `toggle_tariff_traffic_topup` — Переключает включение/выключение докупки трафика., `start_edit_traffic_topup_packages` — Начинает редактирование пакетов докупки трафика., `process_edit_traffic_topup_packages` — Обрабатывает новые пакеты докупки трафика., `start_edit_max_topup_traffic` — Начинает редактирование максимального лимита докупки трафика., `process_edit_max_topup_traffic` — Обрабатывает новое значение максимального лимита докупки трафика., `confirm_delete_tariff` — Запрашивает подтверждение удаления тарифа., `delete_tariff_confirmed` — Удаляет тариф после подтверждения., `start_edit_tariff_squads` — Показывает меню выбора серверов для тарифа., `toggle_tariff_squad` — Переключает выбор сервера для тарифа., `clear_tariff_squads` — Очищает список серверов тарифа., `select_all_tariff_squads` — Выбирает все серверы для тарифа., `start_edit_tariff_promo_groups` — Показывает меню выбора промогрупп для тарифа., `toggle_tariff_promo_group` — Переключает выбор промогруппы для тарифа., `clear_tariff_promo_groups` — Очищает список промогрупп тарифа., `get_traffic_reset_mode_keyboard` — Создает клавиатуру для выбора режима сброса трафика., `start_edit_traffic_reset_mode` — Начинает редактирование режима сброса трафика., `set_traffic_reset_mode` — Устанавливает режим сброса трафика для тарифа., `register_handlers` — Регистрирует обработчики для управления тарифами.
@@ -1707,9 +1716,15 @@
 - `app/services/tabpay_service.py` — Python-модуль
   Классы: `TabPayAPIError` (1 методов), `TabPayNetworkError`, `TabPayService` (15 методов)
   Функции: нет
+- `app/services/tariff_custom_days.py` — Python-модуль
+  Классы: нет
+  Функции: `parse_positive_days` — Целое положительное число дней., `validate_custom_days_configuration` — Ошибки для человека, которые не дают включить произвольные дни.
 - `app/services/tariff_custom_traffic.py` — Python-модуль
   Классы: нет
   Функции: `parse_positive_rubles_to_kopeks` — Parse a positive ruble amount without floating-point rounding., `parse_positive_gb` — Parse a positive whole-number traffic amount in gigabytes., `validate_custom_traffic_configuration` — Return user-facing validation errors for enabling custom traffic.
+- `app/services/tariff_squad_sync.py` — Python-модуль
+  Классы: нет
+  Функции: `schedule_tariff_squad_sync` — Запустить синхронизацию в фоне; ссылка на задачу держится до её конца., `sync_tariff_squads_in_background` — Прогнать сквады тарифа по всем его живым подпискам со своей сессией БД.
 - `app/services/tariff_switch_policy.py` — Python-модуль
   Классы: нет
   Функции: `remaining_days_for_switch` — Сколько дней остатка оплачивать при переключении тарифа., `should_reset_used_traffic` — Обнулять ли счётчик трафика при переключении тарифа.
@@ -1824,6 +1839,9 @@
 - `app/services/panel_sync/runner.py` — Python-модуль
   Классы: `SyncStats` (1 методов)
   Функции: `push_all_subscriptions` — Отправить в панель все подписки бота.
+- `app/services/panel_sync/tags.py` — Python-модуль
+  Классы: нет
+  Функции: `resolve_panel_user_tag` — Тег для панельного аккаунта подписки.
 - `app/services/panel_sync/writer.py` — Python-модуль
   Классы: `PanelWriteResult`
   Функции: `push_subscription` — Отправить состояние подписки в панель., `patch_panel_account` — Обновить карточку аккаунта в панели, не трогая состояние подписки., `patch_panel_squads` — Переназначить аккаунту сквады тарифа.
@@ -2061,6 +2079,9 @@
 - `app/utils/panel_node_usage.py` — Python-модуль
   Классы: нет
   Функции: `coerce_bytes`, `normalize_node_usage` — Привести элементы потребления к форме `{user_id, username, node_uuid, total_bytes}`.
+- `app/utils/panel_tag.py` — Python-модуль
+  Классы: нет
+  Функции: `normalize_panel_tag` — Привести тег к виду панели; пустое значение — «тега нет».
 - `app/utils/payment_logger.py` — Python-модуль
   Классы: нет
   Функции: `configure_payment_logger` — Configure the payment logger with the given handler., `get_payment_logger` — Return the payment logger instance.
@@ -2787,6 +2808,9 @@
 - `migrations/alembic/versions/0118_tariff_is_highlighted.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0119_tariff_panel_tag_and_trial_days.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -2979,6 +3003,9 @@
 - `tests/cabinet/test_admin_sync_records_panel_identity.py` — Python-модуль
   Классы: нет
   Функции: `test_single_mode_update_records_user_panel_id_on_new_subscription`, `test_single_mode_leaves_row_unlinked_when_another_row_holds_the_id` — Колонка частично уникальна: id у соседней строки — не пишем и не падаем., `test_multi_mode_new_subscription_gets_its_own_panel_user`, `test_sync_to_panel_endpoint_records_panel_id_on_selected_subscription`
+- `tests/cabinet/test_admin_tariff_panel_tag.py` — Python-модуль
+  Классы: нет
+  Функции: `test_create_normalizes_panel_tag_to_upper_case`, `test_create_rejects_tags_the_panel_would_reject`, `test_create_without_tag_stores_null`, `test_update_empty_string_clears_tag_and_missing_field_keeps_it`, `test_list_exposes_panel_tag`, `test_trial_duration_days_round_trips_and_null_means_global`, `test_trial_duration_days_must_be_positive`
 - `tests/cabinet/test_admin_traffic_period_days.py` — Python-модуль
   Классы: нет
   Функции: `test_dates_are_read_only_where_they_are_assigned` — Чтение start_dt/end_dt не должно жить вне ветки, которая их задаёт., `test_period_days_is_set_in_every_branch` — Обе ветки разбора дат обязаны задать period_days.
@@ -3284,6 +3311,9 @@
 - `tests/crud/test_subscription_revive.py` — Python-модуль
   Классы: нет
   Функции: `test_revive_expired_starts_fresh_period` — Истёкшую реанимируем: статус active, период с «сейчас», трафик обнулён., `test_revive_alive_extends_from_end_date` — Ещё живую продлеваем от её end_date, накопленный трафик не сбрасываем., `test_create_paid_subscription_revives_existing_in_multitariff` — Мульти-тариф + есть ИСТЁКШАЯ запись тарифа → revive, без вставки дубля., `test_create_paid_subscription_revives_expired_trial` — #3004 (централизовано): ИСТЁКШИЙ ТРИАЛ того же тарифа при платной покупке, `test_revive_expired_trial_converts_to_paid` — Реанимация истёкшего ТРИАЛА: снимаем триальный флаг, обнуляем трафик,, `test_create_paid_subscription_does_not_revive_active` — Активную (не истёкшую) НЕ реанимируем — падаем в обычное создание/IntegrityError., `test_create_paid_subscription_skips_revive_without_tariff` — Классический режим (tariff_id=None) — lookup тарифа не дёргаем, создаём как раньше.
+- `tests/crud/test_tariff_panel_tag_crud.py` — Python-модуль
+  Классы: нет
+  Функции: `test_create_upper_cases_tag`, `test_update_blank_clears_and_missing_keeps`, `test_invalid_tag_is_rejected_before_write`, `test_trial_duration_days_persists`
 - `tests/crud/test_trial_conversion_on_paid_purchase.py` — Python-модуль
   Классы: нет
   Функции: `test_create_paid_subscription_converts_alive_trial_of_other_tariff` — Живой триал ДРУГОГО тарифа при платной покупке конвертируется на месте., `test_create_paid_subscription_prefers_same_tariff_alive_trial` — Живой триал ТОГО ЖЕ тарифа берётся из lookup'а напрямую — без второго, `test_create_paid_subscription_uses_passed_conversion_trial` — Кабинет передаёт пре-резолвленного кандидата — повторный lookup не нужен., `test_create_paid_subscription_falls_to_insert_when_conversion_raced` — Конкурентная покупка успела конвертировать кандидата (конверсия вернула, `test_create_paid_subscription_without_trial_falls_to_insert` — Нет живого триала — обычная вставка новой подписки, как раньше., `test_expired_same_tariff_revive_wins_over_conversion` — Истёкшая запись ПОКУПАЕМОГО тарифа реанимируется (#3004) — конверсия, `test_trial_creation_never_triggers_conversion` — Создание САМОГО триала (is_trial=True) не трогает ветку конверсии., `test_convert_helper_delegates_to_extend` — Обёртка конверсии ревалидирует кандидата под локом и делегирует, `test_convert_helper_bails_out_when_candidate_no_longer_trial` — Гонка: под локом кандидат уже не живой триал (конкурентная покупка, `test_resolver_returns_none_when_revive_will_preempt` — EXPIRED подписка покупаемого тарифа → create уйдёт в revive (#3004),, `test_resolver_prefers_same_tariff_alive_trial`, `test_resolver_falls_back_to_freshest_alive_trial`, `test_cabinet_purchase_excludes_conversion_candidate_from_trial_kill` — Source-pin (в духе test_purchase_tariff_expired_trial_reuse): кабинетный
@@ -3342,6 +3372,9 @@
 - `tests/database/test_tabpay_payments_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match` — Integer вместо Boolean в рукописном DDL иначе не заметить., `test_order_id_is_unique` — Уникальность orderId не даёт двум записям претендовать на один вебхук., `test_downgrade_removes_the_table` — Откат обязан снимать таблицу, иначе повторный upgrade упрётся в неё.
+- `tests/database/test_tariff_panel_tag_schema_parity.py` — Python-модуль
+  Классы: нет
+  Функции: `test_model_declares_both_columns`, `test_migration_adds_the_same_columns_as_the_model`, `test_migration_is_idempotent_on_a_table_that_already_has_the_columns`
 - `tests/database/test_user_balance_lock_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_user_lock_blocks_second_session` — Пока одно зачисление держит строку пользователя, второе ждёт., `test_concurrent_topups_do_not_lose_money` — Два одновременных зачисления складываются, а не затирают друг друга., `test_lock_returns_fresh_values_not_the_cached_object` — Блокировка обязана отдавать значения из БД, а не из кеша сессии.
@@ -3545,12 +3578,21 @@
 - `tests/handlers/test_admin_referral_levels.py` — Python-модуль
   Классы: `TestSingleAnswerPerCallback` (4 методов), `TestActiveBonusSelection` (2 методов), `TestNewLevelSafety` (3 методов), `TestValueInput` (8 методов), `TestTariffSelection` (2 методов), `TestCallbackRouting` (2 методов), `TestPendingInputIsCancelled` (4 методов), `TestDeletedLevelDoesNotResurrectActive` (1 методов), `TestEditorTraps` (7 методов), `TestChainDepthEditing` (4 методов), `TestLevelUnlockThresholdEditing` (4 методов), `TestLevelsModeToggle` (8 методов), `TestCallbackAnswerLength` (3 методов), `TestRegistrationPercentTrap` (3 методов), `TestNonFiniteInput` (2 методов), `TestThresholdWarningPrecision` (2 методов), `TestDepthInputIsCancelledToo` (3 методов)
   Функции: `wired` — Подменяет CRUD уровней и тарифов, собирая записи.
+- `tests/handlers/test_admin_tariff_custom_days.py` — Python-модуль
+  Классы: нет
+  Функции: `test_service_parses_days_and_validates_bounds`, `test_tariff_card_shows_custom_days_block_and_entry`, `test_screen_lists_actions`, `test_enable_requires_valid_settings`, `test_enable_writes_only_flag_when_valid`, `test_price_input_converts_rubles`, `test_min_above_max_is_rejected`, `test_max_below_min_is_rejected`
 - `tests/handlers/test_admin_tariff_custom_traffic.py` — Python-модуль
   Классы: нет
   Функции: `test_tariff_card_renders_custom_traffic_status_and_navigation`, `test_custom_traffic_screen_uses_neutral_value_for_unset_price`, `test_enable_persists_only_enabled_flag_for_valid_settings`, `test_enable_rejects_invalid_settings_without_write`, `test_disable_preserves_price_and_bounds`, `test_price_input_converts_rubles_exactly_and_updates_only_price`, `test_invalid_price_keeps_fsm_active_and_does_not_write`, `test_minimum_above_current_maximum_is_rejected`, `test_maximum_below_current_minimum_is_rejected`, `test_missing_tariff_is_handled_without_update`, `test_custom_traffic_screen_renders_all_unset_values_and_back_navigation`, `test_existing_topup_control_remains_independent`, `test_show_settings_clears_field_edit_state`, `test_minimum_success_updates_only_minimum`, `test_maximum_success_updates_only_maximum`
 - `tests/handlers/test_admin_tariff_custom_traffic_contract.py` — Python-модуль
   Классы: нет
   Функции: `test_tariff_card_exposes_custom_traffic_entry`, `test_tariff_summary_includes_custom_traffic_block`, `test_custom_traffic_module_is_registered_from_tariff_router`, `test_custom_traffic_screen_and_handlers_are_registered`, `test_generic_tariff_toggle_excludes_custom_traffic_callback`, `test_custom_traffic_fsm_states_exist`, `test_disable_path_updates_only_enabled_flag`, `test_field_handlers_use_existing_crud_boundary`
+- `tests/handlers/test_admin_tariff_panel_settings.py` — Python-модуль
+  Классы: нет
+  Функции: `test_tariff_card_shows_panel_block_and_entry_point`, `test_settings_screen_lists_all_actions_and_current_values`, `test_toggle_gift_flips_flag`, `test_toggle_allow_topup_flips_flag`, `test_panel_tag_input_is_normalized_before_write`, `test_panel_tag_dash_clears`, `test_invalid_panel_tag_keeps_state_and_does_not_write`, `test_lava_input_and_dash_clear`, `test_display_order_accepts_non_negative_int_only`, `test_external_squad_list_marks_current_and_offers_none`, `test_set_external_squad_writes_and_schedules_sync`, `test_set_same_external_squad_does_not_resync`
+- `tests/handlers/test_admin_tariff_server_limits.py` — Python-модуль
+  Классы: нет
+  Функции: `test_card_summarizes_limits_and_has_entry`, `test_screen_lists_allowed_squads_with_limits`, `test_screen_lists_all_squads_when_tariff_allows_all`, `test_input_sets_limit_without_mutating_stored_dict`, `test_zero_removes_limit`, `test_invalid_input_keeps_state`
 - `tests/handlers/test_balance_quick_topup.py` — Python-модуль
   Классы: нет
   Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
@@ -3635,6 +3677,9 @@
 - `tests/handlers/test_subscription_gift_purchase.py` — Python-модуль
   Классы: `TestGiftBalanceConfirmation` (7 методов), `TestGiftReplayAndPresentation` (9 методов)
   Функции: `mock_db_user`, `mock_db`, `mock_bot`, `mock_callback`, `memory_state`, `sample_quote`, `sample_purchase_result`
+- `tests/handlers/test_tariff_editor_parity.py` — Python-модуль
+  Классы: нет
+  Функции: `test_editor_modules_are_found`, `test_every_cabinet_field_is_editable_from_telegram`, `test_telegram_editor_writes_only_real_columns` — Дни триала писались в атрибут, которого не было в модели — молча терялись., `test_new_editor_modules_are_registered_from_tariff_router`
 - `tests/handlers/test_tariff_extend_subscription_id.py` — Python-модуль
   Классы: нет
   Функции: `test_confirm_keyboard_puts_subscription_id_first_period_last`, `test_extend_keyboard_embeds_subscription_id_before_tariff_and_period`
@@ -4273,6 +4318,9 @@
 - `tests/services/panel_sync/test_projection.py` — Python-модуль
   Классы: нет
   Функции: `test_reads_the_dictionary_shape_of_the_panel`, `test_reads_the_parsed_object_shape_of_the_client`, `test_reads_the_status_enum_of_the_client` — Клиент отдаёт статус перечислением, панель — строкой., `test_unparsable_date_does_not_explode`, `test_active_panel_moves_the_end_date_in_both_directions`, `test_disabled_panel_never_touches_the_end_date` — У отключённого в панели может лежать «сейчас плюс минута» от старых версий., `test_a_few_seconds_of_difference_are_ignored`, `test_limited_in_the_panel_becomes_limited_in_the_bot`, `test_expired_by_date_marks_a_grace_candidate`, `test_sync_never_expires_a_subscription_that_is_active_in_the_bot` — Защита от гонки: продление могло случиться между чтением панели и записью., `test_expired_trial_becomes_expired`, `test_traffic_is_carried_over`, `test_traffic_jitter_is_ignored`, `test_limits_are_never_read_from_the_panel` — Лимиты трафика и устройств задаёт тариф в боте, а не правка в панели., `test_squads_come_from_the_panel`, `test_empty_squad_list_means_the_panel_does_not_know`, `test_links_are_refreshed`, `test_open_grace_freezes_the_billing_state_but_keeps_links`, `test_status_can_be_frozen_for_a_subscription_just_touched_by_a_webhook` — Свежая оплата важнее любого снимка панели., `test_stale_snapshot_still_takes_the_date_of_a_live_account` — Продление, сделанное руками в панели, бот обязан увидеть., `test_stale_limited_needs_the_traffic_to_be_actually_spent`, `test_stale_limited_does_not_resurrect_a_disabled_subscription`, `test_stale_expired_needs_the_date_to_have_passed`, `test_stale_disabled_is_applied` — DISABLED — решение админа в панели, и донести его больше некому., `test_a_snapshot_older_than_the_row_does_not_touch_billing_fields`, `test_a_snapshot_newer_than_the_row_is_applied`, `test_a_webhook_stamp_also_counts_as_a_fresh_change`, `test_stale_snapshot_still_carries_traffic_and_links`, `test_admin_pull_takes_the_date_even_from_a_disabled_account`, `test_admin_pull_takes_the_limits_from_the_panel`, `test_routine_sync_never_takes_the_limits`, `test_admin_pull_without_a_date_marks_the_account_disabled`, `test_reads_limits_from_both_shapes_of_the_answer`
+- `tests/services/panel_sync/test_tags.py` — Python-модуль
+  Классы: нет
+  Функции: `test_normalize_upper_cases_and_treats_blank_as_absent`, `test_normalize_rejects_what_the_panel_rejects`, `test_tariff_tag_wins_for_paid_subscription`, `test_tariff_tag_wins_over_trial_tag_too`, `test_without_tariff_tag_trial_uses_global_trial_tag`, `test_without_tariff_tag_paid_uses_global_paid_tag`, `test_blank_tariff_tag_counts_as_absent`, `test_payload_resolves_tag_from_tariff_when_caller_passed_none`, `test_payload_keeps_explicit_tag_from_caller`
 - `tests/services/panel_sync/test_writer.py` — Python-модуль
   Классы: нет
   Функции: `test_known_account_is_updated_not_created`, `test_unknown_account_is_created`, `test_panel_says_user_is_gone_so_it_is_recreated` — Протухший id в базе не должен ронять синхронизацию., `test_transient_panel_error_is_not_a_reason_to_create_a_duplicate`, `test_expired_subscription_extinguishes_a_future_date_known_in_advance` — Дата панели уже на руках — гасим тем же запросом, без второго., `test_expired_subscription_extinguishes_a_future_date_learned_from_the_answer` — Дату панели узнали только из ответа — гасим вторым запросом., `test_live_subscription_is_written_once`, `test_identity_is_written_onto_the_subscription`, `test_panel_id_taken_by_a_sibling_row_is_not_written` — Колонка частично уникальна: IntegrityError откатил бы уже сделанный PATCH., `test_single_tariff_records_the_account_on_the_user_too`, `test_only_fields_narrows_the_patch` — Узкая правка описания не должна тащить в панель дату и сквады., `test_recreated_account_replaces_the_stale_link` — Иначе следующий проход снова не найдёт аккаунт и заведёт ещё один дубль., `test_extinguish_learned_from_the_answer_retries_with_a_bigger_margin` — Второй PATCH отвергнут как «прошлое» — повтор с большим запасом, а не ошибка прохода., `test_extinguish_known_in_advance_falls_back_to_status_first` — Дата и статус уехали одним PATCH, и панель отвергла всё: статус важнее — шлём без даты, дату гасим отдельно., `test_a_second_rejection_is_a_real_error` — Если и большой запас панель считает прошлым, это не разъезд часов — ошибку не глотаем., `test_other_validation_errors_are_not_mistaken_for_clock_skew`
