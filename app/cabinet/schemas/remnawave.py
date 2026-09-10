@@ -7,6 +7,12 @@ from typing import Any, Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.external.remnawave_api import (
+    INTERNAL_SQUAD_NAME_MAX_LENGTH,
+    INTERNAL_SQUAD_NAME_MIN_LENGTH,
+    INTERNAL_SQUAD_NAME_PATTERN,
+)
+
 
 # ============ Status & Connection ============
 
@@ -330,16 +336,26 @@ class SquadDetailResponse(BaseModel):
 
 
 class SquadCreateRequest(BaseModel):
-    """Request to create a new squad."""
+    """Request to create a new squad. Имя — по правилам панели (2–30, латиница/цифры/пробел/-/_)."""
 
-    name: str = Field(..., min_length=1, max_length=255)
+    name: str = Field(
+        ...,
+        min_length=INTERNAL_SQUAD_NAME_MIN_LENGTH,
+        max_length=INTERNAL_SQUAD_NAME_MAX_LENGTH,
+        pattern=INTERNAL_SQUAD_NAME_PATTERN,
+    )
     inbound_uuids: list[str] = Field(default_factory=list)
 
 
 class SquadUpdateRequest(BaseModel):
     """Request to update a squad."""
 
-    name: str | None = Field(None, min_length=1, max_length=255)
+    name: str | None = Field(
+        None,
+        min_length=INTERNAL_SQUAD_NAME_MIN_LENGTH,
+        max_length=INTERNAL_SQUAD_NAME_MAX_LENGTH,
+        pattern=INTERNAL_SQUAD_NAME_PATTERN,
+    )
     inbound_uuids: list[str] | None = None
 
 
@@ -347,7 +363,12 @@ class SquadActionRequest(BaseModel):
     """Request to perform squad action."""
 
     action: Literal['add_all_users', 'remove_all_users', 'delete', 'rename', 'update_inbounds']
-    name: str | None = None
+    name: str | None = Field(
+        None,
+        min_length=INTERNAL_SQUAD_NAME_MIN_LENGTH,
+        max_length=INTERNAL_SQUAD_NAME_MAX_LENGTH,
+        pattern=INTERNAL_SQUAD_NAME_PATTERN,
+    )
     inbound_uuids: list[str] | None = None
 
 
