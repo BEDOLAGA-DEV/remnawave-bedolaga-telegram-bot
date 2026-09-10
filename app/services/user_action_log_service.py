@@ -6,15 +6,17 @@
 * кнопки, команды и оплаты бота — ``ButtonStatsMiddleware``
   (тип ``None``/``builtin``/``callback``/``command``/``payment``);
 * кабинет — зависимость авторизации пишет изменения (POST/PUT/PATCH/DELETE),
-  а сам кабинет сообщает об открытии каждого экрана через
-  ``POST /cabinet/activity/screen`` — тип ``cabinet``;
+  а сам кабинет присылает пачкой каждый открытый экран и каждое нажатие
+  (``POST /cabinet/activity/events``) — тип ``cabinet``;
 * Mini App — авторизация запроса в ``app/webapi/routes/miniapp.py``:
   действия и просмотры экранов — тип ``miniapp``.
 
-Решение владельца: «Активность» существует, чтобы видеть каждый шаг — всё,
-что человек делает и в боте, и в кабинете. Поэтому просмотры пишутся тоже.
-Чтобы опрос статуса платежа или перерисовка экрана не давали десяток строк,
-один и тот же экран одного человека в пределах минуты считается одной записью.
+Решение владельца: «Активность» существует, чтобы видеть каждый чих — всё,
+что человек делает и в боте, и в кабинете. Поэтому пишутся и просмотры, и
+нажатия, и сам факт каждого сообщения боту (без содержимого). Чтобы опрос
+статуса платежа или перерисовка экрана не давали десяток строк, один и тот же
+экран одного человека в пределах минуты считается одной записью; нажатия не
+схлопываются, но ограничены лимитом в минуту на человека.
 
 Отличать действие от чтения по HTTP-методу в Mini App нельзя: ``init_data``
 приходит телом, поэтому и чтения идут POST-ом. Список действий задан явно,
@@ -45,6 +47,12 @@ MINIAPP_BUTTON_TYPE = 'miniapp'
 
 # Открытие экрана: button_id = 'SCREEN <нормализованный путь>'.
 SCREEN_PREFIX = 'SCREEN '
+# Нажатие в кабинете: button_id = 'CLICK <подпись кнопки>', callback_data = экран.
+CLICK_PREFIX = 'CLICK '
+CLICK_LABEL_MAX = 80
+# Нажатия не схлопываются — каждое считается, — но один человек не может
+# писать быстрее этого: защита базы от зациклившегося экрана, не от людей.
+CLICK_RATE_LIMIT_PER_MINUTE = 120
 # Тот же экран того же человека внутри окна — одна запись (опрос статуса
 # платежа, перерисовка, StrictMode в разработке).
 SCREEN_DEDUP_SECONDS = 60.0
@@ -123,6 +131,8 @@ _pending_actions: set[asyncio.Task] = set()
 
 # (user_id, button_id) -> момент последней записи экрана.
 _recent_screens: dict[tuple[int, str], float] = {}
+# user_id -> (начало минуты, сколько нажатий в ней записано).
+_click_budget: dict[int, tuple[float, int]] = {}
 _monotonic = time.monotonic
 
 
@@ -210,6 +220,21 @@ def schedule_screen_view_log(user_id: int, path: str, *, surface: str = CABINET_
     _spawn(user_id=user_id, button_id=button_id, callback_data=normalized[:255], button_type=surface)
 
 
+def schedule_click_log(user_id: int, path: str, label: str, *, surface: str = CABINET_BUTTON_TYPE) -> None:
+    """Fire-and-forget запись нажатия: подпись кнопки + экран, где нажали."""
+    if not settings.USER_ACTION_LOG_ENABLED:
+        return
+    clean = ' '.join(label.split())[:CLICK_LABEL_MAX]
+    if not clean or _over_click_budget(user_id):
+        return
+    _spawn(
+        user_id=user_id,
+        button_id=f'{CLICK_PREFIX}{clean}'[:100],
+        callback_data=normalize_screen_path(path)[:255],
+        button_type=surface,
+    )
+
+
 def schedule_miniapp_action_log(user_id: int, path: str | None = None) -> None:
     """Fire-and-forget запись шага юзера в Mini App: действие — как действие, чтение — как экран."""
     resolved = path if path is not None else current_request_path()
@@ -236,6 +261,19 @@ def _seen_recently(user_id: int, button_id: str) -> bool:
     if len(_recent_screens) >= SCREEN_DEDUP_MAX_ENTRIES:
         _prune_recent_screens(now)
     _recent_screens[key] = now
+    return False
+
+
+def _over_click_budget(user_id: int) -> bool:
+    now = _monotonic()
+    started, count = _click_budget.get(user_id, (now, 0))
+    if now - started >= 60.0:
+        started, count = now, 0
+    if count >= CLICK_RATE_LIMIT_PER_MINUTE:
+        return True
+    if len(_click_budget) >= SCREEN_DEDUP_MAX_ENTRIES:
+        _click_budget.clear()
+    _click_budget[user_id] = (started, count + 1)
     return False
 
 

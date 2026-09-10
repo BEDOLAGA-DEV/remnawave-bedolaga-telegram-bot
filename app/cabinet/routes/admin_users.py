@@ -69,7 +69,7 @@ from app.services.panel_sync import (
     read_panel_user,
 )
 from app.services.permission_service import PermissionService
-from app.services.user_action_log_service import SCREEN_PREFIX
+from app.services.user_action_log_service import CLICK_PREFIX, SCREEN_PREFIX
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
 
@@ -3395,7 +3395,7 @@ def _activity_sources(user_id: int) -> dict[str, tuple]:
     def _map_button_click(c: ButtonClickLog) -> UserActivityItem:
         return UserActivityItem(
             type='button_click',
-            subtype=c.button_type if c.button_type in ('command', 'payment') else None,
+            subtype=c.button_type if c.button_type in ('command', 'payment', 'message') else None,
             source='bot',
             title=c.button_text or c.callback_data or c.button_id,
             timestamp=c.clicked_at,
@@ -3403,14 +3403,20 @@ def _activity_sources(user_id: int) -> dict[str, tuple]:
         )
 
     def _web_action(c: ButtonClickLog, *, type_: str, source: str) -> UserActivityItem:
-        # Открытие экрана хранится как 'SCREEN <путь>' — в таймлайне это
-        # отдельный подтип, а не «действие» с техническим заголовком.
-        is_screen = c.button_id.startswith(SCREEN_PREFIX)
+        # Открытие экрана хранится как 'SCREEN <путь>', нажатие — как
+        # 'CLICK <подпись>' — в таймлайне это отдельные подтипы, а не
+        # «действие» с техническим заголовком.
+        subtype = None
+        title = c.button_id
+        for prefix, name in ((SCREEN_PREFIX, 'screen'), (CLICK_PREFIX, 'click')):
+            if c.button_id.startswith(prefix):
+                subtype, title = name, c.button_id[len(prefix) :]
+                break
         return UserActivityItem(
             type=type_,
-            subtype='screen' if is_screen else None,
+            subtype=subtype,
             source=source,
-            title=c.button_id[len(SCREEN_PREFIX) :] if is_screen else c.button_id,
+            title=title,
             timestamp=c.clicked_at,
             meta={'path': c.callback_data} if c.callback_data else None,
         )

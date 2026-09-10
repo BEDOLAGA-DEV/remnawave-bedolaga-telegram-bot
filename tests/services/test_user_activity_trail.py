@@ -56,6 +56,7 @@ def _fresh_dedup(monkeypatch):
     """Окно дедупликации — процессное состояние; тесты не должны видеть друг друга."""
     monkeypatch.setattr(settings, 'USER_ACTION_LOG_ENABLED', True, raising=False)
     log_module._recent_screens.clear()
+    log_module._click_budget.clear()
 
 
 @pytest.fixture
@@ -331,36 +332,97 @@ async def test_miniapp_auth_touches_last_activity_and_logs_the_screen(monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# Роут кабинета: экран принимается, мусор — нет
+# Нажатия: каждое считается, подпись чистится, лимит на человека
+# ---------------------------------------------------------------------------
+
+
+def test_click_is_logged_with_label_and_screen(spawned):
+    log_module.schedule_click_log(7, '/subscriptions/42', '  Скопировать   ключ ')
+
+    assert spawned == [
+        {
+            'user_id': 7,
+            'button_id': f'{log_module.CLICK_PREFIX}Скопировать ключ',
+            'callback_data': '/subscriptions/{id}',
+            'button_type': CABINET_BUTTON_TYPE,
+        }
+    ]
+
+
+def test_every_click_counts_no_dedup(spawned):
+    for _ in range(3):
+        log_module.schedule_click_log(7, '/subscription', 'Скопировать ключ')
+
+    assert len(spawned) == 3
+
+
+def test_click_label_is_trimmed_and_empty_is_dropped(spawned):
+    log_module.schedule_click_log(7, '/subscription', 'x' * 500)
+    log_module.schedule_click_log(7, '/subscription', '   ')
+
+    assert len(spawned) == 1
+    assert len(spawned[0]['button_id']) == len(log_module.CLICK_PREFIX) + log_module.CLICK_LABEL_MAX
+
+
+def test_click_rate_limit_per_user(spawned, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(log_module, '_monotonic', lambda: clock[0])
+    log_module._click_budget.clear()
+
+    for _ in range(log_module.CLICK_RATE_LIMIT_PER_MINUTE + 10):
+        log_module.schedule_click_log(7, '/subscription', 'Кнопка')
+    log_module.schedule_click_log(8, '/subscription', 'Кнопка')
+    clock[0] += 61
+    log_module.schedule_click_log(7, '/subscription', 'Кнопка')
+
+    assert len(spawned) == log_module.CLICK_RATE_LIMIT_PER_MINUTE + 2
+
+
+# ---------------------------------------------------------------------------
+# Роут кабинета: пачка событий принимается, мусор — нет
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_screen_route_accepts_path_and_rejects_garbage(monkeypatch):
+async def test_events_route_accepts_batch_and_rejects_garbage(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from app.cabinet.dependencies import get_current_cabinet_user
     from app.cabinet.routes import activity as route
 
-    seen: list[tuple[int, str]] = []
-    monkeypatch.setattr(route, 'schedule_screen_view_log', lambda user_id, path: seen.append((user_id, path)))
+    seen: list[tuple] = []
+    monkeypatch.setattr(route, 'schedule_screen_view_log', lambda user_id, path: seen.append(('screen', user_id, path)))
+    monkeypatch.setattr(
+        route, 'schedule_click_log', lambda user_id, path, label: seen.append(('click', user_id, path, label))
+    )
 
     app = FastAPI()
     app.include_router(route.router, prefix='/cabinet')
     app.dependency_overrides[get_current_cabinet_user] = lambda: SimpleNamespace(id=7)
 
+    def post(events):
+        return http.post('/cabinet/activity/events', json={'events': events})
+
     with TestClient(app) as http:
-        ok = http.post('/cabinet/activity/screen', json={'path': '/subscriptions/42'})
-        with_query = http.post('/cabinet/activity/screen', json={'path': '/subscription?token=x'})
-        relative = http.post('/cabinet/activity/screen', json={'path': 'subscription'})
-        too_long = http.post('/cabinet/activity/screen', json={'path': '/' + 'a' * 300})
+        ok = post(
+            [
+                {'kind': 'screen', 'path': '/subscriptions/42'},
+                {'kind': 'click', 'path': '/subscriptions/42', 'label': 'Скопировать ключ'},
+                {'kind': 'click', 'path': '/subscriptions/42'},
+            ]
+        )
+        with_query = post([{'kind': 'screen', 'path': '/subscription?token=x'}])
+        relative = post([{'kind': 'screen', 'path': 'subscription'}])
+        too_long = post([{'kind': 'screen', 'path': '/' + 'a' * 300}])
+        unknown_kind = post([{'kind': 'scroll', 'path': '/subscription'}])
+        empty = post([])
+        too_many = post([{'kind': 'screen', 'path': '/subscription'}] * (route.EVENTS_BATCH_MAX + 1))
 
     assert ok.status_code == 204, ok.text
-    assert with_query.status_code == 422
-    assert relative.status_code == 422
-    assert too_long.status_code == 422
-    assert seen == [(7, '/subscriptions/42')]
+    assert seen == [('screen', 7, '/subscriptions/42'), ('click', 7, '/subscriptions/42', 'Скопировать ключ')]
+    for response in (with_query, relative, too_long, unknown_kind, empty, too_many):
+        assert response.status_code == 422, response.text
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +465,16 @@ async def test_timeline_marks_screens_and_payments(monkeypatch):
                     clicked_at=now,
                 ),
                 ButtonClickLog(button_id='successful_payment', user_id=7, button_type='payment', clicked_at=now),
+                ButtonClickLog(
+                    button_id=f'{log_module.CLICK_PREFIX}Скопировать ключ',
+                    user_id=7,
+                    callback_data='/subscription',
+                    button_type=CABINET_BUTTON_TYPE,
+                    clicked_at=now,
+                ),
+                ButtonClickLog(
+                    button_id='message', user_id=7, button_type='message', button_text='photo', clicked_at=now
+                ),
             ]
         )
         await db.commit()
@@ -412,6 +484,8 @@ async def test_timeline_marks_screens_and_payments(monkeypatch):
     shaped = {(item.type, item.subtype, item.title) for item in response.items}
     assert shaped == {
         ('button_click', 'payment', 'successful_payment'),
+        ('button_click', 'message', 'photo'),
+        ('cabinet_action', 'click', 'Скопировать ключ'),
         ('cabinet_action', None, 'POST /cabinet/subscription/trial'),
         ('cabinet_action', 'screen', '/subscription'),
         ('miniapp_action', 'screen', '/miniapp/subscription'),
