@@ -134,8 +134,8 @@ async def test_authorize_writes_action_for_mutating_request(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_authorize_does_not_write_for_reads(monkeypatch):
-    """Просмотр экрана журнал не засоряет."""
+async def test_authorize_writes_screen_for_reads(monkeypatch):
+    """Просмотр экрана — тоже след: пишется как экран, а не как действие."""
     from datetime import UTC, datetime
 
     from app.database.models import Base, User
@@ -148,10 +148,11 @@ async def test_authorize_does_not_write_for_reads(monkeypatch):
 
     written: list[dict] = []
 
-    async def _capture(**kwargs):
-        written.append(kwargs)
+    async def _capture(user_id, button_id, callback_data, button_type):
+        written.append({'user_id': user_id, 'button_id': button_id, 'type': button_type})
 
     monkeypatch.setattr(log_module, '_write_action', _capture)
+    log_module._recent_screens.clear()
 
     async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
         db.add(
@@ -174,7 +175,7 @@ async def test_authorize_does_not_write_for_reads(monkeypatch):
             log_module.reset_request_path(token)
         await log_module.drain_pending_actions()
 
-    assert written == []
+    assert written == [{'user_id': 7, 'button_id': 'SCREEN /miniapp/subscription', 'type': 'miniapp'}]
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.cabinet.apple_iap import apple_iap_only_router, router as apple_iap_router
 
 from .account_linking import merge_router as merge_router, router as account_linking_router
+from .activity import router as activity_router
 from .admin_apps import router as admin_apps_router
 from .admin_audit_log import router as admin_audit_log_router
 from .admin_ban_system import router as admin_ban_system_router
@@ -111,6 +112,7 @@ router.include_router(withdrawal_router)
 router.include_router(ticket_notifications_router)
 router.include_router(tickets_router)
 router.include_router(promocode_router)
+router.include_router(activity_router)
 router.include_router(coupon_router)
 router.include_router(contests_router)
 router.include_router(polls_router)

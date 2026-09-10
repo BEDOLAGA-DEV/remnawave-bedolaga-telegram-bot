@@ -50,29 +50,37 @@ class MenuLayoutStatsService:
         callback_data: str | None = None,
         button_type: str | None = None,
         button_text: str | None = None,
+        telegram_id: int | None = None,
     ) -> ButtonClickLog | None:
         """Записать клик по кнопке.
 
         Args:
-            user_id: Telegram ID пользователя (из middleware) или internal User.id (из API)
+            user_id: внутренний User.id (кабинет, Mini App, внешний API)
+            telegram_id: Telegram ID (middleware бота знает только его)
+
+        Порядок поиска детерминирован: telegram_id ищется только в своей
+        колонке, user_id — сначала в своей, и лишь для внешнего API (где
+        исторически присылали что угодно) — по telegram_id. Раньше одно число
+        искали в обеих колонках без порядка, и при совпадении внутреннего id
+        одного человека с Telegram ID другого клик уходил чужому.
         """
         try:
-            # Проверяем существование пользователя перед вставкой
-            # чтобы избежать ошибки foreign key в логах БД
-            # user_id может быть telegram_id (из middleware) или internal id (из API)
+            from sqlalchemy import select
+
+            from app.database.models import User
+
+            # Проверяем существование пользователя перед вставкой,
+            # чтобы избежать ошибки foreign key в логах БД.
             actual_user_id = None
-            if user_id is not None:
-                from sqlalchemy import or_, select
-
-                from app.database.models import User
-
-                # Пробуем найти пользователя по telegram_id или по internal id
-                result = await db.execute(
-                    select(User.id).where(or_(User.telegram_id == user_id, User.id == user_id)).limit(1)
-                )
-                found_user_id = result.scalar_one_or_none()
-                if found_user_id is not None:
-                    actual_user_id = found_user_id  # Используем internal User.id для FK
+            if telegram_id is not None:
+                result = await db.execute(select(User.id).where(User.telegram_id == telegram_id).limit(1))
+                actual_user_id = result.scalar_one_or_none()
+            elif user_id is not None:
+                result = await db.execute(select(User.id).where(User.id == user_id).limit(1))
+                actual_user_id = result.scalar_one_or_none()
+                if actual_user_id is None:
+                    result = await db.execute(select(User.id).where(User.telegram_id == user_id).limit(1))
+                    actual_user_id = result.scalar_one_or_none()
 
             click_log = ButtonClickLog(
                 button_id=button_id,
