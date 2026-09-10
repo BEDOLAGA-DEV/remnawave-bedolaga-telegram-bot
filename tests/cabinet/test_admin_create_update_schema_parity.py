@@ -196,3 +196,51 @@ def test_pinned_message_can_be_media_only():
 def test_news_update_enforces_same_lengths_as_create(field, value):
     with pytest.raises(ValidationError):
         NewsUpdateRequest(**{field: value})
+
+
+# ---------------------------------------------------------------------------
+# Тариф, правка: тот же объект с нулём снимает выделение, без поля — не трогает
+# ---------------------------------------------------------------------------
+
+
+async def _create_highlighted(http) -> int:
+    response = http.post('/cabinet/admin/tariffs', json=_tariff_payload(highlight_period_days=365))
+    assert response.status_code == 200, response.text
+    assert response.json()['highlight_period_days'] == 365
+    return response.json()['id']
+
+
+@pytest.mark.asyncio
+async def test_update_tariff_zero_clears_highlight(monkeypatch):
+    async with _app(monkeypatch) as (http, db):
+        tariff_id = await _create_highlighted(http)
+
+        response = http.put(f'/cabinet/admin/tariffs/{tariff_id}', json={'highlight_period_days': 0})
+
+        assert response.status_code == 200, response.text
+        assert response.json()['highlight_period_days'] is None
+        stored = await db.get(Tariff, tariff_id)
+        assert stored.highlight_period_days is None
+
+
+@pytest.mark.asyncio
+async def test_update_tariff_moves_highlight_to_another_period(monkeypatch):
+    async with _app(monkeypatch) as (http, _db):
+        tariff_id = await _create_highlighted(http)
+
+        response = http.put(f'/cabinet/admin/tariffs/{tariff_id}', json={'highlight_period_days': 30})
+
+        assert response.status_code == 200, response.text
+        assert response.json()['highlight_period_days'] == 30
+
+
+@pytest.mark.asyncio
+async def test_update_tariff_without_the_field_keeps_highlight(monkeypatch):
+    async with _app(monkeypatch) as (http, _db):
+        tariff_id = await _create_highlighted(http)
+
+        response = http.put(f'/cabinet/admin/tariffs/{tariff_id}', json={'name': 'Базовый+'})
+
+        assert response.status_code == 200, response.text
+        assert response.json()['name'] == 'Базовый+'
+        assert response.json()['highlight_period_days'] == 365
