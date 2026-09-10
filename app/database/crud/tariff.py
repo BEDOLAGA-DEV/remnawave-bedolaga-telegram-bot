@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff
+from app.utils.panel_tag import normalize_panel_tag
 
 
 logger = structlog.get_logger(__name__)
@@ -220,6 +221,10 @@ async def create_tariff(
     traffic_reset_mode: str | None = None,  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = None,
+    # Свой тег панели (нормализуется; недопустимый — ValueError)
+    panel_tag: str | None = None,
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = None,
 ) -> Tariff:
     """Создает новый тариф."""
     normalized_prices = _normalize_period_prices(period_prices)
@@ -263,6 +268,8 @@ async def create_tariff(
         traffic_reset_mode=traffic_reset_mode,
         # Внешний сквад
         external_squad_uuid=external_squad_uuid,
+        panel_tag=normalize_panel_tag(panel_tag),
+        trial_duration_days=trial_duration_days,
     )
 
     db.add(tariff)
@@ -336,6 +343,8 @@ async def update_tariff(
     traffic_reset_mode: str | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = ...,  # ... = не передан, None = убрать внешний сквад
+    # Свой тег панели: ... = не передан, None/'' = снять
+    panel_tag: str | None = ...,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -418,6 +427,8 @@ async def update_tariff(
     # Режим сброса трафика
     if traffic_reset_mode is not ...:
         tariff.traffic_reset_mode = traffic_reset_mode
+    if panel_tag is not ...:
+        tariff.panel_tag = normalize_panel_tag(panel_tag)
     # Внешний сквад
     if external_squad_uuid is not ...:
         tariff.external_squad_uuid = external_squad_uuid

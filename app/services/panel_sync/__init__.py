@@ -25,6 +25,7 @@ from app.services.panel_sync.projection import (
     read_panel_user,
 )
 from app.services.panel_sync.runner import SyncStats, push_all_subscriptions
+from app.services.panel_sync.tags import normalize_panel_tag, resolve_panel_user_tag
 from app.services.panel_sync.writer import (
     PanelWriteResult,
     patch_panel_account,

@@ -2,7 +2,9 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.utils.panel_tag import normalize_panel_tag
 
 
 class PeriodPrice(BaseModel):
@@ -56,6 +58,8 @@ class TariffListItem(BaseModel):
     is_daily: bool = False
     daily_price_kopeks: int = 0
     lava_product_id: str | None = None
+    # Свой тег панельного пользователя (побеждает общие TRIAL/PAID); None = общий
+    panel_tag: str | None = None
     allow_traffic_topup: bool = True
     show_in_gift: bool = True
     traffic_limit_gb: int
@@ -118,12 +122,16 @@ class TariffDetailResponse(BaseModel):
     is_daily: bool = False
     daily_price_kopeks: int = 0
     lava_product_id: str | None = None
+    # Свой тег панельного пользователя (побеждает общие TRIAL/PAID); None = общий
+    panel_tag: str | None = None
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = None
     # Показывать в подарках
     show_in_gift: bool = True
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = None
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -182,12 +190,22 @@ class TariffCreateRequest(BaseModel):
     daily_price_kopeks: int = Field(0, ge=0)
     # UUID продукта Lava для рекуррентных подписок (цена/период заданы в кабинете Lava)
     lava_product_id: str | None = Field(None, max_length=255)
+    # Свой тег панели: пусто = общий тег из настроек; приводится к верхнему регистру
+    panel_tag: str | None = Field(None, max_length=64)
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = Field(None, ge=1)
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках
     show_in_gift: bool = True
+
+    @field_validator('panel_tag')
+    @classmethod
+    def _normalize_panel_tag(cls, value: str | None) -> str | None:
+        # Правила панели: до 16 символов, A–Z, 0–9, _. Пустая строка = «снять тег».
+        return normalize_panel_tag(value)
 
 
 class TariffUpdateRequest(BaseModel):
@@ -227,12 +245,22 @@ class TariffUpdateRequest(BaseModel):
     is_daily: bool | None = None
     daily_price_kopeks: int | None = Field(None, ge=0)
     lava_product_id: str | None = Field(None, max_length=255)
+    # Свой тег панели: пусто = общий тег из настроек; приводится к верхнему регистру
+    panel_tag: str | None = Field(None, max_length=64)
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = Field(None, ge=1)
     # Режим сброса трафика
     traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
     # Показывать в подарках
     show_in_gift: bool | None = None
+
+    @field_validator('panel_tag')
+    @classmethod
+    def _normalize_panel_tag(cls, value: str | None) -> str | None:
+        # Правила панели: до 16 символов, A–Z, 0–9, _. Пустая строка = «снять тег».
+        return normalize_panel_tag(value)
 
 
 class TariffSortOrderRequest(BaseModel):
