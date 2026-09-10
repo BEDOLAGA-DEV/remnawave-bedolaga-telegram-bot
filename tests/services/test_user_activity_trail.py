@@ -274,17 +274,25 @@ async def test_cabinet_dependency_touches_last_activity():
     db.commit.assert_awaited()
 
 
-class _SessionProxy:
-    """`async with AsyncSessionLocal() as db` поверх уже открытой тестовой сессии."""
+def _shared_session(session):
+    """Замена ``AsyncSessionLocal``: `async with` поверх уже открытой тестовой сессии.
 
-    def __init__(self, session):
-        self._session = session
+    В проде у каждой фоновой записи своя сессия; здесь одна на всех, поэтому
+    записи берут её по очереди — AsyncSession не терпит параллельных операций.
+    Замок создаётся внутри теста, в его цикле событий.
+    """
+    lock = asyncio.Lock()
 
-    async def __aenter__(self):
-        return self._session
+    class _Proxy:
+        async def __aenter__(self):
+            await lock.acquire()
+            return session
 
-    async def __aexit__(self, *exc):
-        return False
+        async def __aexit__(self, *exc):
+            lock.release()
+            return False
+
+    return _Proxy
 
 
 @pytest.mark.asyncio
@@ -311,7 +319,7 @@ async def test_miniapp_auth_touches_last_activity_and_logs_the_screen(monkeypatc
         )
         await db.commit()
         # Фоновая запись открывает СВОЮ сессию к боевой базе — подменяем на эту.
-        monkeypatch.setattr(log_module, 'AsyncSessionLocal', lambda: _SessionProxy(db))
+        monkeypatch.setattr(log_module, 'AsyncSessionLocal', _shared_session(db))
 
         token = log_module.bind_request_path('/miniapp/subscription')
         try:
@@ -606,3 +614,57 @@ async def test_remember_task_holds_until_done():
 def test_remember_task_ignores_non_tasks():
     """Тесты middleware подменяют create_task заглушкой, возвращающей None."""
     remember_task(None)
+
+
+# ---------------------------------------------------------------------------
+# Сквозной путь: пачка событий из кабинета → запись в базу → карточка админа
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_events_reach_the_admin_timeline_end_to_end(monkeypatch):
+    """Кабинет прислал экран и два нажатия — админ видит их с подписями, без сырых путей."""
+    from app.cabinet.routes import activity as route
+    from app.cabinet.routes.admin_users import get_user_activity
+    from app.database.models import Base, User
+    from tests.fixtures.sqlite_memory import memory_session
+
+    admin = SimpleNamespace(id=1, telegram_id=1)
+    now = datetime.now(UTC)
+
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        db.add(
+            User(id=7, telegram_id=1, first_name='U', status='active', language='ru', balance_kopeks=0, created_at=now)
+        )
+        await db.commit()
+        # Фоновая запись открывает СВОЮ сессию к боевой базе — подменяем на эту.
+        monkeypatch.setattr(log_module, 'AsyncSessionLocal', _shared_session(db))
+
+        payload = route.ActivityEventsRequest(
+            events=[
+                route.ActivityEvent(kind='screen', path='/subscriptions/42'),
+                route.ActivityEvent(kind='click', path='/subscriptions/42', label='Скопировать ключ'),
+                route.ActivityEvent(kind='click', path='/subscriptions/42', label='Скопировать ключ'),
+                route.ActivityEvent(kind='screen', path='/subscriptions/42'),
+                route.ActivityEvent(kind='screen', path='/coupon/SECRET-TOKEN-1234567'),
+            ]
+        )
+        response = await route.report_activity_events(payload, user=SimpleNamespace(id=7))
+        assert response.status_code == 204
+        await log_module.drain_pending_actions()
+
+        timeline = await get_user_activity(user_id=7, offset=0, limit=50, types=None, admin=admin, db=db)
+
+    shaped = sorted(
+        ((item.type, item.subtype, item.title, (item.meta or {}).get('path')) for item in timeline.items), key=str
+    )
+    assert shaped == [
+        # Два одинаковых нажатия — две записи: нажатия не схлопываются.
+        ('cabinet_action', 'click', 'Скопировать ключ', '/subscriptions/{id}'),
+        ('cabinet_action', 'click', 'Скопировать ключ', '/subscriptions/{id}'),
+        # Экран повторился в пределах минуты — одна запись; секрет купона замаскирован.
+        ('cabinet_action', 'screen', '/coupon/{token}', '/coupon/{token}'),
+        ('cabinet_action', 'screen', '/subscriptions/{id}', '/subscriptions/{id}'),
+    ]
+    assert timeline.total == 4
+    assert 'SECRET' not in str(shaped)
