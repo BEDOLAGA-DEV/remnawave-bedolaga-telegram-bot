@@ -290,6 +290,9 @@ async def purchase_traffic(
         # Save cart for auto-purchase after balance top-up
         cart_data = {
             'cart_mode': 'add_traffic',
+            # Намерение пополнить ради этой корзины: без него тихая автопокупка после
+            # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
+            'return_to_cart': True,
             'subscription_id': subscription.id,
             'traffic_gb': request.gb,
             'price_kopeks': final_price,
@@ -537,6 +540,9 @@ async def save_traffic_cart(
     # Save cart for auto-purchase after balance top-up
     cart_data = {
         'cart_mode': 'add_traffic',
+        # Намерение пополнить ради этой корзины: без него тихая автопокупка после
+        # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
+        'return_to_cart': True,
         'subscription_id': subscription.id,
         'traffic_gb': request.gb,
         'price_kopeks': final_price,

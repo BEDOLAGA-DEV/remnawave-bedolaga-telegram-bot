@@ -41,6 +41,7 @@ from app.localization.texts import Texts, get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.pricing_engine import pricing_engine
 from app.services.remnawave_service import RemnaWaveConfigurationError
+from app.services.subscription_auto_purchase_service import ADDON_CART_MODES
 from app.services.subscription_checkout_service import (
     clear_subscription_checkout_draft,
     get_subscription_checkout_draft,
@@ -1467,6 +1468,14 @@ async def return_to_saved_cart(callback: types.CallbackQuery, state: FSMContext,
         from .tariff_purchase import return_to_saved_tariff_cart
 
         await return_to_saved_tariff_cart(callback, state, db_user, db, cart_data)
+        return
+
+    # Докупка трафика/устройств — не подписка: у такой корзины нет period_days,
+    # и общая ветка ниже объявляла её «повреждённой» и удаляла.
+    if cart_mode in ADDON_CART_MODES:
+        from .addon_cart import resume_addon_cart_from_button
+
+        await resume_addon_cart_from_button(callback, db_user, db, cart_data)
         return
 
     preserved_metadata_keys = {

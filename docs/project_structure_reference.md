@@ -1163,6 +1163,9 @@
 - `app/handlers/subscription/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/handlers/subscription/addon_cart.py` — Python-модуль
+  Классы: нет
+  Функции: `resume_addon_cart_from_button` — Довести докупку до конца по явному нажатию; при нехватке — снова к пополнению.
 - `app/handlers/subscription/autopay.py` — Python-модуль
   Классы: нет
   Функции: `handle_autopay_menu`, `toggle_autopay`, `show_autopay_days`, `set_autopay_days`, `show_autopay_period` — Period picker UI for autopay., `set_autopay_period` — Handle period selection (autopay_period_<N> or autopay_period_default)., `handle_sbp_recurring_menu` — СБП-автопродление Platega: статус текущей подписки + Enable/Cancel., `handle_sbp_recurring_enable` — Подключить СБП-автопродление: создать рекуррентную Platega-подписку и, `handle_sbp_recurring_cancel` — Отменить активное СБП-автопродление и обновить статус-вью., `handle_saved_cards_list`, `handle_unlink_card`, `handle_confirm_unlink`, `handle_subscription_config_back`, `handle_subscription_cancel`
@@ -1673,7 +1676,7 @@
   Функции: `send_bot_startup_notification` — Удобная функция для отправки стартового уведомления., `send_crash_notification` — Отправляет уведомление о падении бота с лог-файлом.
 - `app/services/subscription_auto_purchase_service.py` — Python-модуль
   Классы: `AutoPurchaseContext`, `AutoExtendContext`
-  Функции: `try_auto_extend_expired_after_topup` — Try to auto-extend an expired subscription after balance top-up., `try_resume_disabled_daily_after_topup` — Resume a DISABLED daily subscription immediately after balance top-up., `auto_purchase_saved_cart_after_topup` — Attempts to automatically purchase subscriptions from saved carts.
+  Функции: `try_auto_extend_expired_after_topup` — Try to auto-extend an expired subscription after balance top-up., `try_resume_disabled_daily_after_topup` — Resume a DISABLED daily subscription immediately after balance top-up., `resume_addon_cart` — Докупка трафика/устройств из сохранённой корзины по явному нажатию., `auto_purchase_saved_cart_after_topup` — Attempts to automatically purchase subscriptions from saved carts.
 - `app/services/subscription_checkout_service.py` — Python-модуль
   Классы: нет
   Функции: `save_subscription_checkout_draft` — Persist subscription checkout draft data in cache., `get_subscription_checkout_draft` — Retrieve subscription checkout draft from cache., `clear_subscription_checkout_draft` — Remove stored subscription checkout draft for the user., `has_subscription_checkout_draft`, `should_offer_checkout_resume` — Determine whether checkout resume button should be available for the user.
@@ -3522,6 +3525,9 @@
 - `tests/handlers/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/handlers/test_addon_cart_resume.py` — Python-модуль
+  Классы: нет
+  Функции: `cart_service`, `test_topup_auto_purchases_addon_cart`, `test_topup_without_intent_leaves_addon_cart_alone` — Документирует старую поломку: корзина без флага — «нет свежего намерения»., `test_button_resumes_addon_cart_instead_of_corrupting_it`, `test_button_with_still_insufficient_balance_sends_back_to_topup`, `test_button_reports_failure_without_deleting_cart`, `test_devices_cart_uses_the_same_button_path`, `test_manual_resume_goes_through_dispatcher_as_manual`, `test_manual_success_text_has_no_word_automatically`, `test_every_addon_cart_in_code_carries_topup_intent`
 - `tests/handlers/test_admin_referral_levels.py` — Python-модуль
   Классы: `TestSingleAnswerPerCallback` (4 методов), `TestActiveBonusSelection` (2 методов), `TestNewLevelSafety` (3 методов), `TestValueInput` (8 методов), `TestTariffSelection` (2 методов), `TestCallbackRouting` (2 методов), `TestPendingInputIsCancelled` (4 методов), `TestDeletedLevelDoesNotResurrectActive` (1 методов), `TestEditorTraps` (7 методов), `TestChainDepthEditing` (4 методов), `TestLevelUnlockThresholdEditing` (4 методов), `TestLevelsModeToggle` (8 методов), `TestCallbackAnswerLength` (3 методов), `TestRegistrationPercentTrap` (3 методов), `TestNonFiniteInput` (2 методов), `TestThresholdWarningPrecision` (2 методов), `TestDepthInputIsCancelledToo` (3 методов)
   Функции: `wired` — Подменяет CRUD уровней и тарифов, собирая записи.
