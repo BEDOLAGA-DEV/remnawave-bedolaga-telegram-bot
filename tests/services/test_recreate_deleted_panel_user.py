@@ -1,5 +1,5 @@
 """Самолечение при удалённом из панели юзере: PATCH /api/users отвечает
-«User not found» (404 / A018 / A063), когда подписка в боте живая, — сервисы
+«User not found» (A025 / A063, см. is_user_not_found_error), когда подписка в боте живая, — сервисы
 должны пересоздать панель-юзера, а не падать в ошибку (кейс: админ удалил
 пользователя из RemnaWave вручную, бот об этом не знает)."""
 
@@ -30,9 +30,21 @@ def test_not_found_by_status_404():
 
 
 def test_not_found_by_error_code_without_404():
-    # Разные версии RemnaWave отвечают A018/A063 и не всегда со статусом 404
-    assert is_user_not_found_error(RemnaWaveAPIError('x', 400, {'errorCode': 'A018'}))
+    # Старые панели отвечали A063 не всегда со статусом 404 — код однозначен.
     assert is_user_not_found_error(RemnaWaveAPIError('x', 500, {'errorCode': 'A063'}))
+    assert is_user_not_found_error(RemnaWaveAPIError('x', 500, {'errorCode': 'A025'}))
+
+
+def test_a018_is_a_create_failure_not_absence():
+    """3.4.3: A018 = «Failed to create user» (500). Раньше код считал его «юзера нет»
+    и уводил в пересоздание — то есть на сбое создания создавал бы ещё раз."""
+    assert not is_user_not_found_error(RemnaWaveAPIError('Failed to create user', 500, {'errorCode': 'A018'}))
+    assert not is_user_not_found_error(RemnaWaveAPIError('x', 400, {'errorCode': 'A018'}))
+
+
+def test_404_for_another_entity_is_not_user_absence():
+    """404 у панели имеет 27 причин; чужой 404 (внешний сквад A182) не должен плодить дубли."""
+    assert not is_user_not_found_error(RemnaWaveAPIError('External squad not found', 404, {'errorCode': 'A182'}))
 
 
 def test_other_errors_are_not_not_found():
@@ -55,7 +67,7 @@ def test_invalid_user_id_error_is_never_not_found():
     колонке), а не «панель потеряла юзера». Даже со статусом 404 в конверте она
     НЕ должна открывать ветку пересоздания."""
     assert not is_user_not_found_error(RemnaWaveInvalidUserIdError('Invalid panel user id: None'))
-    assert not is_user_not_found_error(RemnaWaveInvalidUserIdError('x', 404, {'errorCode': 'A018'}))
+    assert not is_user_not_found_error(RemnaWaveInvalidUserIdError('x', 404, {'errorCode': 'A025'}))
 
 
 def test_coerce_panel_user_id_rejects_non_numeric_identifiers():
@@ -226,7 +238,7 @@ async def test_update_skips_panel_when_no_panel_id(monkeypatch):
 
 async def test_update_recreates_deleted_panel_user(monkeypatch):
     api = AsyncMock()
-    api.update_user.side_effect = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A018'})
+    api.update_user.side_effect = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A025'})
     service = _setup_subscription_service(monkeypatch, api)
 
     recreated = object()
@@ -648,19 +660,18 @@ async def test_monitoring_update_does_not_recreate_on_plain_400(monkeypatch):
     service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
 
 
-async def test_monitoring_update_recreates_on_a018_without_404(monkeypatch):
-    """A018 (без статуса 404) — маркер удалённого панель-юзера: пересоздаём."""
+async def test_monitoring_update_does_not_recreate_on_a018_create_failure(monkeypatch):
+    """3.4.3: A018 = «Failed to create user» (500) — сбой записи, а не «юзера нет».
+    Пересоздание здесь дало бы второй аккаунт в панели."""
     api = AsyncMock()
-    api.update_user.side_effect = RemnaWaveAPIError('x', 500, {'errorCode': 'A018'})
+    api.update_user.side_effect = RemnaWaveAPIError('Failed to create user', 500, {'errorCode': 'A018'})
     service = _setup_monitoring_service(monkeypatch, api)
-
-    recreated = object()
-    service.subscription_service.recreate_deleted_panel_user = AsyncMock(return_value=recreated)
+    service.subscription_service.recreate_deleted_panel_user = AsyncMock()
 
     result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
 
-    assert result is recreated
-    service.subscription_service.recreate_deleted_panel_user.assert_awaited_once()
+    assert result is None
+    service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
 
 
 # ---- Апгрейд на 3.0.0: строка ещё без числового id, но с живым shortUuid ----

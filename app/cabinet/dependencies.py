@@ -20,7 +20,7 @@ from app.services.registration_access_service import (
     RegistrationAccessReason,
     RegistrationChannel,
 )
-from app.services.user_action_log_service import schedule_cabinet_action_log
+from app.services.user_action_log_service import mark_user_seen, schedule_cabinet_action_log
 from app.services.user_revival_service import NotDeletedError, revive_deleted_user
 
 from .auth.jwt_handler import get_token_payload
@@ -275,11 +275,16 @@ async def get_current_cabinet_user(
                         },
                     )
 
-    # Throttled update of cabinet_last_login (at most every 5 minutes)
+    # Троттлинг меток (не чаще раза в пять минут): last_activity двигают все
+    # поверхности — по ней карточка показывает «последнюю активность», а сторож
+    # неактивных решает, кого удалять; cabinet_last_login — только кабинет.
     now = datetime.now(UTC)
+    touched = mark_user_seen(user, now=now)
     if not user.cabinet_last_login or (now - user.cabinet_last_login).total_seconds() > 300:
+        user.cabinet_last_login = now
+        touched = True
+    if touched:
         try:
-            user.cabinet_last_login = now
             await db.commit()
         except Exception:
             pass

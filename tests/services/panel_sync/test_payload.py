@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from app.database.models import SubscriptionStatus
 from app.external.remnawave_api import UserStatus
 from app.services.panel_sync import build_panel_payload
+from app.services.panel_sync.expiry import _MINIMUM_FUTURE as MARGIN
 
 
 NOW = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
@@ -117,7 +118,7 @@ def test_update_of_an_expired_subscription_extinguishes_a_future_panel_date():
 
     kwargs = payload.update_kwargs(user_id=7, panel_current=NOW + timedelta(days=100), now=NOW)
 
-    assert kwargs['expire_at'] == NOW + timedelta(minutes=1)
+    assert kwargs['expire_at'] == NOW + MARGIN
 
 
 def test_update_of_an_expired_subscription_keeps_a_past_panel_date():

@@ -38,6 +38,8 @@ HOSTS = [
         config_profile_inbound_uuid='in-eu',
     ),
     RemnaWaveHost(uuid='h-off', remark='Old', address='old.example', port=443, is_disabled=True),
+    # Маркер «БС» только в тегах панели (3.4.3: `tags: string[]`), ни в remark, ни в SNI.
+    RemnaWaveHost(uuid='h-tagged', remark='Finland', address='fi-host.example', port=443, tags=['bs', 'lte']),
 ]
 NODES = [
     RemnaWaveNode(
@@ -72,8 +74,8 @@ def _resolver(prefs: dict | None = None, links: list[str] | None = None) -> Targ
 
 async def test_hosts_hide_disabled_by_default_and_guess_purpose() -> None:
     views = await _resolver().hosts()
-    assert [v.host.uuid for v in views] == ['h-bs', 'h-eu']
-    bs, eu = views
+    assert [v.host.uuid for v in views] == ['h-bs', 'h-eu', 'h-tagged']
+    bs, eu, tagged = views
     assert (bs.target.kind, bs.target.target_key, bs.target.sni, bs.target.purpose, bs.purpose_guessed) == (
         KIND_HOST,
         'bs-host.example:9443',
@@ -82,7 +84,9 @@ async def test_hosts_hide_disabled_by_default_and_guess_purpose() -> None:
         True,
     )
     assert (eu.target.purpose, eu.node_uuids) == ('regular', ['n-1'])
-    assert len(await _resolver().hosts(include_disabled=True)) == 3
+    # Назначение угадано по тегам панели: remark/SNI у хоста нейтральные.
+    assert (tagged.target.purpose, tagged.purpose_guessed) == ('bs', True)
+    assert len(await _resolver().hosts(include_disabled=True)) == 4
 
 
 async def test_sources_are_fetched_once_per_resolver() -> None:

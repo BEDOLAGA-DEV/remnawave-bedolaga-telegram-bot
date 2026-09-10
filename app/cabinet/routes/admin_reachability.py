@@ -186,7 +186,8 @@ def _host_out(view: HostView) -> HostTargetOut:
         port=view.host.port,
         sni=view.target.sni,
         is_disabled=view.host.is_disabled,
-        tag=view.host.tag,
+        # 3.4.3: у хоста массив тегов; кабинету отдаём одну строку-подпись.
+        tag=', '.join(view.host.tags) or None,
         purpose=view.target.purpose,
         purpose_guessed=view.purpose_guessed,
         excluded=view.excluded,
