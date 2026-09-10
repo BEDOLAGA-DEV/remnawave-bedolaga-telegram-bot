@@ -162,6 +162,7 @@ class Settings(BaseSettings):
     CHANNEL_IS_REQUIRED_SUB: bool = False
     CHANNEL_DISABLE_TRIAL_ON_UNSUBSCRIBE: bool = True
     CHANNEL_REQUIRED_FOR_ALL: bool = False
+    CHANNEL_REQUIRED_FOR_PAID: bool = True
 
     DATABASE_URL: str | None = None
 

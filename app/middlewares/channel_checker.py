@@ -155,6 +155,10 @@ class ChannelCheckerMiddleware(BaseMiddleware):
         if is_registration_process(event, current_state):
             return await handler(event, data)
 
+        # Подписка на канал — антифрод против фермы триалов; платящему она не нужна.
+        if not settings.CHANNEL_REQUIRED_FOR_PAID and await self._has_active_paid_subscription(telegram_id):
+            return await handler(event, data)
+
         # Ensure service has bot reference for API fallback
         bot: Bot = data['bot']
         if not channel_subscription_service.bot:
@@ -489,6 +493,14 @@ class ChannelCheckerMiddleware(BaseMiddleware):
                 await db.rollback()
 
     # -- _deactivate (multi-channel) -------------------------------------------
+
+    @staticmethod
+    async def _has_active_paid_subscription(telegram_id: int) -> bool:
+        """Есть ли у пользователя активная НЕтриальная подписка."""
+        async with AsyncSessionLocal() as db:
+            user = await get_user_by_telegram_id(db, telegram_id)
+            subs = getattr(user, 'subscriptions', None) or []
+            return any(s.status == SubscriptionStatus.ACTIVE.value and not s.is_trial for s in subs)
 
     async def _deactivate_subscription_on_unsubscribe(
         self,
