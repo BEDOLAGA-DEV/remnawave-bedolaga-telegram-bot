@@ -16,6 +16,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 
 import structlog
+from sqlalchemy.exc import DBAPIError
 
 from app.external.remnawave_api import RemnaWaveTransientError
 from app.services.panel_sync.writer import push_subscription
@@ -35,6 +36,34 @@ class SyncStats:
 
     def as_dict(self) -> dict[str, int]:
         return {'created': self.created, 'updated': self.updated, 'errors': self.errors}
+
+
+async def _load_batch(db, get_subscriptions_batch, *, offset: int, limit: int):
+    """Прочитать пачку и сразу закрыть транзакцию чтения.
+
+    Дальше минуты сетевых запросов к панели (с паузами по 429 — десятки минут);
+    открытая на это время транзакция — гарантированный обрыв соединения по
+    простою. Обрыв при самом чтении — повтор один раз на свежем соединении.
+    """
+    for attempt in (1, 2):
+        try:
+            subscriptions = await get_subscriptions_batch(db, offset=offset, limit=limit)
+            await db.commit()
+            return subscriptions
+        except DBAPIError as error:
+            logger.warning(
+                'Соединение с базой потеряно при чтении пачки подписок — повтор',
+                offset=offset,
+                attempt=attempt,
+                error=str(error)[:200],
+            )
+            try:
+                await db.rollback()
+            except Exception as rollback_error:
+                logger.debug('Откат после обрыва не удался', error=str(rollback_error)[:200])
+            if attempt == 2:
+                raise
+    return []
 
 
 async def push_all_subscriptions(
@@ -59,7 +88,7 @@ async def push_all_subscriptions(
     semaphore = asyncio.Semaphore(concurrency)
 
     while True:
-        subscriptions = await get_subscriptions_batch(db, offset=offset, limit=batch_size)
+        subscriptions = await _load_batch(db, get_subscriptions_batch, offset=offset, limit=batch_size)
         if not subscriptions:
             break
 
@@ -138,13 +167,9 @@ async def push_all_subscriptions(
             else:
                 errors += 1
 
-        try:
-            await db.commit()
-        except Exception as commit_error:
-            logger.error('Ошибка фиксации транзакции при синхронизации в панель', error=commit_error)
-            await db.rollback()
-            errors += len(valid)
-
+        # Записи подписок ушли через сессии лиз (каждая коммитит сама); здесь
+        # фиксировать нечего — прежний коммит на общей сессии падал по обрыву
+        # соединения и засчитывал всю пачку ошибками.
         logger.info(
             '📦 Обработана партия подписок',
             offset=offset + len(subscriptions),
