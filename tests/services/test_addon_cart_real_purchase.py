@@ -282,3 +282,52 @@ async def test_partial_topup_keeps_cart_and_intent(monkeypatch, cart_service):
     assert after.balance == 100 and after.traffic == 100 and after.payments == []
     assert await cart_service.get_user_cart(USER_ID) is not None, 'корзина ждёт следующего пополнения'
     assert await cart_service.has_topup_intent(USER_ID) is True
+
+
+# ---------------------------------------------------------------------------
+# Через общую точку после зачисления — ту, куда приходят ВСЕ платёжки
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shared_topup_hook_buys_traffic_for_every_provider(monkeypatch, cart_service):
+    """Третья причина: хук проверял только total_price, у корзины докупки — price_kopeks."""
+    from app.services.payment import common
+
+    monkeypatch.setattr(common, 'user_cart_service', cart_service)
+
+    async def _no_email(user, amount_kopeks):
+        return None
+
+    monkeypatch.setattr(common, 'notify_email_user_topup', _no_email)
+
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        user, _ = await _seed(db)
+        await cart_service.save_user_cart(USER_ID, _traffic_cart())
+
+        await common.send_cart_notification_after_topup(user, 5000, db, None)
+        after = await _state(db)
+
+    assert after.traffic == 200, 'докупка прошла через общий хук после зачисления'
+    assert after.balance < BALANCE
+    assert await cart_service.get_user_cart(USER_ID) is None
+
+
+def test_every_payment_provider_calls_the_shared_topup_hook():
+    """Сторож: новая платёжка без общего хука не соберётся — корзина после неё не сработает."""
+    from pathlib import Path
+
+    payment_dir = Path(__file__).resolve().parents[2] / 'app' / 'services' / 'payment'
+    # tribute.py здесь — только создание платежа; зачисление живёт в services/tribute_service.py.
+    skipped = {'__init__.py', 'common.py', 'tribute.py'}
+    providers = sorted(p for p in payment_dir.glob('*.py') if p.name not in skipped)
+    extra = [payment_dir.parent / 'tribute_service.py', payment_dir.parent / 'apple_iap.py']
+
+    missing = [
+        str(path.relative_to(payment_dir.parent.parent))
+        for path in providers + extra
+        if 'send_cart_notification_after_topup(' not in path.read_text(encoding='utf-8')
+    ]
+
+    assert len(providers) >= 25, providers
+    assert not missing, f'платёжки без общего хука после зачисления: {missing}'
