@@ -416,3 +416,45 @@ async def test_job_out_exposes_probes_and_sni_hosts_from_request(service) -> Non
     service.get_job = AsyncMock(return_value=_job())
     bare = await admin_reachability.get_job(5, admin=ADMIN, db=None)
     assert bare.probes is None and bare.sni_hosts == []
+
+
+# ============== Хосты панели 3.4.3 ==============
+
+
+@pytest.mark.asyncio
+async def test_hosts_route_serializes_a_real_panel_host(service) -> None:
+    """Регрессия 2026-09-10 (лог прода): аудит 3.4.3 переименовал у хоста ``tag`` в
+    ``tags``, резолвер обновили, а сериализацию для кабинета — нет: список хостов
+    в «доступности» падал AttributeError на каждом запросе. Тест идёт через
+    настоящий разбор хоста клиентом, а не SimpleNamespace, — двойник с любым
+    набором полей такую поломку не видит."""
+    from app.external.remnawave_api import RemnaWaveAPI
+    from app.services.reachability.resolver import HostView, target_from_host
+
+    host = RemnaWaveAPI._parse_host(
+        {
+            'uuid': 'h-1',
+            'remark': 'Амстердам',
+            'address': 'ams.example.net',
+            'port': 443,
+            'sni': 'cdn.example.net',
+            'isDisabled': False,
+            'tags': ['БС', 'VIP'],
+            'inbound': {'configProfileUuid': 'cp', 'configProfileInboundUuid': 'in'},
+        }
+    )
+    view = HostView(
+        host=host,
+        target=target_from_host(host, 'bs'),
+        purpose_guessed=True,
+        excluded=False,
+        node_uuids=['n-1'],
+    )
+    service.hosts = AsyncMock(return_value=[view])
+
+    response = await admin_reachability.get_hosts(include_disabled=False, admin=ADMIN, db=AsyncMock())
+
+    item = response.items[0]
+    assert item.uuid == 'h-1' and item.address == 'ams.example.net' and item.port == 443
+    assert item.tag == 'БС, VIP'
+    assert item.node_uuids == ['n-1'] and item.purpose == 'bs'
