@@ -1085,12 +1085,15 @@ async def sync_full(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
     """Полная синхронизация: из панели в бота, из бота в панель, серверы — как в боте и по расписанию."""
-    from app.services.remnawave_sync_service import perform_full_sync
+    from app.services.remnawave_sync_service import FullSyncAlreadyRunning, perform_full_sync
 
     service = _get_service()
     _ensure_configured(service)
 
-    user_stats, server_stats = await perform_full_sync(db, service)
+    try:
+        user_stats, server_stats = await perform_full_sync(db, service)
+    except FullSyncAlreadyRunning as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     logger.info('Admin ran full sync', telegram_id=admin.telegram_id)
 
     return SyncResponse(

@@ -35,6 +35,26 @@ class RemnaWaveAutoSyncStatus:
     is_running: bool
 
 
+class FullSyncAlreadyRunning(RuntimeError):
+    """Полная синхронизация уже идёт — второй проход параллельно не запускаем.
+
+    Проход «в панель» по тысячам подписок идёт десятки минут; запрос из кабинета
+    отваливается по таймауту и показывает ошибку, оператор жмёт ещё раз — и второй
+    проход удваивал нагрузку на панель и ловил её лимит частоты. Замок один на
+    все поверхности: бот, кабинет, расписание.
+    """
+
+    def __init__(self) -> None:
+        super().__init__('Полная синхронизация уже выполняется')
+
+
+_full_sync_lock = asyncio.Lock()
+
+
+def is_full_sync_running() -> bool:
+    return _full_sync_lock.locked()
+
+
 class RemnaWaveAutoSyncService:
     def __init__(
         self,
@@ -124,7 +144,7 @@ class RemnaWaveAutoSyncService:
             self._next_run = None
 
     async def run_sync_now(self, *, reason: str = 'manual') -> dict[str, Any]:
-        if self._sync_lock.locked():
+        if self._sync_lock.locked() or is_full_sync_running():
             return {'started': False, 'reason': 'already_running'}
 
         async with self._sync_lock:
@@ -196,7 +216,7 @@ class RemnaWaveAutoSyncService:
             last_run_error=self._last_run_error,
             last_user_stats=self._last_user_stats,
             last_server_stats=self._last_server_stats,
-            is_running=self._sync_lock.locked(),
+            is_running=self._sync_lock.locked() or is_full_sync_running(),
         )
 
     async def _run_scheduler(self, times: list[time]) -> None:
@@ -250,10 +270,13 @@ async def perform_full_sync(session: AsyncSession, service: RemnaWaveService) ->
     статусы, даты, сквады, тег тарифа), серверы. Раньше «полная» делала только
     импорт, и в панель не уезжало ничего.
     """
-    user_stats = dict(await service.sync_users_from_panel(session, 'all'))
-    user_stats['to_panel'] = dict(await service.sync_users_to_panel(session))
-    server_stats = await sync_servers_from_panel(session, service)
-    return user_stats, server_stats
+    if _full_sync_lock.locked():
+        raise FullSyncAlreadyRunning
+    async with _full_sync_lock:
+        user_stats = dict(await service.sync_users_from_panel(session, 'all'))
+        user_stats['to_panel'] = dict(await service.sync_users_to_panel(session))
+        server_stats = await sync_servers_from_panel(session, service)
+        return user_stats, server_stats
 
 
 async def sync_servers_from_panel(session: AsyncSession, service: RemnaWaveService) -> dict[str, Any]:

@@ -29,7 +29,9 @@ from app.keyboards.admin import (
 from app.localization.texts import get_texts
 from app.services.remnawave_service import RemnaWaveConfigurationError, RemnaWaveService
 from app.services.remnawave_sync_service import (
+    FullSyncAlreadyRunning,
     RemnaWaveAutoSyncStatus,
+    is_full_sync_running,
     perform_full_sync,
     remnawave_sync_service,
 )
@@ -2477,6 +2479,12 @@ async def save_auto_sync_schedule(
 async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Выполняет полную синхронизацию всех пользователей"""
 
+    # Проход идёт десятки минут; повторное нажатие не должно запускать второй
+    # проход параллельно первому (двойная нагрузка на панель и её лимит частоты).
+    if is_full_sync_running():
+        await callback.answer('⏳ Полная синхронизация уже выполняется — дождитесь её окончания', show_alert=True)
+        return
+
     progress_text = """
 🔄 <b>Выполняется полная синхронизация...</b>
 
@@ -2493,7 +2501,17 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
 
     remnawave_service = RemnaWaveService()
     # Одна функция на бота, кабинет и расписание: импорт → экспорт → серверы.
-    stats, server_stats = await perform_full_sync(db, remnawave_service)
+    try:
+        stats, server_stats = await perform_full_sync(db, remnawave_service)
+    except FullSyncAlreadyRunning:
+        await callback.message.edit_text(
+            '⏳ <b>Полная синхронизация уже выполняется</b>\n\nДождитесь её окончания и запустите снова.',
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[[types.InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_remnawave')]]
+            ),
+        )
+        await callback.answer()
+        return
     to_panel = stats.get('to_panel') or {}
 
     errors_total = stats['errors'] + to_panel.get('errors', 0)
