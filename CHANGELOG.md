@@ -1,5 +1,38 @@
 # Changelog
 
+## [4.9.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.8.0...v4.9.0) (2026-09-10)
+
+
+### New Features
+
+* **activity:** каждое нажатие в кабинете и каждое сообщение боту ([cddbf29](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/cddbf296ba288b0c08d4e55e922eaea8aa9b9837))
+* **activity:** полный след пользователя — экраны кабинета и Mini App, метка активности из веба ([1cb76d8](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1cb76d8cd5a199e8bf69cc031ec62d5085f56cd8))
+* **admin:** имя сквада проверяется по правилам панели ([06ae99a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/06ae99af9ec32858689a5eefe68e1757f0ae607b))
+* **admin:** телеграм-редактор тарифов правит всё то же, что и кабинет ([e17eb67](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/e17eb67f1c621ce2a4f23db136f004090dbd8dd5))
+* **remnawave:** свой потолок запросов к панели в минуту ([89ea5d5](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/89ea5d51246911fd6d8be974ee46bcf45fa5f17e))
+* **tariffs:** свой тег панели у тарифа и дни триала на тарифе ([76c6385](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/76c6385c1deaf202981bf24b3d3eb5643224672a))
+
+
+### Bug Fixes
+
+* **admin:** отчёт о недоставленном сообщении — причина и пользователь вместо traceback ([1e61277](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1e61277227342072f9d28a837e7f58765b460866))
+* **cabinet:** принимать ноль как «без выгодного периода» при создании тарифа ([6144e6e](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6144e6eb48505680948a9b94bea9814ca508db21))
+* **cart:** корзина докупки трафика и устройств доживает до покупки ([0009c30](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0009c30b1a80b6e4a3d21f3f70ce7d61dcdcde49))
+* **cart:** общий хук после зачисления видит цену корзины докупки ([8fe3084](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8fe30849f25b4e41db476ac8ebf0be5e484035fd))
+* **panel-sync:** гашение даты в панели переживает разъезд часов бота и панели ([3513e1d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3513e1dbbdeb06a742512d1c4b3cd946016d71a7))
+* **reachability:** список хостов в кабинете не падает на тегах хоста панели 3.4.3 ([a7d023c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a7d023c87acbd63a7585ae80e95acd1e090770c6))
+* **remnawave:** сверка клиента панели с OpenAPI 3.4.3 ([9d78689](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9d7868979d159baf0d50d18fe0ae857ae4a259b2))
+* **sync:** импорт из панели не держит транзакцию базы, пока грузит панель ([dc9a7ca](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/dc9a7ca7cfd789fb018a7cc97556fb08f22e2720))
+* **sync:** лимит запросов панели (429) больше не валит проход «в панель» ([917f395](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/917f3950fba6174d0af5cb7ba78da102ac803725))
+* **sync:** полная синхронизация не запускается второй раз, пока идёт первая ([269d7b7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/269d7b7d5801f8f6d633f4d92e3e97e9f80dabd3))
+* **sync:** полная синхронизация пишет и в панель, одна для бота, кабинета и расписания ([f06959c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f06959ca55fc0cb7e5a596ef65b537d1c1d680ad))
+* **sync:** проход «в панель» не держит транзакцию базы, пока ходит в панель ([0715b5c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/0715b5c70ce633114eb0c91023924e9a42204873))
+
+
+### Documentation
+
+* обновить справочник структуры после тестов правки тарифа ([bd88997](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/bd88997b953aaa84c77b028a2714557482598754))
+
 ## [4.8.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.7.1...v4.8.0) (2026-09-09)
 
 
