@@ -10,9 +10,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-import app.external.remnawave_api as api_module
 from app.config import settings
 from app.external.remnawave_api import RemnaWaveAPI
 from tests.external.test_remnawave_3_0_0 import _api_with_session, _FakeResponse
@@ -28,7 +29,7 @@ def pace(monkeypatch):
         sleeps.append(delay)
         clock[0] += delay
 
-    monkeypatch.setattr(api_module.asyncio, 'sleep', fake_sleep)
+    monkeypatch.setattr(asyncio, 'sleep', fake_sleep)
     monkeypatch.setattr(RemnaWaveAPI, '_throttled_until', 0.0)
     monkeypatch.setattr(RemnaWaveAPI, '_pace_clock', lambda: clock[0])
     RemnaWaveAPI._request_times.clear()

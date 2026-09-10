@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 import pytest
 
 import app.external.remnawave_api as api_module
-from app.external.remnawave_api import RemnaWaveAPI, RemnaWaveTransientError
 from tests.external.test_remnawave_3_0_0 import _api_with_session, _FakeResponse
 
 
@@ -27,9 +26,9 @@ def _no_real_sleep_and_clean_throttle(monkeypatch):
         sleeps.append(delay)
 
     monkeypatch.setattr(api_module.asyncio, 'sleep', fake_sleep)
-    monkeypatch.setattr(RemnaWaveAPI, '_throttled_until', 0.0)
+    monkeypatch.setattr(api_module.RemnaWaveAPI, '_throttled_until', 0.0)
     yield sleeps
-    monkeypatch.setattr(RemnaWaveAPI, '_throttled_until', 0.0)
+    monkeypatch.setattr(api_module.RemnaWaveAPI, '_throttled_until', 0.0)
 
 
 def _rate_limited(retry_after: str | None = None) -> _FakeResponse:
@@ -64,12 +63,12 @@ async def test_429_sets_shared_throttle_for_other_requests(_no_real_sleep_and_cl
 
     await api._make_request('GET', '/api/system/stats')
 
-    assert RemnaWaveAPI._throttled_until >= time.monotonic() + 4
+    assert api_module.RemnaWaveAPI._throttled_until >= time.monotonic() + 4
 
 
 async def test_request_waits_for_shared_throttle_before_sending(_no_real_sleep_and_clean_throttle, monkeypatch):
     sleeps = _no_real_sleep_and_clean_throttle
-    monkeypatch.setattr(RemnaWaveAPI, '_throttled_until', time.monotonic() + 3)
+    monkeypatch.setattr(api_module.RemnaWaveAPI, '_throttled_until', time.monotonic() + 3)
     api, session = _api_with_session(_FakeResponse(200, '{"response":{}}'))
 
     await api._make_request('GET', '/api/system/stats')
@@ -83,7 +82,7 @@ async def test_429_after_all_retries_is_transient_and_not_logged_as_error(monkey
     monkeypatch.setattr(api_module, 'logger', fake_logger)
     api, session = _api_with_session(_rate_limited())
 
-    with pytest.raises(RemnaWaveTransientError) as raised:
+    with pytest.raises(api_module.RemnaWaveTransientError) as raised:
         await api._make_request('PATCH', '/api/users', {'id': 1})
 
     assert raised.value.status_code == 429

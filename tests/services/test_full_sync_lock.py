@@ -14,8 +14,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import app.services.remnawave_sync_service as sync_mod
-from app.services.remnawave_sync_service import FullSyncAlreadyRunning, is_full_sync_running, perform_full_sync
+from app.services.remnawave_sync_service import (
+    FullSyncAlreadyRunning,
+    RemnaWaveAutoSyncService,
+    is_full_sync_running,
+    perform_full_sync,
+)
 
 
 def _service(gate: asyncio.Event | None = None) -> SimpleNamespace:
@@ -46,7 +50,8 @@ async def test_second_full_sync_is_refused_while_first_runs():
     second.sync_users_from_panel.assert_not_awaited()
 
     gate.set()
-    await task
+    user_stats, _server_stats = await task
+    assert 'to_panel' in user_stats
     assert not is_full_sync_running()
 
 
@@ -67,10 +72,11 @@ async def test_scheduler_sees_a_manual_full_sync_as_running():
     task = asyncio.create_task(perform_full_sync(AsyncMock(), _service(gate)))
     await asyncio.sleep(0)
 
-    scheduler = sync_mod.RemnaWaveAutoSyncService(service_factory=lambda: SimpleNamespace(is_configured=True))
+    scheduler = RemnaWaveAutoSyncService(service_factory=lambda: SimpleNamespace(is_configured=True))
     assert scheduler.get_status().is_running
     assert await scheduler.run_sync_now(reason='manual') == {'started': False, 'reason': 'already_running'}
 
     gate.set()
-    await task
+    user_stats, _server_stats = await task
+    assert 'to_panel' in user_stats
     assert not scheduler.get_status().is_running
