@@ -103,7 +103,7 @@ async def test_unknown_account_is_created():
 async def test_panel_says_user_is_gone_so_it_is_recreated():
     """Протухший id в базе не должен ронять синхронизацию."""
     api = _api(get_user_by_id=_panel_user())
-    api.update_user.side_effect = RemnaWaveAPIError('not found', response_data={'errorCode': 'A018'})
+    api.update_user.side_effect = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A025'})
 
     result = await push_subscription(api, _user(), _sub(remnawave_id=42), multi_tariff=True, now=NOW)
 
@@ -221,7 +221,7 @@ async def test_recreated_account_replaces_the_stale_link():
     аккаунт заново.
     """
     api = _api(get_user_by_id=_panel_user(user_id=42))
-    api.update_user.side_effect = RemnaWaveAPIError('not found', response_data={'errorCode': 'A018'})
+    api.update_user.side_effect = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A025'})
     api.create_user.return_value = _panel_user(user_id=99)
     subscription = _sub(remnawave_id=42)
     user = _user(remnawave_id=42)

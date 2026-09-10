@@ -138,7 +138,7 @@ async def push_subscription(
                 panel_user = await update(**{key: value for key, value in update_kwargs.items() if key != 'expire_at'})
                 already_sent = None
         except RemnaWaveAPIError as error:
-            # «Пользователя нет» — только явный признак этого (404/A018/A063).
+            # «Пользователя нет» — только явный признак этого (A025/A063, см. is_user_not_found_error).
             # Битый локальный идентификатор и транзиентная ошибка сюда намеренно
             # не попадают: уход в создание плодил бы дубли.
             if not is_user_not_found_error(error) or not recreate_on_missing:

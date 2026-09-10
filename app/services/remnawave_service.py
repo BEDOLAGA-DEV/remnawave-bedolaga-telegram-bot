@@ -548,7 +548,7 @@ class RemnaWaveService:
                 logger.info('Получение системной статистики RemnaWave...')
 
                 try:
-                    system_stats = await api.get_system_stats(tz=settings.TIMEZONE)
+                    system_stats = await api.get_system_stats()
                     logger.info('Системная статистика получена')
                 except Exception as e:
                     logger.error('Ошибка получения системной статистики', error=e)

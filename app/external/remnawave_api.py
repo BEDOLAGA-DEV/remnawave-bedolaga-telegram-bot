@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import re
 import ssl
 import time
 from dataclasses import dataclass, field
@@ -33,6 +34,22 @@ class TrafficLimitStrategy(Enum):
     WEEK = 'WEEK'
     MONTH = 'MONTH'
     MONTH_ROLLING = 'MONTH_ROLLING'
+
+
+# Имя внутреннего сквада по контракту панели (POST/PATCH /api/internal-squads, 3.4.3):
+# 2–30 символов, латиница, цифры, пробел, дефис, подчёркивание. Проверяем на своей
+# границе — иначе админ получает от панели безликий 400.
+INTERNAL_SQUAD_NAME_MIN_LENGTH = 2
+INTERNAL_SQUAD_NAME_MAX_LENGTH = 30
+INTERNAL_SQUAD_NAME_PATTERN = r'^[A-Za-z0-9_\s-]+$'
+_INTERNAL_SQUAD_NAME_RE = re.compile(INTERNAL_SQUAD_NAME_PATTERN)
+
+
+def is_valid_internal_squad_name(name: str) -> bool:
+    """Имя сквада, которое примет панель."""
+    if not INTERNAL_SQUAD_NAME_MIN_LENGTH <= len(name) <= INTERNAL_SQUAD_NAME_MAX_LENGTH:
+        return False
+    return _INTERNAL_SQUAD_NAME_RE.fullmatch(name) is not None
 
 
 @dataclass
@@ -158,7 +175,8 @@ class RemnaWaveHost:
     host: str | None = None
     is_disabled: bool = False
     is_hidden: bool = False
-    tag: str | None = None
+    # 3.4.3: у хоста массив `tags`; поля `tag` в схеме панели нет.
+    tags: list[str] = field(default_factory=list)
     security_layer: str | None = None
     config_profile_uuid: str | None = None
     config_profile_inbound_uuid: str | None = None
@@ -337,20 +355,55 @@ def is_expire_in_past_error(error: RemnaWaveAPIError) -> bool:
     return False
 
 
+# Remnawave 3.4.3: у 404 NotFound 27 кодов — пользователя из них касаются только два.
+# Сообщения — для панелей, не приславших errorCode.
+USER_NOT_FOUND_ERROR_CODES = frozenset({'A025', 'A063'})
+USER_NOT_FOUND_MESSAGES = frozenset({'user not found', 'user with specified params not found', 'users not found'})
+
+# Протухший externalSquadUuid панель не отличает от прочих сбоев записи: на создании
+# отвечает A018 «Failed to create user», на обновлении A039 «Update user error» (оба 500),
+# а при проверке самого сквада — 404 A182 «External squad not found». Повтор без поля
+# уместен только когда поле действительно уходило в запросе.
+STALE_EXTERNAL_SQUAD_ERROR_CODES = frozenset({'A018', 'A039', 'A182'})
+
+
+def _panel_error_code(error: RemnaWaveAPIError) -> str:
+    data = error.response_data if isinstance(error.response_data, dict) else {}
+    return str(data.get('errorCode') or '').strip()
+
+
+def _panel_error_message(error: RemnaWaveAPIError) -> str:
+    data = error.response_data if isinstance(error.response_data, dict) else {}
+    return str(data.get('message') or error.message or '').strip().lower()
+
+
 def is_user_not_found_error(error: RemnaWaveAPIError) -> bool:
-    """Панель не нашла пользователя (удалён/протух идентификатор).
+    """Панель сообщила, что такого пользователя НЕТ (удалён / протух идентификатор).
 
-    Разные версии RemnaWave сообщают это по-разному: A018 или A063, и не всегда
-    со статусом 404 — проверяем оба признака. Вызывающий код по этому признаку
-    пересоздаёт пользователя вместо падения в ошибку.
-
-    Коды A018/A063 в 3.0.0 не изменились (сверено с backend-contract@3.0.0).
-    Статус 400 сюда намеренно НЕ входит: см. ``RemnaWaveInvalidUserIdError``.
+    Только явный признак: код ``A025``/``A063`` либо 404 с сообщением про пользователя.
+    404 у панели имеет 27 причин (внешний сквад ``A182``, внутренний ``A118``,
+    HWID-устройство ``A204``…), а ``A018`` — это «Failed to create user» (500). Любое
+    расширение этой проверки уводит вызывающий код в ветку «пользователя нет → создать»
+    и плодит дубли в панели. Статус 400 сюда намеренно НЕ входит: см.
+    ``RemnaWaveInvalidUserIdError``. Сверено с OpenAPI 3.4.3.
     """
     if isinstance(error, RemnaWaveInvalidUserIdError):
         return False
-    error_code = ((error.response_data or {}).get('errorCode') or '').strip()
-    return error.status_code == 404 or error_code in ('A018', 'A063')
+    error_code = _panel_error_code(error)
+    if error_code in USER_NOT_FOUND_ERROR_CODES:
+        return True
+    if error_code:
+        return False
+    if error.status_code != 404:
+        return False
+    return _panel_error_message(error) in USER_NOT_FOUND_MESSAGES
+
+
+def is_stale_external_squad_error(error: RemnaWaveAPIError) -> bool:
+    """Панель отвергла запись из-за ``externalSquadUuid`` (или не смогла её отличить)."""
+    if _panel_error_code(error) in STALE_EXTERNAL_SQUAD_ERROR_CODES:
+        return True
+    return 'external squad not found' in _panel_error_message(error)
 
 
 # Публичный RSA-ключ Happ для crypt4-ссылок — тот же, которым официальная страница
@@ -679,16 +732,16 @@ class RemnaWaveAPI:
         try:
             response = await self._make_request('POST', '/api/users', data)
         except RemnaWaveAPIError as e:
-            # A039 = FK violation on externalSquadUuid — retry without it
-            error_code = (e.response_data or {}).get('errorCode', '')
-            if error_code == 'A039' and 'externalSquadUuid' in data:
-                stale_uuid = data.pop('externalSquadUuid')
+            # Протухший externalSquadUuid (A018 на создании / A182) — повтор без него.
+            if is_stale_external_squad_error(e) and 'externalSquadUuid' in data:
+                retry_data = {key: value for key, value in data.items() if key != 'externalSquadUuid'}
                 logger.warning(
-                    'A039 FK violation on externalSquadUuid, retrying without it',
-                    stale_uuid=stale_uuid,
+                    'Панель отвергла создание с externalSquadUuid — повтор без него',
+                    error_code=_panel_error_code(e),
+                    stale_uuid=data['externalSquadUuid'],
                     username=data.get('username'),
                 )
-                response = await self._make_request('POST', '/api/users', data)
+                response = await self._make_request('POST', '/api/users', retry_data)
             else:
                 logger.error('POST /api/users FAILED — full payload', payload=data)
                 raise
@@ -895,16 +948,16 @@ class RemnaWaveAPI:
         try:
             response = await self._make_request('PATCH', '/api/users', data)
         except RemnaWaveAPIError as e:
-            # A039 = FK violation on externalSquadUuid — retry without it
-            error_code = (e.response_data or {}).get('errorCode', '')
-            if error_code == 'A039' and 'externalSquadUuid' in data:
-                stale_uuid = data.pop('externalSquadUuid')
+            # Протухший externalSquadUuid (A039 на обновлении / A182) — повтор без него.
+            if is_stale_external_squad_error(e) and 'externalSquadUuid' in data:
+                retry_data = {key: value for key, value in data.items() if key != 'externalSquadUuid'}
                 logger.warning(
-                    'A039 FK violation on externalSquadUuid, retrying without it',
-                    stale_uuid=stale_uuid,
+                    'Панель отвергла обновление с externalSquadUuid — повтор без него',
+                    error_code=_panel_error_code(e),
+                    stale_uuid=data['externalSquadUuid'],
                     panel_user_id=panel_user_id,
                 )
-                response = await self._make_request('PATCH', '/api/users', data)
+                response = await self._make_request('PATCH', '/api/users', retry_data)
             else:
                 # «User not found» — не error: как и 404 в _make_request, его
                 # обрабатывает вызывающий код (пересоздание пользователя), а
@@ -1332,11 +1385,6 @@ class RemnaWaveAPI:
         data = response.get('response') if isinstance(response, dict) else None
         return [str(link) for link in ((data or {}).get('links') or []) if link]
 
-    async def get_subscription_by_short_uuid(self, short_uuid: str, user_agent: str | None = None) -> str:
-        """Публичная подписка; с клиентским User-Agent панель отдаёт настоящие ссылки (base64)."""
-        body, _ = await self.get_public_subscription(short_uuid, user_agent=user_agent)
-        return body
-
     async def get_public_subscription(
         self, short_uuid: str, *, user_agent: str | None = None, headers: dict[str, str] | None = None
     ) -> tuple[str, dict[str, str]]:
@@ -1351,41 +1399,9 @@ class RemnaWaveAPI:
                 raise RemnaWaveAPIError(f'Failed to get subscription: {response.status}')
             return await response.text(), {key.lower(): value for key, value in response.headers.items()}
 
-    async def get_subscription_by_client_type(self, short_uuid: str, client_type: str) -> str:
-        valid_types = ['stash', 'singbox', 'singbox-legacy', 'mihomo', 'json', 'v2ray-json', 'clash']
-        if client_type not in valid_types:
-            raise ValueError(f'Invalid client type. Must be one of: {valid_types}')
-
-        async with self.session.get(f'{self.base_url}/api/sub/{short_uuid}/{client_type}') as response:
-            if response.status >= 400:
-                raise RemnaWaveAPIError(f'Failed to get subscription: {response.status}')
-            return await response.text()
-
-    async def get_subscription_links(self, short_uuid: str) -> dict[str, str]:
-        base_url = f'{self.base_url}/api/sub/{short_uuid}'
-
-        links = {
-            'base': base_url,
-            'stash': f'{base_url}/stash',
-            'singbox': f'{base_url}/singbox',
-            'singbox_legacy': f'{base_url}/singbox-legacy',
-            'mihomo': f'{base_url}/mihomo',
-            'json': f'{base_url}/json',
-            'v2ray_json': f'{base_url}/v2ray-json',
-            'clash': f'{base_url}/clash',
-        }
-
-        return links
-
-    async def get_outline_subscription(self, short_uuid: str, encoded_tag: str) -> str:
-        async with self.session.get(f'{self.base_url}/api/sub/outline/{short_uuid}/ss/{encoded_tag}') as response:
-            if response.status >= 400:
-                raise RemnaWaveAPIError(f'Failed to get outline subscription: {response.status}')
-            return await response.text()
-
-    async def get_system_stats(self, tz: str | None = None) -> dict[str, Any]:
-        params = {'tz': tz} if tz else None
-        response = await self._make_request('GET', '/api/system/stats', params=params)
+    async def get_system_stats(self) -> dict[str, Any]:
+        """``GET /api/system/stats`` — без query-параметров (``tz`` есть только у ``/stats/bandwidth``)."""
+        response = await self._make_request('GET', '/api/system/stats')
         return response['response']
 
     async def get_health(self) -> dict[str, Any]:
@@ -1656,15 +1672,6 @@ class RemnaWaveAPI:
         response = await self._make_request('POST', '/api/subscription-page-configs/actions/clone', data)
         return self._parse_subscription_page_config(response['response'])
 
-    async def get_subpage_config_by_short_uuid(self, short_uuid: str) -> dict[str, Any] | None:
-        try:
-            response = await self._make_request('GET', f'/api/subscriptions/subpage-config/{short_uuid}')
-            return response.get('response')
-        except RemnaWaveAPIError as e:
-            if e.status_code == 404:
-                return None
-            raise
-
     def _parse_subscription_page_config(self, data: dict) -> SubscriptionPageConfig:
         """Парсит данные конфигурации страницы подписки"""
         return SubscriptionPageConfig(
@@ -1690,11 +1697,6 @@ class RemnaWaveAPI:
 
         return {'devices': all_devices, 'total': len(all_devices)}
 
-    async def get_all_panel_subscriptions(self) -> list[dict[str, Any]]:
-        """GET /api/subscriptions — all panel subscriptions."""
-        response = await self._make_request('GET', '/api/subscriptions')
-        return response.get('response') or []
-
     async def get_user_devices(self, user_id: int) -> dict[str, Any]:
         panel_user_id = coerce_panel_user_id(user_id)
         try:
@@ -1706,34 +1708,24 @@ class RemnaWaveAPI:
             raise
 
     async def get_user_devices_all(self, user_id: int) -> dict[str, Any]:
-        """GET /api/hwid/devices/{userId} — all devices for a user (paginated).
+        """``GET /api/hwid/devices/{userId}`` — все устройства пользователя одним ответом.
 
-        Элементы устройств несут ``userId`` (число), а не ``userUuid``.
+        Ручка не пагинируется: ``start``/``size`` — параметры общего
+        ``GET /api/hwid/devices``, здесь их нет. Элементы несут ``userId`` (число).
         """
         panel_user_id = coerce_panel_user_id(user_id)
-        all_devices: list[dict[str, Any]] = []
-        start = 0
-        page_size = 1000
-
         try:
-            while True:
-                response = await self._make_request(
-                    'GET', f'/api/hwid/devices/{panel_user_id}', params={'start': start, 'size': page_size}
-                )
-                data = response.get('response', {'devices': [], 'total': 0})
-                devices = data.get('devices', [])
-                total = data.get('total', 0)
-                all_devices.extend(devices)
-
-                if len(all_devices) >= total or not devices:
-                    break
-                start += len(devices)
+            response = await self._make_request('GET', f'/api/hwid/devices/{panel_user_id}')
         except RemnaWaveAPIError as e:
             if e.status_code == 404:
                 return {'total': 0, 'devices': []}
             raise
 
-        return {'devices': all_devices, 'total': len(all_devices)}
+        data = response.get('response') if isinstance(response, dict) else None
+        payload = data if isinstance(data, dict) else {}
+        devices = list(payload.get('devices') or [])
+        total = payload.get('total')
+        return {'devices': devices, 'total': total if isinstance(total, int) else len(devices)}
 
     async def reset_user_devices(self, user_id: int) -> bool:
         """Снести все HWID-устройства пользователя одним запросом.
@@ -2123,7 +2115,7 @@ class RemnaWaveAPI:
             host=data.get('host') or None,
             is_disabled=bool(data.get('isDisabled', False)),
             is_hidden=bool(data.get('isHidden', False)),
-            tag=data.get('tag') or None,
+            tags=[str(tag) for tag in (data.get('tags') or []) if tag],
             security_layer=data.get('securityLayer') or None,
             config_profile_uuid=inbound.get('configProfileUuid') or None,
             config_profile_inbound_uuid=inbound.get('configProfileInboundUuid') or None,

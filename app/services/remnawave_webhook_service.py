@@ -1766,8 +1766,10 @@ class RemnaWaveWebhookService:
             logger.debug('Traffic warning disabled by user prefs', user_id=user.id)
             return
 
-        # Extract threshold percentage from meta or data
-        percent = data.get('thresholdPercent') or data.get('threshold', '')
+        # 3.4.3: data — объект пользователя, сработавший порог лежит в
+        # lastTriggeredThreshold (0 = ещё не срабатывал). thresholdPercent/threshold
+        # и _meta.thresholdPercent — терпимость к нестандартным панелям.
+        percent = data.get('lastTriggeredThreshold') or data.get('thresholdPercent') or data.get('threshold', '')
         if not percent:
             # Envelope-meta живёт в data['_meta'] (ресивер), не в 'meta'.
             meta = data.get('_meta', {})
