@@ -2136,6 +2136,9 @@
 - `app/utils/subscription_utils.py` — Python-модуль
   Классы: нет
   Функции: `cleanup_duplicate_subscriptions`, `get_display_subscription_link`, `get_happ_cryptolink_redirect_link`, `convert_subscription_link_to_happ_scheme`, `device_limit_needs_heal` — Return True if a stored ``device_limit`` is structurally invalid., `coerce_panel_device_limit` — Normalize ``hwidDeviceLimit`` from a RemnaWave panel response., `resolve_min_device_limit` — Нижняя граница, до которой пользователь может уменьшить лимит устройств., `resolve_hwid_device_limit` — Return a device limit value for RemnaWave payloads when selection is enabled., `resolve_hwid_device_limit_for_payload` — Return the device limit that should be sent to RemnaWave APIs., `resolve_simple_subscription_device_limit` — Return the effective device limit for simple subscription flows.
+- `app/utils/telegram_delivery.py` — Python-модуль
+  Классы: нет
+  Функции: `is_user_unreachable` — Сообщение некуда доставить: 403 от Telegram или 400 с маркером недоступности., `describe_unreachable` — Причина по-русски для отчёта админам; для незнакомого отказа — общая формулировка.
 - `app/utils/telegram_errors.py` — Python-модуль
   Классы: нет
   Функции: `is_stale_callback_query_error` — Telegram уже не ждёт ответ на это нажатие: пользователь давно увидел результат.
@@ -3752,6 +3755,9 @@
 - `tests/middlewares/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/middlewares/test_admin_report_unreachable_user.py` — Python-модуль
+  Классы: нет
+  Функции: `test_unreachable_user_report_has_reason_and_user_instead_of_traceback`, `test_real_errors_still_carry_the_traceback`
 - `tests/middlewares/test_button_stats_commands.py` — Python-модуль
   Классы: нет
   Функции: `test_start_command_logged`, `test_command_payload_not_stored` — Payload диплинков (webauth_/GIFT_/coupon_ токены) не должен попадать в лог., `test_command_with_bot_mention_normalized`, `test_plain_text_logged_without_content` — Обычное сообщение — факт без содержимого: промокоды и переписка в журнал не попадают., `test_middleware_registered_for_messages` — Пин: middleware подключён и к message-апдейтам (иначе команды не видны).
@@ -3769,7 +3775,7 @@
   Функции: `test_stale_callback_logged_quietly`, `test_blocked_bot_logged_quietly`, `test_unexpected_bad_request_stays_error`
 - `tests/middlewares/test_rich_error_report.py` — Python-модуль
   Классы: нет
-  Функции: `test_rich_error_report_structure`, `test_rich_error_report_none_when_oversized`, `test_send_error_uses_rich_and_clears_buffer`, `test_send_error_falls_back_to_document_when_rich_unavailable`
+  Функции: `test_rich_error_report_structure`, `test_rich_error_report_none_when_oversized`, `test_send_error_uses_rich_and_clears_buffer`, `test_send_error_falls_back_to_document_when_rich_unavailable`, `test_rich_error_report_renders_a_plain_note_without_code_block` — Запись без трейса (например, «сообщение некуда доставить») — обычный абзац,
 - `tests/middlewares/test_stale_callback_answer.py` — Python-модуль
   Классы: нет
   Функции: `test_phrase_matcher_covers_both_telegram_wordings`, `test_stale_answer_becomes_warning_and_returns_true`, `test_other_errors_on_answer_still_raise`, `test_stale_phrases_on_other_methods_are_not_swallowed` — Middleware узкий: только ответ на нажатие. Редактирование сообщения — не его дело., `test_successful_request_passes_through`, `test_bot_factory_installs_the_middleware_for_every_bot` — Все боты (основной, из кабинета, из фоновых задач) создаются фабрикой — защита общая.
@@ -4159,6 +4165,9 @@
 - `tests/services/test_referral_notification_kinds.py` — Python-модуль
   Классы: нет
   Функции: `test_registered_notice_carries_its_own_type`, `test_welcome_notice_carries_referrer_and_promise`, `test_every_referral_kind_obeys_referral_switch`, `test_registered_template_never_mentions_money`, `test_welcome_template_names_referrer_and_promise`, `test_welcome_template_without_promise_skips_bonus_line`
+- `tests/services/test_referral_notification_names_the_user.py` — Python-модуль
+  Классы: нет
+  Функции: `test_delivery_failure_log_names_the_user`
 - `tests/services/test_referral_reward_levels.py` — Python-модуль
   Классы: `TestChainWalk` (4 методов), `TestSchemeGate` (1 методов), `TestMoneyPerLevel` (6 методов), `TestTriggers` (2 методов), `TestActiveBonusSelection` (3 методов), `TestRefereeSide` (3 методов), `TestGranting` (9 методов), `TestNullPercentIsZero` (2 методов), `TestLevelNotifications` (6 методов), `TestRewardFormatting` (1 методов), `TestProgramDescription` (4 методов), `TestInvitePromise` (2 методов), `TestDepthHonesty` (2 методов), `TestUngrantablePromises` (4 методов), `TestRefereeRowsStayOutOfReferrerTotals` (1 методов), `TestGeneratedTextIsLocalized` (5 методов), `TestLegacyImportPercent` (4 методов), `TestDepthOnThePayoutPath` (2 методов), `TestThresholdGatesThePayout` (4 методов)
   Функции: `chain` — Цепочка 4 → 3 → 2 → 1 и схема 'levels'., `granting` — Обвязка выдачи: начисления и записи ledger'а собираются в списки.
@@ -4495,6 +4504,9 @@
 - `tests/utils/test_tag_stripping_is_linear.py` — Python-модуль
   Классы: нет
   Функции: `test_no_quadratic_tag_pattern_remains` — Шаблон `<[^>]+>` не должен вернуться ни в один модуль., `test_stripping_keeps_text_and_bare_angle_brackets`, `test_pathological_input_stays_fast` — Строка из одних «<» — ровно тот вход, на котором старый шаблон вставал., `test_visible_length_uses_the_linear_pattern` — Функция, на которую указал CodeQL, считает длину тем же способом., `test_html_validator_stays_fast_on_unclosed_tags` — Проверка HTML правовых страниц: их длина из кабинета ничем не ограничена., `test_html_validator_verdicts_unchanged` — Ускорение не должно менять вердикты на обычной разметке.
+- `tests/utils/test_telegram_delivery.py` — Python-модуль
+  Классы: нет
+  Функции: `test_expected_delivery_refusals_are_unreachable`, `test_other_errors_are_not_unreachable`, `test_reason_is_plain_russian`
 - `tests/utils/test_telegram_html.py` — Python-модуль
   Классы: нет
   Функции: `test_keeps_allowed_inline_tags`, `test_maps_tag_aliases_to_telegram_tags`, `test_strips_unsupported_tags_but_keeps_text`, `test_drops_script_and_iframe_content`, `test_paragraphs_become_blank_lines`, `test_br_becomes_newline`, `test_unordered_list_items_get_bullets`, `test_ordered_list_items_get_numbers`, `test_heading_becomes_bold_block`, `test_link_kept_only_with_http_href`, `test_oversized_href_drops_anchor_but_keeps_text`, `test_misnested_skip_closers_recover`, `test_text_entities_are_escaped`, `test_unclosed_tags_are_closed`, `test_blockquote_and_code_preserved`, `test_split_short_text_single_chunk`, `test_split_empty_returns_empty_list`, `test_split_respects_paragraph_boundaries`, `test_split_hard_splits_oversized_paragraph`, `test_split_closes_open_tags_in_each_chunk`, `test_split_never_exceeds_telegram_hard_limit`, `test_split_link_text_spanning_chunks_stays_within_hard_limit`, `test_hard_split_backs_off_incomplete_entity`, `test_faq_content_rendered_as_question_blocks`, `test_faq_content_invalid_json_returns_empty`

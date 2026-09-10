@@ -125,6 +125,18 @@ IGNORED_LOGGER_PREFIXES: Final[tuple[str, ...]] = (
 )
 
 
+def _event_exception(event_dict: dict[str, Any]) -> BaseException | None:
+    """Исключение записи лога: из exc_info либо из kwargs error/exc/exception."""
+    exc_info = event_dict.get('exc_info')
+    if isinstance(exc_info, tuple) and len(exc_info) > 1 and isinstance(exc_info[1], BaseException):
+        return exc_info[1]
+    for key in ('error', 'exc', 'exception', 'e', 'err'):
+        candidate = event_dict.get(key)
+        if isinstance(candidate, BaseException):
+            return candidate
+    return None
+
+
 def _is_transient_remnawave_error(event_dict: dict[str, Any]) -> bool:
     """True when the log's exception is a RemnaWaveTransientError (slow / briefly
     unreachable panel). Checked by class name + cause chain so we don't import the
@@ -132,16 +144,7 @@ def _is_transient_remnawave_error(event_dict: dict[str, Any]) -> bool:
     failures must NOT be forwarded to the admin chat — a persistent panel outage
     is surfaced by the monitoring service instead.
     """
-    exc: BaseException | None = None
-    exc_info = event_dict.get('exc_info')
-    if isinstance(exc_info, tuple) and len(exc_info) > 1 and isinstance(exc_info[1], BaseException):
-        exc = exc_info[1]
-    if exc is None:
-        for key in ('error', 'exc', 'exception', 'e', 'err'):
-            candidate = event_dict.get(key)
-            if isinstance(candidate, BaseException):
-                exc = candidate
-                break
+    exc = _event_exception(event_dict)
     seen = 0
     while exc is not None and seen < 6:
         if type(exc).__name__ == 'RemnaWaveTransientError':
@@ -361,6 +364,13 @@ class TelegramNotifierProcessor:
                 if username:
                     user_str += f' (@{username})'
                 context_parts.append(user_str)
+            # Кому не удалось написать: сайты доставки логируют telegram_id/chat_id.
+            telegram_id = event_dict.get('telegram_id') or event_dict.get('chat_id')
+            if telegram_id and str(telegram_id) != str(user_id):
+                tg_str = f'Telegram ID: {telegram_id}'
+                if username and not user_id:
+                    tg_str += f' (@{username})'
+                context_parts.append(tg_str)
 
             context = _redact_telegram_secrets('\n'.join(context_parts))
 
@@ -369,6 +379,14 @@ class TelegramNotifierProcessor:
             exc_info = event_dict.get('exc_info')
             if exc_info and isinstance(exc_info, tuple) and exc_info[2] is not None:
                 tb_override = _redact_telegram_secrets(''.join(traceback.format_exception(*exc_info)))
+
+            # Ожидаемый отказ доставки (бот заблокирован, диалога не было, аккаунт
+            # удалён) — это не ошибка бота: вместо traceback пишем причину.
+            from app.utils.telegram_delivery import describe_unreachable, is_user_unreachable
+
+            exc = _event_exception(event_dict)
+            if exc is not None and is_user_unreachable(exc):
+                tb_override = f'Не смогли отправить сообщение пользователю: {describe_unreachable(exc)}.'
 
             # Также redact в самом сообщении ошибки (event string).
             if error.args:
