@@ -4,6 +4,7 @@ import json
 import re
 import ssl
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -441,6 +442,12 @@ RATE_LIMIT_MAX_RETRIES = 6
 RATE_LIMIT_BASE_DELAY = 2.0
 RATE_LIMIT_MAX_DELAY = 30.0
 
+# Свой темп запросов (settings.REMNAWAVE_API_REQUESTS_PER_MINUTE, 0 — без ограничения):
+# перед панелью часто стоит прокси с лимитом (шаблонный Caddyfile Remnawave: rate_limit
+# 100/мин с одного IP на /api/*), и массовый проход упирается в него за секунды.
+# Скользящее окно в минуту на весь процесс — как у самого прокси.
+PACE_WINDOW_SECONDS = 60.0
+
 
 def _retry_after_seconds(headers: Any) -> float | None:
     """``Retry-After`` в секундах; HTTP-дату не разбираем — тогда своя шкала."""
@@ -477,6 +484,9 @@ class RemnaWaveAPI:
     _happ_local_cache: ClassVar[dict[str, str]] = {}
     # Момент (monotonic), до которого все запросы процесса ждут после 429.
     _throttled_until: ClassVar[float] = 0.0
+    # Моменты последних запросов процесса — окно собственного темпа (см. PACE_WINDOW_SECONDS).
+    _request_times: ClassVar[deque[float]] = deque()
+    _pace_clock = staticmethod(time.monotonic)
 
     @classmethod
     def _throttle(cls, delay: float) -> None:
@@ -487,6 +497,21 @@ class RemnaWaveAPI:
         wait = cls._throttled_until - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)
+
+    @classmethod
+    async def _wait_for_pace(cls) -> None:
+        """Дождаться свободного места в окне собственного темпа; повторы тоже считаются."""
+        limit = settings.REMNAWAVE_API_REQUESTS_PER_MINUTE
+        if limit <= 0:
+            return
+        while True:
+            now = cls._pace_clock()
+            while cls._request_times and now - cls._request_times[0] >= PACE_WINDOW_SECONDS:
+                cls._request_times.popleft()
+            if len(cls._request_times) < limit:
+                cls._request_times.append(now)
+                return
+            await asyncio.sleep(cls._request_times[0] + PACE_WINDOW_SECONDS - now)
 
     def __init__(
         self,
@@ -627,6 +652,7 @@ class RemnaWaveAPI:
 
         while True:
             await self._wait_for_shared_throttle()
+            await self._wait_for_pace()
             try:
                 kwargs = {'url': url, 'params': params}
 

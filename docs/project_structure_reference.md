@@ -858,7 +858,7 @@
   Классы: `Pal24APIError`, `Pal24Response` (2 методов), `Pal24Client` (14 методов)
   Функции: нет
 - `app/external/remnawave_api.py` — Python-модуль
-  Классы: `UserStatus`, `TrafficLimitStrategy`, `UserTraffic`, `RemnaWaveUser` (4 методов), `RemnaWaveInbound`, `RemnaWaveInternalSquad`, `RemnaWaveAccessibleNode`, `RemnaWaveHost`, `RemnaWaveNode` (2 методов), `SubscriptionInfo`, `SubscriptionPageConfig`, `RemnaWaveExternalSquad`, `RemnaWaveAPIError` (1 методов), `RemnaWaveTransientError`, `RemnaWaveInvalidUserIdError`, `RemnaWaveAPI` (106 методов)
+  Классы: `UserStatus`, `TrafficLimitStrategy`, `UserTraffic`, `RemnaWaveUser` (4 методов), `RemnaWaveInbound`, `RemnaWaveInternalSquad`, `RemnaWaveAccessibleNode`, `RemnaWaveHost`, `RemnaWaveNode` (2 методов), `SubscriptionInfo`, `SubscriptionPageConfig`, `RemnaWaveExternalSquad`, `RemnaWaveAPIError` (1 методов), `RemnaWaveTransientError`, `RemnaWaveInvalidUserIdError`, `RemnaWaveAPI` (107 методов)
   Функции: `is_valid_internal_squad_name` — Имя сквада, которое примет панель., `coerce_panel_user_id` — Привести локально хранимый идентификатор к числовому id панели., `is_expire_in_past_error` — Панель отвергла ``expireAt`` как прошедшую дату., `is_user_not_found_error` — Панель сообщила, что такого пользователя НЕТ (удалён / протух идентификатор)., `is_stale_external_squad_error` — Панель отвергла запись из-за ``externalSquadUuid`` (или не смогла её отличить)., `format_bytes`, `parse_bytes`, `test_api_connection`
 - `app/external/telegram_stars.py` — Python-модуль
   Классы: `TelegramStarsService` (6 методов)
@@ -1654,8 +1654,8 @@
   Классы: `RemnaWaveConfigurationError`, `RemnaWaveService` (62 методов)
   Функции: нет
 - `app/services/remnawave_sync_service.py` — Python-модуль
-  Классы: `RemnaWaveAutoSyncStatus`, `RemnaWaveAutoSyncService` (12 методов)
-  Функции: `perform_full_sync` — Полная синхронизация — одна для бота, кабинета и расписания., `sync_servers_from_panel` — Сквады панели → серверы бота; кеш стран сбрасывается.
+  Классы: `RemnaWaveAutoSyncStatus`, `FullSyncAlreadyRunning` (1 методов), `RemnaWaveAutoSyncService` (12 методов)
+  Функции: `is_full_sync_running`, `perform_full_sync` — Полная синхронизация — одна для бота, кабинета и расписания., `sync_servers_from_panel` — Сквады панели → серверы бота; кеш стран сбрасывается.
 - `app/services/remnawave_webhook_service.py` — Python-модуль
   Классы: `RemnaWaveWebhookService` (48 методов)
   Функции: нет
@@ -2970,6 +2970,9 @@
 - `tests/cabinet/test_admin_email_queue.py` — Python-модуль
   Классы: нет
   Функции: `test_summary_counts_each_status`, `test_items_are_newest_first_and_carry_no_letter_body` — Тело письма — это код или ссылка входа: наружу его не отдаём., `test_clear_removes_the_queue_and_reports_the_count`, `test_clear_pending_only_leaves_history` — «Отменить ожидающие» не должно стирать историю доставленных и потерянных., `test_clear_defaults_to_wiping_everything` — Запрос без параметров чистит очередь целиком — дефолт проверяем по сигнатуре., `test_empty_queue_is_not_an_error`, `test_routes_are_registered`
+- `tests/cabinet/test_admin_full_sync_lock.py` — Python-модуль
+  Классы: нет
+  Функции: `test_full_sync_route_answers_409_while_another_run_is_in_progress`
 - `tests/cabinet/test_admin_grace_access.py` — Python-модуль
   Классы: `TestEnabling` (6 методов), `TestRejectedInput` (3 методов), `TestPartialUpdate` (3 методов), `TestEnvLock` (3 методов), `TestOverview` (9 методов), `TestSquadPicker` (4 методов)
   Функции: `test_routes_registered`, `test_each_url_reaches_its_own_handler`, `test_sessions_endpoint_also_requires_users_read` — Список отдаёт чужие telegram_id, @логины и имена., `test_configuration_endpoints_stay_on_settings_permissions`, `config` — Живые настройки grace с валидной конфигурацией; правки не утекают в другие тесты., `saved` — Перехват записи настроек: значение сразу видно и в ``settings``, как в проде., `empty_db`, `status_snapshot` — Счётчики сессий подменяются: раздел читает их из общего сборщика.
@@ -3432,6 +3435,9 @@
 - `tests/external/test_remnawave_remove_device.py` — Python-модуль
   Классы: нет
   Функции: `test_remove_device_posts_numeric_user_id_in_body` — Тело запроса — {'userId': int, 'hwid': str}; никакого userUuid., `test_remove_device_coerces_digit_string_id_to_int` — БД отдаёт BigInteger, но JSON/FSM могут донести строку — коерсим до запроса., `test_remove_device_rejects_uuid_id_without_hitting_the_panel` — Протухший UUID вместо id — наша битая ссылка, а не запрос к панели., `test_success_when_target_hwid_absent_from_remaining_list`, `test_failure_when_panel_acks_but_hwid_still_present`, `test_404_is_treated_as_success`, `test_other_api_error_is_failure`, `test_transient_exception_is_failure`, `test_bare_ack_without_device_list_is_success` — Panels that reply with just an ack (no devices echo) keep the old behaviour., `test_empty_response_is_success`, `test_reset_user_devices_is_a_single_delete_all_call`, `test_reset_user_devices_coerces_digit_string_id_to_int`, `test_reset_user_devices_rejects_uuid_id_without_hitting_the_panel`, `test_reset_user_devices_404_is_success` — Пользователя/устройств уже нет — цель достигнута., `test_reset_user_devices_failure_is_reported`
+- `tests/external/test_remnawave_request_pacing.py` — Python-модуль
+  Классы: `SimpleNamespaceLike` (1 методов)
+  Функции: `pace` — Фальшивые часы: «сон» двигает их вперёд, реального ожидания нет., `test_no_pacing_by_default`, `test_requests_beyond_the_minute_budget_wait_for_the_window`, `test_window_slides_and_frees_a_slot_after_a_minute`
 - `tests/external/test_tribute_webhook_donation_id.py` — Python-модуль
   Классы: нет
   Функции: `test_distinct_donations_via_same_link_get_distinct_payment_ids` — Два разных доната через одну ссылку не должны схлопываться в один платёж., `test_replayed_webhook_keeps_identical_payment_id` — Повторная доставка того же события обязана дать тот же ключ (дедуп реплеев)., `test_same_second_donations_from_different_users_stay_distinct` — Одновременные донаты разных юзеров не должны делить ключ идемпотентности.
@@ -3592,7 +3598,7 @@
   Функции: `cart_service`, `test_topup_auto_purchases_addon_cart`, `test_topup_without_intent_leaves_addon_cart_alone` — Документирует старую поломку: корзина без флага — «нет свежего намерения»., `test_button_resumes_addon_cart_instead_of_corrupting_it`, `test_button_with_still_insufficient_balance_sends_back_to_topup`, `test_button_reports_failure_without_deleting_cart`, `test_devices_cart_uses_the_same_button_path`, `test_manual_resume_goes_through_dispatcher_as_manual`, `test_manual_success_text_has_no_word_automatically`, `test_every_addon_cart_in_code_carries_topup_intent`
 - `tests/handlers/test_admin_full_sync.py` — Python-модуль
   Классы: нет
-  Функции: `test_full_sync_button_runs_shared_full_sync_and_reports_all_three_parts`
+  Функции: `test_full_sync_button_runs_shared_full_sync_and_reports_all_three_parts`, `test_full_sync_button_refuses_a_second_run_while_one_is_in_progress`, `test_full_sync_button_reports_a_lost_race_instead_of_crashing`
 - `tests/handlers/test_admin_referral_levels.py` — Python-модуль
   Классы: `TestSingleAnswerPerCallback` (4 методов), `TestActiveBonusSelection` (2 методов), `TestNewLevelSafety` (3 методов), `TestValueInput` (8 методов), `TestTariffSelection` (2 методов), `TestCallbackRouting` (2 методов), `TestPendingInputIsCancelled` (4 методов), `TestDeletedLevelDoesNotResurrectActive` (1 методов), `TestEditorTraps` (7 методов), `TestChainDepthEditing` (4 методов), `TestLevelUnlockThresholdEditing` (4 методов), `TestLevelsModeToggle` (8 методов), `TestCallbackAnswerLength` (3 методов), `TestRegistrationPercentTrap` (3 методов), `TestNonFiniteInput` (2 методов), `TestThresholdWarningPrecision` (2 методов), `TestDepthInputIsCancelledToo` (3 методов)
   Функции: `wired` — Подменяет CRUD уровней и тарифов, собирая записи.
@@ -3901,6 +3907,9 @@
 - `tests/services/test_format_email_datetime.py` — Python-модуль
   Классы: нет
   Функции: `test_default_format_is_locale_independent` — The fallback shape must be ``DD.MM.YYYY, HH:MM`` — no month, `test_explicit_fmt_arg_overrides_settings` — Caller-provided ``fmt`` wins over the global setting — lets, `test_settings_override_takes_effect_without_restart` — An admin who updates ``EMAIL_DATE_FORMAT`` via system_settings, `test_empty_or_invalid_setting_falls_back_to_default` — Operator misconfiguration (empty / non-string) must not crash, `test_localizes_to_configured_timezone` — UTC datetime gets shifted to ``settings.TIMEZONE`` before formatting., `test_naive_datetime_is_treated_as_utc` — Some legacy paths still pass naive datetimes. Treat them as, `test_iso_string_is_parsed_and_reformatted` — Legacy callers that pre-isoformat'd their datetime get parsed, `test_unparseable_string_passes_through` — If the caller pre-formatted the string in some custom shape we, `test_empty_input_returns_placeholder` — ``None`` / empty must not render the literal Python repr or, `test_custom_placeholder_respected`, `test_non_datetime_non_string_input_returns_placeholder` — Garbage input (int, list, etc.) → placeholder. Defensive., `test_no_microseconds_in_output` — REGRESSION (2026-05-18): user saw, `test_no_offset_in_output` — Non-UTC TZ values also must not leak the offset into the email., `test_notification_delivery_service_uses_format_email_datetime` — ``notify_subscription_expiring`` and ``notify_autopay_success``, `test_auto_purchase_service_uses_format_email_datetime` — All ``expires_at`` / ``new_expires_at`` kwarg call sites in, `test_helper_signature_is_stable` — The helper is called from 9+ production sites. Lock its
+- `tests/services/test_full_sync_lock.py` — Python-модуль
+  Классы: нет
+  Функции: `test_second_full_sync_is_refused_while_first_runs`, `test_lock_is_released_after_a_failure`, `test_scheduler_sees_a_manual_full_sync_as_running`
 - `tests/services/test_gift_claim_notify.py` — Python-модуль
   Классы: нет
   Функции: `test_email_recipient_and_buyer_both_get_claim_link`, `test_telegram_recipient_is_not_auto_dmed_but_buyer_still_gets_link`, `test_send_failure_never_raises`, `test_non_gift_purchase_is_a_noop`, `test_email_recipient_gets_admin_override_when_saved` — Жалоба из «Багов»: шаблон письма нельзя было поменять со стандартного., `test_override_lookup_uses_the_gift_template_type_and_claim_context` — Override ищется под тем же типом, что и дефолт, и с тем же контекстом (ссылка на claim)., `test_buyer_backstop_uses_its_own_template_and_admin_override` — Письмо покупателю со ссылкой раньше было зашито в код на двух языках —, `test_disabled_types_are_not_sent` — Выключатель писем: отключённый тип пропускается, остальные уходят.
