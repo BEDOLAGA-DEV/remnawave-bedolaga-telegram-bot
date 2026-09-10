@@ -314,7 +314,7 @@ async def create_new_tariff(
         max_device_limit=request.max_device_limit,
         tier_level=request.tier_level,
         period_prices=period_prices_dict,
-        highlight_period_days=request.highlight_period_days,
+        highlight_period_days=request.highlight_period_days or None,
         is_highlighted=request.is_highlighted,
         allowed_squads=request.allowed_squads,
         server_traffic_limits=server_limits_dict,

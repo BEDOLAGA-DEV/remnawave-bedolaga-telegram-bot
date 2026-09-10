@@ -159,7 +159,9 @@ class TariffCreateRequest(BaseModel):
     max_device_limit: int | None = Field(None, ge=1)
     tier_level: int = Field(1, ge=1, le=10)
     period_prices: list[PeriodPrice] = Field(default_factory=list)
-    highlight_period_days: int | None = Field(None, ge=1, description='Period marked as the best value')
+    # Выделение необязательно: кабинет шлёт 0, когда оператор ничего не отметил
+    # (тот же объект уходит и на правку, где 0 = «снять»). Ноль здесь = None.
+    highlight_period_days: int | None = Field(None, ge=0, description='Period marked as the best value, 0 = none')
     allowed_squads: list[str] = Field(default_factory=list, description='Server UUIDs')
     server_traffic_limits: dict[str, ServerTrafficLimit] = Field(
         default_factory=dict, description='Per-server traffic limits'

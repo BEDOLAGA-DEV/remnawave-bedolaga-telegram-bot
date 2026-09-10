@@ -2925,6 +2925,9 @@
 - `tests/cabinet/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/cabinet/test_admin_create_update_schema_parity.py` — Python-модуль
+  Классы: нет
+  Функции: `test_schema_pairs_are_discovered` — Пустой список сделал бы сторож ниже бессмысленно зелёным., `test_shared_fields_share_constraints`, `test_create_tariff_accepts_zero_as_no_highlight`, `test_create_tariff_keeps_marked_period`, `test_create_tariff_rejects_negative_highlight`, `test_pinned_message_can_be_media_only`, `test_news_update_enforces_same_lengths_as_create`
 - `tests/cabinet/test_admin_delete_user_subscription.py` — Python-модуль
   Классы: нет
   Функции: `test_route_registered` — Метод и путь закреплены: иначе маршрут можно переименовать с зелёным CI., `test_force_defaults_to_off` — Без явного force активную платную подписку снести нельзя., `test_deletes_expired_trial` — Базовый случай из отчёта: отработавший триал убирается из карточки., `test_foreign_subscription_not_found` — Подписка чужого пользователя не удаляется по одному лишь sub_id., `test_active_paid_needs_force` — Оплаченный активный доступ не сносится одним промахом., `test_open_grace_blocks_deletion` — Пока открыт временный доступ, подписку из-под него не вырывают.
