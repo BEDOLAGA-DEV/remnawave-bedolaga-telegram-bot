@@ -316,6 +316,27 @@ def coerce_panel_user_id(value: Any) -> int:
     return candidate
 
 
+def is_expire_in_past_error(error: RemnaWaveAPIError) -> bool:
+    """Панель отвергла ``expireAt`` как прошедшую дату.
+
+    Ответ 3.x: ``400 {"message": "Validation failed", "errors": [{"path":
+    ["expireAt"], "message": "Expiration date cannot be in the past"}]}``
+    (снято с живой панели 3.4.3). Панель сравнивает дату со СВОИМИ часами, так
+    что «ближайшее будущее» по часам бота для неё бывает прошлым.
+    """
+    if getattr(error, 'status_code', None) != 400:
+        return False
+    errors = (error.response_data or {}).get('errors') or []
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        path = item.get('path') or []
+        message = str(item.get('message') or '').lower()
+        if 'expireAt' in path or 'past' in message:
+            return True
+    return False
+
+
 def is_user_not_found_error(error: RemnaWaveAPIError) -> bool:
     """Панель не нашла пользователя (удалён/протух идентификатор).
 
