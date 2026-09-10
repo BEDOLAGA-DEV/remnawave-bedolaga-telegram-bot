@@ -858,7 +858,7 @@
   Классы: `Pal24APIError`, `Pal24Response` (2 методов), `Pal24Client` (14 методов)
   Функции: нет
 - `app/external/remnawave_api.py` — Python-модуль
-  Классы: `UserStatus`, `TrafficLimitStrategy`, `UserTraffic`, `RemnaWaveUser` (4 методов), `RemnaWaveInbound`, `RemnaWaveInternalSquad`, `RemnaWaveAccessibleNode`, `RemnaWaveHost`, `RemnaWaveNode` (2 методов), `SubscriptionInfo`, `SubscriptionPageConfig`, `RemnaWaveExternalSquad`, `RemnaWaveAPIError` (1 методов), `RemnaWaveTransientError`, `RemnaWaveInvalidUserIdError`, `RemnaWaveAPI` (104 методов)
+  Классы: `UserStatus`, `TrafficLimitStrategy`, `UserTraffic`, `RemnaWaveUser` (4 методов), `RemnaWaveInbound`, `RemnaWaveInternalSquad`, `RemnaWaveAccessibleNode`, `RemnaWaveHost`, `RemnaWaveNode` (2 методов), `SubscriptionInfo`, `SubscriptionPageConfig`, `RemnaWaveExternalSquad`, `RemnaWaveAPIError` (1 методов), `RemnaWaveTransientError`, `RemnaWaveInvalidUserIdError`, `RemnaWaveAPI` (106 методов)
   Функции: `is_valid_internal_squad_name` — Имя сквада, которое примет панель., `coerce_panel_user_id` — Привести локально хранимый идентификатор к числовому id панели., `is_expire_in_past_error` — Панель отвергла ``expireAt`` как прошедшую дату., `is_user_not_found_error` — Панель сообщила, что такого пользователя НЕТ (удалён / протух идентификатор)., `is_stale_external_squad_error` — Панель отвергла запись из-за ``externalSquadUuid`` (или не смогла её отличить)., `format_bytes`, `parse_bytes`, `test_api_connection`
 - `app/external/telegram_stars.py` — Python-модуль
   Классы: `TelegramStarsService` (6 методов)
@@ -3276,7 +3276,7 @@
   Функции: `test_client_calls_only_endpoints_that_exist_in_panel_spec`, `test_legacy_allowlist_entries_are_really_absent_from_spec` — Если ручка из allowlist вернулась в спецификацию, запись устарела — убрать.
 - `tests/contracts/test_sync_surfaces_share_one_function.py` — Python-модуль
   Классы: нет
-  Функции: `test_full_sync_is_one_function_everywhere`, `test_bot_full_sync_no_longer_imports_only`, `test_from_panel_and_to_panel_share_service_methods`, `test_per_user_pushes_share_the_account_field_set`
+  Функции: `test_full_sync_is_one_function_everywhere`, `test_bot_full_sync_no_longer_imports_only`, `test_from_panel_and_to_panel_share_service_methods`, `test_per_user_pushes_share_the_account_field_set`, `test_sync_surfaces_never_reset_devices` — Сброс HWID-устройств — это про продление, а не про синхронизацию: массовый проход
 
 #### tests/contracts/fixtures
 
@@ -3420,6 +3420,9 @@
 - `tests/external/test_remnawave_hosts.py` — Python-модуль
   Классы: нет
   Функции: `test_parse_host_maps_panel_fields`, `test_parse_host_tolerates_missing_optional_fields`, `test_get_all_hosts_calls_hosts_endpoint`, `test_parse_node_exposes_active_inbound_uuids_for_host_linking`, `test_parse_node_without_config_profile_has_no_inbounds`
+- `tests/external/test_remnawave_rate_limit.py` — Python-модуль
+  Классы: нет
+  Функции: `test_429_retries_with_growing_delays_until_success`, `test_429_honours_retry_after_header`, `test_429_sets_shared_throttle_for_other_requests`, `test_request_waits_for_shared_throttle_before_sending`, `test_429_after_all_retries_is_transient_and_not_logged_as_error`
 - `tests/external/test_remnawave_remove_device.py` — Python-модуль
   Классы: нет
   Функции: `test_remove_device_posts_numeric_user_id_in_body` — Тело запроса — {'userId': int, 'hwid': str}; никакого userUuid., `test_remove_device_coerces_digit_string_id_to_int` — БД отдаёт BigInteger, но JSON/FSM могут донести строку — коерсим до запроса., `test_remove_device_rejects_uuid_id_without_hitting_the_panel` — Протухший UUID вместо id — наша битая ссылка, а не запрос к панели., `test_success_when_target_hwid_absent_from_remaining_list`, `test_failure_when_panel_acks_but_hwid_still_present`, `test_404_is_treated_as_success`, `test_other_api_error_is_failure`, `test_transient_exception_is_failure`, `test_bare_ack_without_device_list_is_success` — Panels that reply with just an ack (no devices echo) keep the old behaviour., `test_empty_response_is_success`, `test_reset_user_devices_is_a_single_delete_all_call`, `test_reset_user_devices_coerces_digit_string_id_to_int`, `test_reset_user_devices_rejects_uuid_id_without_hitting_the_panel`, `test_reset_user_devices_404_is_success` — Пользователя/устройств уже нет — цель достигнута., `test_reset_user_devices_failure_is_reported`
@@ -4330,6 +4333,9 @@
 - `tests/services/panel_sync/test_projection.py` — Python-модуль
   Классы: нет
   Функции: `test_reads_the_dictionary_shape_of_the_panel`, `test_reads_the_parsed_object_shape_of_the_client`, `test_reads_the_status_enum_of_the_client` — Клиент отдаёт статус перечислением, панель — строкой., `test_unparsable_date_does_not_explode`, `test_active_panel_moves_the_end_date_in_both_directions`, `test_disabled_panel_never_touches_the_end_date` — У отключённого в панели может лежать «сейчас плюс минута» от старых версий., `test_a_few_seconds_of_difference_are_ignored`, `test_limited_in_the_panel_becomes_limited_in_the_bot`, `test_expired_by_date_marks_a_grace_candidate`, `test_sync_never_expires_a_subscription_that_is_active_in_the_bot` — Защита от гонки: продление могло случиться между чтением панели и записью., `test_expired_trial_becomes_expired`, `test_traffic_is_carried_over`, `test_traffic_jitter_is_ignored`, `test_limits_are_never_read_from_the_panel` — Лимиты трафика и устройств задаёт тариф в боте, а не правка в панели., `test_squads_come_from_the_panel`, `test_empty_squad_list_means_the_panel_does_not_know`, `test_links_are_refreshed`, `test_open_grace_freezes_the_billing_state_but_keeps_links`, `test_status_can_be_frozen_for_a_subscription_just_touched_by_a_webhook` — Свежая оплата важнее любого снимка панели., `test_stale_snapshot_still_takes_the_date_of_a_live_account` — Продление, сделанное руками в панели, бот обязан увидеть., `test_stale_limited_needs_the_traffic_to_be_actually_spent`, `test_stale_limited_does_not_resurrect_a_disabled_subscription`, `test_stale_expired_needs_the_date_to_have_passed`, `test_stale_disabled_is_applied` — DISABLED — решение админа в панели, и донести его больше некому., `test_a_snapshot_older_than_the_row_does_not_touch_billing_fields`, `test_a_snapshot_newer_than_the_row_is_applied`, `test_a_webhook_stamp_also_counts_as_a_fresh_change`, `test_stale_snapshot_still_carries_traffic_and_links`, `test_admin_pull_takes_the_date_even_from_a_disabled_account`, `test_admin_pull_takes_the_limits_from_the_panel`, `test_routine_sync_never_takes_the_limits`, `test_admin_pull_without_a_date_marks_the_account_disabled`, `test_reads_limits_from_both_shapes_of_the_answer`
+- `tests/services/panel_sync/test_runner_pacing.py` — Python-модуль
+  Классы: нет
+  Функции: `test_bulk_sync_never_resets_devices`, `test_throttled_panel_is_a_warning_not_an_error`
 - `tests/services/panel_sync/test_tags.py` — Python-модуль
   Классы: нет
   Функции: `test_normalize_upper_cases_and_treats_blank_as_absent`, `test_normalize_rejects_what_the_panel_rejects`, `test_tariff_tag_wins_for_paid_subscription`, `test_tariff_tag_wins_over_trial_tag_too`, `test_without_tariff_tag_trial_uses_global_trial_tag`, `test_without_tariff_tag_paid_uses_global_paid_tag`, `test_blank_tariff_tag_counts_as_absent`, `test_payload_resolves_tag_from_tariff_when_caller_passed_none`, `test_payload_keeps_explicit_tag_from_caller`

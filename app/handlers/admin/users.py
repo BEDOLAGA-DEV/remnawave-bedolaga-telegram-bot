@@ -4336,6 +4336,7 @@ async def _push_narrow_change_to_panel(db, user, subscription, *, fields: set[st
             subscription,
             db=db,
             only_fields=fields | PANEL_ACCOUNT_METADATA_FIELDS,
+            reset_devices=False,
             create_if_missing=False,
             update_call=lambda **kwargs: update_panel_user_grace_safe(api, subscription.id, **kwargs),
         )

@@ -434,6 +434,25 @@ HAPP_CRYPTO_API_COOLDOWN_SECONDS = 600
 HAPP_CRYPTO_API_CACHE_MAX = 512
 
 
+# 429 от панели — троттлинг, не ошибка приложения: терпеливая шкала повторов и ОБЩАЯ
+# пауза на все запросы процесса (иначе параллельные задачи прохода продолжают долбить
+# панель, и лимит не отпускает).
+RATE_LIMIT_MAX_RETRIES = 6
+RATE_LIMIT_BASE_DELAY = 2.0
+RATE_LIMIT_MAX_DELAY = 30.0
+
+
+def _retry_after_seconds(headers: Any) -> float | None:
+    """``Retry-After`` в секундах; HTTP-дату не разбираем — тогда своя шкала."""
+    raw = headers.get('Retry-After') if headers else None
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
 class RemnaWaveAPI:
     # Remnawave 2.8.0 удалил POST /api/system/tools/happ/encrypt (панель теперь
     # генерирует crypt-ссылки на клиенте своего subpage). Клиент создаётся на каждый
@@ -456,6 +475,18 @@ class RemnaWaveAPI:
     _happ_api_cache: ClassVar[dict[str, str]] = {}
     _happ_api_failed_urls: ClassVar[set[str]] = set()
     _happ_local_cache: ClassVar[dict[str, str]] = {}
+    # Момент (monotonic), до которого все запросы процесса ждут после 429.
+    _throttled_until: ClassVar[float] = 0.0
+
+    @classmethod
+    def _throttle(cls, delay: float) -> None:
+        cls._throttled_until = max(cls._throttled_until, time.monotonic() + delay)
+
+    @classmethod
+    async def _wait_for_shared_throttle(cls) -> None:
+        wait = cls._throttled_until - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
 
     def __init__(
         self,
@@ -591,8 +622,11 @@ class RemnaWaveAPI:
         url = f'{self.base_url}{endpoint}'
         max_retries = 3
         base_delay = 1.0
+        attempt = 0  # транзиентные сбои: 502/503/504 и обрывы связи
+        rate_limit_hits = 0  # 429: свой счётчик и своя, более терпеливая шкала
 
-        for attempt in range(max_retries + 1):
+        while True:
+            await self._wait_for_shared_throttle()
             try:
                 kwargs = {'url': url, 'params': params}
 
@@ -610,14 +644,39 @@ class RemnaWaveAPI:
                     except json.JSONDecodeError:
                         response_data = {'raw_response': response_text}
 
-                    if response.status in (429, 502, 503, 504) and attempt < max_retries:
-                        retry_after = float(response.headers.get('Retry-After', base_delay * (2**attempt)))
+                    if response.status == 429:
+                        delay = _retry_after_seconds(response.headers) or min(
+                            RATE_LIMIT_BASE_DELAY * (2**rate_limit_hits), RATE_LIMIT_MAX_DELAY
+                        )
+                        rate_limit_hits += 1
+                        # Пауза общая; ждёт её начало цикла — одна точка ожидания на всех.
+                        RemnaWaveAPI._throttle(delay)
+                        if rate_limit_hits <= RATE_LIMIT_MAX_RETRIES:
+                            logger.warning(
+                                'Панель ограничила частоту запросов (429) — общая пауза',
+                                method=method,
+                                endpoint=endpoint,
+                                delay=delay,
+                                attempt=rate_limit_hits,
+                                max_retries=RATE_LIMIT_MAX_RETRIES,
+                            )
+                            continue
+                        logger.warning(
+                            'Панель ограничивает частоту запросов (429) после всех повторов',
+                            method=method,
+                            endpoint=endpoint,
+                        )
+                        raise RemnaWaveTransientError(f'Rate limited: {method} {endpoint}', 429, response_data)
+
+                    if response.status in (502, 503, 504) and attempt < max_retries:
+                        retry_after = _retry_after_seconds(response.headers) or base_delay * (2**attempt)
+                        attempt += 1
                         logger.warning(
                             'Retryable %s on %s %s, retry %s/%s after %ss',
                             response.status,
                             method,
                             endpoint,
-                            attempt + 1,
+                            attempt,
                             max_retries,
                             retry_after,
                         )
@@ -650,12 +709,13 @@ class RemnaWaveAPI:
             except aiohttp.ClientError as e:
                 if attempt < max_retries:
                     delay = base_delay * (2**attempt)
+                    attempt += 1
                     logger.warning(
                         'Request failed on retry / after s',
                         method=method,
                         endpoint=endpoint,
                         e=e,
-                        attempt=attempt + 1,
+                        attempt=attempt,
                         max_retries=max_retries,
                         delay=delay,
                     )
@@ -682,8 +742,6 @@ class RemnaWaveAPI:
                     error=str(e)[:200],
                 )
                 raise RemnaWaveTransientError(f'Request timed out: {method} {endpoint}') from e
-
-        raise RemnaWaveTransientError(f'Max retries exceeded for {method} {endpoint}')
 
     async def create_user(
         self,

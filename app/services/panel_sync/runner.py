@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import structlog
 
+from app.external.remnawave_api import RemnaWaveTransientError
 from app.services.panel_sync.writer import push_subscription
 
 
@@ -93,7 +94,20 @@ async def push_all_subscriptions(
                     # Записанный id не проверяем отдельным запросом: на большой
                     # базе это удвоило бы число обращений к панели, а протухший
                     # id обнаружится по ответу на PATCH и приведёт к пересозданию.
-                    result = await push_subscription(api, locked.user, locked, db=locked_db, verify_recorded_id=False)
+                    # Синхронизация — не продление: устройства не сбрасываем (и не удваиваем
+                    # число запросов к панели, которая и так ограничивает частоту).
+                    result = await push_subscription(
+                        api, locked.user, locked, db=locked_db, verify_recorded_id=False, reset_devices=False
+                    )
+                except RemnaWaveTransientError as error:
+                    # Троттлинг/недоступность панели — warning: это не ошибка приложения,
+                    # и в админ-чат такому не место (форвардер шлёт только error+).
+                    logger.warning(
+                        'Панель временно не приняла подписку (троттлинг или недоступность)',
+                        subscription_id=subscription.id,
+                        error=str(error)[:200],
+                    )
+                    return 'error'
                 except Exception as error:
                     logger.error(
                         'Ошибка синхронизации подписки в панель',

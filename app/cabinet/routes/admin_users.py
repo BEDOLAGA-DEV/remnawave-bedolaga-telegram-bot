@@ -4119,6 +4119,7 @@ async def sync_user_to_panel(
                 push_sub,
                 db=db,
                 only_fields=only_fields,
+                reset_devices=False,
                 create_if_missing=request.create_if_missing,
                 update_call=lambda **kwargs: update_panel_user_grace_safe(api, push_sub.id, **kwargs),
                 create_call=lambda **kwargs: create_panel_user_grace_safe(

@@ -50,3 +50,12 @@ def test_from_panel_and_to_panel_share_service_methods() -> None:
 def test_per_user_pushes_share_the_account_field_set() -> None:
     assert 'narrow_push_fields(' in _function_source(CABINET_USERS, 'sync_user_to_panel')
     assert 'PANEL_ACCOUNT_METADATA_FIELDS' in _function_source(BOT_USERS, '_push_narrow_change_to_panel')
+
+
+def test_sync_surfaces_never_reset_devices() -> None:
+    """Сброс HWID-устройств — это про продление, а не про синхронизацию: массовый проход
+    сбрасывал устройства КАЖДОМУ, если включён RESET_DEVICES_ON_RENEWAL, и удваивал запросы."""
+    runner = ROOT / 'app' / 'services' / 'panel_sync' / 'runner.py'
+    assert 'reset_devices=False' in _function_source(runner, 'push_all_subscriptions')
+    assert 'reset_devices=False' in _function_source(CABINET_USERS, 'sync_user_to_panel')
+    assert 'reset_devices=False' in _function_source(BOT_USERS, '_push_narrow_change_to_panel')
