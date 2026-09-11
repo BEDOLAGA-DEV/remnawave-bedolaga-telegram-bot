@@ -75,3 +75,46 @@ def test_guard_is_reachable_from_the_writer():
     assert GUARD in WRITER.read_text(encoding='utf-8'), (
         f'{WRITER.name} перестал ссылаться на {GUARD} — фильтр премиум-сквадов потерян'
     )
+
+
+APP = WRITER.parents[2]
+
+
+def _squad_patch_calls() -> list[tuple[str, ast.Call]]:
+    calls = []
+    for path in sorted(APP.rglob('*.py')):
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+            if name == 'patch_panel_squads':
+                calls.append((f'{path.relative_to(APP.parent).as_posix()}:{node.lineno}', node))
+    return calls
+
+
+def test_every_squad_patch_names_its_subscription():
+    """Каждый вызов `patch_panel_squads` обязан передать `subscription_id`.
+
+    Параметр обязательный, так что пропуск не обойдёт фильтр молча — вызов упадёт
+    с `TypeError`. Но падать он будет в рантайме, а вызывают его фоновые задачи,
+    которые ловят исключение и пишут warning: синхронизация сквадов после правки
+    тарифа тихо перестала бы работать у всех. Тесты этого не заметят — фоновую
+    синхронизацию в них подменяют целиком.
+
+    Так уже чуть не случилось: в 4.9.0 синхронизацию вынесли в
+    `tariff_squad_sync`, и новый вызов пришёл без идентификатора подписки.
+    """
+    calls = _squad_patch_calls()
+    missing = [where for where, call in calls if not any(kw.arg == 'subscription_id' for kw in call.keywords)]
+
+    assert not missing, (
+        'Вызов patch_panel_squads без subscription_id упадёт в рантайме, а в фоне — '
+        f'молча. Передайте id подписки: {missing}'
+    )
+
+
+def test_squad_patch_scan_finds_the_callers():
+    """Сторож выше не должен проходить вхолостую, если сканер перестал видеть вызовы."""
+    assert len(_squad_patch_calls()) >= 3, 'сканер не нашёл вызовов patch_panel_squads — сторож смотрит не туда'
