@@ -3424,6 +3424,9 @@
 - `tests/database/test_user_balance_lock_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_user_lock_blocks_second_session` — Пока одно зачисление держит строку пользователя, второе ждёт., `test_concurrent_topups_do_not_lose_money` — Два одновременных зачисления складываются, а не затирают друг друга., `test_lock_returns_fresh_values_not_the_cached_object` — Блокировка обязана отдавать значения из БД, а не из кеша сессии.
+- `tests/database/test_users_statistics_blocked_count.py` — Python-модуль
+  Классы: нет
+  Функции: `test_blocked_counts_only_the_blocked_status`
 
 #### tests/database/crud
 
