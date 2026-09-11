@@ -68,6 +68,24 @@ PANEL_USER_CACHE_TTL_SECONDS = 3600
 PANEL_USER_CACHE_JITTER = 0.25
 
 
+def panel_user_id_for_subscription(subscription: Any) -> int | None:
+    """Аккаунт в панели, к которому относятся расход и сквады подписки.
+
+    В мультиподписках у каждой подписки свой аккаунт, и подстановка аккаунта
+    пользователя увела бы расход, снятие сквада или сброс трафика на соседний
+    тариф. Поэтому там — только аккаунт самой подписки, даже если его ещё нет.
+    """
+    if settings.is_multi_tariff_enabled():
+        raw = getattr(subscription, 'remnawave_id', None)
+    else:
+        user = getattr(subscription, 'user', None)
+        raw = getattr(subscription, 'remnawave_id', None) or (user.remnawave_id if user else None)
+    try:
+        return int(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class _Target:
     """Подписка, которую проверяем по одному конкретному премиум-скваду."""
@@ -280,16 +298,7 @@ class PremiumTrafficService:
 
     @staticmethod
     def _panel_user_id(subscription: Subscription) -> int | None:
-        if settings.is_multi_tariff_enabled():
-            raw = getattr(subscription, 'remnawave_id', None)
-        else:
-            raw = getattr(subscription, 'remnawave_id', None) or (
-                subscription.user.remnawave_id if subscription.user else None
-            )
-        try:
-            return int(raw) if raw else None
-        except (TypeError, ValueError):
-            return None
+        return panel_user_id_for_subscription(subscription)
 
     # ------------------------------------------------- отменённые лимиты
 

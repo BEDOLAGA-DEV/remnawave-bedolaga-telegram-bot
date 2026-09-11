@@ -3,6 +3,9 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from app.cabinet.routes.admin_premium_traffic import _reset_premium, _reset_regular
 from app.database.crud.premium_traffic import get_or_create_state, get_states_for_subscription
 from app.database.models import SubscriptionPremiumTraffic
@@ -146,6 +149,28 @@ class TestRegularReset:
             assert state.used_bytes == 5 * BYTES_IN_GB
             assert state.is_limited is True
             assert state.period_start_at == period_before
+
+    async def test_multi_tariff_never_resets_the_user_account(self, monkeypatch):
+        """В мультиподписках у подписки свой аккаунт в панели.
+
+        Пока его нет, сбрасывать нечего: аккаунт пользователя принадлежит
+        соседней подписке, и сброс ушёл бы ей.
+        """
+        api = _FakeApi()
+        monkeypatch.setattr('app.cabinet.routes.admin_premium_traffic.RemnaWaveService', lambda: _FakeService(api))
+        monkeypatch.setattr(
+            'app.services.premium_traffic_service.settings',
+            SimpleNamespace(is_multi_tariff_enabled=lambda: True),
+        )
+        subscription = _subscription()
+        subscription.remnawave_id = None
+
+        async with memory_session(monkeypatch, TABLES) as db:
+            with pytest.raises(HTTPException) as caught:
+                await _reset_regular(db, subscription, 'regular', NOW)
+
+        assert caught.value.status_code == 409
+        assert api.reset_calls == []
 
     async def test_panel_reset_is_acknowledged_so_the_worker_ignores_it(self, monkeypatch):
         """Иначе воркер примет его за досрочный сброс и обнулит премиум следом."""

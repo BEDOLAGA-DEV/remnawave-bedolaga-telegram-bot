@@ -1597,7 +1597,7 @@
   Функции: `get_premium_topup_options` — Сквады подписки, где докупка премиум-трафика включена и есть пакеты., `quote_premium_topup` — Проверить возможность покупки и посчитать цену до скидок., `apply_premium_topup` — Начислить купленный объём.
 - `app/services/premium_traffic_service.py` — Python-модуль
   Классы: `PremiumTrafficService` (30 методов)
-  Функции: нет
+  Функции: `panel_user_id_for_subscription` — Аккаунт в панели, к которому относятся расход и сквады подписки.
 - `app/services/pricing_engine.py` — Python-модуль
   Классы: `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (20 методов)
   Функции: нет
@@ -3016,7 +3016,7 @@
   Классы: нет
   Функции: `p12_bytes`, `stubbed_service`, `test_admin_overpay_certificate_routes_registered`, `test_upload_certificate_commits`, `test_upload_certificate_env_locked_warning`, `test_upload_certificate_invalid_returns_422`, `test_upload_certificate_oversize_returns_413`, `test_delete_certificate_commits`
 - `tests/cabinet/test_admin_premium_traffic.py` — Python-модуль
-  Классы: `TestPremiumReset` (6 методов), `TestRegularReset` (4 методов)
+  Классы: `TestPremiumReset` (6 методов), `TestRegularReset` (5 методов)
   Функции: нет
 - `tests/cabinet/test_admin_reachability.py` — Python-модуль
   Классы: нет
