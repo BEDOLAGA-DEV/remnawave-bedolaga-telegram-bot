@@ -51,7 +51,7 @@ class _FakePanelSync:
         return True
 
 
-def _rows(*, traffic_reset_mode: str | None, status: str) -> list:
+def _rows(*, traffic_reset_mode: str | None, status: str, paused: bool = False) -> list:
     now = datetime.now(UTC)
     return [
         User(
@@ -83,7 +83,7 @@ def _rows(*, traffic_reset_mode: str | None, status: str) -> list:
             user_id=1,
             status=status,
             is_trial=False,
-            is_daily_paused=False,
+            is_daily_paused=paused,
             start_date=now - timedelta(days=5),
             end_date=now - timedelta(hours=1),
             last_daily_charge_at=now - timedelta(days=1, hours=1),
@@ -103,6 +103,7 @@ async def _resume_from_bot(
     traffic_reset_mode: str | None,
     reset_on_payment: bool,
     status: str = SubscriptionStatus.DISABLED.value,
+    paused: bool = False,
 ):
     import app.handlers.subscription.purchase as purchase_module
     import app.services.subscription_service as subscription_service_module
@@ -115,7 +116,7 @@ async def _resume_from_bot(
     # После нажатия обработчик перерисовывает экран подписки — это не предмет проверки.
     monkeypatch.setattr(purchase_module, 'show_subscription_info', AsyncMock(return_value=None))
 
-    db.add_all(_rows(traffic_reset_mode=traffic_reset_mode, status=status))
+    db.add_all(_rows(traffic_reset_mode=traffic_reset_mode, status=status, paused=paused))
     await db.commit()
 
     loaded = await db.execute(
@@ -190,3 +191,24 @@ async def test_bot_resume_lifts_panel_limit_after_paid_reset(monkeypatch):
     assert panel.calls[0]['reset_traffic'] is True
     assert panel.enabled == [PANEL_USER_ID]
     assert subscription.status == SubscriptionStatus.ACTIVE.value
+
+
+@pytest.mark.asyncio
+async def test_bot_unpause_without_charge_keeps_traffic(monkeypatch):
+    """Снятие своей паузы у активной подписки — не оплата: денег не берём и счётчик не трогаем."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        panel, _, subscription, user = await _resume_from_bot(
+            db,
+            monkeypatch,
+            traffic_reset_mode='NO_RESET',
+            reset_on_payment=True,
+            status=SubscriptionStatus.ACTIVE.value,
+            paused=True,
+        )
+
+    assert panel.calls, 'синхронизация с панелью не выполнялась'
+    assert panel.calls[0]['reset_traffic'] is False
+    assert panel.enabled == []
+    assert subscription.traffic_used_gb == USED_TRAFFIC_GB
+    assert subscription.is_daily_paused is False
+    assert user.balance_kopeks == BALANCE_KOPEKS

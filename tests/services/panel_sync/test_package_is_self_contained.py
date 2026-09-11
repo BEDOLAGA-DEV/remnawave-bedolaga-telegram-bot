@@ -74,3 +74,13 @@ async def test_record_identity_links_row_even_without_subscription_service(monke
 
     assert subscription.remnawave_id == 777
     assert subscription.remnawave_short_uuid == 'abc'
+
+
+def test_subscription_service_reexports_moved_helpers():
+    """Внешний код, импортировавший помощники из сервиса подписок, получает те же объекты."""
+    from app.services import subscription_service
+    from app.services.panel_sync import identity, traffic_strategy
+
+    assert subscription_service.get_traffic_reset_strategy is traffic_strategy.get_traffic_reset_strategy
+    assert subscription_service.link_subscription_panel_identity is identity.link_subscription_panel_identity
+    assert subscription_service.panel_id_is_free_for is identity.panel_id_is_free_for
