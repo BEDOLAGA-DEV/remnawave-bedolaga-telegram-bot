@@ -64,3 +64,18 @@ class FakeAPI:
 
     async def cancel_scan(self, scan_id: int) -> dict:
         return self._next('cancel_scan', scan_id)
+
+    async def geo_catalog(self, params: dict | None = None) -> dict:
+        return self._next('geo_catalog', tuple(sorted((params or {}).items())))
+
+    async def geo_preview(self, body: dict) -> dict:
+        return self._next('geo_preview')
+
+    async def geo_start(self, body: dict, key: str) -> dict:
+        return self._next('geo_start', key)
+
+    async def geo_run(self, run_id: int) -> dict:
+        return self._next('geo_run', run_id)
+
+    async def geo_cancel(self, run_id: int) -> dict:
+        return self._next('geo_cancel', run_id)
