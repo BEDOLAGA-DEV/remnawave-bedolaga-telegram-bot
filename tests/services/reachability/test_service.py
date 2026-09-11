@@ -978,13 +978,22 @@ MOSCOW_KEY = 'moscow|moscow|'
 
 
 def _record_spawns(service) -> list[dict]:
-    """Фон повтора не запускаем: запоминаем, с чем сервис его позвал."""
+    """Фон не запускаем: запоминаем, с чем сервис позвал повтор.
+
+    Глушится и фон обычной задачи: ``create_job`` здесь нужен только как «идущая GEO»,
+    а живой обходчик переживал тест и стучался в уже закрытую базу — на CI это падало
+    «Cannot operate on a closed database», локально проскакивало по таймингу.
+    """
     spawned: list[dict] = []
 
     def spawn(parent_id: int, key: str, **kwargs) -> None:
         spawned.append({'parent_id': parent_id, 'key': key, **kwargs})
 
+    def no_background(job_id: int) -> None:
+        return None
+
     service.runner.rechecks.spawn = spawn
+    service.runner.spawn = no_background
     return spawned
 
 
