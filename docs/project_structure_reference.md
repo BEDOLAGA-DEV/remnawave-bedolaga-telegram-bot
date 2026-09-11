@@ -3414,6 +3414,9 @@
 - `tests/database/test_postgres_fixture_guard.py` — Python-модуль
   Классы: нет
   Функции: `test_missing_url_skips_by_default` — Окружение без PostgreSQL не должно ронять прогон., `test_missing_url_fails_when_postgres_is_required` — С поднятым флагом отсутствие базы — падение, а не пропуск., `test_requirement_flag_accepts_usual_spellings`, `test_requirement_flag_ignores_everything_else`, `test_blank_url_counts_as_absent` — Пустая переменная — это отсутствие базы, а не адрес из пробелов., `test_ci_workflow_runs_postgres_tests_for_real` — CI обязан поднимать базу и требовать, чтобы тесты на ней прошли.
+- `tests/database/test_premium_traffic_schema_parity.py` — Python-модуль
+  Классы: нет
+  Функции: `test_migration_creates_the_same_columns_as_the_model`, `test_migration_keeps_the_pair_unique_and_indexes_the_squad` — Уникальность пары — защита от гонки воркера и докупки; индекс — для выборки по скваду., `test_migration_is_idempotent_on_a_database_that_already_has_the_table`
 - `tests/database/test_reachability_batches_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match`, `test_jobs_reference_batches`, `test_downgrade_removes_batches`
@@ -4161,7 +4164,7 @@
   Функции: `test_create_subscription_posts_method_6`, `test_create_subscription_uses_v2_endpoint_when_configured`, `test_create_subscription_omits_description_when_not_provided`, `test_create_subscription_truncates_long_cyrillic_description`, `test_get_subscription_is_unversioned`, `test_list_subscriptions_builds_query_params`, `test_list_subscriptions_omits_none_params`, `test_cancel_subscription_posts_cancel`, `test_format_amount_integer_and_decimal`, `test_recurrent_gate`, `test_reconcile_unconfigured_platega_is_noop` — Неконфигурированный Platega (нет мерчанта/секрета) — no-op до БД., `test_reconcile_cancelled_sweep_runs_with_recurrent_flag_off` — Cancelled-свип (ретрай недошедших отмен) обязан работать и при, `test_reconcile_marks_stuck_pending_as_failed` — Safety net: a PENDING record that never got a platega_subscription_id back, `test_reconcile_recancels_remotely_active_cancelled_record` — Контрольный свип отменённых: локальный CANCELLED, но remote-статус, `test_reconcile_skips_cancelled_record_confirmed_remotely` — CANCELLED-запись, у которой remote-статус тоже cancelled, — свип не, `test_create_subscription_raises_actionable_error_on_val0001` — VAL_0001 с key=paymentMethod (формат запроса совпадает с доками) =, `test_create_subscription_transport_failure_returns_none` — Транспортный сбой (status=None) — прежний контракт: None, без исключения.
 - `tests/services/test_premium_squads_are_filtered_everywhere.py` — Python-модуль
   Классы: нет
-  Функции: `test_every_squad_writer_filters_limited_squads`, `test_account_patcher_does_not_touch_squads` — `patch_panel_account` фильтровать нечего — и он не должен знать о сквадах., `test_guard_is_reachable_from_the_writer` — Страховка от обратного: правило есть, а импорт потеряли.
+  Функции: `test_every_squad_writer_filters_limited_squads`, `test_account_patcher_does_not_touch_squads` — `patch_panel_account` фильтровать нечего — и он не должен знать о сквадах., `test_guard_is_reachable_from_the_writer` — Страховка от обратного: правило есть, а импорт потеряли., `test_every_squad_patch_names_its_subscription` — Каждый вызов `patch_panel_squads` обязан передать `subscription_id`., `test_squad_patch_scan_finds_the_callers` — Сторож выше не должен проходить вхолостую, если сканер перестал видеть вызовы.
 - `tests/services/test_premium_traffic_multi_tariff.py` — Python-модуль
   Классы: `TestPanelAccountPerSubscription` (3 методов), `TestStateIsolation` (3 методов), `TestUsageAttribution` (1 методов)
   Функции: нет
@@ -4169,7 +4172,7 @@
   Классы: `TestOptions` (4 методов), `TestQuote` (6 методов), `TestApply` (5 методов)
   Функции: нет
 - `tests/services/test_premium_traffic_service.py` — Python-модуль
-  Классы: `FakeRemnawaveApi` (4 методов), `TestUsageCollection` (6 методов), `TestDecisions` (10 методов), `TestPanelUserCache` (4 методов), `TestFirstDayCorrection` (5 методов), `TestIntervalSettings` (1 методов), `TestNotifications` (6 методов)
+  Классы: `FakeRemnawaveApi` (4 методов), `TestUsageCollection` (6 методов), `TestDecisions` (13 методов), `TestPanelUserCache` (4 методов), `TestFirstDayCorrection` (5 методов), `TestIntervalSettings` (1 методов), `TestNotifications` (6 методов)
   Функции: нет
 - `tests/services/test_promocode_rollback_keeps_user_usable.py` — Python-модуль
   Классы: нет
