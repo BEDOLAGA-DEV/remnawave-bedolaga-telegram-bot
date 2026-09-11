@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.settings_store import import_legacy_values, read_legacy_json, store_setting
 
 
 logger = structlog.get_logger(__name__)
@@ -89,15 +89,7 @@ class NotificationSettingsService:
 
     @staticmethod
     async def _store(db: AsyncSession, key: str, value: Any) -> bool:
-        # Локальный импорт: слой системных настроек тянет половину конфигурации.
-        from app.services.system_settings_service import bot_configuration_service
-
-        try:
-            await bot_configuration_service.set_value(db, key, value)
-        except Exception as error:
-            logger.error('Не удалось сохранить настройку уведомлений', key=key, error=error)
-            return False
-        return True
+        return await store_setting(db, key, value)
 
     @classmethod
     async def _store_bounded(cls, db: AsyncSession, key: str, value: Any, bounds: tuple[int, int]) -> bool:
@@ -211,33 +203,13 @@ class NotificationSettingsService:
         Значение, уже заданное в базе, главнее файла; мусор в файле пропускается; битый файл
         остаётся человеку и не трогается. Возвращает перенесённые ключи со значениями.
         """
-        path = cls._legacy_path
-        if not path.exists():
+        sections = read_legacy_json(cls._legacy_path)
+        if sections is None:
             return {}
-        try:
-            raw = json.loads(path.read_text(encoding='utf-8') or '{}')
-        except (OSError, ValueError) as error:
-            logger.error(
-                'Старый файл настроек уведомлений не читается — оставлен как есть', path=str(path), error=error
-            )
-            return {}
-        sections = raw if isinstance(raw, dict) else {}
-
-        from app.services.system_settings_service import bot_configuration_service
-
-        imported: dict[str, Any] = {}
+        values: dict[str, Any] = {}
         for section, field, key, kind in _LEGACY_FIELDS:
             entry = sections.get(section)
             value = _coerce_legacy(kind, entry.get(field)) if isinstance(entry, dict) else None
-            if value is None or bot_configuration_service.has_override(key):
-                continue
-            await bot_configuration_service.set_value(db, key, value, commit=False)
-            imported[key] = value
-        if imported:
-            await db.commit()
-        try:
-            path.rename(path.with_name(path.name + '.imported'))
-        except OSError as error:
-            logger.warning('Не удалось переименовать старый файл настроек уведомлений', path=str(path), error=error)
-        logger.info('Настройки уведомлений перенесены из файла в базу', keys=sorted(imported))
-        return imported
+            if value is not None:
+                values[key] = value
+        return await import_legacy_values(db, cls._legacy_path, values)

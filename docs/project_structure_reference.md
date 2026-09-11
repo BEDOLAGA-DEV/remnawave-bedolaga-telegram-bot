@@ -290,7 +290,7 @@
   Функции: `list_tariffs` — Get list of all tariffs., `get_available_servers` — Get list of all servers for tariff selection., `get_available_external_squads` — Fetch external squads from RemnaWave panel., `update_tariff_order` — Update the display order of tariffs., `get_tariff` — Get detailed tariff info., `create_new_tariff` — Create a new tariff., `update_existing_tariff` — Update an existing tariff., `delete_existing_tariff` — Delete a tariff., `toggle_tariff` — Toggle tariff active status., `toggle_trial_tariff` — Toggle tariff trial availability., `get_tariff_stats` — Get tariff statistics., `sync_tariff_squads` — Sync squads from tariff to all active/trial subscriptions in Remnawave panel.
 - `app/cabinet/routes/admin_tickets.py` — Python-модуль
   Классы: `AdminTicketUserInfo`, `AdminTicketResponse`, `AdminTicketDetailResponse`, `AdminTicketListResponse`, `AdminReplyRequest` (1 методов), `AdminStatusUpdateRequest`, `AdminPriorityUpdateRequest`, `AdminStatsResponse`, `TicketSettingsResponse`, `TicketSettingsUpdateRequest`
-  Функции: `get_ticket_stats` — Get ticket statistics., `get_ticket_settings` — Get ticket system settings., `update_ticket_settings` — Update ticket system settings — SLA в system_settings, режим и уведомления в своём хранилище., `get_all_tickets` — Get all tickets for admin., `get_ticket_detail` — Get ticket with all messages for admin., `reply_to_ticket` — Reply to a ticket as admin., `update_ticket_status` — Update ticket status., `update_ticket_priority` — Update ticket priority.
+  Функции: `get_ticket_stats` — Get ticket statistics., `get_ticket_settings` — Get ticket system settings., `update_ticket_settings` — Update ticket system settings — всё в system_settings: SLA формой, режим и уведомления через сервис., `get_all_tickets` — Get all tickets for admin., `get_ticket_detail` — Get ticket with all messages for admin., `reply_to_ticket` — Reply to a ticket as admin., `update_ticket_status` — Update ticket status., `update_ticket_priority` — Update ticket priority.
 - `app/cabinet/routes/admin_traffic.py` — Python-модуль
   Классы: нет
   Функции: `get_traffic_usage` — Get paginated per-user traffic usage by node., `get_traffic_enrichment` — Return enrichment data: device counts, spending, dates, last node., `export_traffic_csv` — Generate CSV with traffic usage and send to admin's Telegram DM.
@@ -1674,6 +1674,9 @@
 - `app/services/server_status_service.py` — Python-модуль
   Классы: `ServerStatusEntry`, `ServerStatusError`, `ServerStatusService` (7 методов)
   Функции: нет
+- `app/services/settings_store.py` — Python-модуль
+  Классы: нет
+  Функции: `store_setting` — Сохранить настройку в базу и применить к процессу; ошибка — в лог, ответ False., `read_legacy_json` — Содержимое старого файла настроек; None — файла нет или он не читается (остаётся человеку)., `import_legacy_values` — Перенести значения из старого файла в базу и переименовать файл.
 - `app/services/severpay_service.py` — Python-модуль
   Классы: `SeverPayAPIError` (1 методов), `SeverPayService` (9 методов)
   Функции: нет
@@ -1705,7 +1708,7 @@
   Классы: `PropagateSquadsResult`, `SubscriptionService` (32 методов)
   Функции: `get_traffic_reset_strategy` — Получает стратегию сброса трафика., `panel_id_is_free_for` — Не держит ли этот панельный id уже ДРУГАЯ строка подписок., `link_subscription_panel_identity` — Проставить строке id панельного аккаунта, который только что обновили., `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
 - `app/services/support_settings_service.py` — Python-модуль
-  Классы: `SupportSettingsService` (28 методов)
+  Классы: `SupportSettingsService` (25 методов)
   Функции: нет
 - `app/services/system_error_log_service.py` — Python-модуль
   Классы: `SystemErrorLogService` (13 методов)
@@ -4274,9 +4277,9 @@
 - `tests/services/test_subscription_service_sync.py` — Python-модуль
   Классы: нет
   Функции: `test_sync_picks_create_or_update_by_panel_id`, `test_missing_user_falls_to_create_which_reports_it` — Пользователя нет в базе: не падаем, create сам залогирует и вернёт None.
-- `tests/services/test_support_settings_sync.py` — Python-модуль
+- `tests/services/test_support_settings_in_db.py` — Python-модуль
   Классы: нет
-  Функции: `support_storage` — Изолированное JSON-хранилище + сброс кеша класса на каждый тест., `test_load_syncs_system_mode_into_settings` — REGRESSION: persisted-режим должен доезжать до settings при загрузке —, `test_mode_survives_restart_for_cabinet` — REGRESSION (сквозной сценарий): админ выключил тикеты в боте, бот, `test_load_syncs_menu_enabled_into_settings` — REGRESSION: у menu_enabled была ровно та же проблема., `test_set_support_menu_enabled_syncs_settings` — Сеттер меню тоже обязан обновлять settings (раньше не обновлял вовсе)., `test_absent_json_keeps_env_value` — Без сохранённого значения settings остаётся как задан в .env., `test_invalid_persisted_mode_does_not_clobber_settings` — Мусор в JSON не должен затирать settings невалидным режимом., `test_corrupt_json_does_not_clobber_settings` — Битый JSON: _load глотает ошибку, settings остаётся из .env.
+  Функции: `isolated_settings`, `test_keys_are_bot_settings_in_the_support_category`, `test_getters_read_live_settings`, `test_ticket_notification_flags_respect_global_switches`, `test_support_info_text_per_language_with_locale_fallback`, `test_setters_persist_to_db_and_apply_live`, `test_moderators_are_added_and_removed_in_the_db`, `test_legacy_file_is_imported_once_and_never_overrides_the_db`, `test_broken_legacy_file_is_left_to_a_human`
 - `tests/services/test_sync_extinguishes_stale_panel_date.py` — Python-модуль
   Классы: нет
   Функции: `harness` — Один батч из одной истёкшей подписки, панельный id уже известен., `test_future_panel_date_of_an_expired_subscription_is_extinguished`, `test_past_panel_date_is_left_alone` — Настоящая дата окончания в панели — история, второго запроса быть не должно., `test_live_subscription_is_not_touched_twice` — У живой подписки дата уходит первым же запросом — гасить нечего.

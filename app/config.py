@@ -110,6 +110,19 @@ class Settings(BaseSettings):
     SUPPORT_TICKET_SLA_MINUTES: int = 60
     SUPPORT_TICKET_SLA_CHECK_INTERVAL_SECONDS: int = 300
     SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES: int = 30
+    # Настройки поддержки из админки бота и кабинета. Хранятся в базе (system_settings), а не в файле.
+    SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED: bool = True
+    SUPPORT_USER_TICKET_NOTIFICATIONS_ENABLED: bool = True
+    SUPPORT_CABINET_USER_NOTIFICATIONS_ENABLED: bool = True
+    SUPPORT_CABINET_ADMIN_NOTIFICATIONS_ENABLED: bool = True
+    # Telegram ID модераторов поддержки через запятую, как ADMIN_IDS.
+    SUPPORT_MODERATOR_IDS: str = ''
+    # Текст «о поддержке» по языкам (HTML); пусто — текст локали.
+    SUPPORT_INFO_TEXT_RU: str = ''
+    SUPPORT_INFO_TEXT_EN: str = ''
+    SUPPORT_INFO_TEXT_UA: str = ''
+    SUPPORT_INFO_TEXT_ZH: str = ''
+    SUPPORT_INFO_TEXT_FA: str = ''
 
     # MiniApp tickets settings
     MINIAPP_TICKETS_ENABLED: bool = True  # Enable/disable tickets section in miniapp
