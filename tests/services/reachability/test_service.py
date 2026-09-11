@@ -882,3 +882,15 @@ async def test_geo_catalog_respects_disabled_integration(session_factory) -> Non
     service = make_service(session_factory, enabled=False)
     with pytest.raises(ReachabilityDisabled):
         await service.geo_catalog(network='res')
+
+
+async def test_geo_regions_index_is_empty_when_the_service_is_off_or_down(session_factory) -> None:
+    assert await make_service(session_factory, enabled=False).geo_regions() == {}
+
+    class Down(FakeClient):
+        async def geo_catalog(self, params=None):
+            raise BschekAPIError(code='catalog_unavailable', message='down', status=503)
+
+    assert await make_service(session_factory, client=Down()).geo_regions() == {}
+    live = make_service(session_factory, client=FakeClient())
+    assert (await live.geo_regions())['moscow'] == {'name': 'Москва', 'district': 'ЦФО'}

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -17,6 +17,7 @@ from app.database.models import ReachabilityBatch, ReachabilityJob, User
 from app.external.bschek_api import BschekAPIError
 from app.services.permission_service import PermissionService
 from app.services.reachability.batches import BatchPreview, batch_done_targets
+from app.services.reachability.geo_result import DISTRICT_NAMES
 from app.services.reachability.jobs import JobNotCancellable
 from app.services.reachability.pricing import CostLimitExceeded
 from app.services.reachability.requests import RequestBuildError
@@ -42,6 +43,12 @@ from ..schemas.reachability import (
     BatchOut,
     BatchPreviewResponse,
     ConfigOut,
+    GeoCatalogResponse,
+    GeoCityOut,
+    GeoDistrictOut,
+    GeoIspOut,
+    GeoPreviewOut,
+    GeoRegionOut,
     HostsResponse,
     HostTargetOut,
     JobCreateRequest,
@@ -132,6 +139,56 @@ def _job_out(job: Any) -> JobOut:
         probes=dict(probes) if isinstance(probes, dict) else None,
         sni_hosts=[str(name) for name in (request.get('sni_hosts') or [])],
         batch_id=getattr(job, 'batch_id', None),
+    )
+
+
+async def _name_geo_regions(job_out: JobOut) -> JobOut:
+    """Строки GEO получают регион словами из кэша справочника; без сервиса остаются токены."""
+    if job_out.kind != 'geo' or not job_out.result or not job_out.result.get('rows'):
+        return job_out
+    regions = await _service().geo_regions()
+    if not regions:
+        return job_out
+    rows = []
+    for row in job_out.result['rows']:
+        known = regions.get(str(row.get('region')))
+        rows.append({**row, 'region_ru': known['name'], 'district': known['district']} if known else row)
+    return job_out.model_copy(update={'result': {**job_out.result, 'rows': rows}})
+
+
+async def _job_out_named(job: Any) -> JobOut:
+    return await _name_geo_regions(_job_out(job))
+
+
+def _geo_district_out(item: Any) -> GeoDistrictOut:
+    """Округ из справочника: объект `{code, name}` или голый код — тогда имя из своей таблицы."""
+    if isinstance(item, dict):
+        return GeoDistrictOut(code=str(item.get('code') or ''), name=str(item.get('name') or ''))
+    code = str(item)
+    return GeoDistrictOut(code=code, name=DISTRICT_NAMES.get(code.lower(), code.upper()))
+
+
+def _geo_catalog_out(data: dict) -> GeoCatalogResponse:
+    city_keys = ('region', 'region_ru', 'district', 'city', 'city_ru', 'isps')
+    return GeoCatalogResponse(
+        networks=[str(item) for item in data.get('networks') or []],
+        districts=[_geo_district_out(item) for item in data.get('districts') or []],
+        regions=[
+            GeoRegionOut(
+                token=str(r.get('token') or ''), name=str(r.get('name') or ''), district=str(r.get('district') or '')
+            )
+            for r in data.get('regions') or []
+        ],
+        isps=[
+            GeoIspOut(token=str(i.get('token') or ''), name=str(i.get('name') or ''), cities=int(i.get('cities') or 0))
+            for i in data.get('isps') or []
+        ],
+        cities=[
+            GeoCityOut(**{key: c.get(key) for key in city_keys if c.get(key) is not None})
+            for c in data.get('cities') or []
+        ],
+        cities_total=data.get('cities_total'),
+        cities_truncated=bool(data.get('cities_truncated')),
     )
 
 
@@ -250,6 +307,7 @@ def _preview_out(preview: PreviewResult) -> PreviewResponse:
         estimate_is_exact=preview.estimate_is_exact,
         warnings=preview.warnings,
         balance_kopeks=preview.balance_kopeks,
+        geo=GeoPreviewOut(**preview.geo) if preview.geo else None,
     )
 
 
@@ -420,7 +478,7 @@ async def create_job(
         'estimated_kopeks': job.estimated_kopeks,
     }
     await _audit(db, admin, 'reachability_job_create', job, details)
-    return _job_out(job)
+    return await _job_out_named(job)
 
 
 @router.get('/jobs', response_model=JobListResponse)
@@ -440,7 +498,8 @@ async def list_jobs(
         )
     except Exception as exc:
         raise _http(exc) from exc
-    return JobListResponse(items=[_job_out(job) for job in items], total=total, offset=offset, limit=limit)
+    named = [await _job_out_named(job) for job in items]
+    return JobListResponse(items=named, total=total, offset=offset, limit=limit)
 
 
 @router.get('/jobs/{job_id}', response_model=JobOut)
@@ -450,9 +509,10 @@ async def get_job(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> JobOut:
     try:
-        return _job_out(await _service().get_job(db, job_id))
+        job = await _service().get_job(db, job_id)
     except Exception as exc:
         raise _http(exc) from exc
+    return await _job_out_named(job)
 
 
 @router.post('/jobs/{job_id}/cancel', response_model=JobOut)
@@ -466,7 +526,28 @@ async def cancel_job(
     except Exception as exc:
         raise _http(exc) from exc
     await _audit(db, admin, 'reachability_job_cancel', job)
-    return _job_out(job)
+    return await _job_out_named(job)
+
+
+@router.get('/geo/catalog', response_model=GeoCatalogResponse)
+async def geo_catalog(
+    network: Literal['res', 'mob'] = Query(default='res'),
+    q: str | None = Query(default=None, max_length=64),
+    isp: str | None = Query(default=None, max_length=64),
+    region: str | None = Query(default=None, max_length=64),
+    district: str | None = Query(default=None, max_length=8),
+    cities_limit: int | None = Query(default=None, ge=1, le=5000),
+    admin: User = Depends(require_permission('reachability:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> GeoCatalogResponse:
+    """Справочник GEO: округа, регионы, провайдеры; города — по фильтру или поиску."""
+    try:
+        data = await _service().geo_catalog(
+            network=network, q=q, isp=isp, region=region, district=district, cities_limit=cities_limit
+        )
+    except Exception as exc:
+        raise _http(exc) from exc
+    return _geo_catalog_out(data)
 
 
 # ============ Пачка проверок ============

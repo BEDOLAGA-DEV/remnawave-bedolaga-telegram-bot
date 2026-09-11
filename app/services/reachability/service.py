@@ -255,6 +255,13 @@ class ReachabilityService:
         self._ensure_enabled()
         return await self._geo_catalog.get(**filters)
 
+    async def geo_regions(self) -> dict[str, dict]:
+        """token → {name, district} для подписи строк GEO; без сервиса — пусто, строки остаются с токенами."""
+        try:
+            return await self._geo_catalog.regions_index()
+        except (ReachabilityDisabled, ReachabilityUnhealthy, BschekAPIError):
+            return {}
+
     async def account(self) -> dict:
         return await self._account.get()
 
