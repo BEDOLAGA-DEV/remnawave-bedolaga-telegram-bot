@@ -39,7 +39,7 @@ from app.database.crud.premium_traffic import (
     start_new_period,
 )
 from app.database.database import AsyncSessionLocal
-from app.database.models import Subscription, SubscriptionStatus, Tariff
+from app.database.models import Subscription, SubscriptionPremiumTraffic, SubscriptionStatus, Tariff
 from app.services.remnawave_service import RemnaWaveService
 from app.utils.panel_node_usage import normalize_node_usage
 from app.utils.premium_traffic import (
@@ -138,6 +138,10 @@ class PremiumTrafficService:
             return stats
 
         async with AsyncSessionLocal() as db:
+            # До сбора целей: если премиум убрали из всех тарифов, целей не будет,
+            # а снятые сквады всё равно надо вернуть.
+            stats['restored'] += await self._release_orphaned_limits(db, service)
+
             targets = await self._collect_targets(db)
             if not targets:
                 return stats
@@ -286,6 +290,78 @@ class PremiumTrafficService:
             return int(raw) if raw else None
         except (TypeError, ValueError):
             return None
+
+    # ------------------------------------------------- отменённые лимиты
+
+    async def _release_orphaned_limits(self, db: AsyncSession, service: Any) -> int:
+        """Вернуть сквады, снятые за лимит, который больше не действует.
+
+        Фильтр отправки вычитает сквад по отметке ``is_limited``, не заглядывая в
+        тариф. Если клиент перешёл на тариф, где у сервера нет премиум-лимита, или
+        лимит с сервера сняли в админке, запись выпадает из обхода — воркер берёт
+        только премиум-сквады текущего тарифа, — и сквад остался бы вырезанным
+        навсегда.
+
+        Запись не удаляем, только снимаем отметку: докупленное в ней должно
+        пережить обратное включение лимита в том же периоде.
+        """
+        orphaned = [
+            (state, subscription)
+            for state, subscription in await self._limited_states(db)
+            if self._limit_no_longer_applies(state, subscription)
+        ]
+        if not orphaned:
+            return 0
+
+        active = {SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value}
+        released = 0
+        async with service.get_api_client() as api:
+            for state, subscription in orphaned:
+                # Сначала коммит: фильтр отправки читает отметку из базы.
+                state.is_limited = False
+                await db.commit()
+
+                panel_user_id = self._panel_user_id(subscription)
+                if subscription.status in active and panel_user_id:
+                    try:
+                        await self._push_subscription_squads(api, subscription, panel_user_id)
+                    except Exception as error:
+                        # Вернём отметку, чтобы следующий проход попробовал снова:
+                        # иначе запись уже не попала бы в выборку, а сквада в
+                        # панели так и не было бы.
+                        state.is_limited = True
+                        await db.commit()
+                        logger.warning(
+                            'Не удалось вернуть сквад с отменённым премиум-лимитом',
+                            subscription_id=subscription.id,
+                            squad_uuid=state.squad_uuid,
+                            error=error,
+                        )
+                        continue
+                # Неактивной подписке сквад вернёт ближайшая синхронизация при
+                # продлении: отметки больше нет, фильтр его пропустит.
+                released += 1
+                logger.info(
+                    'Премиум-лимит больше не действует, сквад возвращён',
+                    subscription_id=subscription.id,
+                    squad_uuid=state.squad_uuid,
+                )
+        return released
+
+    @staticmethod
+    async def _limited_states(db: AsyncSession) -> list[tuple[Any, Subscription]]:
+        """Снятые записи вместе с подписками. Их единицы, выборка по флагу дешёвая."""
+        result = await db.execute(
+            select(SubscriptionPremiumTraffic, Subscription)
+            .join(Subscription, Subscription.id == SubscriptionPremiumTraffic.subscription_id)
+            .options(selectinload(Subscription.tariff), selectinload(Subscription.user))
+            .where(SubscriptionPremiumTraffic.is_limited.is_(True))
+        )
+        return list(result.tuples().all())
+
+    @staticmethod
+    def _limit_no_longer_applies(state: Any, subscription: Any) -> bool:
+        return state.squad_uuid not in get_premium_squads_for_tariff(getattr(subscription, 'tariff', None))
 
     # ------------------------------------------------------------- период
 
@@ -565,21 +641,24 @@ class PremiumTrafficService:
         Обёртка грейс-доступа обязательна: у него свои двухфазные переходы, и
         запись мимо неё разъехалась бы с открытой сессией.
         """
+        await self._push_subscription_squads(api, target.subscription, target.panel_user_id)
+
+    async def _push_subscription_squads(self, api: Any, subscription: Any, panel_user_id: int) -> None:
         from app.services.grace_access_runtime import update_panel_user_grace_safe
         from app.services.panel_sync import patch_panel_squads
 
-        tariff = getattr(target.subscription, 'tariff', None)
+        tariff = getattr(subscription, 'tariff', None)
         await patch_panel_squads(
             api,
-            user_id=target.panel_user_id,
-            squads=list(target.subscription.connected_squads or []),
+            user_id=panel_user_id,
+            squads=list(subscription.connected_squads or []),
             external_squad_uuid=getattr(tariff, 'external_squad_uuid', None),
-            subscription_id=target.subscription.id,
-            update_call=lambda **kwargs: update_panel_user_grace_safe(api, target.subscription.id, **kwargs),
+            subscription_id=subscription.id,
+            update_call=lambda **kwargs: update_panel_user_grace_safe(api, subscription.id, **kwargs),
         )
         # Набор сквадов в панели только что изменился — иначе сверка на
         # следующем проходе увидела бы протухший снимок и отправила бы всё заново.
-        self.invalidate_panel_user(target.panel_user_id)
+        self.invalidate_panel_user(panel_user_id)
 
     # ------------------------------------------------------- уведомления
 

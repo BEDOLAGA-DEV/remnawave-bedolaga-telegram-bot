@@ -466,6 +466,139 @@ class TestNewStatePeriod:
         assert state.panel_reset_ack_at == reset_at
 
 
+class _ApiService:
+    """Сервис панели: воркеру от него нужен только клиент в контекстном менеджере."""
+
+    def __init__(self):
+        self.opened = 0
+
+    def get_api_client(self):
+        service = self
+
+        class _Ctx:
+            async def __aenter__(self):
+                service.opened += 1
+                return FakeRemnawaveApi()
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        return _Ctx()
+
+
+class TestOrphanedLimits:
+    """Снятый сквад возвращается, когда премиум-лимит на нём перестал действовать.
+
+    Фильтр отправки вычитает сквад по отметке в записи, не глядя в тариф. Клиент
+    перешёл на тариф, где сервер без лимита, или лимит сняли в админке — запись
+    выпадает из обхода, и без уборки сквад остался бы вырезанным навсегда.
+    """
+
+    @staticmethod
+    def _subscription(*, premium_on_squad: bool, status: str = 'active'):
+        limits = {SQUAD: {'traffic_limit_gb': 5}} if premium_on_squad else {}
+        return SimpleNamespace(
+            id=1,
+            status=status,
+            connected_squads=[SQUAD],
+            remnawave_id=PANEL_USER_ID,
+            user=SimpleNamespace(remnawave_id=PANEL_USER_ID),
+            tariff=SimpleNamespace(server_traffic_limits=limits, external_squad_uuid=None),
+        )
+
+    async def _release(self, monkeypatch, subscription, *, push_fails=False):
+        service = PremiumTrafficService()
+        state = _state(limit_gb=5, used_bytes=6 * BYTES_IN_GB, is_limited=True)
+        state.squad_uuid = SQUAD
+        pushed = []
+
+        async def _limited(_db):
+            return [(state, subscription)]
+
+        async def _push(_api, sub, panel_user_id):
+            # Отметка к моменту отправки уже должна быть снята и закоммичена:
+            # фильтр читает её из базы и иначе снова вырезал бы сквад.
+            assert state.is_limited is False
+            if push_fails:
+                raise RuntimeError('панель недоступна')
+            pushed.append((sub.id, panel_user_id))
+
+        monkeypatch.setattr(service, '_limited_states', _limited)
+        monkeypatch.setattr(service, '_push_subscription_squads', _push)
+        api_service = _ApiService()
+        released = await service._release_orphaned_limits(_Db(), api_service)
+        return released, state, pushed, api_service
+
+    async def test_switch_to_a_tariff_without_the_limit_returns_the_squad(self, monkeypatch):
+        released, state, pushed, _ = await self._release(monkeypatch, self._subscription(premium_on_squad=False))
+
+        assert released == 1
+        assert state.is_limited is False
+        assert pushed == [(1, PANEL_USER_ID)]
+
+    async def test_limit_still_in_force_is_left_alone(self, monkeypatch):
+        released, state, pushed, api_service = await self._release(
+            monkeypatch, self._subscription(premium_on_squad=True)
+        )
+
+        assert released == 0
+        assert state.is_limited is True
+        assert pushed == []
+        assert api_service.opened == 0, 'без отменённых лимитов к панели ходить незачем'
+
+    async def test_failed_push_keeps_the_mark_for_the_next_pass(self, monkeypatch):
+        """Иначе запись выпала бы из выборки, а сквада в панели так и не было бы."""
+        released, state, _, _ = await self._release(
+            monkeypatch, self._subscription(premium_on_squad=False), push_fails=True
+        )
+
+        assert released == 0
+        assert state.is_limited is True
+
+    async def test_inactive_subscription_is_released_without_a_push(self, monkeypatch):
+        """Сквад вернёт синхронизация при продлении — отметки больше нет."""
+        released, state, pushed, _ = await self._release(
+            monkeypatch, self._subscription(premium_on_squad=False, status='expired')
+        )
+
+        assert released == 1
+        assert state.is_limited is False
+        assert pushed == []
+
+    async def test_release_runs_even_when_no_tariff_has_premium(self, monkeypatch):
+        """Премиум убрали из всех тарифов — целей нет, но снятые сквады вернуть надо."""
+        service = PremiumTrafficService()
+        calls = []
+
+        class _Remnawave:
+            is_configured = True
+
+        class _Session:
+            async def __aenter__(self):
+                return _Db()
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        async def _release(_db, _service):
+            calls.append('release')
+            return 1
+
+        async def _no_targets(_db):
+            calls.append('targets')
+            return []
+
+        monkeypatch.setattr('app.services.premium_traffic_service.RemnaWaveService', _Remnawave)
+        monkeypatch.setattr('app.services.premium_traffic_service.AsyncSessionLocal', _Session)
+        monkeypatch.setattr(service, '_release_orphaned_limits', _release)
+        monkeypatch.setattr(service, '_collect_targets', _no_targets)
+
+        stats = await service.process_once()
+
+        assert calls == ['release', 'targets']
+        assert stats['restored'] == 1
+
+
 class TestPanelUserCache:
     """Карточка панельного пользователя — самая дорогая часть прохода.
 
