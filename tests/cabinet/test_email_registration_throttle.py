@@ -108,6 +108,7 @@ async def test_standalone_registration_uses_the_throttle(monkeypatch):
         (None, 'campaign-slug', 'campaign-slug'),
         ('REF_CODE', 'campaign-slug', 'REF_CODE'),
     ):
+
         async def capture_gate(_db, **kwargs):
             assert kwargs['channel'] is RegistrationChannel.CABINET_EMAIL
             assert kwargs['start_parameter'] == expected_start_parameter
