@@ -18,6 +18,7 @@ from app.external.remnawave_api import RemnaWaveHost
 from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.jobs import JobNotCancellable, JobRunner, RunnerConfig
 from app.services.reachability.pricing import CostLimitExceeded
+from app.services.reachability.requests import RequestBuildError
 from app.services.reachability.resolver import TargetResolutionError
 from app.services.reachability.service import (
     JobNotFound,
@@ -44,6 +45,11 @@ HOSTS = [RemnaWaveHost(uuid='h-bs', remark='RU | БС', address='bs-host.example
 class FakePanel:
     def __init__(self, *, broken: bool = False) -> None:
         self.broken = broken
+        # Пользователи панели по shortUuid — для пометки «истекла / отключена / трафик исчерпан».
+        self.users_by_short_uuid: dict[str, object] = {}
+
+    async def get_user_by_short_uuid(self, short_uuid):
+        return self.users_by_short_uuid.get(short_uuid)
 
     def get_api_client(self):
         outer = self
@@ -93,6 +99,34 @@ class FakeClient(FakeAPI):
 
     async def preview_scan(self, body):
         return load_bschek_fixture('sv_one_unit')['body']
+
+    async def geo_preview(self, body):
+        self.geo_preview_body = body
+        return {'n_nodes': 89, 'cap_mb': 0.81, 'reserve_credits': 90, 'estimated_sec': 45, 'max_nodes': 800}
+
+    async def geo_catalog(self, params=None):
+        self.geo_catalog_params = dict(params or {})
+        return {
+            'networks': ['res', 'mob'],
+            'districts': [{'code': 'cfo', 'name': 'ЦФО'}],
+            'regions': [{'token': 'moscow', 'name': 'Москва', 'district': 'ЦФО'}],
+            'isps': [{'token': 'mts', 'name': 'МТС', 'cities': 43}],
+            'cities_hint': 'задайте фильтр',
+        }
+
+    async def geo_start(self, body, key):
+        return {
+            'outcome': 'queued',
+            'run_id': 812,
+            'state': 'running',
+            'poll': '/v1/geo/runs/812',
+            'n_nodes': 89,
+            'reserve_credits': 90,
+            'estimated_sec': 45,
+        }
+
+    async def geo_run(self, run_id):
+        return {'state': 'running', 'progress': {'done': 0, 'total': 89}, 'rows': []}
 
 
 def make_service(
@@ -725,3 +759,149 @@ async def test_parse_input_base64_blob_expands_to_links(session_factory) -> None
     async with session_factory() as db:
         parsed = await service.parse_input(db, blob)
     assert [c.target.target_key for c in parsed.configs] == ['eu-host.example:443', 'bs-host.example:9443']
+
+
+async def test_parse_input_failed_url_carries_the_reason_for_the_admin(session_factory) -> None:
+    """«Пропущено» без причины ничего не объясняет — причина уезжает в кабинет."""
+    from app.services.reachability.subscriptions import SubscriptionFetchError
+
+    service = make_service(
+        session_factory, url_links={'https://dead.example/abc': SubscriptionFetchError('Подписка истекла 01.09.2024')}
+    )
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://dead.example/abc')
+    assert parsed.rejected[0].reason == 'subscription_failed'
+    assert parsed.rejected[0].detail == 'Подписка истекла 01.09.2024'
+
+
+async def test_subscription_configs_note_tells_the_status_of_the_panel_user(session_factory) -> None:
+    """Подписка своей панели: истекла / отключена / трафик исчерпан — по статусу пользователя панели."""
+    from datetime import UTC, datetime
+
+    panel = FakePanel()
+    panel.users_by_short_uuid = {
+        'ref-1': SimpleNamespace(
+            status='EXPIRED', expire_at=datetime(2024, 9, 1, tzinfo=UTC), used_traffic_bytes=0, traffic_limit_bytes=0
+        )
+    }
+    service = make_service(session_factory, panel=panel)
+    async with session_factory() as db:
+        configs = await service.subscription_configs(db)
+    assert configs.note == 'Подписка истекла 01.09.2024'
+
+
+# ---------------------------------------------------------------- GEO-РФ
+
+GEO_LINK_A = 'vless://00000000-0000-4000-8000-000000000001@a.example:443?security=reality&sni=a.example#A'
+GEO_LINK_B = 'vless://00000000-0000-4000-8000-000000000002@b.example:443?security=reality&sni=b.example#B'
+GEO_PAYLOAD = {
+    'kind': 'geo',
+    'targets': [{'kind': 'custom', 'value': 'example.com'}],
+    'units': [],
+    'dpi': 'on',
+    'probes': {},
+    'core': '',
+    'sni_hosts': [],
+    'geo': {
+        'network': 'res',
+        'scope': {'kind': 'all'},
+        'isp': None,
+        'city_limit': 0,
+        'probe_mode': 'tls',
+        'heavy': False,
+    },
+}
+
+
+async def test_preview_geo_quotes_the_reserve_and_carries_service_numbers(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        preview = await service.preview(db, GEO_PAYLOAD)
+    assert preview.kind == 'geo'
+    assert preview.cost_kopeks == 90 and preview.estimate_is_exact is False
+    assert preview.units_resolved == ['geo'] and preview.skipped == {}
+    assert preview.geo == {'n_nodes': 89, 'cap_mb': 0.81, 'reserve_credits': 90, 'estimated_sec': 45, 'max_nodes': 800}
+    assert preview.request['targets'] == ['example.com:443'] and preview.request['network'] == 'res'
+    assert client.geo_preview_body == preview.request
+    assert any('резерв' in warning for warning in preview.warnings)
+
+
+async def test_preview_geo_refuses_a_second_tunnel_in_words(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        **GEO_PAYLOAD,
+        'targets': [{'kind': 'custom', 'value': GEO_LINK_A}, {'kind': 'custom', 'value': GEO_LINK_B}],
+    }
+    async with session_factory() as db:
+        with pytest.raises(RequestBuildError, match='один конфиг'):
+            await service.preview(db, payload)
+
+
+async def test_preview_geo_refuses_bad_scope_before_the_service(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    payload = {**GEO_PAYLOAD, 'geo': {**GEO_PAYLOAD['geo'], 'scope': {'kind': 'district', 'district': 'krym'}}}
+    async with session_factory() as db:
+        with pytest.raises(RequestBuildError, match='округ'):
+            await service.preview(db, payload)
+    assert not hasattr(client, 'geo_preview_body'), 'к сервису не ходили'
+
+
+async def test_create_geo_job_stores_reserve_and_spawns_runner(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, GEO_PAYLOAD, admin.id)
+    assert job.kind == 'geo' and job.status == 'pending'
+    assert job.estimated_kopeks == 90 and job.estimate_is_exact is False
+    assert job.dpi == 'any' and job.units_resolved == ['geo']
+    assert job.request['targets'] == ['example.com:443']
+
+
+async def test_second_geo_job_is_busy_while_the_first_runs(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        await service.create_job(db, GEO_PAYLOAD, admin.id)
+        with pytest.raises(ReachabilityBusy):
+            await service.create_job(db, GEO_PAYLOAD, admin.id)
+
+
+async def test_geo_catalog_goes_through_the_client_with_latin_district(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    catalog = await service.geo_catalog(network='res', district='ЦФО', q='Воронеж')
+    assert catalog['isps'][0]['token'] == 'mts'
+    assert client.geo_catalog_params == {'network': 'res', 'district': 'cfo', 'city': 'Воронеж'}
+
+
+async def test_geo_catalog_respects_disabled_integration(session_factory) -> None:
+    service = make_service(session_factory, enabled=False)
+    with pytest.raises(ReachabilityDisabled):
+        await service.geo_catalog(network='res')
+
+
+async def test_geo_names_index_is_empty_when_the_service_is_off_or_down(session_factory) -> None:
+    assert await make_service(session_factory, enabled=False).geo_names() == {}
+
+    class Down(FakeClient):
+        async def geo_catalog(self, params=None):
+            raise BschekAPIError(code='catalog_unavailable', message='down', status=503)
+
+    assert await make_service(session_factory, client=Down()).geo_names() == {}
+    live = make_service(session_factory, client=FakeClient())
+    assert (await live.geo_names())['regions']['moscow'] == {'name': 'Москва', 'district': 'ЦФО'}
+
+
+async def test_status_lists_a_running_geo_job_like_vless_and_scan(session_factory) -> None:
+    # Кабинет по этому списку показывает «уже идёт GEO #N» до запуска, а не 409 после.
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, GEO_PAYLOAD, admin.id)
+        status = await service.status(db)
+    assert [(item['kind'], item['id']) for item in status['active_jobs']] == [('geo', job.id)]

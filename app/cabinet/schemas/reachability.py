@@ -16,14 +16,16 @@ from app.services.reachability.batches import MAX_BATCH_TARGETS
 from app.services.reachability.requests import MAX_SNI_HOSTS, normalize_sni_hosts
 
 
-Kind = Literal['probe', 'vless', 'scan']
+Kind = Literal['probe', 'vless', 'scan', 'geo']
 Dpi = Literal['on', 'off', 'any']
 ScopeKind = Literal['problems', 'stale', 'all', 'manual']
 Purpose = Literal['bs', 'regular', 'unknown']
 TargetKind = Literal['host', 'node', 'subscription_config', 'custom', 'cidr']
 
 MAX_TARGETS_PER_JOB = 20
+MAX_RAW_INPUT_CHARS = 8_000_000
 MAX_UNITS_PER_JOB = 64
+MAX_GEO_CITIES = 5000
 
 
 # ============ Вход ============
@@ -57,6 +59,30 @@ class ProbesIn(BaseModel):
     sni: bool = True
 
 
+class GeoCityIn(BaseModel):
+    region: str = Field(min_length=1, max_length=64)
+    city: str = Field(min_length=1, max_length=64)
+    isp: str | None = Field(default=None, max_length=64)
+
+
+class GeoScopeIn(BaseModel):
+    kind: Literal['all', 'district', 'region', 'cities'] = 'all'
+    district: str | None = Field(default=None, max_length=8)
+    region: str | None = Field(default=None, max_length=64)
+    cities: list[GeoCityIn] = Field(default_factory=list, max_length=MAX_GEO_CITIES)
+
+
+class GeoOptionsIn(BaseModel):
+    """Блок «Откуда» вкладки GEO: сеть, охват, провайдер, потолок городов, метод, тяжёлая проба."""
+
+    network: Literal['res', 'mob'] = 'res'
+    scope: GeoScopeIn = Field(default_factory=GeoScopeIn)
+    isp: str | None = Field(default=None, max_length=64)
+    city_limit: int = Field(default=0, ge=0, le=MAX_GEO_CITIES)
+    probe_mode: Literal['tls', 'tcp'] = 'tls'
+    heavy: bool = False
+
+
 class JobCreateRequest(BaseModel):
     kind: Kind
     targets: list[TargetIn] = Field(min_length=1, max_length=MAX_TARGETS_PER_JOB)
@@ -66,6 +92,8 @@ class JobCreateRequest(BaseModel):
     core: Literal['', 'stable', 'prerelease'] = ''
     # Свои имена для TLS-SNI (до 5, как Multi-SNI в оригинале); пусто — имена целей или дефолт из настроек.
     sni_hosts: list[str] = Field(default_factory=list, max_length=MAX_SNI_HOSTS)
+    # GEO-РФ: откуда проверять; для остальных видов игнорируется.
+    geo: GeoOptionsIn | None = None
 
     @field_validator('sni_hosts')
     @classmethod
@@ -92,7 +120,9 @@ class BatchCreateRequest(BaseModel):
 class ParseInputRequest(BaseModel):
     """Поле «Конфиг или подписка»: ссылки, URL подписок, base64 — построчно."""
 
-    raw_input: str = Field(min_length=1, max_length=65536)
+    # В подписке бывает 10 тысяч серверов, и столько же ссылок можно вставить текстом —
+    # это ~3 МБ. Потолок защищает от мусора, а не режет большой, но честный ввод.
+    raw_input: str = Field(min_length=1, max_length=MAX_RAW_INPUT_CHARS)
 
 
 class PrefUpdateRequest(BaseModel):
@@ -215,18 +245,23 @@ class ConfigOut(BaseModel):
 class RejectedOut(BaseModel):
     reason: str
     preview: str  # обрезок ссылки после «@», без учётных данных
+    # Причина словами («Подписка истекла 01.09.2024»), когда бот её знает.
+    detail: str | None = None
 
 
 class SubscriptionConfigsResponse(BaseModel):
     short_uuid: str
     configs: list[ConfigOut]
     rejected: list[RejectedOut]
+    # Панель на что-то жалуется: истекла, отключена, трафик исчерпан.
+    note: str | None = None
 
 
 class SourceOut(BaseModel):
     kind: Literal['links', 'subscription']
     label: str
     count: int
+    note: str | None = None
 
 
 class ParsedConfigOut(ConfigOut):
@@ -272,6 +307,16 @@ class TargetOut(BaseModel):
     purpose: str = 'unknown'
 
 
+class GeoPreviewOut(BaseModel):
+    """Числа сервиса из расчёта GEO: города, потолок трафика, резерв, прогноз времени, потолок городов."""
+
+    n_nodes: int | None = None
+    cap_mb: float | None = None
+    reserve_credits: int | None = None
+    estimated_sec: int | None = None
+    max_nodes: int | None = None
+
+
 class PreviewResponse(BaseModel):
     kind: Kind
     targets: list[TargetOut]
@@ -281,6 +326,7 @@ class PreviewResponse(BaseModel):
     estimate_is_exact: bool
     warnings: list[str]
     balance_kopeks: int | None
+    geo: GeoPreviewOut | None = None
 
 
 class LegOut(BaseModel):
@@ -415,3 +461,42 @@ class SummaryResponse(BaseModel):
     units: list[UnitOut]
     rows: list[SummaryRow]
     panel_error: str | None = None
+
+
+# ============ GEO-РФ: справочник ============
+
+
+class GeoDistrictOut(BaseModel):
+    code: str
+    name: str
+
+
+class GeoRegionOut(BaseModel):
+    token: str
+    name: str
+    district: str = ''
+
+
+class GeoIspOut(BaseModel):
+    token: str
+    name: str
+    cities: int = 0
+
+
+class GeoCityOut(BaseModel):
+    region: str
+    region_ru: str = ''
+    district: str = ''
+    city: str
+    city_ru: str = ''
+    isps: list[str] = Field(default_factory=list)
+
+
+class GeoCatalogResponse(BaseModel):
+    networks: list[str]
+    districts: list[GeoDistrictOut]
+    regions: list[GeoRegionOut]
+    isps: list[GeoIspOut]
+    cities: list[GeoCityOut] = Field(default_factory=list)
+    cities_total: int | None = None
+    cities_truncated: bool = False

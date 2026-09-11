@@ -9,6 +9,9 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
+
+import structlog
 
 from app.external.remnawave_api import RemnaWaveHost, RemnaWaveNode
 from app.services.reachability.links import SUPPORTED_SCHEMES, ParsedLink, RejectedLink, parse_links
@@ -53,11 +56,16 @@ class NodeView:
     host_uuids: list[str]
 
 
+logger = structlog.get_logger(__name__)
+
+
 @dataclass(frozen=True)
 class SubscriptionConfigs:
     short_uuid: str
     configs: list[Target]
     rejected: list[RejectedLink]
+    #: Панель на что-то жалуется («Подписка истекла 01.09.2024», «отключена») — показать рядом со списком.
+    note: str | None = None
 
 
 def target_from_host(host: RemnaWaveHost, purpose: str) -> Target:
@@ -130,12 +138,14 @@ class TargetResolver:
         fetch_nodes: Callable[[], Awaitable[list[RemnaWaveNode]]],
         fetch_links: Callable[[str], Awaitable[list[str]]],
         prefs: PrefsMap,
-        fetch_url_links: Callable[[str], Awaitable[list[str]]] | None = None,
+        fetch_url_links: Callable[[str], Awaitable[Any]] | None = None,
+        fetch_user_status: Callable[[str], Awaitable[str | None]] | None = None,
     ) -> None:
         self._fetch_hosts = fetch_hosts
         self._fetch_nodes = fetch_nodes
         self._fetch_links = fetch_links
         self._fetch_url_links = fetch_url_links
+        self._fetch_user_status = fetch_user_status
         self._prefs = prefs
         self._hosts: list[RemnaWaveHost] | None = None
         self._nodes: list[RemnaWaveNode] | None = None
@@ -183,23 +193,40 @@ class TargetResolver:
         ]
 
     async def _links_for(self, source: str) -> list[str]:
-        """Ссылки источника: shortUuid — через панель, http(s)-адрес — загрузкой подписки."""
+        """Ссылки источника и пометка: shortUuid — через панель, http(s)-адрес — загрузкой подписки."""
         if is_subscription_url(source):
             if self._fetch_url_links is None:
                 raise TargetResolutionError('Загрузка подписок по URL недоступна')
-            return list(await self._fetch_url_links(source))
-        return list(await self._fetch_links(source))
+            fetched = await self._fetch_url_links(source)
+            # Загрузчик отдаёт ссылки с пометкой; тесты и старые вызывающие — просто список.
+            links = getattr(fetched, 'links', fetched)
+            return list(links), getattr(fetched, 'note', None)
+        links = list(await self._fetch_links(source))
+        return links, await self._panel_user_note(source)
+
+    async def _panel_user_note(self, short_uuid: str) -> str | None:
+        if self._fetch_user_status is None:
+            return None
+        try:
+            return await self._fetch_user_status(short_uuid)
+        except Exception as error:
+            # Пометка — подсказка, а не условие: без неё список всё равно нужен.
+            logger.info('Статус пользователя панели не получен', short_uuid=short_uuid, error=str(error)[:200])
+            return None
 
     async def subscription_configs(self, source: str) -> SubscriptionConfigs:
         """Конфиги подписки по источнику — shortUuid панели или URL чужой подписки (кэш на резолвер)."""
         if source not in self._configs:
-            parsed, rejected = parse_links('\n'.join(await self._links_for(source)))
+            links, note = await self._links_for(source)
+            parsed, rejected = parse_links('\n'.join(links))
             ref_key = 'url' if is_subscription_url(source) else 'short_uuid'
             configs = [
                 target_from_link(link, KIND_SUBSCRIPTION_CONFIG, {ref_key: source, 'index': index})
                 for index, link in enumerate(parsed)
             ]
-            self._configs[source] = SubscriptionConfigs(short_uuid=source, configs=configs, rejected=rejected)
+            self._configs[source] = SubscriptionConfigs(
+                short_uuid=source, configs=configs, rejected=rejected, note=note
+            )
         return self._configs[source]
 
     # ------------------------------------------------------------------ разрешение

@@ -14,7 +14,7 @@ from app.database.models import ReachabilityJob
 from app.external.bschek_api import BschekAPIError
 from app.services.reachability.batches import batch_done_targets
 from app.services.reachability.cores import XRAY_CORES
-from app.services.reachability.kinds import KIND_SCAN, KIND_VLESS
+from app.services.reachability.kinds import KIND_GEO, KIND_SCAN, KIND_VLESS
 from app.services.reachability.pricing import credits_to_kopeks
 from app.services.reachability.resolver import SubscriptionConfigs
 
@@ -99,7 +99,8 @@ def _active_job(job: ReachabilityJob) -> dict[str, Any]:
 
 async def _active_jobs(db: AsyncSession) -> list[dict[str, Any]]:
     active = []
-    for kind in (KIND_VLESS, KIND_SCAN):
+    # Виды «по одной задаче на аккаунт» — кабинет показывает по ним блокер «уже идёт».
+    for kind in (KIND_VLESS, KIND_SCAN, KIND_GEO):
         job = await crud.get_active_job(db, kind)
         if job is not None:
             active.append(_active_job(job))

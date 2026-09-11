@@ -28,9 +28,12 @@ from app.database.models import ReachabilityBatch, ReachabilityJob, Reachability
 from app.external.bschek_api import BschekAPI, BschekAPIError
 from app.services.reachability import batches as batch_ops
 from app.services.reachability.gate import PaidCallGate
+from app.services.reachability.geo_catalog import GeoCatalogCache
+from app.services.reachability.geo_requests import build_geo_request, parse_geo_options
 from app.services.reachability.jobs import JobNotCancellable, JobRunner
-from app.services.reachability.kinds import KIND_PROBE, KIND_SCAN, KIND_VLESS
+from app.services.reachability.kinds import KIND_GEO, KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.links import RejectedLink, expand_raw_input, parse_links
+from app.services.reachability.notes import note_for_panel_user
 from app.services.reachability.panel_links import fetch_panel_links
 from app.services.reachability.preview import PreviewResult
 from app.services.reachability.pricing import credits_to_kopeks, enforce_cost_limit, estimate_vless_kopeks
@@ -65,8 +68,11 @@ logger = structlog.get_logger(__name__)
 
 AUTH_CODES = frozenset({'unauthenticated', 'api_not_available', 'tier_too_low', 'subscription_required'})
 UNHEALTHY_FOR = timedelta(minutes=5)
-JOB_KINDS = (KIND_PROBE, KIND_VLESS, KIND_SCAN)
-EXCLUSIVE_KINDS = (KIND_VLESS, KIND_SCAN)
+JOB_KINDS = (KIND_PROBE, KIND_VLESS, KIND_SCAN, KIND_GEO)
+EXCLUSIVE_KINDS = (KIND_VLESS, KIND_SCAN, KIND_GEO)
+GEO_RESERVE_WARNING = 'Цена GEO — резерв: спишется факт по трафику, разница вернётся'
+#: Симок у GEO нет; чтобы общая проверка «нет симок» не срабатывала, единица одна и условная.
+GEO_UNITS = ['geo']
 NO_UNITS_MESSAGE = 'Под фильтр Белого списка не попала ни одна симка'
 # Последний сегмент URL подписки, похожий на shortUuid панели — сначала спрашиваем свою панель.
 _SHORT_UUID_RE = re.compile(r'^[A-Za-z0-9_-]{4,64}$')
@@ -123,6 +129,7 @@ class Quote:
     cost_kopeks: int | None
     exact: bool
     warnings: list[str] = field(default_factory=list)
+    geo: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -174,8 +181,10 @@ class ReachabilityService:
             gate=self._gate,
             session_factory=session_factory,
             cost_limit_kopeks=self.cost_limit_kopeks,
+            geo_names=self.geo_names,
         )
         self._units = UnitsCache(self._fetch_operators, clock=clock)
+        self._geo_catalog = GeoCatalogCache(self._fetch_geo_catalog, clock=clock)
         self._account = AccountCache(self._fetch_account, clock=clock)
         self._health = Health()
         self._background: asyncio.Task | None = None
@@ -238,6 +247,21 @@ class ReachabilityService:
 
     async def _fetch_account(self) -> dict:
         return await self._call(lambda api: api.get_account())
+
+    async def _fetch_geo_catalog(self, params: dict[str, str]) -> dict:
+        return await self._call(lambda api: api.geo_catalog(params))
+
+    async def geo_catalog(self, **filters: Any) -> dict:
+        """Справочник GEO (бесплатно, из кэша на десять минут): округа, регионы, провайдеры, города по фильтру."""
+        self._ensure_enabled()
+        return await self._geo_catalog.get(**filters)
+
+    async def geo_names(self) -> dict:
+        """Имена регионов и городов для строк GEO; без сервиса — пусто, строки остаются с токенами."""
+        try:
+            return await self._geo_catalog.names_index()
+        except (ReachabilityDisabled, ReachabilityUnhealthy, BschekAPIError):
+            return {}
 
     async def account(self) -> dict:
         return await self._account.get()
@@ -308,11 +332,21 @@ class ReachabilityService:
             async with self._panel_client() as api:
                 return await fetch_panel_links(api, short_uuid, prefer_public=short_uuid == self.reference_short_uuid())
 
+        async def fetch_user_status(short_uuid: str) -> str | None:
+            # Статус пользователя своей панели — чтобы рядом со списком стояло «истекла /
+            # отключена / трафик исчерпан», а не молчаливый список.
+            async with self._panel_client() as api:
+                getter = getattr(api, 'get_user_by_short_uuid', None)
+                if getter is None:
+                    return None
+                return note_for_panel_user(await getter(short_uuid), now=self._now())
+
         return TargetResolver(
             fetch_hosts=fetch_hosts,
             fetch_nodes=fetch_nodes,
             fetch_links=fetch_links,
             fetch_url_links=self._url_fetcher,
+            fetch_user_status=fetch_user_status,
             prefs=prefs,
         )
 
@@ -348,10 +382,13 @@ class ReachabilityService:
         links_count = 0
         for line in expand_raw_input(text):
             if is_subscription_url(line):
-                found, bad = await self._parse_subscription_url(resolver, line)
+                found, bad, note = await self._parse_subscription_url(resolver, line)
                 configs.extend(found)
                 rejected.extend(bad)
-                sources.append({'kind': 'subscription', 'label': line, 'count': len(found)})
+                source = {'kind': 'subscription', 'label': line, 'count': len(found)}
+                if note:
+                    source['note'] = note
+                sources.append(source)
                 continue
             parsed, bad = parse_links(line)
             rejected.extend(bad)
@@ -365,8 +402,11 @@ class ReachabilityService:
 
     async def _parse_subscription_url(
         self, resolver: TargetResolver, url: str
-    ) -> tuple[list[ParsedConfig], list[RejectedLink]]:
-        """Подписка своей панели — через её API по shortUuid из адреса; иначе загружаем сам URL."""
+    ) -> tuple[list[ParsedConfig], list[RejectedLink], str | None]:
+        """Подписка своей панели — через её API по shortUuid из адреса; иначе загружаем сам URL.
+
+        Третьим — пометка панели («Подписка истекла …»), если она есть.
+        """
         candidate = url.rstrip('/').rsplit('/', 1)[-1]
         if _SHORT_UUID_RE.match(candidate):
             try:
@@ -374,13 +414,14 @@ class ReachabilityService:
             except (PanelUnavailable, TargetResolutionError):
                 own = None
             if own is not None and own.configs:
-                return self._parsed_configs(own, {'short_uuid': candidate}), list(own.rejected)
+                return self._parsed_configs(own, {'short_uuid': candidate}), list(own.rejected), own.note
         try:
             fetched = await resolver.subscription_configs(url)
         except SubscriptionFetchError as exc:
             logger.info('Подписка по URL не загружена', url=url, error=str(exc))
-            return [], [RejectedLink(url, 'subscription_failed')]
-        return self._parsed_configs(fetched, {'url': url}), list(fetched.rejected)
+            # Причина уезжает в кабинет словами: «Пропущено» само по себе ничего не объясняет.
+            return [], [RejectedLink(url, 'subscription_failed', detail=str(exc))], None
+        return self._parsed_configs(fetched, {'url': url}), list(fetched.rejected), fetched.note
 
     @staticmethod
     def _parsed_configs(configs: SubscriptionConfigs, source_ref: dict) -> list[ParsedConfig]:
@@ -446,6 +487,29 @@ class ReachabilityService:
         price = await self._call(lambda api: api.preview_scan(request))
         return Quote(request, credits_to_kopeks(price.get('cost_credits')), True)
 
+    async def _quote_geo(self, targets: list[Target], payload: dict) -> Quote:
+        """Цена GEO — резерв под потолок трафика; факт спишется после прогона, разница вернётся."""
+        options = parse_geo_options(payload.get('geo'))
+        request = build_geo_request(targets, options, str(payload.get('core') or ''))
+        numbers = await self._call(lambda api: api.geo_preview(request))
+        geo = {key: numbers.get(key) for key in ('n_nodes', 'cap_mb', 'reserve_credits', 'estimated_sec', 'max_nodes')}
+        return Quote(request, credits_to_kopeks(numbers.get('reserve_credits')), False, [GEO_RESERVE_WARNING], geo=geo)
+
+    async def _preview_geo(self, kind: str, targets: list[Target], payload: dict) -> PreviewResult:
+        quote = await self._quote_geo(targets, payload)
+        return PreviewResult(
+            kind=kind,
+            targets=targets,
+            units_resolved=list(GEO_UNITS),
+            skipped={},
+            cost_kopeks=quote.cost_kopeks,
+            estimate_is_exact=quote.exact,
+            warnings=list(quote.warnings),
+            balance_kopeks=await self._balance_kopeks(),
+            request=quote.request,
+            geo=quote.geo,
+        )
+
     async def preview(self, db: AsyncSession, payload: dict) -> PreviewResult:
         """Всё, что можно узнать до денег: цели, симки, пропуски, цена, предупреждения."""
         self._ensure_enabled()
@@ -453,6 +517,9 @@ class ReachabilityService:
         if kind not in JOB_KINDS:
             raise ValueError(f'Неизвестный вид задачи «{kind}»')
         targets = await (await self.resolver(db)).resolve(list(payload.get('targets') or []))
+        if kind == KIND_GEO:
+            # Симок у GEO нет: города и провайдеры — на стороне сервиса.
+            return await self._preview_geo(kind, targets, payload)
         expansion = await self._expand_units(list(payload.get('units') or []), str(payload.get('dpi') or 'on'))
         quote_by_kind = {KIND_PROBE: self._quote_probe, KIND_VLESS: self._quote_vless, KIND_SCAN: self._quote_scan}
         quote = await quote_by_kind[kind](db, targets, expansion.resolved, payload)
@@ -504,7 +571,8 @@ class ReachabilityService:
             'units_requested': list(payload.get('units') or []),
             'units_resolved': preview.units_resolved,
             'skipped': preview.skipped,
-            'dpi': str(payload.get('dpi') or 'on'),
+            # У GEO режима ТСПУ нет, колонка обязательна — «любой».
+            'dpi': 'any' if preview.kind == KIND_GEO else str(payload.get('dpi') or 'on'),
             'estimated_kopeks': preview.cost_kopeks,
             'estimate_is_exact': preview.estimate_is_exact,
         }

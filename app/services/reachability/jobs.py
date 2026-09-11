@@ -1,7 +1,7 @@
 """Сервис задач BSCHEKER: фон, повторы тем же ключом, опрос, отмена, обходчик.
 
 Состояния: pending → running(phase) → done | failed | cancelled. Фазы running:
-submitting → waiting (probe идёт) / polling (VLESS, скан) / retrieving (probe оборвался,
+submitting → waiting (probe идёт) / polling (VLESS, скан, GEO) / retrieving (probe оборвался,
 забираем результат повтором ключа) / cancelling. Любой повтор к API — только с
 ``job.idempotency_key`` и ``job.request`` как есть: новый ключ = второе списание.
 Статус асинхронной задачи читается только из GET; ответ на повторный submit — не статус.
@@ -25,7 +25,8 @@ from app.database.models import ReachabilityBatch, ReachabilityJob
 from app.external.bschek_api import BschekAPI, BschekAPIError, BschekGatewayError
 from app.services.reachability.batches import batch_cost_kopeks, batch_status_from_jobs
 from app.services.reachability.gate import PaidCallGate
-from app.services.reachability.kinds import KIND_PROBE, KIND_VLESS
+from app.services.reachability.geo_result import geo_summary, normalize_rows, scope_label
+from app.services.reachability.kinds import KIND_GEO, KIND_PROBE, KIND_VLESS
 from app.services.reachability.legs import build_probe_legs, build_vless_legs, merge_skipped, partial_probe_progress
 from app.services.reachability.pricing import credits_to_kopeks, format_rubles
 
@@ -41,15 +42,33 @@ PHASE_CANCELLING = 'cancelling'
 
 # Сервис временно не может принять запрос — повтор тем же ключом безопасен.
 TRANSIENT_CODES = frozenset(
-    {'worker_unavailable', 'scanner_unavailable', 'lte_unavailable', 'maintenance', 'bot_not_ready', 'no_alive_modems'}
+    {
+        'worker_unavailable',
+        'scanner_unavailable',
+        'lte_unavailable',
+        'maintenance',
+        'bot_not_ready',
+        'no_alive_modems',
+        # GEO: три прогона на аккаунт, 1 платный POST/с, справочник лёг — ждём retry_after и повторяем тем же ключом.
+        'too_many_active',
+        'rate_limited',
+        'catalog_unavailable',
+    }
 )
 # На аккаунте уже идёт тест/скан — повторять бессмысленно, админу нужен 409 словами.
 BUSY_CODES = frozenset({'test_in_progress', 'scan_in_progress', 'busy', 'too_many_active'})
 # Отменять уже нечего: итог возьмёт контрольный GET.
-CANCEL_OK_CODES = frozenset({'cannot_cancel_running', 'not_running', 'not_found'})
+CANCEL_OK_CODES = frozenset({'cannot_cancel_running', 'not_running', 'not_found', 'cannot_cancel'})
 # Пробу можно остановить, пока она идёт у API: ключ уже ушёл, результат ещё не пришёл.
 PROBE_CANCELLABLE_PHASES = frozenset({'waiting', 'retrieving'})
 _SCAN_PENDING_STATES = ('queued', 'running')
+_GEO_TERMINAL_STATES = ('done', 'empty', 'error', 'aborted')
+GEO_EMPTY_NOTE = 'Трафика не было, резерв возвращён'
+GEO_CANNOT_CANCEL_NOTE = 'Прогон оборван на стороне сервиса, он закроет его сам — итог придёт с опросом'
+# Идентификатор асинхронной задачи в ответе на запуск — у каждого семейства ручек свой.
+_EXTERNAL_ID_KEYS = {KIND_VLESS: 'test_id', KIND_GEO: 'run_id'}
+_VANISHED_MESSAGES = {KIND_GEO: 'Прогон пропал на стороне сервиса'}
+_VANISHED_DEFAULT = 'Задача пропала на стороне сервиса'
 _NO_DPI_ON_MESSAGE = 'Под фильтр Белого списка не попала ни одна симка'
 
 ApiCall = Callable[[BschekAPI], Awaitable[dict]]
@@ -71,6 +90,11 @@ class RunnerConfig:
     scan_timeout_base: float = 180.0
     scan_timeout_per_unit: float = 60.0
     scan_timeout_cap: float = 2400.0
+    # GEO: сервис сам оценивает время (estimated_sec), прогон у него не дольше 10 минут.
+    geo_poll_interval: float = 5.0
+    geo_timeout_base: float = 120.0
+    geo_timeout_factor: float = 2.0
+    geo_timeout_cap: float = 900.0
     transient_retries: int = 3
     transient_default_wait: float = 60.0
     internal_error_replay_wait: float = 60.0
@@ -110,11 +134,14 @@ class JobRunner:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        geo_names: Callable[[], Awaitable[dict]] | None = None,
     ) -> None:
         self._client_factory = client_factory
         self._gate = gate
         self._session_factory = session_factory
         self._cost_limit = cost_limit_kopeks
+        # Имена регионов и городов для строк GEO (кэш справочника у сервиса); без него — токены.
+        self._geo_names = geo_names
         self.cfg = config or RunnerConfig()
         self._sleep = sleep
         self._clock = clock
@@ -451,10 +478,32 @@ class JobRunner:
     def _submit(api: BschekAPI, job: ReachabilityJob) -> Awaitable[dict]:
         if job.kind == KIND_VLESS:
             return api.start_vless(job.request, job.idempotency_key)
+        if job.kind == KIND_GEO:
+            return api.geo_start(job.request, job.idempotency_key)
         return api.start_scan(job.request, job.idempotency_key)
 
     @staticmethod
-    def _submit_fields(job: ReachabilityJob, submit: dict, external_id: int) -> dict[str, Any]:
+    def _geo_submit_fields(job: ReachabilityJob, submit: dict, external_id: int) -> dict[str, Any]:
+        """Резерв из ответа на запуск точнее расчёта; строки и сводка заполняются опросом."""
+        reserve = credits_to_kopeks(submit.get('reserve_credits'))
+        geo = {
+            'n_nodes': submit.get('n_nodes'),
+            'reserve_credits': submit.get('reserve_credits'),
+            'estimated_sec': submit.get('estimated_sec'),
+            'scope_label': scope_label(job.request or {}),
+        }
+        return {
+            'external_id': external_id,
+            'phase': PHASE_POLLING,
+            'result': {'submit': submit, 'geo': geo, 'rows': [], 'summary': {}},
+            'estimated_kopeks': reserve if reserve is not None else job.estimated_kopeks,
+            'units_effective': ['geo'],
+        }
+
+    @classmethod
+    def _submit_fields(cls, job: ReachabilityJob, submit: dict, external_id: int) -> dict[str, Any]:
+        if job.kind == KIND_GEO:
+            return cls._geo_submit_fields(job, submit, external_id)
         fields: dict[str, Any] = {
             'external_id': external_id,
             'phase': PHASE_POLLING,
@@ -477,7 +526,7 @@ class JobRunner:
         if submit.get('outcome') == 'no_dpi_on':
             await self._fail(db, job, 'no_dpi_on', _NO_DPI_ON_MESSAGE, False, result={'submit': submit})
             return
-        external_id = submit.get('test_id' if job.kind == KIND_VLESS else 'scan_id')
+        external_id = submit.get(_EXTERNAL_ID_KEYS.get(job.kind, 'scan_id'))
         if external_id is None:
             message = 'API не вернул идентификатор задачи'
             await self._fail(db, job, 'unexpected_response', message, False, result={'submit': submit})
@@ -500,6 +549,9 @@ class JobRunner:
         return True
 
     def _timeout_for(self, job: ReachabilityJob) -> float:
+        if job.kind == KIND_GEO:
+            estimated = float(((job.result or {}).get('geo') or {}).get('estimated_sec') or 0)
+            return min(self.cfg.geo_timeout_cap, self.cfg.geo_timeout_base + self.cfg.geo_timeout_factor * estimated)
         units = max(1, len(job.units_effective or job.units_resolved or []))
         if job.kind == KIND_VLESS:
             legs = max(1, len(job.targets or [])) * units
@@ -510,10 +562,27 @@ class JobRunner:
         external_id = int(job.external_id)
         if job.kind == KIND_VLESS:
             return lambda api: api.get_vless(external_id)
+        if job.kind == KIND_GEO:
+            return lambda api: api.geo_run(external_id)
         return lambda api: api.get_scan(external_id)
 
+    def _poll_interval(self, job: ReachabilityJob) -> float:
+        if job.kind == KIND_VLESS:
+            return self.cfg.vless_poll_interval
+        if job.kind == KIND_GEO:
+            return self.cfg.geo_poll_interval
+        return self.cfg.scan_poll_interval
+
+    def _status_handler(self, job: ReachabilityJob) -> Callable[[AsyncSession, ReachabilityJob, dict], Awaitable[bool]]:
+        if job.kind == KIND_VLESS:
+            return self._handle_vless_status
+        if job.kind == KIND_GEO:
+            return self._handle_geo_status
+        return self._handle_scan_status
+
     async def _poll(self, db: AsyncSession, job: ReachabilityJob) -> None:
-        interval = self.cfg.vless_poll_interval if job.kind == KIND_VLESS else self.cfg.scan_poll_interval
+        interval = self._poll_interval(job)
+        handler = self._status_handler(job)
         deadline = self._clock() + self._timeout_for(job)
         while self._clock() < deadline:
             await self._sleep(interval)
@@ -523,10 +592,9 @@ class JobRunner:
                 continue
             except BschekAPIError as exc:
                 if exc.code == 'not_found' or exc.status == 404:
-                    await self._fail(db, job, 'not_found', 'Задача пропала на стороне сервиса', False)
+                    await self._fail(db, job, 'not_found', _VANISHED_MESSAGES.get(job.kind, _VANISHED_DEFAULT), False)
                     return
                 raise
-            handler = self._handle_vless_status if job.kind == KIND_VLESS else self._handle_scan_status
             if await handler(db, job, status):
                 return
         logger.warning('Опрос задачи проверки исчерпал таймаут, доберёт обходчик', job_id=job.id, kind=job.kind)
@@ -584,22 +652,66 @@ class JobRunner:
         )
         return True
 
+    async def _handle_geo_status(self, db: AsyncSession, job: ReachabilityJob, status: dict) -> bool:
+        """Строки и сводка пишутся при каждом опросе (прогресс виден в кабинете); терминал — итог и деньги.
+
+        Регионы и города — словами из справочника (он в кэше на десять минут, так что опрос
+        раз в пять секунд в каталог не ходит); справочник недоступен — в базу лягут токены,
+        маршрут кабинета допишет имена при чтении.
+        """
+        names = await self._geo_names() if self._geo_names else {}
+        rows = normalize_rows(list(status.get('rows') or []), names)
+        base = {**(job.result or {}), 'status': status, 'rows': rows, 'summary': geo_summary(status, rows)}
+        state = status.get('state')
+        if state not in _GEO_TERMINAL_STATES:
+            await self._update(db, job, result=base)
+            return False
+        if state == 'error':
+            message = str(status.get('error') or 'Прогон завершился ошибкой на стороне сервиса')
+            await self._fail(db, job, 'geo_error', message, bool(status.get('retryable')), result=base)
+            return True
+        reserve = job.estimated_kopeks or 0
+        charged = credits_to_kopeks(status.get('charged_credits')) or 0
+        # Отмену ставит другой запрос, пока этот ждёт ответа API: фазу перечитываем из базы.
+        await db.refresh(job, attribute_names=['phase'])
+        cancelled = state == 'aborted' or job.phase == PHASE_CANCELLING
+        await self._update(
+            db,
+            job,
+            status=STATUS_CANCELLED if cancelled else STATUS_DONE,
+            phase=None,
+            result={**base, 'note': GEO_EMPTY_NOTE} if state == 'empty' else base,
+            cost_kopeks=charged,
+            refunded_kopeks=max(0, reserve - charged),
+            finished_at=self._now(),
+        )
+        return True
+
     # ------------------------------------------------------------ отмена
 
-    async def _try_cancel_remote(self, job: ReachabilityJob) -> None:
-        """Отмена у API: пробу — её ключом, тест и скан — их идентификатором. «Уже нечего» — не ошибка."""
+    async def _try_cancel_remote(self, job: ReachabilityJob) -> str | None:
+        """Отмена у API: пробу — её ключом, тест, скан и GEO — их идентификатором.
+
+        «Уже нечего» — не ошибка; возвращается проглоченный код, чтобы вызывающий мог пометить задачу.
+        """
 
         def call(api: BschekAPI) -> Awaitable[dict]:
             if job.kind == KIND_PROBE:
                 return api.cancel_probe(job.idempotency_key)
             external_id = int(job.external_id)
-            return api.cancel_vless(external_id) if job.kind == KIND_VLESS else api.cancel_scan(external_id)
+            if job.kind == KIND_VLESS:
+                return api.cancel_vless(external_id)
+            if job.kind == KIND_GEO:
+                return api.geo_cancel(external_id)
+            return api.cancel_scan(external_id)
 
         try:
             await self._call(call, paid=False)
         except BschekAPIError as exc:
             if exc.code not in CANCEL_OK_CODES and exc.status != 404:
                 raise
+            return exc.code
+        return None
 
     async def cancel(self, db: AsyncSession, job: ReachabilityJob) -> ReachabilityJob:
         """Дёрнуть отмену у API и пометить фазу; итог (статус, цена) поставит поллер или обходчик.
@@ -614,5 +726,8 @@ class JobRunner:
         elif job.external_id is None:
             raise JobNotCancellable('Задача ещё не отправлена, подождите пару секунд')
         await self._update(db, job, phase=PHASE_CANCELLING)
-        await self._try_cancel_remote(job)
+        swallowed = await self._try_cancel_remote(job)
+        if swallowed == 'cannot_cancel':
+            # Прогон оборван перезапуском сервиса: он закроет его сам, наш опрос дочитает итог.
+            await self._update(db, job, result={**(job.result or {}), 'note': GEO_CANNOT_CANCEL_NOTE})
         return job

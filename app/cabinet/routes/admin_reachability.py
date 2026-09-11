@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -17,6 +17,9 @@ from app.database.models import ReachabilityBatch, ReachabilityJob, User
 from app.external.bschek_api import BschekAPIError
 from app.services.permission_service import PermissionService
 from app.services.reachability.batches import BatchPreview, batch_done_targets
+from app.services.reachability.geo_catalog import MAX_CITIES_LIMIT, names_from_catalog
+from app.services.reachability.geo_messages import geo_error_message
+from app.services.reachability.geo_result import DISTRICT_NAMES, ISP_NAMES, name_rows
 from app.services.reachability.jobs import JobNotCancellable
 from app.services.reachability.pricing import CostLimitExceeded
 from app.services.reachability.requests import RequestBuildError
@@ -42,6 +45,12 @@ from ..schemas.reachability import (
     BatchOut,
     BatchPreviewResponse,
     ConfigOut,
+    GeoCatalogResponse,
+    GeoCityOut,
+    GeoDistrictOut,
+    GeoIspOut,
+    GeoPreviewOut,
+    GeoRegionOut,
     HostsResponse,
     HostTargetOut,
     JobCreateRequest,
@@ -79,6 +88,8 @@ BAD_REQUEST_ERRORS = (
     ValueError,
 )
 REJECTED_PREVIEW_LENGTH = 60
+# Сервис отверг именно наш запрос: лимиты, деньги, тариф, занятость, частота — статус и текст его.
+REQUEST_REFUSED_STATUSES = frozenset({400, 402, 403, 409, 429})
 
 
 def _service() -> ReachabilityService:
@@ -103,6 +114,9 @@ def _http(exc: Exception) -> HTTPException:
         return HTTPException(status.HTTP_404_NOT_FOUND, 'Задача не найдена')
     if isinstance(exc, BAD_REQUEST_ERRORS):
         return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if isinstance(exc, BschekAPIError) and exc.status in REQUEST_REFUSED_STATUSES:
+        # Отказ по нашему запросу (а не сбой шлюза) — статус сервиса и слова для человека.
+        return HTTPException(exc.status, geo_error_message(exc))
     if isinstance(exc, BschekAPIError):
         return HTTPException(status.HTTP_502_BAD_GATEWAY, f'bschekbot: {exc.message} [{exc.code}]')
     logger.error('Неожиданная ошибка раздела reachability', error=str(exc), error_type=type(exc).__name__)
@@ -132,6 +146,107 @@ def _job_out(job: Any) -> JobOut:
         probes=dict(probes) if isinstance(probes, dict) else None,
         sni_hosts=[str(name) for name in (request.get('sni_hosts') or [])],
         batch_id=getattr(job, 'batch_id', None),
+    )
+
+
+async def _name_geo_regions(job_out: JobOut) -> JobOut:
+    """Строки GEO получают регион и город словами из кэша справочника; без сервиса остаются токены.
+
+    Обходчик подписывает строки при записи, но старые задачи в базе лежат токенами, а справочник
+    мог быть недоступен в момент прогона — поэтому имена дописываются и при чтении.
+    """
+    if job_out.kind != 'geo' or not job_out.result or not job_out.result.get('rows'):
+        return job_out
+    names = await _service().geo_names()
+    if not names:
+        return job_out
+    rows = name_rows(job_out.result['rows'], names)
+    return job_out.model_copy(update={'result': {**job_out.result, 'rows': rows}})
+
+
+async def _job_out_named(job: Any) -> JobOut:
+    return await _name_geo_regions(_job_out(job))
+
+
+def _geo_district_out(item: Any) -> GeoDistrictOut:
+    """Округ из справочника: объект `{code, name}` или голый код — тогда имя из своей таблицы."""
+    if isinstance(item, dict):
+        return GeoDistrictOut(code=str(item.get('code') or ''), name=str(item.get('name') or ''))
+    code = str(item)
+    return GeoDistrictOut(code=code, name=DISTRICT_NAMES.get(code.lower(), code.upper()))
+
+
+def _geo_district_named(item: Any) -> GeoDistrictOut:
+    out = _geo_district_out(item)
+    return (
+        out if out.name else GeoDistrictOut(code=out.code, name=DISTRICT_NAMES.get(out.code.lower(), out.code.upper()))
+    )
+
+
+def _geo_regions_out(data: dict, cities: list[GeoCityOut]) -> list[GeoRegionOut]:
+    """Регионы из `regions[]` сервиса, если у них есть имена; иначе — из строк городов, где имена есть всегда."""
+    named = names_from_catalog({'regions': data.get('regions') or []})['regions']
+    if named:
+        return [
+            GeoRegionOut(token=token, name=info['name'], district=info['district']) for token, info in named.items()
+        ]
+    seen: dict[str, GeoRegionOut] = {}
+    for city in cities:
+        if city.region and city.region_ru and city.region not in seen:
+            seen[city.region] = GeoRegionOut(token=city.region, name=city.region_ru, district=city.district)
+    return sorted(seen.values(), key=lambda region: region.name)
+
+
+ISP_TOKEN_KEYS = ('token', 'isp', 'code', 'id')
+ISP_NAME_KEYS = ('name', 'isp_ru', 'name_ru', 'title')
+ISP_COUNT_KEYS = ('cities', 'count', 'n', 'n_cities')
+
+
+def _isp_title(token: str) -> str:
+    return ISP_NAMES.get(token) or token.replace('_', ' ').title()
+
+
+def _geo_isps_out(data: dict, cities: list[GeoCityOut]) -> list[GeoIspOut]:
+    """Провайдеры из списка сервиса (ключи терпимы к переименованию); нет списка — счёт по городам."""
+    raw = next((data.get(key) for key in ('isps', 'providers', 'operators') if data.get(key)), None) or []
+    isps = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        token = next((str(item[key]) for key in ISP_TOKEN_KEYS if item.get(key)), '')
+        if not token:
+            continue
+        name = next((str(item[key]) for key in ISP_NAME_KEYS if item.get(key)), '') or _isp_title(token)
+        count = next((item[key] for key in ISP_COUNT_KEYS if isinstance(item.get(key), int | float)), 0)
+        isps.append(GeoIspOut(token=token, name=name, cities=int(count)))
+    if isps:
+        return isps
+    counts: dict[str, int] = {}
+    for city in cities:
+        for token in city.isps:
+            counts[token] = counts.get(token, 0) + 1
+    return [
+        GeoIspOut(token=token, name=_isp_title(token), cities=count)
+        for token, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    ]
+
+
+def _geo_catalog_out(data: dict, *, include_cities: bool = True) -> GeoCatalogResponse:
+    """Ответ справочника для кабинета; города прилагаются только когда их просили (иначе это тысячи строк)."""
+    city_keys = ('region', 'region_ru', 'district', 'city', 'city_ru', 'isps')
+    cities = [
+        GeoCityOut(**{key: c.get(key) for key in city_keys if c.get(key) is not None})
+        for c in data.get('cities') or []
+        if isinstance(c, dict)
+    ]
+    return GeoCatalogResponse(
+        networks=[str(item) for item in data.get('networks') or []],
+        districts=[_geo_district_named(item) for item in data.get('districts') or []],
+        regions=_geo_regions_out(data, cities),
+        isps=_geo_isps_out(data, cities),
+        cities=cities if include_cities else [],
+        cities_total=data.get('cities_total') if include_cities else None,
+        cities_truncated=bool(data.get('cities_truncated')) if include_cities else False,
     )
 
 
@@ -231,8 +346,13 @@ def _configs_out(configs: SubscriptionConfigs) -> SubscriptionConfigsResponse:
     return SubscriptionConfigsResponse(
         short_uuid=configs.short_uuid,
         configs=[_config_out(index, target) for index, target in enumerate(configs.configs)],
-        rejected=[RejectedOut(reason=item.reason, preview=_rejected_preview(item.raw)) for item in configs.rejected],
+        rejected=[_rejected_out(item) for item in configs.rejected],
+        note=configs.note,
     )
+
+
+def _rejected_out(item) -> RejectedOut:
+    return RejectedOut(reason=item.reason, preview=_rejected_preview(item.raw), detail=getattr(item, 'detail', None))
 
 
 def _preview_out(preview: PreviewResult) -> PreviewResponse:
@@ -245,6 +365,7 @@ def _preview_out(preview: PreviewResult) -> PreviewResponse:
         estimate_is_exact=preview.estimate_is_exact,
         warnings=preview.warnings,
         balance_kopeks=preview.balance_kopeks,
+        geo=GeoPreviewOut(**preview.geo) if preview.geo else None,
     )
 
 
@@ -356,7 +477,7 @@ async def parse_input(
             ParsedConfigOut(**_config_out(index, item.target).model_dump(), target=item.target_in)
             for index, item in enumerate(parsed.configs)
         ],
-        rejected=[RejectedOut(reason=item.reason, preview=_rejected_preview(item.raw)) for item in parsed.rejected],
+        rejected=[_rejected_out(item) for item in parsed.rejected],
         sources=[SourceOut(**source) for source in parsed.sources],
     )
 
@@ -415,7 +536,7 @@ async def create_job(
         'estimated_kopeks': job.estimated_kopeks,
     }
     await _audit(db, admin, 'reachability_job_create', job, details)
-    return _job_out(job)
+    return await _job_out_named(job)
 
 
 @router.get('/jobs', response_model=JobListResponse)
@@ -435,7 +556,8 @@ async def list_jobs(
         )
     except Exception as exc:
         raise _http(exc) from exc
-    return JobListResponse(items=[_job_out(job) for job in items], total=total, offset=offset, limit=limit)
+    named = [await _job_out_named(job) for job in items]
+    return JobListResponse(items=named, total=total, offset=offset, limit=limit)
 
 
 @router.get('/jobs/{job_id}', response_model=JobOut)
@@ -445,9 +567,10 @@ async def get_job(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> JobOut:
     try:
-        return _job_out(await _service().get_job(db, job_id))
+        job = await _service().get_job(db, job_id)
     except Exception as exc:
         raise _http(exc) from exc
+    return await _job_out_named(job)
 
 
 @router.post('/jobs/{job_id}/cancel', response_model=JobOut)
@@ -461,7 +584,39 @@ async def cancel_job(
     except Exception as exc:
         raise _http(exc) from exc
     await _audit(db, admin, 'reachability_job_cancel', job)
-    return _job_out(job)
+    return await _job_out_named(job)
+
+
+@router.get('/geo/catalog', response_model=GeoCatalogResponse)
+async def geo_catalog(
+    network: Literal['res', 'mob'] = Query(default='res'),
+    q: str | None = Query(default=None, max_length=64),
+    isp: str | None = Query(default=None, max_length=64),
+    region: str | None = Query(default=None, max_length=64),
+    district: str | None = Query(default=None, max_length=8),
+    cities_limit: int | None = Query(default=None, ge=1, le=5000),
+    admin: User = Depends(require_permission('reachability:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> GeoCatalogResponse:
+    """Справочник GEO: округа, регионы, провайдеры; города — по фильтру или поиску.
+
+    Без фильтра у сервиса просятся все города (это тот же запрос, из которого строятся имена
+    строк прогона, он в кэше): из них выводятся регионы и провайдеры, если сервис прислал
+    свои списки без имён, а сами города в ответ не кладутся.
+    """
+    wants_cities = any((q, isp, region, district, cities_limit))
+    try:
+        data = await _service().geo_catalog(
+            network=network,
+            q=q,
+            isp=isp,
+            region=region,
+            district=district,
+            cities_limit=cities_limit if wants_cities else MAX_CITIES_LIMIT,
+        )
+    except Exception as exc:
+        raise _http(exc) from exc
+    return _geo_catalog_out(data, include_cities=wants_cities)
 
 
 # ============ Пачка проверок ============
