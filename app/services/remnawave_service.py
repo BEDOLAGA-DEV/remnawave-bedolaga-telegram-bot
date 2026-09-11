@@ -1471,6 +1471,16 @@ class RemnaWaveService:
                     panel_users_email_only_count=len(panel_users_email_only),
                 )
 
+            # Аккаунты без Telegram id и без почты бот не создавал (он пишет
+            # личность в каждый свой аккаунт) — их не подтягиваем и не трогаем.
+            # Считаем явно, чтобы оператор видел, что они пропущены намеренно.
+            foreign_accounts_count = len(panel_users) - len(panel_users_with_tg) - len(panel_users_email_only)
+            if foreign_accounts_count > 0:
+                logger.info(
+                    '⏭️ Аккаунтов панели без Telegram ID и почты — созданы не ботом, пропускаем',
+                    foreign_accounts_count=foreign_accounts_count,
+                )
+
             # Для ускорения - подготовим данные о подписках
             # Соберем все существующие подписки за один запрос
             existing_subscriptions_result = await db.execute(
@@ -2062,6 +2072,10 @@ class RemnaWaveService:
                 bot_users_by_email=len(bot_users_by_email),
             )
 
+            # Аккаунты без Telegram id и без почты бот не создавал — их не
+            # подтягиваем и не трогаем; считаем, чтобы пропуск был виден оператору.
+            foreign_accounts_count = 0
+
             # Match and update
             for panel_user in panel_users:
                 panel_user_id = _normalize_panel_user_id(panel_user.get('id'))
@@ -2118,11 +2132,14 @@ class RemnaWaveService:
                         _bot_user = bot_users_by_email.get(_panel_email)
 
                     if not _bot_user:
-                        logger.debug(
-                            '⚠️ [multi-tariff] Panel user has no matching bot user',
-                            panel_user_id=panel_user_id,
-                            username=panel_user.get('username'),
-                        )
+                        if not _panel_tg and not _panel_email:
+                            foreign_accounts_count += 1
+                        else:
+                            logger.debug(
+                                '⚠️ [multi-tariff] Panel user has no matching bot user',
+                                panel_user_id=panel_user_id,
+                                username=panel_user.get('username'),
+                            )
                         continue
 
                     # Check MAX_ACTIVE_SUBSCRIPTIONS
@@ -2242,6 +2259,12 @@ class RemnaWaveService:
                     stats['errors'] += 1
 
             await db.commit()
+
+            if foreign_accounts_count > 0:
+                logger.info(
+                    '⏭️ [multi-tariff] Аккаунтов панели без Telegram ID и почты — созданы не ботом, пропускаем',
+                    foreign_accounts_count=foreign_accounts_count,
+                )
 
             logger.info(
                 '🎯 [multi-tariff] Синхронизация завершена',
