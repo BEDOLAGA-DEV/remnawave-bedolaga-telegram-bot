@@ -90,11 +90,9 @@ async def test_access_matrix(enabled, status, admin, evidence, allowed, reason):
     assert decision.reason is reason
 
 
-async def test_non_invite_channel_cannot_create_or_revive_when_enabled():
-    service = RegistrationAccessService(
-        invite_validator=FakeValidator(RegistrationInviteEvidence(RegistrationInviteKind.REFERRAL)),
-        settings_reader=reader(True),
-    )
+async def test_non_telegram_channel_cannot_create_or_revive_when_enabled():
+    validator = FakeValidator(RegistrationInviteEvidence(RegistrationInviteKind.REFERRAL))
+    service = RegistrationAccessService(invite_validator=validator, settings_reader=reader(True))
 
     decision = await service.evaluate(
         object(),
@@ -104,11 +102,6 @@ async def test_non_invite_channel_cannot_create_or_revive_when_enabled():
     assert decision.allowed is False
     assert decision.reason is RegistrationAccessReason.CHANNEL_NOT_ALLOWED
 
-
-async def test_cabinet_email_can_use_invite_evidence_when_enabled():
-    validator = FakeValidator(RegistrationInviteEvidence(RegistrationInviteKind.REFERRAL))
-    service = RegistrationAccessService(invite_validator=validator, settings_reader=reader(True))
-
     decision = await service.evaluate(
         object(),
         context(None, channel=RegistrationChannel.CABINET_EMAIL, payload='ref-code'),
@@ -116,13 +109,9 @@ async def test_cabinet_email_can_use_invite_evidence_when_enabled():
 
     assert decision.allowed is True
     assert decision.reason is RegistrationAccessReason.INVITE_GRANTED
-    assert validator.calls[0][1] == 'ref-code'
+    assert validator.calls[-1][1] == 'ref-code'
 
-
-async def test_cabinet_email_without_resolvable_invite_stays_denied():
-    validator = FakeValidator(evidence=None)
-    service = RegistrationAccessService(invite_validator=validator, settings_reader=reader(True))
-
+    validator.evidence = None
     decision = await service.evaluate(
         object(),
         context(None, channel=RegistrationChannel.CABINET_EMAIL, payload=None),
@@ -130,7 +119,7 @@ async def test_cabinet_email_without_resolvable_invite_stays_denied():
 
     assert decision.allowed is False
     assert decision.reason is RegistrationAccessReason.INVITE_REQUIRED
-    assert validator.calls[0][1] is None
+    assert validator.calls[-1][1] is None
 
 
 async def test_web_gift_claim_is_admitted_by_the_gift_token_it_carries():
