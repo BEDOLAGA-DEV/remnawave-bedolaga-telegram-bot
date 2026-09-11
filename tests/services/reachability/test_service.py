@@ -894,3 +894,14 @@ async def test_geo_regions_index_is_empty_when_the_service_is_off_or_down(sessio
     assert await make_service(session_factory, client=Down()).geo_regions() == {}
     live = make_service(session_factory, client=FakeClient())
     assert (await live.geo_regions())['moscow'] == {'name': 'Москва', 'district': 'ЦФО'}
+
+
+async def test_status_lists_a_running_geo_job_like_vless_and_scan(session_factory) -> None:
+    # Кабинет по этому списку показывает «уже идёт GEO #N» до запуска, а не 409 после.
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, GEO_PAYLOAD, admin.id)
+        status = await service.status(db)
+    assert [(item['kind'], item['id']) for item in status['active_jobs']] == [('geo', job.id)]
