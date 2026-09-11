@@ -17,6 +17,7 @@ from app.database.models import ReachabilityBatch, ReachabilityJob, User
 from app.external.bschek_api import BschekAPIError
 from app.services.permission_service import PermissionService
 from app.services.reachability.batches import BatchPreview, batch_done_targets
+from app.services.reachability.geo_messages import geo_error_message
 from app.services.reachability.geo_result import DISTRICT_NAMES
 from app.services.reachability.jobs import JobNotCancellable
 from app.services.reachability.pricing import CostLimitExceeded
@@ -86,6 +87,8 @@ BAD_REQUEST_ERRORS = (
     ValueError,
 )
 REJECTED_PREVIEW_LENGTH = 60
+# Сервис отверг именно наш запрос: лимиты, деньги, тариф, занятость, частота — статус и текст его.
+REQUEST_REFUSED_STATUSES = frozenset({400, 402, 403, 409, 429})
 
 
 def _service() -> ReachabilityService:
@@ -110,6 +113,9 @@ def _http(exc: Exception) -> HTTPException:
         return HTTPException(status.HTTP_404_NOT_FOUND, 'Задача не найдена')
     if isinstance(exc, BAD_REQUEST_ERRORS):
         return HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if isinstance(exc, BschekAPIError) and exc.status in REQUEST_REFUSED_STATUSES:
+        # Отказ по нашему запросу (а не сбой шлюза) — статус сервиса и слова для человека.
+        return HTTPException(exc.status, geo_error_message(exc))
     if isinstance(exc, BschekAPIError):
         return HTTPException(status.HTTP_502_BAD_GATEWAY, f'bschekbot: {exc.message} [{exc.code}]')
     logger.error('Неожиданная ошибка раздела reachability', error=str(exc), error_type=type(exc).__name__)

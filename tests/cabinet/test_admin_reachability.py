@@ -187,7 +187,9 @@ def _probe_body(**overrides) -> JobCreateRequest:
         (PanelUnavailable('панель лежит'), 503, 'панель'),
         (SelectorError('Неизвестные симки: nokia'), 400, 'nokia'),
         (ValueError('Для скана нужна подсеть /24'), 400, '/24'),
-        (BschekAPIError(code='too_many_targets', message='Лимит 10 целей', status=400), 502, 'too_many_targets'),
+        # Отказ по нашему запросу — статус сервиса и его слова, не 502 шлюза.
+        (BschekAPIError(code='too_many_targets', message='Лимит 10 целей', status=400), 400, 'Лимит 10 целей'),
+        (BschekAPIError(code='worker_unavailable', message='нет воркера', status=503), 502, 'worker_unavailable'),
         (RuntimeError('boom'), 500, 'Внутренняя'),
         (HTTPException(418, 'чайник'), 418, 'чайник'),
     ],
@@ -650,3 +652,19 @@ async def test_job_out_keeps_tokens_when_catalog_is_unavailable(service) -> None
     service.get_job = AsyncMock(return_value=_job(kind='geo', status='done', result={'rows': [GEO_ROW]}))
     out = await admin_reachability.get_job(5, admin=ADMIN, db=AsyncMock())
     assert out.result['rows'][0]['region_ru'] == 'voronezh_oblast'
+
+
+def test_http_translates_geo_service_errors_into_words() -> None:
+    exc = BschekAPIError(code='too_many_nodes', message='raw', status=400, details={'suggested_city_limit': 120})
+    http = admin_reachability._http(exc)
+    assert http.status_code == 400 and 'потолок 120' in http.detail and 'raw' not in http.detail
+    assert (
+        admin_reachability._http(BschekAPIError(code='insufficient_credits', message='raw', status=402)).status_code
+        == 402
+    )
+    assert 'Bronze' in admin_reachability._http(BschekAPIError(code='tier_too_low', message='raw', status=403)).detail
+    limited = admin_reachability._http(BschekAPIError(code='rate_limited', message='raw', status=429, retry_after=9))
+    assert limited.status_code == 429 and '9 с' in limited.detail
+    # Сбой сервиса (5xx) и ответ без статуса — по-прежнему 502 с кодом: это не отказ по нашему запросу.
+    assert admin_reachability._http(BschekAPIError(code='maintenance', message='raw', status=503)).status_code == 502
+    assert admin_reachability._http(BschekAPIError(code='timeout', message='raw')).status_code == 502
