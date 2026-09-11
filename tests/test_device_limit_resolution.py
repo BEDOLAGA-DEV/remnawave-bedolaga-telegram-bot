@@ -219,3 +219,26 @@ def test_coerce_panel_device_limit_honors_default(panel_value, default, expected
 )
 def test_device_limit_needs_heal_preserves_zero(stored_value, needs_heal):
     assert device_limit_needs_heal(stored_value) is needs_heal
+
+
+def test_zero_device_limit_is_not_a_warning(monkeypatch):
+    """Ноль = «без ограничения» (HWID выключен) — штатное состояние, не повод для warning.
+
+    Полная синхронизация в панель прогоняет каждую подписку через сборщик полей;
+    на базе с выключенным HWID warning на каждую подписку — шум, который
+    операторы читают как ошибку.
+    """
+    from structlog.testing import capture_logs
+
+    subscription = DummySubscription(device_limit=0)
+    monkeypatch.setattr(
+        subscription_utils,
+        'settings',
+        StubSettings(enabled=False, disabled_amount=None, disabled_selection_amount=None),
+    )
+
+    with capture_logs() as records:
+        assert resolve_hwid_device_limit_for_payload(subscription) is None
+
+    noisy = [record for record in records if record['log_level'] in {'warning', 'error'}]
+    assert noisy == []
