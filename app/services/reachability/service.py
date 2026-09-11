@@ -28,8 +28,10 @@ from app.database.models import ReachabilityBatch, ReachabilityJob, Reachability
 from app.external.bschek_api import BschekAPI, BschekAPIError
 from app.services.reachability import batches as batch_ops
 from app.services.reachability.gate import PaidCallGate
+from app.services.reachability.geo_catalog import GeoCatalogCache
+from app.services.reachability.geo_requests import build_geo_request, parse_geo_options
 from app.services.reachability.jobs import JobNotCancellable, JobRunner
-from app.services.reachability.kinds import KIND_PROBE, KIND_SCAN, KIND_VLESS
+from app.services.reachability.kinds import KIND_GEO, KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.links import RejectedLink, expand_raw_input, parse_links
 from app.services.reachability.notes import note_for_panel_user
 from app.services.reachability.panel_links import fetch_panel_links
@@ -66,8 +68,11 @@ logger = structlog.get_logger(__name__)
 
 AUTH_CODES = frozenset({'unauthenticated', 'api_not_available', 'tier_too_low', 'subscription_required'})
 UNHEALTHY_FOR = timedelta(minutes=5)
-JOB_KINDS = (KIND_PROBE, KIND_VLESS, KIND_SCAN)
-EXCLUSIVE_KINDS = (KIND_VLESS, KIND_SCAN)
+JOB_KINDS = (KIND_PROBE, KIND_VLESS, KIND_SCAN, KIND_GEO)
+EXCLUSIVE_KINDS = (KIND_VLESS, KIND_SCAN, KIND_GEO)
+GEO_RESERVE_WARNING = 'Цена GEO — резерв: спишется факт по трафику, разница вернётся'
+#: Симок у GEO нет; чтобы общая проверка «нет симок» не срабатывала, единица одна и условная.
+GEO_UNITS = ['geo']
 NO_UNITS_MESSAGE = 'Под фильтр Белого списка не попала ни одна симка'
 # Последний сегмент URL подписки, похожий на shortUuid панели — сначала спрашиваем свою панель.
 _SHORT_UUID_RE = re.compile(r'^[A-Za-z0-9_-]{4,64}$')
@@ -124,6 +129,7 @@ class Quote:
     cost_kopeks: int | None
     exact: bool
     warnings: list[str] = field(default_factory=list)
+    geo: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +183,7 @@ class ReachabilityService:
             cost_limit_kopeks=self.cost_limit_kopeks,
         )
         self._units = UnitsCache(self._fetch_operators, clock=clock)
+        self._geo_catalog = GeoCatalogCache(self._fetch_geo_catalog, clock=clock)
         self._account = AccountCache(self._fetch_account, clock=clock)
         self._health = Health()
         self._background: asyncio.Task | None = None
@@ -239,6 +246,14 @@ class ReachabilityService:
 
     async def _fetch_account(self) -> dict:
         return await self._call(lambda api: api.get_account())
+
+    async def _fetch_geo_catalog(self, params: dict[str, str]) -> dict:
+        return await self._call(lambda api: api.geo_catalog(params))
+
+    async def geo_catalog(self, **filters: Any) -> dict:
+        """Справочник GEO (бесплатно, из кэша на десять минут): округа, регионы, провайдеры, города по фильтру."""
+        self._ensure_enabled()
+        return await self._geo_catalog.get(**filters)
 
     async def account(self) -> dict:
         return await self._account.get()
@@ -464,6 +479,29 @@ class ReachabilityService:
         price = await self._call(lambda api: api.preview_scan(request))
         return Quote(request, credits_to_kopeks(price.get('cost_credits')), True)
 
+    async def _quote_geo(self, targets: list[Target], payload: dict) -> Quote:
+        """Цена GEO — резерв под потолок трафика; факт спишется после прогона, разница вернётся."""
+        options = parse_geo_options(payload.get('geo'))
+        request = build_geo_request(targets, options, str(payload.get('core') or ''))
+        numbers = await self._call(lambda api: api.geo_preview(request))
+        geo = {key: numbers.get(key) for key in ('n_nodes', 'cap_mb', 'reserve_credits', 'estimated_sec', 'max_nodes')}
+        return Quote(request, credits_to_kopeks(numbers.get('reserve_credits')), False, [GEO_RESERVE_WARNING], geo=geo)
+
+    async def _preview_geo(self, kind: str, targets: list[Target], payload: dict) -> PreviewResult:
+        quote = await self._quote_geo(targets, payload)
+        return PreviewResult(
+            kind=kind,
+            targets=targets,
+            units_resolved=list(GEO_UNITS),
+            skipped={},
+            cost_kopeks=quote.cost_kopeks,
+            estimate_is_exact=quote.exact,
+            warnings=list(quote.warnings),
+            balance_kopeks=await self._balance_kopeks(),
+            request=quote.request,
+            geo=quote.geo,
+        )
+
     async def preview(self, db: AsyncSession, payload: dict) -> PreviewResult:
         """Всё, что можно узнать до денег: цели, симки, пропуски, цена, предупреждения."""
         self._ensure_enabled()
@@ -471,6 +509,9 @@ class ReachabilityService:
         if kind not in JOB_KINDS:
             raise ValueError(f'Неизвестный вид задачи «{kind}»')
         targets = await (await self.resolver(db)).resolve(list(payload.get('targets') or []))
+        if kind == KIND_GEO:
+            # Симок у GEO нет: города и провайдеры — на стороне сервиса.
+            return await self._preview_geo(kind, targets, payload)
         expansion = await self._expand_units(list(payload.get('units') or []), str(payload.get('dpi') or 'on'))
         quote_by_kind = {KIND_PROBE: self._quote_probe, KIND_VLESS: self._quote_vless, KIND_SCAN: self._quote_scan}
         quote = await quote_by_kind[kind](db, targets, expansion.resolved, payload)
@@ -522,7 +563,8 @@ class ReachabilityService:
             'units_requested': list(payload.get('units') or []),
             'units_resolved': preview.units_resolved,
             'skipped': preview.skipped,
-            'dpi': str(payload.get('dpi') or 'on'),
+            # У GEO режима ТСПУ нет, колонка обязательна — «любой».
+            'dpi': 'any' if preview.kind == KIND_GEO else str(payload.get('dpi') or 'on'),
             'estimated_kopeks': preview.cost_kopeks,
             'estimate_is_exact': preview.estimate_is_exact,
         }
