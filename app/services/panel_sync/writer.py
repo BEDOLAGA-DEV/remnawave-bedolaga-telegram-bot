@@ -18,8 +18,13 @@ from datetime import UTC, datetime
 import structlog
 
 from app.config import settings
-from app.external.remnawave_api import RemnaWaveAPIError, RemnaWaveUser, is_user_not_found_error
-from app.services.panel_sync.expiry import stale_panel_expire_at
+from app.external.remnawave_api import (
+    RemnaWaveAPIError,
+    RemnaWaveUser,
+    is_expire_in_past_error,
+    is_user_not_found_error,
+)
+from app.services.panel_sync.expiry import SKEW_RETRY_MARGIN, stale_panel_expire_at
 from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identity
 from app.services.panel_sync.payload import PanelPayload, build_panel_payload
 
@@ -109,17 +114,32 @@ async def push_subscription(
     if panel_user_id is not None:
         if reset_devices and not await api.reset_user_devices(panel_user_id):
             logger.error('⚠️ Не удалось сбросить HWID', panel_user_id=panel_user_id)
+        update_kwargs = payload.update_kwargs(
+            user_id=panel_user_id,
+            panel_current=identity.expire_at,
+            now=moment,
+            only_fields=only_fields,
+        )
+        already_sent = identity.expire_at
         try:
-            panel_user = await update(
-                **payload.update_kwargs(
-                    user_id=panel_user_id,
-                    panel_current=identity.expire_at,
-                    now=moment,
-                    only_fields=only_fields,
+            try:
+                panel_user = await update(**update_kwargs)
+            except RemnaWaveAPIError as error:
+                if not is_expire_in_past_error(error) or 'expire_at' not in update_kwargs:
+                    raise
+                # Гашение уехало в одном запросе со статусом, и панель отвергла
+                # весь запрос: по её часам дата уже прошла. Статус важнее даты —
+                # шлём без неё, а дату гасим отдельно, с запасом на разъезд.
+                logger.warning(
+                    'Панель сочла дату гашения прошедшей — часы бота и панели разошлись; шлём статус без даты',
+                    subscription_id=getattr(subscription, 'id', None),
+                    panel_user_id=panel_user_id,
+                    expire_at=update_kwargs['expire_at'],
                 )
-            )
+                panel_user = await update(**{key: value for key, value in update_kwargs.items() if key != 'expire_at'})
+                already_sent = None
         except RemnaWaveAPIError as error:
-            # «Пользователя нет» — только явный признак этого (404/A018/A063).
+            # «Пользователя нет» — только явный признак этого (A025/A063, см. is_user_not_found_error).
             # Битый локальный идентификатор и транзиентная ошибка сюда намеренно
             # не попадают: уход в создание плодил бы дубли.
             if not is_user_not_found_error(error) or not recreate_on_missing:
@@ -143,7 +163,7 @@ async def push_subscription(
             subscription,
             panel_user,
             panel_user_id=panel_user_id,
-            already_sent=identity.expire_at,
+            already_sent=already_sent,
             now=moment,
         )
         await _record_identity(
@@ -187,7 +207,23 @@ async def _extinguish_stale_date(
     if already_sent is not None:
         # Дата была известна до запроса — гашение уже уехало тем же PATCH.
         return True
-    await update(user_id=panel_user_id, expire_at=extinguish_at)
+    try:
+        await update(user_id=panel_user_id, expire_at=extinguish_at)
+    except RemnaWaveAPIError as error:
+        if not is_expire_in_past_error(error):
+            raise
+        # Панель сравнивает дату со своими часами: наш запас она уже съела.
+        # Вторая попытка — с большим; если и её отвергнет, это уже не разъезд
+        # часов, а что-то, о чём должен узнать оператор.
+        retry_at = now + SKEW_RETRY_MARGIN
+        logger.warning(
+            'Панель отвергла дату гашения как прошедшую — часы бота отстают от панели; повтор с запасом',
+            subscription_id=getattr(subscription, 'id', None),
+            panel_user_id=panel_user_id,
+            rejected=extinguish_at,
+            retry_at=retry_at,
+        )
+        await update(user_id=panel_user_id, expire_at=retry_at)
     return True
 
 

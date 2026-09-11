@@ -64,13 +64,22 @@ def test_perform_sync_rebuilds_service_on_each_run(monkeypatch):
             self._user_stats = user_stats or {'synced': 1}
             self._squads = squads or []
             self.sync_calls = 0
+            self.to_panel_calls = 0
             self.squad_calls = 0
+            self.order: list[str] = []
 
         async def sync_users_from_panel(self, session, scope):
             self.sync_calls += 1
-            return self._user_stats
+            self.order.append('from_panel')
+            return dict(self._user_stats)
+
+        async def sync_users_to_panel(self, session):
+            self.to_panel_calls += 1
+            self.order.append('to_panel')
+            return {'created': 0, 'updated': 5, 'errors': 0}
 
         async def get_all_squads(self):
+            self.order.append('servers')
             self.squad_calls += 1
             return self._squads
 
@@ -122,8 +131,12 @@ def test_perform_sync_rebuilds_service_on_each_run(monkeypatch):
 
         user_stats, server_stats = await service._perform_sync()
 
-        assert user_stats == {'synced': 2}
+        # Полная синхронизация: импорт из панели, затем экспорт в панель, затем серверы.
+        assert user_stats == {'synced': 2, 'to_panel': {'created': 0, 'updated': 5, 'errors': 0}}
         assert server_stats == {'created': 1, 'updated': 2, 'removed': 3, 'total': 2}
+        used = service._service
+        assert used.to_panel_calls == 1
+        assert used.order == ['from_panel', 'to_panel', 'servers']
 
     asyncio.run(runner())
 

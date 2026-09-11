@@ -2065,6 +2065,13 @@ class Tariff(Base):
     # Внешний сквад RemnaWave (UUID) — назначается пользователю при создании подписки
     external_squad_uuid = Column(String(255), nullable=True, default=None)
 
+    # Свой тег панельного пользователя для тарифа (A–Z, 0–9, _, до 16). Побеждает общие
+    # TRIAL_USER_TAG/PAID_SUBSCRIPTION_USER_TAG; None = общий тег из настроек.
+    panel_tag = Column(String(16), nullable=True, default=None)
+
+    # Дни триала на этом тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days = Column(Integer, nullable=True, default=None)
+
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 

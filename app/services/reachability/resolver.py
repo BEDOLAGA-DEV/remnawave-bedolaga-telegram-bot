@@ -157,7 +157,9 @@ class TargetResolver:
         pref = self._prefs.get((KIND_HOST, host.uuid))
         guessed = pref is None or pref[0] == PURPOSE_UNKNOWN
         purpose = (
-            guess_purpose(address=host.address, sni=host.sni, remark=host.remark, tag=host.tag) if guessed else pref[0]
+            guess_purpose(address=host.address, sni=host.sni, remark=host.remark, tag=' '.join(host.tags) or None)
+            if guessed
+            else pref[0]
         )
         node_uuids = [node.uuid for node in nodes if _linked_hosts([host], node)]
         return HostView(

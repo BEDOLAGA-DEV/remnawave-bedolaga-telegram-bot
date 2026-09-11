@@ -189,6 +189,9 @@ async def purchase_devices_legacy(
         try:
             cart_data = {
                 'cart_mode': 'add_devices',
+                # Намерение пополнить ради этой корзины: без него тихая автопокупка после
+                # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
+                'return_to_cart': True,
                 'devices_to_add': request.devices,
                 'price_kopeks': total_price,
                 'base_price_kopeks': base_total_price,
@@ -464,6 +467,9 @@ async def purchase_devices(
             try:
                 cart_data = {
                     'cart_mode': 'add_devices',
+                    # Намерение пополнить ради этой корзины: без него тихая автопокупка после
+                    # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
+                    'return_to_cart': True,
                     'devices_to_add': request.devices,
                     'price_kopeks': price_kopeks,
                     'base_price_kopeks': base_price_prorated,
@@ -746,6 +752,9 @@ async def save_devices_cart(
     # Save cart for auto-purchase after balance top-up
     cart_data = {
         'cart_mode': 'add_devices',
+        # Намерение пополнить ради этой корзины: без него тихая автопокупка после
+        # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
+        'return_to_cart': True,
         'devices_to_add': request.devices,
         'price_kopeks': price_kopeks,
         'base_price_kopeks': base_total_price,

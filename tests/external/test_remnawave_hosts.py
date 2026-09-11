@@ -27,7 +27,8 @@ HOST_PAYLOAD = {
     'isDisabled': False,
     'isHidden': False,
     'securityLayer': 'DEFAULT',
-    'tag': 'EU',
+    # 3.4.3: у хоста массив `tags`, поля `tag` в схеме нет.
+    'tags': ['EU', 'BS'],
     'inbound': {'configProfileUuid': 'cp-1', 'configProfileInboundUuid': 'in-1'},
 }
 
@@ -43,7 +44,7 @@ def test_parse_host_maps_panel_fields() -> None:
         host=None,
         is_disabled=False,
         is_hidden=False,
-        tag='EU',
+        tags=['EU', 'BS'],
         security_layer='DEFAULT',
         config_profile_uuid='cp-1',
         config_profile_inbound_uuid='in-1',
@@ -54,6 +55,7 @@ def test_parse_host_maps_panel_fields() -> None:
 def test_parse_host_tolerates_missing_optional_fields() -> None:
     host = RemnaWaveAPI._parse_host({'uuid': 'h-2', 'remark': 'x', 'address': 'a.example'})
     assert (host.port, host.sni, host.config_profile_inbound_uuid, host.is_disabled) == (None, None, None, False)
+    assert host.tags == []
 
 
 async def test_get_all_hosts_calls_hosts_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:

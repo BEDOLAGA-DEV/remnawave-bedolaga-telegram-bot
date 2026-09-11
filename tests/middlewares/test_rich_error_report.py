@@ -51,8 +51,10 @@ def test_rich_error_report_none_when_oversized():
 
 async def test_send_error_uses_rich_and_clears_buffer():
     bot = AsyncMock()
-
-    sent = await ge.send_error_to_admin_chat(bot, ValueError('boom'), context='Logger: app.x')
+    try:
+        raise ValueError('boom')
+    except ValueError as error:
+        sent = await ge.send_error_to_admin_chat(bot, error, context='Logger: app.x')
 
     assert sent == 'sent'
     bot.send_rich_message.assert_awaited_once()
@@ -72,3 +74,22 @@ async def test_send_error_falls_back_to_document_when_rich_unavailable(monkeypat
     assert sent == 'sent'
     bot.send_rich_message.assert_not_awaited()
     bot.send_document.assert_awaited_once()  # классический путь с .txt-файлом
+
+
+def test_rich_error_report_renders_a_plain_note_without_code_block():
+    """Запись без трейса (например, «сообщение некуда доставить») — обычный абзац,
+    а не сворачиваемый блок кода с одной строкой внутри."""
+    ge._error_buffer.append(
+        (
+            'TelegramForbiddenError',
+            'Ошибка отправки',
+            'Не смогли отправить сообщение: пользователь <заблокировал> бота.',
+        )
+    )
+
+    report = ge._build_rich_error_report(datetime.now(UTC), 'TelegramForbiddenError', '')
+
+    assert '<details' not in report
+    assert '<pre><code' not in report
+    assert '📋 TelegramForbiddenError: Ошибка отправки' in report
+    assert 'пользователь &lt;заблокировал&gt; бота' in report

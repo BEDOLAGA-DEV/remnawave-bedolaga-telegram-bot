@@ -216,6 +216,10 @@ class Settings(BaseSettings):
     # таймауты логируются как WARNING, чтобы не спамить админ-чат ошибками.
     REMNAWAVE_API_CONNECT_TIMEOUT: int = 30
     REMNAWAVE_API_TOTAL_TIMEOUT: int = 60
+    # Свой потолок запросов к панели в минуту (0 — без ограничения). Нужен, когда перед
+    # панелью прокси с лимитом частоты (шаблонный Caddyfile: 100/мин на /api/*), а
+    # исключить адрес бота из него нельзя: иначе массовая синхронизация ловит 429.
+    REMNAWAVE_API_REQUESTS_PER_MINUTE: int = 0
 
     REMNAWAVE_USERNAME: str | None = None
     REMNAWAVE_PASSWORD: str | None = None

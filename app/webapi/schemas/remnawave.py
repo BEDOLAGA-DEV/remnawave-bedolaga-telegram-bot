@@ -5,6 +5,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.external.remnawave_api import (
+    INTERNAL_SQUAD_NAME_MAX_LENGTH,
+    INTERNAL_SQUAD_NAME_MIN_LENGTH,
+    INTERNAL_SQUAD_NAME_PATTERN,
+)
+
 
 class RemnaWaveConnectionStatus(BaseModel):
     status: str
@@ -151,19 +157,26 @@ class RemnaWaveSquadListResponse(BaseModel):
     total: int
 
 
+_SQUAD_NAME = dict(
+    min_length=INTERNAL_SQUAD_NAME_MIN_LENGTH,
+    max_length=INTERNAL_SQUAD_NAME_MAX_LENGTH,
+    pattern=INTERNAL_SQUAD_NAME_PATTERN,
+)
+
+
 class RemnaWaveSquadCreateRequest(BaseModel):
-    name: str
+    name: str = Field(..., **_SQUAD_NAME)
     inbound_uuids: list[str] = Field(default_factory=list)
 
 
 class RemnaWaveSquadUpdateRequest(BaseModel):
-    name: str | None = None
+    name: str | None = Field(None, **_SQUAD_NAME)
     inbound_uuids: list[str] | None = None
 
 
 class RemnaWaveSquadActionRequest(BaseModel):
     action: Literal['add_all_users', 'remove_all_users', 'delete', 'rename', 'update_inbounds']
-    name: str | None = None
+    name: str | None = Field(None, **_SQUAD_NAME)
     inbound_uuids: list[str] | None = None
 
 

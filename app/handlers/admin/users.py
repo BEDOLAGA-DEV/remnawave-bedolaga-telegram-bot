@@ -4318,6 +4318,7 @@ async def _push_narrow_change_to_panel(db, user, subscription, *, fields: set[st
     """
     from app.services.grace_access_runtime import update_panel_user_grace_safe
     from app.services.panel_sync import push_subscription
+    from app.services.panel_sync.fields import PANEL_ACCOUNT_METADATA_FIELDS
 
     remnawave_service = RemnaWaveService()
     try:
@@ -4334,7 +4335,8 @@ async def _push_narrow_change_to_panel(db, user, subscription, *, fields: set[st
             user,
             subscription,
             db=db,
-            only_fields=fields | {'description'},
+            only_fields=fields | PANEL_ACCOUNT_METADATA_FIELDS,
+            reset_devices=False,
             create_if_missing=False,
             update_call=lambda **kwargs: update_panel_user_grace_safe(api, subscription.id, **kwargs),
         )

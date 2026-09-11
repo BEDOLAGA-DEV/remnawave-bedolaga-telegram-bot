@@ -24,6 +24,7 @@ from app.services.panel_sync import (
     is_subscription_live,
     patch_panel_account,
     push_subscription,
+    resolve_panel_user_tag,
 )
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
@@ -183,10 +184,8 @@ class SubscriptionService:
 
     @staticmethod
     def _resolve_user_tag(subscription: Subscription) -> str | None:
-        if getattr(subscription, 'is_trial', False):
-            return settings.get_trial_user_tag()
-
-        return settings.get_paid_subscription_user_tag()
+        # Тег тарифа побеждает, иначе общие TRIAL/PAID из настроек (panel_sync.tags).
+        return resolve_panel_user_tag(subscription)
 
     @property
     def is_configured(self) -> bool:

@@ -68,7 +68,9 @@ from app.services.panel_sync import (
     project_onto_subscription,
     read_panel_user,
 )
+from app.services.panel_sync.fields import narrow_push_fields
 from app.services.permission_service import PermissionService
+from app.services.user_action_log_service import CLICK_PREFIX, SCREEN_PREFIX
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import panel_datetime_to_utc
 
@@ -3394,30 +3396,37 @@ def _activity_sources(user_id: int) -> dict[str, tuple]:
     def _map_button_click(c: ButtonClickLog) -> UserActivityItem:
         return UserActivityItem(
             type='button_click',
-            subtype='command' if c.button_type == 'command' else None,
+            subtype=c.button_type if c.button_type in ('command', 'payment', 'message') else None,
             source='bot',
             title=c.button_text or c.callback_data or c.button_id,
             timestamp=c.clicked_at,
             meta={'callback_data': c.callback_data} if c.callback_data else None,
         )
 
-    def _map_cabinet_action(c: ButtonClickLog) -> UserActivityItem:
+    def _web_action(c: ButtonClickLog, *, type_: str, source: str) -> UserActivityItem:
+        # Открытие экрана хранится как 'SCREEN <путь>', нажатие — как
+        # 'CLICK <подпись>' — в таймлайне это отдельные подтипы, а не
+        # «действие» с техническим заголовком.
+        subtype = None
+        title = c.button_id
+        for prefix, name in ((SCREEN_PREFIX, 'screen'), (CLICK_PREFIX, 'click')):
+            if c.button_id.startswith(prefix):
+                subtype, title = name, c.button_id[len(prefix) :]
+                break
         return UserActivityItem(
-            type='cabinet_action',
-            source='cabinet',
-            title=c.button_id,
+            type=type_,
+            subtype=subtype,
+            source=source,
+            title=title,
             timestamp=c.clicked_at,
             meta={'path': c.callback_data} if c.callback_data else None,
         )
 
+    def _map_cabinet_action(c: ButtonClickLog) -> UserActivityItem:
+        return _web_action(c, type_='cabinet_action', source='cabinet')
+
     def _map_miniapp_action(c: ButtonClickLog) -> UserActivityItem:
-        return UserActivityItem(
-            type='miniapp_action',
-            source='miniapp',
-            title=c.button_id,
-            timestamp=c.clicked_at,
-            meta={'path': c.callback_data} if c.callback_data else None,
-        )
+        return _web_action(c, type_='miniapp_action', source='miniapp')
 
     # button_click_logs делится на три источника: нажатия кнопок бота (пишет
     # ButtonStatsMiddleware), действия в кабинете (button_type='cabinet') и
@@ -4087,17 +4096,14 @@ async def sync_user_to_panel(
                 detail=service.configuration_error or 'Remnawave API not configured',
             )
 
-        # Что именно админ разрешил отправить. Описание, лимит устройств и
-        # внешний сквад уезжают всегда — они описывают аккаунт, а не подписку.
-        only_fields = {'description', 'hwid_device_limit', 'external_squad_uuid'}
-        if request.update_status:
-            only_fields.add('status')
-        if request.update_expire_date:
-            only_fields.add('expire_at')
-        if request.update_traffic_limit:
-            only_fields.update({'traffic_limit_bytes', 'traffic_limit_strategy'})
-        if request.update_squads:
-            only_fields.add('active_internal_squads')
+        # Что именно админ разрешил отправить; поля аккаунта (описание, лимит
+        # устройств, внешний сквад, тег панели) уезжают всегда — набор общий с ботом.
+        only_fields = narrow_push_fields(
+            status=request.update_status,
+            expire_date=request.update_expire_date,
+            traffic_limit=request.update_traffic_limit,
+            squads=request.update_squads,
+        )
 
         try:
             await db.refresh(push_sub, ['tariff'])
@@ -4113,6 +4119,7 @@ async def sync_user_to_panel(
                 push_sub,
                 db=db,
                 only_fields=only_fields,
+                reset_devices=False,
                 create_if_missing=request.create_if_missing,
                 update_call=lambda **kwargs: update_panel_user_grace_safe(api, push_sub.id, **kwargs),
                 create_call=lambda **kwargs: create_panel_user_grace_safe(

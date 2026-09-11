@@ -635,7 +635,12 @@ async def send_referral_notification(
         await bot.send_message(telegram_id, message, parse_mode='HTML')
         logger.info('✅ Уведомление отправлено пользователю', telegram_id=telegram_id)
     except Exception as e:
-        logger.error('❌ Ошибка отправки уведомления пользователю', telegram_id=telegram_id, error=e)
+        logger.error(
+            '❌ Ошибка отправки уведомления пользователю',
+            telegram_id=telegram_id,
+            username=getattr(user, 'username', None),
+            error=e,
+        )
 
 
 async def process_referral_registration(db: AsyncSession, new_user_id: int, referrer_id: int, bot: Bot = None):

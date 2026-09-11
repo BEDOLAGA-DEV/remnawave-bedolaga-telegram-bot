@@ -69,8 +69,8 @@ def test_command_with_bot_mention_normalized(monkeypatch):
     assert calls[0]['button_id'] == '/menu'
 
 
-def test_plain_text_not_logged(monkeypatch):
-    """Обычные сообщения (промокоды, переписка с поддержкой) не логируются."""
+def test_plain_text_logged_without_content(monkeypatch):
+    """Обычное сообщение — факт без содержимого: промокоды и переписка в журнал не попадают."""
     middleware = ButtonStatsMiddleware()
     calls = _capture_log_calls(middleware, monkeypatch)
 
@@ -79,7 +79,12 @@ def test_plain_text_not_logged(monkeypatch):
         middleware._log_command(_message(None))
         middleware._log_command(_message('/'))
 
-    assert calls == []
+    assert [(c['button_id'], c['button_type'], c['button_text'], c['callback_data']) for c in calls] == [
+        ('message', 'message', 'text', None),
+        ('message', 'message', 'other', None),
+        ('message', 'message', 'text', None),
+    ]
+    assert 'SUMMER25' not in str(calls)
 
 
 def test_middleware_registered_for_messages():

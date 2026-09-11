@@ -1277,10 +1277,11 @@ class MenuLayoutService:
         callback_data: str | None = None,
         button_type: str | None = None,
         button_text: str | None = None,
+        telegram_id: int | None = None,
     ):
         """Записать клик по кнопке."""
         return await MenuLayoutStatsService.log_button_click(
-            db, button_id, user_id, callback_data, button_type, button_text
+            db, button_id, user_id, callback_data, button_type, button_text, telegram_id=telegram_id
         )
 
     @classmethod

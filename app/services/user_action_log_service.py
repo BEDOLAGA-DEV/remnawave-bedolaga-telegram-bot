@@ -3,18 +3,25 @@
 Поверхностей у пользователя три, и все три пишут в одну таблицу
 ``button_click_logs`` (без новых миграций), различаясь ``button_type``:
 
-* кнопки бота — ``ButtonStatsMiddleware`` (тип ``None``/``builtin``/``callback``);
-* кабинет — зависимость авторизации, тип ``cabinet``;
-* Mini App — авторизация запроса в ``app/webapi/routes/miniapp.py``, тип ``miniapp``.
+* кнопки, команды и оплаты бота — ``ButtonStatsMiddleware``
+  (тип ``None``/``builtin``/``callback``/``command``/``payment``);
+* кабинет — зависимость авторизации пишет изменения (POST/PUT/PATCH/DELETE),
+  а сам кабинет присылает пачкой каждый открытый экран и каждое нажатие
+  (``POST /cabinet/activity/events``) — тип ``cabinet``;
+* Mini App — авторизация запроса в ``app/webapi/routes/miniapp.py``:
+  действия и просмотры экранов — тип ``miniapp``.
 
-Третьей не было вовсе: у Mini App своя авторизация по ``init_data``, мимо
-кабинетной зависимости. Человек, живущий в Mini App, выглядел в «Активности»
-неактивным — с этого и началась жалоба.
+Решение владельца: «Активность» существует, чтобы видеть каждый чих — всё,
+что человек делает и в боте, и в кабинете. Поэтому пишутся и просмотры, и
+нажатия, и сам факт каждого сообщения боту (без содержимого). Чтобы опрос
+статуса платежа или перерисовка экрана не давали десяток строк, один и тот же
+экран одного человека в пределах минуты считается одной записью; нажатия не
+схлопываются, но ограничены лимитом в минуту на человека.
 
 Отличать действие от чтения по HTTP-методу в Mini App нельзя: ``init_data``
-приходит телом, поэтому и чтения идут POST-ом. Поэтому список действий задан
-явно, а тест-сторож требует, чтобы каждый маршрут был отнесён к действиям или к
-чтениям — новый маршрут не проскочит молча.
+приходит телом, поэтому и чтения идут POST-ом. Список действий задан явно,
+чтения — тоже, а тест-сторож требует, чтобы каждый маршрут был отнесён к одному
+из двух — новый маршрут не проскочит молча.
 
 Записи всех источников отдаёт GET /cabinet/admin/users/{id}/activity.
 """
@@ -23,7 +30,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from contextvars import ContextVar, Token
+from datetime import UTC, datetime, timedelta
 
 import structlog
 
@@ -36,11 +45,41 @@ logger = structlog.get_logger(__name__)
 CABINET_BUTTON_TYPE = 'cabinet'
 MINIAPP_BUTTON_TYPE = 'miniapp'
 
+# Открытие экрана: button_id = 'SCREEN <нормализованный путь>'.
+SCREEN_PREFIX = 'SCREEN '
+# Нажатие в кабинете: button_id = 'CLICK <подпись кнопки>', callback_data = экран.
+CLICK_PREFIX = 'CLICK '
+CLICK_LABEL_MAX = 80
+# Нажатия не схлопываются — каждое считается, — но один человек не может
+# писать быстрее этого: защита базы от зациклившегося экрана, не от людей.
+CLICK_RATE_LIMIT_PER_MINUTE = 120
+# Тот же экран того же человека внутри окна — одна запись (опрос статуса
+# платежа, перерисовка, StrictMode в разработке).
+SCREEN_DEDUP_SECONDS = 60.0
+SCREEN_DEDUP_MAX_ENTRIES = 5000
+# «Последнюю активность» двигаем не чаще раза в пять минут — иначе каждый
+# запрос кабинета превращался бы в UPDATE users.
+ACTIVITY_TOUCH_INTERVAL = timedelta(minutes=5)
+
 _MUTATING_METHODS = frozenset({'POST', 'PUT', 'PATCH', 'DELETE'})
 # Технические/шумные пути: auth-обмены дергаются фоном, админские действия
-# уже пишутся в admin_audit_log зависимостью require_permission.
-_EXCLUDED_PREFIXES = ('/cabinet/admin', '/cabinet/auth/refresh')
+# уже пишутся в admin_audit_log зависимостью require_permission, а отчёт об
+# экране — сам источник записи, иначе каждый экран давал бы две строки.
+_EXCLUDED_PREFIXES = ('/cabinet/admin', '/cabinet/auth/refresh', '/cabinet/activity')
 _ID_SEGMENT_RE = re.compile(r'/\d+(?=/|$)')
+# Экраны кабинета, где в пути живёт секрет (токен купона, подарка, слияния,
+# входа по ссылке): всё после префикса маскируется, в журнал не попадает.
+_SECRET_SCREEN_PREFIXES = (
+    '/coupon',
+    '/buy/gift',
+    '/buy/success',
+    '/merge',
+    '/auto-login',
+    '/verify-email',
+    '/reset-password',
+)
+# Длинный «непроизносимый» сегмент — тоже токен, даже на незнакомом экране.
+_OPAQUE_SEGMENT_RE = re.compile(r'^[A-Za-z0-9_-]{16,}$')
 
 # Действия человека в Mini App — то, что имеет смысл видеть в таймлайне.
 MINIAPP_ACTION_PATHS = frozenset(
@@ -63,8 +102,9 @@ MINIAPP_ACTION_PATHS = frozenset(
     }
 )
 
-# Чтения и предпросчёты: дёргаются при каждом открытии экрана, в таймлайне
-# были бы шумом. Перечислены явно, чтобы сторож видел полный список маршрутов.
+# Чтения и предпросчёты: дёргаются при каждом открытии экрана. Пишутся как
+# просмотр экрана — одна запись на экран в минуту. Перечислены явно, чтобы
+# сторож видел полный список маршрутов.
 MINIAPP_READ_PATHS = frozenset(
     {
         '/miniapp/maintenance/status',
@@ -89,6 +129,12 @@ _request_path: ContextVar[str | None] = ContextVar('user_action_request_path', d
 # asyncio pitfall) — часть действий тихо терялась бы.
 _pending_actions: set[asyncio.Task] = set()
 
+# (user_id, button_id) -> момент последней записи экрана.
+_recent_screens: dict[tuple[int, str], float] = {}
+# user_id -> (начало минуты, сколько нажатий в ней записано).
+_click_budget: dict[int, tuple[float, int]] = {}
+_monotonic = time.monotonic
+
 
 def bind_request_path(path: str) -> Token:
     """Запомнить путь текущего запроса на время его обработки."""
@@ -106,6 +152,35 @@ def current_request_path() -> str | None:
 def normalize_cabinet_path(path: str) -> str:
     """Сворачивает числовые сегменты пути в {id} для группировки однотипных действий."""
     return _ID_SEGMENT_RE.sub('/{id}', path)
+
+
+def normalize_screen_path(path: str) -> str:
+    """Путь экрана без секретов: числа → {id}, токены → {token}, хвостовой слэш срезан."""
+    clean = path.rstrip('/') or '/'
+    for prefix in _SECRET_SCREEN_PREFIXES:
+        if clean == prefix or clean.startswith(prefix + '/'):
+            return f'{prefix}/{{token}}'
+    segments = [
+        '{id}' if segment.isdigit() else '{token}' if _OPAQUE_SEGMENT_RE.match(segment) else segment
+        for segment in clean.split('/')
+    ]
+    return '/'.join(segments)
+
+
+def mark_user_seen(user, *, now: datetime | None = None) -> bool:
+    """Подвинуть ``last_activity``, если она старше интервала. Возвращает, изменилось ли.
+
+    Двигают все три поверхности: по этой метке карточка показывает «последнюю
+    активность», а сторож неактивных решает, кого удалять. Коммит — на вызывающем.
+    """
+    now = now or datetime.now(UTC)
+    previous = getattr(user, 'last_activity', None)
+    if previous is not None and previous.tzinfo is None:
+        previous = previous.replace(tzinfo=UTC)
+    if previous is not None and now - previous < ACTIVITY_TOUCH_INTERVAL:
+        return False
+    user.last_activity = now
+    return True
 
 
 def should_log_cabinet_action(method: str, path: str) -> bool:
@@ -134,27 +209,103 @@ def schedule_cabinet_action_log(user_id: int, method: str, path: str) -> None:
     )
 
 
-def schedule_miniapp_action_log(user_id: int, path: str | None = None) -> None:
-    """Fire-and-forget запись действия юзера в Mini App."""
-    resolved = path if path is not None else current_request_path()
-    if not resolved or not should_log_miniapp_action(resolved):
+def schedule_screen_view_log(user_id: int, path: str, *, surface: str = CABINET_BUTTON_TYPE) -> None:
+    """Fire-and-forget запись открытия экрана; повтор в окне дедупликации — не пишется."""
+    if not settings.USER_ACTION_LOG_ENABLED:
+        return
+    normalized = normalize_screen_path(path)
+    button_id = f'{SCREEN_PREFIX}{normalized}'[:100]
+    if _seen_recently(user_id, button_id):
+        return
+    _spawn(user_id=user_id, button_id=button_id, callback_data=normalized[:255], button_type=surface)
+
+
+def schedule_click_log(user_id: int, path: str, label: str, *, surface: str = CABINET_BUTTON_TYPE) -> None:
+    """Fire-and-forget запись нажатия: подпись кнопки + экран, где нажали."""
+    if not settings.USER_ACTION_LOG_ENABLED:
+        return
+    clean = ' '.join(label.split())[:CLICK_LABEL_MAX]
+    if not clean or _over_click_budget(user_id):
         return
     _spawn(
         user_id=user_id,
-        button_id=f'POST {normalize_cabinet_path(resolved)}'[:100],
-        callback_data=resolved[:255],
-        button_type=MINIAPP_BUTTON_TYPE,
+        button_id=f'{CLICK_PREFIX}{clean}'[:100],
+        callback_data=normalize_screen_path(path)[:255],
+        button_type=surface,
     )
 
 
-def _spawn(*, user_id: int, button_id: str, callback_data: str, button_type: str) -> None:
+def schedule_miniapp_action_log(user_id: int, path: str | None = None) -> None:
+    """Fire-and-forget запись шага юзера в Mini App: действие — как действие, чтение — как экран."""
+    resolved = path if path is not None else current_request_path()
+    if not resolved or not settings.USER_ACTION_LOG_ENABLED:
+        return
+    normalized = normalize_cabinet_path(resolved)
+    if normalized in MINIAPP_ACTION_PATHS:
+        _spawn(
+            user_id=user_id,
+            button_id=f'POST {normalized}'[:100],
+            callback_data=resolved[:255],
+            button_type=MINIAPP_BUTTON_TYPE,
+        )
+    elif normalized in MINIAPP_READ_PATHS:
+        schedule_screen_view_log(user_id, resolved, surface=MINIAPP_BUTTON_TYPE)
+
+
+def _seen_recently(user_id: int, button_id: str) -> bool:
+    now = _monotonic()
+    key = (user_id, button_id)
+    last = _recent_screens.get(key)
+    if last is not None and now - last < SCREEN_DEDUP_SECONDS:
+        return True
+    if len(_recent_screens) >= SCREEN_DEDUP_MAX_ENTRIES:
+        _prune_recent_screens(now)
+    _recent_screens[key] = now
+    return False
+
+
+def _over_click_budget(user_id: int) -> bool:
+    now = _monotonic()
+    started, count = _click_budget.get(user_id, (now, 0))
+    if now - started >= 60.0:
+        started, count = now, 0
+    if count >= CLICK_RATE_LIMIT_PER_MINUTE:
+        return True
+    if len(_click_budget) >= SCREEN_DEDUP_MAX_ENTRIES:
+        _click_budget.clear()
+    _click_budget[user_id] = (started, count + 1)
+    return False
+
+
+def _prune_recent_screens(now: float) -> None:
+    expired = [key for key, stamp in _recent_screens.items() if now - stamp >= SCREEN_DEDUP_SECONDS]
+    for key in expired:
+        del _recent_screens[key]
+    # Всё живое и памяти всё равно много — забываем самое старое, точность
+    # дедупликации тут дешевле, чем неограниченный словарь.
+    if len(_recent_screens) >= SCREEN_DEDUP_MAX_ENTRIES:
+        for key in sorted(_recent_screens, key=_recent_screens.__getitem__)[: SCREEN_DEDUP_MAX_ENTRIES // 2]:
+            del _recent_screens[key]
+
+
+def remember_task(task: object) -> None:
+    """Держать фоновую задачу сильной ссылкой до завершения.
+
+    Принимает что угодно: тесты middleware подменяют ``create_task`` заглушкой.
+    """
+    if not isinstance(task, asyncio.Task):
+        return
+    _pending_actions.add(task)
+    task.add_done_callback(_pending_actions.discard)
+
+
+def _spawn(*, user_id: int, button_id: str, callback_data: str | None, button_type: str) -> None:
     try:
         task = asyncio.create_task(_write_action(user_id, button_id, callback_data, button_type))
     except RuntimeError:
         # Нет запущенного цикла событий — записывать некому и незачем.
         return
-    _pending_actions.add(task)
-    task.add_done_callback(_pending_actions.discard)
+    remember_task(task)
 
 
 async def drain_pending_actions() -> None:
@@ -163,7 +314,7 @@ async def drain_pending_actions() -> None:
         await asyncio.gather(*tuple(_pending_actions), return_exceptions=True)
 
 
-async def _write_action(user_id: int, button_id: str, callback_data: str, button_type: str) -> None:
+async def _write_action(user_id: int, button_id: str, callback_data: str | None, button_type: str) -> None:
     try:
         async with AsyncSessionLocal() as db:
             from app.services.menu_layout.service import MenuLayoutService

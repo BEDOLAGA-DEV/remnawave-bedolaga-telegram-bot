@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.services.panel_sync import panel_expire_at
+from app.services.panel_sync.expiry import _MINIMUM_FUTURE as MARGIN
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -72,9 +73,7 @@ def test_blocked_but_not_expired_subscription_still_pushes_its_real_date():
 
 def test_expired_subscription_extinguishes_a_future_date_in_the_panel():
     """Панель держит будущее — гасим ближайшим допустимым моментом."""
-    assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=FUTURE) == NOW + timedelta(
-        minutes=1
-    )
+    assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=FUTURE) == NOW + MARGIN
 
 
 def test_expired_subscription_leaves_a_past_date_in_the_panel_alone():
@@ -93,9 +92,7 @@ def test_naive_panel_date_is_read_as_utc():
     """Панель отдаёт UTC; наивное значение нельзя считать локальным временем."""
     naive_future = FUTURE.replace(tzinfo=None)
 
-    assert panel_expire_at(
-        PAST, is_active=False, creating=False, now=NOW, panel_current=naive_future
-    ) == NOW + timedelta(minutes=1)
+    assert panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=naive_future) == NOW + MARGIN
 
 
 # ==================== сторож на все точки записи ====================
@@ -294,6 +291,7 @@ def test_a_date_a_few_minutes_ahead_is_left_alone_too():
 
 
 def test_a_genuinely_live_panel_date_is_still_extinguished():
-    assert panel_expire_at(
-        PAST, is_active=False, creating=False, now=NOW, panel_current=NOW + timedelta(hours=2)
-    ) == NOW + timedelta(minutes=1)
+    assert (
+        panel_expire_at(PAST, is_active=False, creating=False, now=NOW, panel_current=NOW + timedelta(hours=2))
+        == NOW + MARGIN
+    )
