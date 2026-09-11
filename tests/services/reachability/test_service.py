@@ -905,3 +905,128 @@ async def test_status_lists_a_running_geo_job_like_vless_and_scan(session_factor
         job = await service.create_job(db, GEO_PAYLOAD, admin.id)
         status = await service.status(db)
     assert [(item['kind'], item['id']) for item in status['active_jobs']] == [('geo', job.id)]
+
+
+GEO_PARENT_ROWS = [
+    {
+        'region': 'moscow',
+        'city': 'moscow',
+        'req_isp': None,
+        'provider': 'MTS',
+        'exit_ip': '203.0.113.7',
+        'verdict': 'blocked',
+        'is_result': True,
+        'sid': 's-1',
+        'sid_hold_s': 280,
+    },
+    {
+        'region': 'spb',
+        'city': 'spb',
+        'req_isp': None,
+        'provider': 'RT',
+        'exit_ip': '203.0.113.8',
+        'verdict': 'ok',
+        'is_result': True,
+    },
+]
+
+
+async def _done_geo_parent(db, admin_id: int, request: dict | None = None):
+    return await crud.create_job(
+        db,
+        kind='geo',
+        status='done',
+        trigger='manual',
+        started_by_user_id=admin_id,
+        idempotency_key='geo-parent',
+        request=request
+        or {
+            'targets': ['example.com:443'],
+            'network': 'res',
+            'probe_mode': 'tls',
+            'heavy': False,
+            'core': '',
+            'isp': '__ALL__',
+            'district': 'cfo',
+            'city_limit': 30,
+        },
+        targets=[
+            {
+                'kind': 'custom',
+                'label': 'example.com',
+                'address': 'example.com',
+                'port': 443,
+                'target_key': 'example.com:443',
+                'sni': None,
+                'ref': {},
+                'purpose': 'unknown',
+                'raw_link': None,
+            }
+        ],
+        units_requested=[],
+        units_resolved=['geo'],
+        dpi='any',
+        estimated_kopeks=1384,
+        estimate_is_exact=False,
+        result={'rows': GEO_PARENT_ROWS, 'summary': {'by_verdict': {'blocked': 1, 'ok': 1}}},
+    )
+
+
+async def test_recheck_geo_builds_the_child_from_the_parent_and_marks_it(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        child = await service.recheck_geo(
+            db, parent.id, {'region': 'moscow', 'city': 'moscow', 'req_isp': None}, admin.id, same_exit=True
+        )
+    assert child.kind == 'geo' and child.status == 'pending' and child.targets == parent.targets
+    assert child.request == {
+        'targets': ['example.com:443'],
+        'network': 'res',
+        'probe_mode': 'tls',
+        'heavy': False,
+        'core': '',
+        'cities': [{'region': 'moscow', 'city': 'moscow'}],
+        'session': 's-1',
+        'expect_exit_ip': '203.0.113.7',
+    }
+    assert child.result == {
+        'recheck_of': parent.id,
+        'recheck_key': {'region': 'moscow', 'city': 'moscow', 'req_isp': None},
+        'recheck_same_exit': True,
+    }
+    assert child.estimated_kopeks == 90, 'резерв из расчёта сервиса'
+    assert client.geo_preview_body['cities'] == [{'region': 'moscow', 'city': 'moscow'}]
+
+
+async def test_recheck_geo_new_exit_drops_the_session_and_is_not_blocked_by_a_running_geo_job(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        await service.create_job(db, GEO_PAYLOAD, admin.id)
+        child = await service.recheck_geo(
+            db, parent.id, {'region': 'moscow', 'city': 'moscow', 'req_isp': None}, admin.id, same_exit=False
+        )
+    assert 'session' not in child.request and child.result['recheck_same_exit'] is False
+
+
+async def test_recheck_geo_refuses_unknown_city_and_unfinished_parent_in_words(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        with pytest.raises(ValueError, match='Такого города'):
+            await service.recheck_geo(
+                db, parent.id, {'region': 'x', 'city': 'y', 'req_isp': None}, admin.id, same_exit=False
+            )
+        running = await service.create_job(db, GEO_PAYLOAD, admin.id)
+        with pytest.raises(ValueError, match='завершённой'):
+            await service.recheck_geo(
+                db, running.id, {'region': 'moscow', 'city': 'moscow', 'req_isp': None}, admin.id, same_exit=False
+            )

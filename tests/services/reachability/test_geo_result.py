@@ -7,8 +7,11 @@ from app.services.reachability.geo_result import (
     RESULT_VERDICTS,
     geo_summary,
     is_result_verdict,
+    merge_recheck,
     name_rows,
     normalize_rows,
+    recheck_request,
+    row_key,
     scope_label,
 )
 
@@ -152,3 +155,73 @@ def test_session_fields_survive_for_a_same_exit_repeat() -> None:
     assert out['sid'] == 's-1' and out['sid_hold_s'] == 287 and out['exit_changed'] is True
     [plain] = normalize_rows([row()])
     assert plain['sid'] is None and plain['sid_hold_s'] is None and plain['exit_changed'] is False
+
+
+PARENT_REQUEST = {
+    'targets': ['example.com:443'],
+    'network': 'res',
+    'probe_mode': 'tls',
+    'heavy': False,
+    'core': '',
+    'isp': '__ALL__',
+    'district': 'cfo',
+    'city_limit': 30,
+}
+
+
+def test_recheck_request_keeps_targets_and_method_and_narrows_scope_to_the_city() -> None:
+    row = {'region': 'moscow', 'city': 'moscow', 'req_isp': 'mts', 'sid': 's-1', 'exit_ip': '203.0.113.7'}
+    fresh = recheck_request(PARENT_REQUEST, row, same_exit=False)
+    assert fresh == {
+        'targets': ['example.com:443'],
+        'network': 'res',
+        'probe_mode': 'tls',
+        'heavy': False,
+        'core': '',
+        'cities': [{'region': 'moscow', 'city': 'moscow', 'isp': 'mts'}],
+    }, 'охват, потолок и «каждый провайдер» родителя не уходят — только этот город и его провайдер'
+    same = recheck_request(PARENT_REQUEST, row, same_exit=True)
+    assert same['session'] == 's-1' and same['expect_exit_ip'] == '203.0.113.7'
+    no_sid = recheck_request(PARENT_REQUEST, {**row, 'sid': None, 'req_isp': None}, same_exit=True)
+    assert 'session' not in no_sid and no_sid['cities'] == [{'region': 'moscow', 'city': 'moscow'}]
+    assert row_key(row) == ('moscow', 'moscow', 'mts')
+
+
+def _prow(city: str, verdict: str, exit_ip: str | None, **extra) -> dict:
+    return {
+        'region': 'r',
+        'city': city,
+        'req_isp': None,
+        'provider': 'p',
+        'exit_ip': exit_ip,
+        'verdict': verdict,
+        'is_result': verdict != 'no_ru_node',
+        **extra,
+    }
+
+
+def test_merge_recheck_follows_the_original_rules() -> None:
+    parent = {
+        'rows': [_prow('a', 'blocked', '1.1.1.1'), _prow('b', 'ok', '2.2.2.2'), _prow('c', 'no_ru_node', None)],
+        'summary': {'by_verdict': {'blocked': 1, 'ok': 1, 'no_ru_node': 1}, 'conclusion': {'text': 'старое'}},
+        'geo': {'n_nodes': 3},
+    }
+    # Тот же выход — прежняя строка заменяется свежей (переезжает в конец).
+    merged = merge_recheck(parent, [_prow('a', 'ok', '1.1.1.1')], child_id=9)
+    assert [row['city'] for row in merged['rows']] == ['b', 'c', 'a']
+    assert merged['rows'][-1] == {**_prow('a', 'ok', '1.1.1.1'), 'recheck_job_id': 9}
+    assert merged['summary']['by_verdict'] == {'ok': 2, 'no_ru_node': 1}
+    assert merged['summary']['conclusion'] is None and merged['geo'] == {'n_nodes': 3}
+    # Другой выход — строка добавляется с «новый выход», прежняя остаётся и помечается «перепроверено».
+    merged = merge_recheck(parent, [_prow('a', 'ok', '9.9.9.9')], child_id=10)
+    rows = merged['rows']
+    assert rows[0] == {**_prow('a', 'blocked', '1.1.1.1'), 'rechecked': True}
+    assert rows[-1] == {**_prow('a', 'ok', '9.9.9.9'), 'recheck_job_id': 10, 'new_exit': True}
+    assert merged['summary']['by_verdict'] == {'blocked': 1, 'ok': 2, 'no_ru_node': 1}
+    assert merged['summary']['result_rows'] == 3 and merged['summary']['noise_rows'] == 1
+    # Строка без выхода («нет RU-ноды») — заменяется на месте.
+    merged = merge_recheck(parent, [_prow('c', 'ok', '3.3.3.3')], child_id=11)
+    assert [row['city'] for row in merged['rows']] == ['a', 'b', 'c']
+    assert merged['rows'][2]['exit_ip'] == '3.3.3.3' and 'new_exit' not in merged['rows'][2]
+    # Мусор в строках повтора пропускается, родитель без строк не ломается.
+    assert merge_recheck({}, ['x', None], child_id=1)['rows'] == []

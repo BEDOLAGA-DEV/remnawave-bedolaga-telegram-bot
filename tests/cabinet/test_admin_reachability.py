@@ -12,7 +12,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.cabinet.routes import admin_reachability
-from app.cabinet.schemas.reachability import JobCreateRequest, PrefUpdateRequest, TargetIn
+from app.cabinet.schemas.reachability import (
+    GeoRecheckRequest,
+    JobCreateRequest,
+    PrefUpdateRequest,
+    TargetIn,
+)
 from app.external.bschek_api import BschekAPIError
 from app.services.reachability.jobs import JobNotCancellable
 from app.services.reachability.links import RejectedLink
@@ -720,6 +725,31 @@ async def test_geo_catalog_keeps_service_lists_when_they_carry_names(service) ->
     )
     assert [(r.token, r.name) for r in out.regions] == [('moscow', 'Москва')]
     assert [(i.token, i.name, i.cities) for i in out.isps] == [('mts', 'МТС', 43)]
+
+
+@pytest.mark.asyncio
+async def test_recheck_geo_city_starts_a_child_job_and_audits(service) -> None:
+    child = _job(id=9, kind='geo', status='pending', result={'recheck_of': 5, 'rows': []})
+    service.recheck_geo = AsyncMock(return_value=child)
+    service.geo_names = AsyncMock(return_value={})
+    body = GeoRecheckRequest(region='tyumen_oblast', city='tyumen', req_isp=None, same_exit=True)
+    out = await admin_reachability.recheck_geo_city(5, body, admin=ADMIN, db=AsyncMock())
+    assert out.id == 9 and out.result['recheck_of'] == 5
+    args, kwargs = service.recheck_geo.await_args
+    assert args[1] == 5 and args[2] == {'region': 'tyumen_oblast', 'city': 'tyumen', 'req_isp': None}
+    assert args[3] == ADMIN.id and kwargs == {'same_exit': True}
+    logged = admin_reachability.PermissionService.log_action.await_args.kwargs
+    details = logged.get('details') or logged.get('metadata') or {}
+    assert details['recheck_of'] == 5 and details['city'] == 'tyumen_oblast|tyumen' and details['same_exit'] is True
+
+
+@pytest.mark.asyncio
+async def test_recheck_geo_city_refuses_in_words(service) -> None:
+    service.recheck_geo = AsyncMock(side_effect=ValueError('Такого города в отчёте нет'))
+    body = GeoRecheckRequest(region='x', city='y')
+    with pytest.raises(HTTPException) as caught:
+        await admin_reachability.recheck_geo_city(5, body, admin=ADMIN, db=AsyncMock())
+    assert caught.value.status_code == 400 and 'Такого города' in caught.value.detail
 
 
 def test_http_translates_geo_service_errors_into_words() -> None:

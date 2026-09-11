@@ -190,3 +190,81 @@ def scope_label(request: dict) -> str:
     if request.get('city_limit'):
         parts.append(f'до {request["city_limit"]} городов')
     return ' · '.join(parts)
+
+
+# ---------------------------------------------------------------- перепроверка города из отчёта
+
+#: Ключи охвата родительского запроса — у повтора охват один: этот город.
+_SCOPE_KEYS = ('district', 'region', 'cities', 'city_limit', 'isp', 'session', 'expect_exit_ip')
+
+
+def row_key(row: dict) -> tuple[str, str, str]:
+    """Город × заказанный провайдер — по этому ключу оригинал ищет строки при повторе."""
+    return (str(row.get('region') or ''), str(row.get('city') or ''), str(row.get('req_isp') or ''))
+
+
+def recheck_request(parent_request: dict, row: dict, *, same_exit: bool) -> dict:
+    """Тело повтора: цели, сеть, метод, ядро родителя; охват — один город; при `same_exit` — его выход."""
+    city = {'region': str(row.get('region') or ''), 'city': str(row.get('city') or '')}
+    if row.get('req_isp'):
+        city['isp'] = str(row['req_isp'])
+    body = {key: value for key, value in parent_request.items() if key not in _SCOPE_KEYS}
+    body['cities'] = [city]
+    if same_exit and row.get('sid'):
+        body['session'] = str(row['sid'])
+        body['expect_exit_ip'] = str(row.get('exit_ip') or '')
+    return body
+
+
+def _same_key(row: dict, key: tuple[str, str, str]) -> bool:
+    return row_key(row) == key
+
+
+def merge_recheck(parent_result: dict, new_rows: list[dict], child_id: int) -> dict:
+    """Строки повтора — в отчёт родителя по правилам оригинала.
+
+    Тот же выход (совпал exit_ip) — повтор наблюдения: прежняя строка заменяется свежей.
+    Строка без выхода — заменяется. Другой выход — ДОБАВЛЯЕТСЯ с пометкой «новый выход»,
+    прежние строки города остаются, но помечаются «перепроверено» и кнопок больше не получают.
+    Сводка пересчитывается по строкам; фраза-вывод сервиса после слияния устаревает и снимается.
+    """
+    rows = [dict(row) for row in parent_result.get('rows') or [] if isinstance(row, dict)]
+    for raw in new_rows:
+        if not isinstance(raw, dict):
+            continue
+        fresh = {**raw, 'recheck_job_id': child_id}
+        key = row_key(fresh)
+        same = next(
+            (
+                i
+                for i, row in enumerate(rows)
+                if _same_key(row, key) and row.get('exit_ip') and row.get('exit_ip') == fresh.get('exit_ip')
+            ),
+            None,
+        )
+        if same is not None:
+            rows.pop(same)
+            rows.append(fresh)
+            continue
+        stub = next((i for i, row in enumerate(rows) if _same_key(row, key) and not row.get('exit_ip')), None)
+        if stub is not None:
+            rows[stub] = fresh
+            continue
+        siblings = [i for i, row in enumerate(rows) if _same_key(row, key)]
+        if siblings:
+            fresh['new_exit'] = True
+            for i in siblings:
+                rows[i] = {**rows[i], 'rechecked': True}
+        rows.append(fresh)
+    by_verdict: dict[str, int] = {}
+    for row in rows:
+        verdict = str(row.get('verdict') or '')
+        by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
+    summary = {
+        **(parent_result.get('summary') or {}),
+        'by_verdict': by_verdict,
+        'result_rows': sum(1 for row in rows if row.get('is_result')),
+        'noise_rows': sum(1 for row in rows if not row.get('is_result')),
+        'conclusion': None,
+    }
+    return {**parent_result, 'rows': rows, 'summary': summary}

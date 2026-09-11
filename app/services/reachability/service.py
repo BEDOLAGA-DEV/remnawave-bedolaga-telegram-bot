@@ -30,6 +30,7 @@ from app.services.reachability import batches as batch_ops
 from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.geo_catalog import GeoCatalogCache
 from app.services.reachability.geo_requests import build_geo_request, parse_geo_options
+from app.services.reachability.geo_result import recheck_request, row_key
 from app.services.reachability.jobs import JobNotCancellable, JobRunner
 from app.services.reachability.kinds import KIND_GEO, KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.links import RejectedLink, expand_raw_input, parse_links
@@ -556,6 +557,60 @@ class ReachabilityService:
         self._account.invalidate()
         self.runner.spawn(job.id)
         logger.info('Задача проверки запущена', job_id=job.id, kind=job.kind, admin_id=admin_id)
+        return job
+
+    async def recheck_geo(
+        self, db: AsyncSession, parent_id: int, key: dict, admin_id: int, *, same_exit: bool
+    ) -> ReachabilityJob:
+        """Перепроверка одного проваленного города из отчёта GEO — кнопки «тот же IP» / «сменить IP» оригинала.
+
+        Дочерняя задача берёт цели, сеть, метод и ядро родителя, охват — один город; «тот же IP» несёт
+        sid строки. По завершении обходчик вливает её строки в отчёт родителя. Замок «одна GEO-задача
+        за раз» на повтор не действует: это секунды и один город, сервис держит до трёх прогонов.
+        """
+        self._ensure_enabled()
+        parent = await self.get_job(db, parent_id)
+        if parent.kind != KIND_GEO or parent.status not in ('done', 'cancelled') or not parent.request:
+            raise ValueError('Перепроверить можно только город из завершённой проверки GEO')
+        wanted = (str(key.get('region') or ''), str(key.get('city') or ''), str(key.get('req_isp') or ''))
+        rows = [
+            row for row in (parent.result or {}).get('rows') or [] if isinstance(row, dict) and row_key(row) == wanted
+        ]
+        if not rows:
+            raise ValueError('Такого города в отчёте нет')
+        row = next((item for item in rows if item.get('sid')), rows[-1]) if same_exit else rows[-1]
+        request = recheck_request(parent.request, row, same_exit=same_exit)
+        numbers = await self._call(lambda api: api.geo_preview(request))
+        cost = credits_to_kopeks(numbers.get('reserve_credits'))
+        enforce_cost_limit(cost, self.cost_limit_kopeks())
+        balance = await self._balance_kopeks()
+        if balance is not None and (cost or 0) > balance:
+            raise ValueError('На балансе bschekbot не хватает средств на эту задачу')
+        job = await crud.create_job(
+            db,
+            kind=KIND_GEO,
+            status='pending',
+            trigger='manual',
+            started_by_user_id=admin_id,
+            idempotency_key=str(uuid.uuid4()),
+            request=request,
+            targets=list(parent.targets or []),
+            units_requested=[],
+            units_resolved=list(GEO_UNITS),
+            skipped={},
+            dpi='any',
+            estimated_kopeks=cost,
+            estimate_is_exact=False,
+            result={
+                'recheck_of': parent.id,
+                'recheck_key': {'region': wanted[0], 'city': wanted[1], 'req_isp': wanted[2] or None},
+                'recheck_same_exit': bool(same_exit and row.get('sid')),
+            },
+        )
+        await db.commit()
+        self._account.invalidate()
+        self.runner.spawn(job.id)
+        logger.info('Повтор города GEO запущен', job_id=job.id, parent_id=parent.id, admin_id=admin_id)
         return job
 
     @staticmethod

@@ -81,9 +81,16 @@ class GeoOptionsIn(BaseModel):
     city_limit: int = Field(default=0, ge=0, le=MAX_GEO_CITIES)
     probe_mode: Literal['tls', 'tcp'] = 'tls'
     heavy: bool = False
-    #: Повтор через тот же выход: sid строки прошлого прогона и ожидаемый exit_ip; только с одним городом.
-    session: str | None = Field(default=None, max_length=128)
-    expect_exit_ip: str | None = Field(default=None, max_length=64)
+
+
+class GeoRecheckRequest(BaseModel):
+    """Перепроверка одного проваленного города из отчёта GEO — как кнопки «тот же IP» / «сменить IP» у оригинала."""
+
+    region: str = Field(min_length=1, max_length=64)
+    city: str = Field(min_length=1, max_length=64)
+    req_isp: str | None = Field(default=None, max_length=64)
+    #: Через тот же выход (sid строки, пока сервис его держит); без sid — выход выберется заново.
+    same_exit: bool = False
 
 
 class JobCreateRequest(BaseModel):

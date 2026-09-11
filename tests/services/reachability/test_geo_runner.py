@@ -285,3 +285,54 @@ async def test_poll_timeout_grows_with_the_estimate_and_is_capped(session_factor
     assert job.status == STATUS_RUNNING, 'таймаут опроса — не провал: доберёт обходчик'
     polls = len([call for call in api.calls if call[0] == 'geo_run'])
     assert polls == 900 // 5, 'потолок 900 с при опросе раз в 5 с'
+
+
+async def test_recheck_child_merges_its_rows_into_the_parent_report(session_factory) -> None:
+    parent_rows = [
+        {
+            'region': 'moscow',
+            'city': 'moscow',
+            'req_isp': None,
+            'provider': 'old',
+            'exit_ip': '1.1.1.1',
+            'verdict': 'blocked',
+            'is_result': True,
+        },
+        {
+            'region': 'voronezh_oblast',
+            'city': 'voronezh',
+            'req_isp': None,
+            'provider': 'rt',
+            'exit_ip': '2.2.2.2',
+            'verdict': 'ok',
+            'is_result': True,
+        },
+    ]
+    parent_id = await make_geo_job(
+        session_factory,
+        status=STATUS_DONE,
+        result={
+            'rows': parent_rows,
+            'summary': {'by_verdict': {'blocked': 1, 'ok': 1}, 'conclusion': {'text': 'старое'}},
+            'geo': {'n_nodes': 2},
+        },
+    )
+    child_id = await make_geo_job(
+        session_factory,
+        request={**REQUEST, 'cities': [{'region': 'moscow', 'city': 'moscow'}]},
+        result={'recheck_of': parent_id, 'recheck_key': {'region': 'moscow', 'city': 'moscow', 'req_isp': None}},
+    )
+    fresh = {**ROW_OK, 'exit_ip': '9.9.9.9'}
+    done = {**DONE, 'rows': [fresh], 'by_verdict': {'ok': 1}, 'charged_credits': 3}
+    api = FakeAPI({'geo_start': [{**START, 'n_nodes': 1}], 'geo_run': [done]})
+    await make_runner(session_factory, api, FakeClock()).run(child_id)
+    child = await load(session_factory, child_id)
+    assert child.status == STATUS_DONE and child.result['recheck_of'] == parent_id, 'пометка повтора пережила запуск'
+    assert child.result['geo']['scope_label'].startswith('повтор · ')
+    parent = await load(session_factory, parent_id)
+    rows = parent.result['rows']
+    assert [row['city'] for row in rows] == ['moscow', 'voronezh', 'moscow']
+    assert rows[0]['rechecked'] is True and rows[2]['new_exit'] is True and rows[2]['recheck_job_id'] == child_id
+    assert rows[2]['verdict'] == 'ok' and rows[2]['exit_ip'] == '9.9.9.9'
+    assert parent.result['summary']['by_verdict'] == {'blocked': 1, 'ok': 2}
+    assert parent.result['summary']['conclusion'] is None and parent.result['geo'] == {'n_nodes': 2}
