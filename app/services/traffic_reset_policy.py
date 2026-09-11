@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 from app.config import settings
+from app.external.remnawave_api import TrafficLimitStrategy
+from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
 
 
 def should_reset_traffic_on_daily_charge(tariff: object | None) -> bool:
@@ -34,8 +36,5 @@ def should_reset_traffic_on_daily_charge(tariff: object | None) -> bool:
     """
     if not settings.RESET_TRAFFIC_ON_PAYMENT:
         return False
-
-    from app.external.remnawave_api import TrafficLimitStrategy
-    from app.services.subscription_service import get_traffic_reset_strategy
 
     return get_traffic_reset_strategy(tariff) is not TrafficLimitStrategy.DAY

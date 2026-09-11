@@ -684,7 +684,7 @@ class DailySubscriptionService:
             return False  # безлимит — за лимит не уйти
 
         from app.external.remnawave_api import TrafficLimitStrategy
-        from app.services.subscription_service import get_traffic_reset_strategy
+        from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
 
         strategy = get_traffic_reset_strategy(subscription.tariff)
         if strategy == TrafficLimitStrategy.NO_RESET:

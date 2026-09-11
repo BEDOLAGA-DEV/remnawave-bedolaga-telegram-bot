@@ -15,13 +15,18 @@ from app.external.remnawave_api import (
     RemnaWaveAPI,
     RemnaWaveAPIError,
     RemnaWaveUser,
-    TrafficLimitStrategy,
     is_user_not_found_error,
 )
+
+# Правила поля стратегии живут в пакете синхронизации; имя оставлено здесь для
+# внешнего кода, который импортировал его из сервиса.
 from app.services.panel_sync import (
     PanelIdentity,
     build_panel_payload,
+    get_traffic_reset_strategy as get_traffic_reset_strategy,  # noqa: PLC0414
     is_subscription_live,
+    link_subscription_panel_identity,
+    panel_id_is_free_for,
     patch_panel_account,
     push_subscription,
     resolve_panel_user_tag,
@@ -34,46 +39,6 @@ from app.utils.subscription_utils import (
 logger = structlog.get_logger(__name__)
 
 
-def get_traffic_reset_strategy(tariff=None):
-    """Получает стратегию сброса трафика.
-
-    Args:
-        tariff: Объект тарифа. Если у тарифа задан traffic_reset_mode,
-               используется он, иначе глобальная настройка из конфига.
-
-    Returns:
-        TrafficLimitStrategy: Стратегия сброса трафика для RemnaWave API.
-    """
-    from app.config import settings
-
-    strategy_mapping = {
-        'NO_RESET': 'NO_RESET',
-        'DAY': 'DAY',
-        'WEEK': 'WEEK',
-        'MONTH': 'MONTH',
-        'MONTH_ROLLING': 'MONTH_ROLLING',
-    }
-
-    # Проверяем настройку тарифа
-    if tariff is not None:
-        tariff_mode = getattr(tariff, 'traffic_reset_mode', None)
-        if tariff_mode is not None:
-            mapped_strategy = strategy_mapping.get(tariff_mode.upper(), 'NO_RESET')
-            logger.info(
-                '🔄 Стратегия сброса трафика из тарифа',
-                value=getattr(tariff, 'name', 'N/A'),
-                tariff_mode=tariff_mode,
-                mapped_strategy=mapped_strategy,
-            )
-            return getattr(TrafficLimitStrategy, mapped_strategy)
-
-    # Используем глобальную настройку
-    strategy = settings.DEFAULT_TRAFFIC_RESET_STRATEGY.upper()
-    mapped_strategy = strategy_mapping.get(strategy, 'NO_RESET')
-    logger.info('🔄 Стратегия сброса трафика из конфига', strategy=strategy, mapped_strategy=mapped_strategy)
-    return getattr(TrafficLimitStrategy, mapped_strategy)
-
-
 @dataclass
 class PropagateSquadsResult:
     """Результат применения скводов тарифа к подпискам."""
@@ -81,48 +46,6 @@ class PropagateSquadsResult:
     total: int = 0
     synced: int = 0
     failed_ids: list[int] = field(default_factory=list)
-
-
-async def panel_id_is_free_for(db: AsyncSession, subscription, panel_id: int | None) -> bool:
-    """Не держит ли этот панельный id уже ДРУГАЯ строка подписок.
-
-    Колонка частично уникальна, и в single-tariff все подписки одного человека
-    адресуют один и тот же панельный аккаунт, поэтому конфликт — штатная
-    ситуация, а не аномалия. Единственная проверка перед записью
-    ``subscriptions.remnawave_id`` — и для сервиса, и для админских роутов.
-    """
-    if panel_id is None:
-        return False
-    other = (
-        await db.execute(
-            select(Subscription.id)
-            .where(
-                Subscription.remnawave_id == int(panel_id),
-                Subscription.id != getattr(subscription, 'id', None),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    return other is None
-
-
-async def link_subscription_panel_identity(db: AsyncSession, subscription, panel_id: int | None) -> bool:
-    """Проставить строке id панельного аккаунта, который только что обновили.
-
-    В single-tariff панель адресуется через ``users.remnawave_id``, и свежая строка
-    подписки (создана после удаления старой или повторной покупкой) оставалась с
-    пустым ``subscriptions.remnawave_id`` — а админские экраны по выбранной подписке
-    (panel-info, устройства, трафик) читают строго его: «пользователь не найден в
-    панели». Пишем только в пустую строку и только если id не держит соседняя —
-    колонка частично уникальна, и IntegrityError после успешного PATCH откатил бы
-    всё сделанное. True — привязали.
-    """
-    if getattr(subscription, 'remnawave_id', None) or panel_id is None:
-        return False
-    if not await panel_id_is_free_for(db, subscription, panel_id):
-        return False
-    subscription.remnawave_id = int(panel_id)
-    return True
 
 
 class SubscriptionService:
