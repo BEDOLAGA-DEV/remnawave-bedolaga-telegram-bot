@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.reachability.geo_catalog import GeoCatalogCache, catalog_params
+from app.services.reachability.geo_catalog import GeoCatalogCache, catalog_params, names_from_catalog
 from tests.services.reachability.fakes import FakeClock
 
 
@@ -80,13 +80,6 @@ async def test_city_search_is_its_own_cache_key() -> None:
     assert len(fetch.calls) == 1
 
 
-async def test_regions_index_maps_token_to_name_and_district() -> None:
-    fetch = Fetch({(('network', 'res'),): CATALOG})
-    cache = GeoCatalogCache(fetch, clock=FakeClock())
-    index = await cache.regions_index()
-    assert index['voronezh_oblast'] == {'name': 'Воронежская область', 'district': 'ЦФО'}
-
-
 async def test_invalidate_forgets_everything() -> None:
     fetch = Fetch({(('network', 'res'),): CATALOG})
     cache = GeoCatalogCache(fetch, clock=FakeClock())
@@ -94,3 +87,55 @@ async def test_invalidate_forgets_everything() -> None:
     cache.invalidate()
     await cache.get(network='res')
     assert len(fetch.calls) == 2
+
+
+def test_names_index_is_built_from_cities_when_regions_come_nameless() -> None:
+    # Прод 2026-09-11: regions[] у сервиса без token/name, имена есть только в строках городов.
+    catalog = {
+        'regions': [{'district': 'ЦФО'}, {'region': 'moscow', 'region_ru': 'Москва', 'district': 'ЦФО'}],
+        'cities': [
+            {
+                'region': 'voronezh_oblast',
+                'region_ru': 'Воронежская область',
+                'district': 'ЦФО',
+                'city': 'voronezh',
+                'city_ru': 'Воронеж',
+            },
+            {
+                'region': 'voronezh_oblast',
+                'region_ru': 'Воронежская область',
+                'district': 'ЦФО',
+                'city': 'liski',
+                'city_ru': 'Лиски',
+            },
+            {
+                'region': 'moscow',
+                'region_ru': 'Москва (из города)',
+                'district': 'ЦФО',
+                'city': 'moscow',
+                'city_ru': 'Москва',
+            },
+            'мусор',
+        ],
+    }
+    names = names_from_catalog(catalog)
+    assert names['regions'] == {
+        'moscow': {'name': 'Москва', 'district': 'ЦФО'},
+        'voronezh_oblast': {'name': 'Воронежская область', 'district': 'ЦФО'},
+    }, 'регион из regions[] с именем главнее, безымянный пропускается, недостающий — из городов'
+    assert names['cities'] == {
+        'voronezh_oblast|voronezh': 'Воронеж',
+        'voronezh_oblast|liski': 'Лиски',
+        'moscow|moscow': 'Москва',
+    }
+    assert names_from_catalog({}) == {'regions': {}, 'cities': {}}
+
+
+async def test_names_index_asks_for_all_cities_once() -> None:
+    fetch = Fetch({(('cities_limit', '5000'), ('network', 'res')): CITIES})
+    cache = GeoCatalogCache(fetch, clock=FakeClock())
+    first = await cache.names_index()
+    await cache.names_index()
+    assert first['regions']['voronezh_oblast']['name'] == 'Воронежская область'
+    assert first['cities'] == {'voronezh_oblast|voronezh': 'Воронеж'}
+    assert len(fetch.calls) == 1

@@ -11,6 +11,8 @@ from __future__ import annotations
 from statistics import median
 from typing import Any
 
+from app.services.reachability.geo_catalog import city_name_key
+
 
 RESULT_VERDICTS = frozenset({'ok', 'partial', 'throttled', 'blocked', 'unconfirmed', 'target_error'})
 NOISE_VERDICTS = frozenset({'port_blocked', 'exit_bad', 'no_ru_node', 'no_udp'})
@@ -77,17 +79,19 @@ def _heavy(raw: dict) -> dict | None:
     }
 
 
-def _row(raw: dict, regions: dict[str, dict]) -> dict:
+def _row(raw: dict, names: dict) -> dict:
     region = str(raw.get('region') or '')
-    known = regions.get(region) or {}
+    city = str(raw.get('city') or '')
+    known = (names.get('regions') or {}).get(region) or {}
+    city_ru = raw.get('city_ru') or (names.get('cities') or {}).get(city_name_key(region, city)) or city
     all_targets = _targets(raw.get('targets'))
     verdict = str(raw.get('verdict') or '')
     return {
         'region': region,
         'region_ru': known.get('name') or region,
         'district': known.get('district') or '',
-        'city': str(raw.get('city') or ''),
-        'city_ru': str(raw.get('city_ru') or raw.get('city') or ''),
+        'city': city,
+        'city_ru': str(city_ru),
         'req_isp': raw.get('req_isp') or None,
         'provider': raw.get('provider') or None,
         'exit_ip': raw.get('exit_ip') or None,
@@ -104,9 +108,32 @@ def _row(raw: dict, regions: dict[str, dict]) -> dict:
     }
 
 
-def normalize_rows(rows: list, regions: dict[str, dict]) -> list[dict]:
-    """Строки сервиса → строки кабинета; не-словарь в списке пропускается, а не роняет задачу."""
-    return [_row(raw, regions) for raw in rows if isinstance(raw, dict)]
+def normalize_rows(rows: list, names: dict | None = None) -> list[dict]:
+    """Строки сервиса → строки кабинета; не-словарь в списке пропускается, а не роняет задачу.
+
+    `names` — индекс `names_from_catalog`: регион и город словами; без него остаются токены.
+    """
+    return [_row(raw, names or {}) for raw in rows if isinstance(raw, dict)]
+
+
+def name_rows(rows: list, names: dict) -> list[dict]:
+    """Уже нормализованные строки — с именами из индекса (старые задачи в базе лежат токенами)."""
+    if not names.get('regions') and not names.get('cities'):
+        return list(rows)
+    named = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        region, city = str(row.get('region') or ''), str(row.get('city') or '')
+        known = (names.get('regions') or {}).get(region)
+        city_ru = (names.get('cities') or {}).get(city_name_key(region, city))
+        patch = {}
+        if known:
+            patch.update(region_ru=known['name'], district=known['district'])
+        if city_ru:
+            patch['city_ru'] = city_ru
+        named.append({**row, **patch} if patch else row)
+    return named
 
 
 def geo_summary(status: dict, rows: list[dict]) -> dict:

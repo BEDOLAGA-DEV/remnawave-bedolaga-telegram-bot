@@ -614,12 +614,15 @@ GEO_ROW = {
     'is_result': True,
     'targets': [],
 }
-GEO_REGIONS = {'voronezh_oblast': {'name': 'Воронежская область', 'district': 'ЦФО'}}
+GEO_NAMES = {
+    'regions': {'voronezh_oblast': {'name': 'Воронежская область', 'district': 'ЦФО'}},
+    'cities': {'voronezh_oblast|voronezh': 'Воронеж'},
+}
 
 
 @pytest.mark.asyncio
-async def test_job_out_names_regions_of_geo_rows(service) -> None:
-    service.geo_regions = AsyncMock(return_value=GEO_REGIONS)
+async def test_job_out_names_regions_and_cities_of_geo_rows(service) -> None:
+    service.geo_names = AsyncMock(return_value=GEO_NAMES)
     job = _job(
         kind='geo',
         status='done',
@@ -628,13 +631,14 @@ async def test_job_out_names_regions_of_geo_rows(service) -> None:
     service.get_job = AsyncMock(return_value=job)
     out = await admin_reachability.get_job(5, admin=ADMIN, db=AsyncMock())
     assert out.result['rows'][0]['region_ru'] == 'Воронежская область' and out.result['rows'][0]['district'] == 'ЦФО'
+    assert out.result['rows'][0]['city_ru'] == 'Воронеж'
     assert out.result['rows'][1]['region_ru'] == 'nowhere', 'неизвестный регион остаётся токеном'
     assert job.result['rows'][0]['region_ru'] == 'voronezh_oblast', 'задача в базе не меняется'
 
 
 @pytest.mark.asyncio
 async def test_job_list_names_regions_only_for_geo_jobs(service) -> None:
-    service.geo_regions = AsyncMock(return_value=GEO_REGIONS)
+    service.geo_names = AsyncMock(return_value=GEO_NAMES)
     geo = _job(id=6, kind='geo', status='done', result={'rows': [GEO_ROW], 'summary': {}})
     probe = _job(id=7, kind='probe', status='done', result={'rows': [GEO_ROW]})
     service.list_jobs = AsyncMock(return_value=([geo, probe], 2))
@@ -643,15 +647,79 @@ async def test_job_list_names_regions_only_for_geo_jobs(service) -> None:
     )
     assert out.items[0].result['rows'][0]['region_ru'] == 'Воронежская область'
     assert out.items[1].result['rows'][0]['region_ru'] == 'voronezh_oblast'
-    assert service.geo_regions.await_count == 1
+    assert service.geo_names.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_job_out_keeps_tokens_when_catalog_is_unavailable(service) -> None:
-    service.geo_regions = AsyncMock(return_value={})
+    service.geo_names = AsyncMock(return_value={})
     service.get_job = AsyncMock(return_value=_job(kind='geo', status='done', result={'rows': [GEO_ROW]}))
     out = await admin_reachability.get_job(5, admin=ADMIN, db=AsyncMock())
     assert out.result['rows'][0]['region_ru'] == 'voronezh_oblast'
+
+
+@pytest.mark.asyncio
+async def test_geo_catalog_without_filter_derives_lists_from_all_cities(service) -> None:
+    # Прод 2026-09-11: regions[]/districts[] без имён, isps[] нет вовсе — кабинет получал пустые списки.
+    service.geo_catalog = AsyncMock(
+        return_value={
+            'networks': ['res', 'mob'],
+            'districts': [{'code': 'cfo'}, 'szfo'],
+            'regions': [{'district': 'ЦФО'}],
+            'cities': [
+                {
+                    'region': 'voronezh_oblast',
+                    'region_ru': 'Воронежская область',
+                    'district': 'ЦФО',
+                    'city': 'voronezh',
+                    'city_ru': 'Воронеж',
+                    'isps': ['rostelecom', 'mts'],
+                },
+                {
+                    'region': 'moscow',
+                    'region_ru': 'Москва',
+                    'district': 'ЦФО',
+                    'city': 'moscow',
+                    'city_ru': 'Москва',
+                    'isps': ['mts', 'some_local_isp'],
+                },
+            ],
+            'cities_total': 2,
+            'cities_truncated': False,
+        }
+    )
+    out = await admin_reachability.geo_catalog(
+        network='res', q=None, isp=None, region=None, district=None, cities_limit=None, admin=ADMIN, db=AsyncMock()
+    )
+    assert service.geo_catalog.await_args.kwargs['cities_limit'] == 5000, 'без фильтра просим все города'
+    assert [(d.code, d.name) for d in out.districts] == [('cfo', 'ЦФО'), ('szfo', 'СЗФО')]
+    assert [(r.token, r.name, r.district) for r in out.regions] == [
+        ('voronezh_oblast', 'Воронежская область', 'ЦФО'),
+        ('moscow', 'Москва', 'ЦФО'),
+    ], 'по алфавиту имён'
+    assert [(i.token, i.name, i.cities) for i in out.isps] == [
+        ('mts', 'МТС', 2),
+        ('rostelecom', 'Ростелеком', 1),
+        ('some_local_isp', 'Some Local Isp', 1),
+    ]
+    assert out.cities == [] and out.cities_total is None, 'города без запроса не отдаём'
+
+
+@pytest.mark.asyncio
+async def test_geo_catalog_keeps_service_lists_when_they_carry_names(service) -> None:
+    service.geo_catalog = AsyncMock(
+        return_value={
+            'networks': ['res'],
+            'districts': [{'code': 'cfo', 'name': 'ЦФО'}],
+            'regions': [{'region': 'moscow', 'region_ru': 'Москва', 'district': 'ЦФО'}],
+            'providers': [{'isp': 'mts', 'title': 'МТС', 'count': 43}],
+        }
+    )
+    out = await admin_reachability.geo_catalog(
+        network='res', q=None, isp=None, region=None, district=None, cities_limit=None, admin=ADMIN, db=AsyncMock()
+    )
+    assert [(r.token, r.name) for r in out.regions] == [('moscow', 'Москва')]
+    assert [(i.token, i.name, i.cities) for i in out.isps] == [('mts', 'МТС', 43)]
 
 
 def test_http_translates_geo_service_errors_into_words() -> None:

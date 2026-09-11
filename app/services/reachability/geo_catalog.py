@@ -1,8 +1,13 @@
 """Справочник GEO-РФ (`GET /v1/geo/catalog`): сети, округа, регионы, провайдеры, города.
 
 Бесплатная ручка, но города — тысячи строк: справочные списки кэшируются на десять
-минут, города запрашиваются только по фильтру или поиску (сервис отдаёт до 500
-и говорит, сколько всего). Округ в query обязан быть латиницей.
+минут, города запрашиваются по фильтру или поиску (сервис отдаёт до 500 и говорит,
+сколько всего) либо целиком с явным потолком. Округ в query обязан быть латиницей.
+
+Русские имена регионов и городов сервис отдаёт только в строках городов справочника
+(`region_ru`, `city_ru`, `district`); в строках прогона — одни токены. Поэтому индекс
+имён строится из полного списка городов, а списки регионов и провайдеров, если сервис
+прислал их без имён, выводятся из него же.
 """
 
 from __future__ import annotations
@@ -64,14 +69,51 @@ class GeoCatalogCache:
         self._cached[key] = (now, data)
         return data
 
-    async def regions_index(self, network: str = 'res') -> dict[str, dict]:
-        """token → {name, district} — чтобы подписать строки прогона без похода в каталог за каждой."""
-        catalog = await self.get(network=network)
-        return {
-            str(item.get('token')): {'name': str(item.get('name') or ''), 'district': str(item.get('district') or '')}
-            for item in catalog.get('regions') or []
-            if isinstance(item, dict) and item.get('token')
-        }
+    async def names_index(self, network: str = 'res') -> dict:
+        """Имена регионов и городов из полного списка городов (один запрос на десять минут)."""
+        catalog = await self.get(network=network, cities_limit=MAX_CITIES_LIMIT)
+        return names_from_catalog(catalog)
 
     def invalidate(self) -> None:
         self._cached.clear()
+
+
+REGION_TOKEN_KEYS = ('token', 'region', 'code', 'id')
+REGION_NAME_KEYS = ('name', 'region_ru', 'name_ru', 'title')
+
+
+def _first(item: dict, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value:
+            return str(value)
+    return ''
+
+
+def city_name_key(region: str, city: str) -> str:
+    return f'{region}|{city}'
+
+
+def names_from_catalog(catalog: dict) -> dict:
+    """{'regions': token → {name, district}, 'cities': 'region|city' → city_ru} из ответа справочника.
+
+    Регионы берутся из `regions[]`, если у них есть имя (ключи терпимы к переименованию),
+    и дополняются из строк городов — там имена есть всегда.
+    """
+    regions: dict[str, dict] = {}
+    for item in catalog.get('regions') or []:
+        if not isinstance(item, dict):
+            continue
+        token, name = _first(item, REGION_TOKEN_KEYS), _first(item, REGION_NAME_KEYS)
+        if token and name:
+            regions[token] = {'name': name, 'district': str(item.get('district') or '')}
+    cities: dict[str, str] = {}
+    for city in catalog.get('cities') or []:
+        if not isinstance(city, dict):
+            continue
+        region, token = str(city.get('region') or ''), str(city.get('city') or '')
+        if region and city.get('region_ru') and region not in regions:
+            regions[region] = {'name': str(city['region_ru']), 'district': str(city.get('district') or '')}
+        if region and token and city.get('city_ru'):
+            cities[city_name_key(region, token)] = str(city['city_ru'])
+    return {'regions': regions, 'cities': cities}

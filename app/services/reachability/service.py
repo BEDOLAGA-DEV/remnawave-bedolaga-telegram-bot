@@ -181,6 +181,7 @@ class ReachabilityService:
             gate=self._gate,
             session_factory=session_factory,
             cost_limit_kopeks=self.cost_limit_kopeks,
+            geo_names=self.geo_names,
         )
         self._units = UnitsCache(self._fetch_operators, clock=clock)
         self._geo_catalog = GeoCatalogCache(self._fetch_geo_catalog, clock=clock)
@@ -255,10 +256,10 @@ class ReachabilityService:
         self._ensure_enabled()
         return await self._geo_catalog.get(**filters)
 
-    async def geo_regions(self) -> dict[str, dict]:
-        """token → {name, district} для подписи строк GEO; без сервиса — пусто, строки остаются с токенами."""
+    async def geo_names(self) -> dict:
+        """Имена регионов и городов для строк GEO; без сервиса — пусто, строки остаются с токенами."""
         try:
-            return await self._geo_catalog.regions_index()
+            return await self._geo_catalog.names_index()
         except (ReachabilityDisabled, ReachabilityUnhealthy, BschekAPIError):
             return {}
 

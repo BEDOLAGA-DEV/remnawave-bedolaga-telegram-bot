@@ -7,12 +7,16 @@ from app.services.reachability.geo_result import (
     RESULT_VERDICTS,
     geo_summary,
     is_result_verdict,
+    name_rows,
     normalize_rows,
     scope_label,
 )
 
 
-REGIONS = {'voronezh_oblast': {'name': 'Воронежская область', 'district': 'ЦФО'}}
+REGIONS = {
+    'regions': {'voronezh_oblast': {'name': 'Воронежская область', 'district': 'ЦФО'}},
+    'cities': {'voronezh_oblast|voronezh': 'Воронеж'},
+}
 
 
 def row(**kw) -> dict:
@@ -45,7 +49,8 @@ def test_row_gets_region_name_district_latency_and_targets() -> None:
     [out] = normalize_rows([row()], REGIONS)
     assert out['region'] == 'voronezh_oblast' and out['region_ru'] == 'Воронежская область'
     assert out['district'] == 'ЦФО'
-    assert out['city'] == 'voronezh' and out['provider'] == 'rostelecom' and out['verdict'] == 'ok'
+    assert out['city'] == 'voronezh' and out['city_ru'] == 'Воронеж'
+    assert out['provider'] == 'rostelecom' and out['verdict'] == 'ok'
     assert out['is_result'] is True
     assert out['latency_ms'] == 100, 'медиана по ответившим целям'
     assert out['targets'] == [
@@ -60,7 +65,7 @@ def test_unknown_region_and_missing_fields_do_not_break() -> None:
     [out] = normalize_rows(
         [{'region': 'nowhere', 'city': 'x', 'verdict': 'no_ru_node', 'err': 'run-timeout'}, 'мусор', None], REGIONS
     )
-    assert out['region_ru'] == 'nowhere' and out['district'] == ''
+    assert out['region_ru'] == 'nowhere' and out['district'] == '' and out['city_ru'] == 'x'
     assert out['is_result'] is False and out['latency_ms'] is None and out['targets'] == []
     assert out['err'] == 'run-timeout' and out['mb_bill'] is None
 
@@ -131,3 +136,12 @@ def test_scope_label_reads_like_the_original() -> None:
     assert scope_label({'targets': ['vless://x@h:443', 'a.example:443']}).startswith('туннель и сайты')
     assert scope_label({'cities': [{}] * 11}).endswith('11 городов')
     assert scope_label({'cities': [{}] * 21}).endswith('21 город')
+
+
+def test_rows_without_index_keep_tokens_and_name_rows_fills_them_later() -> None:
+    [out] = normalize_rows([row()])
+    assert out['region_ru'] == 'voronezh_oblast' and out['city_ru'] == 'voronezh' and out['district'] == ''
+    [named, stranger] = name_rows([out, {**out, 'region': 'nowhere', 'city': 'x', 'region_ru': 'nowhere'}], REGIONS)
+    assert named['region_ru'] == 'Воронежская область' and named['district'] == 'ЦФО' and named['city_ru'] == 'Воронеж'
+    assert stranger['region_ru'] == 'nowhere', 'неизвестный регион остаётся токеном'
+    assert name_rows([out], {}) == [out], 'пустой индекс — строки как есть'

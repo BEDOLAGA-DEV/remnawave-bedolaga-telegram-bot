@@ -17,8 +17,9 @@ from app.database.models import ReachabilityBatch, ReachabilityJob, User
 from app.external.bschek_api import BschekAPIError
 from app.services.permission_service import PermissionService
 from app.services.reachability.batches import BatchPreview, batch_done_targets
+from app.services.reachability.geo_catalog import MAX_CITIES_LIMIT, names_from_catalog
 from app.services.reachability.geo_messages import geo_error_message
-from app.services.reachability.geo_result import DISTRICT_NAMES
+from app.services.reachability.geo_result import DISTRICT_NAMES, ISP_NAMES, name_rows
 from app.services.reachability.jobs import JobNotCancellable
 from app.services.reachability.pricing import CostLimitExceeded
 from app.services.reachability.requests import RequestBuildError
@@ -149,16 +150,17 @@ def _job_out(job: Any) -> JobOut:
 
 
 async def _name_geo_regions(job_out: JobOut) -> JobOut:
-    """Строки GEO получают регион словами из кэша справочника; без сервиса остаются токены."""
+    """Строки GEO получают регион и город словами из кэша справочника; без сервиса остаются токены.
+
+    Обходчик подписывает строки при записи, но старые задачи в базе лежат токенами, а справочник
+    мог быть недоступен в момент прогона — поэтому имена дописываются и при чтении.
+    """
     if job_out.kind != 'geo' or not job_out.result or not job_out.result.get('rows'):
         return job_out
-    regions = await _service().geo_regions()
-    if not regions:
+    names = await _service().geo_names()
+    if not names:
         return job_out
-    rows = []
-    for row in job_out.result['rows']:
-        known = regions.get(str(row.get('region')))
-        rows.append({**row, 'region_ru': known['name'], 'district': known['district']} if known else row)
+    rows = name_rows(job_out.result['rows'], names)
     return job_out.model_copy(update={'result': {**job_out.result, 'rows': rows}})
 
 
@@ -174,27 +176,77 @@ def _geo_district_out(item: Any) -> GeoDistrictOut:
     return GeoDistrictOut(code=code, name=DISTRICT_NAMES.get(code.lower(), code.upper()))
 
 
-def _geo_catalog_out(data: dict) -> GeoCatalogResponse:
+def _geo_district_named(item: Any) -> GeoDistrictOut:
+    out = _geo_district_out(item)
+    return (
+        out if out.name else GeoDistrictOut(code=out.code, name=DISTRICT_NAMES.get(out.code.lower(), out.code.upper()))
+    )
+
+
+def _geo_regions_out(data: dict, cities: list[GeoCityOut]) -> list[GeoRegionOut]:
+    """Регионы из `regions[]` сервиса, если у них есть имена; иначе — из строк городов, где имена есть всегда."""
+    named = names_from_catalog({'regions': data.get('regions') or []})['regions']
+    if named:
+        return [
+            GeoRegionOut(token=token, name=info['name'], district=info['district']) for token, info in named.items()
+        ]
+    seen: dict[str, GeoRegionOut] = {}
+    for city in cities:
+        if city.region and city.region_ru and city.region not in seen:
+            seen[city.region] = GeoRegionOut(token=city.region, name=city.region_ru, district=city.district)
+    return sorted(seen.values(), key=lambda region: region.name)
+
+
+ISP_TOKEN_KEYS = ('token', 'isp', 'code', 'id')
+ISP_NAME_KEYS = ('name', 'isp_ru', 'name_ru', 'title')
+ISP_COUNT_KEYS = ('cities', 'count', 'n', 'n_cities')
+
+
+def _isp_title(token: str) -> str:
+    return ISP_NAMES.get(token) or token.replace('_', ' ').title()
+
+
+def _geo_isps_out(data: dict, cities: list[GeoCityOut]) -> list[GeoIspOut]:
+    """Провайдеры из списка сервиса (ключи терпимы к переименованию); нет списка — счёт по городам."""
+    raw = next((data.get(key) for key in ('isps', 'providers', 'operators') if data.get(key)), None) or []
+    isps = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        token = next((str(item[key]) for key in ISP_TOKEN_KEYS if item.get(key)), '')
+        if not token:
+            continue
+        name = next((str(item[key]) for key in ISP_NAME_KEYS if item.get(key)), '') or _isp_title(token)
+        count = next((item[key] for key in ISP_COUNT_KEYS if isinstance(item.get(key), int | float)), 0)
+        isps.append(GeoIspOut(token=token, name=name, cities=int(count)))
+    if isps:
+        return isps
+    counts: dict[str, int] = {}
+    for city in cities:
+        for token in city.isps:
+            counts[token] = counts.get(token, 0) + 1
+    return [
+        GeoIspOut(token=token, name=_isp_title(token), cities=count)
+        for token, count in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+    ]
+
+
+def _geo_catalog_out(data: dict, *, include_cities: bool = True) -> GeoCatalogResponse:
+    """Ответ справочника для кабинета; города прилагаются только когда их просили (иначе это тысячи строк)."""
     city_keys = ('region', 'region_ru', 'district', 'city', 'city_ru', 'isps')
+    cities = [
+        GeoCityOut(**{key: c.get(key) for key in city_keys if c.get(key) is not None})
+        for c in data.get('cities') or []
+        if isinstance(c, dict)
+    ]
     return GeoCatalogResponse(
         networks=[str(item) for item in data.get('networks') or []],
-        districts=[_geo_district_out(item) for item in data.get('districts') or []],
-        regions=[
-            GeoRegionOut(
-                token=str(r.get('token') or ''), name=str(r.get('name') or ''), district=str(r.get('district') or '')
-            )
-            for r in data.get('regions') or []
-        ],
-        isps=[
-            GeoIspOut(token=str(i.get('token') or ''), name=str(i.get('name') or ''), cities=int(i.get('cities') or 0))
-            for i in data.get('isps') or []
-        ],
-        cities=[
-            GeoCityOut(**{key: c.get(key) for key in city_keys if c.get(key) is not None})
-            for c in data.get('cities') or []
-        ],
-        cities_total=data.get('cities_total'),
-        cities_truncated=bool(data.get('cities_truncated')),
+        districts=[_geo_district_named(item) for item in data.get('districts') or []],
+        regions=_geo_regions_out(data, cities),
+        isps=_geo_isps_out(data, cities),
+        cities=cities if include_cities else [],
+        cities_total=data.get('cities_total') if include_cities else None,
+        cities_truncated=bool(data.get('cities_truncated')) if include_cities else False,
     )
 
 
@@ -546,14 +598,25 @@ async def geo_catalog(
     admin: User = Depends(require_permission('reachability:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> GeoCatalogResponse:
-    """Справочник GEO: округа, регионы, провайдеры; города — по фильтру или поиску."""
+    """Справочник GEO: округа, регионы, провайдеры; города — по фильтру или поиску.
+
+    Без фильтра у сервиса просятся все города (это тот же запрос, из которого строятся имена
+    строк прогона, он в кэше): из них выводятся регионы и провайдеры, если сервис прислал
+    свои списки без имён, а сами города в ответ не кладутся.
+    """
+    wants_cities = any((q, isp, region, district, cities_limit))
     try:
         data = await _service().geo_catalog(
-            network=network, q=q, isp=isp, region=region, district=district, cities_limit=cities_limit
+            network=network,
+            q=q,
+            isp=isp,
+            region=region,
+            district=district,
+            cities_limit=cities_limit if wants_cities else MAX_CITIES_LIMIT,
         )
     except Exception as exc:
         raise _http(exc) from exc
-    return _geo_catalog_out(data)
+    return _geo_catalog_out(data, include_cities=wants_cities)
 
 
 # ============ Пачка проверок ============

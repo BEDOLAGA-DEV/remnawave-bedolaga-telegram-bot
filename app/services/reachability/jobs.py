@@ -134,11 +134,14 @@ class JobRunner:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        geo_names: Callable[[], Awaitable[dict]] | None = None,
     ) -> None:
         self._client_factory = client_factory
         self._gate = gate
         self._session_factory = session_factory
         self._cost_limit = cost_limit_kopeks
+        # Имена регионов и городов для строк GEO (кэш справочника у сервиса); без него — токены.
+        self._geo_names = geo_names
         self.cfg = config or RunnerConfig()
         self._sleep = sleep
         self._clock = clock
@@ -652,10 +655,12 @@ class JobRunner:
     async def _handle_geo_status(self, db: AsyncSession, job: ReachabilityJob, status: dict) -> bool:
         """Строки и сводка пишутся при каждом опросе (прогресс виден в кабинете); терминал — итог и деньги.
 
-        Регионы здесь без подписи: подпись из справочника добавляет маршрут кабинета, чтобы
-        обходчик не ходил в каталог на каждый опрос.
+        Регионы и города — словами из справочника (он в кэше на десять минут, так что опрос
+        раз в пять секунд в каталог не ходит); справочник недоступен — в базу лягут токены,
+        маршрут кабинета допишет имена при чтении.
         """
-        rows = normalize_rows(list(status.get('rows') or []), {})
+        names = await self._geo_names() if self._geo_names else {}
+        rows = normalize_rows(list(status.get('rows') or []), names)
         base = {**(job.result or {}), 'status': status, 'rows': rows, 'summary': geo_summary(status, rows)}
         state = status.get('state')
         if state not in _GEO_TERMINAL_STATES:
