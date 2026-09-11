@@ -1456,6 +1456,7 @@ async def register_email_standalone(
         email=request.email,
         email_verified=False,
         verified_admin=False,
+        start_parameter=request.referral_code or request.campaign_slug,
     )
     raise_for_registration_decision(email_access)
 
@@ -2255,7 +2256,7 @@ async def request_email_change(
         user.email_verified = False
 
         verification_token = generate_verification_token()
-        verification_expires = get_verification_expires_at()
+        verification_expires = get_email_change_expires_at()
         user.email_verification_token = verification_token
         user.email_verification_expires = verification_expires
 
