@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -11,6 +12,7 @@ from app.database.crud import reachability as crud
 from app.database.models import User
 from app.external.bschek_api import BschekAPIError
 from app.services.reachability.gate import PaidCallGate
+from app.services.reachability.geo_result import recheck_started
 from app.services.reachability.jobs import (
     GEO_CANNOT_CANCEL_NOTE,
     GEO_EMPTY_NOTE,
@@ -287,8 +289,15 @@ async def test_poll_timeout_grows_with_the_estimate_and_is_capped(session_factor
     assert polls == 900 // 5, 'потолок 900 с при опросе раз в 5 с'
 
 
-async def test_recheck_child_merges_its_rows_into_the_parent_report(session_factory) -> None:
-    parent_rows = [
+# ---------------------------------------------------------------- повтор города — в тот же тест
+
+RECHECK_KEY = 'moscow|moscow|'
+RECHECK_REQUEST = {**REQUEST, 'cities': [{'region': 'moscow', 'city': 'moscow'}]}
+VORONEZH_KEY = 'voronezh_oblast|voronezh|'
+
+
+def _parent_rows() -> list[dict]:
+    return [
         {
             'region': 'moscow',
             'city': 'moscow',
@@ -308,31 +317,123 @@ async def test_recheck_child_merges_its_rows_into_the_parent_report(session_fact
             'is_result': True,
         },
     ]
-    parent_id = await make_geo_job(
+
+
+def _parent_result(*keys: str) -> dict:
+    result = {
+        'rows': _parent_rows(),
+        'summary': {'by_verdict': {'blocked': 1, 'ok': 1}, 'conclusion': {'text': 'старое'}},
+        'geo': {'n_nodes': 2},
+    }
+    for key in keys:
+        result = recheck_started(
+            result, key, same_exit=False, reserve_kopeks=90, started_at='2026-09-11T10:00:00+00:00', admin_id=None
+        )
+    return result
+
+
+async def _done_parent(session_factory, *keys: str) -> int:
+    return await make_geo_job(
         session_factory,
         status=STATUS_DONE,
-        result={
-            'rows': parent_rows,
-            'summary': {'by_verdict': {'blocked': 1, 'ok': 1}, 'conclusion': {'text': 'старое'}},
-            'geo': {'n_nodes': 2},
-        },
+        estimated_kopeks=1384,
+        cost_kopeks=1013,
+        refunded_kopeks=371,
+        result=_parent_result(*(keys or (RECHECK_KEY,))),
     )
-    child_id = await make_geo_job(
-        session_factory,
-        request={**REQUEST, 'cities': [{'region': 'moscow', 'city': 'moscow'}]},
-        result={'recheck_of': parent_id, 'recheck_key': {'region': 'moscow', 'city': 'moscow', 'req_isp': None}},
-    )
+
+
+async def _count_jobs(session_factory) -> int:
+    async with session_factory() as db:
+        return (await crud.list_jobs(db))[1]
+
+
+async def test_recheck_writes_rows_and_money_into_the_parent_and_makes_no_job(session_factory) -> None:
+    parent_id = await _done_parent(session_factory)
     fresh = {**ROW_OK, 'exit_ip': '9.9.9.9'}
     done = {**DONE, 'rows': [fresh], 'by_verdict': {'ok': 1}, 'charged_credits': 3}
-    api = FakeAPI({'geo_start': [{**START, 'n_nodes': 1}], 'geo_run': [done]})
-    await make_runner(session_factory, api, FakeClock()).run(child_id)
-    child = await load(session_factory, child_id)
-    assert child.status == STATUS_DONE and child.result['recheck_of'] == parent_id, 'пометка повтора пережила запуск'
-    assert child.result['geo']['scope_label'].startswith('повтор · ')
+    api = FakeAPI({'geo_start': [{**START, 'n_nodes': 1, 'reserve_credits': 95}], 'geo_run': [RUNNING, done]})
+    runner = make_runner(session_factory, api, FakeClock())
+    await runner.rechecks.run(parent_id, RECHECK_KEY, request=RECHECK_REQUEST, reserve_kopeks=90)
     parent = await load(session_factory, parent_id)
     rows = parent.result['rows']
     assert [row['city'] for row in rows] == ['moscow', 'voronezh', 'moscow']
-    assert rows[0]['rechecked'] is True and rows[2]['new_exit'] is True and rows[2]['recheck_job_id'] == child_id
+    assert rows[0]['rechecked'] is True and rows[2]['new_exit'] is True and rows[2]['recheck_run_id'] == 812
     assert rows[2]['verdict'] == 'ok' and rows[2]['exit_ip'] == '9.9.9.9'
     assert parent.result['summary']['by_verdict'] == {'blocked': 1, 'ok': 2}
     assert parent.result['summary']['conclusion'] is None and parent.result['geo'] == {'n_nodes': 2}
+    assert parent.result['rechecks'] == {}, 'запись идущего повтора снята'
+    assert parent.status == STATUS_DONE
+    # Деньги — в родителя: резерв из ответа на запуск (95), списано 3, разница возвращена.
+    assert (parent.estimated_kopeks, parent.cost_kopeks, parent.refunded_kopeks) == (1384 + 95, 1013 + 3, 371 + 92)
+    assert await _count_jobs(session_factory) == 1, 'история не растёт'
+    start_call = next(call for call in api.calls if call[0] == 'geo_start')
+    assert start_call[1][0], 'запуск — со своим ключом идемпотентности'
+    assert not runner.rechecks.is_active(parent_id, RECHECK_KEY)
+
+
+async def test_recheck_failure_lands_in_the_entry_in_words_and_leaves_the_report_alone(session_factory) -> None:
+    parent_id = await _done_parent(session_factory)
+    api = FakeAPI({'geo_start': [START], 'geo_run': [ERROR]})
+    await make_runner(session_factory, api, FakeClock()).rechecks.run(
+        parent_id, RECHECK_KEY, request=RECHECK_REQUEST, reserve_kopeks=90
+    )
+    parent = await load(session_factory, parent_id)
+    entry = parent.result['rechecks'][RECHECK_KEY]
+    assert entry['status'] == 'failed' and entry['error'] == 'engine exploded' and entry['run_id'] == 812
+    assert [row['city'] for row in parent.result['rows']] == ['moscow', 'voronezh']
+    assert 'rechecked' not in parent.result['rows'][0]
+    assert (parent.estimated_kopeks, parent.cost_kopeks, parent.refunded_kopeks) == (1384, 1013, 371)
+
+
+async def test_recheck_vanished_run_and_timeout_fail_the_entry_in_words(session_factory) -> None:
+    parent_id = await _done_parent(session_factory)
+    vanished = BschekAPIError(code='not_found', message='nf', status=404)
+    api = FakeAPI({'geo_start': [START], 'geo_run': [vanished]})
+    await make_runner(session_factory, api, FakeClock()).rechecks.run(
+        parent_id, RECHECK_KEY, request=RECHECK_REQUEST, reserve_kopeks=90
+    )
+    parent = await load(session_factory, parent_id)
+    assert parent.result['rechecks'][RECHECK_KEY]['error'] == 'Прогон пропал на стороне сервиса'
+    # Сервис так и не отдал итог: запись падает словами, а не висит «идёт проверка» навсегда.
+    parent_id = await _done_parent(session_factory)
+    api = FakeAPI({'geo_start': [{**START, 'estimated_sec': 10_000}], 'geo_run': [RUNNING]})
+    await make_runner(session_factory, api, FakeClock()).rechecks.run(
+        parent_id, RECHECK_KEY, request=RECHECK_REQUEST, reserve_kopeks=90
+    )
+    parent = await load(session_factory, parent_id)
+    entry = parent.result['rechecks'][RECHECK_KEY]
+    assert entry['status'] == 'failed' and '15 мин' in entry['error'] and '812' in entry['error']
+    assert len([call for call in api.calls if call[0] == 'geo_run']) == 900 // 5, 'потолок 900 с раз в 5 с'
+
+
+class _TwoRunsAPI(FakeAPI):
+    """Два повтора на одном родителе: у каждого свой прогон, свой ответ."""
+
+    async def geo_start(self, body: dict, key: str) -> dict:
+        self.calls.append(('geo_start', (key,)))
+        return {**START, 'run_id': 812 if body['cities'][0]['city'] == 'moscow' else 813}
+
+    async def geo_run(self, run_id: int) -> dict:
+        self.calls.append(('geo_run', (run_id,)))
+        row = (
+            {**ROW_OK, 'exit_ip': '9.9.9.9'}
+            if run_id == 812
+            else {**ROW_BLOCKED, 'verdict': 'ok', 'exit_ip': '8.8.8.8'}
+        )
+        return {**DONE, 'rows': [row], 'charged_credits': 3}
+
+
+async def test_two_rechecks_on_one_parent_do_not_lose_each_other(session_factory) -> None:
+    parent_id = await _done_parent(session_factory, RECHECK_KEY, VORONEZH_KEY)
+    runner = make_runner(session_factory, _TwoRunsAPI(), FakeClock())
+    voronezh = {**REQUEST, 'cities': [{'region': 'voronezh_oblast', 'city': 'voronezh'}]}
+    await asyncio.gather(
+        runner.rechecks.run(parent_id, RECHECK_KEY, request=RECHECK_REQUEST, reserve_kopeks=90),
+        runner.rechecks.run(parent_id, VORONEZH_KEY, request=voronezh, reserve_kopeks=90),
+    )
+    parent = await load(session_factory, parent_id)
+    exits = sorted(row['exit_ip'] for row in parent.result['rows'] if row.get('recheck_run_id'))
+    assert exits == ['8.8.8.8', '9.9.9.9'], 'оба итога на месте — записи не затирают друг друга'
+    assert parent.result['rechecks'] == {}
+    assert parent.cost_kopeks == 1013 + 6 and parent.estimated_kopeks == 1384 + 180

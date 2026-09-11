@@ -728,19 +728,24 @@ async def test_geo_catalog_keeps_service_lists_when_they_carry_names(service) ->
 
 
 @pytest.mark.asyncio
-async def test_recheck_geo_city_starts_a_child_job_and_audits(service) -> None:
-    child = _job(id=9, kind='geo', status='pending', result={'recheck_of': 5, 'rows': []})
-    service.recheck_geo = AsyncMock(return_value=child)
+async def test_recheck_geo_city_returns_the_parent_with_the_running_entry_and_audits(service) -> None:
+    entry = {'status': 'running', 'same_exit': True, 'reserve_kopeks': 90, 'run_id': None}
+    parent = _job(id=5, kind='geo', status='done', result={'rows': [], 'rechecks': {'tyumen_oblast|tyumen|': entry}})
+    service.recheck_geo = AsyncMock(return_value=parent)
     service.geo_names = AsyncMock(return_value={})
     body = GeoRecheckRequest(region='tyumen_oblast', city='tyumen', req_isp=None, same_exit=True)
     out = await admin_reachability.recheck_geo_city(5, body, admin=ADMIN, db=AsyncMock())
-    assert out.id == 9 and out.result['recheck_of'] == 5
+    assert out.id == 5 and out.result['rechecks']['tyumen_oblast|tyumen|']['status'] == 'running'
+    route = next(r for r in admin_reachability.router.routes if getattr(r, 'path', '').endswith('/geo/recheck'))
+    assert route.status_code == 202, 'повтор принят в работу: новой задачи нет, история не растёт'
     args, kwargs = service.recheck_geo.await_args
     assert args[1] == 5 and args[2] == {'region': 'tyumen_oblast', 'city': 'tyumen', 'req_isp': None}
     assert args[3] == ADMIN.id and kwargs == {'same_exit': True}
     logged = admin_reachability.PermissionService.log_action.await_args.kwargs
-    details = logged.get('details') or logged.get('metadata') or {}
-    assert details['recheck_of'] == 5 and details['city'] == 'tyumen_oblast|tyumen' and details['same_exit'] is True
+    assert logged['action'] == 'reachability_geo_recheck' and logged['resource_id'] == '5'
+    details = logged.get('details') or {}
+    assert details['city'] == 'tyumen_oblast|tyumen' and details['same_exit'] is True
+    assert details['reserve_kopeks'] == 90
 
 
 @pytest.mark.asyncio

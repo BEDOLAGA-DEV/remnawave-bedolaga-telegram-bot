@@ -620,14 +620,18 @@ async def geo_catalog(
     return _geo_catalog_out(data, include_cities=wants_cities)
 
 
-@router.post('/jobs/{job_id}/geo/recheck', response_model=JobOut, status_code=status.HTTP_201_CREATED)
+@router.post('/jobs/{job_id}/geo/recheck', response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
 async def recheck_geo_city(
     job_id: int,
     body: GeoRecheckRequest,
     admin: User = Depends(require_permission('reachability:run')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> JobOut:
-    """Повтор одного проваленного города из отчёта GEO: «тот же IP» или «сменить IP», как у оригинала."""
+    """Повтор одного проваленного города из отчёта GEO: «тот же IP» или «сменить IP».
+
+    Новой задачи нет: в ответе тот же отчёт с записью идущего повтора в ``result.rechecks``,
+    итог ляжет в его же строки.
+    """
     try:
         job = await _service().recheck_geo(
             db,
@@ -638,14 +642,15 @@ async def recheck_geo_city(
         )
     except Exception as exc:
         raise _http(exc) from exc
+    key = f'{body.region}|{body.city}|{body.req_isp or ""}'
+    entry = ((job.result or {}).get('rechecks') or {}).get(key) or {}
     details = {
         'kind': job.kind,
-        'recheck_of': job_id,
         'city': f'{body.region}|{body.city}',
         'same_exit': body.same_exit,
-        'estimated_kopeks': job.estimated_kopeks,
+        'reserve_kopeks': entry.get('reserve_kopeks'),
     }
-    await _audit(db, admin, 'reachability_job_create', job, details)
+    await _audit(db, admin, 'reachability_geo_recheck', job, details)
     return await _job_out_named(job)
 
 

@@ -8,6 +8,8 @@ no_ru_node, no_udp, port_blocked статистикой не считаются.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import UTC, datetime
 from statistics import median
 from typing import Any
 
@@ -220,7 +222,7 @@ def _same_key(row: dict, key: tuple[str, str, str]) -> bool:
     return row_key(row) == key
 
 
-def merge_recheck(parent_result: dict, new_rows: list[dict], child_id: int) -> dict:
+def merge_recheck(parent_result: dict, new_rows: list[dict], *, run_id: int | None) -> dict:
     """Строки повтора — в отчёт родителя по правилам оригинала.
 
     Тот же выход (совпал exit_ip) — повтор наблюдения: прежняя строка заменяется свежей.
@@ -232,7 +234,7 @@ def merge_recheck(parent_result: dict, new_rows: list[dict], child_id: int) -> d
     for raw in new_rows:
         if not isinstance(raw, dict):
             continue
-        fresh = {**raw, 'recheck_job_id': child_id}
+        fresh = {**raw, 'recheck_run_id': run_id}
         key = row_key(fresh)
         same = next(
             (
@@ -268,3 +270,102 @@ def merge_recheck(parent_result: dict, new_rows: list[dict], child_id: int) -> d
         'conclusion': None,
     }
     return {**parent_result, 'rows': rows, 'summary': summary}
+
+
+# ---------------------------------------------------------------- идущие повторы в отчёте родителя
+
+#: Повтор города пишется в тот же тест: запись ``result.rechecks[ключ]`` живёт, пока идёт прогон.
+RECHECK_RUNNING = 'running'
+RECHECK_FAILED = 'failed'
+RECHECK_STALE_MESSAGE = 'Повтор прерван перезапуском бота — итог не получен'
+
+
+def recheck_key_str(key: tuple[str, str, str]) -> str:
+    """Ключ записи повтора — «регион|город|провайдер», тот же, что у строки в кабинете."""
+    return '|'.join(key)
+
+
+def _rechecks(result: dict) -> dict[str, dict]:
+    raw = result.get('rechecks')
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): dict(entry) for key, entry in raw.items() if isinstance(entry, dict)}
+
+
+def _with_rechecks(result: dict, rechecks: dict[str, dict]) -> dict:
+    return {**result, 'rechecks': rechecks}
+
+
+def recheck_started(
+    result: dict,
+    key: str,
+    *,
+    same_exit: bool,
+    reserve_kopeks: int | None,
+    started_at: str,
+    admin_id: int | None,
+) -> dict:
+    """Новый result с записью только что заказанного повтора; прогон у сервиса ещё не запущен."""
+    entry = {
+        'status': RECHECK_RUNNING,
+        'same_exit': bool(same_exit),
+        'reserve_kopeks': reserve_kopeks,
+        'started_at': started_at,
+        'admin_id': admin_id,
+        'run_id': None,
+    }
+    return _with_rechecks(result, {**_rechecks(result), key: entry})
+
+
+def recheck_updated(result: dict, key: str, **fields: Any) -> dict:
+    """Новый result с полями, дописанными в запись повтора (номер прогона, уточнённый резерв)."""
+    rechecks = _rechecks(result)
+    return _with_rechecks(result, {**rechecks, key: {**rechecks.get(key, {}), **fields}})
+
+
+def recheck_failed(result: dict, key: str, message: str, *, finished_at: str) -> dict:
+    """Повтор не удался: запись остаётся с причиной словами, кнопки у строки возвращаются."""
+    return recheck_updated(result, key, status=RECHECK_FAILED, error=message, finished_at=finished_at)
+
+
+def recheck_finished(result: dict, key: str) -> dict:
+    """Итог влит в строки — запись снимается."""
+    rechecks = _rechecks(result)
+    rechecks.pop(key, None)
+    return _with_rechecks(result, rechecks)
+
+
+def running_rechecks(result: dict) -> dict[str, dict]:
+    return {key: entry for key, entry in _rechecks(result).items() if entry.get('status') == RECHECK_RUNNING}
+
+
+def _age_sec(started_at: Any, now: datetime) -> float:
+    try:
+        started = datetime.fromisoformat(str(started_at))
+    except (TypeError, ValueError):
+        return float('inf')
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    return (now - started).total_seconds()
+
+
+def expire_rechecks(result: dict, *, now: datetime, is_active: Callable[[str], bool], grace_sec: float) -> dict | None:
+    """Записи «идёт» без живой фоновой задачи дольше окна запуска — сироты после перезапуска бота.
+
+    Они падают с причиной словами, иначе кабинет ждал бы итог вечно. Нечего менять — None.
+    """
+    changed: dict | None = None
+    for key, entry in running_rechecks(result).items():
+        if is_active(key) or _age_sec(entry.get('started_at'), now) < grace_sec:
+            continue
+        changed = recheck_failed(changed or result, key, RECHECK_STALE_MESSAGE, finished_at=now.isoformat())
+    return changed
+
+
+def recheck_money(job: Any, *, reserve_kopeks: int, charged_kopeks: int) -> dict[str, int]:
+    """Деньги повтора — в родителя: резерв к оценке, факт к списанию, разница к возврату."""
+    return {
+        'cost_kopeks': (job.cost_kopeks or 0) + charged_kopeks,
+        'estimated_kopeks': (job.estimated_kopeks or 0) + reserve_kopeks,
+        'refunded_kopeks': (job.refunded_kopeks or 0) + max(0, reserve_kopeks - charged_kopeks),
+    }

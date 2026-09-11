@@ -29,8 +29,16 @@ from app.external.bschek_api import BschekAPI, BschekAPIError
 from app.services.reachability import batches as batch_ops
 from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.geo_catalog import GeoCatalogCache
+from app.services.reachability.geo_recheck import RECHECK_STALE_GRACE_SEC
 from app.services.reachability.geo_requests import build_geo_request, parse_geo_options
-from app.services.reachability.geo_result import recheck_request, row_key
+from app.services.reachability.geo_result import (
+    expire_rechecks,
+    recheck_key_str,
+    recheck_request,
+    recheck_started,
+    row_key,
+    running_rechecks,
+)
 from app.services.reachability.jobs import JobNotCancellable, JobRunner
 from app.services.reachability.kinds import KIND_GEO, KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.links import RejectedLink, expand_raw_input, parse_links
@@ -562,11 +570,12 @@ class ReachabilityService:
     async def recheck_geo(
         self, db: AsyncSession, parent_id: int, key: dict, admin_id: int, *, same_exit: bool
     ) -> ReachabilityJob:
-        """Перепроверка одного проваленного города из отчёта GEO — кнопки «тот же IP» / «сменить IP» оригинала.
+        """Перепроверка одного проваленного города из отчёта GEO — кнопки «Тот же IP» / «Сменить IP».
 
-        Дочерняя задача берёт цели, сеть, метод и ядро родителя, охват — один город; «тот же IP» несёт
-        sid строки. По завершении обходчик вливает её строки в отчёт родителя. Замок «одна GEO-задача
-        за раз» на повтор не действует: это секунды и один город, сервис держит до трёх прогонов.
+        Новой задачи нет и история не растёт: сервис гоняет один город своим прогоном, бот ждёт его
+        фоном и вливает строки и деньги в этот же отчёт; пока идёт — запись в ``result.rechecks``.
+        Замок «одна GEO-задача за раз» на повтор не действует: это секунды и один город, сервис
+        держит до трёх прогонов.
         """
         self._ensure_enabled()
         parent = await self.get_job(db, parent_id)
@@ -578,6 +587,9 @@ class ReachabilityService:
         ]
         if not rows:
             raise ValueError('Такого города в отчёте нет')
+        key_str = recheck_key_str(wanted)
+        if key_str in running_rechecks(parent.result or {}) and self.runner.rechecks.is_active(parent.id, key_str):
+            raise ValueError('Этот город уже перепроверяется — дождитесь итога')
         row = next((item for item in rows if item.get('sid')), rows[-1]) if same_exit else rows[-1]
         request = recheck_request(parent.request, row, same_exit=same_exit)
         numbers = await self._call(lambda api: api.geo_preview(request))
@@ -586,32 +598,20 @@ class ReachabilityService:
         balance = await self._balance_kopeks()
         if balance is not None and (cost or 0) > balance:
             raise ValueError('На балансе bschekbot не хватает средств на эту задачу')
-        job = await crud.create_job(
-            db,
-            kind=KIND_GEO,
-            status='pending',
-            trigger='manual',
-            started_by_user_id=admin_id,
-            idempotency_key=str(uuid.uuid4()),
-            request=request,
-            targets=list(parent.targets or []),
-            units_requested=[],
-            units_resolved=list(GEO_UNITS),
-            skipped={},
-            dpi='any',
-            estimated_kopeks=cost,
-            estimate_is_exact=False,
-            result={
-                'recheck_of': parent.id,
-                'recheck_key': {'region': wanted[0], 'city': wanted[1], 'req_isp': wanted[2] or None},
-                'recheck_same_exit': bool(same_exit and row.get('sid')),
-            },
+        result = recheck_started(
+            parent.result or {},
+            key_str,
+            same_exit=bool(same_exit and row.get('sid')),
+            reserve_kopeks=cost,
+            started_at=self._now().isoformat(),
+            admin_id=admin_id,
         )
+        await crud.update_job(db, parent, result=result)
         await db.commit()
         self._account.invalidate()
-        self.runner.spawn(job.id)
-        logger.info('Повтор города GEO запущен', job_id=job.id, parent_id=parent.id, admin_id=admin_id)
-        return job
+        self.runner.rechecks.spawn(parent.id, key_str, request=request, reserve_kopeks=cost or 0)
+        logger.info('Повтор города GEO запущен', job_id=parent.id, key=key_str, admin_id=admin_id)
+        return parent
 
     @staticmethod
     def _job_fields(preview: PreviewResult, payload: dict, admin_id: int) -> dict[str, Any]:
@@ -635,13 +635,38 @@ class ReachabilityService:
     # ------------------------------------------------------------ история и управление
 
     async def list_jobs(self, db: AsyncSession, **filters: Any) -> tuple[list[ReachabilityJob], int]:
-        return await crud.list_jobs(db, **filters)
+        jobs, total = await crud.list_jobs(db, **filters)
+        await self._expire_orphaned_rechecks(db, jobs)
+        return jobs, total
 
     async def get_job(self, db: AsyncSession, job_id: int) -> ReachabilityJob:
         job = await crud.get_job(db, job_id)
         if job is None:
             raise JobNotFound(job_id)
+        await self._expire_orphaned_rechecks(db, [job])
         return job
+
+    async def _expire_orphaned_rechecks(self, db: AsyncSession, jobs: list[ReachabilityJob]) -> None:
+        """Записи «идёт повтор» без живой фоновой задачи (перезапуск бота) — в «прервано» словами.
+
+        Иначе кабинет ждал бы итог вечно. Сессия кабинета сама не коммитит — коммит здесь, если что-то изменилось.
+        """
+        changed = False
+        for job in jobs:
+            if job.kind != KIND_GEO or not job.result:
+                continue
+            result = expire_rechecks(
+                job.result,
+                now=self._now(),
+                is_active=lambda key, job_id=job.id: self.runner.rechecks.is_active(job_id, key),
+                grace_sec=RECHECK_STALE_GRACE_SEC,
+            )
+            if result is None:
+                continue
+            await crud.update_job(db, job, result=result)
+            changed = True
+        if changed:
+            await db.commit()
 
     async def cancel_job(self, db: AsyncSession, job_id: int) -> ReachabilityJob:
         self._ensure_enabled()

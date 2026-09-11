@@ -25,7 +25,8 @@ from app.database.models import ReachabilityBatch, ReachabilityJob
 from app.external.bschek_api import BschekAPI, BschekAPIError, BschekGatewayError
 from app.services.reachability.batches import batch_cost_kopeks, batch_status_from_jobs
 from app.services.reachability.gate import PaidCallGate
-from app.services.reachability.geo_result import geo_summary, merge_recheck, normalize_rows, scope_label
+from app.services.reachability.geo_recheck import GeoRecheckRunner, geo_timeout
+from app.services.reachability.geo_result import geo_summary, normalize_rows, scope_label
 from app.services.reachability.kinds import KIND_GEO, KIND_PROBE, KIND_VLESS
 from app.services.reachability.legs import build_probe_legs, build_vless_legs, merge_skipped, partial_probe_progress
 from app.services.reachability.pricing import credits_to_kopeks, format_rubles
@@ -149,6 +150,17 @@ class JobRunner:
         self._tasks: dict[int, asyncio.Task] = {}
         self._batch_tasks: dict[int, asyncio.Task] = {}
         self._running = False
+        # Повторы городов из отчёта GEO: свои фоновые задачи по родителю, а не новые задачи в истории.
+        self.rechecks = GeoRecheckRunner(
+            call=self._call,
+            retry_wait=self._retry_wait,
+            session_factory=session_factory,
+            cfg=self.cfg,
+            sleep=sleep,
+            clock=clock,
+            now=now,
+            geo_names=geo_names,
+        )
 
     # ------------------------------------------------------------ фон
 
@@ -490,14 +502,12 @@ class JobRunner:
             'n_nodes': submit.get('n_nodes'),
             'reserve_credits': submit.get('reserve_credits'),
             'estimated_sec': submit.get('estimated_sec'),
-            # В истории повтор города виден сразу: «повтор · сайты · проводной · Москва».
-            'scope_label': ('повтор · ' if (job.result or {}).get('recheck_of') else '')
-            + scope_label(job.request or {}),
+            # В истории охват виден сразу: «сайты · проводной · Москва».
+            'scope_label': scope_label(job.request or {}),
         }
         return {
             'external_id': external_id,
             'phase': PHASE_POLLING,
-            # Пометка «повтор города из #N» ставится при создании — её нельзя затирать.
             'result': {**(job.result or {}), 'submit': submit, 'geo': geo, 'rows': [], 'summary': {}},
             'estimated_kopeks': reserve if reserve is not None else job.estimated_kopeks,
             'units_effective': ['geo'],
@@ -554,7 +564,7 @@ class JobRunner:
     def _timeout_for(self, job: ReachabilityJob) -> float:
         if job.kind == KIND_GEO:
             estimated = float(((job.result or {}).get('geo') or {}).get('estimated_sec') or 0)
-            return min(self.cfg.geo_timeout_cap, self.cfg.geo_timeout_base + self.cfg.geo_timeout_factor * estimated)
+            return geo_timeout(self.cfg, estimated)
         units = max(1, len(job.units_effective or job.units_resolved or []))
         if job.kind == KIND_VLESS:
             legs = max(1, len(job.targets or [])) * units
@@ -688,20 +698,7 @@ class JobRunner:
             refunded_kopeks=max(0, reserve - charged),
             finished_at=self._now(),
         )
-        if not cancelled and rows:
-            await self._merge_recheck_into_parent(db, job, rows)
         return True
-
-    async def _merge_recheck_into_parent(self, db: AsyncSession, job: ReachabilityJob, rows: list[dict]) -> None:
-        """Повтор города из отчёта: свежие строки ложатся в отчёт родителя по правилам оригинала."""
-        parent_id = (job.result or {}).get('recheck_of')
-        if not parent_id:
-            return
-        parent = await crud.get_job(db, int(parent_id))
-        if parent is None or parent.kind != KIND_GEO:
-            logger.warning('Родитель повтора GEO не найден', job_id=job.id, parent_id=parent_id)
-            return
-        await self._update(db, parent, result=merge_recheck(parent.result or {}, rows, job.id))
 
     # ------------------------------------------------------------ отмена
 

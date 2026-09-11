@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +16,7 @@ from app.database.models import User
 from app.external.bschek_api import BschekAPIError
 from app.external.remnawave_api import RemnaWaveHost
 from app.services.reachability.gate import PaidCallGate
+from app.services.reachability.geo_result import RECHECK_STALE_MESSAGE, recheck_started
 from app.services.reachability.jobs import JobNotCancellable, JobRunner, RunnerConfig
 from app.services.reachability.pricing import CostLimitExceeded
 from app.services.reachability.requests import RequestBuildError
@@ -972,51 +973,73 @@ async def _done_geo_parent(db, admin_id: int, request: dict | None = None):
     )
 
 
-async def test_recheck_geo_builds_the_child_from_the_parent_and_marks_it(session_factory) -> None:
+MOSCOW = {'region': 'moscow', 'city': 'moscow', 'req_isp': None}
+MOSCOW_KEY = 'moscow|moscow|'
+
+
+def _record_spawns(service) -> list[dict]:
+    """Фон повтора не запускаем: запоминаем, с чем сервис его позвал."""
+    spawned: list[dict] = []
+
+    def spawn(parent_id: int, key: str, **kwargs) -> None:
+        spawned.append({'parent_id': parent_id, 'key': key, **kwargs})
+
+    service.runner.rechecks.spawn = spawn
+    return spawned
+
+
+async def test_recheck_geo_writes_the_run_into_the_parent_instead_of_a_child_job(session_factory) -> None:
     client = FakeClient()
     service = make_service(session_factory, client=client)
+    spawned = _record_spawns(service)
     async with session_factory() as db:
         admin = await _admin(db)
         parent = await _done_geo_parent(db, admin.id)
         await db.commit()
-        child = await service.recheck_geo(
-            db, parent.id, {'region': 'moscow', 'city': 'moscow', 'req_isp': None}, admin.id, same_exit=True
-        )
-    assert child.kind == 'geo' and child.status == 'pending' and child.targets == parent.targets
-    assert child.request == {
-        'targets': ['example.com:443'],
-        'network': 'res',
-        'probe_mode': 'tls',
-        'heavy': False,
-        'core': '',
-        'cities': [{'region': 'moscow', 'city': 'moscow'}],
-        'session': 's-1',
-        'expect_exit_ip': '203.0.113.7',
-    }
-    assert child.result == {
-        'recheck_of': parent.id,
-        'recheck_key': {'region': 'moscow', 'city': 'moscow', 'req_isp': None},
-        'recheck_same_exit': True,
-    }
-    assert child.estimated_kopeks == 90, 'резерв из расчёта сервиса'
+        before = (await crud.list_jobs(db))[1]
+        out = await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=True)
+        after = (await crud.list_jobs(db))[1]
+    assert out.id == parent.id and after == before, 'новой задачи нет — история не растёт'
+    entry = out.result['rechecks'][MOSCOW_KEY]
+    assert entry['status'] == 'running' and entry['same_exit'] is True and entry['reserve_kopeks'] == 90
+    assert entry['admin_id'] == admin.id and entry['run_id'] is None and entry['started_at']
+    assert out.result['rows'] == GEO_PARENT_ROWS, 'строки до итога не тронуты'
+    assert spawned == [
+        {
+            'parent_id': parent.id,
+            'key': MOSCOW_KEY,
+            'request': {
+                'targets': ['example.com:443'],
+                'network': 'res',
+                'probe_mode': 'tls',
+                'heavy': False,
+                'core': '',
+                'cities': [{'region': 'moscow', 'city': 'moscow'}],
+                'session': 's-1',
+                'expect_exit_ip': '203.0.113.7',
+            },
+            'reserve_kopeks': 90,
+        }
+    ]
     assert client.geo_preview_body['cities'] == [{'region': 'moscow', 'city': 'moscow'}]
 
 
 async def test_recheck_geo_new_exit_drops_the_session_and_is_not_blocked_by_a_running_geo_job(session_factory) -> None:
     service = make_service(session_factory)
+    spawned = _record_spawns(service)
     async with session_factory() as db:
         admin = await _admin(db)
         parent = await _done_geo_parent(db, admin.id)
         await db.commit()
         await service.create_job(db, GEO_PAYLOAD, admin.id)
-        child = await service.recheck_geo(
-            db, parent.id, {'region': 'moscow', 'city': 'moscow', 'req_isp': None}, admin.id, same_exit=False
-        )
-    assert 'session' not in child.request and child.result['recheck_same_exit'] is False
+        out = await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+    assert 'session' not in spawned[0]['request']
+    assert out.result['rechecks'][MOSCOW_KEY]['same_exit'] is False
 
 
-async def test_recheck_geo_refuses_unknown_city_and_unfinished_parent_in_words(session_factory) -> None:
+async def test_recheck_geo_refuses_unknown_city_unfinished_parent_and_a_running_city_in_words(session_factory) -> None:
     service = make_service(session_factory)
+    _record_spawns(service)
     async with session_factory() as db:
         admin = await _admin(db)
         parent = await _done_geo_parent(db, admin.id)
@@ -1027,6 +1050,41 @@ async def test_recheck_geo_refuses_unknown_city_and_unfinished_parent_in_words(s
             )
         running = await service.create_job(db, GEO_PAYLOAD, admin.id)
         with pytest.raises(ValueError, match='завершённой'):
-            await service.recheck_geo(
-                db, running.id, {'region': 'moscow', 'city': 'moscow', 'req_isp': None}, admin.id, same_exit=False
-            )
+            await service.recheck_geo(db, running.id, MOSCOW, admin.id, same_exit=False)
+        await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+        service.runner.rechecks.is_active = lambda parent_id, key: True
+        with pytest.raises(ValueError, match='уже перепроверяется'):
+            await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+
+
+async def test_reading_a_job_fails_rechecks_orphaned_by_a_restart(session_factory) -> None:
+    service = make_service(session_factory)
+    now = datetime.now(UTC)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        stale = recheck_started(
+            parent.result,
+            MOSCOW_KEY,
+            same_exit=False,
+            reserve_kopeks=90,
+            started_at=(now - timedelta(minutes=5)).isoformat(),
+            admin_id=admin.id,
+        )
+        fresh = recheck_started(
+            stale,
+            'spb|spb|',
+            same_exit=False,
+            reserve_kopeks=90,
+            started_at=(now - timedelta(seconds=5)).isoformat(),
+            admin_id=admin.id,
+        )
+        await crud.update_job(db, parent, result=fresh)
+        await db.commit()
+        job = await service.get_job(db, parent.id)
+        assert job.result['rechecks'][MOSCOW_KEY]['status'] == 'failed'
+        assert job.result['rechecks'][MOSCOW_KEY]['error'] == RECHECK_STALE_MESSAGE
+        assert job.result['rechecks']['spb|spb|']['status'] == 'running', 'свежая запись ещё в окне запуска'
+    async with session_factory() as db:
+        items, _ = await service.list_jobs(db, kind='geo')
+        assert items[0].result['rechecks'][MOSCOW_KEY]['status'] == 'failed', 'и через список, и сохранено'

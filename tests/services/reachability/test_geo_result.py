@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
 from app.services.reachability.geo_result import (
     NOISE_VERDICTS,
+    RECHECK_STALE_MESSAGE,
     RESULT_VERDICTS,
+    expire_rechecks,
     geo_summary,
     is_result_verdict,
     merge_recheck,
     name_rows,
     normalize_rows,
+    recheck_failed,
+    recheck_finished,
+    recheck_money,
     recheck_request,
+    recheck_started,
+    recheck_updated,
     row_key,
+    running_rechecks,
     scope_label,
 )
 
@@ -207,21 +218,105 @@ def test_merge_recheck_follows_the_original_rules() -> None:
         'geo': {'n_nodes': 3},
     }
     # Тот же выход — прежняя строка заменяется свежей (переезжает в конец).
-    merged = merge_recheck(parent, [_prow('a', 'ok', '1.1.1.1')], child_id=9)
+    merged = merge_recheck(parent, [_prow('a', 'ok', '1.1.1.1')], run_id=9)
     assert [row['city'] for row in merged['rows']] == ['b', 'c', 'a']
-    assert merged['rows'][-1] == {**_prow('a', 'ok', '1.1.1.1'), 'recheck_job_id': 9}
+    assert merged['rows'][-1] == {**_prow('a', 'ok', '1.1.1.1'), 'recheck_run_id': 9}
     assert merged['summary']['by_verdict'] == {'ok': 2, 'no_ru_node': 1}
     assert merged['summary']['conclusion'] is None and merged['geo'] == {'n_nodes': 3}
     # Другой выход — строка добавляется с «новый выход», прежняя остаётся и помечается «перепроверено».
-    merged = merge_recheck(parent, [_prow('a', 'ok', '9.9.9.9')], child_id=10)
+    merged = merge_recheck(parent, [_prow('a', 'ok', '9.9.9.9')], run_id=10)
     rows = merged['rows']
     assert rows[0] == {**_prow('a', 'blocked', '1.1.1.1'), 'rechecked': True}
-    assert rows[-1] == {**_prow('a', 'ok', '9.9.9.9'), 'recheck_job_id': 10, 'new_exit': True}
+    assert rows[-1] == {**_prow('a', 'ok', '9.9.9.9'), 'recheck_run_id': 10, 'new_exit': True}
     assert merged['summary']['by_verdict'] == {'blocked': 1, 'ok': 2, 'no_ru_node': 1}
     assert merged['summary']['result_rows'] == 3 and merged['summary']['noise_rows'] == 1
     # Строка без выхода («нет RU-ноды») — заменяется на месте.
-    merged = merge_recheck(parent, [_prow('c', 'ok', '3.3.3.3')], child_id=11)
+    merged = merge_recheck(parent, [_prow('c', 'ok', '3.3.3.3')], run_id=11)
     assert [row['city'] for row in merged['rows']] == ['a', 'b', 'c']
     assert merged['rows'][2]['exit_ip'] == '3.3.3.3' and 'new_exit' not in merged['rows'][2]
     # Мусор в строках повтора пропускается, родитель без строк не ломается.
-    assert merge_recheck({}, ['x', None], child_id=1)['rows'] == []
+    assert merge_recheck({}, ['x', None], run_id=1)['rows'] == []
+
+
+def test_recheck_entries_live_in_the_parent_result_not_in_a_child_job() -> None:
+    result = {'rows': [], 'summary': {}}
+    started = recheck_started(
+        result, 'r|a|', same_exit=True, reserve_kopeks=90, started_at='2026-09-11T10:00:00+00:00', admin_id=7
+    )
+    assert started['rechecks'] == {
+        'r|a|': {
+            'status': 'running',
+            'same_exit': True,
+            'reserve_kopeks': 90,
+            'started_at': '2026-09-11T10:00:00+00:00',
+            'admin_id': 7,
+            'run_id': None,
+        }
+    }
+    assert 'rechecks' not in result, 'исходный result не тронут'
+    updated = recheck_updated(started, 'r|a|', run_id=812, reserve_kopeks=95)
+    assert updated['rechecks']['r|a|']['run_id'] == 812 and updated['rechecks']['r|a|']['reserve_kopeks'] == 95
+    assert running_rechecks(updated) == {'r|a|': updated['rechecks']['r|a|']}
+    failed = recheck_failed(updated, 'r|a|', 'engine exploded', finished_at='2026-09-11T10:05:00+00:00')
+    assert failed['rechecks']['r|a|'] == {
+        **updated['rechecks']['r|a|'],
+        'status': 'failed',
+        'error': 'engine exploded',
+        'finished_at': '2026-09-11T10:05:00+00:00',
+    }
+    assert running_rechecks(failed) == {}
+    finished = recheck_finished(updated, 'r|a|')
+    assert finished['rechecks'] == {} and finished['rows'] == []
+    assert recheck_finished({}, 'нет такого') == {'rechecks': {}}
+    assert running_rechecks({}) == {} and running_rechecks({'rechecks': 'мусор'}) == {}
+
+
+def test_expire_rechecks_marks_orphans_after_grace() -> None:
+    now = datetime(2026, 9, 11, 10, 5, tzinfo=UTC)
+    fresh = recheck_started(
+        {},
+        'r|a|',
+        same_exit=False,
+        reserve_kopeks=1,
+        started_at=(now - timedelta(seconds=10)).isoformat(),
+        admin_id=None,
+    )
+    both = recheck_started(
+        fresh,
+        'r|b|',
+        same_exit=False,
+        reserve_kopeks=1,
+        started_at=(now - timedelta(minutes=3)).isoformat(),
+        admin_id=None,
+    )
+    # Свежая запись без задачи — окно между записью и запуском; старая без задачи — сирота после перезапуска.
+    expired = expire_rechecks(both, now=now, is_active=lambda key: False, grace_sec=60)
+    assert expired is not None
+    assert expired['rechecks']['r|a|']['status'] == 'running'
+    assert expired['rechecks']['r|b|'] == {
+        **both['rechecks']['r|b|'],
+        'status': 'failed',
+        'error': RECHECK_STALE_MESSAGE,
+        'finished_at': now.isoformat(),
+    }
+    # Старая, но задача жива — не трогаем; нечего менять — None.
+    assert expire_rechecks(both, now=now, is_active=lambda key: True, grace_sec=60) is None
+    assert expire_rechecks({}, now=now, is_active=lambda key: False, grace_sec=60) is None
+    garbage = {'rechecks': {'x': {'status': 'running', 'started_at': 'мусор'}}}
+    expired = expire_rechecks(garbage, now=now, is_active=lambda key: False, grace_sec=60)
+    assert expired is not None and expired['rechecks']['x']['status'] == 'failed', 'нечитаемая дата — тоже сирота'
+
+
+def test_recheck_money_adds_up_on_the_parent() -> None:
+    job = SimpleNamespace(cost_kopeks=None, estimated_kopeks=1384, refunded_kopeks=None)
+    assert recheck_money(job, reserve_kopeks=90, charged_kopeks=3) == {
+        'cost_kopeks': 3,
+        'estimated_kopeks': 1474,
+        'refunded_kopeks': 87,
+    }
+    again = SimpleNamespace(cost_kopeks=3, estimated_kopeks=1474, refunded_kopeks=87)
+    assert recheck_money(again, reserve_kopeks=90, charged_kopeks=120) == {
+        'cost_kopeks': 123,
+        'estimated_kopeks': 1564,
+        'refunded_kopeks': 87,
+    }, 'списали больше резерва — возврата нет, и он не уходит в минус'
