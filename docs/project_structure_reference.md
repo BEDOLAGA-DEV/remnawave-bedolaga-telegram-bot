@@ -3234,6 +3234,9 @@
 - `tests/cabinet/test_remnawave_sync_timeout.py` — Python-модуль
   Классы: нет
   Функции: `test_sync_timeout_constant_is_sane`, `test_inline_sync_is_time_bounded`, `test_timeout_defers_to_fallback_and_returns_promptly`
+- `tests/cabinet/test_renewal_single_tariff_mode.py` — Python-модуль
+  Классы: нет
+  Функции: `single_tariff_mode`, `panel`, `test_expired_subscription_gets_tariff_periods_without_multi_tariff`, `test_resolve_subscription_without_multi_tariff_loads_the_tariff` — Любой маршрут, взявший подписку через resolve_subscription, может читать её тариф.
 - `tests/cabinet/test_role_grant_subset.py` — Python-модуль
   Классы: нет
   Функции: `test_permission_covered_wildcards`, `test_cannot_grant_permissions_not_held`, `test_superadmin_exempt_and_does_not_query`
