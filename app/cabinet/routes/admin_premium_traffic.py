@@ -206,6 +206,9 @@ async def _reset_premium(db: AsyncSession, subscription, squad_uuid: str | None,
             period_start_at=now,
         )
         start_new_period(state, period_start_at=now, limit_bytes=config.limit_bytes)
+        # Период начат вручную с этой секунды — фиксируем. Незамеренную запись
+        # воркер считает временной и переносит её начало назад, к расчётному.
+        state.last_checked_at = now
         reset.append(uuid)
     return reset
 

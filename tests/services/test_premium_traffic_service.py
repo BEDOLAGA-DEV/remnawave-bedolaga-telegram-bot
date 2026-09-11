@@ -391,6 +391,81 @@ class TestDecisions:
         assert outcome is None
 
 
+class TestNewStatePeriod:
+    """Новая запись берёт верное начало периода, а не момент своего создания.
+
+    Запись создаётся «с этой секунды»: верное начало без карточки из панели не
+    посчитать. Проверка на смену периода его не подхватывает — верное начало
+    всегда раньше «сейчас», — и расход с начала периода до включения лимита
+    пропадал. Так было на первом запуске: у всех записей период начался в день
+    включения лимита, хотя у тарифов скользящий месяц.
+    """
+
+    async def _resolve(self, state, monkeypatch, *, first_connected_at=None, panel_reset_at=None):
+        service = PremiumTrafficService()
+
+        async def _get_or_create(_db, _sub_id, _squad, **_kwargs):
+            return state
+
+        async def _panel_user(_api, _panel_user_id):
+            return SimpleNamespace(
+                first_connected_at=first_connected_at,
+                last_traffic_reset_at=panel_reset_at,
+                active_internal_squads=None,
+            )
+
+        monkeypatch.setattr('app.services.premium_traffic_service.get_or_create_state', _get_or_create)
+        monkeypatch.setattr(service, '_panel_user', _panel_user)
+        target = _target()
+        target.subscription.tariff.traffic_reset_mode = 'MONTH_ROLLING'
+        period_start = await service._resolve_period(_Db(), FakeRemnawaveApi(), target, NOW)
+        return service, period_start
+
+    async def test_new_state_starts_at_the_real_period_start(self, monkeypatch):
+        state = _state(limit_gb=15, baseline_bytes=None)
+        # Первое подключение 40 дней назад: окна по 30 дней, текущее началось 10 дней назад.
+        _, period_start = await self._resolve(state, monkeypatch, first_connected_at=NOW - timedelta(days=40))
+
+        assert period_start == NOW - timedelta(days=10)
+        assert state.period_start_at == NOW - timedelta(days=10)
+
+    async def test_usage_since_the_period_start_is_counted_in_full(self, monkeypatch):
+        state = _state(limit_gb=15, baseline_bytes=None)
+        service, period_start = await self._resolve(state, monkeypatch, first_connected_at=NOW - timedelta(days=40))
+
+        # Период начался не сегодня — поправка первого дня не нужна, весь расход наш.
+        assert service._net_usage(state, 7 * BYTES_IN_GB, period_start, NOW) == 7 * BYTES_IN_GB
+
+    async def test_topup_before_the_first_measurement_is_kept(self, monkeypatch):
+        """Докупка могла создать запись раньше воркера — купленное не должно пропасть."""
+        state = _state(limit_gb=15, extra_bytes=5 * BYTES_IN_GB, baseline_bytes=None)
+
+        await self._resolve(state, monkeypatch, first_connected_at=NOW - timedelta(days=40))
+
+        assert state.extra_bytes == 5 * BYTES_IN_GB
+        assert state.period_start_at == NOW - timedelta(days=10)
+
+    async def test_measured_state_keeps_its_period(self, monkeypatch):
+        """Замеренную запись не трогаем: её начало уже верное или выставлено вручную."""
+        state = _state(limit_gb=15)
+        state.last_checked_at = NOW - timedelta(minutes=5)
+        state.period_start_at = NOW - timedelta(hours=1)  # например, ручной сброс админом
+
+        await self._resolve(state, monkeypatch, first_connected_at=NOW - timedelta(days=40))
+
+        assert state.period_start_at == NOW - timedelta(hours=1)
+
+    async def test_panel_reset_after_the_window_start_wins(self, monkeypatch):
+        """Панель сбросила трафик досрочно — премиум-период идёт следом."""
+        state = _state(limit_gb=15, baseline_bytes=None)
+        reset_at = NOW - timedelta(days=2)
+
+        await self._resolve(state, monkeypatch, first_connected_at=NOW - timedelta(days=40), panel_reset_at=reset_at)
+
+        assert state.period_start_at == reset_at
+        assert state.panel_reset_ack_at == reset_at
+
+
 class TestPanelUserCache:
     """Карточка панельного пользователя — самая дорогая часть прохода.
 

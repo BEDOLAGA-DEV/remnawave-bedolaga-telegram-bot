@@ -117,6 +117,19 @@ class TestPremiumReset:
             assert len(states) == 1
             assert states[0].limit_bytes == 5 * BYTES_IN_GB
 
+    async def test_manual_reset_is_not_moved_back_by_the_worker(self, monkeypatch):
+        """Незамеренную запись воркер считает временной и переносит её начало назад.
+
+        Ручной сброс начинает период с этой секунды намеренно — он фиксирует
+        запись, иначе первый же проход вернул бы расход до сброса.
+        """
+        async with memory_session(monkeypatch, TABLES) as db:
+            await _reset_premium(db, _subscription(), SQUAD, NOW)
+            await db.commit()
+
+            (state,) = await get_states_for_subscription(db, 1)
+            assert state.last_checked_at is not None
+
 
 class TestRegularReset:
     async def test_panel_is_reset_and_premium_is_left_alone(self, monkeypatch):

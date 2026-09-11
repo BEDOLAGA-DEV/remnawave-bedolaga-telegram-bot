@@ -320,7 +320,18 @@ class PremiumTrafficService:
             acknowledged_panel_reset_at=state.panel_reset_ack_at,
         )
 
-        if state.period_start_at is None or resolved > _as_utc(state.period_start_at):
+        if state.last_checked_at is None:
+            # Запись ни разу не замерялась — её начало периода временное. Создают
+            # её «с этой секунды» и воркер, и докупка, и выдача админом: верное
+            # начало без карточки из панели не посчитать. Проверка на смену
+            # периода ниже его не подхватит — верное начало всегда раньше
+            # «сейчас», — и расход с начала периода до включения лимита терялся бы.
+            # Счётчики не обнуляем: докупленное до первого замера должно остаться.
+            state.period_start_at = resolved
+            state.baseline_bytes = None
+            if panel_reset_at is not None:
+                state.panel_reset_ack_at = panel_reset_at
+        elif resolved > _as_utc(state.period_start_at):
             start_new_period(
                 state,
                 period_start_at=resolved,

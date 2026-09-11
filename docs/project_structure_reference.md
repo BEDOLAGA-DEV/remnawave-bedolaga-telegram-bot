@@ -3016,7 +3016,7 @@
   Классы: нет
   Функции: `p12_bytes`, `stubbed_service`, `test_admin_overpay_certificate_routes_registered`, `test_upload_certificate_commits`, `test_upload_certificate_env_locked_warning`, `test_upload_certificate_invalid_returns_422`, `test_upload_certificate_oversize_returns_413`, `test_delete_certificate_commits`
 - `tests/cabinet/test_admin_premium_traffic.py` — Python-модуль
-  Классы: `TestPremiumReset` (5 методов), `TestRegularReset` (4 методов)
+  Классы: `TestPremiumReset` (6 методов), `TestRegularReset` (4 методов)
   Функции: нет
 - `tests/cabinet/test_admin_reachability.py` — Python-модуль
   Классы: нет
@@ -4172,7 +4172,7 @@
   Классы: `TestOptions` (4 методов), `TestQuote` (6 методов), `TestApply` (5 методов)
   Функции: нет
 - `tests/services/test_premium_traffic_service.py` — Python-модуль
-  Классы: `FakeRemnawaveApi` (4 методов), `TestUsageCollection` (6 методов), `TestDecisions` (13 методов), `TestPanelUserCache` (4 методов), `TestFirstDayCorrection` (5 методов), `TestIntervalSettings` (1 методов), `TestNotifications` (6 методов)
+  Классы: `FakeRemnawaveApi` (4 методов), `TestUsageCollection` (6 методов), `TestDecisions` (13 методов), `TestNewStatePeriod` (6 методов), `TestPanelUserCache` (4 методов), `TestFirstDayCorrection` (5 методов), `TestIntervalSettings` (1 методов), `TestNotifications` (6 методов)
   Функции: нет
 - `tests/services/test_promocode_rollback_keeps_user_usable.py` — Python-модуль
   Классы: нет
