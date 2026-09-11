@@ -152,7 +152,7 @@ class TestUsageCollection:
 
 
 class TestDecisions:
-    async def _apply(self, service, target, state, used_bytes, monkeypatch, api=None):
+    async def _apply(self, service, target, state, used_bytes, monkeypatch, api=None, panel_user=None):
         async def _get_state(_db, _sub_id, _squad):
             return state
 
@@ -170,6 +170,7 @@ class TestDecisions:
             used_bytes=used_bytes,
             period_start=NOW,
             now=NOW,
+            panel_user=panel_user,
         )
         return outcome, pushed
 
@@ -321,6 +322,59 @@ class TestDecisions:
             assert outcome is None
 
         assert pushed == []
+
+    async def test_limit_that_never_reached_the_panel_is_resent(self, monkeypatch):
+        """Флаг `is_limited` пишется до отправки: иначе фильтр её не увидит.
+
+        Если сама отправка не дошла — панель отказала по лимиту запросов или была
+        недоступна, — флаг уже стоит, и ветка «снять» сюда больше не попадёт.
+        Без сверки исчерпанный премиум-сервер работал бы до конца периода.
+        """
+        service = PremiumTrafficService()
+        state = _state(limit_gb=5, used_bytes=5 * BYTES_IN_GB, is_limited=True)
+
+        outcome, pushed = await self._apply(
+            service,
+            _target(),
+            state,
+            5 * BYTES_IN_GB,
+            monkeypatch,
+            panel_user=SimpleNamespace(active_internal_squads=[{'uuid': SQUAD, 'name': 'LTE'}]),
+        )
+
+        assert outcome == 'limited'
+        assert state.is_limited is True
+        assert pushed == [1]
+
+    async def test_limited_squad_already_gone_from_panel_is_left_alone(self, monkeypatch):
+        """Снятие дошло — отправлять повторно нечего, иначе панель дёргалась бы каждый проход."""
+        service = PremiumTrafficService()
+        state = _state(limit_gb=5, used_bytes=5 * BYTES_IN_GB, is_limited=True)
+
+        outcome, pushed = await self._apply(
+            service,
+            _target(),
+            state,
+            5 * BYTES_IN_GB,
+            monkeypatch,
+            panel_user=SimpleNamespace(active_internal_squads=[]),
+        )
+
+        assert outcome is None
+        assert pushed == []
+
+    async def test_limited_squad_with_unknown_panel_state_is_left_alone(self, monkeypatch):
+        """Панель не сказала, что у пользователя, — снимать повторно вслепую нельзя."""
+        service = PremiumTrafficService()
+
+        for panel_user in (None, SimpleNamespace(active_internal_squads=None)):
+            state = _state(limit_gb=5, used_bytes=5 * BYTES_IN_GB, is_limited=True)
+            outcome, pushed = await self._apply(
+                service, _target(), state, 5 * BYTES_IN_GB, monkeypatch, panel_user=panel_user
+            )
+
+            assert outcome is None
+            assert pushed == []
 
     async def test_missing_state_is_not_an_error(self, monkeypatch):
         service = PremiumTrafficService()

@@ -442,40 +442,49 @@ class PremiumTrafficService:
             await self._notify_warning(target, state)
             return 'warned'
 
-        # Сверка с панелью. Флаг `is_limited` могли снять не мы: докупка через
-        # кабинет обнуляет его сама и сама же возвращает сквад. Если та отправка
-        # не дошла — панель недоступна, оборвалась сессия, — сквад остался бы
-        # снятым навсегда: ветки выше сюда уже не попадут, флаг-то снят.
-        # Поэтому сверяем фактический набор с ожидаемым и досылаем расхождение.
-        if not state.is_limited and self._squad_missing_in_panel(target, panel_user):
+        # Сверка с панелью — в обе стороны. Флаг `is_limited` пишется в базу до
+        # отправки (иначе фильтр её не увидит), и если отправка не дошла —
+        # панель недоступна, отказала по лимиту запросов, оборвалась сессия, —
+        # ветки выше сюда уже не попадут: флаг-то стоит как надо.
+        #
+        # * Флаг снят, а сквада в панели нет — докупка через кабинет вернула
+        #   флаг, но не сквад. Без сверки доступ не вернулся бы никогда.
+        # * Флаг стоит, а сквад в панели есть — снятие не дошло. Без сверки
+        #   исчерпанный лимит продолжал бы работать до конца периода.
+        #
+        # Отправка — тот же штатный набор через фильтр: он сам уберёт снятое и
+        # оставит положенное, так что одна ветка чинит оба расхождения.
+        has_squad = self._panel_has_squad(target, panel_user)
+        if has_squad is not None and has_squad == state.is_limited:
             await self._push_squads(db, api, target)
             logger.info(
                 'Премиум-сквад досинхронизирован с панелью',
                 subscription_id=target.subscription.id,
                 squad_uuid=target.config.squad_uuid,
+                direction='снят' if state.is_limited else 'возвращён',
             )
-            return 'restored'
+            return 'limited' if state.is_limited else 'restored'
 
         return None
 
     @staticmethod
-    def _squad_missing_in_panel(target: _Target, panel_user: Any) -> bool:
-        """Сквад положен подписке, но в панели его нет.
+    def _panel_has_squad(target: _Target, panel_user: Any) -> bool | None:
+        """Есть ли сквад в панели; None — если панель об этом не сказала.
 
         Панель отдаёт сквады объектами `{uuid, name}`, а не строками. Разбор
         берём общий с grace-механизмом, чтобы обе части читали одно и то же.
         """
         if panel_user is None:
-            return False
+            return None
         raw = getattr(panel_user, 'active_internal_squads', None)
         # `None` — панель не сказала, сверять не с чем. Пустой список — сказала,
         # что сквадов нет, и это ровно тот случай, ради которого сверка нужна.
         if raw is None:
-            return False
+            return None
 
         from app.services.grace_access_runtime import _extract_panel_squads
 
-        return target.config.squad_uuid not in set(_extract_panel_squads(raw))
+        return target.config.squad_uuid in set(_extract_panel_squads(raw))
 
     @staticmethod
     def _net_usage(state: Any, raw_bytes: int, period_start: datetime, now: datetime) -> int:
