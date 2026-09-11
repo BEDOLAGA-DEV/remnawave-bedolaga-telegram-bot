@@ -2500,7 +2500,7 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
     await callback.message.edit_text(progress_text, reply_markup=None)
 
     remnawave_service = RemnaWaveService()
-    # Одна функция на бота, кабинет и расписание: импорт → экспорт → серверы.
+    # Одна функция на бота, кабинет и расписание: из панели в бота → серверы.
     try:
         stats, server_stats = await perform_full_sync(db, remnawave_service)
     except FullSyncAlreadyRunning:
@@ -2512,16 +2512,8 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
         )
         await callback.answer()
         return
-    to_panel = stats.get('to_panel') or {}
-
-    errors_total = stats['errors'] + to_panel.get('errors', 0)
-    total_operations = (
-        stats['created']
-        + stats['updated']
-        + stats.get('deleted', 0)
-        + to_panel.get('created', 0)
-        + to_panel.get('updated', 0)
-    )
+    errors_total = stats['errors']
+    total_operations = stats['created'] + stats['updated'] + stats.get('deleted', 0)
 
     if errors_total == 0:
         status_emoji = '✅'
@@ -2541,11 +2533,6 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
 • 🔄 Обновлено: {stats['updated']}
 • 🗑️ Деактивировано: {stats.get('deleted', 0)}
 • ❌ Ошибок: {stats['errors']}
-
-⬆️ <b>В панель:</b>
-• 🆕 Создано: {to_panel.get('created', 0)}
-• 🔄 Обновлено: {to_panel.get('updated', 0)}
-• ❌ Ошибок: {to_panel.get('errors', 0)}
 
 🌐 <b>Серверы:</b> создано {server_stats.get('created', 0)}, обновлено {server_stats.get('updated', 0)}, \
 удалено {server_stats.get('removed', 0)} из {server_stats.get('total', 0)}
@@ -2570,9 +2557,10 @@ async def sync_all_users(callback: types.CallbackQuery, db_user: User, db: Async
 
     text += """
 
-💡 <b>Рекомендации:</b>
-• Полная синхронизация выполнена в обе стороны
-• По расписанию выполняется она же
+💡 <b>Как это работает:</b>
+• Панель — источник истины: бот забрал из неё сроки, статусы и лимиты
+• В панель бот пишет только при покупке, продлении и действиях админа
+• По расписанию выполняется эта же синхронизация
 """
 
     keyboard = []
