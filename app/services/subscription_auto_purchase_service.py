@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.crud.subscription import extend_subscription
+from app.database.crud.subscription import extend_subscription, resolve_tariff_purchase_device_limit
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import (
@@ -920,9 +920,7 @@ async def _auto_purchase_tariff(
     user = await lock_user_for_pricing(db, user.id)
 
     # Calculate price via PricingEngine (single source of truth)
-    device_limit = None
-    if existing_subscription and existing_subscription.tariff_id == tariff_id:
-        device_limit = existing_subscription.device_limit
+    device_limit = resolve_tariff_purchase_device_limit(existing_subscription, tariff)
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
@@ -982,10 +980,7 @@ async def _auto_purchase_tariff(
         if existing_subscription:
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
-            if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
-            else:
-                effective_device_limit = tariff.device_limit
+            effective_device_limit = resolve_tariff_purchase_device_limit(existing_subscription, tariff)
             subscription = await extend_subscription(
                 db,
                 existing_subscription,
@@ -1263,18 +1258,33 @@ async def _auto_purchase_daily_tariff(
         )
         return False
 
-    # Блокируем пользователя и применяем скидки (group + promo-offer)
+    # Блокируем пользователя и повторно разрешаем целевую подписку: корзина
+    # legacy-перехода должна сохранить оплаченные ранее устройства.
     from app.database.crud.user import lock_user_for_pricing
-    from app.utils.promo_offer import get_user_active_promo_discount_percent
 
     user = await lock_user_for_pricing(db, user.id)
 
-    promo_group = user.get_primary_promo_group()
-    group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-    offer_pct = get_user_active_promo_discount_percent(user)
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
-    final_price, _, _ = PricingEngine.apply_stacked_discounts(daily_price, group_pct, offer_pct)
-    consume_promo = offer_pct > 0
+        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
+        _cart_sub_id = cart_data.get('subscription_id')
+        if _cart_sub_id:
+            existing_subscription = next((s for s in active_subs if s.id == int(_cart_sub_id)), None)
+        else:
+            existing_subscription = next((s for s in active_subs if s.tariff_id == tariff_id), None)
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, user.id)
+
+    effective_device_limit = resolve_tariff_purchase_device_limit(existing_subscription, tariff)
+    pricing_result = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period_days=1,
+        device_limit=effective_device_limit,
+        user=user,
+    )
+    final_price = pricing_result.final_total
+    consume_promo = pricing_result.promo_offer_discount > 0
 
     if final_price > 0 and user.balance_kopeks < final_price:
         logger.info(
@@ -1317,44 +1327,14 @@ async def _auto_purchase_daily_tariff(
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-    # Проверяем есть ли уже подписка
-    if settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_active_subscriptions_by_user_id
-
-        active_subs = await get_active_subscriptions_by_user_id(db, user.id)
-        _cart_sub_id = cart_data.get('subscription_id')
-        if _cart_sub_id:
-            existing_subscription = next(
-                (s for s in active_subs if s.id == int(_cart_sub_id)),
-                None,
-            )
-        else:
-            existing_subscription = next(
-                (s for s in active_subs if s.tariff_id == tariff_id),
-                None,
-            )
-    else:
-        existing_subscription = await get_subscription_by_user_id(db, user.id)
-
     try:
         if existing_subscription:
             # Обновляем существующую подписку на суточный тариф
             # Суточность определяется через tariff.is_daily, поэтому достаточно установить tariff_id
             was_trial_conversion = existing_subscription.is_trial  # Сохраняем до изменения
-            from app.database.crud.subscription import calc_device_limit_on_tariff_switch
-            from app.database.crud.tariff import get_tariff_by_id as _get_old_tariff
-
-            old_tariff = (
-                await _get_old_tariff(db, existing_subscription.tariff_id) if existing_subscription.tariff_id else None
-            )
             existing_subscription.tariff_id = tariff.id
             existing_subscription.traffic_limit_gb = tariff.traffic_limit_gb
-            existing_subscription.device_limit = calc_device_limit_on_tariff_switch(
-                current_device_limit=existing_subscription.device_limit,
-                old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
-                new_tariff_device_limit=tariff.device_limit,
-                max_device_limit=getattr(tariff, 'max_device_limit', None),
-            )
+            existing_subscription.device_limit = effective_device_limit
             existing_subscription.connected_squads = squads
             existing_subscription.status = 'active'
             existing_subscription.is_trial = False
