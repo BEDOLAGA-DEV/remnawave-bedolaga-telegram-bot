@@ -50,6 +50,7 @@ async def show_users_statistics(callback: types.CallbackQuery, db_user: User, db
 - Всего зарегистрировано: {stats['total_users']}
 - Активных: {stats['active_users']} ({active_rate})
 - Заблокированных: {stats['blocked_users']}
+- Удалённых: {stats['deleted_users']}
 
 <b>Новые регистрации:</b>
 - Сегодня: {stats['new_today']}

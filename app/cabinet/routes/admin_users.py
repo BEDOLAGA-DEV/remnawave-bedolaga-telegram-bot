@@ -599,15 +599,11 @@ async def get_users_stats(
     active_week = (await db.execute(active_week_q)).scalar() or 0
     active_month = (await db.execute(active_month_q)).scalar() or 0
 
-    # Count deleted users
-    deleted_q = select(func.count(User.id)).where(User.status == UserStatus.DELETED.value)
-    deleted_count = (await db.execute(deleted_q)).scalar() or 0
-
     return UsersStatsResponse(
         total_users=stats['total_users'],
         active_users=stats['active_users'],
         blocked_users=stats['blocked_users'],
-        deleted_users=deleted_count,
+        deleted_users=stats['deleted_users'],
         new_today=stats['new_today'],
         new_week=stats['new_week'],
         new_month=stats['new_month'],
