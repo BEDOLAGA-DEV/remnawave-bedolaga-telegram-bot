@@ -1528,7 +1528,7 @@
   Классы: `NotificationDeliveryService` (25 методов)
   Функции: нет
 - `app/services/notification_settings_service.py` — Python-модуль
-  Классы: `NotificationSettingsService` (28 методов)
+  Классы: `NotificationSettingsService` (23 методов)
   Функции: нет
 - `app/services/notification_types.py` — Python-модуль
   Классы: `NotificationType`
@@ -4049,6 +4049,9 @@
 - `tests/services/test_notification_delivery_preferences.py` — Python-модуль
   Классы: нет
   Функции: `test_global_switch_blocks_regular_notifications`, `test_transactional_messages_bypass_global_switch`, `test_per_user_preferences_block_matching_notifications`, `test_referral_switch_is_enforced_by_unified_delivery`, `test_blocked_user_can_receive_the_ban_notification`, `test_blocked_user_does_not_receive_unrelated_notifications`, `test_promo_opt_out_suppresses_the_message_but_keeps_the_discount` — Отказ от промо-уведомлений глушит СООБЩЕНИЕ, но не отбирает скидку.
+- `tests/services/test_notification_settings_in_db.py` — Python-модуль
+  Классы: нет
+  Функции: `isolated_settings` — Настройки — глобальный объект: значения возвращаются после теста; файла по умолчанию нет., `test_keys_are_bot_settings_in_the_user_notifications_category`, `test_getters_read_live_settings_not_the_file`, `test_getters_clamp_bad_values`, `test_setters_persist_to_db_and_apply_live`, `test_setters_clamp_and_reject_garbage`, `test_legacy_file_is_imported_once_and_never_overrides_the_db`, `test_missing_or_broken_legacy_file_is_ignored`, `test_followups_do_not_query_when_all_three_switches_are_off` — Все три выключены — мониторинг не ходит в базу и ничего не шлёт., `test_admin_menu_view_reflects_live_settings` — Меню «Уведомления пользователям» строится из тех же живых значений, что читает мониторинг.
 - `tests/services/test_overpay_certificate_service.py` — Python-модуль
   Классы: нет
   Функции: `cert_and_key`, `test_validate_p12_with_password`, `test_validate_p12_without_password`, `test_validate_p12_wrong_passphrase`, `test_validate_p12_garbage_bytes`, `test_validate_p12_oversize`, `stubbed_env`, `test_store_certificate`, `test_store_certificate_is_readable_by_owner_only` — p12 содержит приватный ключ — на диске он должен быть доступен только владельцу., `test_store_certificate_env_locked_warning`, `test_store_certificate_invalid_writes_nothing`, `test_delete_certificate`, `test_get_status`

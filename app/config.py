@@ -309,6 +309,17 @@ class Settings(BaseSettings):
     TRIAL_WARNING_HOURS: int = 2
     ENABLE_NOTIFICATIONS: bool = True
     NOTIFICATION_RETRY_ATTEMPTS: int = 3
+    # Уведомления истёкшим и отписавшимся от канала — переключатели меню «Уведомления пользователям»
+    # в админке бота и раздела настроек кабинета. Хранятся в базе (system_settings), а не в файле.
+    NOTIFICATION_TRIAL_CHANNEL_UNSUBSCRIBED_ENABLED: bool = True
+    NOTIFICATION_EXPIRED_1D_ENABLED: bool = True
+    NOTIFICATION_EXPIRED_WAVE2_ENABLED: bool = True
+    NOTIFICATION_EXPIRED_WAVE2_DISCOUNT_PERCENT: int = 10
+    NOTIFICATION_EXPIRED_WAVE2_VALID_HOURS: int = 24
+    NOTIFICATION_EXPIRED_WAVE3_ENABLED: bool = True
+    NOTIFICATION_EXPIRED_WAVE3_DISCOUNT_PERCENT: int = 20
+    NOTIFICATION_EXPIRED_WAVE3_VALID_HOURS: int = 24
+    NOTIFICATION_EXPIRED_WAVE3_TRIGGER_DAYS: int = 5
 
     MONITORING_LOGS_RETENTION_DAYS: int = 30
     NOTIFICATION_CACHE_HOURS: int = 24

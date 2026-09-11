@@ -1216,6 +1216,13 @@ class MonitoringService:
             return
         if not self.bot:
             return
+        # Переключатели читаются живьём из settings (база), не из файла: выключили — этот цикл уже видит.
+        if not (
+            NotificationSettingsService.is_expired_1d_enabled()
+            or NotificationSettingsService.is_second_wave_enabled()
+            or NotificationSettingsService.is_third_wave_enabled()
+        ):
+            return
 
         try:
             now = datetime.now(UTC)
