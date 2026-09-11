@@ -27,11 +27,21 @@ LINK_B = 'trojan://pass@b.example:443?security=tls&sni=b.example#B'
 
 
 class _Content:
-    def __init__(self, body: bytes) -> None:
+    """Поток тела ответа как у aiohttp: ``read(n)`` отдаёт то, что уже пришло (не больше n), в конце — пусто."""
+
+    def __init__(self, body: bytes, chunk: int | None = None) -> None:
         self._body = body
+        self._chunk = chunk
+        self._pos = 0
 
     async def read(self, n: int = -1) -> bytes:
-        return self._body if n < 0 else self._body[:n]
+        if n < 0:
+            n = len(self._body)
+        if self._chunk is not None:
+            n = min(n, self._chunk)
+        piece = self._body[self._pos : self._pos + n]
+        self._pos += len(piece)
+        return piece
 
 
 class FakeSession:
@@ -41,11 +51,13 @@ class FakeSession:
         status: int = 200,
         final_url: str | None = None,
         hwid_body: str | None = None,
+        chunk: int | None = None,
     ) -> None:
         self.body = body.encode() if isinstance(body, str) else body
         self.status = status
         self.final_url = final_url
         self.hwid_body = hwid_body.encode() if isinstance(hwid_body, str) else hwid_body
+        self.chunk = chunk
         self.requests: list[dict] = []
 
     def get(self, url: str, **kwargs):
@@ -54,7 +66,10 @@ class FakeSession:
         body = self.hwid_body if with_hwid and self.hwid_body is not None else self.body
         headers = {'x-hwid-active': 'true'} if self.hwid_body is not None else {}
         response = SimpleNamespace(
-            status=self.status, url=URL(self.final_url or url), content=_Content(body), headers=headers
+            status=self.status,
+            url=URL(self.final_url or url),
+            content=_Content(body, self.chunk),
+            headers=headers,
         )
 
         class _Ctx:
@@ -91,6 +106,24 @@ async def test_fetch_decodes_base64_body_with_client_user_agent() -> None:
     links = await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
     assert links == [LINK_A, LINK_B]
     assert session.requests[0]['headers']['User-Agent'] == CLIENT_USER_AGENT
+
+
+async def test_fetch_reads_the_whole_body_when_it_arrives_in_pieces() -> None:
+    """Чужая панель отдала JSON-подписку на 280 КБ, а загрузчик прочитал первый кусок в 9 КБ
+    и не разобрал обрезанный JSON — «нет конфигов». ``read(n)`` у aiohttp отдаёт то, что уже
+    пришло, а не ждёт n байт: тело надо дочитывать до конца."""
+    link_c = 'ss://YWVzLTI1Ni1nY206cGFzcw@c.example:8388#C'
+    body = f'{LINK_A}\n{LINK_B}\n{link_c}\n'
+    session = FakeSession(body, chunk=16)
+    links = await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+    assert links == [LINK_A, LINK_B, link_c]
+
+
+async def test_fetch_size_cap_counts_the_whole_stream() -> None:
+    """Потолок размера считается по сумме кусков, а не по первому из них."""
+    session = FakeSession(b'x' * (MAX_BODY_BYTES + 1), chunk=64 * 1024)
+    with pytest.raises(SubscriptionFetchError, match='велик'):
+        await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
 
 
 async def test_fetch_repeats_with_device_headers_when_panel_requires_hwid() -> None:

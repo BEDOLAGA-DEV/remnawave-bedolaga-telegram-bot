@@ -30,6 +30,7 @@ from app.services.reachability.panel_links import (
 MAX_BODY_BYTES = 1_000_000
 TIMEOUT_SECONDS = 15
 MAX_REDIRECTS = 3
+_READ_CHUNK_BYTES = 64 * 1024
 
 
 class SubscriptionFetchError(ValueError):
@@ -100,11 +101,26 @@ async def _get(session: Any, url: str, headers: dict[str, str]) -> tuple[bytes, 
         _check_host(response.url.host)
         if response.status >= 400:
             raise SubscriptionFetchError(f'Подписка ответила HTTP {response.status}')
-        body = await response.content.read(MAX_BODY_BYTES + 1)
-        if len(body) > MAX_BODY_BYTES:
-            raise SubscriptionFetchError('Ответ подписки слишком велик')
+        body = await _read_capped(response.content)
         raw_headers = getattr(response, 'headers', None) or {}
         return body, {str(key).lower(): str(value) for key, value in dict(raw_headers).items()}
+
+
+async def _read_capped(content: Any) -> bytes:
+    """Всё тело ответа, но не больше потолка.
+
+    ``read(n)`` у aiohttp отдаёт то, что уже пришло по сети (не больше n), а не ждёт
+    n байт: JSON-подписка на сотни килобайт приходила первым куском в несколько
+    килобайт, обрезанный JSON не разбирался — «по этому адресу нет конфигов».
+    """
+    body = bytearray()
+    while True:
+        chunk = await content.read(_READ_CHUNK_BYTES)
+        if not chunk:
+            return bytes(body)
+        body.extend(chunk)
+        if len(body) > MAX_BODY_BYTES:
+            raise SubscriptionFetchError('Ответ подписки слишком велик')
 
 
 async def fetch_subscription_links(url: str, *, session_factory: Callable[[], Any] | None = None) -> list[str]:
