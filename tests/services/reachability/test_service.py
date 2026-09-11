@@ -44,6 +44,11 @@ HOSTS = [RemnaWaveHost(uuid='h-bs', remark='RU | БС', address='bs-host.example
 class FakePanel:
     def __init__(self, *, broken: bool = False) -> None:
         self.broken = broken
+        # Пользователи панели по shortUuid — для пометки «истекла / отключена / трафик исчерпан».
+        self.users_by_short_uuid: dict[str, object] = {}
+
+    async def get_user_by_short_uuid(self, short_uuid):
+        return self.users_by_short_uuid.get(short_uuid)
 
     def get_api_client(self):
         outer = self
@@ -725,3 +730,32 @@ async def test_parse_input_base64_blob_expands_to_links(session_factory) -> None
     async with session_factory() as db:
         parsed = await service.parse_input(db, blob)
     assert [c.target.target_key for c in parsed.configs] == ['eu-host.example:443', 'bs-host.example:9443']
+
+
+async def test_parse_input_failed_url_carries_the_reason_for_the_admin(session_factory) -> None:
+    """«Пропущено» без причины ничего не объясняет — причина уезжает в кабинет."""
+    from app.services.reachability.subscriptions import SubscriptionFetchError
+
+    service = make_service(
+        session_factory, url_links={'https://dead.example/abc': SubscriptionFetchError('Подписка истекла 01.09.2024')}
+    )
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://dead.example/abc')
+    assert parsed.rejected[0].reason == 'subscription_failed'
+    assert parsed.rejected[0].detail == 'Подписка истекла 01.09.2024'
+
+
+async def test_subscription_configs_note_tells_the_status_of_the_panel_user(session_factory) -> None:
+    """Подписка своей панели: истекла / отключена / трафик исчерпан — по статусу пользователя панели."""
+    from datetime import UTC, datetime
+
+    panel = FakePanel()
+    panel.users_by_short_uuid = {
+        'ref-1': SimpleNamespace(
+            status='EXPIRED', expire_at=datetime(2024, 9, 1, tzinfo=UTC), used_traffic_bytes=0, traffic_limit_bytes=0
+        )
+    }
+    service = make_service(session_factory, panel=panel)
+    async with session_factory() as db:
+        configs = await service.subscription_configs(db)
+    assert configs.note == 'Подписка истекла 01.09.2024'

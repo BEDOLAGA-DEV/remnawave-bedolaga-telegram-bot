@@ -23,6 +23,7 @@ Purpose = Literal['bs', 'regular', 'unknown']
 TargetKind = Literal['host', 'node', 'subscription_config', 'custom', 'cidr']
 
 MAX_TARGETS_PER_JOB = 20
+MAX_RAW_INPUT_CHARS = 8_000_000
 MAX_UNITS_PER_JOB = 64
 
 
@@ -92,7 +93,9 @@ class BatchCreateRequest(BaseModel):
 class ParseInputRequest(BaseModel):
     """Поле «Конфиг или подписка»: ссылки, URL подписок, base64 — построчно."""
 
-    raw_input: str = Field(min_length=1, max_length=65536)
+    # В подписке бывает 10 тысяч серверов, и столько же ссылок можно вставить текстом —
+    # это ~3 МБ. Потолок защищает от мусора, а не режет большой, но честный ввод.
+    raw_input: str = Field(min_length=1, max_length=MAX_RAW_INPUT_CHARS)
 
 
 class PrefUpdateRequest(BaseModel):
@@ -215,18 +218,23 @@ class ConfigOut(BaseModel):
 class RejectedOut(BaseModel):
     reason: str
     preview: str  # обрезок ссылки после «@», без учётных данных
+    # Причина словами («Подписка истекла 01.09.2024»), когда бот её знает.
+    detail: str | None = None
 
 
 class SubscriptionConfigsResponse(BaseModel):
     short_uuid: str
     configs: list[ConfigOut]
     rejected: list[RejectedOut]
+    # Панель на что-то жалуется: истекла, отключена, трафик исчерпан.
+    note: str | None = None
 
 
 class SourceOut(BaseModel):
     kind: Literal['links', 'subscription']
     label: str
     count: int
+    note: str | None = None
 
 
 class ParsedConfigOut(ConfigOut):

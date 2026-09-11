@@ -231,8 +231,13 @@ def _configs_out(configs: SubscriptionConfigs) -> SubscriptionConfigsResponse:
     return SubscriptionConfigsResponse(
         short_uuid=configs.short_uuid,
         configs=[_config_out(index, target) for index, target in enumerate(configs.configs)],
-        rejected=[RejectedOut(reason=item.reason, preview=_rejected_preview(item.raw)) for item in configs.rejected],
+        rejected=[_rejected_out(item) for item in configs.rejected],
+        note=configs.note,
     )
+
+
+def _rejected_out(item) -> RejectedOut:
+    return RejectedOut(reason=item.reason, preview=_rejected_preview(item.raw), detail=getattr(item, 'detail', None))
 
 
 def _preview_out(preview: PreviewResult) -> PreviewResponse:
@@ -356,7 +361,7 @@ async def parse_input(
             ParsedConfigOut(**_config_out(index, item.target).model_dump(), target=item.target_in)
             for index, item in enumerate(parsed.configs)
         ],
-        rejected=[RejectedOut(reason=item.reason, preview=_rejected_preview(item.raw)) for item in parsed.rejected],
+        rejected=[_rejected_out(item) for item in parsed.rejected],
         sources=[SourceOut(**source) for source in parsed.sources],
     )
 

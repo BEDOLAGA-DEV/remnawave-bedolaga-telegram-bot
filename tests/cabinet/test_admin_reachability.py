@@ -458,3 +458,33 @@ async def test_hosts_route_serializes_a_real_panel_host(service) -> None:
     assert item.uuid == 'h-1' and item.address == 'ams.example.net' and item.port == 443
     assert item.tag == 'БС, VIP'
     assert item.node_uuids == ['n-1'] and item.purpose == 'bs'
+
+
+def test_parse_input_accepts_ten_thousand_pasted_links() -> None:
+    """Владелец: в подписке бывает 10 тысяч серверов — столько же ссылок можно вставить текстом
+    (это ~3 МБ), старый потолок поля в 64 КБ резал такой ввод на входе."""
+    from app.cabinet.schemas.reachability import ParseInputRequest
+
+    link = 'vless://00000000-0000-4000-8000-000000000001@srv{i}.example:443?security=reality&sni=srv{i}.example#S{i}'
+    raw = '\n'.join(link.format(i=i) for i in range(10_000))
+    assert len(raw) > 65_536
+    assert len(ParseInputRequest(raw_input=raw).raw_input) == len(raw)
+
+
+def test_configs_out_carries_the_note_and_the_rejection_detail() -> None:
+    from app.cabinet.routes.admin_reachability import _configs_out
+    from app.services.reachability.links import RejectedLink
+    from app.services.reachability.resolver import SubscriptionConfigs
+
+    out = _configs_out(
+        SubscriptionConfigs(
+            short_uuid='ref-1',
+            configs=[],
+            rejected=[
+                RejectedLink('https://dead.example/abc', 'subscription_failed', detail='Подписка истекла 01.09.2024')
+            ],
+            note='Подписка отключена в панели',
+        )
+    )
+    assert out.note == 'Подписка отключена в панели'
+    assert out.rejected[0].detail == 'Подписка истекла 01.09.2024'

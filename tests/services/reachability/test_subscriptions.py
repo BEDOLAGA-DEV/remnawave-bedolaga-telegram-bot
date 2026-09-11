@@ -52,19 +52,21 @@ class FakeSession:
         final_url: str | None = None,
         hwid_body: str | None = None,
         chunk: int | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.body = body.encode() if isinstance(body, str) else body
         self.status = status
         self.final_url = final_url
         self.hwid_body = hwid_body.encode() if isinstance(hwid_body, str) else hwid_body
         self.chunk = chunk
+        self.extra_headers = headers or {}
         self.requests: list[dict] = []
 
     def get(self, url: str, **kwargs):
         self.requests.append({'url': url, **kwargs})
         with_hwid = 'x-hwid' in (kwargs.get('headers') or {})
         body = self.hwid_body if with_hwid and self.hwid_body is not None else self.body
-        headers = {'x-hwid-active': 'true'} if self.hwid_body is not None else {}
+        headers = {**({'x-hwid-active': 'true'} if self.hwid_body is not None else {}), **self.extra_headers}
         response = SimpleNamespace(
             status=self.status,
             url=URL(self.final_url or url),
@@ -126,6 +128,52 @@ async def test_fetch_size_cap_counts_the_whole_stream() -> None:
         await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
 
 
+async def test_fetch_takes_a_subscription_with_ten_thousand_servers() -> None:
+    """Владелец: в подписке бывает и 10 тысяч серверов. JSON такой подписки — мегабайты,
+    потолок в 1 МБ отвергал её как «слишком велика»."""
+    import json
+
+    uuid = '00000000-0000-4000-8000-000000000001'
+
+    def outbound(i: int) -> dict:
+        return {
+            'tag': f'proxy-{i}',
+            'protocol': 'vless',
+            'settings': {'vnext': [{'address': f'srv{i}.example', 'port': 443, 'users': [{'id': uuid}]}]},
+            'streamSettings': {
+                'network': 'tcp',
+                'security': 'reality',
+                'realitySettings': {'serverName': f'srv{i}.example', 'publicKey': 'P' * 43, 'shortId': 'ab'},
+            },
+        }
+
+    configs = [
+        {
+            'remarks': f'Group {group}',
+            'routing': {'rules': [{'type': 'field', 'ip': ['127.0.0.0/8'] * 3, 'outboundTag': 'DIRECT'}] * 8},
+            'outbounds': [outbound(group * 100 + i) for i in range(100)],
+        }
+        for group in range(100)
+    ]
+    body = json.dumps(configs).encode()
+    assert len(body) > 1_000_000, 'тело обязано быть больше прежнего потолка в 1 МБ'
+    session = FakeSession(body, chunk=64 * 1024)
+    links = await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+    assert len(links) == 10_000
+
+
+async def test_default_session_waits_long_enough_for_a_multimegabyte_body() -> None:
+    """15 секунд на всё хватало заглушке, но не подписке в десятки мегабайт с медленной панели."""
+    from app.services.reachability.subscriptions import _default_session
+
+    session = _default_session()
+    try:
+        assert session.timeout.total is not None and session.timeout.total >= 120
+        assert session.timeout.connect is not None and session.timeout.connect <= 30
+    finally:
+        await session.close()
+
+
 async def test_fetch_repeats_with_device_headers_when_panel_requires_hwid() -> None:
     stub = 'vless://00000000-0000-4000-8000-000000000001@0.0.0.0:1?security=none#stub'
     session = FakeSession(stub, hwid_body=f'{LINK_A}\n')
@@ -139,7 +187,7 @@ async def test_fetch_accepts_plain_links_and_rejects_pages_errors_and_private_re
     assert await fetch_subscription_links(
         'https://sub.example/abc', session_factory=lambda: FakeSession(f'{LINK_A}\n')
     ) == [LINK_A]
-    with pytest.raises(SubscriptionFetchError, match='конфиг'):
+    with pytest.raises(SubscriptionFetchError, match='страница'):
         await fetch_subscription_links(
             'https://sub.example/abc', session_factory=lambda: FakeSession('<html>page</html>')
         )
@@ -199,3 +247,68 @@ async def test_fetch_uses_public_only_resolver_for_the_real_connection() -> None
 
     with pytest.raises(SubscriptionFetchError, match=r'служебный адрес 10\.0\.0\.5'):
         await fetch_subscription_links('http://internal.example/sub', session_factory=session_factory)
+
+
+# ==================== понятные причины ====================
+
+# Владелец: «внятные ошибки, чтобы человек понимал: лимит устройств, истекла, отключена».
+# Панель вместо серверов отдаёт заглушки с текстом оператора (customRemarks: expiredUsers,
+# limitedUsers, disabledUsers, HWIDMaxDevicesExceeded, HWIDNotSupported — контракт 3.4.3),
+# а срок и трафик кладёт в заголовок subscription-userinfo.
+
+STUB = 'vless://00000000-0000-4000-8000-000000000001@0.0.0.0:1?security=none#%D0%9F%D0%BE%D0%B4%D0%BF%D0%B8%D1%81%D0%BA%D0%B0%20%D0%BE%D1%82%D0%BA%D0%BB%D1%8E%D1%87%D0%B5%D0%BD%D0%B0'
+GB = 1024**3
+
+
+async def test_expired_subscription_is_explained_by_the_userinfo_header() -> None:
+    session = FakeSession(
+        STUB, headers={'subscription-userinfo': f'upload=0; download={GB}; total={100 * GB}; expire=1725148800'}
+    )
+    with pytest.raises(SubscriptionFetchError, match=r'Подписка истекла 01\.09\.2024'):
+        await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+
+
+async def test_exhausted_traffic_is_explained_by_the_userinfo_header() -> None:
+    session = FakeSession(
+        STUB, headers={'subscription-userinfo': f'upload={GB}; download={99 * GB}; total={100 * GB}; expire=4102444800'}
+    )
+    with pytest.raises(SubscriptionFetchError, match=r'Трафик подписки исчерпан: 100 из 100 ГБ'):
+        await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+
+
+async def test_stub_remark_of_the_panel_is_shown_verbatim() -> None:
+    """Текст заглушки задаёт оператор панели («Подписка отключена», «Лимит устройств») — его и показываем."""
+    session = FakeSession(STUB, headers={'subscription-userinfo': 'upload=0; download=0; total=0; expire=4102444800'})
+    with pytest.raises(SubscriptionFetchError, match=r'вместо серверов.*«Подписка отключена»'):
+        await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+
+
+async def test_stub_after_device_retry_mentions_the_device_requirement() -> None:
+    """Панель с привязкой устройств и после повтора с заголовками устройства отдала заглушку."""
+    stub = 'vless://00000000-0000-4000-8000-000000000001@0.0.0.0:1?security=none#Device%20limit%20reached'
+    session = FakeSession(stub, hwid_body=stub)
+    with pytest.raises(SubscriptionFetchError, match=r'«Device limit reached».*устройств'):
+        await fetch_subscription_links('https://sub.example/abc', session_factory=lambda: session)
+
+
+async def test_live_subscription_with_an_expired_header_carries_a_note() -> None:
+    """Конфиги есть, но срок вышел: список отдаём, а рядом — предупреждение."""
+    from app.services.reachability.subscriptions import fetch_subscription
+
+    session = FakeSession(
+        f'{LINK_A}\n', headers={'subscription-userinfo': 'upload=0; download=0; total=0; expire=1725148800'}
+    )
+    fetched = await fetch_subscription('https://sub.example/abc', session_factory=lambda: session)
+    assert fetched.links == [LINK_A]
+    assert fetched.note == 'Подписка истекла 01.09.2024'
+
+
+async def test_live_subscription_without_problems_has_no_note() -> None:
+    from app.services.reachability.subscriptions import fetch_subscription
+
+    session = FakeSession(
+        f'{LINK_A}\n',
+        headers={'subscription-userinfo': f'upload=0; download={GB}; total={100 * GB}; expire=4102444800'},
+    )
+    fetched = await fetch_subscription('https://sub.example/abc', session_factory=lambda: session)
+    assert fetched.note is None

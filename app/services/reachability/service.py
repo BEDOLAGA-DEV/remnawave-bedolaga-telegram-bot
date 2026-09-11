@@ -31,6 +31,7 @@ from app.services.reachability.gate import PaidCallGate
 from app.services.reachability.jobs import JobNotCancellable, JobRunner
 from app.services.reachability.kinds import KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.links import RejectedLink, expand_raw_input, parse_links
+from app.services.reachability.notes import note_for_panel_user
 from app.services.reachability.panel_links import fetch_panel_links
 from app.services.reachability.preview import PreviewResult
 from app.services.reachability.pricing import credits_to_kopeks, enforce_cost_limit, estimate_vless_kopeks
@@ -308,11 +309,21 @@ class ReachabilityService:
             async with self._panel_client() as api:
                 return await fetch_panel_links(api, short_uuid, prefer_public=short_uuid == self.reference_short_uuid())
 
+        async def fetch_user_status(short_uuid: str) -> str | None:
+            # Статус пользователя своей панели — чтобы рядом со списком стояло «истекла /
+            # отключена / трафик исчерпан», а не молчаливый список.
+            async with self._panel_client() as api:
+                getter = getattr(api, 'get_user_by_short_uuid', None)
+                if getter is None:
+                    return None
+                return note_for_panel_user(await getter(short_uuid), now=self._now())
+
         return TargetResolver(
             fetch_hosts=fetch_hosts,
             fetch_nodes=fetch_nodes,
             fetch_links=fetch_links,
             fetch_url_links=self._url_fetcher,
+            fetch_user_status=fetch_user_status,
             prefs=prefs,
         )
 
@@ -348,10 +359,13 @@ class ReachabilityService:
         links_count = 0
         for line in expand_raw_input(text):
             if is_subscription_url(line):
-                found, bad = await self._parse_subscription_url(resolver, line)
+                found, bad, note = await self._parse_subscription_url(resolver, line)
                 configs.extend(found)
                 rejected.extend(bad)
-                sources.append({'kind': 'subscription', 'label': line, 'count': len(found)})
+                source = {'kind': 'subscription', 'label': line, 'count': len(found)}
+                if note:
+                    source['note'] = note
+                sources.append(source)
                 continue
             parsed, bad = parse_links(line)
             rejected.extend(bad)
@@ -365,8 +379,11 @@ class ReachabilityService:
 
     async def _parse_subscription_url(
         self, resolver: TargetResolver, url: str
-    ) -> tuple[list[ParsedConfig], list[RejectedLink]]:
-        """Подписка своей панели — через её API по shortUuid из адреса; иначе загружаем сам URL."""
+    ) -> tuple[list[ParsedConfig], list[RejectedLink], str | None]:
+        """Подписка своей панели — через её API по shortUuid из адреса; иначе загружаем сам URL.
+
+        Третьим — пометка панели («Подписка истекла …»), если она есть.
+        """
         candidate = url.rstrip('/').rsplit('/', 1)[-1]
         if _SHORT_UUID_RE.match(candidate):
             try:
@@ -374,13 +391,14 @@ class ReachabilityService:
             except (PanelUnavailable, TargetResolutionError):
                 own = None
             if own is not None and own.configs:
-                return self._parsed_configs(own, {'short_uuid': candidate}), list(own.rejected)
+                return self._parsed_configs(own, {'short_uuid': candidate}), list(own.rejected), own.note
         try:
             fetched = await resolver.subscription_configs(url)
         except SubscriptionFetchError as exc:
             logger.info('Подписка по URL не загружена', url=url, error=str(exc))
-            return [], [RejectedLink(url, 'subscription_failed')]
-        return self._parsed_configs(fetched, {'url': url}), list(fetched.rejected)
+            # Причина уезжает в кабинет словами: «Пропущено» само по себе ничего не объясняет.
+            return [], [RejectedLink(url, 'subscription_failed', detail=str(exc))], None
+        return self._parsed_configs(fetched, {'url': url}), list(fetched.rejected), fetched.note
 
     @staticmethod
     def _parsed_configs(configs: SubscriptionConfigs, source_ref: dict) -> list[ParsedConfig]:
