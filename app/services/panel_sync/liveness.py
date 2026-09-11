@@ -45,3 +45,26 @@ def is_subscription_live(user, subscription, *, now: datetime | None = None) -> 
     if end_date.tzinfo is None:
         end_date = end_date.replace(tzinfo=UTC)
     return end_date > moment
+
+
+def is_subscription_expired(subscription, *, now: datetime | None = None) -> bool:
+    """Истекла ли подписка по дате — состояние, которое панель выводит сама.
+
+    Совпадает с ``Subscription.actual_status == 'expired'``: колонка EXPIRED,
+    либо ACTIVE/TRIAL с прошедшей (или отсутствующей) датой. DISABLED и LIMITED
+    сюда не входят — это другие состояния со своими правилами. Правило нужно
+    писателю (истёкшей подписке статус в панель не шлём — там нет «истекла»,
+    только «отключена админом»), вебхуку и импорту (DISABLED из панели у уже
+    истёкшей подписки ничего не меняет и переноситься не должен).
+    """
+    status = getattr(subscription, 'status', None)
+    if status == SubscriptionStatus.EXPIRED.value:
+        return True
+    if status not in _LIVE_STATUSES:
+        return False
+    end_date = getattr(subscription, 'end_date', None)
+    if end_date is None:
+        return True
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=UTC)
+    return end_date <= (now or datetime.now(UTC))

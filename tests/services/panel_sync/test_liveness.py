@@ -88,3 +88,35 @@ def test_matches_actual_status_of_the_model():
             assert is_subscription_live(_user(), subscription) is model_says_live, (
                 f'{column_status}, дней={days}: правило разошлось с actual_status'
             )
+
+
+# ==================== «истекла по дате» ====================
+
+
+def test_is_subscription_expired_matches_actual_status_of_the_model():
+    """Вебхук и импорт отличают «истекла» от «отключена» этим же правилом — оно обязано совпадать с моделью."""
+    from app.database.models import Subscription
+    from app.services.panel_sync import is_subscription_expired
+
+    for column_status in (
+        SubscriptionStatus.ACTIVE.value,
+        SubscriptionStatus.TRIAL.value,
+        SubscriptionStatus.EXPIRED.value,
+        SubscriptionStatus.DISABLED.value,
+        SubscriptionStatus.LIMITED.value,
+        SubscriptionStatus.PENDING.value,
+    ):
+        for days in (30, -1):
+            subscription = Subscription(status=column_status, end_date=datetime.now(UTC) + timedelta(days=days))
+            model_says_expired = subscription.actual_status == 'expired'
+
+            assert is_subscription_expired(subscription) is model_says_expired, (
+                f'{column_status}, дней={days}: правило разошлось с actual_status'
+            )
+
+
+def test_is_subscription_expired_takes_an_explicit_clock():
+    from app.services.panel_sync import is_subscription_expired
+
+    assert is_subscription_expired(_sub(days=-1), now=NOW) is True
+    assert is_subscription_expired(_sub(days=1), now=NOW) is False

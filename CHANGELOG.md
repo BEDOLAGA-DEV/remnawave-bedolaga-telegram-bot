@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.9.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.9.0...v4.9.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **sync:** истёкшей и лимитированной подписке не отправлять в панель статус DISABLED ([610c9f4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/610c9f48761fc56cf5cf46fe0f77321dfdd3088b))
+* **sync:** лимит устройств «без ограничения» не пишет warning на каждую подписку при синхронизации в панель ([d22e47c](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d22e47c9ed548d8c7a188eaf46dc5ab79b8e1337))
+
 ## [4.9.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.8.0...v4.9.0) (2026-09-10)
 
 
