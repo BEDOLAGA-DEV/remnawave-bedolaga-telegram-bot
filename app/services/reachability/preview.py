@@ -18,3 +18,5 @@ class PreviewResult:
     warnings: list[str] = field(default_factory=list)
     balance_kopeks: int | None = None
     request: dict = field(default_factory=dict)
+    #: GEO-РФ: числа сервиса из расчёта — города, потолок трафика, резерв, прогноз времени, потолок городов.
+    geo: dict | None = None

@@ -21,16 +21,11 @@ def _callback():
     return callback
 
 
-async def test_full_sync_button_runs_shared_full_sync_and_reports_all_three_parts(monkeypatch) -> None:
+async def test_full_sync_button_runs_shared_full_sync_and_reports_both_parts(monkeypatch) -> None:
+    """Панель — истина: полная синхронизация читает панель и серверы, в панель не пишет."""
     full = AsyncMock(
         return_value=(
-            {
-                'created': 1,
-                'updated': 2,
-                'errors': 0,
-                'deleted': 0,
-                'to_panel': {'created': 0, 'updated': 7, 'errors': 1},
-            },
+            {'created': 1, 'updated': 2, 'errors': 0, 'deleted': 0},
             {'created': 0, 'updated': 1, 'removed': 0, 'total': 3},
         )
     )
@@ -42,8 +37,9 @@ async def test_full_sync_button_runs_shared_full_sync_and_reports_all_three_part
 
     full.assert_awaited_once()
     final_text = callback.message.edit_text.await_args_list[-1].args[0]
-    assert 'Из панели' in final_text and 'Создано: 1' in final_text
-    assert 'В панель' in final_text and 'Обновлено: 7' in final_text and 'Ошибок: 1' in final_text
+    assert 'Из панели' in final_text and 'Создано: 1' in final_text and 'Обновлено: 2' in final_text
+    assert '<b>В панель:</b>' not in final_text and 'обе стороны' not in final_text
+    assert 'Панель — источник истины' in final_text
     assert 'Сервер' in final_text
 
 

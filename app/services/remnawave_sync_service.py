@@ -266,15 +266,17 @@ class RemnaWaveAutoSyncService:
 async def perform_full_sync(session: AsyncSession, service: RemnaWaveService) -> tuple[dict[str, Any], dict[str, Any]]:
     """Полная синхронизация — одна для бота, кабинета и расписания.
 
-    Три шага по порядку: из панели в бота (импорт), из бота в панель (экспорт —
-    статусы, даты, сквады, тег тарифа), серверы. Раньше «полная» делала только
-    импорт, и в панель не уезжало ничего.
+    Панель — истина (решение владельца 2026-09-11): «синхронизация = из панели в
+    бота». Два шага: пользователи из панели в бота, серверы из панели. В панель
+    отсюда не уезжает ничего — туда бот пишет только при покупке, продлении и
+    явных действиях админа; кнопка «из бота в панель» остаётся отдельной ручной
+    командой на крайний случай. До этого «полная» после чтения ещё и переписывала
+    панель состоянием бота, и правка руками в панели жила до ближайшего прохода.
     """
     if _full_sync_lock.locked():
         raise FullSyncAlreadyRunning
     async with _full_sync_lock:
         user_stats = dict(await service.sync_users_from_panel(session, 'all'))
-        user_stats['to_panel'] = dict(await service.sync_users_to_panel(session))
         server_stats = await sync_servers_from_panel(session, service)
         return user_stats, server_stats
 

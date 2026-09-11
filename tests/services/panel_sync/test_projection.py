@@ -2,6 +2,10 @@
 
 Раньше это делали шесть независимых мапперов с разными наборами полей и разными
 правилами. Здесь закреплены правила, которые они должны были соблюдать все.
+
+Владелец (2026-09-11): панель — истина, «в бота пишется истина панели». Дата,
+статус, трафик, сквады и лимиты берутся из панели при любом статусе аккаунта;
+от устаревшего снимка защищает его возраст, а не недоверие к полям.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -110,14 +114,46 @@ def test_active_panel_moves_the_end_date_in_both_directions():
     assert earlier.end_date == NOW + timedelta(days=10)
 
 
-def test_disabled_panel_never_touches_the_end_date():
-    """У отключённого в панели может лежать «сейчас плюс минута» от старых версий."""
+def test_disabled_panel_date_is_taken_too():
+    """Панель — истина при любом статусе: у отключённого дата тоже переносится."""
     subscription = _sub()
-    original = subscription.end_date
 
     project_onto_subscription(subscription, PanelSnapshot(status='DISABLED', expire_at=NOW), now=NOW)
 
-    assert subscription.end_date == original
+    assert subscription.end_date == NOW
+    assert subscription.status == SubscriptionStatus.DISABLED.value
+
+
+def test_panel_active_resurrects_an_expired_row_with_the_panel_date():
+    """Продлили руками в панели — бот берёт дату и снова считает подписку живой."""
+    subscription = _sub(status=SubscriptionStatus.EXPIRED.value, end_date=NOW - timedelta(days=3))
+
+    project_onto_subscription(subscription, PanelSnapshot(status='ACTIVE', expire_at=NOW + timedelta(days=20)), now=NOW)
+
+    assert subscription.end_date == NOW + timedelta(days=20)
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
+
+
+def test_trial_stays_trial_when_the_panel_says_active():
+    """Панель не различает триал и оплату — триал в боте остаётся триалом."""
+    subscription = _sub(status=SubscriptionStatus.TRIAL.value)
+
+    project_onto_subscription(subscription, PanelSnapshot(status='ACTIVE', expire_at=NOW + timedelta(days=2)), now=NOW)
+
+    assert subscription.status == SubscriptionStatus.TRIAL.value
+    assert subscription.end_date == NOW + timedelta(days=2)
+
+
+def test_expired_in_the_panel_takes_the_panel_date_and_expires():
+    subscription = _sub()
+
+    project_onto_subscription(
+        subscription, PanelSnapshot(status='EXPIRED', expire_at=NOW - timedelta(hours=1)), now=NOW
+    )
+
+    assert subscription.end_date == NOW - timedelta(hours=1)
+    assert subscription.status == SubscriptionStatus.EXPIRED.value
+    assert subscription.grace_candidate_reason == SubscriptionStatus.EXPIRED.value
 
 
 def test_a_few_seconds_of_difference_are_ignored():
@@ -154,8 +190,8 @@ def test_expired_by_date_marks_a_grace_candidate():
     assert subscription.status == SubscriptionStatus.DISABLED.value
 
 
-def test_sync_never_expires_a_subscription_that_is_active_in_the_bot():
-    """Защита от гонки: продление могло случиться между чтением панели и записью."""
+def test_silent_panel_does_not_expire_a_subscription_that_is_active_in_the_bot():
+    """Панель не сказала статус — не гадаем; истечение по своей дате доводит мониторинг."""
     subscription = _sub(status=SubscriptionStatus.ACTIVE.value, end_date=NOW - timedelta(minutes=1))
 
     project_onto_subscription(subscription, PanelSnapshot(status=None), now=NOW)
@@ -190,8 +226,19 @@ def test_traffic_jitter_is_ignored():
     assert subscription.traffic_used_gb == 1.0
 
 
-def test_limits_are_never_read_from_the_panel():
-    """Лимиты трафика и устройств задаёт тариф в боте, а не правка в панели."""
+def test_limits_are_read_from_the_panel():
+    """Панель — истина и по лимитам: правка в панели приезжает в бота."""
+    subscription = _sub()
+
+    project_onto_subscription(
+        subscription, PanelSnapshot(status='ACTIVE', traffic_limit_gb=500, device_limit=10), now=NOW
+    )
+
+    assert subscription.traffic_limit_gb == 500
+    assert subscription.device_limit == 10
+
+
+def test_missing_limits_in_the_answer_keep_the_bot_values():
     subscription = _sub()
 
     project_onto_subscription(subscription, PanelSnapshot(status='ACTIVE'), now=NOW)
@@ -298,34 +345,34 @@ def test_stale_snapshot_still_takes_the_date_of_a_live_account():
     assert subscription.end_date == NOW + timedelta(days=90)
 
 
-def test_stale_limited_needs_the_traffic_to_be_actually_spent():
+def test_snapshot_limited_is_limited_whatever_the_bot_counted():
+    """Панель — истина: «исчерпана» переносится, даже если счётчик бота отстал.
+
+    Только что оплаченную подписку от старого снимка защищает его возраст
+    (``snapshot_taken_at``, тесты ниже), а не счётчики трафика.
+    """
     fresh = _sub(traffic_used_gb=1.0, traffic_limit_gb=100)
-    spent = _sub(traffic_used_gb=100.0, traffic_limit_gb=100)
 
     project_onto_subscription(fresh, PanelSnapshot(status='LIMITED'), now=NOW, policy=BULK_SNAPSHOT)
-    project_onto_subscription(spent, PanelSnapshot(status='LIMITED'), now=NOW, policy=BULK_SNAPSHOT)
 
-    assert fresh.status == SubscriptionStatus.ACTIVE.value, 'только что оплаченную не гасим'
-    assert spent.status == SubscriptionStatus.LIMITED.value
+    assert fresh.status == SubscriptionStatus.LIMITED.value
 
 
-def test_stale_limited_does_not_resurrect_a_disabled_subscription():
-    subscription = _sub(status=SubscriptionStatus.DISABLED.value, traffic_used_gb=100.0, traffic_limit_gb=100)
+def test_snapshot_limited_overrides_a_locally_disabled_row():
+    subscription = _sub(status=SubscriptionStatus.DISABLED.value)
 
     project_onto_subscription(subscription, PanelSnapshot(status='LIMITED'), now=NOW, policy=BULK_SNAPSHOT)
 
-    assert subscription.status == SubscriptionStatus.DISABLED.value
+    assert subscription.status == SubscriptionStatus.LIMITED.value
 
 
-def test_stale_expired_needs_the_date_to_have_passed():
+def test_snapshot_expired_is_expired_whatever_the_bot_date_says():
+    """Панель гасит аккаунт сама и знает об этом лучше бота."""
     renewed = _sub(end_date=NOW + timedelta(days=30))
-    over = _sub(end_date=NOW - timedelta(days=1))
 
     project_onto_subscription(renewed, PanelSnapshot(status='EXPIRED'), now=NOW, policy=BULK_SNAPSHOT)
-    project_onto_subscription(over, PanelSnapshot(status='EXPIRED'), now=NOW, policy=BULK_SNAPSHOT)
 
-    assert renewed.status == SubscriptionStatus.ACTIVE.value, 'продление важнее протухшего снимка'
-    assert over.status == SubscriptionStatus.EXPIRED.value
+    assert renewed.status == SubscriptionStatus.EXPIRED.value
 
 
 def test_stale_disabled_is_applied():
@@ -418,6 +465,7 @@ def test_stale_snapshot_still_carries_traffic_and_links():
 
 
 def test_admin_pull_takes_the_date_even_from_a_disabled_account():
+    """Отключённый в панели остаётся отключённым, даже если дата прошла: так решила панель."""
     subscription = _sub()
 
     project_onto_subscription(
@@ -428,7 +476,7 @@ def test_admin_pull_takes_the_date_even_from_a_disabled_account():
     )
 
     assert subscription.end_date == NOW - timedelta(days=2)
-    assert subscription.status == SubscriptionStatus.EXPIRED.value
+    assert subscription.status == SubscriptionStatus.DISABLED.value
 
 
 def test_admin_pull_takes_the_limits_from_the_panel():
@@ -445,25 +493,24 @@ def test_admin_pull_takes_the_limits_from_the_panel():
     assert subscription.device_limit == 10
 
 
-def test_routine_sync_never_takes_the_limits():
-    subscription = _sub()
+def test_all_policies_but_webhook_are_the_same_panel_truth():
+    """Кнопка «из панели в бота», полный проход и фоновое чтение верят панели одинаково."""
+    from app.services.panel_sync import ROUTINE
 
-    project_onto_subscription(
-        subscription,
-        PanelSnapshot(status='ACTIVE', traffic_limit_gb=500, device_limit=10),
-        now=NOW,
-    )
-
-    assert subscription.traffic_limit_gb == 100
-    assert subscription.device_limit == 3
+    for policy in (ROUTINE, BULK_SNAPSHOT, ADMIN_PULL):
+        assert (policy.takes_date, policy.date_only_from_active, policy.status_mode) == (True, False, 'panel_truth'), (
+            policy.name
+        )
+        assert policy.takes_traffic_limit and policy.takes_device_limit, policy.name
 
 
-def test_admin_pull_without_a_date_marks_the_account_disabled():
+def test_panel_active_without_a_date_keeps_the_status():
+    """Дату не разобрали — статус не трогаем, а не гасим наугад."""
     subscription = _sub()
 
     project_onto_subscription(subscription, PanelSnapshot(status='ACTIVE', expire_at=None), now=NOW, policy=ADMIN_PULL)
 
-    assert subscription.status == SubscriptionStatus.DISABLED.value
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
 
 
 def test_reads_limits_from_both_shapes_of_the_answer():

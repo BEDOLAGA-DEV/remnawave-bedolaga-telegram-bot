@@ -59,7 +59,13 @@ from app.services.notification_delivery_service import (
     notification_delivery_service,
 )
 from app.services.notification_settings_service import NotificationSettingsService
-from app.services.panel_sync import is_subscription_live, push_subscription
+from app.services.panel_sync import (
+    is_subscription_live,
+    project_onto_subscription,
+    push_subscription,
+    read_panel_user,
+    resolve_panel_identity,
+)
 from app.services.promo_offer_service import promo_offer_service
 from app.services.subscription_service import SubscriptionService
 from app.utils.cache import cache
@@ -568,6 +574,11 @@ class MonitoringService:
                     )
                     continue
 
+                # Панель — истина по сроку: продлили руками в панели, а бот ещё не читал —
+                # забираем дату оттуда и не гасим.
+                if await self._panel_keeps_alive(db, subscription):
+                    continue
+
                 from app.database.crud.subscription import expire_subscription
 
                 # Capture tariff name before expire_subscription's db.refresh() expires the relationship
@@ -613,6 +624,49 @@ class MonitoringService:
 
         except Exception as e:
             logger.error('Ошибка проверки истёкших подписок', error=e)
+
+    async def _panel_keeps_alive(self, db: AsyncSession, subscription: Subscription) -> bool:
+        """Спросить панель перед гашением по своей дате.
+
+        Панель — истина (владелец, 2026-09-11): если аккаунт там активен и дата в
+        будущем, срок продлили в обход бота (руками в панели, вебхуков нет,
+        расписание раз в сутки) — берём дату и статус оттуда и подписку не гасим.
+        Панель молчит, аккаунта нет или он истёк — гасим по своей дате, как раньше.
+        """
+        service = getattr(self, 'subscription_service', None)
+        if service is None or not getattr(service, 'is_configured', False):
+            return False
+        user = getattr(subscription, 'user', None) or await get_user_by_id(db, subscription.user_id)
+        if user is None:
+            return False
+        try:
+            async with service.get_api_client() as api:
+                identity = await resolve_panel_identity(
+                    api, user, subscription, multi_tariff=settings.is_multi_tariff_enabled()
+                )
+        except Exception as error:
+            logger.warning(
+                'Панель не ответила перед гашением подписки — гасим по своей дате',
+                subscription_id=subscription.id,
+                error=str(error)[:200],
+            )
+            return False
+        if identity.panel_user is None:
+            return False
+        snapshot = read_panel_user(identity.panel_user)
+        now = datetime.now(UTC)
+        if snapshot.status != 'ACTIVE' or snapshot.expire_at is None or snapshot.expire_at <= now:
+            return False
+        changed = project_onto_subscription(subscription, snapshot, now=now)
+        if changed:
+            await db.commit()
+        logger.info(
+            'Подписка жива в панели — срок взят оттуда, не гасим',
+            subscription_id=subscription.id,
+            panel_expire_at=snapshot.expire_at.isoformat(),
+            changed=sorted(changed),
+        )
+        return True
 
     async def update_remnawave_user(self, db: AsyncSession, subscription: Subscription) -> RemnaWaveUser | None:
         try:
@@ -1215,6 +1269,13 @@ class MonitoringService:
         if not NotificationSettingsService.are_notifications_globally_enabled():
             return
         if not self.bot:
+            return
+        # Переключатели читаются живьём из settings (база), не из файла: выключили — этот цикл уже видит.
+        if not (
+            NotificationSettingsService.is_expired_1d_enabled()
+            or NotificationSettingsService.is_second_wave_enabled()
+            or NotificationSettingsService.is_third_wave_enabled()
+        ):
             return
 
         try:

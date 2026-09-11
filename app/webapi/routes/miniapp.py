@@ -7554,6 +7554,7 @@ async def toggle_daily_subscription_pause_endpoint(
         SubscriptionStatus.EXPIRED.value,
         SubscriptionStatus.LIMITED.value,
     )
+    was_limited = subscription.status == SubscriptionStatus.LIMITED.value
 
     # System-DISABLED subs (is_daily_paused=False) должны идти по пути resume
     if was_disabled and not is_currently_paused:
@@ -7679,7 +7680,7 @@ async def toggle_daily_subscription_pause_endpoint(
         # Sync with RemnaWave
         # Возобновление списывает суточную оплату — обнуление счётчика решает
         # общая политика суточного списания, а не жёсткая константа.
-        from app.services.traffic_reset_policy import should_reset_traffic_on_daily_charge
+        from app.services.traffic_reset_policy import lift_panel_traffic_limit, should_reset_traffic_on_daily_charge
 
         reset_traffic = should_reset_traffic_on_daily_charge(tariff)
         reset_reason = 'суточное списание (возобновление)' if reset_traffic else None
@@ -7736,6 +7737,9 @@ async def toggle_daily_subscription_pause_endpoint(
                 # мониторинга он показывал бы исчерпанный трафик.
                 subscription.traffic_used_gb = 0.0
                 await db.commit()
+                if was_limited:
+                    # PATCH сам по себе статус «трафик исчерпан» не снимает.
+                    await lift_panel_traffic_limit(db, subscription, service=service)
         except Exception as e:
             logger.error('Ошибка синхронизации с RemnaWave при возобновлении', error=e)
             from app.services.remnawave_retry_queue import remnawave_retry_queue

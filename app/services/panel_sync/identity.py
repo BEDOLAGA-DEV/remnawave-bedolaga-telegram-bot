@@ -26,7 +26,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import structlog
+from sqlalchemy import select
 
+from app.database.models import Subscription
 from app.external.remnawave_api import RemnaWaveUser
 
 
@@ -173,3 +175,45 @@ async def resolve_panel_identity(
         raise adoption_error
 
     return PanelIdentity()
+
+
+async def panel_id_is_free_for(db, subscription, panel_id: int | None) -> bool:
+    """Не держит ли этот панельный id уже ДРУГАЯ строка подписок.
+
+    Колонка частично уникальна, и в single-tariff все подписки одного человека
+    адресуют один и тот же панельный аккаунт, поэтому конфликт — штатная
+    ситуация, а не аномалия. Единственная проверка перед записью
+    ``subscriptions.remnawave_id`` — и для сервиса, и для админских роутов.
+    """
+    if panel_id is None:
+        return False
+    other = (
+        await db.execute(
+            select(Subscription.id)
+            .where(
+                Subscription.remnawave_id == int(panel_id),
+                Subscription.id != getattr(subscription, 'id', None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return other is None
+
+
+async def link_subscription_panel_identity(db, subscription, panel_id: int | None) -> bool:
+    """Проставить строке id панельного аккаунта, который только что обновили.
+
+    В single-tariff панель адресуется через ``users.remnawave_id``, и свежая строка
+    подписки (создана после удаления старой или повторной покупкой) оставалась с
+    пустым ``subscriptions.remnawave_id`` — а админские экраны по выбранной подписке
+    (panel-info, устройства, трафик) читают строго его: «пользователь не найден в
+    панели». Пишем только в пустую строку и только если id не держит соседняя —
+    колонка частично уникальна, и IntegrityError после успешного PATCH откатил бы
+    всё сделанное. True — привязали.
+    """
+    if getattr(subscription, 'remnawave_id', None) or panel_id is None:
+        return False
+    if not await panel_id_is_free_for(db, subscription, panel_id):
+        return False
+    subscription.remnawave_id = int(panel_id)
+    return True

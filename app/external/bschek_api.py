@@ -217,3 +217,24 @@ class BschekAPI:
 
     async def cancel_vless(self, test_id: int) -> dict:
         return await self._request('POST', f'/vless/{test_id}/cancel')
+
+    # ------------------------------------------------------------------ GEO-РФ (/v1/geo)
+
+    async def geo_catalog(self, params: dict[str, str] | None = None) -> dict:
+        """Справочник городов, регионов, провайдеров: бесплатно. Округ в query — латиницей (cfo…dfo)."""
+        return await self._request('GET', '/geo/catalog', params=params)
+
+    async def geo_preview(self, body: dict) -> dict:
+        """Число городов, резерв, прогноз времени и потолок городов для режима — без списания."""
+        return await self._request('POST', '/geo/preview', json_body=body)
+
+    async def geo_start(self, body: dict, idempotency_key: str) -> dict:
+        """Запуск прогона: Idempotency-Key обязателен (400 idempotency_key_required без него)."""
+        return await self._request('POST', '/geo/runs', json_body=body, idempotency_key=idempotency_key)
+
+    async def geo_run(self, run_id: int) -> dict:
+        return await self._request('GET', f'/geo/runs/{run_id}')
+
+    async def geo_cancel(self, run_id: int) -> dict:
+        """Остановить идущий прогон; 409 not_running / cannot_cancel — «останавливать нечего»."""
+        return await self._request('POST', f'/geo/runs/{run_id}/cancel')

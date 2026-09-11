@@ -284,7 +284,7 @@ async def update_ticket_settings(
     admin: User = Depends(require_permission('tickets:settings')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
-    """Update ticket system settings — SLA в system_settings, режим и уведомления в своём хранилище."""
+    """Update ticket system settings — всё в system_settings: SLA формой, режим и уведомления через сервис."""
     from app.services.support_settings_service import SupportSettingsService
 
     # Validate support_system_mode
@@ -300,11 +300,15 @@ async def update_ticket_settings(
     await save_settings_form(db, updates)
 
     if request.support_system_mode is not None:
-        SupportSettingsService.set_system_mode(request.support_system_mode.strip().lower())
+        await SupportSettingsService.set_system_mode(db, request.support_system_mode.strip().lower())
     if request.cabinet_user_notifications_enabled is not None:
-        SupportSettingsService.set_cabinet_user_notifications_enabled(request.cabinet_user_notifications_enabled)
+        await SupportSettingsService.set_cabinet_user_notifications_enabled(
+            db, request.cabinet_user_notifications_enabled
+        )
     if request.cabinet_admin_notifications_enabled is not None:
-        SupportSettingsService.set_cabinet_admin_notifications_enabled(request.cabinet_admin_notifications_enabled)
+        await SupportSettingsService.set_cabinet_admin_notifications_enabled(
+            db, request.cabinet_admin_notifications_enabled
+        )
 
     logger.info('Admin updated ticket settings', admin_id=admin.id, keys=sorted(updates))
 

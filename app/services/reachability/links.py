@@ -33,7 +33,9 @@ class ParsedLink:
 @dataclass(frozen=True)
 class RejectedLink:
     raw: str
-    reason: str  # stub | unsupported_scheme | malformed
+    reason: str  # stub | unsupported_scheme | malformed | subscription_failed
+    #: Причина словами для админа («Подписка истекла 01.09.2024»), если она известна.
+    detail: str | None = None
 
 
 def parse_links(text: str) -> tuple[list[ParsedLink], list[RejectedLink]]:
