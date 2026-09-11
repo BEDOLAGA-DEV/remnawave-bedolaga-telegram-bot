@@ -1,7 +1,7 @@
 """create subscription_premium_traffic (premium squad traffic limits)
 
-Revision ID: 0119
-Revises: 0118
+Revision ID: 0120
+Revises: 0119
 Create Date: 2026-09-06
 
 """
@@ -16,8 +16,20 @@ down_revision: Union[str, None] = '0119'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+TABLE = 'subscription_premium_traffic'
+
+
+def _has_table() -> bool:
+    return TABLE in sa.inspect(op.get_bind()).get_table_names()
+
 
 def upgrade() -> None:
+    # Номер миграции менялся при слияниях с dev (0116 → 0117 → 0119 → 0120).
+    # База, где она прошла под прежним номером, после перенумерации видит её
+    # непройденной — повторный запуск не должен падать на готовой таблице.
+    if _has_table():
+        return
+
     op.create_table(
         'subscription_premium_traffic',
         sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
@@ -58,6 +70,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if not _has_table():
+        return
+
     op.drop_constraint(
         'uq_subscription_premium_traffic_sub_squad',
         'subscription_premium_traffic',
