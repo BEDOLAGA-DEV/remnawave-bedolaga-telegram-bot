@@ -273,7 +273,7 @@ async def test_extinguish_learned_from_the_answer_retries_with_a_bigger_margin()
 
 @pytest.mark.asyncio
 async def test_extinguish_known_in_advance_falls_back_to_status_first():
-    """Дата и статус уехали одним PATCH, и панель отвергла всё: статус важнее — шлём без даты, дату гасим отдельно."""
+    """Дата уехала одним PATCH с остальными полями, и панель отвергла всё: поля важнее — шлём без даты, дату гасим отдельно."""
     stale = _panel_user(expire_at=NOW + timedelta(days=100))
     api = _api(get_user_by_id=stale)
     api.update_user.side_effect = [
@@ -288,9 +288,10 @@ async def test_extinguish_known_in_advance_falls_back_to_status_first():
 
     assert result.expiry_extinguished is True
     calls = api.update_user.await_args_list
-    status = lambda call: getattr(call.kwargs['status'], 'value', call.kwargs['status'])  # noqa: E731
-    assert 'expire_at' in calls[0].kwargs and status(calls[0]) == 'DISABLED'
-    assert 'expire_at' not in calls[1].kwargs and status(calls[1]) == 'DISABLED'
+    # Истёкшей подписке статус в панель не уезжает вовсе: истечение панель выводит
+    # сама, а DISABLED значил бы «отключена администратором».
+    assert 'expire_at' in calls[0].kwargs and 'status' not in calls[0].kwargs
+    assert 'expire_at' not in calls[1].kwargs and 'status' not in calls[1].kwargs
     assert calls[2].kwargs == {'user_id': 42, 'expire_at': NOW + MARGIN}
     assert calls[3].kwargs == {'user_id': 42, 'expire_at': NOW + SKEW_RETRY_MARGIN}
 

@@ -22,7 +22,6 @@ import app.database.crud.subscription as crud_sub_mod
 import app.services.grace_access_runtime as grace_runtime_mod
 from app.config import Settings
 from app.database.models import SubscriptionStatus
-from app.external.remnawave_api import UserStatus
 from app.services.remnawave_service import RemnaWaveService
 
 
@@ -116,7 +115,10 @@ async def test_future_panel_date_of_an_expired_subscription_is_extinguished(harn
     assert len(calls) == 2, 'после гашения панели нужен второй PATCH — он и несёт дату'
 
     first = calls[0].kwargs
-    assert first['status'] is UserStatus.DISABLED
+    # Истёкшей подписке статус не уезжает: в панели нет «истекла» руками, только
+    # «отключена админом» — доступ закрывает погашенная дата, истечение панель
+    # выводит сама.
+    assert 'status' not in first
     assert first.get('expire_at') is None, 'первым запросом дату не трогаем: вдруг там уже прошлое'
 
     second = calls[1].kwargs

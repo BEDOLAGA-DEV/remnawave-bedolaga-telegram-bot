@@ -194,3 +194,109 @@ def test_tag_is_sent_only_when_given():
 
     assert 'tag' not in without.update_kwargs(user_id=7)
     assert with_tag.update_kwargs(user_id=7)['tag'] == 'VIP'
+
+
+# ==================== статус: что панель решает сама ====================
+
+# В PATCH панель принимает только ACTIVE и DISABLED (контракт 3.4.3, ошибка A089:
+# «LIMITED и EXPIRED нельзя выставить вручную»). DISABLED для панели — решение
+# админа, а истечение по дате и исчерпанный трафик она выводит сама. Отправляя
+# истёкшей подписке DISABLED, бот превращал «истекла» в «отключена
+# администратором» у аккаунта, который панель ещё считала живым, и это
+# «отключена» импорт нёс обратно в бота, где такую подписку нельзя продлить из
+# кабинета. На уже истёкшем аккаунте панель 3.4.3 такой PATCH игнорирует
+# (проверено на стенде) — но отправлять его всё равно незачем.
+
+
+def test_expired_subscription_of_an_active_user_sends_no_status_on_update():
+    payload = build_panel_payload(
+        _user(),
+        _sub(status=SubscriptionStatus.EXPIRED.value, end_date=NOW - timedelta(days=5)),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert 'status' not in payload.update_kwargs(user_id=7, now=NOW)
+
+
+def test_active_column_past_its_date_sends_no_status_on_update():
+    """Мониторинг ещё не успел поставить EXPIRED — для панели это всё равно истечение, не отключение."""
+    payload = build_panel_payload(
+        _user(),
+        _sub(status=SubscriptionStatus.ACTIVE.value, end_date=NOW - timedelta(hours=1)),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert 'status' not in payload.update_kwargs(user_id=7, now=NOW)
+
+
+def test_limited_subscription_sends_no_status_on_update():
+    """Исчерпанный трафик панель считает сама; DISABLED сверху не снимался бы её же сбросом трафика."""
+    payload = build_panel_payload(
+        _user(),
+        _sub(status=SubscriptionStatus.LIMITED.value),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert 'status' not in payload.update_kwargs(user_id=7, now=NOW)
+
+
+def test_disabled_subscription_sends_disabled_on_update():
+    """Отключение в боте (обнуление админом) — настоящее решение, оно обязано доехать."""
+    payload = build_panel_payload(
+        _user(),
+        _sub(status=SubscriptionStatus.DISABLED.value, end_date=NOW - timedelta(days=5)),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert payload.update_kwargs(user_id=7, now=NOW)['status'] is UserStatus.DISABLED
+
+
+def test_blocked_user_with_expired_subscription_sends_disabled_on_update():
+    """Блокировка пользователя важнее истечения: панель обязана держать его выключенным."""
+    payload = build_panel_payload(
+        _user(status='blocked'),
+        _sub(status=SubscriptionStatus.EXPIRED.value, end_date=NOW - timedelta(days=5)),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert payload.update_kwargs(user_id=7, now=NOW)['status'] is UserStatus.DISABLED
+
+
+def test_expired_column_with_a_future_date_still_sends_disabled_on_update():
+    """Противоречивое состояние (статус «истекла», дата в будущем) — гасим, как и раньше."""
+    payload = build_panel_payload(
+        _user(),
+        _sub(status=SubscriptionStatus.EXPIRED.value, end_date=NOW + timedelta(days=5)),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert payload.update_kwargs(user_id=7, now=NOW)['status'] is UserStatus.DISABLED
+
+
+def test_create_of_an_expired_subscription_sends_expired_status():
+    """При создании панель принимает и EXPIRED — заведённый аккаунт сразу истёкший, а не отключённый."""
+    payload = build_panel_payload(
+        _user(),
+        _sub(status=SubscriptionStatus.EXPIRED.value, end_date=NOW - timedelta(days=5)),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert payload.create_kwargs(now=NOW)['status'] is UserStatus.EXPIRED
+
+
+def test_create_of_a_limited_subscription_sends_limited_status():
+    payload = build_panel_payload(
+        _user(),
+        _sub(status=SubscriptionStatus.LIMITED.value),
+        multi_tariff=False,
+        now=NOW,
+    )
+
+    assert payload.create_kwargs(now=NOW)['status'] is UserStatus.LIMITED

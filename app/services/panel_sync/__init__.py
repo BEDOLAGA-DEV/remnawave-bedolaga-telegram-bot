@@ -11,7 +11,7 @@
 
 from app.services.panel_sync.expiry import panel_expire_at, stale_panel_expire_at
 from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identity
-from app.services.panel_sync.liveness import is_subscription_live
+from app.services.panel_sync.liveness import is_subscription_expired, is_subscription_live
 from app.services.panel_sync.payload import PanelPayload, build_panel_payload
 from app.services.panel_sync.projection import (
     ADMIN_PULL,
@@ -46,6 +46,7 @@ __all__ = [
     'ProjectionPolicy',
     'SyncStats',
     'build_panel_payload',
+    'is_subscription_expired',
     'is_subscription_live',
     'panel_expire_at',
     'panel_status_for_new_subscription',
