@@ -4,6 +4,10 @@
 как ночной планировщик, но обе копии кода отправляли в панель жёсткое «не
 обнулять». Значит, тот же баг («плачу каждый день, а расход копится») жил и на
 кнопке «возобновить».
+
+Кнопка принимает и подписку в статусе «трафик исчерпан». После оплаты со
+сбросом лимит в панели снимается явно — PATCH сам по себе его не снимает, и без
+этого человек платил за сутки, а аккаунт оставался зарезанным.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ TABLES = list(Base.metadata.sorted_tables)
 class _FakePanelSync:
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.enabled: list[int] = []
 
     async def update_remnawave_user(self, db, subscription, **kwargs):
         self.calls.append(kwargs)
@@ -33,8 +38,12 @@ class _FakePanelSync:
         self.calls.append(kwargs)
         return SimpleNamespace(id=9001, used_traffic_bytes=0)
 
+    async def enable_remnawave_user(self, panel_user_id, db=None):
+        self.enabled.append(panel_user_id)
+        return True
 
-def _rows(traffic_reset_mode: str | None) -> list:
+
+def _rows(traffic_reset_mode: str | None, *, status: str = SubscriptionStatus.DISABLED.value) -> list:
     now = datetime.now(UTC)
     return [
         User(
@@ -64,7 +73,7 @@ def _rows(traffic_reset_mode: str | None) -> list:
             remnawave_short_id='day1',
             remnawave_id=9001,
             user_id=1,
-            status=SubscriptionStatus.DISABLED.value,
+            status=status,
             is_trial=False,
             is_daily_paused=False,
             start_date=now - timedelta(days=5),
@@ -79,7 +88,14 @@ def _rows(traffic_reset_mode: str | None) -> list:
     ]
 
 
-async def _resume_from_cabinet(db, monkeypatch, *, traffic_reset_mode: str | None, reset_on_payment: bool):
+async def _resume_from_cabinet(
+    db,
+    monkeypatch,
+    *,
+    traffic_reset_mode: str | None,
+    reset_on_payment: bool,
+    status: str = SubscriptionStatus.DISABLED.value,
+):
     import app.cabinet.routes.subscription_modules.daily as cabinet_daily
 
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset_on_payment)
@@ -88,7 +104,7 @@ async def _resume_from_cabinet(db, monkeypatch, *, traffic_reset_mode: str | Non
     panel = _FakePanelSync()
     monkeypatch.setattr(cabinet_daily, 'SubscriptionService', lambda: panel)
 
-    db.add_all(_rows(traffic_reset_mode))
+    db.add_all(_rows(traffic_reset_mode, status=status))
     await db.commit()
     user = await db.get(User, 1)
 
@@ -133,7 +149,31 @@ async def test_cabinet_resume_leaves_daily_reset_to_panel(monkeypatch):
     assert subscription.traffic_used_gb == 90.0
 
 
-async def _resume_from_miniapp(db, monkeypatch, *, traffic_reset_mode: str | None, reset_on_payment: bool):
+@pytest.mark.asyncio
+async def test_cabinet_resume_lifts_panel_limit_after_paid_reset(monkeypatch):
+    """Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        panel, subscription = await _resume_from_cabinet(
+            db,
+            monkeypatch,
+            traffic_reset_mode='NO_RESET',
+            reset_on_payment=True,
+            status=SubscriptionStatus.LIMITED.value,
+        )
+
+    assert panel.calls[0]['reset_traffic'] is True
+    assert panel.enabled == [9001]
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
+
+
+async def _resume_from_miniapp(
+    db,
+    monkeypatch,
+    *,
+    traffic_reset_mode: str | None,
+    reset_on_payment: bool,
+    status: str = SubscriptionStatus.DISABLED.value,
+):
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
@@ -147,7 +187,7 @@ async def _resume_from_miniapp(db, monkeypatch, *, traffic_reset_mode: str | Non
     panel = _FakePanelSync()
     monkeypatch.setattr(subscription_service_module, 'SubscriptionService', lambda: panel)
 
-    db.add_all(_rows(traffic_reset_mode))
+    db.add_all(_rows(traffic_reset_mode, status=status))
     await db.commit()
 
     loaded = await db.execute(
@@ -188,3 +228,20 @@ async def test_miniapp_resume_keeps_traffic_when_disabled(monkeypatch):
 
     assert panel.calls[0]['reset_traffic'] is False
     assert subscription.traffic_used_gb == 90.0
+
+
+@pytest.mark.asyncio
+async def test_miniapp_resume_lifts_panel_limit_after_paid_reset(monkeypatch):
+    """Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        panel, subscription = await _resume_from_miniapp(
+            db,
+            monkeypatch,
+            traffic_reset_mode='NO_RESET',
+            reset_on_payment=True,
+            status=SubscriptionStatus.LIMITED.value,
+        )
+
+    assert panel.calls[0]['reset_traffic'] is True
+    assert panel.enabled == [9001]
+    assert subscription.status == SubscriptionStatus.ACTIVE.value

@@ -1,9 +1,11 @@
 """Сторож: суточное списание нигде не решает про сброс трафика само.
 
-Правило жило тремя копиями — планировщик, кабинет, Mini App — и во всех трёх
-стояла жёсткая константа «не обнулять». Чинили бы снова по одной копии.
-Здесь по разбору кода проверяется, что каждый из трёх обработчиков спрашивает
-общую политику, а не подставляет константу.
+Правило жило копиями, и во всех стояла жёсткая константа «не обнулять». Первый
+фикс закрыл три копии по рукописному списку — и пропустил ещё две (кнопку
+«возобновить» в самом боте и авто-возобновление после пополнения), потому что
+список писался руками. Теперь места суточной оплаты сторож находит сам, по
+разбору кода всего приложения: функция, которая синхронизирует панель и при
+этом проводит транзакцию с описанием суточного списания, — это оно.
 """
 
 from __future__ import annotations
@@ -13,34 +15,61 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+APP = ROOT / 'app'
 
 POLICY = 'should_reset_traffic_on_daily_charge'
 
-# файл → функция, которая списывает суточную оплату и синхронизирует панель
-DAILY_CHARGE_SITES = {
-    'app/services/daily_subscription_service.py': '_process_single_charge',
-    'app/cabinet/routes/subscription_modules/daily.py': 'toggle_subscription_pause',
-    'app/webapi/routes/miniapp.py': 'toggle_daily_subscription_pause_endpoint',
-}
+# Описание транзакции, с которым проводится каждое суточное списание. Покупка и
+# смена тарифа проводятся с другими описаниями — они живут по правилам покупки.
+CHARGE_DESCRIPTION_MARKER = 'Суточная оплата'
 
 SYNC_CALLS = {'update_remnawave_user', 'create_remnawave_user'}
 
+# Все известные места. Детектор обязан находить как минимум их — иначе он ослеп
+# (переименовали функцию или описание транзакции), и сторож надо обновить.
+KNOWN_SITES = {
+    'app/services/daily_subscription_service.py::_process_single_charge',
+    'app/cabinet/routes/subscription_modules/daily.py::toggle_subscription_pause',
+    'app/webapi/routes/miniapp.py::toggle_daily_subscription_pause_endpoint',
+    'app/handlers/subscription/purchase.py::handle_toggle_daily_subscription_pause',
+    'app/services/subscription_auto_purchase_service.py::try_resume_disabled_daily_after_topup',
+}
 
-def _find_function(path: Path, name: str) -> ast.AST:
-    tree = ast.parse(path.read_text(encoding='utf-8'))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f'{path}: функция {name} не найдена — сторож устарел, обновите список')
+
+def _called_name(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return getattr(func, 'id', None)
+
+
+def _string_constants(func: ast.AST) -> list[str]:
+    return [node.value for node in ast.walk(func) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+
+
+def _is_daily_charge_site(func: ast.AST) -> bool:
+    calls = {_called_name(node) for node in ast.walk(func) if isinstance(node, ast.Call)}
+    if not calls & SYNC_CALLS:
+        return False
+    return any(CHARGE_DESCRIPTION_MARKER in text for text in _string_constants(func))
+
+
+def _daily_charge_sites() -> dict[str, ast.AST]:
+    sites: dict[str, ast.AST] = {}
+    for path in sorted(APP.rglob('*.py')):
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef):
+                continue
+            if _is_daily_charge_site(node):
+                sites[f'{path.relative_to(ROOT)}::{node.name}'] = node
+    return sites
 
 
 def _reset_traffic_arguments(func: ast.AST) -> list[ast.expr]:
     values: list[ast.expr] = []
     for node in ast.walk(func):
-        if not isinstance(node, ast.Call):
-            continue
-        called = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, 'id', None)
-        if called not in SYNC_CALLS:
+        if not isinstance(node, ast.Call) or _called_name(node) not in SYNC_CALLS:
             continue
         for keyword in node.keywords:
             if keyword.arg == 'reset_traffic':
@@ -48,12 +77,21 @@ def _reset_traffic_arguments(func: ast.AST) -> list[ast.expr]:
     return values
 
 
+def test_detector_still_sees_every_known_site():
+    """Детектор не ослеп: каждое известное место суточной оплаты он находит сам."""
+    found = set(_daily_charge_sites())
+    missing = KNOWN_SITES - found
+    assert not missing, f'детектор не видит известные места суточной оплаты: {sorted(missing)}'
+
+
 def test_every_daily_charge_site_asks_the_policy():
-    """Каждый обработчик суточной оплаты вызывает общее правило."""
-    for relative, function_name in DAILY_CHARGE_SITES.items():
-        func = _find_function(ROOT / relative, function_name)
+    """Каждое место суточной оплаты — найденное, а не перечисленное — спрашивает общее правило."""
+    offenders = []
+    for site, func in _daily_charge_sites().items():
         names = {node.id for node in ast.walk(func) if isinstance(node, ast.Name)}
-        assert POLICY in names, f'{relative}:{function_name} не спрашивает {POLICY}()'
+        if POLICY not in names:
+            offenders.append(site)
+    assert not offenders, f'суточная оплата без {POLICY}(): {sorted(offenders)}'
 
 
 def test_daily_charge_sync_never_hardcodes_reset():
@@ -62,18 +100,15 @@ def test_daily_charge_sync_never_hardcodes_reset():
     Одна константа на обработчик допустима — это досыл сквадов сразу после
     создания аккаунта, часть того же события оплаты, где обнуление уже сделано.
     """
-    for relative, function_name in DAILY_CHARGE_SITES.items():
-        func = _find_function(ROOT / relative, function_name)
+    for site, func in _daily_charge_sites().items():
         arguments = _reset_traffic_arguments(func)
-        assert arguments, f'{relative}:{function_name}: синхронизация без reset_traffic — сторож устарел'
+        assert arguments, f'{site}: синхронизация без reset_traffic — сторож устарел'
 
         computed = [value for value in arguments if not isinstance(value, ast.Constant)]
-        assert computed, f'{relative}:{function_name}: все вызовы синхронизации задают reset_traffic константой'
+        assert computed, f'{site}: все вызовы синхронизации задают reset_traffic константой'
 
         constants = [value for value in arguments if isinstance(value, ast.Constant)]
         assert all(value.value is False for value in constants), (
-            f'{relative}:{function_name}: жёсткое reset_traffic=True в суточном списании'
+            f'{site}: жёсткое reset_traffic=True в суточном списании'
         )
-        assert len(constants) <= 1, (
-            f'{relative}:{function_name}: больше одной константы reset_traffic — похоже, правило снова обходят'
-        )
+        assert len(constants) <= 1, f'{site}: больше одной константы reset_traffic — похоже, правило снова обходят'

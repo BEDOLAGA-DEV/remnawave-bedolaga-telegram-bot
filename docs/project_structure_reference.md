@@ -1706,7 +1706,7 @@
   Функции: `build_renewal_period_id`, `build_payment_descriptor`, `encode_payment_payload`, `decode_payment_payload`, `build_payment_metadata`, `parse_payment_metadata`, `with_admin_notification_service`, `calculate_missing_amount`
 - `app/services/subscription_service.py` — Python-модуль
   Классы: `PropagateSquadsResult`, `SubscriptionService` (32 методов)
-  Функции: `get_traffic_reset_strategy` — Получает стратегию сброса трафика., `panel_id_is_free_for` — Не держит ли этот панельный id уже ДРУГАЯ строка подписок., `link_subscription_panel_identity` — Проставить строке id панельного аккаунта, который только что обновили., `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
+  Функции: `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
 - `app/services/support_settings_service.py` — Python-модуль
   Классы: `SupportSettingsService` (25 методов)
   Функции: нет
@@ -1736,7 +1736,7 @@
   Функции: нет
 - `app/services/traffic_reset_policy.py` — Python-модуль
   Классы: нет
-  Функции: `should_reset_traffic_on_daily_charge` — Обнулять ли израсходованный трафик после успешного суточного списания.
+  Функции: `should_reset_traffic_on_daily_charge` — Обнулять ли израсходованный трафик после успешного суточного списания., `lift_panel_traffic_limit` — Снять с аккаунта в панели статус «трафик исчерпан» после оплаты новых суток.
 - `app/services/trial_activation_service.py` — Python-модуль
   Классы: `TrialPaymentError`, `TrialPaymentInsufficientFunds` (1 методов), `TrialPaymentChargeFailed`, `TrialActivationReversionResult`
   Функции: `get_trial_activation_charge_amount` — Returns the configured activation charge in kopeks if payment is enabled., `preview_trial_activation_charge` — Validates that the user can afford the trial activation charge., `charge_trial_activation_if_required` — Charges the user's balance if paid trial activation is enabled., `refund_trial_activation_charge` — Refunds a previously charged trial activation amount back to the user., `rollback_trial_subscription_activation` — Attempts to undo a previously created trial subscription., `revert_trial_activation` — Rolls back a trial subscription and refunds any charged amount.
@@ -1835,7 +1835,7 @@
   Функции: `narrow_push_fields` — Поля для ``push_subscription(only_fields=...)`` по флагам админа.
 - `app/services/panel_sync/identity.py` — Python-модуль
   Классы: `PanelIdentity` (2 методов)
-  Функции: `resolve_panel_identity` — Найти в панели аккаунт этой подписки.
+  Функции: `resolve_panel_identity` — Найти в панели аккаунт этой подписки., `panel_id_is_free_for` — Не держит ли этот панельный id уже ДРУГАЯ строка подписок., `link_subscription_panel_identity` — Проставить строке id панельного аккаунта, который только что обновили.
 - `app/services/panel_sync/liveness.py` — Python-модуль
   Классы: нет
   Функции: `is_subscription_live` — Включать ли пользователя в панели ради этой подписки., `is_subscription_expired` — Истекла ли подписка по дате — состояние, которое панель выводит сама.
@@ -1851,6 +1851,9 @@
 - `app/services/panel_sync/tags.py` — Python-модуль
   Классы: нет
   Функции: `resolve_panel_user_tag` — Тег для панельного аккаунта подписки.
+- `app/services/panel_sync/traffic_strategy.py` — Python-модуль
+  Классы: нет
+  Функции: `get_traffic_reset_strategy` — Стратегия сброса трафика: настройка тарифа, иначе общая из конфига.
 - `app/services/panel_sync/writer.py` — Python-модуль
   Классы: `PanelWriteResult`
   Функции: `push_subscription` — Отправить состояние подписки в панель., `patch_panel_account` — Обновить карточку аккаунта в панели, не трогая состояние подписки., `patch_panel_squads` — Переназначить аккаунту сквады тарифа.
@@ -3657,6 +3660,9 @@
 - `tests/handlers/test_broadcast_custom_buttons.py` — Python-модуль
   Классы: нет
   Функции: `test_keyboard_passes_icon_custom_emoji_id`, `test_schema_roundtrips_icon_custom_emoji_id`, `test_schema_defaults_to_none_and_rejects_garbage`
+- `tests/handlers/test_daily_bot_resume_traffic_reset.py` — Python-модуль
+  Классы: нет
+  Функции: `test_bot_resume_resets_traffic_when_enabled` — RESET_TRAFFIC_ON_PAYMENT=true — оплата возобновления обнуляет счётчик и в панели, и у себя., `test_bot_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем (прежнее поведение)., `test_bot_resume_leaves_daily_reset_to_panel` — Панель обнуляет сама раз в сутки — свой сброс не добавляем, иначе две квоты за день., `test_bot_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно.
 - `tests/handlers/test_device_rename_cancel.py` — Python-модуль
   Классы: нет
   Функции: `test_cancel_button_reopens_device_list`, `test_typed_cancel_reopens_device_list`, `test_valid_name_saves_and_reopens`, `test_empty_after_normalize_keeps_state_for_retry`
@@ -3907,7 +3913,7 @@
   Функции: `test_generated_token_matches_format_and_fits_start_param`, `test_generated_tokens_are_unique`, `test_is_coupon_token_rejects_wrong_shapes`, `test_invalid_format_never_touches_db`, `test_unknown_token_is_invalid`, `test_token_is_normalized_before_lookup`, `test_rejection_never_takes_the_row_lock` — Failed links must not hold FOR UPDATE for the rest of the /start handler., `test_redeemed_by_same_user_is_distinguishable`, `test_redeemed_by_other_user_is_uniform_invalid`, `test_revoked_coupon_is_uniform_invalid`, `test_expired_batch_raises_expired`, `test_missing_tariff_is_internal_error`, `test_concurrent_claim_lost_after_lock_is_rejected` — The locked re-read must re-check the status — a concurrent redemption may win., `test_success_claims_under_lock_and_flips_before_remnawave_sync`, `test_failed_remnawave_sync_aborts_redemption` — create_remnawave_user swallows API errors and returns None WITHOUT, `test_grant_failure_rolls_back_and_raises_internal`, `test_grant_extends_active_subscription`, `test_grant_replaces_expired_subscription`, `test_grant_creates_subscription_when_none_exists`, `test_grant_multi_tariff_looks_up_by_tariff`
 - `tests/services/test_daily_charge_reset_policy_guard.py` — Python-модуль
   Классы: нет
-  Функции: `test_every_daily_charge_site_asks_the_policy` — Каждый обработчик суточной оплаты вызывает общее правило., `test_daily_charge_sync_never_hardcodes_reset` — Решение о сбросе приходит выражением, а не константой в вызове синхронизации.
+  Функции: `test_detector_still_sees_every_known_site` — Детектор не ослеп: каждое известное место суточной оплаты он находит сам., `test_every_daily_charge_site_asks_the_policy` — Каждое место суточной оплаты — найденное, а не перечисленное — спрашивает общее правило., `test_daily_charge_sync_never_hardcodes_reset` — Решение о сбросе приходит выражением, а не константой в вызове синхронизации.
 - `tests/services/test_daily_charge_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `test_charge_resets_traffic_when_enabled` — RESET_TRAFFIC_ON_PAYMENT=true — списание обнуляет счётчик и в панели, и у себя., `test_charge_keeps_traffic_when_disabled` — Выключатель выключен — счётчик остаётся нетронутым (прежнее поведение)., `test_charge_leaves_reset_to_panel_on_daily_strategy` — У тарифа суточный сброс панели — свой сброс не делаем, иначе две квоты за день.
@@ -3919,10 +3925,13 @@
   Функции: `test_reload_daily_subscription_refetches_and_returns_loaded_object`, `test_reload_query_eager_loads_user_and_tariff` — The re-fetch must carry selectinload options for user AND tariff.
 - `tests/services/test_daily_resume_traffic_reset.py` — Python-модуль
   Классы: нет
-  Функции: `test_cabinet_resume_resets_traffic` — Возобновление с оплатой обнуляет счётчик, когда выключатель включён., `test_cabinet_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем., `test_cabinet_resume_leaves_daily_reset_to_panel` — Панель обнуляет сама раз в сутки — свой сброс не добавляем., `test_miniapp_resume_resets_traffic` — Кнопка «возобновить» в Mini App живёт по той же политике, что и планировщик., `test_miniapp_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем.
+  Функции: `test_cabinet_resume_resets_traffic` — Возобновление с оплатой обнуляет счётчик, когда выключатель включён., `test_cabinet_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем., `test_cabinet_resume_leaves_daily_reset_to_panel` — Панель обнуляет сама раз в сутки — свой сброс не добавляем., `test_cabinet_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно., `test_miniapp_resume_resets_traffic` — Кнопка «возобновить» в Mini App живёт по той же политике, что и планировщик., `test_miniapp_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем., `test_miniapp_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно.
 - `tests/services/test_daily_subscription_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `test_defers_drop_when_panel_resets_and_user_over_limit` — MONTH + used 130 > нового лимита 100 → понижение ОТКЛАДЫВАЕТСЯ до сброса панели., `test_applies_drop_cleanly_when_user_under_limit` — MONTH + used 40 <= нового лимита 100 → лимит понижается, сброса used нет., `test_no_reset_tariff_resets_used_when_over_limit` — NO_RESET (панель сама не сбрасывает) + used 130 > 100 → лимит вниз + сброс used (clamp)., `test_forces_drop_after_grace_even_if_panel_resets` — MONTH, но докупка просрочена >40д → не ждём вечно: понижаем + добиваем used., `test_traffic_reset_only_loop_runs_processor` — #630055: с ВЫКЛЮЧЕННЫМИ суточными тарифами джоба сброса докупок всё равно
+- `tests/services/test_daily_topup_resume_traffic_reset.py` — Python-модуль
+  Классы: нет
+  Функции: `test_topup_resume_resets_traffic_when_enabled` — RESET_TRAFFIC_ON_PAYMENT=true — списание после пополнения обнуляет счётчик и в панели, и у себя., `test_topup_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем (прежнее поведение)., `test_topup_resume_leaves_daily_reset_to_panel` — Панель обнуляет сама раз в сутки — свой сброс не добавляем, иначе две квоты за день., `test_topup_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно., `test_topup_resume_does_not_charge_limited_when_reset_impossible` — Списание счётчик не обнулит — деньги за сутки в лимите не берём, подписку не трогаем.
 - `tests/services/test_daily_traffic_reset_policy.py` — Python-модуль
   Классы: нет
   Функции: `test_reset_when_setting_enabled` — Выключатель включён — суточное списание обнуляет счётчик, как и любая оплата., `test_no_reset_when_setting_disabled` — Выключатель выключен — поведение прежнее, счётчик не трогаем., `test_no_reset_when_panel_already_resets_daily` — Панель сама обнуляет раз в сутки — второй сброс дал бы две квоты за день., `test_no_reset_when_global_strategy_is_daily` — У тарифа режим не задан — стратегия берётся из общей настройки., `test_reset_for_weekly_panel_strategy` — Недельный сброс панели суточную квоту не покрывает — обнуляем сами., `test_missing_tariff_falls_back_to_global` — Тариф не передан — решает общая настройка, без падения.
@@ -4391,6 +4400,9 @@
 - `tests/services/panel_sync/test_no_bypass.py` — Python-модуль
   Классы: нет
   Функции: `test_nobody_writes_to_the_panel_directly`, `test_grace_is_still_the_only_exception_that_needs_one` — Переведут грейс на сервис — убрать его из списка, иначе тот начнёт врать.
+- `tests/services/panel_sync/test_package_is_self_contained.py` — Python-модуль
+  Классы: нет
+  Функции: `test_no_module_in_panel_sync_imports_subscription_service` — Ни на уровне модуля, ни лениво внутри функций., `test_record_identity_links_row_even_without_subscription_service` — Сценарий репорта: модуль сервиса на месте, но нужного имени в нём нет — связь всё равно пишется.
 - `tests/services/panel_sync/test_payload.py` — Python-модуль
   Классы: нет
   Функции: `test_gigabytes_become_bytes`, `test_zero_gigabytes_mean_unlimited`, `test_empty_squads_are_never_sent_on_update` — Пустой список для панели значит «снять все инбаунды» — так подписку глушили., `test_empty_squads_are_sent_as_empty_list_on_create` — У нового аккаунта снимать нечего, а поле обязательно., `test_multi_tariff_username_carries_the_subscription_suffix`, `test_multi_tariff_username_falls_back_to_subscription_id` — Пустой short_id: без запасного суффикса два тарифа получали одно имя,, `test_single_tariff_username_has_no_subscription_suffix`, `test_blocked_user_gets_disabled_status`, `test_live_subscription_gets_active_status_and_its_own_date`, `test_update_of_an_expired_subscription_extinguishes_a_future_panel_date`, `test_update_of_an_expired_subscription_keeps_a_past_panel_date`, `test_create_of_an_expired_subscription_carries_its_real_date` — POST панель принимает с прошедшей датой — выдумывать «минуту вперёд» не надо., `test_external_squad_is_taken_from_the_tariff`, `test_null_external_squad_is_never_sent` — Панель отвечает ошибкой A039 на null в externalSquadUuid., `test_update_payload_never_carries_username` — PATCH с username переименовал бы аккаунт в панели., `test_update_payload_carries_the_panel_user_id`, `test_only_fields_filter_keeps_the_addressee` — Узкие правки (описание, сквады) не должны тащить в панель соседние поля., `test_tag_is_sent_only_when_given`, `test_expired_subscription_of_an_active_user_sends_no_status_on_update`, `test_active_column_past_its_date_sends_no_status_on_update` — Мониторинг ещё не успел поставить EXPIRED — для панели это всё равно истечение, не отключение., `test_limited_subscription_sends_no_status_on_update` — Исчерпанный трафик панель считает сама; DISABLED сверху не снимался бы её же сбросом трафика., `test_disabled_subscription_sends_disabled_on_update` — Отключение в боте (обнуление админом) — настоящее решение, оно обязано доехать., `test_blocked_user_with_expired_subscription_sends_disabled_on_update` — Блокировка пользователя важнее истечения: панель обязана держать его выключенным., `test_expired_column_with_a_future_date_still_sends_disabled_on_update` — Противоречивое состояние (статус «истекла», дата в будущем) — гасим, как и раньше., `test_create_of_an_expired_subscription_sends_expired_status` — При создании панель принимает и EXPIRED — заведённый аккаунт сразу истёкший, а не отключённый., `test_create_of_a_limited_subscription_sends_limited_status`
