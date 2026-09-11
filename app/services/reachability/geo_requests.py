@@ -52,6 +52,9 @@ class GeoOptions:
     city_limit: int = 0
     probe_mode: str = 'tls'
     heavy: bool = False
+    #: Повтор на том же выходе: sid из строки прошлого прогона и ожидаемый exit_ip (сервис сверит).
+    session: str | None = None
+    expect_exit_ip: str | None = None
 
 
 def normalize_district(value: str) -> str:
@@ -112,6 +115,8 @@ def parse_geo_options(raw: dict | None) -> GeoOptions:
         city_limit=city_limit,
         probe_mode=probe_mode,
         heavy=bool(data.get('heavy')),
+        session=str(data.get('session') or '').strip() or None,
+        expect_exit_ip=str(data.get('expect_exit_ip') or '').strip() or None,
     )
 
 
@@ -162,6 +167,9 @@ def build_geo_request(targets: list[Target], options: GeoOptions, core: str) -> 
         raise RequestBuildError(
             '«По пробе на каждого провайдера» работает только с округом, регионом или списком городов'
         )
+    # Правило сервиса: session принимается только с ОДНИМ городом в cities.
+    if options.session and (options.scope.kind != 'cities' or len(options.scope.cities) != 1):
+        raise RequestBuildError('Повтор через тот же выход — только для одного города из списка')
     body: dict = {
         'targets': [_site_target(target) for target in sites] + [_tunnel_link(target) for target in tunnels],
         'network': options.network,
@@ -180,4 +188,7 @@ def build_geo_request(targets: list[Target], options: GeoOptions, core: str) -> 
         body['region'] = scope.region
     elif scope.kind == 'cities':
         body['cities'] = list(scope.cities)
+    if options.session:
+        body['session'] = options.session
+        body['expect_exit_ip'] = options.expect_exit_ip or ''
     return body

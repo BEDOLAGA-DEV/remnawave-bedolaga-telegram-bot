@@ -81,6 +81,9 @@ class GeoOptionsIn(BaseModel):
     city_limit: int = Field(default=0, ge=0, le=MAX_GEO_CITIES)
     probe_mode: Literal['tls', 'tcp'] = 'tls'
     heavy: bool = False
+    #: Повтор через тот же выход: sid строки прошлого прогона и ожидаемый exit_ip; только с одним городом.
+    session: str | None = Field(default=None, max_length=128)
+    expect_exit_ip: str | None = Field(default=None, max_length=64)
 
 
 class JobCreateRequest(BaseModel):

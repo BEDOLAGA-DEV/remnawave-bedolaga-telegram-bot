@@ -105,6 +105,10 @@ def _row(raw: dict, names: dict) -> dict:
         'err': raw.get('err') or None,
         'flaky': bool(raw.get('flaky')),
         'retries': raw.get('retries'),
+        # Повтор через тот же выход из кабинета: sid и остаток удержания; «выход сменился» — пометка повтора.
+        'sid': str(raw['sid']) if raw.get('sid') else None,
+        'sid_hold_s': raw.get('sid_hold_s') if isinstance(raw.get('sid_hold_s'), int | float) else None,
+        'exit_changed': bool(raw.get('exit_changed')),
     }
 
 

@@ -145,3 +145,10 @@ def test_rows_without_index_keep_tokens_and_name_rows_fills_them_later() -> None
     assert named['region_ru'] == 'Воронежская область' and named['district'] == 'ЦФО' and named['city_ru'] == 'Воронеж'
     assert stranger['region_ru'] == 'nowhere', 'неизвестный регион остаётся токеном'
     assert name_rows([out], {}) == [out], 'пустой индекс — строки как есть'
+
+
+def test_session_fields_survive_for_a_same_exit_repeat() -> None:
+    [out] = normalize_rows([row(sid='s-1', sid_hold_s=287, exit_changed=True)])
+    assert out['sid'] == 's-1' and out['sid_hold_s'] == 287 and out['exit_changed'] is True
+    [plain] = normalize_rows([row()])
+    assert plain['sid'] is None and plain['sid_hold_s'] is None and plain['exit_changed'] is False

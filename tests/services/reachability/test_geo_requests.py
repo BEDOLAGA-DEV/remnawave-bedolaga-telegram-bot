@@ -143,3 +143,17 @@ def test_parse_geo_options_rejects_garbage() -> None:
         parse_geo_options({'scope': {'kind': 'cities', 'cities': []}})
     with pytest.raises(RequestBuildError, match='отрицательн'):
         parse_geo_options({'city_limit': -3})
+
+
+def test_session_repeats_on_the_same_exit_only_for_a_single_city() -> None:
+    one = GeoScope(kind='cities', cities=({'region': 'moscow', 'city': 'moscow'},))
+    body = build_geo_request([site('ya.ru')], options(scope=one, session='sid-1', expect_exit_ip='203.0.113.7'), '')
+    assert body['session'] == 'sid-1' and body['expect_exit_ip'] == '203.0.113.7'
+    assert 'session' not in build_geo_request([site('ya.ru')], options(scope=one), '')
+    two = GeoScope(kind='cities', cities=({'region': 'moscow', 'city': 'moscow'}, {'region': 'spb', 'city': 'spb'}))
+    with pytest.raises(RequestBuildError, match='одного города'):
+        build_geo_request([site('ya.ru')], options(scope=two, session='sid-1'), '')
+    with pytest.raises(RequestBuildError, match='одного города'):
+        build_geo_request([site('ya.ru')], options(session='sid-1'), '')
+    parsed = parse_geo_options({'session': ' sid-1 ', 'expect_exit_ip': ''})
+    assert parsed.session == 'sid-1' and parsed.expect_exit_ip is None
