@@ -2455,7 +2455,6 @@
 - `docs/persistent_cart_system.md` — файл
 - `docs/project_structure_reference.md` — файл
 - `docs/referral_program_setting.md` — файл
-- `docs/superpowers/`
 - `docs/web-admin-integration-guide.md` — файл
 - `docs/web-admin-integration.md` — файл
 - `docs/websocket-and-webhooks.md` — файл
@@ -2464,20 +2463,6 @@
 
 - `docs/handoffs/handoff-2026-08-31-1659.md` — файл
 - `docs/handoffs/handoff-2026-08-31-1944.md` — файл
-
-### docs/superpowers
-
-- `docs/superpowers/plans/`
-- `docs/superpowers/specs/`
-
-#### docs/superpowers/plans
-
-- `docs/superpowers/plans/2026-09-11-geo-rf-bot.md` — файл
-- `docs/superpowers/plans/2026-09-11-geo-rf-cabinet.md` — файл
-
-#### docs/superpowers/specs
-
-- `docs/superpowers/specs/2026-09-11-geo-rf-design.md` — файл
 
 ## migrations
 
