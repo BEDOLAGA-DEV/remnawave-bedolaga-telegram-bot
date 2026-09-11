@@ -78,6 +78,8 @@ async def test_standalone_registration_uses_the_throttle(monkeypatch):
     """Боевой обработчик зовёт общий дроссель, а не свой минутный лимит."""
     from app.cabinet.auth import email_auth_gate as gate
     from app.cabinet.routes import auth
+    from app.cabinet.schemas.auth import EmailRegisterStandaloneRequest
+    from app.services.registration_access_service import RegistrationChannel
 
     monkeypatch.setattr(gate, 'get_setting_value', AsyncMock(return_value=None))
     monkeypatch.setattr(gate.settings, 'CABINET_EMAIL_AUTH_ENABLED', True)
@@ -95,3 +97,33 @@ async def test_standalone_registration_uses_the_throttle(monkeypatch):
 
     assert limited.value.status_code == 429
     assert seen == ['9.9.9.9']
+
+    async def pass_throttle(_ip: str) -> None:
+        return None
+
+    monkeypatch.setattr(auth, 'enforce_email_registration_throttle', pass_throttle)
+
+    for referral_code, campaign_slug, expected_start_parameter in (
+        ('REF_CODE', None, 'REF_CODE'),
+        (None, 'campaign-slug', 'campaign-slug'),
+        ('REF_CODE', 'campaign-slug', 'REF_CODE'),
+    ):
+        async def capture_gate(_db, **kwargs):
+            assert kwargs['channel'] is RegistrationChannel.CABINET_EMAIL
+            assert kwargs['start_parameter'] == expected_start_parameter
+            raise RuntimeError('registration gate observed')
+
+        monkeypatch.setattr(auth, 'evaluate_public_registration', capture_gate)
+        request = EmailRegisterStandaloneRequest(
+            email='new@example.com',
+            password='strong-password',
+            referral_code=referral_code,
+            campaign_slug=campaign_slug,
+        )
+
+        with pytest.raises(RuntimeError, match='registration gate observed'):
+            await auth.register_email_standalone(
+                request=request,
+                raw_request=object(),
+                db=SimpleNamespace(),
+            )
