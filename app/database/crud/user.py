@@ -29,6 +29,7 @@ from app.database.models import (
     UserStatus,
 )
 from app.utils.text_search import contains_conditions
+from app.utils.timezone import local_day_start
 from app.utils.validators import sanitize_telegram_name
 
 
@@ -1357,7 +1358,7 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     deleted_result = await db.execute(select(func.count(User.id)).where(User.status == UserStatus.DELETED.value))
     deleted_users = deleted_result.scalar()
 
-    today = datetime.now(UTC).date()
+    today = local_day_start()
     today_result = await db.execute(
         select(func.count(User.id)).where(and_(User.created_at >= today, User.status == UserStatus.ACTIVE.value))
     )

@@ -15,6 +15,7 @@ from app.database.models import (
     WheelPrize,
     WheelSpin,
 )
+from app.utils.timezone import local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -235,7 +236,7 @@ async def mark_spin_applied(db: AsyncSession, spin_id: int) -> WheelSpin | None:
 
 async def get_user_spins_today(db: AsyncSession, user_id: int) -> int:
     """Получить количество спинов пользователя за сегодня."""
-    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = local_day_start()
 
     result = await db.execute(
         select(func.count(WheelSpin.id)).where(

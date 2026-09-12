@@ -596,6 +596,9 @@
 - `app/database/database.py` — Python-модуль
   Классы: `DatabaseManager` (4 методов), `BatchOperations` (2 методов)
   Функции: `with_db_retry` — Декоратор для автоматического retry при сбоях подключения к БД., `execute_with_retry` — Выполнение SQL с retry логикой., `get_db` — Стандартная dependency для FastAPI, `get_db_read_only` — Read-only dependency для тяжелых SELECT запросов, `close_db` — Корректное закрытие всех соединений, `sync_postgres_sequences` — Ensure PostgreSQL sequences match the current max values after restores., `get_pool_metrics` — Детальные метрики пула для Prometheus/Grafana
+- `app/database/local_date.py` — Python-модуль
+  Классы: нет
+  Функции: `local_date_expr` — SQL-выражение «дата ``column`` в зоне ``tz``» (по умолчанию settings.TIMEZONE)., `as_date` — Значение ``local_date_expr`` из строки результата как ``date``.
 - `app/database/migrations.py` — Python-модуль
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
@@ -799,7 +802,7 @@
   Функции: нет
 - `app/database/crud/transaction.py` — Python-модуль
   Классы: нет
-  Функции: `traffic_addon_clause` — SQL-условие: описание транзакции похоже на докупку трафика., `device_addon_clause` — SQL-условие: описание транзакции похоже на покупку доп. устройств., `addon_description_clause` — SQL-условие: транзакция — любой доп (трафик или устройства), не продажа/продление., `create_transaction`, `emit_transaction_side_effects` — Fire side-effects that were deferred when create_transaction(commit=False) was used., `get_transaction_by_id`, `get_transaction_by_external_id`, `get_user_transactions`, `get_user_transactions_count`, `get_user_total_spent_kopeks` — Sum of personal spending for promo group auto-assignment., `complete_transaction`, `get_pending_transactions`, `get_transactions_statistics`, `get_revenue_by_period` — Доход по дням — реальные платежи + прямые покупки подписок (лендинги)., `find_tribute_transactions_by_payment_id`, `check_tribute_payment_duplicate`, `create_unique_tribute_transaction` — Create a Tribute deposit transaction idempotently.
+  Функции: `traffic_addon_clause` — SQL-условие: описание транзакции похоже на докупку трафика., `device_addon_clause` — SQL-условие: описание транзакции похоже на покупку доп. устройств., `addon_description_clause` — SQL-условие: транзакция — любой доп (трафик или устройства), не продажа/продление., `create_transaction`, `emit_transaction_side_effects` — Fire side-effects that were deferred when create_transaction(commit=False) was used., `get_transaction_by_id`, `get_transaction_by_external_id`, `get_user_transactions`, `get_user_transactions_count`, `get_user_total_spent_kopeks` — Sum of personal spending for promo group auto-assignment., `complete_transaction`, `get_pending_transactions`, `get_transactions_statistics`, `get_revenue_by_period` — Доход по календарным дням settings.TIMEZONE за последние ``days`` дней, включая сегодня., `find_tribute_transactions_by_payment_id`, `check_tribute_payment_duplicate`, `create_unique_tribute_transaction` — Create a Tribute deposit transaction idempotently.
 - `app/database/crud/user.py` — Python-модуль
   Классы: нет
   Функции: `generate_referral_code`, `get_user_by_id`, `get_user_by_telegram_id`, `find_phantom_user_by_username` — Find a phantom user created by guest purchase (no telegram_id, auth_type=telegram)., `get_user_by_username`, `get_user_by_referral_code`, `get_user_by_remnawave_id` — Найти бот-пользователя по числовому id пользователя панели., `create_unique_referral_code`, `create_user_no_commit` — Создает пользователя без немедленного коммита для пакетной обработки, `emit_user_created_event` — Emit the best-effort post-commit user.created event for a persisted user., `create_user`, `update_user`, `lock_user_for_update` — Lock user row with SELECT FOR UPDATE to prevent concurrent balance modifications., `add_user_balance`, `add_user_balance_by_id`, `lock_user_for_pricing` — Lock user row with FOR UPDATE and return refreshed instance., `subtract_user_balance`, `cleanup_expired_promo_offer_discounts`, `get_users_list`, `get_users_count`, `get_users_spending_stats` — Получает статистику трат для списка пользователей., `get_referrals`, `get_users_for_promo_segment`, `get_inactive_users`, `delete_user`, `get_users_statistics`, `get_users_with_active_subscriptions` — Получает список пользователей с активными подписками., `create_user_by_email` — Создать пользователя через email регистрацию (без Telegram)., `get_user_by_email` — Get user by email address (case-insensitive)., `get_user_by_email_alias` — Найти пользователя, чей адрес ведёт в тот же ящик, что и ``email``., `is_email_taken` — Check if email is already taken by another user., `set_email_change_pending` — Set pending email change for user., `verify_and_apply_email_change` — Verify email change code and apply the change., `clear_email_change_pending` — Clear pending email change data., `get_user_by_oauth_provider` — Find a user by OAuth provider ID., `set_user_oauth_provider_id` — Link an OAuth provider ID to an existing user., `clear_user_oauth_provider_id` — Unlink an OAuth provider from an existing user (set column to None)., `create_user_by_oauth` — Create a new user via OAuth provider., `lock_user_subscriptions_for_update` — Lock all subscriptions for a user using SELECT FOR UPDATE.
@@ -2180,7 +2183,7 @@
   Функции: `preview_text` — Короткое превью сообщения для уведомлений (полный текст — в карточке тикета)., `split_long_block` — Режет блок по границам строк/слов, не разрывая HTML-теги и сущности., `build_ticket_pages` — Собирает страницы «шапка + сообщения», не теряя ни одного символа.
 - `app/utils/timezone.py` — Python-модуль
   Классы: нет
-  Функции: `get_local_timezone` — Return the configured local timezone., `panel_datetime_to_utc` — Normalize a RemnaWave panel datetime to aware UTC., `to_local_datetime` — Convert a datetime value to the configured local timezone., `format_local_datetime` — Format a datetime value in the configured local timezone., `format_email_datetime` — Format a datetime for email-template substitution.
+  Функции: `get_local_timezone` — Return the configured local timezone., `local_date` — Календарная дата момента ``moment`` (по умолчанию — сейчас) в зоне ``tz``., `local_day_start` — Полночь локального дня, к которому относится ``moment``, как момент в UTC., `local_day_bounds` — Полуинтервал ``[начало, конец)`` локального дня в UTC: ``created_at >= start`` и ``< end``., `local_month_start` — Полночь первого числа локального месяца, к которому относится ``moment``, как момент в UTC., `panel_datetime_to_utc` — Normalize a RemnaWave panel datetime to aware UTC., `to_local_datetime` — Convert a datetime value to the configured local timezone., `format_local_datetime` — Format a datetime value in the configured local timezone., `format_email_datetime` — Format a datetime for email-template substitution.
 - `app/utils/user_utils.py` — Python-модуль
   Классы: нет
   Функции: `format_referrer_info` — Return formatted referrer info for admin notifications., `generate_unique_referral_code`, `get_effective_referral_commission_percent` — Возвращает индивидуальный процент комиссии пользователя или дефолтное значение., `mark_user_as_had_paid_subscription`, `get_user_referral_summary`, `get_detailed_referral_list`, `get_referral_analytics`
@@ -3033,6 +3036,9 @@
 - `tests/cabinet/test_admin_settings_forms_persist.py` — Python-модуль
   Классы: `TestPartnerSettings` (3 методов), `TestTicketSettings` (1 методов)
   Функции: `isolated_settings`, `test_no_cabinet_route_rewrites_dotenv` — Сторож: .env — не хранилище настроек; в контейнере это не тот файл или его нет.
+- `tests/cabinet/test_admin_stats_today_local_day.py` — Python-модуль
+  Классы: нет
+  Функции: `test_recent_payments_today_total_uses_local_day`, `test_dashboard_income_today_comes_from_statistics_not_from_chart` — Дашборд не пересчитывает «сегодня» из графика по строке даты UTC.
 - `tests/cabinet/test_admin_sync_extinguishes_stale_panel_date.py` — Python-модуль
   Классы: нет
   Функции: `test_future_panel_date_of_an_expired_subscription_is_extinguished`, `test_past_panel_date_is_left_alone` — В панели уже прошлое: это настоящая дата окончания, её не трогаем., `test_live_subscription_pushes_its_own_date`, `test_sync_to_panel_endpoint_extinguishes_a_future_panel_date` — Та же кнопка в карточке пользователя — у неё своя копия сборки запроса.
@@ -3246,6 +3252,9 @@
 - `tests/cabinet/test_route_shadowing.py` — Python-модуль
   Классы: нет
   Функции: `cabinet_routes`, `test_no_literal_route_is_shadowed`, `test_guard_detects_shadowing` — Сама проверка обязана быть чувствительной, иначе она молча зелёная.
+- `tests/cabinet/test_sales_stats_period_local_day.py` — Python-модуль
+  Классы: нет
+  Функции: `test_preset_days_start_at_local_midnight`, `test_custom_dates_without_zone_are_local_calendar_days`, `test_custom_dates_with_zone_are_kept_as_instants`
 - `tests/cabinet/test_settings_choice_types.py` — Python-модуль
   Классы: `TestChoiceKeyNormalisation` (2 методов)
   Функции: `test_every_listed_option_is_accepted` — Вариант, показанный админу, обязан сохраняться., `test_boolean_setting_accepts_both_shapes` — Кабинет шлёт настоящий bool, бот — строку. Принимать надо обе формы., `test_string_choices_still_reject_unknown_values` — Контроль: смягчение сравнения не должно открыть дорогу чему угодно., `test_setting_without_choices_is_not_restricted` — Ограничение задаётся списком, а не самим фактом проверки.
@@ -3307,6 +3316,9 @@
 - `tests/contracts/test_bschek_geo_client_paths_match_spec.py` — Python-модуль
   Классы: нет
   Функции: `test_every_geo_call_of_the_client_exists_in_the_spec`, `test_client_covers_the_five_endpoints_we_use`
+- `tests/contracts/test_local_day_guard.py` — Python-модуль
+  Классы: нет
+  Функции: `find_violations`, `test_detector_sees_every_idiom` — Сторож не ослеп: на синтетическом примере находит все четыре идиомы., `test_app_has_no_hand_made_utc_days`
 - `tests/contracts/test_public_registration_gate.py` — Python-модуль
   Классы: нет
   Функции: `test_every_public_user_mutation_is_gated_or_narrowly_trusted`, `test_legacy_guest_find_or_create_wrapper_cannot_reappear_in_public_routes`, `test_registration_twins_bind_the_locked_gift_symmetrically`, `test_no_admission_branch_binds_the_locked_gift_twice`, `test_registration_twins_never_bind_the_gift_unguarded` — A raw bind_locked_gift in a twin would surface a lost race as a 500, not a denial.
@@ -3363,6 +3375,12 @@
 - `tests/crud/test_tariff_panel_tag_crud.py` — Python-модуль
   Классы: нет
   Функции: `test_create_upper_cases_tag`, `test_update_blank_clears_and_missing_keeps`, `test_invalid_tag_is_rejected_before_write`, `test_trial_duration_days_persists`
+- `tests/crud/test_today_metrics_local_day.py` — Python-модуль
+  Классы: нет
+  Функции: `test_new_users_today_counts_from_local_midnight`, `test_subscriptions_purchased_today_counts_from_local_midnight`
+- `tests/crud/test_transactions_today_local_day.py` — Python-модуль
+  Классы: нет
+  Функции: `test_income_today_starts_at_local_midnight`, `test_transactions_count_today_starts_at_local_midnight`, `test_revenue_by_period_groups_by_local_calendar_day`, `test_revenue_by_period_for_one_day_is_today_only`
 - `tests/crud/test_trial_conversion_on_paid_purchase.py` — Python-модуль
   Классы: нет
   Функции: `test_create_paid_subscription_converts_alive_trial_of_other_tariff` — Живой триал ДРУГОГО тарифа при платной покупке конвертируется на месте., `test_create_paid_subscription_prefers_same_tariff_alive_trial` — Живой триал ТОГО ЖЕ тарифа берётся из lookup'а напрямую — без второго, `test_create_paid_subscription_uses_passed_conversion_trial` — Кабинет передаёт пре-резолвленного кандидата — повторный lookup не нужен., `test_create_paid_subscription_falls_to_insert_when_conversion_raced` — Конкурентная покупка успела конвертировать кандидата (конверсия вернула, `test_create_paid_subscription_without_trial_falls_to_insert` — Нет живого триала — обычная вставка новой подписки, как раньше., `test_expired_same_tariff_revive_wins_over_conversion` — Истёкшая запись ПОКУПАЕМОГО тарифа реанимируется (#3004) — конверсия, `test_trial_creation_never_triggers_conversion` — Создание САМОГО триала (is_trial=True) не трогает ветку конверсии., `test_convert_helper_delegates_to_extend` — Обёртка конверсии ревалидирует кандидата под локом и делегирует, `test_convert_helper_bails_out_when_candidate_no_longer_trial` — Гонка: под локом кандидат уже не живой триал (конкурентная покупка, `test_resolver_returns_none_when_revive_will_preempt` — EXPIRED подписка покупаемого тарифа → create уйдёт в revive (#3004),, `test_resolver_prefers_same_tariff_alive_trial`, `test_resolver_falls_back_to_freshest_alive_trial`, `test_cabinet_purchase_excludes_conversion_candidate_from_trial_kill` — Source-pin (в духе test_purchase_tariff_expired_trial_reuse): кабинетный
@@ -3391,6 +3409,9 @@
 - `tests/database/test_info_page_display_mode.py` — Python-модуль
   Классы: нет
   Функции: `test_model_has_display_mode_column_with_both_default`, `test_crud_update_whitelist_includes_display_mode`, `test_create_request_accepts_valid_display_mode`, `test_create_request_defaults_to_both`, `test_update_request_rejects_invalid_display_mode`, `test_response_schemas_expose_display_mode`
+- `tests/database/test_local_date_expr_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_day_buckets_ignore_session_timezone`, `test_local_date_expr_respects_dst_transitions`
 - `tests/database/test_migration_chain.py` — Python-модуль
   Классы: нет
   Функции: `test_single_head`, `test_revision_ids_are_unique`, `test_every_revision_reaches_base` — Разрыв в down_revision оставил бы часть миграций неприменёнными.
@@ -3497,6 +3518,9 @@
 - `tests/fixtures/bschek_fixtures.py` — Python-модуль
   Классы: нет
   Функции: `load_bschek_fixture` — Возвращает фикстуру целиком: status, headers, request, idempotency_key, body., `iter_bschek_fixtures`
+- `tests/fixtures/local_day.py` — Python-модуль
+  Классы: нет
+  Функции: `use_timezone` — Переключить settings.TIMEZONE на ``name`` и вернуть саму зону., `zone_where_local_date_differs_from_utc` — Зона, в которой прямо сейчас другая календарная дата, чем в UTC., `reset_local_timezone_cache` — Сбросить кэш зоны после теста, чтобы подмена не утекла в соседей.
 - `tests/fixtures/postgres_db.py` — Python-модуль
   Классы: нет
   Функции: `postgres_dsn` — URL тестовой базы из окружения или ``None``., `postgres_is_required` — Требует ли окружение, чтобы тесты на PostgreSQL действительно шли., `require_postgres_dsn` — URL живого PostgreSQL, иначе пропуск теста (или падение, если требуется)., `real_asyncpg` — Снимает заглушку ``sys.modules['asyncpg']``, поставленную conftest., `postgres_database` — URL тестовой базы, в которой уже создана полная схема проекта., `truncate_tables` — Очищает переданные таблицы вместе со счётчиками идентификаторов., `postgres_engine` — Движок к тестовой базе; переданные таблицы очищаются до и после теста., `postgres_session` — Одна сессия к тестовой базе (зеркало ``memory_session``, но на PostgreSQL)., `postgres_sessions` — Несколько независимых сессий, каждая на своём соединении., `lock_waiter_appeared` — Дождалась ли база сессии, стоящей в очереди за блокировкой., `wait_for_lock_waiter` — То же, но отсутствие соперника — сразу падение теста.
@@ -3702,6 +3726,9 @@
 - `tests/handlers/test_resolve_subscription_footgun_guard.py` — Python-модуль
   Классы: нет
   Функции: `test_underscore_trailing_number_is_NOT_used_as_sub_id`, `test_colon_trailing_real_sub_id_is_used`
+- `tests/handlers/test_revenue_period_local_day.py` — Python-модуль
+  Классы: нет
+  Функции: `local_days`, `test_today_is_the_local_calendar_day`, `test_yesterday_is_the_previous_local_day_and_needs_two_days_of_data`
 - `tests/handlers/test_sbp_recurring_handlers.py` — Python-модуль
   Классы: нет
   Функции: `test_autopay_menu_daily_tariff_still_shows_sbp_entry` — Daily-tariff subscriptions can't use balance-autopay, but Platega's SBP, `test_autopay_menu_daily_tariff_gate_off_hides_sbp_entry` — Counterpart of the reachability test: with the Platega recurrent gate, `test_menu_gate_off_shows_alert_and_does_not_render`, `test_menu_no_active_record_shows_enable_button`, `test_menu_active_record_shows_cancel_button`, `test_menu_no_subscription_shows_alert`, `test_enable_gate_off_shows_alert`, `test_enable_trial_subscription_blocked_before_helper` — Trial subscriptions must not be able to authorize a real recurring bank, `test_enable_without_tariff_shows_alert_and_skips_helper` — No tariff on the subscription -> must short-circuit BEFORE calling the, `test_enable_value_error_shows_friendly_alert`, `test_enable_runtime_error_shows_friendly_alert`, `test_enable_success_shows_redirect_url_button`, `test_enable_idempotent_return_without_redirect_shows_status` — Idempotent return (already-active record) may carry no redirect_url —, `test_cancel_works_even_when_gate_off` — Отмена НЕ гейтится (паритет с кабинетным cancel): выключение фичи при, `test_cancel_gate_on_calls_helper_and_refreshes_menu`, `test_toggle_autopay_enable_cancels_active_sbp_recurring`, `test_toggle_autopay_disable_does_not_touch_sbp` — Disabling balance-autopay must NOT cancel SBP — only the enable path, `test_toggle_autopay_enable_blocked_before_cancel_for_trial` — A trial subscription is rejected before update_subscription_autopay is, `test_tariff_confirm_keyboard_shows_sbp_button_when_gate_on`, `test_tariff_confirm_keyboard_hides_sbp_button_when_gate_off`, `test_daily_tariff_confirm_keyboard_gates_sbp_button`
@@ -4538,6 +4565,9 @@
 - `tests/utils/test_lava_display_names.py` — Python-модуль
   Классы: нет
   Функции: `test_lava_sbp_and_card_describe_provider_not_themselves`, `test_lava_generic_method_keeps_provider_description`
+- `tests/utils/test_local_day.py` — Python-модуль
+  Классы: нет
+  Функции: `test_bounds_of_moscow_day_are_utc_instants`, `test_moment_before_moscow_midnight_belongs_to_previous_day`, `test_local_date_follows_the_zone_not_utc`, `test_naive_moment_is_treated_as_utc`, `test_spring_forward_day_is_23_hours_long` — Границы считаются через ZoneInfo, а не через фиксированное смещение., `test_fall_back_day_is_25_hours_long`, `test_days_back_counts_calendar_days_across_dst`, `test_default_zone_comes_from_settings`, `test_utc_zone_keeps_utc_midnight`, `test_month_start_is_local_first_day_midnight_in_utc`, `test_month_start_before_local_midnight_is_previous_month`
 - `tests/utils/test_logo_resize_tempdir.py` — Python-модуль
   Классы: нет
   Функции: `test_oversized_logo_resized_into_writable_tempdir`, `test_small_logo_returned_unchanged`

@@ -23,7 +23,7 @@ from app.database.models import (
     User,
     UserStatus,
 )
-from app.utils.timezone import format_local_datetime
+from app.utils.timezone import format_local_datetime, local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -1857,7 +1857,7 @@ async def get_subscriptions_statistics(db: AsyncSession) -> dict:
     paid_subscriptions = active_subscriptions - trial_subscriptions
 
     now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = local_day_start(now)
     week_ago = today_start - timedelta(days=7)
     month_ago = today_start - timedelta(days=30)
 

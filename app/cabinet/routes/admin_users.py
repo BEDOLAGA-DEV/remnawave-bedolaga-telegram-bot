@@ -72,7 +72,7 @@ from app.services.panel_sync.fields import narrow_push_fields
 from app.services.permission_service import PermissionService
 from app.services.user_action_log_service import CLICK_PREFIX, SCREEN_PREFIX
 from app.utils.subscription_utils import coerce_panel_device_limit
-from app.utils.timezone import panel_datetime_to_utc
+from app.utils.timezone import local_day_start, panel_datetime_to_utc
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.users import (
@@ -578,7 +578,7 @@ async def get_users_stats(
 
     # Get activity stats
     now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = local_day_start(now)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
 

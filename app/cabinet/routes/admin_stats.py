@@ -27,6 +27,7 @@ from app.database.models import (
 )
 from app.services.remnawave_service import RemnaWaveService
 from app.services.version_service import version_service
+from app.utils.timezone import local_day_start, local_month_start
 
 from ..dependencies import get_cabinet_db, require_permission
 
@@ -260,7 +261,7 @@ async def get_dashboard_stats(
 
         # Get financial statistics
         now = datetime.now(UTC)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_start = local_month_start(now)
 
         trans_stats = await get_transactions_statistics(db, month_start, now)
         all_time_stats = await get_transactions_statistics(
@@ -276,13 +277,9 @@ async def get_dashboard_stats(
         # Get tariff statistics
         tariff_stats = await _get_tariff_stats(db)
 
-        # Derive income_today from revenue_chart to ensure consistency with chart
-        today_str = now.date().isoformat()
-        income_today_from_chart = sum(
-            item.get('amount_kopeks', 0) for item in revenue_data if str(item.get('date', '')) == today_str
-        )
-        # Use chart-derived value if available, otherwise fall back to trans_stats
-        income_today_kopeks = income_today_from_chart or trans_stats.get('today', {}).get('income_kopeks', 0)
+        # «Сегодня» у сводки, графика и бота — один календарный день settings.TIMEZONE,
+        # поэтому пересчитывать сводку из графика по строке даты UTC больше не нужно (#3136).
+        income_today_kopeks = trans_stats.get('today', {}).get('income_kopeks', 0)
 
         # Build response
         return DashboardStats(
@@ -513,7 +510,7 @@ async def _get_tariff_stats(db: AsyncSession) -> TariffStats | None:
             return None
 
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=30)
 
@@ -611,7 +608,7 @@ async def get_top_referrers(
     """Get top referrers with earnings breakdown by period."""
     try:
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=30)
 
@@ -852,7 +849,7 @@ async def get_recent_payments(
     """Get recent payments with user info."""
     try:
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=7)
 
         # Get recent transactions (deposits and subscription payments)

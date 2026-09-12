@@ -46,6 +46,7 @@ from app.services.pinned_message_service import (
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.miniapp_buttons import BUTTON_KEY_TO_CABINET_PATH, build_miniapp_or_callback_button
+from app.utils.timezone import local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -1775,7 +1776,7 @@ async def get_target_users_count(db: AsyncSession, target: str) -> int:
     # Custom filters — быстрый COUNT вместо загрузки всех пользователей
     if target.startswith('custom_'):
         now = datetime.now(UTC)
-        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today = local_day_start(now)
         criteria = target[len('custom_') :]
 
         if criteria == 'today':
@@ -1988,7 +1989,7 @@ async def get_custom_users_count(db: AsyncSession, criteria: str) -> int:
 
 async def get_custom_users(db: AsyncSession, criteria: str) -> list:
     now = datetime.now(UTC)
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today = local_day_start(now)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
 
@@ -2017,7 +2018,7 @@ async def get_custom_users(db: AsyncSession, criteria: str) -> list:
 
 async def get_users_statistics(db: AsyncSession) -> dict:
     now = datetime.now(UTC)
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today = local_day_start(now)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
 

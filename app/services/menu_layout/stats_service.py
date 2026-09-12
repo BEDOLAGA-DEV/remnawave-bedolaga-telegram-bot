@@ -9,7 +9,9 @@ from sqlalchemy import Integer, and_, case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.local_date import local_date_expr
 from app.database.models import ButtonClickLog
+from app.utils.timezone import local_day_start
 
 
 class MenuLayoutStatsService:
@@ -105,7 +107,7 @@ class MenuLayoutStatsService:
     ) -> dict[str, Any]:
         """Получить статистику кликов по конкретной кнопке."""
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=days)
 
@@ -176,10 +178,13 @@ class MenuLayoutStatsService:
 
         # Группировка по дате
         result = await db.execute(
-            select(func.date(ButtonClickLog.clicked_at).label('date'), func.count(ButtonClickLog.id).label('count'))
+            select(
+                local_date_expr(ButtonClickLog.clicked_at, db).label('date'),
+                func.count(ButtonClickLog.id).label('count'),
+            )
             .where(and_(ButtonClickLog.button_id == button_id, ButtonClickLog.clicked_at >= start_date))
-            .group_by(func.date(ButtonClickLog.clicked_at))
-            .order_by(func.date(ButtonClickLog.clicked_at))
+            .group_by(local_date_expr(ButtonClickLog.clicked_at, db))
+            .order_by(local_date_expr(ButtonClickLog.clicked_at, db))
         )
 
         return [{'date': str(row.date), 'count': row.count} for row in result.all()]
@@ -192,7 +197,7 @@ class MenuLayoutStatsService:
     ) -> list[dict[str, Any]]:
         """Получить статистику по всем кнопкам."""
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=days)
 

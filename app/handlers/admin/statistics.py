@@ -14,6 +14,7 @@ from app.services.referral_reward_service import format_reward_total
 from app.services.user_service import UserService
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime, format_percentage
+from app.utils.timezone import local_date, local_month_start
 
 
 logger = structlog.get_logger(__name__)
@@ -136,7 +137,7 @@ async def show_subscriptions_statistics(callback: types.CallbackQuery, db_user: 
 @error_handler
 async def show_revenue_statistics(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     now = datetime.now(UTC)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = local_month_start(now)
 
     month_stats = await get_transactions_statistics(db, month_start, now)
     all_time_stats = await get_transactions_statistics(db, start_date=datetime(2020, 1, 1, tzinfo=UTC), end_date=now)
@@ -261,7 +262,7 @@ async def show_summary_statistics(callback: types.CallbackQuery, db_user: User, 
     sub_stats = await get_subscriptions_statistics(db)
 
     now = datetime.now(UTC)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = local_month_start(now)
     revenue_stats = await get_transactions_statistics(db, month_start, now)
     current_time = format_datetime(datetime.now(UTC))
 
@@ -321,16 +322,17 @@ async def show_summary_statistics(callback: types.CallbackQuery, db_user: User, 
 async def show_revenue_by_period(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     period = callback.data.split('_')[-1]
 
-    period_map = {'today': 1, 'yesterday': 1, 'week': 7, 'month': 30, 'all': 365}
+    # Дни — календарные, в settings.TIMEZONE; «вчера» требует двух дней данных.
+    period_map = {'today': 1, 'yesterday': 2, 'week': 7, 'month': 30, 'all': 365}
 
     days = period_map.get(period, 30)
     revenue_data = await get_revenue_by_period(db, days)
 
     if period == 'yesterday':
-        yesterday = datetime.now(UTC).date() - timedelta(days=1)
+        yesterday = local_date() - timedelta(days=1)
         revenue_data = [r for r in revenue_data if r['date'] == yesterday]
     elif period == 'today':
-        today = datetime.now(UTC).date()
+        today = local_date()
         revenue_data = [r for r in revenue_data if r['date'] == today]
 
     total_revenue = sum(r['amount_kopeks'] for r in revenue_data)

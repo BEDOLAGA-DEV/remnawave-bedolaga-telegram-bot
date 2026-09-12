@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.crud.referral import not_referee_directed
 from app.database.crud.transaction import REAL_PAYMENT_METHODS
+from app.database.local_date import local_date_expr
 from app.database.models import (
     AdvertisingCampaignRegistration,
     ReferralEarning,
@@ -21,6 +22,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.utils.timezone import local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -50,7 +52,7 @@ class PartnerStatsService:
     ) -> dict[str, Any]:
         """Получить детальную статистику реферера."""
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=30)
         year_ago = now - timedelta(days=365)
@@ -206,7 +208,7 @@ class PartnerStatsService:
         # Рефералы по дням
         referrals_by_day = await db.execute(
             select(
-                func.date(User.created_at).label('date'),
+                local_date_expr(User.created_at, db).label('date'),
                 func.count(User.id).label('referrals_count'),
             )
             .where(
@@ -215,15 +217,15 @@ class PartnerStatsService:
                     User.created_at >= start_date,
                 )
             )
-            .group_by(func.date(User.created_at))
-            .order_by(func.date(User.created_at))
+            .group_by(local_date_expr(User.created_at, db))
+            .order_by(local_date_expr(User.created_at, db))
         )
         referrals_dict = {str(row.date): row.referrals_count for row in referrals_by_day.all()}
 
         # Заработки по дням (из ReferralEarning)
         earnings_by_day = await db.execute(
             select(
-                func.date(ReferralEarning.created_at).label('date'),
+                local_date_expr(ReferralEarning.created_at, db).label('date'),
                 func.sum(ReferralEarning.amount_kopeks).label('earnings'),
             )
             .where(
@@ -232,7 +234,7 @@ class PartnerStatsService:
                     ReferralEarning.created_at >= start_date,
                 )
             )
-            .group_by(func.date(ReferralEarning.created_at))
+            .group_by(local_date_expr(ReferralEarning.created_at, db))
         )
         earnings_dict = {str(row.date): int(row.earnings or 0) for row in earnings_by_day.all()}
 
@@ -428,7 +430,7 @@ class PartnerStatsService:
     ) -> dict[str, Any]:
         """Глобальная статистика партнёрской программы."""
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=7)
         month_ago = now - timedelta(days=30)
         year_ago = now - timedelta(days=365)
@@ -568,7 +570,7 @@ class PartnerStatsService:
         # Рефералы по дням
         referrals_by_day = await db.execute(
             select(
-                func.date(User.created_at).label('date'),
+                local_date_expr(User.created_at, db).label('date'),
                 func.count(User.id).label('referrals_count'),
             )
             .where(
@@ -577,18 +579,18 @@ class PartnerStatsService:
                     User.created_at >= start_date,
                 )
             )
-            .group_by(func.date(User.created_at))
+            .group_by(local_date_expr(User.created_at, db))
         )
         referrals_dict = {str(row.date): row.referrals_count for row in referrals_by_day.all()}
 
         # Выплаты по дням
         earnings_by_day = await db.execute(
             select(
-                func.date(ReferralEarning.created_at).label('date'),
+                local_date_expr(ReferralEarning.created_at, db).label('date'),
                 func.sum(ReferralEarning.amount_kopeks).label('earnings'),
             )
             .where(ReferralEarning.created_at >= start_date)
-            .group_by(func.date(ReferralEarning.created_at))
+            .group_by(local_date_expr(ReferralEarning.created_at, db))
         )
         earnings_dict = {str(row.date): int(row.earnings or 0) for row in earnings_by_day.all()}
 
@@ -778,7 +780,7 @@ class PartnerStatsService:
     ) -> dict[str, Any]:
         """Detailed stats for a single campaign owned by the partner."""
         now = datetime.now(UTC)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = local_day_start(now)
         week_ago = now - timedelta(days=PERIOD_COMPARISON_DAYS)
         month_ago = now - timedelta(days=DAILY_STATS_DAYS)
 
@@ -815,7 +817,7 @@ class PartnerStatsService:
 
         referrals_by_day = await db.execute(
             select(
-                func.date(User.created_at).label('date'),
+                local_date_expr(User.created_at, db).label('date'),
                 func.count(User.id).label('count'),
             )
             .join(AdvertisingCampaignRegistration, AdvertisingCampaignRegistration.user_id == User.id)
@@ -826,13 +828,13 @@ class PartnerStatsService:
                     User.created_at >= start_date,
                 )
             )
-            .group_by(func.date(User.created_at))
+            .group_by(local_date_expr(User.created_at, db))
         )
         referrals_dict = {str(row.date): int(row.count) for row in referrals_by_day.all()}
 
         earnings_by_day = await db.execute(
             select(
-                func.date(ReferralEarning.created_at).label('date'),
+                local_date_expr(ReferralEarning.created_at, db).label('date'),
                 func.sum(ReferralEarning.amount_kopeks).label('earnings'),
             )
             .where(
@@ -842,7 +844,7 @@ class PartnerStatsService:
                     ReferralEarning.created_at >= start_date,
                 )
             )
-            .group_by(func.date(ReferralEarning.created_at))
+            .group_by(local_date_expr(ReferralEarning.created_at, db))
         )
         earnings_dict = {str(row.date): int(row.earnings or 0) for row in earnings_by_day.all()}
 
@@ -1035,7 +1037,7 @@ class PartnerStatsService:
         # --- Daily registrations (DAILY_STATS_DAYS days) ---
         registrations_by_day = await db.execute(
             select(
-                func.date(AdvertisingCampaignRegistration.created_at).label('date'),
+                local_date_expr(AdvertisingCampaignRegistration.created_at, db).label('date'),
                 func.count(AdvertisingCampaignRegistration.id).label('count'),
             )
             .where(
@@ -1044,7 +1046,7 @@ class PartnerStatsService:
                     AdvertisingCampaignRegistration.created_at >= start_date,
                 )
             )
-            .group_by(func.date(AdvertisingCampaignRegistration.created_at))
+            .group_by(local_date_expr(AdvertisingCampaignRegistration.created_at, db))
         )
         registrations_dict = {str(row.date): int(row.count) for row in registrations_by_day.all()}
 
@@ -1068,7 +1070,7 @@ class PartnerStatsService:
 
         revenue_by_day = await db.execute(
             select(
-                func.date(Transaction.created_at).label('date'),
+                local_date_expr(Transaction.created_at, db).label('date'),
                 revenue_amount_expr.label('revenue'),
             )
             .where(
@@ -1080,7 +1082,7 @@ class PartnerStatsService:
                     Transaction.payment_method.in_(REAL_PAYMENT_METHODS),
                 )
             )
-            .group_by(func.date(Transaction.created_at))
+            .group_by(local_date_expr(Transaction.created_at, db))
         )
         revenue_dict = {str(row.date): int(row.revenue) for row in revenue_by_day.all()}
 
