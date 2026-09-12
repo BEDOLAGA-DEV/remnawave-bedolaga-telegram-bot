@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from app.utils.timezone import local_date, local_day_start, local_month_start
+
 
 # Длина окна скользящего месяца. В админке подписано как «через 30 дней от
 # первого подключения» (handlers/admin/tariffs.py), панель считает так же.
@@ -43,10 +45,6 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
-
-
-def _start_of_day(moment: datetime) -> datetime:
-    return moment.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def normalize_mode(mode: object) -> str:
@@ -98,12 +96,14 @@ def period_start_for_mode(mode: object, *, anchor: datetime, now: datetime) -> d
     if resolved == MONTH_ROLLING:
         return rolling_period_start(anchor, now)
 
+    # Календарные границы — в поясе бота, а не в UTC: иначе «раз в сутки» у
+    # оператора в Москве начиналось бы в три часа ночи, а не в полночь.
     if resolved == DAY:
-        start = _start_of_day(now)
+        start = local_day_start(now)
     elif resolved == WEEK:
-        start = _start_of_day(now) - timedelta(days=now.weekday())
+        start = local_day_start(now, days_back=local_date(now).weekday())
     else:  # MONTH
-        start = _start_of_day(now).replace(day=1)
+        start = local_month_start(now)
 
     return max(start, anchor)
 

@@ -13,6 +13,7 @@ from app.utils.premium_traffic_period import (
     resolve_period_start,
     rolling_period_start,
 )
+from tests.fixtures.local_day import reset_local_timezone_cache, use_timezone  # noqa: F401
 
 
 def _dt(year=2026, month=9, day=6, hour=12, minute=0):
@@ -64,6 +65,48 @@ class TestCalendarModes:
         start = period_start_for_mode(mode, anchor=anchor, now=_dt(2026, 9, 6, 18, 0))
 
         assert start == anchor
+
+
+class TestCalendarModesFollowTheBotTimezone:
+    """Календарные границы считаются в поясе бота, а не в UTC.
+
+    У оператора в Москве «сброс раз в сутки» обязан начинаться в полночь по
+    Москве. Полночь UTC — это три часа ночи по Москве: расход трёх часов
+    уезжал бы в прошлый период, а предупреждение о 80 % приходило бы не в тот
+    день. Скользящего месяца это не касается — он считается от подключения.
+    """
+
+    def test_day_starts_at_local_midnight(self, monkeypatch, reset_local_timezone_cache):
+        zone = use_timezone(monkeypatch, 'Europe/Moscow')
+        now = _dt(2026, 9, 12, 1, 30)  # 04:30 по Москве
+
+        start = period_start_for_mode('DAY', anchor=ANCHOR, now=now)
+
+        assert start == datetime(2026, 9, 12, tzinfo=zone).astimezone(UTC)
+        assert start != _dt(2026, 9, 12, 0, 0), 'полночь UTC — это уже 03:00 по Москве'
+
+    def test_late_evening_utc_belongs_to_the_next_local_day(self, monkeypatch, reset_local_timezone_cache):
+        zone = use_timezone(monkeypatch, 'Europe/Moscow')
+        now = _dt(2026, 9, 12, 22, 0)  # 13 сентября, 01:00 по Москве
+
+        start = period_start_for_mode('DAY', anchor=ANCHOR, now=now)
+
+        assert start == datetime(2026, 9, 13, tzinfo=zone).astimezone(UTC)
+
+    def test_week_starts_on_local_monday(self, monkeypatch, reset_local_timezone_cache):
+        zone = use_timezone(monkeypatch, 'Europe/Moscow')
+        # 12 сентября 2026 — суббота, неделя началась в понедельник 7-го.
+        start = period_start_for_mode('WEEK', anchor=ANCHOR, now=_dt(2026, 9, 12, 1, 30))
+
+        assert start == datetime(2026, 9, 7, tzinfo=zone).astimezone(UTC)
+
+    def test_month_starts_on_the_local_first(self, monkeypatch, reset_local_timezone_cache):
+        zone = use_timezone(monkeypatch, 'Europe/Moscow')
+        now = _dt(2026, 9, 1, 1, 0)  # 04:00 по Москве первого числа
+
+        start = period_start_for_mode('MONTH', anchor=ANCHOR, now=now)
+
+        assert start == datetime(2026, 9, 1, tzinfo=zone).astimezone(UTC)
 
 
 class TestRollingMonth:
