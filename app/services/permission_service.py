@@ -71,7 +71,10 @@ PERMISSION_REGISTRY: dict[str, list[str]] = {
     'payment_methods': ['read', 'edit'],
     'servers': ['read', 'edit'],
     'remnawave': ['read', 'sync', 'manage'],
-    'traffic': ['read', 'export'],
+    # `manage` — ручные операции с трафиком подписки: сброс премиум-периода и
+    # начисление премиум-гигабайтов. Отделено от `read`, потому что меняет
+    # доступ пользователя к серверам, а не только показывает цифры.
+    'traffic': ['read', 'export', 'manage'],
     'settings': ['read', 'edit'],
     'roles': ['read', 'create', 'edit', 'delete', 'assign'],
     'audit_log': ['read', 'export'],

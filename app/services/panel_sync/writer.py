@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import structlog
@@ -107,6 +107,7 @@ async def push_subscription(
         )
     if payload is None:
         payload = build_panel_payload(user, subscription, multi_tariff=multi_tariff, user_tag=user_tag, now=moment)
+    payload = await _without_limited_premium_squads(payload, subscription, db=db)
 
     if reset_devices is None:
         reset_devices = settings.RESET_DEVICES_ON_RENEWAL
@@ -318,12 +319,35 @@ async def patch_panel_account(
     return await update(**kwargs)
 
 
+async def _without_limited_premium_squads(payload: PanelPayload, subscription, *, db=None) -> PanelPayload:
+    """Убрать из набора сквады, снятые за перерасход премиум-лимита.
+
+    `connected_squads` означает право подписки на сквад и не меняется, когда
+    лимит исчерпан. Убирать сквад надо именно на отправке: иначе любая
+    синхронизация вернула бы его пользователю и отменила ограничение.
+
+    Точка одна на весь сервис: раньше фильтр стоял копиями у каждого писателя,
+    и это был тот же класс расхождений, ради которого собран этот пакет.
+    """
+    from app.utils.premium_traffic import effective_panel_squads
+
+    if not payload.active_internal_squads:
+        return payload
+    allowed = await effective_panel_squads(
+        getattr(subscription, 'id', None), list(payload.active_internal_squads), db=db
+    )
+    if allowed is None or tuple(allowed) == payload.active_internal_squads:
+        return payload
+    return replace(payload, active_internal_squads=tuple(allowed))
+
+
 async def patch_panel_squads(
     api,
     *,
     user_id: int,
     squads: list[str],
     external_squad_uuid: str | None,
+    subscription_id: int,
     update_call=None,
 ) -> RemnaWaveUser:
     """Переназначить аккаунту сквады тарифа.
@@ -335,10 +359,18 @@ async def patch_panel_squads(
 
     ``external_squad_uuid=None`` отправляется как null намеренно: у тарифа сняли
     внешний сквад, и в панели он тоже должен исчезнуть.
+
+    ``subscription_id`` обязателен: без него не отфильтровать сквады, снятые за
+    перерасход премиум-лимита. Значение по умолчанию сделало бы пропуск тихим —
+    вызов прошёл бы, а ограничение снялось.
     """
+    from app.utils.premium_traffic import effective_panel_squads
+
     update = update_call or api.update_user
+    # Сквады приходят из тарифа, но снятые за перерасход возвращать нельзя:
+    # право на сквад и его наличие в панели — разные вещи.
     return await update(
         user_id=user_id,
-        active_internal_squads=squads,
+        active_internal_squads=await effective_panel_squads(subscription_id, squads),
         external_squad_uuid=external_squad_uuid,
     )
