@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time
 from typing import Any
 
 import structlog
@@ -15,6 +15,7 @@ from app.services.remnawave_service import (
     RemnaWaveService,
 )
 from app.utils.cache import cache
+from app.utils.timezone import next_local_wall_clock
 
 
 logger = structlog.get_logger(__name__)
@@ -249,32 +250,25 @@ class RemnaWaveAutoSyncService:
             return await perform_full_sync(session, service)
 
     @staticmethod
-    def _calculate_next_run(times: list[time]) -> datetime:
-        now = datetime.now(UTC)
-        today = now.date()
-
-        for scheduled in sorted(times):
-            candidate = datetime.combine(today, scheduled, tzinfo=UTC)
-            if candidate > now:
-                return candidate
-
-        first_time = min(times)
-        next_day = today + timedelta(days=1)
-        return datetime.combine(next_day, first_time, tzinfo=UTC)
+    def _calculate_next_run(times: list[time], reference: datetime | None = None) -> datetime:
+        """REMNAWAVE_AUTO_SYNC_TIMES — локальное время оператора (settings.TIMEZONE), наружу — UTC."""
+        return next_local_wall_clock(times, reference)
 
 
 async def perform_full_sync(session: AsyncSession, service: RemnaWaveService) -> tuple[dict[str, Any], dict[str, Any]]:
     """Полная синхронизация — одна для бота, кабинета и расписания.
 
-    Три шага по порядку: из панели в бота (импорт), из бота в панель (экспорт —
-    статусы, даты, сквады, тег тарифа), серверы. Раньше «полная» делала только
-    импорт, и в панель не уезжало ничего.
+    Панель — истина (решение владельца 2026-09-11): «синхронизация = из панели в
+    бота». Два шага: пользователи из панели в бота, серверы из панели. В панель
+    отсюда не уезжает ничего — туда бот пишет только при покупке, продлении и
+    явных действиях админа; кнопка «из бота в панель» остаётся отдельной ручной
+    командой на крайний случай. До этого «полная» после чтения ещё и переписывала
+    панель состоянием бота, и правка руками в панели жила до ближайшего прохода.
     """
     if _full_sync_lock.locked():
         raise FullSyncAlreadyRunning
     async with _full_sync_lock:
         user_stats = dict(await service.sync_users_from_panel(session, 'all'))
-        user_stats['to_panel'] = dict(await service.sync_users_to_panel(session))
         server_stats = await sync_servers_from_panel(session, service)
         return user_stats, server_stats
 

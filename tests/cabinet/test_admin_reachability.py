@@ -12,7 +12,12 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.cabinet.routes import admin_reachability
-from app.cabinet.schemas.reachability import JobCreateRequest, PrefUpdateRequest, TargetIn
+from app.cabinet.schemas.reachability import (
+    GeoRecheckRequest,
+    JobCreateRequest,
+    PrefUpdateRequest,
+    TargetIn,
+)
 from app.external.bschek_api import BschekAPIError
 from app.services.reachability.jobs import JobNotCancellable
 from app.services.reachability.links import RejectedLink
@@ -119,6 +124,7 @@ def test_routes_are_registered(registered_paths) -> None:
         ('get_job', 'reachability:read'),
         ('cancel_job', 'reachability:run'),
         ('get_summary', 'reachability:read'),
+        ('geo_catalog', 'reachability:read'),
     ],
 )
 def test_routes_require_expected_permission(endpoint_name: str, permission: str) -> None:
@@ -186,7 +192,9 @@ def _probe_body(**overrides) -> JobCreateRequest:
         (PanelUnavailable('панель лежит'), 503, 'панель'),
         (SelectorError('Неизвестные симки: nokia'), 400, 'nokia'),
         (ValueError('Для скана нужна подсеть /24'), 400, '/24'),
-        (BschekAPIError(code='too_many_targets', message='Лимит 10 целей', status=400), 502, 'too_many_targets'),
+        # Отказ по нашему запросу — статус сервиса и его слова, не 502 шлюза.
+        (BschekAPIError(code='too_many_targets', message='Лимит 10 целей', status=400), 400, 'Лимит 10 целей'),
+        (BschekAPIError(code='worker_unavailable', message='нет воркера', status=503), 502, 'worker_unavailable'),
         (RuntimeError('boom'), 500, 'Внутренняя'),
         (HTTPException(418, 'чайник'), 418, 'чайник'),
     ],
@@ -458,3 +466,308 @@ async def test_hosts_route_serializes_a_real_panel_host(service) -> None:
     assert item.uuid == 'h-1' and item.address == 'ams.example.net' and item.port == 443
     assert item.tag == 'БС, VIP'
     assert item.node_uuids == ['n-1'] and item.purpose == 'bs'
+
+
+def test_parse_input_accepts_ten_thousand_pasted_links() -> None:
+    """Владелец: в подписке бывает 10 тысяч серверов — столько же ссылок можно вставить текстом
+    (это ~3 МБ), старый потолок поля в 64 КБ резал такой ввод на входе."""
+    from app.cabinet.schemas.reachability import ParseInputRequest
+
+    link = 'vless://00000000-0000-4000-8000-000000000001@srv{i}.example:443?security=reality&sni=srv{i}.example#S{i}'
+    raw = '\n'.join(link.format(i=i) for i in range(10_000))
+    assert len(raw) > 65_536
+    assert len(ParseInputRequest(raw_input=raw).raw_input) == len(raw)
+
+
+def test_configs_out_carries_the_note_and_the_rejection_detail() -> None:
+    from app.cabinet.routes.admin_reachability import _configs_out
+    from app.services.reachability.links import RejectedLink
+    from app.services.reachability.resolver import SubscriptionConfigs
+
+    out = _configs_out(
+        SubscriptionConfigs(
+            short_uuid='ref-1',
+            configs=[],
+            rejected=[
+                RejectedLink('https://dead.example/abc', 'subscription_failed', detail='Подписка истекла 01.09.2024')
+            ],
+            note='Подписка отключена в панели',
+        )
+    )
+    assert out.note == 'Подписка отключена в панели'
+    assert out.rejected[0].detail == 'Подписка истекла 01.09.2024'
+
+
+# ============== GEO-РФ ==============
+
+
+def test_job_create_request_accepts_geo_options_and_rejects_bad_scope() -> None:
+    body = JobCreateRequest(
+        kind='geo',
+        targets=[TargetIn(kind='custom', value='example.com')],
+        geo={
+            'network': 'mob',
+            'scope': {'kind': 'district', 'district': 'cfo'},
+            'isp': 'mts',
+            'city_limit': 30,
+            'probe_mode': 'tcp',
+            'heavy': False,
+        },
+    )
+    assert body.geo is not None and body.geo.scope.kind == 'district' and body.geo.city_limit == 30
+    assert body.geo.model_dump()['scope'] == {'kind': 'district', 'district': 'cfo', 'region': None, 'cities': []}
+    with pytest.raises(ValidationError):
+        JobCreateRequest(kind='geo', targets=[TargetIn(kind='custom', value='a')], geo={'scope': {'kind': 'planet'}})
+    with pytest.raises(ValidationError):
+        JobCreateRequest(kind='geo', targets=[TargetIn(kind='custom', value='a')], geo={'city_limit': -1})
+    with pytest.raises(ValidationError):
+        JobCreateRequest(kind='geo', targets=[TargetIn(kind='custom', value='a')], geo={'network': 'wifi'})
+
+
+def test_registered_geo_catalog_route(registered_paths) -> None:
+    assert 'GET' in registered_paths[f'{BASE}/geo/catalog']
+
+
+@pytest.mark.asyncio
+async def test_geo_catalog_route_passes_filters_and_shapes_the_answer(service) -> None:
+    async def geo_catalog(**filters):
+        assert filters == {
+            'network': 'res',
+            'q': 'Воронеж',
+            'isp': None,
+            'region': None,
+            'district': 'cfo',
+            'cities_limit': None,
+        }
+        return {
+            'networks': ['res', 'mob'],
+            'districts': [{'code': 'cfo', 'name': 'ЦФО'}, 'szfo'],
+            'regions': [{'token': 'voronezh_oblast', 'name': 'Воронежская область', 'district': 'ЦФО'}],
+            'isps': [{'token': 'rostelecom', 'name': 'Ростелеком', 'cities': 89}],
+            'cities': [
+                {
+                    'region': 'voronezh_oblast',
+                    'region_ru': 'Воронежская область',
+                    'district': 'ЦФО',
+                    'city': 'voronezh',
+                    'city_ru': 'Воронеж',
+                    'isps': ['rostelecom'],
+                }
+            ],
+            'cities_total': 1,
+            'cities_truncated': False,
+        }
+
+    service.geo_catalog = geo_catalog
+    out = await admin_reachability.geo_catalog(
+        network='res',
+        q='Воронеж',
+        isp=None,
+        region=None,
+        district='cfo',
+        cities_limit=None,
+        admin=ADMIN,
+        db=AsyncMock(),
+    )
+    assert out.regions[0].token == 'voronezh_oblast' and out.cities[0].city_ru == 'Воронеж'
+    assert out.cities_total == 1 and out.cities_truncated is False and out.isps[0].cities == 89
+    assert [d.model_dump() for d in out.districts] == [{'code': 'cfo', 'name': 'ЦФО'}, {'code': 'szfo', 'name': 'СЗФО'}]
+
+
+@pytest.mark.asyncio
+async def test_geo_catalog_route_translates_service_errors(service) -> None:
+    service.geo_catalog = AsyncMock(side_effect=ReachabilityDisabled('выключено'))
+    with pytest.raises(HTTPException) as exc:
+        await admin_reachability.geo_catalog(
+            network='res', q=None, isp=None, region=None, district=None, cities_limit=None, admin=ADMIN, db=AsyncMock()
+        )
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_preview_out_carries_geo_numbers(service) -> None:
+    preview = PreviewResult(
+        kind='geo',
+        targets=[BS],
+        units_resolved=['geo'],
+        skipped={},
+        cost_kopeks=90,
+        estimate_is_exact=False,
+        warnings=['Цена GEO — резерв'],
+        balance_kopeks=1000,
+        request={},
+        geo={'n_nodes': 89, 'cap_mb': 0.81, 'reserve_credits': 90, 'estimated_sec': 45, 'max_nodes': 800},
+    )
+    service.preview = AsyncMock(return_value=preview)
+    body = JobCreateRequest(kind='geo', targets=[TargetIn(kind='custom', value='example.com')], geo={})
+    out = await admin_reachability.preview_job(body, admin=ADMIN, db=AsyncMock())
+    assert out.geo is not None and out.geo.n_nodes == 89 and out.geo.max_nodes == 800 and out.geo.estimated_sec == 45
+    assert service.preview.await_args.args[1]['geo']['scope'] == {
+        'kind': 'all',
+        'district': None,
+        'region': None,
+        'cities': [],
+    }
+
+
+GEO_ROW = {
+    'region': 'voronezh_oblast',
+    'region_ru': 'voronezh_oblast',
+    'district': '',
+    'city': 'voronezh',
+    'verdict': 'ok',
+    'is_result': True,
+    'targets': [],
+}
+GEO_NAMES = {
+    'regions': {'voronezh_oblast': {'name': 'Воронежская область', 'district': 'ЦФО'}},
+    'cities': {'voronezh_oblast|voronezh': 'Воронеж'},
+}
+
+
+@pytest.mark.asyncio
+async def test_job_out_names_regions_and_cities_of_geo_rows(service) -> None:
+    service.geo_names = AsyncMock(return_value=GEO_NAMES)
+    job = _job(
+        kind='geo',
+        status='done',
+        result={'rows': [GEO_ROW, {**GEO_ROW, 'region': 'nowhere', 'region_ru': 'nowhere'}], 'summary': {}},
+    )
+    service.get_job = AsyncMock(return_value=job)
+    out = await admin_reachability.get_job(5, admin=ADMIN, db=AsyncMock())
+    assert out.result['rows'][0]['region_ru'] == 'Воронежская область' and out.result['rows'][0]['district'] == 'ЦФО'
+    assert out.result['rows'][0]['city_ru'] == 'Воронеж'
+    assert out.result['rows'][1]['region_ru'] == 'nowhere', 'неизвестный регион остаётся токеном'
+    assert job.result['rows'][0]['region_ru'] == 'voronezh_oblast', 'задача в базе не меняется'
+
+
+@pytest.mark.asyncio
+async def test_job_list_names_regions_only_for_geo_jobs(service) -> None:
+    service.geo_names = AsyncMock(return_value=GEO_NAMES)
+    geo = _job(id=6, kind='geo', status='done', result={'rows': [GEO_ROW], 'summary': {}})
+    probe = _job(id=7, kind='probe', status='done', result={'rows': [GEO_ROW]})
+    service.list_jobs = AsyncMock(return_value=([geo, probe], 2))
+    out = await admin_reachability.list_jobs(
+        kind=None, job_status=None, target_key=None, user_id=None, offset=0, limit=50, admin=ADMIN, db=AsyncMock()
+    )
+    assert out.items[0].result['rows'][0]['region_ru'] == 'Воронежская область'
+    assert out.items[1].result['rows'][0]['region_ru'] == 'voronezh_oblast'
+    assert service.geo_names.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_job_out_keeps_tokens_when_catalog_is_unavailable(service) -> None:
+    service.geo_names = AsyncMock(return_value={})
+    service.get_job = AsyncMock(return_value=_job(kind='geo', status='done', result={'rows': [GEO_ROW]}))
+    out = await admin_reachability.get_job(5, admin=ADMIN, db=AsyncMock())
+    assert out.result['rows'][0]['region_ru'] == 'voronezh_oblast'
+
+
+@pytest.mark.asyncio
+async def test_geo_catalog_without_filter_derives_lists_from_all_cities(service) -> None:
+    # Прод 2026-09-11: regions[]/districts[] без имён, isps[] нет вовсе — кабинет получал пустые списки.
+    service.geo_catalog = AsyncMock(
+        return_value={
+            'networks': ['res', 'mob'],
+            'districts': [{'code': 'cfo'}, 'szfo'],
+            'regions': [{'district': 'ЦФО'}],
+            'cities': [
+                {
+                    'region': 'voronezh_oblast',
+                    'region_ru': 'Воронежская область',
+                    'district': 'ЦФО',
+                    'city': 'voronezh',
+                    'city_ru': 'Воронеж',
+                    'isps': ['rostelecom', 'mts'],
+                },
+                {
+                    'region': 'moscow',
+                    'region_ru': 'Москва',
+                    'district': 'ЦФО',
+                    'city': 'moscow',
+                    'city_ru': 'Москва',
+                    'isps': ['mts', 'some_local_isp'],
+                },
+            ],
+            'cities_total': 2,
+            'cities_truncated': False,
+        }
+    )
+    out = await admin_reachability.geo_catalog(
+        network='res', q=None, isp=None, region=None, district=None, cities_limit=None, admin=ADMIN, db=AsyncMock()
+    )
+    assert service.geo_catalog.await_args.kwargs['cities_limit'] == 5000, 'без фильтра просим все города'
+    assert [(d.code, d.name) for d in out.districts] == [('cfo', 'ЦФО'), ('szfo', 'СЗФО')]
+    assert [(r.token, r.name, r.district) for r in out.regions] == [
+        ('voronezh_oblast', 'Воронежская область', 'ЦФО'),
+        ('moscow', 'Москва', 'ЦФО'),
+    ], 'по алфавиту имён'
+    assert [(i.token, i.name, i.cities) for i in out.isps] == [
+        ('mts', 'МТС', 2),
+        ('rostelecom', 'Ростелеком', 1),
+        ('some_local_isp', 'Some Local Isp', 1),
+    ]
+    assert out.cities == [] and out.cities_total is None, 'города без запроса не отдаём'
+
+
+@pytest.mark.asyncio
+async def test_geo_catalog_keeps_service_lists_when_they_carry_names(service) -> None:
+    service.geo_catalog = AsyncMock(
+        return_value={
+            'networks': ['res'],
+            'districts': [{'code': 'cfo', 'name': 'ЦФО'}],
+            'regions': [{'region': 'moscow', 'region_ru': 'Москва', 'district': 'ЦФО'}],
+            'providers': [{'isp': 'mts', 'title': 'МТС', 'count': 43}],
+        }
+    )
+    out = await admin_reachability.geo_catalog(
+        network='res', q=None, isp=None, region=None, district=None, cities_limit=None, admin=ADMIN, db=AsyncMock()
+    )
+    assert [(r.token, r.name) for r in out.regions] == [('moscow', 'Москва')]
+    assert [(i.token, i.name, i.cities) for i in out.isps] == [('mts', 'МТС', 43)]
+
+
+@pytest.mark.asyncio
+async def test_recheck_geo_city_returns_the_parent_with_the_running_entry_and_audits(service) -> None:
+    entry = {'status': 'running', 'same_exit': True, 'reserve_kopeks': 90, 'run_id': None}
+    parent = _job(id=5, kind='geo', status='done', result={'rows': [], 'rechecks': {'tyumen_oblast|tyumen|': entry}})
+    service.recheck_geo = AsyncMock(return_value=parent)
+    service.geo_names = AsyncMock(return_value={})
+    body = GeoRecheckRequest(region='tyumen_oblast', city='tyumen', req_isp=None, same_exit=True)
+    out = await admin_reachability.recheck_geo_city(5, body, admin=ADMIN, db=AsyncMock())
+    assert out.id == 5 and out.result['rechecks']['tyumen_oblast|tyumen|']['status'] == 'running'
+    route = next(r for r in admin_reachability.router.routes if getattr(r, 'path', '').endswith('/geo/recheck'))
+    assert route.status_code == 202, 'повтор принят в работу: новой задачи нет, история не растёт'
+    args, kwargs = service.recheck_geo.await_args
+    assert args[1] == 5 and args[2] == {'region': 'tyumen_oblast', 'city': 'tyumen', 'req_isp': None}
+    assert args[3] == ADMIN.id and kwargs == {'same_exit': True}
+    logged = admin_reachability.PermissionService.log_action.await_args.kwargs
+    assert logged['action'] == 'reachability_geo_recheck' and logged['resource_id'] == '5'
+    details = logged.get('details') or {}
+    assert details['city'] == 'tyumen_oblast|tyumen' and details['same_exit'] is True
+    assert details['reserve_kopeks'] == 90
+
+
+@pytest.mark.asyncio
+async def test_recheck_geo_city_refuses_in_words(service) -> None:
+    service.recheck_geo = AsyncMock(side_effect=ValueError('Такого города в отчёте нет'))
+    body = GeoRecheckRequest(region='x', city='y')
+    with pytest.raises(HTTPException) as caught:
+        await admin_reachability.recheck_geo_city(5, body, admin=ADMIN, db=AsyncMock())
+    assert caught.value.status_code == 400 and 'Такого города' in caught.value.detail
+
+
+def test_http_translates_geo_service_errors_into_words() -> None:
+    exc = BschekAPIError(code='too_many_nodes', message='raw', status=400, details={'suggested_city_limit': 120})
+    http = admin_reachability._http(exc)
+    assert http.status_code == 400 and 'потолок 120' in http.detail and 'raw' not in http.detail
+    assert (
+        admin_reachability._http(BschekAPIError(code='insufficient_credits', message='raw', status=402)).status_code
+        == 402
+    )
+    assert 'Bronze' in admin_reachability._http(BschekAPIError(code='tier_too_low', message='raw', status=403)).detail
+    limited = admin_reachability._http(BschekAPIError(code='rate_limited', message='raw', status=429, retry_after=9))
+    assert limited.status_code == 429 and '9 с' in limited.detail
+    # Сбой сервиса (5xx) и ответ без статуса — по-прежнему 502 с кодом: это не отказ по нашему запросу.
+    assert admin_reachability._http(BschekAPIError(code='maintenance', message='raw', status=503)).status_code == 502
+    assert admin_reachability._http(BschekAPIError(code='timeout', message='raw')).status_code == 502

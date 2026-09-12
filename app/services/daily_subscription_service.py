@@ -31,7 +31,7 @@ from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
 )
-from app.services.traffic_reset_policy import should_reset_traffic_on_daily_charge
+from app.services.traffic_reset_policy import lift_panel_traffic_limit, should_reset_traffic_on_daily_charge
 
 
 logger = structlog.get_logger(__name__)
@@ -684,7 +684,7 @@ class DailySubscriptionService:
             return False  # безлимит — за лимит не уйти
 
         from app.external.remnawave_api import TrafficLimitStrategy
-        from app.services.subscription_service import get_traffic_reset_strategy
+        from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
 
         strategy = get_traffic_reset_strategy(subscription.tariff)
         if strategy == TrafficLimitStrategy.NO_RESET:
@@ -769,28 +769,11 @@ class DailySubscriptionService:
     async def _lift_panel_traffic_limit(self, db: AsyncSession, subscription: Subscription) -> None:
         """Снять с аккаунта в панели статус «трафик исчерпан» после оплаты новых суток.
 
-        Обнуления счётчика обычно достаточно, но PATCH сам по себе статус LIMITED
-        не снимает (та же оговорка стоит во всех админских реактивациях). Явное
-        включение делает возврат независимым от того, как панель обработала сброс.
+        Правило общее для всех потоков суточной оплаты — см. ``traffic_reset_policy``.
         """
-        panel_user_id = (
-            getattr(subscription, 'remnawave_id', None)
-            if settings.is_multi_tariff_enabled()
-            else getattr(await get_user_by_id(db, subscription.user_id), 'remnawave_id', None)
-        )
-        if not panel_user_id:
-            return
+        from app.services.subscription_service import SubscriptionService
 
-        try:
-            from app.services.subscription_service import SubscriptionService
-
-            await SubscriptionService().enable_remnawave_user(panel_user_id, db=db)
-        except Exception as exc:
-            logger.warning(
-                'Не удалось снять лимит трафика в панели после возврата подписки',
-                subscription_id=subscription.id,
-                error=exc,
-            )
+        await lift_panel_traffic_limit(db, subscription, service=SubscriptionService())
 
     async def process_auto_resume(self) -> dict:
         """

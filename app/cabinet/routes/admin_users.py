@@ -72,7 +72,7 @@ from app.services.panel_sync.fields import narrow_push_fields
 from app.services.permission_service import PermissionService
 from app.services.user_action_log_service import CLICK_PREFIX, SCREEN_PREFIX
 from app.utils.subscription_utils import coerce_panel_device_limit
-from app.utils.timezone import panel_datetime_to_utc
+from app.utils.timezone import local_day_start, panel_datetime_to_utc
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.users import (
@@ -578,7 +578,7 @@ async def get_users_stats(
 
     # Get activity stats
     now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = local_day_start(now)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
 
@@ -599,15 +599,11 @@ async def get_users_stats(
     active_week = (await db.execute(active_week_q)).scalar() or 0
     active_month = (await db.execute(active_month_q)).scalar() or 0
 
-    # Count deleted users
-    deleted_q = select(func.count(User.id)).where(User.status == UserStatus.DELETED.value)
-    deleted_count = (await db.execute(deleted_q)).scalar() or 0
-
     return UsersStatsResponse(
         total_users=stats['total_users'],
         active_users=stats['active_users'],
         blocked_users=stats['blocked_users'],
-        deleted_users=deleted_count,
+        deleted_users=stats['deleted_users'],
         new_today=stats['new_today'],
         new_week=stats['new_week'],
         new_month=stats['new_month'],

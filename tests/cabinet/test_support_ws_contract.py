@@ -41,9 +41,10 @@ def _support_guards_open(monkeypatch):
     Подменяются источники, а не сами guard'ы: режим берётся из данных сервиса,
     глобальная блокировка — из CRUD, так что реальная логика исполняется.
     """
+    from app.config import settings
+
     monkeypatch.setattr(support_ws.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
-    monkeypatch.setattr(support_ws.SupportSettingsService, '_loaded', True)
-    monkeypatch.setattr(support_ws.SupportSettingsService, '_data', {'system_mode': 'both'})
+    monkeypatch.setattr(settings, 'SUPPORT_SYSTEM_MODE', 'both')
 
 
 class _FakeDb:
@@ -235,8 +236,10 @@ async def test_owner_ws_reply_rejected_when_tickets_disabled(monkeypatch) -> Non
     async def fake_get_visible_ticket(_db, _context, _ticket_id):
         return ticket
 
+    from app.config import settings
+
     monkeypatch.setattr(support_ws, '_get_visible_ticket', fake_get_visible_ticket)
-    monkeypatch.setattr(support_ws.SupportSettingsService, '_data', {'system_mode': 'contact'})
+    monkeypatch.setattr(settings, 'SUPPORT_SYSTEM_MODE', 'contact')
 
     with pytest.raises(PermissionError):
         await support_ws._handle_ticket_reply(

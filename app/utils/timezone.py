@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,84 @@ def get_local_timezone() -> ZoneInfo:
     except Exception as exc:  # pragma: no cover - defensive branch
         logger.warning('⚠️ Не удалось загрузить временную зону, используем UTC', tz_name=tz_name, exc=exc)
         return ZoneInfo('UTC')
+
+
+def _as_aware_utc(moment: datetime | None) -> datetime:
+    if moment is None:
+        return datetime.now(UTC)
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
+
+
+def local_date(moment: datetime | None = None, tz: ZoneInfo | None = None) -> date:
+    """Календарная дата момента ``moment`` (по умолчанию — сейчас) в зоне ``tz``.
+
+    Зона по умолчанию — ``settings.TIMEZONE``. Это единственное определение
+    «сегодня» для отчётов: раньше каждый экран брал дату по UTC, и при
+    Europe/Moscow платежи с 00:00 до 02:59 МСК уезжали во «вчера» (#3136).
+    """
+    zone = tz or get_local_timezone()
+    return _as_aware_utc(moment).astimezone(zone).date()
+
+
+def local_day_start(
+    moment: datetime | None = None,
+    tz: ZoneInfo | None = None,
+    *,
+    days_back: int = 0,
+) -> datetime:
+    """Полночь локального дня, к которому относится ``moment``, как момент в UTC.
+
+    ``days_back`` отсчитывает календарные дни назад (не «минус 24 часа»):
+    через перевод часов длина дня 23 или 25 часов, и вычитание ``timedelta``
+    из UTC-момента давало бы сдвиг на час.
+    """
+    zone = tz or get_local_timezone()
+    day = local_date(moment, zone) - timedelta(days=days_back)
+    return datetime.combine(day, time.min, tzinfo=zone).astimezone(UTC)
+
+
+def local_day_bounds(moment: datetime | None = None, tz: ZoneInfo | None = None) -> tuple[datetime, datetime]:
+    """Полуинтервал ``[начало, конец)`` локального дня в UTC: ``created_at >= start`` и ``< end``."""
+    zone = tz or get_local_timezone()
+    day = local_date(moment, zone)
+    start = datetime.combine(day, time.min, tzinfo=zone).astimezone(UTC)
+    end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=zone).astimezone(UTC)
+    return start, end
+
+
+def local_month_start(moment: datetime | None = None, tz: ZoneInfo | None = None) -> datetime:
+    """Полночь первого числа локального месяца, к которому относится ``moment``, как момент в UTC."""
+    zone = tz or get_local_timezone()
+    first_day = local_date(moment, zone).replace(day=1)
+    return datetime.combine(first_day, time.min, tzinfo=zone).astimezone(UTC)
+
+
+def next_local_wall_clock(
+    times: Iterable[time],
+    reference: datetime | None = None,
+    tz: ZoneInfo | None = None,
+) -> datetime:
+    """Ближайший момент (в UTC), когда часы в зоне ``tz`` покажут одно из ``times``.
+
+    Для расписаний из настроек (синхронизация с панелью, суточная проверка
+    трафика): HH:MM там — локальное время оператора, как и BACKUP_TIME после
+    #3030. Раньше часы подставлялись в UTC-«сейчас», и при Europe/Moscow
+    запуск уезжал на три часа. Через перевод часов локальный час сохраняется.
+    """
+    zone = tz or get_local_timezone()
+    slots = sorted({slot.replace(tzinfo=None) for slot in times})
+    if not slots:
+        raise ValueError('расписание пустое')
+    moment = _as_aware_utc(reference)
+    today = moment.astimezone(zone).date()
+    for day in (today, today + timedelta(days=1)):
+        for slot in slots:
+            candidate = datetime.combine(day, slot, tzinfo=zone).astimezone(UTC)
+            if candidate > moment:
+                return candidate
+    raise RuntimeError('расписание не дало ни одного момента за два дня')  # pragma: no cover
 
 
 def panel_datetime_to_utc(dt: datetime) -> datetime:

@@ -1084,7 +1084,7 @@ async def sync_full(
     admin: User = Depends(require_permission('remnawave:sync')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> SyncResponse:
-    """Полная синхронизация: из панели в бота, из бота в панель, серверы — как в боте и по расписанию."""
+    """Полная синхронизация: из панели в бота и серверы — как в боте и по расписанию. Панель — истина, в неё не пишем."""
     from app.services.remnawave_sync_service import FullSyncAlreadyRunning, perform_full_sync
 
     service = _get_service()

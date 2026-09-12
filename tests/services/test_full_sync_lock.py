@@ -51,7 +51,9 @@ async def test_second_full_sync_is_refused_while_first_runs():
 
     gate.set()
     user_stats, _server_stats = await task
-    assert 'to_panel' in user_stats
+    # Панель — истина: полная синхронизация только читает панель, в неё не пишет.
+    assert 'to_panel' not in user_stats
+    first.sync_users_to_panel.assert_not_awaited()
     assert not is_full_sync_running()
 
 
@@ -78,5 +80,5 @@ async def test_scheduler_sees_a_manual_full_sync_as_running():
 
     gate.set()
     user_stats, _server_stats = await task
-    assert 'to_panel' in user_stats
+    assert 'to_panel' not in user_stats, 'полная синхронизация в панель не пишет'
     assert not scheduler.get_status().is_running

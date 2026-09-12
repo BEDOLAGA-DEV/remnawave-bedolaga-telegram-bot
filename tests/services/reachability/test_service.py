@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -16,8 +16,10 @@ from app.database.models import User
 from app.external.bschek_api import BschekAPIError
 from app.external.remnawave_api import RemnaWaveHost
 from app.services.reachability.gate import PaidCallGate
+from app.services.reachability.geo_result import RECHECK_STALE_MESSAGE, recheck_started
 from app.services.reachability.jobs import JobNotCancellable, JobRunner, RunnerConfig
 from app.services.reachability.pricing import CostLimitExceeded
+from app.services.reachability.requests import RequestBuildError
 from app.services.reachability.resolver import TargetResolutionError
 from app.services.reachability.service import (
     JobNotFound,
@@ -44,6 +46,11 @@ HOSTS = [RemnaWaveHost(uuid='h-bs', remark='RU | БС', address='bs-host.example
 class FakePanel:
     def __init__(self, *, broken: bool = False) -> None:
         self.broken = broken
+        # Пользователи панели по shortUuid — для пометки «истекла / отключена / трафик исчерпан».
+        self.users_by_short_uuid: dict[str, object] = {}
+
+    async def get_user_by_short_uuid(self, short_uuid):
+        return self.users_by_short_uuid.get(short_uuid)
 
     def get_api_client(self):
         outer = self
@@ -93,6 +100,34 @@ class FakeClient(FakeAPI):
 
     async def preview_scan(self, body):
         return load_bschek_fixture('sv_one_unit')['body']
+
+    async def geo_preview(self, body):
+        self.geo_preview_body = body
+        return {'n_nodes': 89, 'cap_mb': 0.81, 'reserve_credits': 90, 'estimated_sec': 45, 'max_nodes': 800}
+
+    async def geo_catalog(self, params=None):
+        self.geo_catalog_params = dict(params or {})
+        return {
+            'networks': ['res', 'mob'],
+            'districts': [{'code': 'cfo', 'name': 'ЦФО'}],
+            'regions': [{'token': 'moscow', 'name': 'Москва', 'district': 'ЦФО'}],
+            'isps': [{'token': 'mts', 'name': 'МТС', 'cities': 43}],
+            'cities_hint': 'задайте фильтр',
+        }
+
+    async def geo_start(self, body, key):
+        return {
+            'outcome': 'queued',
+            'run_id': 812,
+            'state': 'running',
+            'poll': '/v1/geo/runs/812',
+            'n_nodes': 89,
+            'reserve_credits': 90,
+            'estimated_sec': 45,
+        }
+
+    async def geo_run(self, run_id):
+        return {'state': 'running', 'progress': {'done': 0, 'total': 89}, 'rows': []}
 
 
 def make_service(
@@ -725,3 +760,340 @@ async def test_parse_input_base64_blob_expands_to_links(session_factory) -> None
     async with session_factory() as db:
         parsed = await service.parse_input(db, blob)
     assert [c.target.target_key for c in parsed.configs] == ['eu-host.example:443', 'bs-host.example:9443']
+
+
+async def test_parse_input_failed_url_carries_the_reason_for_the_admin(session_factory) -> None:
+    """«Пропущено» без причины ничего не объясняет — причина уезжает в кабинет."""
+    from app.services.reachability.subscriptions import SubscriptionFetchError
+
+    service = make_service(
+        session_factory, url_links={'https://dead.example/abc': SubscriptionFetchError('Подписка истекла 01.09.2024')}
+    )
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://dead.example/abc')
+    assert parsed.rejected[0].reason == 'subscription_failed'
+    assert parsed.rejected[0].detail == 'Подписка истекла 01.09.2024'
+
+
+async def test_subscription_configs_note_tells_the_status_of_the_panel_user(session_factory) -> None:
+    """Подписка своей панели: истекла / отключена / трафик исчерпан — по статусу пользователя панели."""
+    from datetime import UTC, datetime
+
+    panel = FakePanel()
+    panel.users_by_short_uuid = {
+        'ref-1': SimpleNamespace(
+            status='EXPIRED', expire_at=datetime(2024, 9, 1, tzinfo=UTC), used_traffic_bytes=0, traffic_limit_bytes=0
+        )
+    }
+    service = make_service(session_factory, panel=panel)
+    async with session_factory() as db:
+        configs = await service.subscription_configs(db)
+    assert configs.note == 'Подписка истекла 01.09.2024'
+
+
+# ---------------------------------------------------------------- GEO-РФ
+
+GEO_LINK_A = 'vless://00000000-0000-4000-8000-000000000001@a.example:443?security=reality&sni=a.example#A'
+GEO_LINK_B = 'vless://00000000-0000-4000-8000-000000000002@b.example:443?security=reality&sni=b.example#B'
+GEO_PAYLOAD = {
+    'kind': 'geo',
+    'targets': [{'kind': 'custom', 'value': 'example.com'}],
+    'units': [],
+    'dpi': 'on',
+    'probes': {},
+    'core': '',
+    'sni_hosts': [],
+    'geo': {
+        'network': 'res',
+        'scope': {'kind': 'all'},
+        'isp': None,
+        'city_limit': 0,
+        'probe_mode': 'tls',
+        'heavy': False,
+    },
+}
+
+
+async def test_preview_geo_quotes_the_reserve_and_carries_service_numbers(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        preview = await service.preview(db, GEO_PAYLOAD)
+    assert preview.kind == 'geo'
+    assert preview.cost_kopeks == 90 and preview.estimate_is_exact is False
+    assert preview.units_resolved == ['geo'] and preview.skipped == {}
+    assert preview.geo == {'n_nodes': 89, 'cap_mb': 0.81, 'reserve_credits': 90, 'estimated_sec': 45, 'max_nodes': 800}
+    assert preview.request['targets'] == ['example.com:443'] and preview.request['network'] == 'res'
+    assert client.geo_preview_body == preview.request
+    assert any('резерв' in warning for warning in preview.warnings)
+
+
+async def test_preview_geo_refuses_a_second_tunnel_in_words(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        **GEO_PAYLOAD,
+        'targets': [{'kind': 'custom', 'value': GEO_LINK_A}, {'kind': 'custom', 'value': GEO_LINK_B}],
+    }
+    async with session_factory() as db:
+        with pytest.raises(RequestBuildError, match='один конфиг'):
+            await service.preview(db, payload)
+
+
+async def test_preview_geo_refuses_bad_scope_before_the_service(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    payload = {**GEO_PAYLOAD, 'geo': {**GEO_PAYLOAD['geo'], 'scope': {'kind': 'district', 'district': 'krym'}}}
+    async with session_factory() as db:
+        with pytest.raises(RequestBuildError, match='округ'):
+            await service.preview(db, payload)
+    assert not hasattr(client, 'geo_preview_body'), 'к сервису не ходили'
+
+
+async def test_create_geo_job_stores_reserve_and_spawns_runner(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, GEO_PAYLOAD, admin.id)
+    assert job.kind == 'geo' and job.status == 'pending'
+    assert job.estimated_kopeks == 90 and job.estimate_is_exact is False
+    assert job.dpi == 'any' and job.units_resolved == ['geo']
+    assert job.request['targets'] == ['example.com:443']
+
+
+async def test_second_geo_job_is_busy_while_the_first_runs(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        await service.create_job(db, GEO_PAYLOAD, admin.id)
+        with pytest.raises(ReachabilityBusy):
+            await service.create_job(db, GEO_PAYLOAD, admin.id)
+
+
+async def test_geo_catalog_goes_through_the_client_with_latin_district(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    catalog = await service.geo_catalog(network='res', district='ЦФО', q='Воронеж')
+    assert catalog['isps'][0]['token'] == 'mts'
+    assert client.geo_catalog_params == {'network': 'res', 'district': 'cfo', 'city': 'Воронеж'}
+
+
+async def test_geo_catalog_respects_disabled_integration(session_factory) -> None:
+    service = make_service(session_factory, enabled=False)
+    with pytest.raises(ReachabilityDisabled):
+        await service.geo_catalog(network='res')
+
+
+async def test_geo_names_index_is_empty_when_the_service_is_off_or_down(session_factory) -> None:
+    assert await make_service(session_factory, enabled=False).geo_names() == {}
+
+    class Down(FakeClient):
+        async def geo_catalog(self, params=None):
+            raise BschekAPIError(code='catalog_unavailable', message='down', status=503)
+
+    assert await make_service(session_factory, client=Down()).geo_names() == {}
+    live = make_service(session_factory, client=FakeClient())
+    assert (await live.geo_names())['regions']['moscow'] == {'name': 'Москва', 'district': 'ЦФО'}
+
+
+async def test_status_lists_a_running_geo_job_like_vless_and_scan(session_factory) -> None:
+    # Кабинет по этому списку показывает «уже идёт GEO #N» до запуска, а не 409 после.
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, GEO_PAYLOAD, admin.id)
+        status = await service.status(db)
+    assert [(item['kind'], item['id']) for item in status['active_jobs']] == [('geo', job.id)]
+
+
+GEO_PARENT_ROWS = [
+    {
+        'region': 'moscow',
+        'city': 'moscow',
+        'req_isp': None,
+        'provider': 'MTS',
+        'exit_ip': '203.0.113.7',
+        'verdict': 'blocked',
+        'is_result': True,
+        'sid': 's-1',
+        'sid_hold_s': 280,
+    },
+    {
+        'region': 'spb',
+        'city': 'spb',
+        'req_isp': None,
+        'provider': 'RT',
+        'exit_ip': '203.0.113.8',
+        'verdict': 'ok',
+        'is_result': True,
+    },
+]
+
+
+async def _done_geo_parent(db, admin_id: int, request: dict | None = None):
+    return await crud.create_job(
+        db,
+        kind='geo',
+        status='done',
+        trigger='manual',
+        started_by_user_id=admin_id,
+        idempotency_key='geo-parent',
+        request=request
+        or {
+            'targets': ['example.com:443'],
+            'network': 'res',
+            'probe_mode': 'tls',
+            'heavy': False,
+            'core': '',
+            'isp': '__ALL__',
+            'district': 'cfo',
+            'city_limit': 30,
+        },
+        targets=[
+            {
+                'kind': 'custom',
+                'label': 'example.com',
+                'address': 'example.com',
+                'port': 443,
+                'target_key': 'example.com:443',
+                'sni': None,
+                'ref': {},
+                'purpose': 'unknown',
+                'raw_link': None,
+            }
+        ],
+        units_requested=[],
+        units_resolved=['geo'],
+        dpi='any',
+        estimated_kopeks=1384,
+        estimate_is_exact=False,
+        result={'rows': GEO_PARENT_ROWS, 'summary': {'by_verdict': {'blocked': 1, 'ok': 1}}},
+    )
+
+
+MOSCOW = {'region': 'moscow', 'city': 'moscow', 'req_isp': None}
+MOSCOW_KEY = 'moscow|moscow|'
+
+
+def _record_spawns(service) -> list[dict]:
+    """Фон не запускаем: запоминаем, с чем сервис позвал повтор.
+
+    Глушится и фон обычной задачи: ``create_job`` здесь нужен только как «идущая GEO»,
+    а живой обходчик переживал тест и стучался в уже закрытую базу — на CI это падало
+    «Cannot operate on a closed database», локально проскакивало по таймингу.
+    """
+    spawned: list[dict] = []
+
+    def spawn(parent_id: int, key: str, **kwargs) -> None:
+        spawned.append({'parent_id': parent_id, 'key': key, **kwargs})
+
+    def no_background(job_id: int) -> None:
+        return None
+
+    service.runner.rechecks.spawn = spawn
+    service.runner.spawn = no_background
+    return spawned
+
+
+async def test_recheck_geo_writes_the_run_into_the_parent_instead_of_a_child_job(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    spawned = _record_spawns(service)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        before = (await crud.list_jobs(db))[1]
+        out = await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=True)
+        after = (await crud.list_jobs(db))[1]
+    assert out.id == parent.id and after == before, 'новой задачи нет — история не растёт'
+    entry = out.result['rechecks'][MOSCOW_KEY]
+    assert entry['status'] == 'running' and entry['same_exit'] is True and entry['reserve_kopeks'] == 90
+    assert entry['admin_id'] == admin.id and entry['run_id'] is None and entry['started_at']
+    assert out.result['rows'] == GEO_PARENT_ROWS, 'строки до итога не тронуты'
+    assert spawned == [
+        {
+            'parent_id': parent.id,
+            'key': MOSCOW_KEY,
+            'request': {
+                'targets': ['example.com:443'],
+                'network': 'res',
+                'probe_mode': 'tls',
+                'heavy': False,
+                'core': '',
+                'cities': [{'region': 'moscow', 'city': 'moscow'}],
+                'session': 's-1',
+                'expect_exit_ip': '203.0.113.7',
+            },
+            'reserve_kopeks': 90,
+        }
+    ]
+    assert client.geo_preview_body['cities'] == [{'region': 'moscow', 'city': 'moscow'}]
+
+
+async def test_recheck_geo_new_exit_drops_the_session_and_is_not_blocked_by_a_running_geo_job(session_factory) -> None:
+    service = make_service(session_factory)
+    spawned = _record_spawns(service)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        await service.create_job(db, GEO_PAYLOAD, admin.id)
+        out = await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+    assert 'session' not in spawned[0]['request']
+    assert out.result['rechecks'][MOSCOW_KEY]['same_exit'] is False
+
+
+async def test_recheck_geo_refuses_unknown_city_unfinished_parent_and_a_running_city_in_words(session_factory) -> None:
+    service = make_service(session_factory)
+    _record_spawns(service)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        with pytest.raises(ValueError, match='Такого города'):
+            await service.recheck_geo(
+                db, parent.id, {'region': 'x', 'city': 'y', 'req_isp': None}, admin.id, same_exit=False
+            )
+        running = await service.create_job(db, GEO_PAYLOAD, admin.id)
+        with pytest.raises(ValueError, match='завершённой'):
+            await service.recheck_geo(db, running.id, MOSCOW, admin.id, same_exit=False)
+        await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+        service.runner.rechecks.is_active = lambda parent_id, key: True
+        with pytest.raises(ValueError, match='уже перепроверяется'):
+            await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+
+
+async def test_reading_a_job_fails_rechecks_orphaned_by_a_restart(session_factory) -> None:
+    service = make_service(session_factory)
+    now = datetime.now(UTC)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        stale = recheck_started(
+            parent.result,
+            MOSCOW_KEY,
+            same_exit=False,
+            reserve_kopeks=90,
+            started_at=(now - timedelta(minutes=5)).isoformat(),
+            admin_id=admin.id,
+        )
+        fresh = recheck_started(
+            stale,
+            'spb|spb|',
+            same_exit=False,
+            reserve_kopeks=90,
+            started_at=(now - timedelta(seconds=5)).isoformat(),
+            admin_id=admin.id,
+        )
+        await crud.update_job(db, parent, result=fresh)
+        await db.commit()
+        job = await service.get_job(db, parent.id)
+        assert job.result['rechecks'][MOSCOW_KEY]['status'] == 'failed'
+        assert job.result['rechecks'][MOSCOW_KEY]['error'] == RECHECK_STALE_MESSAGE
+        assert job.result['rechecks']['spb|spb|']['status'] == 'running', 'свежая запись ещё в окне запуска'
+    async with session_factory() as db:
+        items, _ = await service.list_jobs(db, kind='geo')
+        assert items[0].result['rechecks'][MOSCOW_KEY]['status'] == 'failed', 'и через список, и сохранено'

@@ -64,7 +64,13 @@ async def resolve_subscription(
         return None
 
     await db.refresh(user, ['subscriptions'])
-    return user.subscription
+    subscription = user.subscription
+    if subscription is not None and subscription.tariff_id is not None:
+        # Связь с тарифом ленивая, а маршруты читают subscription.tariff напрямую: в async это
+        # падает или даёт None — и «Продлить» показывало «Нет вариантов продления» при истёкшей
+        # подписке на обычном тарифе. Мульти-ветка грузит тариф через selectinload — выравниваем.
+        await db.refresh(subscription, ['tariff'])
+    return subscription
 
 
 def _get_addon_discount_percent(

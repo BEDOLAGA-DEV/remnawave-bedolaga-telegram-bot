@@ -16,7 +16,7 @@ from app.config import settings
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import User
 from app.services.subscription_service import SubscriptionService
-from app.services.traffic_reset_policy import should_reset_traffic_on_daily_charge
+from app.services.traffic_reset_policy import lift_panel_traffic_limit, should_reset_traffic_on_daily_charge
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from .helpers import resolve_subscription
@@ -65,6 +65,7 @@ async def toggle_subscription_pause(
         SubscriptionStatus.EXPIRED.value,
         SubscriptionStatus.LIMITED.value,
     )
+    was_limited = subscription.status == SubscriptionStatus.LIMITED.value
 
     # System-DISABLED subs (insufficient balance) should always be treated as needing resume,
     # even if is_daily_paused is False (it's set by the system, not the user)
@@ -173,6 +174,9 @@ async def toggle_subscription_pause(
             if reset_traffic:
                 subscription.traffic_used_gb = 0.0
                 await db.commit()
+                if was_limited:
+                    # PATCH сам по себе статус «трафик исчерпан» не снимает.
+                    await lift_panel_traffic_limit(db, subscription, service=subscription_service)
         except Exception as e:
             logger.error('Error syncing RemnaWave user on resume', error=e)
             from app.services.remnawave_retry_queue import remnawave_retry_queue

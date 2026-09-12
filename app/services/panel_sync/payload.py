@@ -20,6 +20,7 @@ from app.external.remnawave_api import TrafficLimitStrategy, UserStatus
 from app.services.panel_sync.expiry import panel_expire_at
 from app.services.panel_sync.liveness import is_subscription_expired, is_subscription_live
 from app.services.panel_sync.tags import resolve_panel_user_tag
+from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
 from app.utils.subscription_utils import resolve_hwid_device_limit_for_payload
 
 
@@ -162,8 +163,6 @@ def build_panel_payload(
     now: datetime | None = None,
 ) -> PanelPayload:
     """Собрать поля запроса из пользователя, подписки и её тарифа."""
-    from app.services.subscription_service import get_traffic_reset_strategy
-
     moment = now or datetime.now(UTC)
     is_live = is_subscription_live(user, subscription, now=moment)
     tariff = getattr(subscription, 'tariff', None)

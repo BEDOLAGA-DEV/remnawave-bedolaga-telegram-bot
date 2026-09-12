@@ -21,6 +21,7 @@ from app.config import settings
 from app.database.crud.referral import create_referral_earning, get_user_campaign_id
 from app.database.crud.user import add_user_balance
 from app.database.models import ReferralEarning, User
+from app.utils.timezone import local_date, local_day_bounds
 
 
 logger = structlog.get_logger(__name__)
@@ -311,13 +312,13 @@ class ReferralDiagnosticsService:
 
     def _find_log_file(self) -> Path:
         """Ищет существующий лог-файл, предпочитая свежие."""
-        today = datetime.now(UTC).date()
+        today = local_date()
         candidates = []
 
         for path_str in self.LOG_PATHS:
             path = Path(path_str)
             if path.exists() and path.stat().st_size > 0:
-                mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).date()
+                mtime = local_date(datetime.fromtimestamp(path.stat().st_mtime, tz=UTC))
                 is_fresh = mtime >= today - timedelta(days=1)
                 candidates.append((path, is_fresh, path.stat().st_mtime))
                 logger.info('📁 Найден лог', path=path, is_fresh=is_fresh)
@@ -345,8 +346,7 @@ class ReferralDiagnosticsService:
 
     async def analyze_today(self, db: AsyncSession) -> DiagnosticReport:
         """Анализирует реферальные события за сегодня."""
-        today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        tomorrow = today + timedelta(days=1)
+        today, tomorrow = local_day_bounds()
         return await self.analyze_period(db, today, tomorrow)
 
     async def analyze_period(self, db: AsyncSession, start_date: datetime, end_date: datetime) -> DiagnosticReport:

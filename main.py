@@ -300,6 +300,22 @@ async def main():
             except Exception as error:
                 stage.warning(f'Не удалось загрузить конфигурацию: {error}')
                 logger.error('❌ Не удалось загрузить конфигурацию', error=error)
+            # Переключатели уведомлений истёкшим и настройки поддержки раньше жили в JSON-файлах
+            # в data/ — один раз переносятся в базу, чтобы прежние значения операторов не пропали.
+            try:
+                from app.database.database import AsyncSessionLocal
+                from app.services.notification_settings_service import NotificationSettingsService
+                from app.services.support_settings_service import SupportSettingsService
+
+                async with AsyncSessionLocal() as db:
+                    imported = {
+                        **await NotificationSettingsService.import_legacy_file(db),
+                        **await SupportSettingsService.import_legacy_file(db),
+                    }
+                if imported:
+                    stage.log(f'Настройки перенесены из файлов в базу: {len(imported)}')
+            except Exception as error:
+                logger.error('❌ Не удалось перенести настройки из файлов в базу', error=error)
 
         bot = None
         dp = None

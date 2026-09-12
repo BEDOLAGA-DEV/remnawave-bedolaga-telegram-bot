@@ -25,7 +25,11 @@ from app.external.remnawave_api import (
     is_user_not_found_error,
 )
 from app.services.panel_sync.expiry import SKEW_RETRY_MARGIN, stale_panel_expire_at
-from app.services.panel_sync.identity import PanelIdentity, resolve_panel_identity
+from app.services.panel_sync.identity import (
+    PanelIdentity,
+    link_subscription_panel_identity,
+    resolve_panel_identity,
+)
 from app.services.panel_sync.payload import PanelPayload, build_panel_payload
 
 
@@ -249,8 +253,6 @@ async def _record_identity(
     его надо затереть, иначе следующий проход снова не найдёт аккаунт и заведёт
     ещё один дубль.
     """
-    from app.services.subscription_service import link_subscription_panel_identity
-
     panel_user_id = getattr(panel_user, 'id', None) or panel_user_id
     if panel_user_id is None:
         return

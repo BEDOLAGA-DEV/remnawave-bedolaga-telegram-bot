@@ -2,8 +2,11 @@
 
 Владелец: «есть три синхрона — полная, из панели в бота, из бота в панель; они должны
 одинаково работать из кабинета и из бота, а синхрон по расписанию — это полная».
-Раньше «Полная синхронизация» в боте и автосинхронизация делали только «из панели в
-бота»: в панель не уезжало ничего, и тег тарифа там не появлялся.
+
+И второе решение владельца (2026-09-11): панель — истина, «синхронизация = из панели в бота».
+Бот пишет в панель только при покупке, продлении и явных действиях админа; полная
+синхронизация и расписание панель не трогают — только читают её и серверы. «Из бота в
+панель» остаётся отдельной ручной кнопкой на крайний случай.
 """
 
 from __future__ import annotations
@@ -39,6 +42,16 @@ def test_full_sync_is_one_function_everywhere() -> None:
 def test_bot_full_sync_no_longer_imports_only() -> None:
     body = _function_source(BOT_ADMIN, 'sync_all_users')
     assert 'sync_users_from_panel(' not in body
+
+
+def test_full_sync_only_reads_the_panel() -> None:
+    """Полная синхронизация и расписание в панель не пишут: истина там, бот её забирает."""
+    body = _function_source(AUTO_SYNC, 'perform_full_sync')
+    assert 'sync_users_from_panel(' in body
+    assert 'sync_users_to_panel(' not in body
+    assert 'push_all_subscriptions(' not in body
+    summary = _function_source(BOT_ADMIN, 'sync_all_users')
+    assert 'to_panel' not in summary and 'в обе стороны' not in summary
 
 
 def test_from_panel_and_to_panel_share_service_methods() -> None:

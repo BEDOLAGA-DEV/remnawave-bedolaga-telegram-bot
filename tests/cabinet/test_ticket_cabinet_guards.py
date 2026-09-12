@@ -43,14 +43,14 @@ def user() -> User:
 
 
 def _set_mode(monkeypatch, mode: str) -> None:
-    """Выставить persisted-режим поддержки.
+    """Выставить режим поддержки.
 
-    Guard читает режим у SupportSettingsService (а не у ``settings``), поэтому
-    подменяем его загруженные данные — реальная цепочка _load -> get_system_mode
-    -> is_tickets_enabled при этом исполняется целиком.
+    Guard читает режим у SupportSettingsService, а тот — живьём из ``settings`` (база):
+    реальная цепочка get_system_mode -> is_tickets_enabled исполняется целиком.
     """
-    monkeypatch.setattr(tickets_route.SupportSettingsService, '_loaded', True)
-    monkeypatch.setattr(tickets_route.SupportSettingsService, '_data', {'system_mode': mode})
+    from app.config import settings
+
+    monkeypatch.setattr(settings, 'SUPPORT_SYSTEM_MODE', mode)
 
 
 @pytest.fixture

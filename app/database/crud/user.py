@@ -29,6 +29,7 @@ from app.database.models import (
     UserStatus,
 )
 from app.utils.text_search import contains_conditions
+from app.utils.timezone import local_day_start
 from app.utils.validators import sanitize_telegram_name
 
 
@@ -1349,7 +1350,15 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     active_result = await db.execute(select(func.count(User.id)).where(User.status == UserStatus.ACTIVE.value))
     active_users = active_result.scalar()
 
-    today = datetime.now(UTC).date()
+    # «Заблокировано» — только статус «заблокирован». Раньше считалось «всего минус активные»,
+    # и в карточку кабинета попадали удалённые, которых в разы больше, чем заблокированных:
+    # сводка показывала 1097, а список с фильтром «Заблокированные» — одну страницу.
+    blocked_result = await db.execute(select(func.count(User.id)).where(User.status == UserStatus.BLOCKED.value))
+    blocked_users = blocked_result.scalar()
+    deleted_result = await db.execute(select(func.count(User.id)).where(User.status == UserStatus.DELETED.value))
+    deleted_users = deleted_result.scalar()
+
+    today = local_day_start()
     today_result = await db.execute(
         select(func.count(User.id)).where(and_(User.created_at >= today, User.status == UserStatus.ACTIVE.value))
     )
@@ -1370,7 +1379,8 @@ async def get_users_statistics(db: AsyncSession) -> dict:
     return {
         'total_users': total_users,
         'active_users': active_users,
-        'blocked_users': total_users - active_users,
+        'blocked_users': blocked_users,
+        'deleted_users': deleted_users,
         'new_today': new_today,
         'new_week': new_week,
         'new_month': new_month,

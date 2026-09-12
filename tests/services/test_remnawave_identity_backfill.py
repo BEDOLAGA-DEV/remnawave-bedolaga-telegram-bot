@@ -952,3 +952,62 @@ def test_audit_filename_reflects_the_kind_of_run_not_the_commit_flag(tmp_path, m
     clashed = BackfillReport(dry_run=False)
     clashed.conflicts.append('sub#1 vs sub#2')
     assert 'conflicts' in cli._write_audit(clashed, committed=False)
+
+
+# ── Аккаунты, которых бот не создавал ────────────────────────────────────────
+#
+# Репорт: в панели живут аккаунты, заведённые руками, без Telegram id и без
+# почты. Совпадение одного лишь имени с шаблоном бота (`user_<telegram_id>`) —
+# догадка, а не улика: бот с первой версии пишет в свой аккаунт telegramId
+# (для почтовых пользователей — email). Аккаунт без этой личности бот не
+# создавал, и привязывать к нему строку нельзя — дальше синхронизация начала бы
+# писать в чужой аккаунт наш Telegram id и дату.
+
+
+def test_username_match_refuses_account_without_identity():
+    """Имя совпало с шаблоном, но у аккаунта нет ни Telegram id, ни почты — не наш."""
+    index = _PanelIndex([panel_user(5, username='user_555', telegram_id=None, email=None)])
+    matched, strategy = _match_subscription(subscription(), bot_user(telegram_id=555), index, {})
+    assert matched is None
+    assert strategy == 'account_not_created_by_bot'
+
+
+def test_username_match_refuses_account_of_another_person():
+    """Имя совпало, но Telegram id в аккаунте чужой — это чей-то ещё аккаунт."""
+    index = _PanelIndex([panel_user(5, username='user_555', telegram_id=777)])
+    matched, strategy = _match_subscription(subscription(), bot_user(telegram_id=555), index, {})
+    assert matched is None
+    assert strategy == 'account_not_created_by_bot'
+
+
+def test_username_still_disambiguates_duplicate_email():
+    """Почтовый пользователь с двумя аккаунтами на одну почту: имя по шаблону выбирает наш."""
+    from app.config import settings
+
+    user = bot_user(user_id=1, telegram_id=None, email='a@e.com')
+    ours = settings.build_remnawave_subscription_username(
+        full_name='Test', username=None, telegram_id=None, email='a@e.com', user_id=1, suffix=''
+    )
+    index = _PanelIndex(
+        [panel_user(11, username=ours, email='a@e.com'), panel_user(12, username='other', email='a@e.com')]
+    )
+    matched, strategy = _match_subscription(subscription(), user, index, {})
+    assert matched is not None and matched.id == 11
+    assert strategy == 'reconstructed_username'
+
+
+@pytest.mark.asyncio
+async def test_backfill_leaves_manually_created_panel_account_alone(monkeypatch):
+    """Сквозной прогон: аккаунт с именем по шаблону, но без личности, остаётся ничьим."""
+    async with memory_session(
+        monkeypatch, [UserModel.__table__, SubModel.__table__, GraceAccessSessionModel.__table__]
+    ) as db:
+        await _seed(db, subs=[(10, None, 'legacy-uuid')])  # владелец: user 1, telegram 551, short_id sid10
+        _patch_roster(monkeypatch, [panel_user(77, username='user_551_sid10', telegram_id=None, email=None)])
+
+        report = await backfill_remnawave_ids(db, dry_run=False)
+
+        sub10 = await db.get(SubModel, 10)
+        assert sub10.remnawave_id is None, 'аккаунт, заведённый руками, привязан к строке бота'
+        assert [row.reason for row in report.unresolved if row.kind == 'subscription'] == ['account_not_created_by_bot']
+        assert 'reconstructed_username' not in report.by_strategy
