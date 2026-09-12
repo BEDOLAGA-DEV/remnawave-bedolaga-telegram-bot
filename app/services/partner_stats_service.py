@@ -22,7 +22,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
-from app.utils.timezone import local_day_start
+from app.utils.timezone import local_date, local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -204,6 +204,8 @@ class PartnerStatsService:
         """Получить статистику реферера по дням."""
         now = datetime.now(UTC)
         start_date = now - timedelta(days=days)
+        # Подписи дней — локальные календарные даты, как и ключи из SQL (#3136).
+        start_day = local_date(now) - timedelta(days=days)
 
         # Рефералы по дням
         referrals_by_day = await db.execute(
@@ -241,7 +243,7 @@ class PartnerStatsService:
         # Формируем массив за все дни
         result = []
         for i in range(days):
-            date = (start_date + timedelta(days=i)).date()
+            date = start_day + timedelta(days=i)
             date_str = str(date)
             result.append(
                 {
@@ -566,6 +568,8 @@ class PartnerStatsService:
         """Глобальная статистика по дням."""
         now = datetime.now(UTC)
         start_date = now - timedelta(days=days)
+        # Подписи дней — локальные календарные даты, как и ключи из SQL (#3136).
+        start_day = local_date(now) - timedelta(days=days)
 
         # Рефералы по дням
         referrals_by_day = await db.execute(
@@ -596,7 +600,7 @@ class PartnerStatsService:
 
         result = []
         for i in range(days):
-            date = (start_date + timedelta(days=i)).date()
+            date = start_day + timedelta(days=i)
             date_str = str(date)
             result.append(
                 {
@@ -814,6 +818,8 @@ class PartnerStatsService:
 
         # --- Daily stats (DAILY_STATS_DAYS days) ---
         start_date = now - timedelta(days=DAILY_STATS_DAYS)
+        # Подписи дней — локальные календарные даты, как и ключи из SQL (#3136).
+        start_day = local_date(now) - timedelta(days=DAILY_STATS_DAYS)
 
         referrals_by_day = await db.execute(
             select(
@@ -850,7 +856,7 @@ class PartnerStatsService:
 
         daily_stats = []
         for i in range(DAILY_STATS_DAYS):
-            date = (start_date + timedelta(days=i)).date()
+            date = start_day + timedelta(days=i)
             date_str = str(date)
             daily_stats.append(
                 {
@@ -1024,6 +1030,8 @@ class PartnerStatsService:
         """
         now = datetime.now(UTC)
         start_date = now - timedelta(days=DAILY_STATS_DAYS)
+        # Подписи дней — локальные календарные даты, как и ключи из SQL (#3136).
+        start_day = local_date(now) - timedelta(days=DAILY_STATS_DAYS)
         week_ago = now - timedelta(days=PERIOD_COMPARISON_DAYS)
         previous_start = week_ago - timedelta(days=PERIOD_COMPARISON_DAYS)
 
@@ -1089,7 +1097,7 @@ class PartnerStatsService:
         # --- Combine into daily_stats ---
         daily_stats: list[dict[str, Any]] = []
         for i in range(DAILY_STATS_DAYS):
-            date = (start_date + timedelta(days=i)).date()
+            date = start_day + timedelta(days=i)
             date_str = str(date)
             daily_stats.append(
                 {

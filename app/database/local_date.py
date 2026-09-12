@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func
+from sqlalchemy import func, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
@@ -30,9 +30,21 @@ def local_date_expr(column: ColumnElement, db: AsyncSession, tz: ZoneInfo | None
     """
     zone = tz or get_local_timezone()
     if _dialect_name(db) == 'postgresql':
-        return func.date(func.timezone(zone.key, column))
+        return func.date(func.timezone(_sql_literal(zone.key), column))
     offset_seconds = int((datetime.now(zone).utcoffset() or _ZERO).total_seconds())
-    return func.date(column, f'{offset_seconds:+d} seconds')
+    return func.date(column, _sql_literal(f'{offset_seconds:+d} seconds'))
+
+
+def _sql_literal(value: str) -> ColumnElement:
+    """Строка прямо в тексте SQL, а не bind-параметром.
+
+    Выражение строится отдельно для SELECT, GROUP BY и ORDER BY; с параметром
+    каждое вхождение получало свой номер ($1, $4, $5), и PostgreSQL отвечал
+    «column must appear in the GROUP BY clause» — выражения для него разные.
+    Литерал делает их текстуально одинаковыми. Значение — имя зоны из
+    настроек (проверено ZoneInfo) или смещение в секундах, не пользовательский ввод.
+    """
+    return literal(value, literal_execute=True)
 
 
 def as_date(value: date | datetime | str) -> date:

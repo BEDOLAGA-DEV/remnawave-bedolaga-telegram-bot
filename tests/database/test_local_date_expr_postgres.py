@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app.database.crud.transaction import REAL_PAYMENT_METHODS, get_revenue_by_period
 from app.database.local_date import as_date, local_date_expr
@@ -93,3 +93,26 @@ async def test_local_date_expr_respects_dst_transitions(postgres_database, monke
         days = [as_date(value) for value in result.scalars()]
 
     assert days == [date(2026, 3, 28), date(2026, 3, 29), date(2026, 10, 25), date(2026, 10, 26)]
+
+
+@pytest.mark.asyncio
+async def test_separate_expressions_group_together(postgres_database, monkeypatch, reset_local_timezone_cache):
+    """Прод 2026-09-12: имя зоны уходило bind-параметром, каждое вхождение — своим ($1, $4, $5),
+    и PostgreSQL отвечал «column must appear in the GROUP BY clause». Выражение в SELECT и в
+    GROUP BY строятся отдельными вызовами, как в статистике продаж, — и обязаны совпадать."""
+    use_timezone(monkeypatch, 'Europe/Moscow')
+
+    async with postgres_session(postgres_database, TABLES) as db:
+        await _seed(db, [(1, datetime(2026, 9, 11, 22, 30, tzinfo=UTC)), (2, datetime(2026, 9, 11, 10, 0, tzinfo=UTC))])
+
+        result = await db.execute(
+            select(
+                local_date_expr(Transaction.created_at, db).label('date'),
+                func.count(Transaction.id).label('count'),
+            )
+            .group_by(local_date_expr(Transaction.created_at, db))
+            .order_by(local_date_expr(Transaction.created_at, db))
+        )
+        rows = [(as_date(row.date), row.count) for row in result]
+
+    assert rows == [(date(2026, 9, 11), 1), (date(2026, 9, 12), 1)]

@@ -26,6 +26,7 @@ from app.database.crud.landing import (
 )
 from app.database.local_date import local_date_expr
 from app.database.models import GuestPurchase, GuestPurchaseStatus, LandingPage, Tariff, User
+from app.utils.timezone import local_date
 
 from ..dependencies import get_cabinet_db, require_permission
 from .branding import ALLOWED_BG_TYPES, _validate_settings
@@ -921,7 +922,7 @@ async def get_landing_stats(
     created_rows = {str(r.day): r.created for r in created_result.all()}
 
     # Fill missing days with zeros
-    today = now.date()
+    today = local_date(now)  # ключи дней из SQL — локальные (#3136)
     daily_stats: list[LandingDailyStat] = []
     for i in range(_STATS_PERIOD_DAYS, -1, -1):
         day = today - timedelta(days=i)

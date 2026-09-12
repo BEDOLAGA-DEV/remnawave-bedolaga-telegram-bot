@@ -3318,7 +3318,7 @@
   Функции: `test_every_geo_call_of_the_client_exists_in_the_spec`, `test_client_covers_the_five_endpoints_we_use`
 - `tests/contracts/test_local_day_guard.py` — Python-модуль
   Классы: нет
-  Функции: `find_violations`, `test_detector_sees_every_idiom` — Сторож не ослеп: на синтетическом примере находит все четыре идиомы., `test_app_has_no_hand_made_utc_days`
+  Функции: `find_violations`, `test_known_utc_sites_still_exist` — Список исключений не должен пережить переименование: каждая функция обязана существовать., `test_detector_sees_every_idiom` — Сторож не ослеп: на синтетическом примере находит все пять идиом., `test_app_has_no_hand_made_utc_days`
 - `tests/contracts/test_public_registration_gate.py` — Python-модуль
   Классы: нет
   Функции: `test_every_public_user_mutation_is_gated_or_narrowly_trusted`, `test_legacy_guest_find_or_create_wrapper_cannot_reappear_in_public_routes`, `test_registration_twins_bind_the_locked_gift_symmetrically`, `test_no_admission_branch_binds_the_locked_gift_twice`, `test_registration_twins_never_bind_the_gift_unguarded` — A raw bind_locked_gift in a twin would surface a lost race as a 500, not a denial.
@@ -3411,7 +3411,10 @@
   Функции: `test_model_has_display_mode_column_with_both_default`, `test_crud_update_whitelist_includes_display_mode`, `test_create_request_accepts_valid_display_mode`, `test_create_request_defaults_to_both`, `test_update_request_rejects_invalid_display_mode`, `test_response_schemas_expose_display_mode`
 - `tests/database/test_local_date_expr_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `test_day_buckets_ignore_session_timezone`, `test_local_date_expr_respects_dst_transitions`
+  Функции: `test_day_buckets_ignore_session_timezone`, `test_local_date_expr_respects_dst_transitions`, `test_separate_expressions_group_together` — Прод 2026-09-12: имя зоны уходило bind-параметром, каждое вхождение — своим ($1, $4, $5),
+- `tests/database/test_local_day_groupings_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_sales_stats_route_groups_by_local_day`, `test_sales_stats_custom_period_groups_by_local_day`, `test_partner_and_menu_stats_group_by_local_day`, `test_landing_stats_group_by_local_day`
 - `tests/database/test_migration_chain.py` — Python-модуль
   Классы: нет
   Функции: `test_single_head`, `test_revision_ids_are_unique`, `test_every_revision_reaches_base` — Разрыв в down_revision оставил бы часть миграций неприменёнными.
