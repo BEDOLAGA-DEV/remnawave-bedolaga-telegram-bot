@@ -158,7 +158,7 @@ class PremiumTrafficService:
         async with AsyncSessionLocal() as db:
             # До сбора целей: если премиум убрали из всех тарифов, целей не будет,
             # а снятые сквады всё равно надо вернуть.
-            stats['restored'] += await self._release_orphaned_limits(db, service)
+            stats['restored'] += await self._reconcile_limited_states(db, service)
 
             targets = await self._collect_targets(db)
             if not targets:
@@ -302,23 +302,31 @@ class PremiumTrafficService:
 
     # ------------------------------------------------- отменённые лимиты
 
-    async def _release_orphaned_limits(self, db: AsyncSession, service: Any) -> int:
-        """Вернуть сквады, снятые за лимит, который больше не действует.
+    async def _reconcile_limited_states(self, db: AsyncSession, service: Any) -> int:
+        """Привести в порядок снятые записи: отменённые лимиты и стёртые права.
 
-        Фильтр отправки вычитает сквад по отметке ``is_limited``, не заглядывая в
-        тариф. Если клиент перешёл на тариф, где у сервера нет премиум-лимита, или
-        лимит с сервера сняли в админке, запись выпадает из обхода — воркер берёт
-        только премиум-сквады текущего тарифа, — и сквад остался бы вырезанным
-        навсегда.
+        Обе беды в том, что снятый сквад живёт только в базе: в панели его нет.
 
-        Запись не удаляем, только снимаем отметку: докупленное в ней должно
-        пережить обратное включение лимита в том же периоде.
+        * Лимит на сервере отменили — клиент сменил тариф или лимит убрали в
+          админке. Запись выпадает из обхода (воркер берёт только премиум-сквады
+          текущего тарифа), и сквад остался бы вырезанным навсегда. Снимаем
+          отметку и возвращаем сквад; саму запись не удаляем, чтобы докупленное
+          пережило обратное включение лимита в том же периоде.
+        * Право на сквад стёрло чтение панели — разбирается ниже.
         """
-        orphaned = [
-            (state, subscription)
-            for state, subscription in await self._limited_states(db)
-            if self._limit_no_longer_applies(state, subscription)
-        ]
+        limited = await self._limited_states(db)
+        if not limited:
+            return 0
+
+        orphaned: list[tuple[Any, Any]] = []
+        for state, subscription in limited:
+            if self._limit_no_longer_applies(state, subscription):
+                orphaned.append((state, subscription))
+            else:
+                self._restore_lost_entitlement(state, subscription)
+        # Возвращённые права — в базу, даже если снимать нечего.
+        await db.commit()
+
         if not orphaned:
             return 0
 
@@ -356,6 +364,33 @@ class PremiumTrafficService:
                     squad_uuid=state.squad_uuid,
                 )
         return released
+
+    @staticmethod
+    def _restore_lost_entitlement(state: Any, subscription: Any) -> bool:
+        """Вернуть право на снятый сквад, если его стёрла синхронизация с панелью.
+
+        Чтение панели переносит её набор сквадов в `connected_squads`
+        (`panel_sync.projection`), а снятый за перерасход сквад мы из панели
+        убрали — полная синхронизация вычёркивает его из права подписки. После
+        этого сквад не вернулся бы и по сбросу периода: возвращать было бы
+        нечего, отправка берёт набор именно из права.
+
+        Право сверяем с тарифом: сквад возвращаем, только если тариф его
+        по-прежнему даёт.
+        """
+        tariff = getattr(subscription, 'tariff', None)
+        allowed = getattr(tariff, 'allowed_squads', None) or []
+        connected = list(subscription.connected_squads or [])
+        if state.squad_uuid not in allowed or state.squad_uuid in connected:
+            return False
+
+        subscription.connected_squads = [*connected, state.squad_uuid]
+        logger.info(
+            'Право на премиум-сквад восстановлено: его стёрло чтение панели',
+            subscription_id=subscription.id,
+            squad_uuid=state.squad_uuid,
+        )
+        return True
 
     @staticmethod
     async def _limited_states(db: AsyncSession) -> list[tuple[Any, Subscription]]:

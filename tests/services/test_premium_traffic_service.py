@@ -495,15 +495,19 @@ class TestOrphanedLimits:
     """
 
     @staticmethod
-    def _subscription(*, premium_on_squad: bool, status: str = 'active'):
+    def _subscription(*, premium_on_squad: bool, status: str = 'active', connected=(SQUAD,), allowed=(SQUAD,)):
         limits = {SQUAD: {'traffic_limit_gb': 5}} if premium_on_squad else {}
         return SimpleNamespace(
             id=1,
             status=status,
-            connected_squads=[SQUAD],
+            connected_squads=list(connected),
             remnawave_id=PANEL_USER_ID,
             user=SimpleNamespace(remnawave_id=PANEL_USER_ID),
-            tariff=SimpleNamespace(server_traffic_limits=limits, external_squad_uuid=None),
+            tariff=SimpleNamespace(
+                server_traffic_limits=limits,
+                external_squad_uuid=None,
+                allowed_squads=list(allowed),
+            ),
         )
 
     async def _release(self, monkeypatch, subscription, *, push_fails=False):
@@ -526,7 +530,7 @@ class TestOrphanedLimits:
         monkeypatch.setattr(service, '_limited_states', _limited)
         monkeypatch.setattr(service, '_push_subscription_squads', _push)
         api_service = _ApiService()
-        released = await service._release_orphaned_limits(_Db(), api_service)
+        released = await service._reconcile_limited_states(_Db(), api_service)
         return released, state, pushed, api_service
 
     async def test_switch_to_a_tariff_without_the_limit_returns_the_squad(self, monkeypatch):
@@ -565,6 +569,35 @@ class TestOrphanedLimits:
         assert state.is_limited is False
         assert pushed == []
 
+    async def test_entitlement_erased_by_panel_sync_is_restored(self, monkeypatch):
+        """Чтение панели переносит её сквады в право подписки, а снятый мы оттуда убрали.
+
+        Полная синхронизация вычёркивает его из `connected_squads`, и после
+        сброса периода возвращать было бы нечего — отправка берёт набор из права.
+        """
+        subscription = self._subscription(premium_on_squad=True, connected=())
+        released, state, pushed, api_service = await self._release(monkeypatch, subscription)
+
+        assert subscription.connected_squads == [SQUAD]
+        assert state.is_limited is True, 'лимит в силе — отметку не трогаем'
+        assert released == 0
+        assert pushed == []
+        assert api_service.opened == 0, 'право правится в базе, панель тут ни при чём'
+
+    async def test_entitlement_is_not_restored_when_the_tariff_no_longer_gives_it(self, monkeypatch):
+        """Сквад убрали из тарифа — возвращать право нельзя, это не сбой синхронизации."""
+        subscription = self._subscription(premium_on_squad=True, connected=(), allowed=())
+        await self._release(monkeypatch, subscription)
+
+        assert subscription.connected_squads == []
+
+    async def test_entitlement_in_place_is_left_alone(self, monkeypatch):
+        """Ничего не потеряно — список не трогаем и дублей не заводим."""
+        subscription = self._subscription(premium_on_squad=True)
+        await self._release(monkeypatch, subscription)
+
+        assert subscription.connected_squads == [SQUAD]
+
     async def test_release_runs_even_when_no_tariff_has_premium(self, monkeypatch):
         """Премиум убрали из всех тарифов — целей нет, но снятые сквады вернуть надо."""
         service = PremiumTrafficService()
@@ -590,7 +623,7 @@ class TestOrphanedLimits:
 
         monkeypatch.setattr('app.services.premium_traffic_service.RemnaWaveService', _Remnawave)
         monkeypatch.setattr('app.services.premium_traffic_service.AsyncSessionLocal', _Session)
-        monkeypatch.setattr(service, '_release_orphaned_limits', _release)
+        monkeypatch.setattr(service, '_reconcile_limited_states', _release)
         monkeypatch.setattr(service, '_collect_targets', _no_targets)
 
         stats = await service.process_once()
