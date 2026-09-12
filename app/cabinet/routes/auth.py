@@ -1456,6 +1456,7 @@ async def register_email_standalone(
         email=request.email,
         email_verified=False,
         verified_admin=False,
+        start_parameter=request.referral_code or request.campaign_slug,
     )
     raise_for_registration_decision(email_access)
 
