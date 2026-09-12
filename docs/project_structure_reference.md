@@ -1735,7 +1735,7 @@
   Классы: нет
   Функции: `remaining_days_for_switch` — Сколько дней остатка оплачивать при переключении тарифа., `should_reset_used_traffic` — Обнулять ли счётчик трафика при переключении тарифа.
 - `app/services/traffic_monitoring_service.py` — Python-модуль
-  Классы: `TrafficViolation`, `TrafficMonitoringServiceV2` (35 методов), `TrafficMonitoringSchedulerV2` (8 методов), `TrafficMonitoringService` (6 методов), `TrafficMonitoringScheduler` (9 методов)
+  Классы: `TrafficViolation`, `TrafficMonitoringServiceV2` (35 методов), `TrafficMonitoringSchedulerV2` (9 методов), `TrafficMonitoringService` (6 методов), `TrafficMonitoringScheduler` (9 методов)
   Функции: нет
 - `app/services/traffic_reset_policy.py` — Python-модуль
   Классы: нет
@@ -2183,7 +2183,7 @@
   Функции: `preview_text` — Короткое превью сообщения для уведомлений (полный текст — в карточке тикета)., `split_long_block` — Режет блок по границам строк/слов, не разрывая HTML-теги и сущности., `build_ticket_pages` — Собирает страницы «шапка + сообщения», не теряя ни одного символа.
 - `app/utils/timezone.py` — Python-модуль
   Классы: нет
-  Функции: `get_local_timezone` — Return the configured local timezone., `local_date` — Календарная дата момента ``moment`` (по умолчанию — сейчас) в зоне ``tz``., `local_day_start` — Полночь локального дня, к которому относится ``moment``, как момент в UTC., `local_day_bounds` — Полуинтервал ``[начало, конец)`` локального дня в UTC: ``created_at >= start`` и ``< end``., `local_month_start` — Полночь первого числа локального месяца, к которому относится ``moment``, как момент в UTC., `panel_datetime_to_utc` — Normalize a RemnaWave panel datetime to aware UTC., `to_local_datetime` — Convert a datetime value to the configured local timezone., `format_local_datetime` — Format a datetime value in the configured local timezone., `format_email_datetime` — Format a datetime for email-template substitution.
+  Функции: `get_local_timezone` — Return the configured local timezone., `local_date` — Календарная дата момента ``moment`` (по умолчанию — сейчас) в зоне ``tz``., `local_day_start` — Полночь локального дня, к которому относится ``moment``, как момент в UTC., `local_day_bounds` — Полуинтервал ``[начало, конец)`` локального дня в UTC: ``created_at >= start`` и ``< end``., `local_month_start` — Полночь первого числа локального месяца, к которому относится ``moment``, как момент в UTC., `next_local_wall_clock` — Ближайший момент (в UTC), когда часы в зоне ``tz`` покажут одно из ``times``., `panel_datetime_to_utc` — Normalize a RemnaWave panel datetime to aware UTC., `to_local_datetime` — Convert a datetime value to the configured local timezone., `format_local_datetime` — Format a datetime value in the configured local timezone., `format_email_datetime` — Format a datetime for email-template substitution.
 - `app/utils/user_utils.py` — Python-модуль
   Классы: нет
   Функции: `format_referrer_info` — Return formatted referrer info for admin notifications., `generate_unique_referral_code`, `get_effective_referral_commission_percent` — Возвращает индивидуальный процент комиссии пользователя или дефолтное значение., `mark_user_as_had_paid_subscription`, `get_user_referral_summary`, `get_detailed_referral_list`, `get_referral_analytics`
@@ -4367,6 +4367,9 @@
 - `tests/services/test_ticket_reply_email.py` — Python-модуль
   Классы: нет
   Функции: `sent` — Перехватывает send_notification роутера., `last_message` — Подменяет чтение последнего сообщения тикета (проверка на фото)., `test_email_user_gets_ticket_reply_email`, `test_photo_reply_marked_in_context`, `test_long_reply_is_previewed`, `test_telegram_user_does_not_get_email` — Юзеру с Telegram ответ уже ушёл в бот — письмо было бы дублем., `test_disabled_toggle_blocks_email`, `test_global_notifications_switch_does_not_mute_support_replies` — ENABLE_NOTIFICATIONS не должен глушить ответ поддержки только email-юзеру., `test_user_without_verified_email_is_skipped`, `test_delivery_failure_does_not_raise`, `test_template_renders_for_supported_languages`, `test_template_escapes_html_in_preview` — Ответ поддержки вида «откройте <config>» не должен ломать вёрстку письма., `test_template_mentions_photo_when_reply_has_one`
+- `tests/services/test_traffic_daily_check_schedule.py` — Python-модуль
+  Классы: нет
+  Функции: `test_daily_check_runs_at_local_midnight`, `test_daily_check_today_if_local_time_is_still_ahead`
 - `tests/services/test_traffic_daily_sum.py` — Python-модуль
   Классы: нет
   Функции: `test_sums_per_node_totals`, `test_the_old_top_level_total_is_not_used` — Регрессия, ради которой всё и переписывалось., `test_falls_back_to_daily_breakdown_when_a_node_has_no_total`, `test_accepts_a_flat_list_of_series`, `test_tolerates_garbage_without_raising`, `test_daily_window_is_one_complete_previous_day` — Окно обязано быть ОДНИМИ полными сутками, и не текущими.
@@ -4570,7 +4573,7 @@
   Функции: `test_lava_sbp_and_card_describe_provider_not_themselves`, `test_lava_generic_method_keeps_provider_description`
 - `tests/utils/test_local_day.py` — Python-модуль
   Классы: нет
-  Функции: `test_bounds_of_moscow_day_are_utc_instants`, `test_moment_before_moscow_midnight_belongs_to_previous_day`, `test_local_date_follows_the_zone_not_utc`, `test_naive_moment_is_treated_as_utc`, `test_spring_forward_day_is_23_hours_long` — Границы считаются через ZoneInfo, а не через фиксированное смещение., `test_fall_back_day_is_25_hours_long`, `test_days_back_counts_calendar_days_across_dst`, `test_default_zone_comes_from_settings`, `test_utc_zone_keeps_utc_midnight`, `test_month_start_is_local_first_day_midnight_in_utc`, `test_month_start_before_local_midnight_is_previous_month`
+  Функции: `test_bounds_of_moscow_day_are_utc_instants`, `test_moment_before_moscow_midnight_belongs_to_previous_day`, `test_local_date_follows_the_zone_not_utc`, `test_naive_moment_is_treated_as_utc`, `test_spring_forward_day_is_23_hours_long` — Границы считаются через ZoneInfo, а не через фиксированное смещение., `test_fall_back_day_is_25_hours_long`, `test_days_back_counts_calendar_days_across_dst`, `test_default_zone_comes_from_settings`, `test_utc_zone_keeps_utc_midnight`, `test_month_start_is_local_first_day_midnight_in_utc`, `test_month_start_before_local_midnight_is_previous_month`, `test_next_wall_clock_picks_the_next_local_time_today`, `test_next_wall_clock_rolls_over_to_the_earliest_time_tomorrow`, `test_next_wall_clock_keeps_the_local_hour_across_dst`
 - `tests/utils/test_logo_resize_tempdir.py` — Python-модуль
   Классы: нет
   Функции: `test_oversized_logo_resized_into_writable_tempdir`, `test_small_logo_returned_unchanged`
@@ -4588,7 +4591,7 @@
   Функции: `from_url`, `test_factory_disables_maintenance_notifications`, `test_factory_defaults_to_settings_url_and_keeps_explicit_kwargs`, `test_factory_skips_config_on_old_redis_py` — redis-py без модуля maint_notifications: лишний kwarg уронил бы from_url., `test_every_redis_client_in_app_goes_through_factory` — Сторож: прямой ``from_url``/``Redis(`` в app/ вернул бы шум и обошёл общие настройки.
 - `tests/utils/test_remnawave_auto_sync.py` — Python-модуль
   Классы: нет
-  Функции: `test_parse_daily_time_list`, `test_calculate_next_run_same_day`, `test_calculate_next_run_rollover`, `test_perform_sync_rebuilds_service_on_each_run`
+  Функции: `test_parse_daily_time_list`, `test_calculate_next_run_same_day_in_configured_timezone` — REMNAWAVE_AUTO_SYNC_TIMES — локальное время оператора (.env.example так и обещает: «по МСК»),, `test_calculate_next_run_rollover_in_configured_timezone`, `test_perform_sync_rebuilds_service_on_each_run`
 - `tests/utils/test_rich_admin.py` — Python-модуль
   Классы: нет
   Функции: `test_rich_flag_default_is_enabled`, `test_classic_html_to_rich_conversion`, `test_classic_html_emoji_before_bold_becomes_header` — Заголовки вида «🔧 <b>ВКЛЮЧЕНИЕ ТЕХРАБОТ</b>» (эмодзи до тега) тоже выносятся в h6., `test_classic_html_without_bold_header_kept_as_is`, `test_kv_table_escapes_keys_and_keeps_value_html`, `test_traceback_details_escapes_content`, `test_try_send_passes_thread_and_markup`, `test_try_send_disabled_by_setting`, `test_try_send_unsupported_marks_latch`, `test_try_send_render_error_does_not_latch`, `test_try_send_oversized_falls_back`, `test_pre_blocks_survive_conversion` — <pre>-блоки (описание релиза из markdown) сохраняют форматирование —, `test_inline_buttons_move_into_canvas_in_private_admin_chat` — В личке админа Mini App допустим, поэтому переносится вся клавиатура., `test_web_app_button_stays_outside_in_group_admin_chat` — У группы отрицательный id, а Mini App там не откроется — клавиатура остаётся., `test_callback_buttons_move_into_canvas_in_group_admin_chat` — Обычные callback-кнопки в группе переносятся штатно.

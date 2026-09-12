@@ -9,6 +9,7 @@ import pytest
 from app.config import settings
 from app.services.remnawave_service import RemnaWaveConfigurationError
 from app.services.remnawave_sync_service import RemnaWaveAutoSyncService
+from tests.fixtures.local_day import reset_local_timezone_cache, use_timezone  # noqa: F401
 
 
 @pytest.mark.parametrize(
@@ -24,36 +25,26 @@ def test_parse_daily_time_list(raw, expected):
     assert settings.parse_daily_time_list(raw) == expected
 
 
-def _patch_datetime(monkeypatch, current):
-    real_datetime = datetime
-
-    monkeypatch.setattr(
-        'app.services.remnawave_sync_service.datetime',
-        SimpleNamespace(
-            now=lambda tz=None: current,
-            combine=lambda date_obj, time_obj, tzinfo=None: real_datetime.combine(date_obj, time_obj, tzinfo=tzinfo),
-        ),
-    )
-
-
-def test_calculate_next_run_same_day(monkeypatch):
+def test_calculate_next_run_same_day_in_configured_timezone(monkeypatch, reset_local_timezone_cache):
+    """REMNAWAVE_AUTO_SYNC_TIMES — локальное время оператора (.env.example так и обещает: «по МСК»),
+    а считалось по UTC — тот же класс, что BACKUP_TIME в #3030."""
+    use_timezone(monkeypatch, 'Europe/Moscow')
     service = RemnaWaveAutoSyncService()
-    current = datetime(2024, 1, 1, 2, 30, tzinfo=UTC)
-    _patch_datetime(monkeypatch, current)
+    current = datetime(2024, 1, 1, 2, 30, tzinfo=UTC)  # 05:30 МСК
 
-    next_run = service._calculate_next_run([time_cls(1, 0), time_cls(3, 0)])
+    next_run = service._calculate_next_run([time_cls(1, 0), time_cls(7, 0)], reference=current)
 
-    assert next_run == datetime(2024, 1, 1, 3, 0, tzinfo=UTC)
+    assert next_run == datetime(2024, 1, 1, 4, 0, tzinfo=UTC)  # 07:00 МСК того же дня
 
 
-def test_calculate_next_run_rollover(monkeypatch):
+def test_calculate_next_run_rollover_in_configured_timezone(monkeypatch, reset_local_timezone_cache):
+    use_timezone(monkeypatch, 'Europe/Moscow')
     service = RemnaWaveAutoSyncService()
-    current = datetime(2024, 1, 1, 23, 45, tzinfo=UTC)
-    _patch_datetime(monkeypatch, current)
+    current = datetime(2024, 1, 1, 23, 45, tzinfo=UTC)  # 02:45 МСК 2 января
 
-    next_run = service._calculate_next_run([time_cls(1, 0), time_cls(10, 0)])
+    next_run = service._calculate_next_run([time_cls(1, 0), time_cls(10, 0)], reference=current)
 
-    assert next_run == datetime(2024, 1, 2, 1, 0, tzinfo=UTC)
+    assert next_run == datetime(2024, 1, 2, 7, 0, tzinfo=UTC)  # 10:00 МСК 2 января
 
 
 def test_perform_sync_rebuilds_service_on_each_run(monkeypatch):

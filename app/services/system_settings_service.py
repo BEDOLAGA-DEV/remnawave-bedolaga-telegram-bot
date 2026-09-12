@@ -1147,7 +1147,10 @@ class BotConfigurationService:
             'dependencies': 'REMNAWAVE_AUTO_SYNC_TIMES',
         },
         'REMNAWAVE_AUTO_SYNC_TIMES': {
-            'description': ('Список времени в формате HH:MM, когда запускается автосинхронизация в течение суток.'),
+            'description': (
+                'Список времени в формате HH:MM в часовом поясе бота (TIMEZONE), '
+                'когда запускается автосинхронизация в течение суток.'
+            ),
             'format': 'Перечислите время через запятую или с новой строки (например, 03:00, 15:00).',
             'example': '03:00, 15:00',
             'warning': (
@@ -1296,10 +1299,10 @@ class BotConfigurationService:
             'dependencies': 'TRAFFIC_DAILY_CHECK_TIME, TRAFFIC_DAILY_THRESHOLD_GB',
         },
         'TRAFFIC_DAILY_CHECK_TIME': {
-            'description': 'Время суточной проверки трафика в формате HH:MM (UTC).',
+            'description': 'Время суточной проверки трафика в формате HH:MM в часовом поясе бота (TIMEZONE).',
             'format': 'Строка времени HH:MM.',
             'example': '00:00',
-            'warning': 'Время указывается в UTC.',
+            'warning': 'Время указывается в часовом поясе бота (TIMEZONE), а не в UTC.',
             'dependencies': 'TRAFFIC_DAILY_CHECK_ENABLED',
         },
         'TRAFFIC_DAILY_THRESHOLD_GB': {

@@ -30,15 +30,9 @@ ALLOWED_FILES = {
 
 MIDNIGHT_KEYWORDS = {'hour': 0, 'minute': 0, 'second': 0, 'microsecond': 0}
 
-# Функции, где дата по UTC — по контракту или отложенный сосед, а не недосмотр (файл::функция → почему).
+# Функции, где дата по UTC — по контракту, а не недосмотр (файл::функция → почему).
 KNOWN_UTC_SITES = {
     'app/services/remnawave_service.py::get_top_consumers': 'диапазон дат для API панели — панель живёт в UTC',
-    'app/services/remnawave_sync_service.py::_calculate_next_run': (
-        'расписание синхронизации считается по UTC — соседний класс (#3030 у бэкапов), чинить отдельным коммитом'
-    ),
-    'app/services/traffic_monitoring_service.py::_run_daily_check_loop': (
-        'суточная проверка трафика по UTC-времени — то же, чинить вместе с расписанием синхронизации'
-    ),
 }
 
 

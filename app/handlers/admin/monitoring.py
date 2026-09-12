@@ -1947,7 +1947,7 @@ async def edit_daily_time(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
     await callback.message.answer(
-        '🕐 Введите время суточной проверки в формате HH:MM (UTC):\nНапример: 00:00, 03:00, 12:30'
+        '🕐 Введите время суточной проверки в формате HH:MM (в часовом поясе бота):\nНапример: 00:00, 03:00, 12:30'
     )
 
 

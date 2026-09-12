@@ -106,3 +106,42 @@ def test_month_start_before_local_midnight_is_previous_month():
     moment = datetime(2026, 8, 31, 20, 30, tzinfo=UTC)  # 23:30 МСК 31 августа
 
     assert local_month_start(moment, tz=MOSCOW) == datetime(2026, 7, 31, 21, 0, tzinfo=UTC)
+
+
+# ---- расписания: ближайшее локальное время из списка --------------------------------------------
+
+
+def test_next_wall_clock_picks_the_next_local_time_today():
+    from datetime import time
+
+    from app.utils.timezone import next_local_wall_clock
+
+    reference = datetime(2026, 9, 12, 1, 0, tzinfo=UTC)  # 04:00 МСК
+
+    result = next_local_wall_clock([time(3, 0), time(10, 0)], reference, tz=MOSCOW)
+
+    assert result == datetime(2026, 9, 12, 7, 0, tzinfo=UTC)  # 10:00 МСК сегодня
+
+
+def test_next_wall_clock_rolls_over_to_the_earliest_time_tomorrow():
+    from datetime import time
+
+    from app.utils.timezone import next_local_wall_clock
+
+    reference = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)  # 15:00 МСК
+
+    result = next_local_wall_clock([time(10, 0), time(3, 0)], reference, tz=MOSCOW)
+
+    assert result == datetime(2026, 9, 13, 0, 0, tzinfo=UTC)  # 03:00 МСК завтра
+
+
+def test_next_wall_clock_keeps_the_local_hour_across_dst():
+    from datetime import time
+
+    from app.utils.timezone import next_local_wall_clock
+
+    reference = datetime(2026, 3, 28, 12, 0, tzinfo=UTC)  # суббота перед переводом часов в Берлине
+
+    result = next_local_wall_clock([time(3, 0)], reference, tz=BERLIN)
+
+    assert result == datetime(2026, 3, 29, 1, 0, tzinfo=UTC)  # 03:00 CEST, а не 02:00 UTC

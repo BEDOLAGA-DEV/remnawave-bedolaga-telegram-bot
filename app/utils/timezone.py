@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
 from zoneinfo import ZoneInfo
@@ -81,6 +82,32 @@ def local_month_start(moment: datetime | None = None, tz: ZoneInfo | None = None
     zone = tz or get_local_timezone()
     first_day = local_date(moment, zone).replace(day=1)
     return datetime.combine(first_day, time.min, tzinfo=zone).astimezone(UTC)
+
+
+def next_local_wall_clock(
+    times: Iterable[time],
+    reference: datetime | None = None,
+    tz: ZoneInfo | None = None,
+) -> datetime:
+    """Ближайший момент (в UTC), когда часы в зоне ``tz`` покажут одно из ``times``.
+
+    Для расписаний из настроек (синхронизация с панелью, суточная проверка
+    трафика): HH:MM там — локальное время оператора, как и BACKUP_TIME после
+    #3030. Раньше часы подставлялись в UTC-«сейчас», и при Europe/Moscow
+    запуск уезжал на три часа. Через перевод часов локальный час сохраняется.
+    """
+    zone = tz or get_local_timezone()
+    slots = sorted({slot.replace(tzinfo=None) for slot in times})
+    if not slots:
+        raise ValueError('расписание пустое')
+    moment = _as_aware_utc(reference)
+    today = moment.astimezone(zone).date()
+    for day in (today, today + timedelta(days=1)):
+        for slot in slots:
+            candidate = datetime.combine(day, slot, tzinfo=zone).astimezone(UTC)
+            if candidate > moment:
+                return candidate
+    raise RuntimeError('расписание не дало ни одного момента за два дня')  # pragma: no cover
 
 
 def panel_datetime_to_utc(dt: datetime) -> datetime:
