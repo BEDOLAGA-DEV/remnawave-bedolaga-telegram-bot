@@ -504,7 +504,21 @@ class PlategaPaymentMixin:
                 )
                 return
 
-            subscription.extend_subscription(record.charge_days)
+            if subscription.tariff_id is None and record.tariff_id is not None:
+                from app.database.crud.subscription import apply_recurrent_tariff_charge
+                from app.database.crud.tariff import get_tariff_by_id
+
+                tariff = await get_tariff_by_id(db, record.tariff_id)
+                if tariff is None:
+                    logger.error(
+                        'Platega subscription callback: тариф не найден для успешного списания',
+                        tariff_id=record.tariff_id,
+                        subscription_id=subscription.id,
+                    )
+                    return
+                await apply_recurrent_tariff_charge(db, subscription, tariff, record.charge_days)
+            else:
+                subscription.extend_subscription(record.charge_days)
 
             # Списание по локально ОТМЕНЁННОЙ записи = удалённая отмена не
             # прошла (сбой Platega в момент cancel). Деньги взяты — продлеваем
@@ -1122,6 +1136,7 @@ async def purchase_tariff_with_sbp_recurring(
     *,
     user: Any,
     tariff: Any,
+    subscription: Any | None = None,
 ) -> dict[str, Any]:
     """Оформление подписки на тариф с оплатой через СБП-автопродление Platega.
 
@@ -1155,11 +1170,16 @@ async def purchase_tariff_with_sbp_recurring(
         get_subscription_by_user_id,
     )
 
-    if settings.is_multi_tariff_enabled():
+    if subscription is not None:
+        if subscription.user_id != user.id:
+            raise ValueError('Subscription does not belong to user')
+        if subscription.tariff_id not in (None, tariff.id):
+            raise ValueError('СБП-оформление недоступно при подписке другого тарифа — оплатите с баланса')
+    elif settings.is_multi_tariff_enabled():
         subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
     else:
         subscription = await get_subscription_by_user_id(db, user.id)
-        if subscription is not None and subscription.tariff_id != tariff.id:
+        if subscription is not None and subscription.tariff_id not in (None, tariff.id):
             raise ValueError('СБП-оформление недоступно при подписке другого тарифа — оплатите с баланса')
 
     if subscription is not None:

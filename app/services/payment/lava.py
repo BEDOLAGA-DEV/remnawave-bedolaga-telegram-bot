@@ -758,9 +758,21 @@ class LavaPaymentMixin:
         # подписки докуплены устройства/трафик), привязка недобирала бы разницу
         # при каждом списании — отказываем с конкретными числами, чтобы
         # оператор завёл продукт с нужной ценой.
-        from app.services.recurrent_amount import resolve_true_renewal_amount
+        if subscription.tariff_id is None:
+            from app.database.crud.subscription import resolve_tariff_purchase_device_limit
+            from app.services.pricing_engine import pricing_engine
 
-        true_amount = await resolve_true_renewal_amount(db, subscription, charge_days)
+            legacy_device_limit = resolve_tariff_purchase_device_limit(subscription, tariff)
+            target_pricing = await pricing_engine.calculate_tariff_purchase_price(
+                tariff,
+                charge_days,
+                device_limit=legacy_device_limit,
+            )
+            true_amount = int(target_pricing.final_total)
+        else:
+            from app.services.recurrent_amount import resolve_true_renewal_amount
+
+            true_amount = await resolve_true_renewal_amount(db, subscription, charge_days)
         if true_amount and true_amount - amount_kopeks > 1:
             raise ValueError(
                 f'Продукт Lava стоит {amount_kopeks / 100:.2f} ₽, а продление подписки — '
@@ -1065,7 +1077,21 @@ class LavaPaymentMixin:
 
             await _lock_subscription_row(db, subscription)
 
-            subscription.extend_subscription(record.charge_days)
+            if subscription.tariff_id is None and record.tariff_id is not None:
+                from app.database.crud.subscription import apply_recurrent_tariff_charge
+                from app.database.crud.tariff import get_tariff_by_id
+
+                tariff = await get_tariff_by_id(db, record.tariff_id)
+                if tariff is None:
+                    logger.error(
+                        'Lava subscription callback: тариф не найден для успешного списания',
+                        tariff_id=record.tariff_id,
+                        subscription_id=subscription.id,
+                    )
+                    return False
+                await apply_recurrent_tariff_charge(db, subscription, tariff, record.charge_days)
+            else:
+                subscription.extend_subscription(record.charge_days)
 
             # Списание по локально ОТМЕНЁННОЙ записи = удалённая отмена не
             # прошла. Деньги взяты — продлеваем честно, но запись НЕ воскрешаем
@@ -1204,6 +1230,7 @@ async def purchase_tariff_with_lava_recurring(
     *,
     user: Any,
     tariff: Any,
+    subscription: Any | None = None,
 ) -> dict[str, Any]:
     """Оформление подписки на тариф оплатой через автопродление Lava.
 
@@ -1230,11 +1257,16 @@ async def purchase_tariff_with_lava_recurring(
         get_subscription_by_user_id,
     )
 
-    if settings.is_multi_tariff_enabled():
+    if subscription is not None:
+        if subscription.user_id != user.id:
+            raise ValueError('Subscription does not belong to user')
+        if subscription.tariff_id not in (None, tariff.id):
+            raise ValueError('Оформление через Lava недоступно при подписке другого тарифа — оплатите с баланса')
+    elif settings.is_multi_tariff_enabled():
         subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
     else:
         subscription = await get_subscription_by_user_id(db, user.id)
-        if subscription is not None and subscription.tariff_id != tariff.id:
+        if subscription is not None and subscription.tariff_id not in (None, tariff.id):
             raise ValueError('Оформление через Lava недоступно при подписке другого тарифа — оплатите с баланса')
 
     if subscription is not None:

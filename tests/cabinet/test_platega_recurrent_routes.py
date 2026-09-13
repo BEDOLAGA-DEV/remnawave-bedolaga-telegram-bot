@@ -467,6 +467,29 @@ async def test_purchase_happy_path_returns_redirect_and_subscription_id(monkeypa
     mock_purchase.assert_awaited_once_with(db, user=user, tariff=tariff)
 
 
+async def test_purchase_forwards_legacy_subscription_to_recurring_service(monkeypatch, user):
+    _configure_gate(monkeypatch, enabled=True)
+    tariff = SimpleNamespace(id=5, is_active=True)
+    legacy_subscription = SimpleNamespace(id=77, user_id=user.id, tariff_id=None)
+    db = AsyncMock()
+    mock_purchase = AsyncMock(
+        return_value={'status': 'PENDING', 'redirect_url': 'https://pay/x', 'subscription_id': 77}
+    )
+
+    monkeypatch.setattr('app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=tariff))
+    monkeypatch.setattr(route, 'resolve_subscription', AsyncMock(return_value=legacy_subscription))
+    monkeypatch.setattr('app.services.payment.platega.purchase_tariff_with_sbp_recurring', mock_purchase)
+
+    await route.purchase_with_platega_recurrent(tariff_id=5, subscription_id=77, user=user, db=db)
+
+    mock_purchase.assert_awaited_once_with(
+        db,
+        user=user,
+        tariff=tariff,
+        subscription=legacy_subscription,
+    )
+
+
 async def test_purchase_value_error_maps_to_400(monkeypatch, user):
     """Отказ сервиса (триал/чужой тариф/disabled) -> 400 с текстом причины."""
     _configure_gate(monkeypatch, enabled=True)
