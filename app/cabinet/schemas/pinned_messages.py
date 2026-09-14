@@ -13,7 +13,9 @@ class PinnedMessageMedia(BaseModel):
 
 
 class PinnedMessageCreateRequest(BaseModel):
-    content: str = Field(..., min_length=1, max_length=4000)
+    # Текст может быть пустым у сообщения из одной картинки: «текст или медиа»
+    # проверяет роут, здесь только предел длины — тот же, что на правке.
+    content: str = Field(..., max_length=4000)
     media: PinnedMessageMedia | None = None
     send_before_menu: bool = True
     send_on_every_start: bool = True

@@ -154,7 +154,13 @@ def resolve_min_device_limit(tariff: object | None = None) -> int:
 
 
 def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
-    """Return a device limit value for RemnaWave payloads when selection is enabled."""
+    """Return a device limit value for RemnaWave payloads when selection is enabled.
+
+    Ноль или пусто в ``device_limit`` — «без ограничения» (HWID выключен): это
+    штатное состояние подписки, а не ошибка, поэтому в панель поле не шлём и
+    пишем об этом только в debug. Полная синхронизация прогоняет через эту
+    функцию каждую подписку — warning здесь превращался в шум на всю базу.
+    """
     import structlog
 
     _logger = structlog.get_logger('resolve_hwid_device_limit')
@@ -177,8 +183,8 @@ def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
 
     limit = getattr(subscription, 'device_limit', None)
     if limit is None or limit <= 0:
-        _logger.warning(
-            'device_limit is None or <= 0, returning None',
+        _logger.debug(
+            'device_limit не задан (без ограничения) — hwidDeviceLimit в панель не шлём',
             device_limit=limit,
             subscription_id=getattr(subscription, 'id', None),
         )
@@ -195,39 +201,22 @@ def resolve_hwid_device_limit_for_payload(
     When device selection is disabled and no explicit override is configured,
     RemnaWave should continue receiving the subscription's stored limit so the
     external panel stays aligned with the bot configuration.
+
+    Раньше здесь был «запасной» путь, читавший тот же ``device_limit`` ещё раз
+    и писавший второй warning на ту же подписку; значения он дать не мог.
     """
     import structlog
 
     _logger = structlog.get_logger('resolve_hwid_device_limit')
 
     resolved_limit = resolve_hwid_device_limit(subscription)
-
     if resolved_limit is not None:
         _logger.info(
             'hwid_device_limit resolved',
             resolved_limit=resolved_limit,
             subscription_id=getattr(subscription, 'id', None),
         )
-        return resolved_limit
-
-    if subscription is None:
-        return None
-
-    fallback_limit = getattr(subscription, 'device_limit', None)
-    if fallback_limit is None or fallback_limit <= 0:
-        _logger.warning(
-            'fallback device_limit is None or <= 0, NOT sending hwidDeviceLimit to RemnaWave',
-            fallback_limit=fallback_limit,
-            subscription_id=getattr(subscription, 'id', None),
-        )
-        return None
-
-    _logger.info(
-        'using fallback device_limit',
-        fallback_limit=fallback_limit,
-        subscription_id=getattr(subscription, 'id', None),
-    )
-    return fallback_limit
+    return resolved_limit
 
 
 def resolve_simple_subscription_device_limit() -> int:

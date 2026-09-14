@@ -1,0 +1,24 @@
+{
+ "name": "method_405",
+ "status": 405,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "allow": "GET",
+  "x-api-version": "1.1",
+  "x-request-id": "805c3ba1b003",
+  "server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "method_not_allowed",
+   "message": "Method Not Allowed",
+   "details": {
+    "request_id": "805c3ba1b003",
+    "retryable": false
+   }
+  }
+ }
+}

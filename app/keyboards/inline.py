@@ -2598,6 +2598,87 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+    if settings.is_tabpay_card_enabled():
+        tabpay_card_name = settings.get_tabpay_card_display_name()
+        keyboard.append(
+            [
+                _create_btn(
+                    text=texts.t('PAYMENT_TABPAY_CARD', f'💳 {tabpay_card_name}'),
+                    callback_data=_build_callback('tabpay_card'),
+                    method='tabpay_card',
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_tabpay_sbp_enabled():
+        tabpay_sbp_name = settings.get_tabpay_sbp_display_name()
+        keyboard.append(
+            [
+                _create_btn(
+                    text=texts.t('PAYMENT_TABPAY_SBP', f'📱 {tabpay_sbp_name}'),
+                    callback_data=_build_callback('tabpay_sbp'),
+                    method='tabpay_sbp',
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_tabpay_enabled() and not settings.is_tabpay_card_enabled() and not settings.is_tabpay_sbp_enabled():
+        tabpay_name = settings.get_tabpay_display_name()
+        keyboard.append(
+            [
+                _create_btn(
+                    text=texts.t('PAYMENT_TABPAY', f'💳 {tabpay_name}'),
+                    callback_data=_build_callback('tabpay'),
+                    method='tabpay',
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_paritypay_card_enabled():
+        paritypay_card_name = settings.get_paritypay_card_display_name()
+        keyboard.append(
+            [
+                _create_btn(
+                    text=texts.t('PAYMENT_PARITYPAY_CARD', f'💳 {paritypay_card_name}'),
+                    callback_data=_build_callback('paritypay_card'),
+                    method='paritypay_card',
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_paritypay_sbp_enabled():
+        paritypay_sbp_name = settings.get_paritypay_sbp_display_name()
+        keyboard.append(
+            [
+                _create_btn(
+                    text=texts.t('PAYMENT_PARITYPAY_SBP', f'📱 {paritypay_sbp_name}'),
+                    callback_data=_build_callback('paritypay_sbp'),
+                    method='paritypay_sbp',
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_paritypay_enabled()
+        and not settings.is_paritypay_card_enabled()
+        and not settings.is_paritypay_sbp_enabled()
+    ):
+        paritypay_name = settings.get_paritypay_display_name()
+        keyboard.append(
+            [
+                _create_btn(
+                    text=texts.t('PAYMENT_PARITYPAY', f'💳 {paritypay_name}'),
+                    callback_data=_build_callback('paritypay'),
+                    method='paritypay',
+                )
+            ]
+        )
+        has_direct_payment_methods = True
     if not keyboard:
         keyboard.append(
             [

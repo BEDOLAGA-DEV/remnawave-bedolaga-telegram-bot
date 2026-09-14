@@ -1,0 +1,28 @@
+{
+ "name": "sv_not24",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "ca884339df9a",
+  "server": "cloudflare"
+ },
+ "request": {
+  "cidr": "192.0.2.0/23",
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "cidr_too_wide",
+   "message": "Поддерживается только /24",
+   "details": {
+    "request_id": "ca884339df9a",
+    "retryable": false
+   }
+  }
+ }
+}

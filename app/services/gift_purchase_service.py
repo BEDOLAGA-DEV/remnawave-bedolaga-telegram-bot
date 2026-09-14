@@ -76,6 +76,9 @@ class GiftTariffOffer:
     device_limit: int
     display_order: int
     quotes: tuple[GiftQuote, ...]
+    # Отметки оператора: выгодный тариф и выгодный период внутри него.
+    is_highlighted: bool = False
+    highlight_period_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -286,6 +289,8 @@ async def list_gift_offers(db: AsyncSession, buyer: User | None = None) -> list[
                 device_limit=tariff.device_limit if tariff.device_limit is not None else 1,
                 display_order=tariff.display_order or 0,
                 quotes=tuple(quotes),
+                is_highlighted=bool(tariff.is_highlighted),
+                highlight_period_days=tariff.highlight_period_days,
             )
         )
 

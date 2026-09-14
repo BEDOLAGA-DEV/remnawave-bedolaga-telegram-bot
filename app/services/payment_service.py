@@ -41,10 +41,12 @@ from app.services.payment.jupiter import JupiterPaymentMixin
 from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.payment.lava import LavaPaymentMixin
 from app.services.payment.overpay import OverpayPaymentMixin
+from app.services.payment.paritypay import ParityPayPaymentMixin
 from app.services.payment.paypear import PayPearPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
 from app.services.payment.rollypay import RollyPayPaymentMixin
 from app.services.payment.severpay import SeverPayPaymentMixin
+from app.services.payment.tabpay import TabPayPaymentMixin
 from app.services.platega_service import PlategaService
 from app.services.wata_service import WataService
 from app.services.yookassa_service import YooKassaService
@@ -698,6 +700,76 @@ async def link_cispay_payment_to_transaction(*args, **kwargs):
     return await cispay_crud.link_cispay_payment_to_transaction(*args, **kwargs)
 
 
+async def create_tabpay_payment(*args, **kwargs):
+    tabpay_crud = import_module('app.database.crud.tabpay')
+    return await tabpay_crud.create_tabpay_payment(*args, **kwargs)
+
+
+async def get_tabpay_payment_by_order_id(*args, **kwargs):
+    tabpay_crud = import_module('app.database.crud.tabpay')
+    return await tabpay_crud.get_tabpay_payment_by_order_id(*args, **kwargs)
+
+
+async def get_tabpay_payment_by_invoice_id(*args, **kwargs):
+    tabpay_crud = import_module('app.database.crud.tabpay')
+    return await tabpay_crud.get_tabpay_payment_by_invoice_id(*args, **kwargs)
+
+
+async def get_tabpay_payment_by_id(*args, **kwargs):
+    tabpay_crud = import_module('app.database.crud.tabpay')
+    return await tabpay_crud.get_tabpay_payment_by_id(*args, **kwargs)
+
+
+async def get_tabpay_payment_by_id_for_update(*args, **kwargs):
+    tabpay_crud = import_module('app.database.crud.tabpay')
+    return await tabpay_crud.get_tabpay_payment_by_id_for_update(*args, **kwargs)
+
+
+async def update_tabpay_payment_status(*args, **kwargs):
+    tabpay_crud = import_module('app.database.crud.tabpay')
+    return await tabpay_crud.update_tabpay_payment_status(*args, **kwargs)
+
+
+async def link_tabpay_payment_to_transaction(*args, **kwargs):
+    tabpay_crud = import_module('app.database.crud.tabpay')
+    return await tabpay_crud.link_tabpay_payment_to_transaction(*args, **kwargs)
+
+
+async def create_paritypay_payment(*args, **kwargs):
+    paritypay_crud = import_module('app.database.crud.paritypay')
+    return await paritypay_crud.create_paritypay_payment(*args, **kwargs)
+
+
+async def get_paritypay_payment_by_order_id(*args, **kwargs):
+    paritypay_crud = import_module('app.database.crud.paritypay')
+    return await paritypay_crud.get_paritypay_payment_by_order_id(*args, **kwargs)
+
+
+async def get_paritypay_payment_by_invoice_id(*args, **kwargs):
+    paritypay_crud = import_module('app.database.crud.paritypay')
+    return await paritypay_crud.get_paritypay_payment_by_invoice_id(*args, **kwargs)
+
+
+async def get_paritypay_payment_by_id(*args, **kwargs):
+    paritypay_crud = import_module('app.database.crud.paritypay')
+    return await paritypay_crud.get_paritypay_payment_by_id(*args, **kwargs)
+
+
+async def get_paritypay_payment_by_id_for_update(*args, **kwargs):
+    paritypay_crud = import_module('app.database.crud.paritypay')
+    return await paritypay_crud.get_paritypay_payment_by_id_for_update(*args, **kwargs)
+
+
+async def update_paritypay_payment_status(*args, **kwargs):
+    paritypay_crud = import_module('app.database.crud.paritypay')
+    return await paritypay_crud.update_paritypay_payment_status(*args, **kwargs)
+
+
+async def link_paritypay_payment_to_transaction(*args, **kwargs):
+    paritypay_crud = import_module('app.database.crud.paritypay')
+    return await paritypay_crud.link_paritypay_payment_to_transaction(*args, **kwargs)
+
+
 # Mapping from model_name to getter function name for providers
 # where it differs from the standard get_{model_name}_payment_by_id pattern.
 _GETTER_OVERRIDES: dict[str, str] = {
@@ -753,6 +825,8 @@ class PaymentService(
     DonutPaymentMixin,
     LavaPaymentMixin,
     CisPayPaymentMixin,
+    TabPayPaymentMixin,
+    ParityPayPaymentMixin,
 ):
     """Основной интерфейс платежей, делегирующий работу специализированным mixin-ам."""
 
@@ -1510,6 +1584,52 @@ class PaymentService(
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),
                     'provider': 'cispay',
+                }
+            return None
+
+        # --- TabPay -----------------------------------------------------------
+        if _base == 'tabpay':
+            if not settings.is_tabpay_enabled():
+                logger.warning('TabPay is not enabled, cannot create guest payment')
+                return None
+
+            result = await self.create_tabpay_payment(
+                db=db,
+                user_id=None,
+                amount_kopeks=amount_kopeks,
+                description=description,
+                return_url=return_url,
+                payment_method_type=_option,
+            )
+            if result:
+                await _patch_guest_metadata(result['local_payment_id'], 'tabpay')
+                return {
+                    'payment_url': result.get('payment_url'),
+                    'payment_id': result.get('order_id'),
+                    'provider': 'tabpay',
+                }
+            return None
+
+        # --- ParityPay --------------------------------------------------------
+        if _base == 'paritypay':
+            if not settings.is_paritypay_enabled():
+                logger.warning('ParityPay is not enabled, cannot create guest payment')
+                return None
+
+            result = await self.create_paritypay_payment(
+                db=db,
+                user_id=None,
+                amount_kopeks=amount_kopeks,
+                description=description,
+                return_url=return_url,
+                payment_method_type=_option,
+            )
+            if result:
+                await _patch_guest_metadata(result['local_payment_id'], 'paritypay')
+                return {
+                    'payment_url': result.get('payment_url'),
+                    'payment_id': result.get('order_id'),
+                    'provider': 'paritypay',
                 }
             return None
 

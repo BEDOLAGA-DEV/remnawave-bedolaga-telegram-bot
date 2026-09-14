@@ -1,0 +1,71 @@
+{
+ "name": "vB_poll_34",
+ "status": 200,
+ "elapsed_sec": 0.44,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "00b01b07dcb2",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "test_id": 43304,
+  "state": "done",
+  "queue_pos": null,
+  "queue_total": null,
+  "result_ready": true,
+  "completed_at": "2026-09-05T14:18:58.633791+00:00",
+  "result": [
+   {
+    "ok": false,
+    "sni": "eu-host.example",
+    "stage": "",
+    "tcp_ok": true,
+    "targets": [
+     {
+      "ok": false,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": false,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "vless",
+    "diagnosis": "Туннель до сервера есть, но целевые сайты режутся (DPI после TLS на этом операторе)",
+    "tunnel_up": true,
+    "used_core": "stable",
+    "speed_mbps": 0,
+    "fail_reason": "zombie_tcp",
+    "server_addr": "eu-host.example:443",
+    "server_name": "🇩🇪 Germany",
+    "speed_error": "",
+    "sni_check_ok": false,
+    "tcp_latency_ms": 82,
+    "tsp_latency_ms": 7840,
+    "sni_check_error": "timeout",
+    "sni_check_latency_ms": 2620,
+    "operator": "tele2",
+    "operator_name": "Tele2",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON"
+   }
+  ],
+  "used_core": "stable",
+  "core_requested": "stable"
+ }
+}

@@ -1,0 +1,31 @@
+{
+ "name": "s1_second",
+ "status": 409,
+ "elapsed_sec": 0.38,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "987cc5584b98",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "cidr": "192.0.3.0/24",
+  "operators": [
+   "dobro|цфо|on"
+  ],
+  "probes": {
+   "tcp": true
+  }
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "scan_in_progress",
+   "message": "Дождитесь завершения текущего /24-скана",
+   "details": {
+    "request_id": "987cc5584b98",
+    "retryable": true
+   }
+  }
+ }
+}

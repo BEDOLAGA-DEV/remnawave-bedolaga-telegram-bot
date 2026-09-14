@@ -14,6 +14,8 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from app.config import settings
 from app.services.startup_notification_service import _get_error_recommendations
 from app.utils.rich_admin import RICH_TEXT_LIMIT, rich_footer_now, rich_traceback_details, try_send_rich_admin_message
+from app.utils.telegram_delivery import BOT_BLOCKED_PHRASE, CHAT_NOT_FOUND_PHRASE, USER_DEACTIVATED_PHRASE
+from app.utils.telegram_errors import STALE_CALLBACK_QUERY_PHRASES
 from app.utils.timezone import format_local_datetime
 
 
@@ -29,11 +31,7 @@ DATETIME_FORMAT_FILENAME: Final[str] = '%Y%m%d_%H%M%S'
 DEVELOPER_CONTACT_URL: Final[str] = 'https://t.me/fringg'
 
 # Фразы ошибок Telegram API
-OLD_QUERY_PHRASES: Final[tuple[str, ...]] = (
-    'query is too old',
-    'query id is invalid',
-    'response timeout expired',
-)
+OLD_QUERY_PHRASES: Final[tuple[str, ...]] = STALE_CALLBACK_QUERY_PHRASES
 BAD_REQUEST_PHRASES: Final[tuple[str, ...]] = (
     'message not found',
     'chat not found',
@@ -47,9 +45,7 @@ TOPIC_ERROR_PHRASES: Final[tuple[str, ...]] = (
     'forum_closed',
 )
 MESSAGE_NOT_MODIFIED_PHRASE: Final[str] = 'message is not modified'
-BOT_BLOCKED_PHRASE: Final[str] = 'bot was blocked'
-USER_DEACTIVATED_PHRASE: Final[str] = 'user is deactivated'
-CHAT_NOT_FOUND_PHRASE: Final[str] = 'chat not found'
+# Маркеры недоступности пользователя — один источник: app.utils.telegram_delivery.
 MESSAGE_NOT_FOUND_PHRASE: Final[str] = 'message not found'
 
 # Троттлинг для предотвращения спама ошибками
@@ -203,6 +199,10 @@ class ErrorStatisticsMiddleware(BaseMiddleware):
             self.error_counts[key] = 0
 
 
+def _looks_like_traceback(text: str) -> bool:
+    return text.lstrip().startswith('Traceback') or '\n  File ' in text
+
+
 def _build_rich_error_report(now: datetime, error_type: str, context: str) -> str | None:
     """Rich-отчёт об ошибках: шапка + сворачиваемые трейсбеки всех ошибок буфера.
 
@@ -220,10 +220,15 @@ def _build_rich_error_report(now: datetime, error_type: str, context: str) -> st
     if recommendations:
         blocks.append(f'<blockquote>{recommendations}</blockquote>')
 
-    # Последняя (свежая) ошибка — развёрнута, остальные из буфера — свёрнуты
+    # Последняя (свежая) ошибка — развёрнута, остальные из буфера — свёрнуты.
+    # Запись без трейса (ожидаемый отказ доставки, «traceback недоступен») —
+    # обычный абзац, а не блок кода с одной строкой.
     for index, (err_type, err_msg, err_tb) in enumerate(reversed(_error_buffer)):
         summary = f'📋 {err_type}: {err_msg[:80]}' if err_msg else f'📋 {err_type}'
-        blocks.append(rich_traceback_details(summary, err_tb, open_by_default=index == 0))
+        if _looks_like_traceback(err_tb):
+            blocks.append(rich_traceback_details(summary, err_tb, open_by_default=index == 0))
+        else:
+            blocks.append(f'<p>{html.escape(summary)}<br/>{html.escape(err_tb)}</p>')
 
     blocks.append('<hr/>')
     blocks.append(rich_footer_now())
@@ -236,7 +241,7 @@ def _build_rich_error_report(now: datetime, error_type: str, context: str) -> st
 
 async def send_error_to_admin_chat(
     bot: Bot, error: Exception, context: str = '', tb_override: str | None = None
-) -> bool:
+) -> str:
     """
     Отправляет уведомление об ошибке в админский чат с троттлингом.
 
@@ -247,7 +252,12 @@ async def send_error_to_admin_chat(
         tb_override: Готовый traceback (если вызывается не из except-блока)
 
     Returns:
-        bool: True если уведомление отправлено
+        str: исход доставки — 'sent' | 'throttled' | 'skipped' | 'failed'.
+
+        Раньше возвращался bool, но False означал сразу три разных вещи:
+        уведомления выключены, сработал троттлинг, реальный провал отправки.
+        Для записи в system_error_events их надо различать — иначе штатное
+        подавление дубликата выглядит как авария.
     """
     global _last_error_notification
 
@@ -259,7 +269,7 @@ async def send_error_to_admin_chat(
     enabled = getattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False)
 
     if not enabled or not chat_id:
-        return False
+        return 'skipped'
 
     error_type = type(error).__name__
     error_message = str(error)[:ERROR_MESSAGE_MAX_LENGTH]
@@ -276,7 +286,7 @@ async def send_error_to_admin_chat(
     now = datetime.now(tz=UTC)
     if _last_error_notification and (now - _last_error_notification) < _error_notification_cooldown:
         logger.debug('Ошибка добавлена в буфер, троттлинг активен', error_type=error_type)
-        return False
+        return 'throttled'
 
     _last_error_notification = now
 
@@ -302,7 +312,7 @@ async def send_error_to_admin_chat(
         ):
             _error_buffer.clear()
             logger.info('Rich-уведомление об ошибке отправлено в чат', chat_id=chat_id)
-            return True
+            return 'sent'
     except Exception as rich_error:
         # warning + строка: error-уровень отсюда сам бы ушёл в этот конвейер
         logger.warning('Сбой rich-рендера отчёта об ошибке', error=str(rich_error))
@@ -374,8 +384,8 @@ async def send_error_to_admin_chat(
         await bot.send_document(**message_kwargs)
         _error_buffer.clear()  # Clear only after successful send
         logger.info('Уведомление об ошибке отправлено в чат', chat_id=chat_id)
-        return True
+        return 'sent'
 
     except Exception as e:
         logger.error('Ошибка отправки уведомления об ошибке', e=e, _admin_notified=True)
-        return False
+        return 'failed'

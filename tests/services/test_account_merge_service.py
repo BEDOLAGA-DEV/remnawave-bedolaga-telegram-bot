@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.config import Settings
+from app.config import Settings, settings
 from app.services import account_merge_service
 from app.services.account_merge_service import (
     _build_subscription_preview,
@@ -66,6 +66,10 @@ def _make_user(
     restriction_subscription: bool = False,
     restriction_reason: str | None = None,
     used_promocodes: int = 0,
+    last_name: str | None = None,
+    language: str = 'ru',
+    email_verification_source: str | None = None,
+    promo_group_id: int | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=id,
@@ -105,6 +109,10 @@ def _make_user(
         restriction_subscription=restriction_subscription,
         restriction_reason=restriction_reason,
         used_promocodes=used_promocodes,
+        last_name=last_name,
+        language=language,
+        email_verification_source=email_verification_source,
+        promo_group_id=promo_group_id,
     )
 
 
@@ -470,6 +478,157 @@ class TestExecuteMergeEmailTransfer:
             result = await execute_merge(db, 1, 2)
 
         assert result.email == 'pri@example.com'
+
+
+class TestExecuteMergeKeepsWhatThePagePromises:
+    """Жалоба 2026-09-14: «пустой аккаунт поглощает старый — владелец теряет данные».
+
+    Страница объединения обещает «все способы входа объединятся, история сохранится».
+    Поглощаемый аккаунт терял email с паролем (если у инициатора уже был email),
+    реферальный код, промогруппу и дату регистрации — направление слияния решало,
+    что пропадёт. Теперь слияние сохраняет это независимо от направления.
+    """
+
+    def _patch_users(self, monkeypatch, primary, secondary):
+        monkeypatch.setattr(account_merge_service, 'get_user_by_id', AsyncMock(side_effect=[primary, secondary]))
+        monkeypatch.setattr(account_merge_service, '_count_referrals', AsyncMock(return_value=0))
+        monkeypatch.setattr(account_merge_service, '_promo_group_priority', AsyncMock(return_value=0))
+
+    async def test_password_login_of_the_absorbed_account_replaces_an_oauth_only_email(self, monkeypatch):
+        """Свежий Google-аккаунт (email от Google, без пароля) поглощает старый с email+паролем."""
+        db = _make_db()
+        primary = _make_user(
+            id=1,
+            email='fresh@gmail.com',
+            email_verified=True,
+            email_verification_source='oauth_google',
+            google_id='g1',
+        )
+        secondary = _make_user(
+            id=2,
+            email='old@example.com',
+            email_verified=True,
+            password_hash='hash_old',
+            email_verification_source='cabinet',
+            email_verified_at=datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        self._patch_users(monkeypatch, primary, secondary)
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.email == 'old@example.com' and result.password_hash == 'hash_old'
+        assert result.email_verification_source == 'cabinet'
+        assert result.google_id == 'g1', 'вход через Google остаётся — он по provider id, не по email'
+        assert secondary.email is None and secondary.password_hash is None
+
+    async def test_two_password_logins_keep_the_initiators_email(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(
+            id=1, email='pri@example.com', password_hash='hash_pri', email_verification_source='cabinet'
+        )
+        secondary = _make_user(
+            id=2, email='sec@example.com', password_hash='hash_sec', email_verification_source='cabinet'
+        )
+        self._patch_users(monkeypatch, primary, secondary)
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.email == 'pri@example.com' and result.password_hash == 'hash_pri'
+
+    async def test_email_verification_source_travels_with_the_email(self, monkeypatch):
+        """Пустой источник считается доверенным для ADMIN_EMAILS — терять его нельзя."""
+        db = _make_db()
+        primary = _make_user(id=1)
+        secondary = _make_user(id=2, email='sec@ya.ru', email_verified=True, email_verification_source='oauth_yandex')
+        self._patch_users(monkeypatch, primary, secondary)
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.email == 'sec@ya.ru'
+        assert result.email_verification_source == 'oauth_yandex'
+        assert secondary.email_verification_source is None
+
+    async def test_used_referral_code_of_the_absorbed_account_survives(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(id=1, referral_code='FRESH')
+        secondary = _make_user(id=2, referral_code='OLDLINK')
+        self._patch_users(monkeypatch, primary, secondary)
+        monkeypatch.setattr(
+            account_merge_service, '_count_referrals', AsyncMock(side_effect=lambda db, uid: 3 if uid == 2 else 0)
+        )
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.referral_code == 'OLDLINK'
+        assert secondary.referral_code is None
+
+    async def test_referral_code_of_the_initiator_stays_when_it_has_referrals(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(id=1, referral_code='MINE')
+        secondary = _make_user(id=2, referral_code='OLDLINK')
+        self._patch_users(monkeypatch, primary, secondary)
+        monkeypatch.setattr(account_merge_service, '_count_referrals', AsyncMock(return_value=2))
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.referral_code == 'MINE'
+
+    async def test_unused_referral_codes_keep_the_initiators(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(id=1, referral_code='MINE')
+        secondary = _make_user(id=2, referral_code='OLDLINK')
+        self._patch_users(monkeypatch, primary, secondary)
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.referral_code == 'MINE'
+
+    async def test_higher_promo_group_survives(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(id=1, promo_group_id=10)
+        secondary = _make_user(id=2, promo_group_id=20)
+        self._patch_users(monkeypatch, primary, secondary)
+        monkeypatch.setattr(
+            account_merge_service, '_promo_group_priority', AsyncMock(side_effect=lambda db, gid: 5 if gid == 20 else 0)
+        )
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.promo_group_id == 20
+
+    async def test_lower_promo_group_does_not_replace_a_higher_one(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(id=1, promo_group_id=20)
+        secondary = _make_user(id=2, promo_group_id=10)
+        self._patch_users(monkeypatch, primary, secondary)
+        monkeypatch.setattr(
+            account_merge_service, '_promo_group_priority', AsyncMock(side_effect=lambda db, gid: 5 if gid == 20 else 0)
+        )
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.promo_group_id == 20
+
+    async def test_registration_date_is_the_earliest(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(id=1, created_at=datetime(2026, 9, 1, tzinfo=UTC))
+        secondary = _make_user(id=2, created_at=datetime(2024, 3, 1, tzinfo=UTC))
+        self._patch_users(monkeypatch, primary, secondary)
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.created_at == datetime(2024, 3, 1, tzinfo=UTC)
+
+    async def test_empty_profile_fields_are_filled_from_the_absorbed_account(self, monkeypatch):
+        db = _make_db()
+        primary = _make_user(id=1, first_name='Fresh', language='en')
+        secondary = _make_user(id=2, username='oldnick', first_name='Old', last_name='Owner', language='ru')
+        self._patch_users(monkeypatch, primary, secondary)
+        with _patch_remnawave_delete():
+            result = await execute_merge(db, 1, 2)
+
+        assert result.username == 'oldnick' and result.last_name == 'Owner'
+        assert result.first_name == 'Fresh' and result.language == 'en', 'заполняем только пустое'
 
 
 class TestExecuteMergeBalance:
@@ -993,3 +1152,52 @@ class TestExecuteMergeSelfReferralPrevention:
             result = await execute_merge(db, 1, 2)
 
         assert result.referred_by_id is None
+
+
+class TestRemnawaveDeleteMode:
+    """``REMNAWAVE_USER_DELETE_MODE=disable`` запрещает удалять аккаунты панели.
+
+    Мерж убирал аккаунт слитого профиля напрямую, мимо настройки — тот же класс
+    дефекта, что и сброс триала.
+    """
+
+    @staticmethod
+    def _api_spy(monkeypatch):
+        from contextlib import asynccontextmanager
+
+        api = AsyncMock()
+
+        @asynccontextmanager
+        async def fake_api():
+            yield api
+
+        monkeypatch.setattr(account_merge_service, '_get_remnawave_api', fake_api)
+        return api
+
+    async def test_disable_mode_deactivates_merged_account(self, monkeypatch):
+        monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+        api = self._api_spy(monkeypatch)
+
+        await account_merge_service._delete_remnawave_user_with_fallback(1001)
+
+        api.disable_user.assert_awaited_once_with(1001)
+        api.delete_user.assert_not_awaited()
+
+    async def test_delete_mode_still_deletes(self, monkeypatch):
+        monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'delete')
+        api = self._api_spy(monkeypatch)
+
+        await account_merge_service._delete_remnawave_user_with_fallback(1001)
+
+        api.delete_user.assert_awaited_once_with(1001)
+        api.disable_user.assert_not_awaited()
+
+    async def test_disable_failure_is_swallowed(self, monkeypatch):
+        """Мерж уже закоммичен — сбой уборки в панели не должен ронять вызывающего."""
+        monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+        api = self._api_spy(monkeypatch)
+        api.disable_user.side_effect = RuntimeError('panel down')
+
+        await account_merge_service._delete_remnawave_user_with_fallback(1001)
+
+        api.delete_user.assert_not_awaited()

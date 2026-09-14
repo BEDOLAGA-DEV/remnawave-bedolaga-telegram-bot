@@ -1,0 +1,36 @@
+{
+ "name": "v2_replay",
+ "status": 200,
+ "elapsed_sec": 0.39,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "6d4dd4a5954e",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "vless://00000000-0000-4000-8000-000000000001@eu-host.example:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=eu-host.example&fp=firefox&pbk=PUBKEY#%F0%9F%87%A9%F0%9F%87%AA%20Germany",
+  "selected_modems": [
+   "dobro|цфо|on"
+  ],
+  "dpi": "on"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "tx_id": 868625,
+  "configs": [
+   {
+    "name": "🇩🇪 Germany",
+    "port": 443,
+    "address": "eu-host.example",
+    "protocol": "vless"
+   }
+  ],
+  "outcome": "queued",
+  "test_id": 43301,
+  "n_modems": 1,
+  "n_servers": 1,
+  "queue_pos": 0,
+  "cost_credits": 103
+ }
+}

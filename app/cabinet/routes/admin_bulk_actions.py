@@ -17,6 +17,7 @@ from app.database.crud.subscription import (
     extend_subscription,
     get_subscription_by_id,
     reactivate_subscription,
+    reconcile_tariff_traffic_limit,
 )
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user import add_user_balance, get_user_by_id
@@ -248,6 +249,8 @@ async def _do_activate_subscription(
     if sub.end_date and sub.end_date <= datetime.now(UTC):
         # Extend by 30 days if expired
         sub.end_date = datetime.now(UTC) + timedelta(days=30)
+    # Условия тарифа на новый срок: база тарифа + активные докупки.
+    await reconcile_tariff_traffic_limit(db, sub)
     await db.commit()
     await db.refresh(sub)
     await _sync_subscription_to_panel(db, user, sub)

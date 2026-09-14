@@ -1,0 +1,38 @@
+{
+ "name": "v1_submit",
+ "status": 200,
+ "elapsed_sec": 0.78,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "77becd5cfba9",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "vless://00000000-0000-4000-8000-000000000001@bs-host.example:9443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=whitelisted.example&fp=firefox&pbk=PUBKEY&sid=def012&spx=%2Fpath#%F0%9F%87%B7%F0%9F%87%BA%20Russia%20%7C%20LTE%20%7C%20%D0%91%D0%A1",
+  "selected_modems": [
+   "tele2|цфо|on",
+   "dobro|цфо|on"
+  ],
+  "dpi": "on",
+  "core": ""
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "queued",
+  "test_id": 43300,
+  "tx_id": 868621,
+  "cost_credits": 206,
+  "n_servers": 1,
+  "n_modems": 2,
+  "configs": [
+   {
+    "name": "🇷🇺 Russia | LTE | БС",
+    "address": "bs-host.example",
+    "port": 9443,
+    "protocol": "vless"
+   }
+  ],
+  "queue_pos": 0
+ }
+}

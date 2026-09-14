@@ -1,0 +1,69 @@
+{
+ "name": "sB_submit",
+ "status": 200,
+ "elapsed_sec": 0.44,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "3fc0fd6de012",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "cidr": "192.0.2.0/24",
+  "operators": [
+   "*|цфо|on"
+  ],
+  "probes": {
+   "icmp": true,
+   "tcp": true
+  },
+  "dpi": "on"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "queued",
+  "scan_id": 5358,
+  "cidr": "192.0.2.0/24",
+  "state": "running",
+  "poll": "/v1/scans/5358",
+  "units": [
+   {
+    "op_key": "megafon|цфо|on",
+    "operator": "megafon",
+    "region": "ЦФО",
+    "dpi": "on"
+   },
+   {
+    "op_key": "tele2|цфо|on",
+    "operator": "tele2",
+    "region": "ЦФО",
+    "dpi": "on"
+   },
+   {
+    "op_key": "yota|цфо|on",
+    "operator": "yota",
+    "region": "ЦФО",
+    "dpi": "on"
+   },
+   {
+    "op_key": "t-mobile|цфо|on",
+    "operator": "t-mobile",
+    "region": "ЦФО",
+    "dpi": "on"
+   },
+   {
+    "op_key": "dobro|цфо|on",
+    "operator": "dobro",
+    "region": "ЦФО",
+    "dpi": "on"
+   },
+   {
+    "op_key": "sberm|цфо|on",
+    "operator": "sberm",
+    "region": "ЦФО",
+    "dpi": "on"
+   }
+  ],
+  "n_units": 6
+ }
+}

@@ -225,23 +225,30 @@ class GraceReconcileResult:
 class GraceSessionStore(Protocol):
     """Persistence adapter implemented in the next integration step."""
 
-    async def get_open(self, subscription_id: int) -> GraceAccessSession | None: ...
+    async def get_open(self, subscription_id: int) -> GraceAccessSession | None:
+        pass
 
-    async def get_by_incident(self, subscription_id: int, incident_key: str) -> GraceAccessSession | None: ...
+    async def get_by_incident(self, subscription_id: int, incident_key: str) -> GraceAccessSession | None:
+        pass
 
-    async def create(self, session: GraceAccessSession) -> GraceAccessSession: ...
+    async def create(self, session: GraceAccessSession) -> GraceAccessSession:
+        pass
 
-    async def save(self, session: GraceAccessSession) -> GraceAccessSession: ...
+    async def save(self, session: GraceAccessSession) -> GraceAccessSession:
+        pass
 
-    async def list_open(self, *, limit: int) -> Sequence[GraceAccessSession]: ...
+    async def list_open(self, *, limit: int) -> Sequence[GraceAccessSession]:
+        pass
 
 
 class GracePanelGateway(Protocol):
     """Remnawave adapter implemented in the next integration step."""
 
-    async def read_snapshot(self, remnawave_id: int) -> GracePanelSnapshot | None: ...
+    async def read_snapshot(self, remnawave_id: int) -> GracePanelSnapshot | None:
+        pass
 
-    async def apply_overlay(self, remnawave_id: int, overlay: GracePanelOverlay) -> None: ...
+    async def apply_overlay(self, remnawave_id: int, overlay: GracePanelOverlay) -> None:
+        pass
 
     async def restore_snapshot(
         self,
@@ -271,7 +278,8 @@ class GracePanelGateway(Protocol):
 class GraceBillingGateway(Protocol):
     """Read-only adapter for the bot's canonical subscription state."""
 
-    async def get_subscription(self, subscription_id: int) -> GraceBillingState | None: ...
+    async def get_subscription(self, subscription_id: int) -> GraceBillingState | None:
+        pass
 
 
 class GraceAccessService:

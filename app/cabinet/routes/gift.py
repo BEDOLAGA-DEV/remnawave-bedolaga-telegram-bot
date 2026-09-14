@@ -123,6 +123,7 @@ async def get_gift_config(
                     price_label=settings.format_price(quote.final_price_kopeks),
                     original_price_kopeks=quote.original_price_kopeks if quote.discount_percent > 0 else None,
                     discount_percent=quote.discount_percent if quote.discount_percent > 0 else None,
+                    is_highlighted=offer.highlight_period_days == quote.period_days,
                 )
             )
         tariffs.append(
@@ -133,6 +134,7 @@ async def get_gift_config(
                 traffic_limit_gb=offer.traffic_limit_gb if offer.traffic_limit_gb is not None else 0,
                 device_limit=offer.device_limit,
                 periods=periods,
+                is_highlighted=offer.is_highlighted,
             )
         )
 

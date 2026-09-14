@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import app.services.apple_iap_reconciliation_service as reconciliation_module
 from app.services.apple_iap_reconciliation_service import AppleIAPReconciliationService
 
 
@@ -26,7 +25,7 @@ async def test_lookup_delegates_to_support_query(monkeypatch: pytest.MonkeyPatch
     db = _FakeDB()
     rows = [SimpleNamespace(transaction_id='2000000123456789')]
     lookup = AsyncMock(return_value=rows)
-    monkeypatch.setattr(reconciliation_module, 'find_apple_transactions_for_support', lookup)
+    monkeypatch.setattr('app.services.apple_iap_reconciliation_service.find_apple_transactions_for_support', lookup)
 
     result = await AppleIAPReconciliationService().lookup(db, '2000000123456789', limit=5)
 
@@ -79,14 +78,14 @@ async def test_reconcile_recent_transactions_flags_drift_and_counts_backlog(monk
 
     apple_service = FakeAppleService()
     monkeypatch.setattr(
-        reconciliation_module,
-        'get_recent_apple_transactions',
+        'app.services.apple_iap_reconciliation_service.get_recent_apple_transactions',
         AsyncMock(return_value=[sandbox_txn, fetch_failed_txn, drift_txn]),
     )
     monkeypatch.setattr(
-        reconciliation_module, 'get_unprocessed_apple_notifications', AsyncMock(return_value=notifications)
+        'app.services.apple_iap_reconciliation_service.get_unprocessed_apple_notifications',
+        AsyncMock(return_value=notifications),
     )
-    monkeypatch.setattr(reconciliation_module, 'create_apple_abuse_event', abuse_event)
+    monkeypatch.setattr('app.services.apple_iap_reconciliation_service.create_apple_abuse_event', abuse_event)
 
     result = await AppleIAPReconciliationService(apple_service).reconcile_recent_transactions(db, limit=10)
 

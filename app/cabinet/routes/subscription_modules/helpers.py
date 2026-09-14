@@ -63,7 +63,13 @@ async def resolve_subscription(
         return None
 
     await db.refresh(user, ['subscriptions'])
-    return user.subscription
+    subscription = user.subscription
+    if subscription is not None and subscription.tariff_id is not None:
+        # Связь с тарифом ленивая, а маршруты читают subscription.tariff напрямую: в async это
+        # падает или даёт None — и «Продлить» показывало «Нет вариантов продления» при истёкшей
+        # подписке на обычном тарифе. Мульти-ветка грузит тариф через selectinload — выравниваем.
+        await db.refresh(subscription, ['tariff'])
+    return subscription
 
 
 def _get_addon_discount_percent(
@@ -169,18 +175,12 @@ def _subscription_to_response(
     traffic_reset_mode = None
     if tariff_id and hasattr(subscription, 'tariff') and subscription.tariff:
         daily_price_kopeks = getattr(subscription.tariff, 'daily_price_kopeks', None)
-        # Применяем скидку промогруппы + promo-offer для отображения
+        # Ровно то, что списывается каждый день: только скидка группы. Промокод —
+        # разовый, при покупке; вкладывать его в «цену за день» было бы обманом.
         if daily_price_kopeks and daily_price_kopeks > 0 and user:
             from app.services.pricing_engine import PricingEngine
-            from app.utils.promo_offer import get_user_active_promo_discount_percent
 
-            _promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
-            _group_pct = _promo_group.get_discount_percent('period', 1) if _promo_group else 0
-            _offer_pct = get_user_active_promo_discount_percent(user)
-            if _group_pct > 0 or _offer_pct > 0:
-                daily_price_kopeks, _, _ = PricingEngine.apply_stacked_discounts(
-                    daily_price_kopeks, _group_pct, _offer_pct
-                )
+            daily_price_kopeks, _ = PricingEngine.daily_group_price(daily_price_kopeks, user)
         if not tariff_name:  # Only set if not passed as parameter
             tariff_name = getattr(subscription.tariff, 'name', None)
         traffic_reset_mode = (

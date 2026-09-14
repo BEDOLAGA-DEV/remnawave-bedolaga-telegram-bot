@@ -337,3 +337,174 @@ async def test_calculate_recurring_commission_tier_boundary(paid_count, expected
 
     percent = await referral_service.calculate_referral_commission_percent(db, referrer, is_first_payment=False)
     assert percent == expected_percent
+
+
+# ---------------------------------------------------------------------------
+# Вид письма выбирается событием, а не суммой. Отчёт из «Багов»: пригласившему
+# без Telegram на регистрацию реферала приходило «Реферальный бонус: +0 ₽» —
+# единственный email-путь диспетчера вёл в шаблон бонуса, а шаблон «Новый
+# реферал» существовал, но никем не вызывался. Сам приглашённый без Telegram
+# получал то же письмо вместо приветствия.
+# ---------------------------------------------------------------------------
+
+
+def _email_only_user(user_id: int, name: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=user_id,
+        telegram_id=None,
+        full_name=name,
+        first_name=name,
+        language='ru',
+        email=f'user{user_id}@example.com',
+        email_verified=True,
+        referred_by_id=None,
+    )
+
+
+def _capture_referral_channels(monkeypatch) -> dict[str, AsyncMock]:
+    mocks = {
+        'bonus': AsyncMock(return_value=True),
+        'registered': AsyncMock(return_value=True),
+        'welcome': AsyncMock(return_value=True),
+    }
+    delivery = referral_service.notification_delivery_service
+    monkeypatch.setattr(delivery, 'notify_referral_bonus', mocks['bonus'])
+    monkeypatch.setattr(delivery, 'notify_referral_registered', mocks['registered'])
+    monkeypatch.setattr(delivery, 'notify_referral_welcome', mocks['welcome'])
+    monkeypatch.setattr(referral_service.settings, 'ENABLE_NOTIFICATIONS', True)
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_NOTIFICATIONS_ENABLED', True)
+    return mocks
+
+
+async def test_registration_notice_to_email_referrer_uses_registered_template(monkeypatch):
+    from app.services.notification_delivery_service import NotificationType
+
+    mocks = _capture_referral_channels(monkeypatch)
+    referrer = _email_only_user(2, 'Пригласивший')
+
+    await referral_service.send_referral_notification(
+        SimpleNamespace(send_message=AsyncMock()),
+        telegram_id=None,
+        message='👥 <b>Новый реферал!</b>',
+        user=referrer,
+        referral_name='Новичок',
+        notification_type=NotificationType.REFERRAL_REGISTERED,
+    )
+
+    mocks['bonus'].assert_not_awaited()
+    mocks['welcome'].assert_not_awaited()
+    mocks['registered'].assert_awaited_once()
+    kwargs = mocks['registered'].await_args.kwargs
+    assert kwargs['user'] is referrer
+    assert kwargs['referral_name'] == 'Новичок'
+    assert kwargs['telegram_message'] == '👥 <b>Новый реферал!</b>'
+
+
+async def test_welcome_notice_to_email_referee_uses_welcome_template(monkeypatch):
+    from app.services.notification_delivery_service import NotificationType
+
+    mocks = _capture_referral_channels(monkeypatch)
+    newcomer = _email_only_user(10, 'Новичок')
+
+    await referral_service.send_referral_notification(
+        SimpleNamespace(send_message=AsyncMock()),
+        telegram_id=None,
+        message='🎉 <b>Добро пожаловать!</b>',
+        user=newcomer,
+        notification_type=NotificationType.REFERRAL_WELCOME,
+        referrer_name='Пригласивший',
+        bonus_promise='7 дн. подписки',
+    )
+
+    mocks['bonus'].assert_not_awaited()
+    mocks['registered'].assert_not_awaited()
+    kwargs = mocks['welcome'].await_args.kwargs
+    assert kwargs['user'] is newcomer
+    assert kwargs['referrer_name'] == 'Пригласивший'
+    assert kwargs['bonus_promise'] == '7 дн. подписки'
+
+
+async def test_reward_notice_keeps_bonus_template_by_default(monkeypatch):
+    mocks = _capture_referral_channels(monkeypatch)
+
+    await referral_service.send_referral_notification(
+        SimpleNamespace(send_message=AsyncMock()),
+        telegram_id=None,
+        message='💰 Награда',
+        user=_email_only_user(2, 'Пригласивший'),
+        bonus_kopeks=25_000,
+        referral_name='Новичок',
+    )
+
+    mocks['registered'].assert_not_awaited()
+    mocks['welcome'].assert_not_awaited()
+    assert mocks['bonus'].await_args.kwargs['bonus_kopeks'] == 25_000
+
+
+async def test_non_referral_type_is_rejected(monkeypatch):
+    from app.services.notification_delivery_service import NotificationType
+
+    _capture_referral_channels(monkeypatch)
+
+    with pytest.raises(ValueError):
+        await referral_service.send_referral_notification(
+            None,
+            None,
+            'x',
+            user=_email_only_user(2, 'x'),
+            notification_type=NotificationType.BALANCE_LOW,
+        )
+
+
+@pytest.mark.parametrize('scheme', ['classic', 'levels'])
+async def test_registration_of_email_only_pair_never_sends_bonus_email(monkeypatch, scheme):
+    """Сквозной: регистрация реферала, оба участника без Telegram."""
+    from unittest.mock import patch
+
+    mocks = _capture_referral_channels(monkeypatch)
+    newcomer = _email_only_user(10, 'Новичок')
+    referrer = _email_only_user(20, 'Пригласивший')
+    newcomer.referred_by_id = referrer.id
+
+    db = AsyncMock()
+    existing_row = AsyncMock()
+    existing_row.scalar_one_or_none = lambda: None  # аудит-строки ещё нет — путь идёт до уведомлений
+    db.execute = AsyncMock(return_value=existing_row)
+
+    monkeypatch.setattr(referral_service, 'get_user_by_id', AsyncMock(side_effect=[newcomer, referrer]))
+    monkeypatch.setattr(referral_service, 'get_user_campaign_id', AsyncMock(return_value=None))
+    monkeypatch.setattr(referral_service, 'create_referral_earning', AsyncMock())
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_REWARD_SCHEME', scheme)
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_MINIMUM_TOPUP_KOPEKS', 10_000)
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_FIRST_TOPUP_BONUS_KOPEKS', 5_000)
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_INVITER_BONUS_KOPEKS', 10_000)
+    monkeypatch.setattr(referral_service.settings, 'REFERRAL_COMMISSION_PERCENT', 25)
+
+    with (
+        patch(
+            'app.services.referral_contest_service.referral_contest_service.on_referral_registration',
+            AsyncMock(),
+        ),
+        patch('app.services.referral_reward_service.award_referral_rewards', AsyncMock(return_value=[])),
+        patch(
+            'app.services.referral_reward_service.describe_referee_bonus',
+            AsyncMock(return_value='7 дн. подписки'),
+        ),
+        patch(
+            'app.services.referral_reward_service.describe_active_levels',
+            AsyncMock(return_value=['уровень 1 — 10 %']),
+        ),
+    ):
+        result = await referral_service.process_referral_registration(
+            db, newcomer.id, referrer.id, bot=SimpleNamespace(send_message=AsyncMock())
+        )
+
+    assert result is True
+    mocks['bonus'].assert_not_awaited()
+    welcome = mocks['welcome'].await_args.kwargs
+    assert welcome['user'] is newcomer
+    assert welcome['referrer_name'] == 'Пригласивший'
+    assert welcome['bonus_promise']
+    registered = mocks['registered'].await_args.kwargs
+    assert registered['user'] is referrer
+    assert registered['referral_name'] == 'Новичок'

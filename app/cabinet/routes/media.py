@@ -16,6 +16,7 @@ from app.config import settings
 from app.database.models import User
 
 from ..dependencies import get_current_cabinet_user
+from ..schemas.media import TELEGRAM_FILE_ID_PATTERN
 
 
 logger = structlog.get_logger(__name__)
@@ -95,7 +96,7 @@ def _content_response_params(filename: str) -> tuple[str, dict[str, str]]:
 
 
 # Telegram file_ids are opaque URL-safe base64 strings.
-_FILE_ID_RE = re.compile(r'^[A-Za-z0-9_-]{16,256}$')
+_FILE_ID_RE = re.compile(TELEGRAM_FILE_ID_PATTERN)
 
 # Media download tokens — a leaked raw file_id must NOT be downloadable. Media
 # URLs are signed with the cabinet JWT secret and expire, and are minted only

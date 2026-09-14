@@ -4,7 +4,15 @@ import asyncio
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+
+if TYPE_CHECKING:
+    # Только для аннотаций: в рантайме эти модули импортируются лениво (цикл
+    # cabinet services -> services -> cabinet).
+    from app.cabinet.services.email_templates import EmailNotificationTemplates
+    from app.services.notification_delivery_service import NotificationType
+
 
 import structlog
 from sqlalchemy import func, or_, select, update
@@ -1213,6 +1221,71 @@ async def _send_telegram_gift_notification(
         )
 
 
+async def _send_guest_main_email(
+    templates: 'EmailNotificationTemplates',
+    purchase: GuestPurchase,
+    notification_type: 'NotificationType',
+    language: str,
+    context: dict,
+    recipient_email: str,
+) -> None:
+    """Основное письмо гостевой покупки (доставка / активация / подарок).
+
+    Письмо с доступами кабинета уходит отдельно и от этого письма не зависит:
+    ни выключатель типа, ни отсутствие шаблона не должны его глушить — иначе
+    покупатель остался бы без пароля.
+    """
+    from app.cabinet.services.email_service import email_service
+    from app.cabinet.services.email_type_switch import is_email_type_enabled
+
+    if not is_email_type_enabled(notification_type.value):
+        logger.info('Гостевое письмо отключено админом', notification_type=notification_type.value)
+        return
+
+    # Check DB override first, then fall back to hardcoded template
+    template = None
+    try:
+        from app.cabinet.services.email_template_overrides import get_rendered_override
+
+        rendered = await get_rendered_override(notification_type.value, language, context)
+        if rendered:
+            subject, body_html = rendered
+            template = {
+                'subject': subject,
+                'body_html': body_html,
+            }
+    except Exception as e:
+        logger.debug('Failed to check template override', e=e)
+
+    if not template:
+        template = templates.get_template(notification_type, language, context)
+
+    if not template:
+        logger.warning('No email template found for guest notification', notification_type=notification_type.value)
+        return
+
+    result = await asyncio.to_thread(
+        email_service.send_email,
+        to_email=recipient_email,
+        subject=template['subject'],
+        body_html=template['body_html'],
+    )
+
+    if result:
+        logger.info(
+            'Guest purchase notification sent',
+            purchase_id=purchase.id,
+            notification_type=notification_type.value,
+            recipient_masked=_mask_email(recipient_email),
+        )
+    else:
+        logger.warning(
+            'Failed to send guest purchase notification',
+            purchase_id=purchase.id,
+            notification_type=notification_type.value,
+        )
+
+
 async def send_guest_notification(
     purchase: GuestPurchase,
     *,
@@ -1281,49 +1354,7 @@ async def send_guest_notification(
         notification_type = NotificationType.GUEST_SUBSCRIPTION_DELIVERED
 
     templates = EmailNotificationTemplates()
-
-    # Check DB override first, then fall back to hardcoded template
-    template = None
-    try:
-        from app.cabinet.services.email_template_overrides import get_rendered_override
-
-        rendered = await get_rendered_override(notification_type.value, language, context)
-        if rendered:
-            subject, body_html = rendered
-            template = {
-                'subject': subject,
-                'body_html': body_html,
-            }
-    except Exception as e:
-        logger.debug('Failed to check template override', e=e)
-
-    if not template:
-        template = templates.get_template(notification_type, language, context)
-
-    if not template:
-        logger.warning('No email template found for guest notification', notification_type=notification_type.value)
-        return
-
-    result = await asyncio.to_thread(
-        email_service.send_email,
-        to_email=recipient_email,
-        subject=template['subject'],
-        body_html=template['body_html'],
-    )
-
-    if result:
-        logger.info(
-            'Guest purchase notification sent',
-            purchase_id=purchase.id,
-            notification_type=notification_type.value,
-            recipient_masked=_mask_email(recipient_email),
-        )
-    else:
-        logger.warning(
-            'Failed to send guest purchase notification',
-            purchase_id=purchase.id,
-            notification_type=notification_type.value,
-        )
+    await _send_guest_main_email(templates, purchase, notification_type, language, context, recipient_email)
 
     # Send separate credentials email for new accounts (self-purchases and gifts)
     if purchase.cabinet_password:
@@ -1391,11 +1422,17 @@ async def notify_gift_claim_available(
 
     from app.cabinet.services.email_service import email_service
     from app.cabinet.services.email_templates import EmailNotificationTemplates
-    from app.services.notification_delivery_service import NotificationType
 
     # Recipient: reuse the gift-received template, but its CTA now points at the
     # claim page and it carries no credentials/subscription (none exist yet).
-    if purchase.gift_recipient_type == 'email' and purchase.gift_recipient_value:
+    from app.cabinet.services.email_type_switch import is_email_type_enabled
+    from app.services.notification_delivery_service import NotificationType
+
+    if (
+        purchase.gift_recipient_type == 'email'
+        and purchase.gift_recipient_value
+        and is_email_type_enabled(NotificationType.GUEST_GIFT_RECEIVED.value)
+    ):
         try:
             context = {
                 'tariff_name': tariff_name,
@@ -1409,8 +1446,16 @@ async def notify_gift_claim_available(
                 'cabinet_email': '',
                 'cabinet_password': '',
             }
-            templates = EmailNotificationTemplates()
-            template = templates.get_template(NotificationType.GUEST_GIFT_RECEIVED, language, context)
+            # Сохранённый в редакторе шаблон, как и в остальных гостевых письмах;
+            # иначе получатель подарка по ссылке видел только стандартный.
+            from app.cabinet.services.email_template_overrides import get_rendered_override
+
+            rendered = await get_rendered_override(NotificationType.GUEST_GIFT_RECEIVED.value, language, context)
+            if rendered:
+                template = {'subject': rendered[0], 'body_html': rendered[1]}
+            else:
+                templates = EmailNotificationTemplates()
+                template = templates.get_template(NotificationType.GUEST_GIFT_RECEIVED, language, context)
             if template:
                 await asyncio.to_thread(
                     email_service.send_email,
@@ -1423,23 +1468,38 @@ async def notify_gift_claim_available(
 
     # Buyer backstop: a durable copy of the link to forward, regardless of which
     # channel the recipient used or whether the buyer kept the success tab open.
-    if purchase.contact_type == 'email' and purchase.contact_value:
+    if (
+        purchase.contact_type == 'email'
+        and purchase.contact_value
+        and is_email_type_enabled(NotificationType.GUEST_GIFT_LINK_BUYER.value)
+    ):
         try:
-            is_ru = (language or 'ru').startswith('ru')
-            subject = 'Ссылка на ваш подарок' if is_ru else 'Your gift link'
-            body = (
-                '<p>Спасибо за покупку подарка! Перешлите эту ссылку тому, '
-                'кому предназначен подарок — он активирует его сам:</p>'
-                if is_ru
-                else '<p>Thanks for your gift purchase! Forward this link to the '
-                'person it is for — they activate it themselves:</p>'
-            ) + f'<p><a href="{claim_url}">{claim_url}</a></p>'
-            await asyncio.to_thread(
-                email_service.send_email,
-                to_email=purchase.contact_value,
-                subject=subject,
-                body_html=body,
+            # Шаблон guest_gift_link_buyer: сохранённый в редакторе, иначе дефолтный.
+            # Раньше текст был зашит здесь на двух языках и без обёртки.
+            buyer_context = {
+                'claim_url': claim_url,
+                'tariff_name': tariff_name,
+                'period_days': period_days if period_days is not None else purchase.period_days,
+                'cabinet_url': cabinet_base,
+            }
+            from app.cabinet.services.email_template_overrides import get_rendered_override
+
+            rendered = await get_rendered_override(
+                NotificationType.GUEST_GIFT_LINK_BUYER.value, language, buyer_context
             )
+            if rendered:
+                buyer_template = {'subject': rendered[0], 'body_html': rendered[1]}
+            else:
+                buyer_template = EmailNotificationTemplates().get_template(
+                    NotificationType.GUEST_GIFT_LINK_BUYER, language, buyer_context
+                )
+            if buyer_template:
+                await asyncio.to_thread(
+                    email_service.send_email,
+                    to_email=purchase.contact_value,
+                    subject=buyer_template['subject'],
+                    body_html=buyer_template['body_html'],
+                )
         except Exception:
             logger.warning('Failed to send gift link to buyer', purchase_id=purchase.id, exc_info=True)
 

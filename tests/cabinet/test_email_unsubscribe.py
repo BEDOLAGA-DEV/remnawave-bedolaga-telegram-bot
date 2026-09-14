@@ -390,7 +390,7 @@ async def test_marketing_email_carries_unsubscribe_url(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     'notification_type_name',
-    ['SUBSCRIPTION_EXPIRING', 'PAYMENT_SUCCESS', 'SUBSCRIPTION_EXPIRED'],
+    ['SUBSCRIPTION_EXPIRING', 'PAYMENT_RECEIVED', 'BALANCE_TOPUP', 'SUBSCRIPTION_EXPIRED'],
 )
 async def test_transactional_email_has_no_unsubscribe(monkeypatch, notification_type_name):
     """Транзакционному письму ссылка отписки не положена.
@@ -403,9 +403,14 @@ async def test_transactional_email_has_no_unsubscribe(monkeypatch, notification_
         notification_delivery_service as service,
     )
 
-    notification_type = getattr(NotificationType, notification_type_name, None)
-    if notification_type is None:
-        pytest.skip(f'{notification_type_name} нет в этой версии перечисления')
+    # Раньше здесь стоял пропуск для отсутствующего имени, и он молча съедал
+    # ровно платёжный случай: в перечислении нет PAYMENT_SUCCESS, есть
+    # PAYMENT_RECEIVED. Пропуск выглядел как зелёный тест, а письмо с чеком не
+    # проверял никто. Теперь опечатка в имени — падение, а не тишина.
+    assert hasattr(NotificationType, notification_type_name), (
+        f'{notification_type_name} нет в NotificationType — проверка молча перестала бы работать'
+    )
+    notification_type = getattr(NotificationType, notification_type_name)
 
     captured = _capture_email(monkeypatch, service)
 

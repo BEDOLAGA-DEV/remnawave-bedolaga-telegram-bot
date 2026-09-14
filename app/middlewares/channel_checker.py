@@ -23,6 +23,7 @@ from app.services.channel_subscription_service import channel_subscription_servi
 from app.services.subscription_service import SubscriptionService
 from app.utils.cache import cache
 from app.utils.check_reg_process import is_registration_process
+from app.utils.telegram_delivery import is_user_unreachable
 
 
 logger = structlog.get_logger(__name__)
@@ -31,30 +32,10 @@ logger = structlog.get_logger(__name__)
 REDIS_PAYLOAD_KEY_PREFIX = 'pending_start_payload:'
 REDIS_PAYLOAD_TTL = 3600  # 1 hour
 
-# Отказы Telegram, означающие, что писать больше некому: бот заблокирован,
-# аккаунт удалён, чат недоступен. Апдейт от такого пользователя всё равно
-# доезжает (он мог заблокировать бота уже после отправки), а гейт по подписке
-# честно пытается ему ответить и получает 403.
-_UNREACHABLE_USER_ERRORS = (
-    'bot was blocked',
-    'user is deactivated',
-    'chat not found',
-)
-
-
-def _is_user_unreachable(error: BaseException) -> bool:
-    """Сообщение физически некуда доставить — не ошибка бота.
-
-    Такие отказы логируются debug-строкой: на error-уровне
-    ``TelegramNotifierProcessor`` разворачивает ``sys.exc_info()`` и шлёт
-    админам traceback, то есть каждый заблокировавший бота пользователь
-    превращается в отчёт об ошибке.
-    """
-    if isinstance(error, TelegramForbiddenError):
-        return True
-    if isinstance(error, TelegramBadRequest):
-        return any(marker in str(error).lower() for marker in _UNREACHABLE_USER_ERRORS)
-    return False
+# Отказы Telegram, означающие, что писать больше некому (бот заблокирован, аккаунт
+# удалён, чат недоступен), логируются debug-строкой: на error-уровне
+# TelegramNotifierProcessor развернул бы traceback в отчёт админам.
+_is_user_unreachable = is_user_unreachable
 
 
 async def save_pending_payload_to_redis(telegram_id: int, payload: str) -> bool:

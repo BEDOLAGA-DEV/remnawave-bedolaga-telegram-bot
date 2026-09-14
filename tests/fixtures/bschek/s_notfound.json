@@ -1,0 +1,23 @@
+{
+ "name": "s_notfound",
+ "status": 404,
+ "elapsed_sec": 0.43,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "8e00e9869a39",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "not_found",
+   "message": "Скан не найден",
+   "details": {
+    "request_id": "8e00e9869a39",
+    "retryable": false
+   }
+  }
+ }
+}

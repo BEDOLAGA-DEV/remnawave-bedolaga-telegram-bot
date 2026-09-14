@@ -469,6 +469,10 @@ class FortuneWheelService:
                     # Обычная подписка - добавляем дни и синхронизируем с RemnaWave
                     subscription.end_date += timedelta(days=prize.prize_value)
                     subscription.updated_at = datetime.now(UTC)
+                    # Условия тарифа на новый срок: база тарифа + активные докупки.
+                    from app.database.crud.subscription import reconcile_tariff_traffic_limit
+
+                    await reconcile_tariff_traffic_limit(db, subscription)
                     logger.info('📅 Начислено дней подписки user_id', prize_value=prize.prize_value, user_id=user.id)
 
                     # Синхронизируем с RemnaWave

@@ -1,0 +1,1099 @@
+"""Фасад: выключено → ReachabilityDisabled; preview считает симки, пропуски и цену до денег;
+create_job проверяет занятость и потолок, пишет задачу и запускает фон."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy import inspect as sa_inspect
+
+from app.database.crud import reachability as crud
+from app.database.models import User
+from app.external.bschek_api import BschekAPIError
+from app.external.remnawave_api import RemnaWaveHost
+from app.services.reachability.gate import PaidCallGate
+from app.services.reachability.geo_result import RECHECK_STALE_MESSAGE, recheck_started
+from app.services.reachability.jobs import JobNotCancellable, JobRunner, RunnerConfig
+from app.services.reachability.pricing import CostLimitExceeded
+from app.services.reachability.requests import RequestBuildError
+from app.services.reachability.resolver import TargetResolutionError
+from app.services.reachability.service import (
+    JobNotFound,
+    PanelUnavailable,
+    ReachabilityBusy,
+    ReachabilityDisabled,
+    ReachabilityService,
+    ReachabilityUnhealthy,
+)
+from app.services.reachability.subscriptions import SubscriptionFetchError
+from app.services.reachability.units import SelectorError
+from tests.fixtures.bschek_fixtures import load_bschek_fixture
+from tests.services.reachability.fakes import FakeAPI, FakeClock
+
+
+pytestmark = pytest.mark.asyncio
+
+BS_LINK = (
+    'vless://00000000-0000-4000-8000-000000000001@bs-host.example:9443?security=reality&sni=whitelisted.example#BS'
+)
+HOSTS = [RemnaWaveHost(uuid='h-bs', remark='RU | БС', address='bs-host.example', port=9443, sni='whitelisted.example')]
+
+
+class FakePanel:
+    def __init__(self, *, broken: bool = False) -> None:
+        self.broken = broken
+        # Пользователи панели по shortUuid — для пометки «истекла / отключена / трафик исчерпан».
+        self.users_by_short_uuid: dict[str, object] = {}
+
+    async def get_user_by_short_uuid(self, short_uuid):
+        return self.users_by_short_uuid.get(short_uuid)
+
+    def get_api_client(self):
+        outer = self
+
+        class _Ctx:
+            async def __aenter__(self):
+                if outer.broken:
+                    raise RuntimeError('panel down')
+                return outer
+
+            async def __aexit__(self, *exc):
+                return None
+
+        return _Ctx()
+
+    async def get_all_hosts(self):
+        return HOSTS
+
+    async def get_all_nodes(self):
+        return []
+
+    async def get_subscription_info(self, short_uuid):
+        if short_uuid not in ('ref-1', 'sub-1'):
+            raise RuntimeError('404 User not found')
+        return SimpleNamespace(links=[BS_LINK])
+
+
+class FakeClient(FakeAPI):
+    def __init__(self, script=None, *, account_error: Exception | None = None) -> None:
+        super().__init__(script)
+        self.account_error = account_error
+        self.operators_calls = 0
+        self.account_calls = 0
+
+    async def get_operators(self, **kwargs):
+        self.operators_calls += 1
+        return load_bschek_fixture('operators')['body']
+
+    async def get_account(self):
+        self.account_calls += 1
+        if self.account_error is not None:
+            raise self.account_error
+        return {k: v for k, v in load_bschek_fixture('account')['body'].items() if k != 'webhook_secret'}
+
+    async def preview_probe(self, body):
+        return load_bschek_fixture('pv_bare_mts')['body']
+
+    async def preview_scan(self, body):
+        return load_bschek_fixture('sv_one_unit')['body']
+
+    async def geo_preview(self, body):
+        self.geo_preview_body = body
+        return {'n_nodes': 89, 'cap_mb': 0.81, 'reserve_credits': 90, 'estimated_sec': 45, 'max_nodes': 800}
+
+    async def geo_catalog(self, params=None):
+        self.geo_catalog_params = dict(params or {})
+        return {
+            'networks': ['res', 'mob'],
+            'districts': [{'code': 'cfo', 'name': 'ЦФО'}],
+            'regions': [{'token': 'moscow', 'name': 'Москва', 'district': 'ЦФО'}],
+            'isps': [{'token': 'mts', 'name': 'МТС', 'cities': 43}],
+            'cities_hint': 'задайте фильтр',
+        }
+
+    async def geo_start(self, body, key):
+        return {
+            'outcome': 'queued',
+            'run_id': 812,
+            'state': 'running',
+            'poll': '/v1/geo/runs/812',
+            'n_nodes': 89,
+            'reserve_credits': 90,
+            'estimated_sec': 45,
+        }
+
+    async def geo_run(self, run_id):
+        return {'state': 'running', 'progress': {'done': 0, 'total': 89}, 'rows': []}
+
+
+def make_service(
+    session_factory,
+    *,
+    enabled: bool = True,
+    key: str | None = 'bsk_live_test',
+    limit: int = 0,
+    reference: str | None = 'ref-1',
+    client: FakeClient | None = None,
+    panel: FakePanel | None = None,
+    url_links: dict[str, list[str] | Exception] | None = None,
+) -> ReachabilityService:
+    settings_obj = SimpleNamespace(
+        BSCHEK_ENABLED=enabled,
+        BSCHEK_API_KEY=key,
+        BSCHEK_REQUEST_TIMEOUT=200,
+        BSCHEK_REFERENCE_SUBSCRIPTION=reference,
+        BSCHEK_JOB_COST_LIMIT_KOPEKS=limit,
+        is_bschek_enabled=lambda: enabled,
+        is_bschek_configured=lambda: bool(key),
+        get_bschek_api_url=lambda: 'https://bsbord.com/v1',
+    )
+    clock = FakeClock()
+    api = client or FakeClient()
+    runner = JobRunner(
+        client_factory=lambda: api,
+        gate=PaidCallGate(min_interval=0, clock=clock, sleep=clock.sleep),
+        session_factory=session_factory,
+        cost_limit_kopeks=lambda: limit,
+        config=RunnerConfig(),
+        sleep=clock.sleep,
+        clock=clock,
+    )
+    panel_obj = panel or FakePanel()
+
+    async def url_fetcher(url: str) -> list[str]:
+        answer = (url_links or {}).get(url)
+        if answer is None:
+            raise SubscriptionFetchError(f'Не удалось загрузить {url}')
+        if isinstance(answer, Exception):
+            raise answer
+        return list(answer)
+
+    service = ReachabilityService(
+        settings_obj=settings_obj,
+        session_factory=session_factory,
+        remnawave_factory=lambda: panel_obj,
+        runner=runner,
+        clock=clock,
+        url_fetcher=url_fetcher,
+    )
+    service._client_factory = lambda: api
+    return service
+
+
+async def _admin(db) -> User:
+    user = User(telegram_id=1, username='admin', first_name='A', language='ru')
+    db.add(user)
+    await db.flush()
+    return user
+
+
+PROBE_PAYLOAD = {
+    'kind': 'probe',
+    'targets': [{'kind': 'host', 'ref': 'h-bs'}],
+    'units': ['mts'],
+    'dpi': 'on',
+    'probes': {'tcp': True, 'sni': True},
+}
+VLESS_PAYLOAD = {
+    'kind': 'vless',
+    'targets': [{'kind': 'subscription_config', 'short_uuid': 'ref-1', 'index': 0}],
+    'units': ['*|цфо|on'],
+    'dpi': 'on',
+    'probes': {},
+    'core': '',
+}
+
+
+# ---------------------------------------------------------------- доступ и статус
+
+
+async def test_disabled_integration_raises(session_factory) -> None:
+    service = make_service(session_factory, enabled=False)
+    async with session_factory() as db:
+        with pytest.raises(ReachabilityDisabled):
+            await service.preview(db, PROBE_PAYLOAD)
+        with pytest.raises(ReachabilityDisabled):
+            await service.units()
+        status = await service.status(db)
+    assert (status['enabled'], status['configured'], status['balance_kopeks'], status['reference']) == (
+        False,
+        True,
+        None,
+        None,
+    )
+
+
+async def test_missing_key_is_reported_as_not_configured(session_factory) -> None:
+    service = make_service(session_factory, key=None)
+    async with session_factory() as db:
+        with pytest.raises(ReachabilityDisabled, match='BSCHEK_API_KEY'):
+            await service.preview(db, PROBE_PAYLOAD)
+
+
+async def test_status_reports_balance_without_secret_and_reference(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        status = await service.status(db)
+    assert status['enabled'] and status['configured'] and status['healthy']
+    assert status['balance_kopeks'] == 100018 and 'webhook_secret' not in str(status)
+    assert (status['tier'], status['active_jobs'], status['cost_limit_kopeks']) == ('gold', [], 0)
+    assert status['reference'] == {'short_uuid': 'ref-1', 'configs': 1, 'rejected': 0, 'error': None}
+    # Номера ядер Xray для фронта: оригинал bsbord.com показывает версии цифрами, а не «stable/prerelease».
+    assert set(status['cores']) == {'stable', 'prerelease'}
+    assert all(re.fullmatch(r'\d+\.\d+\.\d+', version) for version in status['cores'].values())
+
+
+async def test_status_lists_active_jobs_and_missing_reference(session_factory) -> None:
+    service = make_service(session_factory, reference=None)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await crud.create_job(
+            db,
+            kind='scan',
+            status='running',
+            trigger='manual',
+            started_by_user_id=admin.id,
+            idempotency_key='k',
+            request={},
+            targets=[],
+            dpi='on',
+            phase='polling',
+        )
+        await db.commit()
+        status = await service.status(db)
+    assert [(j['kind'], j['phase'], j['started_by_user_id']) for j in status['active_jobs']] == [('scan', 'polling', 1)]
+    assert status['reference']['short_uuid'] is None and status['reference']['error']
+
+
+async def test_auth_error_marks_integration_unhealthy_for_a_while(session_factory) -> None:
+    client = FakeClient(account_error=BschekAPIError(code='tier_too_low', message='Нужен тариф выше', status=403))
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        status = await service.status(db)
+        assert (status['healthy'], status['health_message']) == (False, 'Нужен тариф выше')
+        with pytest.raises(ReachabilityUnhealthy) as excinfo:
+            await service.preview(db, PROBE_PAYLOAD)
+        assert excinfo.value.until > datetime.now(UTC)
+        assert client.account_calls == 1  # пока нездорово — к API не ходим
+
+
+async def test_account_is_cached_between_calls(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        await service.status(db)
+        await service.preview(db, PROBE_PAYLOAD)
+    assert client.account_calls == 1
+
+
+# ---------------------------------------------------------------- симки и источники
+
+
+async def test_units_filters_locally_over_cached_catalog(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    mts_on = await service.units(dpi='on', operator=['MTS'])
+    assert [u.op_key for u in mts_on] == ['mts|пфо|on']
+    cfo = await service.units(region=['cfo'])
+    assert len(cfo) == 6 and client.operators_calls == 1
+
+
+async def test_hosts_nodes_and_configs_go_through_panel(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        hosts = await service.hosts(db)
+        nodes = await service.nodes(db)
+        configs = await service.subscription_configs(db)
+    assert [h.host.uuid for h in hosts] == ['h-bs'] and hosts[0].target.purpose == 'bs'
+    assert nodes == [] and [c.label for c in configs.configs] == ['BS']
+
+
+async def test_panel_failure_becomes_panel_unavailable(session_factory) -> None:
+    service = make_service(session_factory, panel=FakePanel(broken=True))
+    async with session_factory() as db:
+        with pytest.raises(PanelUnavailable):
+            await service.hosts(db)
+        with pytest.raises(PanelUnavailable):
+            await service.preview(db, PROBE_PAYLOAD)
+
+
+async def test_subscription_configs_for_user_without_subscription_explains(session_factory) -> None:
+    """Пользователь без подписки панели — своя ошибка, а не жалоба на эталон из настроек."""
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        with pytest.raises(TargetResolutionError, match=f'#{admin.id} нет подписки'):
+            await service.subscription_configs(db, user_id=admin.id)
+
+
+async def test_subscription_configs_without_reference_raise(session_factory) -> None:
+    service = make_service(session_factory, reference=None)
+    async with session_factory() as db:
+        with pytest.raises(ReachabilityDisabled, match='BSCHEK_REFERENCE_SUBSCRIPTION'):
+            await service.subscription_configs(db)
+
+
+# ---------------------------------------------------------------- preview
+
+
+async def test_preview_probe_expands_units_reports_skipped_and_exact_price(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        preview = await service.preview(db, PROBE_PAYLOAD)
+    assert preview.units_resolved == ['mts|пфо|on']
+    assert [u['op_key'] for u in preview.skipped['dpi_off']] == ['mts|цфо|off', 'mts|дфо|off']
+    assert (preview.cost_kopeks, preview.estimate_is_exact, preview.balance_kopeks) == (18, True, 100018)
+    assert preview.request['sni_hosts'] == ['whitelisted.example']
+    assert preview.warnings == []
+
+
+async def test_preview_probe_warns_about_bs_host_without_sni_probe(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        preview = await service.preview(db, {**PROBE_PAYLOAD, 'probes': {'tcp': True}})
+    assert any('SNI' in warning for warning in preview.warnings)
+
+
+async def test_preview_unknown_selector_is_rejected_before_api(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        with pytest.raises(SelectorError, match='nokia'):
+            await service.preview(db, {**PROBE_PAYLOAD, 'units': ['nokia|цфо|on']})
+
+
+async def test_preview_unknown_kind_is_rejected(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        with pytest.raises(ValueError, match='teapot'):
+            await service.preview(db, {**PROBE_PAYLOAD, 'kind': 'teapot'})
+
+
+async def test_preview_vless_is_an_estimate(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        preview = await service.preview(db, VLESS_PAYLOAD)
+    assert preview.estimate_is_exact is False and preview.cost_kopeks == 5 * 110
+    assert preview.request['raw_input'] == BS_LINK and preview.request['selected_modems'] == preview.units_resolved
+    assert any('после запуска' in warning for warning in preview.warnings)
+
+
+async def test_preview_scan_uses_cidr_and_exact_price(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        'kind': 'scan',
+        'targets': [{'kind': 'cidr', 'value': '8.8.8.0/24'}, {'kind': 'host', 'ref': 'h-bs'}],
+        'units': ['dobro|цфо|on'],
+        'dpi': 'on',
+        'probes': {'tcp': True, 'sni': True},
+    }
+    async with session_factory() as db:
+        preview = await service.preview(db, payload)
+        with pytest.raises(ValueError, match='/24'):
+            await service.preview(db, {**payload, 'targets': [{'kind': 'host', 'ref': 'h-bs'}]})
+    assert (preview.cost_kopeks, preview.estimate_is_exact) == (61, True)
+    assert preview.request == {
+        'cidr': '8.8.8.0/24',
+        'operators': ['dobro|цфо|on'],
+        'probes': {'icmp': False, 'tcp': True, 'sni': True},
+        'dpi': 'on',
+        'sni_hosts': ['whitelisted.example'],
+    }
+
+
+async def test_preview_without_units_left_warns(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        preview = await service.preview(db, {**PROBE_PAYLOAD, 'units': ['yota'], 'dpi': 'on'})
+    assert preview.units_resolved == [] and any('ни одна симка' in warning for warning in preview.warnings)
+
+
+# ---------------------------------------------------------------- запуск
+
+
+async def test_create_job_writes_row_and_spawns_runner(session_factory) -> None:
+    client = FakeClient({'probe': [load_bschek_fixture('p1_probe')['body']]})
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, PROBE_PAYLOAD, admin.id)
+        assert job.status == 'pending' and job.idempotency_key
+        assert (job.units_requested, job.units_resolved, job.estimated_kopeks) == (['mts'], ['mts|пфо|on'], 18)
+        assert job.targets[0]['target_key'] == 'bs-host.example:9443' and job.skipped['dpi_off']
+        assert service.runner.is_active(job.id)
+    await asyncio.gather(*service.runner._tasks.values())
+    async with session_factory() as db:
+        assert (await crud.get_job(db, job.id)).status == 'done'
+
+
+async def test_create_job_returns_job_ready_for_response(session_factory) -> None:
+    """Роут сериализует созданную задачу сразу, включая ``legs``.
+
+    Свежий объект после flush/commit не имеет загруженной связи: обращение к
+    ``job.legs`` в обработчике запускает ленивый SELECT вне greenlet — в проде
+    это MissingGreenlet на POST /jobs. CRUD обязан отдавать задачу, готовую к
+    ответу без дополнительного IO.
+    """
+    client = FakeClient({'probe': [load_bschek_fixture('p1_probe')['body']]})
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, PROBE_PAYLOAD, admin.id)
+        assert 'legs' not in sa_inspect(job).unloaded
+        assert job.legs == []
+    await asyncio.gather(*service.runner._tasks.values())
+
+
+async def test_create_job_refuses_second_active_vless(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await crud.create_job(
+            db,
+            kind='vless',
+            status='running',
+            trigger='manual',
+            started_by_user_id=admin.id,
+            idempotency_key='busy',
+            request={},
+            targets=[],
+            dpi='on',
+        )
+        await db.commit()
+        with pytest.raises(ReachabilityBusy) as excinfo:
+            await service.create_job(db, VLESS_PAYLOAD, admin.id)
+        assert excinfo.value.job.kind == 'vless'
+
+
+async def test_create_job_enforces_cost_limit_and_units(session_factory) -> None:
+    service = make_service(session_factory, limit=10)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        with pytest.raises(CostLimitExceeded):
+            await service.create_job(db, PROBE_PAYLOAD, admin.id)
+        with pytest.raises(ValueError, match='симка'):
+            await service.create_job(db, {**PROBE_PAYLOAD, 'units': ['yota']}, admin.id)
+        assert (await crud.list_jobs(db))[1] == 0
+
+
+async def test_create_job_refuses_when_balance_is_short(session_factory) -> None:
+    client = FakeClient()
+    poor = {**load_bschek_fixture('account')['body'], 'balance_total': 5}
+    client.get_account = lambda: _coro(poor)  # type: ignore[method-assign]
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        with pytest.raises(ValueError, match='балансе'):
+            await service.create_job(db, PROBE_PAYLOAD, admin.id)
+
+
+async def _coro(value):
+    return value
+
+
+# ---------------------------------------------------------------- управление
+
+
+async def test_get_cancel_and_retrieve_jobs(session_factory) -> None:
+    client = FakeClient(
+        {
+            'cancel_vless': [load_bschek_fixture('vC_cancel')['body']],
+            'get_vless': [load_bschek_fixture('vC_after_cancel')['body']],
+        }
+    )
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        job = await crud.create_job(
+            db,
+            kind='vless',
+            status='running',
+            trigger='manual',
+            started_by_user_id=admin.id,
+            idempotency_key='c',
+            request={},
+            targets=[],
+            dpi='on',
+            external_id=43306,
+            result={'submit': load_bschek_fixture('vC_submit')['body']},
+        )
+        await db.commit()
+        with pytest.raises(JobNotFound):
+            await service.get_job(db, job.id + 100)
+        cancelled = await service.cancel_job(db, job.id)
+        assert cancelled.phase == 'cancelling' and service.runner.is_active(job.id)
+    await asyncio.gather(*service.runner._tasks.values())
+    async with session_factory() as db:
+        assert (await crud.get_job(db, job.id)).status == 'cancelled'
+        with pytest.raises(JobNotCancellable):
+            await service.retrieve_job(db, job.id)
+
+
+async def test_retrieve_job_resumes_stuck_probe(session_factory) -> None:
+    client = FakeClient({'probe': [load_bschek_fixture('p1_probe')['body']]})
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        job = await crud.create_job(
+            db,
+            kind='probe',
+            status='running',
+            phase='retrieving',
+            trigger='manual',
+            started_by_user_id=admin.id,
+            idempotency_key='r',
+            request=load_bschek_fixture('p1_probe')['request'],
+            targets=[],
+            dpi='on',
+        )
+        await db.commit()
+        await service.retrieve_job(db, job.id)
+    await asyncio.gather(*service.runner._tasks.values())
+    async with session_factory() as db:
+        assert (await crud.get_job(db, job.id)).status == 'done'
+
+
+async def test_summary_builds_matrix_from_latest_legs(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        job = await crud.create_job(
+            db,
+            kind='probe',
+            status='done',
+            trigger='manual',
+            started_by_user_id=admin.id,
+            idempotency_key='s',
+            request={},
+            targets=[],
+            dpi='on',
+        )
+        leg = {
+            'kind': 'probe',
+            'target_key': 'bs-host.example:9443',
+            'target_kind': 'host',
+            'target_ref': 'h-bs',
+            'op_key': 'mts|пфо|on',
+            'operator': 'mts',
+            'region': 'ПФО',
+            'dpi': 'on',
+            'verdict': 'reachable',
+            'matches_expectation': True,
+            'raw': {},
+            'checked_at': datetime.now(UTC),
+        }
+        await crud.replace_legs(db, job.id, [leg])
+        await db.commit()
+        summary = await service.summary(db, dpi='on')
+    row = summary['rows'][0]
+    assert (row['target_key'], row['purpose'], row['cells']['mts|пфо|on']['verdict']) == (
+        'bs-host.example:9443',
+        'bs',
+        'reachable',
+    )
+    assert 'mts|пфо|on' in [u['op_key'] for u in summary['units']]
+    assert all(u['dpi'] == 'on' for u in summary['units'] if 'dpi' in u) and summary['panel_error'] is None
+
+
+async def test_summary_survives_panel_and_api_outage(session_factory) -> None:
+    client = FakeClient(account_error=BschekAPIError(code='unauthenticated', message='bad key', status=401))
+    service = make_service(session_factory, client=client, panel=FakePanel(broken=True))
+    async with session_factory() as db:
+        await service.status(db)  # помечает нездоровье
+        summary = await service.summary(db, dpi='any')
+    assert summary['rows'] == [] and summary['units'] == [] and summary['panel_error']
+
+
+async def test_update_pref_persists_and_changes_summary_purpose(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        pref = await service.update_pref(
+            db,
+            target_kind='host',
+            target_ref='h-bs',
+            purpose='regular',
+            excluded=False,
+            note='обычный',
+            admin_id=admin.id,
+        )
+        assert (pref.purpose, pref.updated_by_user_id) == ('regular', admin.id)
+        hosts = await service.hosts(db)
+    assert (hosts[0].target.purpose, hosts[0].purpose_guessed) == ('regular', False)
+
+
+async def test_background_sweeper_starts_and_stops(session_factory) -> None:
+    service = make_service(session_factory)
+    service.start_background()
+    assert service._background is not None and not service._background.done()
+    await service.stop_background()
+    assert service._background is None
+
+
+# ---------------------------------------------------------------- SNI: дефолт из настроек и свои имена
+
+
+async def test_preview_probe_uses_explicit_sni_hosts_for_bare_ip(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        'kind': 'probe',
+        'targets': [{'kind': 'custom', 'value': '8.8.8.8'}],
+        'units': ['mts'],
+        'dpi': 'on',
+        'probes': {'tcp': True, 'sni': True},
+        'sni_hosts': ['ads.x5.ru', 'vk.com'],
+    }
+    async with session_factory() as db:
+        preview = await service.preview(db, payload)
+    assert preview.request['sni_hosts'] == ['ads.x5.ru', 'vk.com']
+
+
+async def test_preview_probe_falls_back_to_built_in_default_sni(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        'kind': 'probe',
+        'targets': [{'kind': 'custom', 'value': '8.8.8.8'}],
+        'units': ['mts'],
+        'dpi': 'on',
+        'probes': {'tcp': True, 'sni': True},
+    }
+    async with session_factory() as db:
+        preview = await service.preview(db, payload)
+        status = await service.status(db)
+    assert preview.request['sni_hosts'] == ['ads.x5.ru']
+    assert status['default_sni'] == 'ads.x5.ru'
+
+
+async def test_preview_scan_with_sni_takes_names_from_payload(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        'kind': 'scan',
+        'targets': [{'kind': 'cidr', 'value': '8.8.8.0/24'}],
+        'units': ['dobro|цфо|on'],
+        'dpi': 'on',
+        'probes': {'tcp': True, 'sni': True},
+        'sni_hosts': ['ads.x5.ru'],
+    }
+    async with session_factory() as db:
+        preview = await service.preview(db, payload)
+    assert preview.request['sni_hosts'] == ['ads.x5.ru']
+
+
+# ---------------------------------------------------------------- поле «Конфиг или подписка»
+
+EU_LINK = 'vless://00000000-0000-4000-8000-000000000001@eu-host.example:443?security=reality&sni=eu-host.example#EU'
+
+
+async def test_parse_input_direct_links_become_custom_targets(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, f'{EU_LINK}\n8.8.8.8\n')
+    assert [c.target.target_key for c in parsed.configs] == ['eu-host.example:443']
+    assert parsed.configs[0].target_in == {'kind': 'custom', 'value': EU_LINK}
+    assert parsed.configs[0].target.raw_link == EU_LINK
+    assert [r.reason for r in parsed.rejected] == ['unsupported_scheme']
+    assert parsed.sources == [{'kind': 'links', 'label': 'ссылки', 'count': 1}]
+
+
+async def test_parse_input_own_panel_url_resolves_through_panel_api(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://sub.example/ref-1')
+    config = parsed.configs[0]
+    assert config.target.kind == 'subscription_config' and config.target.raw_link == BS_LINK
+    assert config.target_in == {
+        'kind': 'subscription_config',
+        'short_uuid': 'ref-1',
+        'index': 0,
+        'target_key': 'bs-host.example:9443',
+    }
+    assert parsed.sources == [{'kind': 'subscription', 'label': 'https://sub.example/ref-1', 'count': 1}]
+
+
+async def test_parse_input_foreign_url_is_fetched_and_referenced_by_url(session_factory) -> None:
+    url = 'https://other.example/xyz'
+    service = make_service(session_factory, url_links={url: [EU_LINK]})
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, url)
+        # Цель по url разрешается при preview — та же ссылка, что при разборе.
+        preview = await service.preview(
+            db,
+            {
+                'kind': 'vless',
+                'targets': [parsed.configs[0].target_in],
+                'units': ['*|цфо|on'],
+                'dpi': 'on',
+                'probes': {},
+                'core': '',
+            },
+        )
+    assert parsed.configs[0].target_in == {
+        'kind': 'subscription_config',
+        'url': url,
+        'index': 0,
+        'target_key': 'eu-host.example:443',
+    }
+    assert preview.request['raw_input'] == EU_LINK
+
+
+async def test_parse_input_unreachable_url_is_rejected_not_raised(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://dead.example/abc')
+    assert parsed.configs == [] and [r.reason for r in parsed.rejected] == ['subscription_failed']
+    assert parsed.rejected[0].raw == 'https://dead.example/abc'
+
+
+async def test_parse_input_base64_blob_expands_to_links(session_factory) -> None:
+    import base64
+
+    service = make_service(session_factory)
+    blob = base64.b64encode(f'{EU_LINK}\n{BS_LINK}'.encode()).decode()
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, blob)
+    assert [c.target.target_key for c in parsed.configs] == ['eu-host.example:443', 'bs-host.example:9443']
+
+
+async def test_parse_input_failed_url_carries_the_reason_for_the_admin(session_factory) -> None:
+    """«Пропущено» без причины ничего не объясняет — причина уезжает в кабинет."""
+    from app.services.reachability.subscriptions import SubscriptionFetchError
+
+    service = make_service(
+        session_factory, url_links={'https://dead.example/abc': SubscriptionFetchError('Подписка истекла 01.09.2024')}
+    )
+    async with session_factory() as db:
+        parsed = await service.parse_input(db, 'https://dead.example/abc')
+    assert parsed.rejected[0].reason == 'subscription_failed'
+    assert parsed.rejected[0].detail == 'Подписка истекла 01.09.2024'
+
+
+async def test_subscription_configs_note_tells_the_status_of_the_panel_user(session_factory) -> None:
+    """Подписка своей панели: истекла / отключена / трафик исчерпан — по статусу пользователя панели."""
+    from datetime import UTC, datetime
+
+    panel = FakePanel()
+    panel.users_by_short_uuid = {
+        'ref-1': SimpleNamespace(
+            status='EXPIRED', expire_at=datetime(2024, 9, 1, tzinfo=UTC), used_traffic_bytes=0, traffic_limit_bytes=0
+        )
+    }
+    service = make_service(session_factory, panel=panel)
+    async with session_factory() as db:
+        configs = await service.subscription_configs(db)
+    assert configs.note == 'Подписка истекла 01.09.2024'
+
+
+# ---------------------------------------------------------------- GEO-РФ
+
+GEO_LINK_A = 'vless://00000000-0000-4000-8000-000000000001@a.example:443?security=reality&sni=a.example#A'
+GEO_LINK_B = 'vless://00000000-0000-4000-8000-000000000002@b.example:443?security=reality&sni=b.example#B'
+GEO_PAYLOAD = {
+    'kind': 'geo',
+    'targets': [{'kind': 'custom', 'value': 'example.com'}],
+    'units': [],
+    'dpi': 'on',
+    'probes': {},
+    'core': '',
+    'sni_hosts': [],
+    'geo': {
+        'network': 'res',
+        'scope': {'kind': 'all'},
+        'isp': None,
+        'city_limit': 0,
+        'probe_mode': 'tls',
+        'heavy': False,
+    },
+}
+
+
+async def test_preview_geo_quotes_the_reserve_and_carries_service_numbers(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    async with session_factory() as db:
+        preview = await service.preview(db, GEO_PAYLOAD)
+    assert preview.kind == 'geo'
+    assert preview.cost_kopeks == 90 and preview.estimate_is_exact is False
+    assert preview.units_resolved == ['geo'] and preview.skipped == {}
+    assert preview.geo == {'n_nodes': 89, 'cap_mb': 0.81, 'reserve_credits': 90, 'estimated_sec': 45, 'max_nodes': 800}
+    assert preview.request['targets'] == ['example.com:443'] and preview.request['network'] == 'res'
+    assert client.geo_preview_body == preview.request
+    assert any('резерв' in warning for warning in preview.warnings)
+
+
+async def test_preview_geo_refuses_a_second_tunnel_in_words(session_factory) -> None:
+    service = make_service(session_factory)
+    payload = {
+        **GEO_PAYLOAD,
+        'targets': [{'kind': 'custom', 'value': GEO_LINK_A}, {'kind': 'custom', 'value': GEO_LINK_B}],
+    }
+    async with session_factory() as db:
+        with pytest.raises(RequestBuildError, match='один конфиг'):
+            await service.preview(db, payload)
+
+
+async def test_preview_geo_refuses_bad_scope_before_the_service(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    payload = {**GEO_PAYLOAD, 'geo': {**GEO_PAYLOAD['geo'], 'scope': {'kind': 'district', 'district': 'krym'}}}
+    async with session_factory() as db:
+        with pytest.raises(RequestBuildError, match='округ'):
+            await service.preview(db, payload)
+    assert not hasattr(client, 'geo_preview_body'), 'к сервису не ходили'
+
+
+async def test_create_geo_job_stores_reserve_and_spawns_runner(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, GEO_PAYLOAD, admin.id)
+    assert job.kind == 'geo' and job.status == 'pending'
+    assert job.estimated_kopeks == 90 and job.estimate_is_exact is False
+    assert job.dpi == 'any' and job.units_resolved == ['geo']
+    assert job.request['targets'] == ['example.com:443']
+
+
+async def test_second_geo_job_is_busy_while_the_first_runs(session_factory) -> None:
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        await service.create_job(db, GEO_PAYLOAD, admin.id)
+        with pytest.raises(ReachabilityBusy):
+            await service.create_job(db, GEO_PAYLOAD, admin.id)
+
+
+async def test_geo_catalog_goes_through_the_client_with_latin_district(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    catalog = await service.geo_catalog(network='res', district='ЦФО', q='Воронеж')
+    assert catalog['isps'][0]['token'] == 'mts'
+    assert client.geo_catalog_params == {'network': 'res', 'district': 'cfo', 'city': 'Воронеж'}
+
+
+async def test_geo_catalog_respects_disabled_integration(session_factory) -> None:
+    service = make_service(session_factory, enabled=False)
+    with pytest.raises(ReachabilityDisabled):
+        await service.geo_catalog(network='res')
+
+
+async def test_geo_names_index_is_empty_when_the_service_is_off_or_down(session_factory) -> None:
+    assert await make_service(session_factory, enabled=False).geo_names() == {}
+
+    class Down(FakeClient):
+        async def geo_catalog(self, params=None):
+            raise BschekAPIError(code='catalog_unavailable', message='down', status=503)
+
+    assert await make_service(session_factory, client=Down()).geo_names() == {}
+    live = make_service(session_factory, client=FakeClient())
+    assert (await live.geo_names())['regions']['moscow'] == {'name': 'Москва', 'district': 'ЦФО'}
+
+
+async def test_status_lists_a_running_geo_job_like_vless_and_scan(session_factory) -> None:
+    # Кабинет по этому списку показывает «уже идёт GEO #N» до запуска, а не 409 после.
+    service = make_service(session_factory)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        await db.commit()
+        job = await service.create_job(db, GEO_PAYLOAD, admin.id)
+        status = await service.status(db)
+    assert [(item['kind'], item['id']) for item in status['active_jobs']] == [('geo', job.id)]
+
+
+GEO_PARENT_ROWS = [
+    {
+        'region': 'moscow',
+        'city': 'moscow',
+        'req_isp': None,
+        'provider': 'MTS',
+        'exit_ip': '203.0.113.7',
+        'verdict': 'blocked',
+        'is_result': True,
+        'sid': 's-1',
+        'sid_hold_s': 280,
+    },
+    {
+        'region': 'spb',
+        'city': 'spb',
+        'req_isp': None,
+        'provider': 'RT',
+        'exit_ip': '203.0.113.8',
+        'verdict': 'ok',
+        'is_result': True,
+    },
+]
+
+
+async def _done_geo_parent(db, admin_id: int, request: dict | None = None):
+    return await crud.create_job(
+        db,
+        kind='geo',
+        status='done',
+        trigger='manual',
+        started_by_user_id=admin_id,
+        idempotency_key='geo-parent',
+        request=request
+        or {
+            'targets': ['example.com:443'],
+            'network': 'res',
+            'probe_mode': 'tls',
+            'heavy': False,
+            'core': '',
+            'isp': '__ALL__',
+            'district': 'cfo',
+            'city_limit': 30,
+        },
+        targets=[
+            {
+                'kind': 'custom',
+                'label': 'example.com',
+                'address': 'example.com',
+                'port': 443,
+                'target_key': 'example.com:443',
+                'sni': None,
+                'ref': {},
+                'purpose': 'unknown',
+                'raw_link': None,
+            }
+        ],
+        units_requested=[],
+        units_resolved=['geo'],
+        dpi='any',
+        estimated_kopeks=1384,
+        estimate_is_exact=False,
+        result={'rows': GEO_PARENT_ROWS, 'summary': {'by_verdict': {'blocked': 1, 'ok': 1}}},
+    )
+
+
+MOSCOW = {'region': 'moscow', 'city': 'moscow', 'req_isp': None}
+MOSCOW_KEY = 'moscow|moscow|'
+
+
+def _record_spawns(service) -> list[dict]:
+    """Фон не запускаем: запоминаем, с чем сервис позвал повтор.
+
+    Глушится и фон обычной задачи: ``create_job`` здесь нужен только как «идущая GEO»,
+    а живой обходчик переживал тест и стучался в уже закрытую базу — на CI это падало
+    «Cannot operate on a closed database», локально проскакивало по таймингу.
+    """
+    spawned: list[dict] = []
+
+    def spawn(parent_id: int, key: str, **kwargs) -> None:
+        spawned.append({'parent_id': parent_id, 'key': key, **kwargs})
+
+    def no_background(job_id: int) -> None:
+        return None
+
+    service.runner.rechecks.spawn = spawn
+    service.runner.spawn = no_background
+    return spawned
+
+
+async def test_recheck_geo_writes_the_run_into_the_parent_instead_of_a_child_job(session_factory) -> None:
+    client = FakeClient()
+    service = make_service(session_factory, client=client)
+    spawned = _record_spawns(service)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        before = (await crud.list_jobs(db))[1]
+        out = await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=True)
+        after = (await crud.list_jobs(db))[1]
+    assert out.id == parent.id and after == before, 'новой задачи нет — история не растёт'
+    entry = out.result['rechecks'][MOSCOW_KEY]
+    assert entry['status'] == 'running' and entry['same_exit'] is True and entry['reserve_kopeks'] == 90
+    assert entry['admin_id'] == admin.id and entry['run_id'] is None and entry['started_at']
+    assert out.result['rows'] == GEO_PARENT_ROWS, 'строки до итога не тронуты'
+    assert spawned == [
+        {
+            'parent_id': parent.id,
+            'key': MOSCOW_KEY,
+            'request': {
+                'targets': ['example.com:443'],
+                'network': 'res',
+                'probe_mode': 'tls',
+                'heavy': False,
+                'core': '',
+                'cities': [{'region': 'moscow', 'city': 'moscow'}],
+                'session': 's-1',
+                'expect_exit_ip': '203.0.113.7',
+            },
+            'reserve_kopeks': 90,
+        }
+    ]
+    assert client.geo_preview_body['cities'] == [{'region': 'moscow', 'city': 'moscow'}]
+
+
+async def test_recheck_geo_new_exit_drops_the_session_and_is_not_blocked_by_a_running_geo_job(session_factory) -> None:
+    service = make_service(session_factory)
+    spawned = _record_spawns(service)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        await service.create_job(db, GEO_PAYLOAD, admin.id)
+        out = await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+    assert 'session' not in spawned[0]['request']
+    assert out.result['rechecks'][MOSCOW_KEY]['same_exit'] is False
+
+
+async def test_recheck_geo_refuses_unknown_city_unfinished_parent_and_a_running_city_in_words(session_factory) -> None:
+    service = make_service(session_factory)
+    _record_spawns(service)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        await db.commit()
+        with pytest.raises(ValueError, match='Такого города'):
+            await service.recheck_geo(
+                db, parent.id, {'region': 'x', 'city': 'y', 'req_isp': None}, admin.id, same_exit=False
+            )
+        running = await service.create_job(db, GEO_PAYLOAD, admin.id)
+        with pytest.raises(ValueError, match='завершённой'):
+            await service.recheck_geo(db, running.id, MOSCOW, admin.id, same_exit=False)
+        await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+        service.runner.rechecks.is_active = lambda parent_id, key: True
+        with pytest.raises(ValueError, match='уже перепроверяется'):
+            await service.recheck_geo(db, parent.id, MOSCOW, admin.id, same_exit=False)
+
+
+async def test_reading_a_job_fails_rechecks_orphaned_by_a_restart(session_factory) -> None:
+    service = make_service(session_factory)
+    now = datetime.now(UTC)
+    async with session_factory() as db:
+        admin = await _admin(db)
+        parent = await _done_geo_parent(db, admin.id)
+        stale = recheck_started(
+            parent.result,
+            MOSCOW_KEY,
+            same_exit=False,
+            reserve_kopeks=90,
+            started_at=(now - timedelta(minutes=5)).isoformat(),
+            admin_id=admin.id,
+        )
+        fresh = recheck_started(
+            stale,
+            'spb|spb|',
+            same_exit=False,
+            reserve_kopeks=90,
+            started_at=(now - timedelta(seconds=5)).isoformat(),
+            admin_id=admin.id,
+        )
+        await crud.update_job(db, parent, result=fresh)
+        await db.commit()
+        job = await service.get_job(db, parent.id)
+        assert job.result['rechecks'][MOSCOW_KEY]['status'] == 'failed'
+        assert job.result['rechecks'][MOSCOW_KEY]['error'] == RECHECK_STALE_MESSAGE
+        assert job.result['rechecks']['spb|spb|']['status'] == 'running', 'свежая запись ещё в окне запуска'
+    async with session_factory() as db:
+        items, _ = await service.list_jobs(db, kind='geo')
+        assert items[0].result['rechecks'][MOSCOW_KEY]['status'] == 'failed', 'и через список, и сохранено'

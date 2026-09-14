@@ -15,6 +15,7 @@ from app.database.models import (
     Subscription,
     SubscriptionStatus,
     Tariff,
+    TrafficPurchase,
     Transaction,
     User,
     UserPromoGroup,
@@ -30,6 +31,7 @@ TABLES = (
     User.__table__,
     Subscription.__table__,
     Tariff.__table__,
+    TrafficPurchase.__table__,
     PromoGroup.__table__,
     UserPromoGroup.__table__,
     tariff_promo_groups,
@@ -653,3 +655,26 @@ async def test_purchase_rejects_trial_and_foreign_tariff(monkeypatch):
         await db.commit()
         with pytest.raises(ValueError, match='недоступно'):
             await purchase_tariff_with_lava_recurring(db, user=user, tariff=tariff)
+
+
+async def test_charge_returns_a_zeroed_tariff_subscription_to_the_tariff_limit(monkeypatch):
+    """Продление Lava идёт мимо extend_subscription — условия тарифа обязаны примениться и здесь.
+
+    Подписка, которой прежняя ошибка продления выдала безлимит (ноль в базе при
+    тарифе с лимитом), на рекуррентном списании возвращается к лимиту тарифа.
+    """
+    async with memory_session(monkeypatch, TABLES) as db:
+        user, tariff, subscription = await _seed(db)
+        tariff.traffic_limit_gb = 50
+        subscription.traffic_limit_gb = 0
+        await db.commit()
+        agent, service = _agent(monkeypatch)
+        monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', False)
+
+        await agent.create_lava_recurrent_subscription(db, user_id=user.id, subscription=subscription, tariff=tariff)
+        order_id = service.subscribe_recurrent.await_args.kwargs['order_id']
+
+        assert await agent.process_lava_subscription_callback(db, _charge(order_id, 'inv-heal')) is True
+
+        await db.refresh(subscription)
+        assert subscription.traffic_limit_gb == 50

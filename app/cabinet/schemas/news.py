@@ -280,10 +280,10 @@ class NewsUpdateRequest(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=500)
     slug: str | None = Field(None, min_length=1, max_length=500)
     content: str | None = Field(None, max_length=500_000)
-    excerpt: str | None = None
+    excerpt: str | None = Field(None, max_length=1000)
     category: str | None = Field(None, min_length=1, max_length=100)
     category_color: str | None = Field(None, max_length=20)
-    tag: str | None = None
+    tag: str | None = Field(None, max_length=50)
     category_id: int | None = None
     tag_id: int | None = None
     featured_image_url: str | None = Field(None, max_length=2000)

@@ -45,3 +45,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     status=status,
                     duration_ms=duration_ms,
                 )
+
+
+class RequestPathContextMiddleware(BaseHTTPMiddleware):
+    """Кладёт путь запроса в контекст на время его обработки.
+
+    Нужен логу действий пользователя: авторизация Mini App знает пользователя,
+    но не путь — ``init_data`` приходит телом, поэтому единой зависимости с
+    ``Request`` там нет. Включается всегда, в отличие от логирования запросов
+    (``WEB_API_REQUEST_LOGGING``), иначе таймлайн активности зависел бы от
+    настройки отладочных логов.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        from app.services.user_action_log_service import bind_request_path, reset_request_path
+
+        token = bind_request_path(request.url.path)
+        try:
+            return await call_next(request)
+        finally:
+            reset_request_path(token)

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.cabinet.apple_iap import apple_iap_only_router, router as apple_iap_router
 
 from .account_linking import merge_router as merge_router, router as account_linking_router
+from .activity import router as activity_router
 from .admin_apps import router as admin_apps_router
 from .admin_audit_log import router as admin_audit_log_router
 from .admin_ban_system import router as admin_ban_system_router
@@ -14,6 +15,7 @@ from .admin_button_styles import router as admin_button_styles_router
 from .admin_campaigns import router as admin_campaigns_router
 from .admin_channels import router as admin_channels_router
 from .admin_coupons import router as admin_coupons_router
+from .admin_email_queue import router as admin_email_queue_router
 from .admin_email_templates import router as admin_email_templates_router
 from .admin_grace_access import router as admin_grace_access_router
 from .admin_info_pages import router as admin_info_pages_router
@@ -32,6 +34,7 @@ from .admin_pinned_messages import router as admin_pinned_messages_router
 from .admin_policies import router as admin_policies_router
 from .admin_promo_offers import router as admin_promo_offers_router
 from .admin_promocodes import promo_groups_router as admin_promo_groups_router, router as admin_promocodes_router
+from .admin_reachability import router as admin_reachability_router
 from .admin_referral_network import router as admin_referral_network_router
 from .admin_remnawave import router as admin_remnawave_router
 from .admin_roles import router as admin_roles_router
@@ -39,6 +42,7 @@ from .admin_sales_stats import router as admin_sales_stats_router
 from .admin_servers import router as admin_servers_router
 from .admin_settings import router as admin_settings_router
 from .admin_stats import router as admin_stats_router
+from .admin_system_errors import router as admin_system_errors_router
 from .admin_tariffs import router as admin_tariffs_router
 from .admin_tickets import router as admin_tickets_router
 from .admin_traffic import router as admin_traffic_router
@@ -108,6 +112,7 @@ router.include_router(withdrawal_router)
 router.include_router(ticket_notifications_router)
 router.include_router(tickets_router)
 router.include_router(promocode_router)
+router.include_router(activity_router)
 router.include_router(coupon_router)
 router.include_router(contests_router)
 router.include_router(polls_router)
@@ -137,6 +142,7 @@ router.include_router(admin_stats_router)
 router.include_router(admin_referral_network_router)
 router.include_router(admin_sales_stats_router)
 router.include_router(admin_ban_system_router)
+router.include_router(admin_reachability_router)
 router.include_router(admin_broadcasts_router)
 router.include_router(admin_promocodes_router)
 router.include_router(admin_promo_groups_router)
@@ -152,6 +158,7 @@ router.include_router(admin_payments_router)
 router.include_router(admin_promo_offers_router)
 router.include_router(admin_remnawave_router)
 router.include_router(admin_email_templates_router)
+router.include_router(admin_email_queue_router)
 router.include_router(admin_grace_access_router)
 router.include_router(admin_updates_router)
 router.include_router(admin_traffic_router)
@@ -163,6 +170,7 @@ router.include_router(admin_apps_router)
 router.include_router(admin_roles_router)
 router.include_router(admin_policies_router)
 router.include_router(admin_audit_log_router)
+router.include_router(admin_system_errors_router)
 # Categories/tags/media routers MUST be before the main news router
 # to avoid /admin/news/{article_id} catching /admin/news/categories etc.
 router.include_router(admin_news_categories_router)

@@ -1,0 +1,29 @@
+{
+ "name": "pv_old_format",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "6a83b314de0c",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "ufo1:mts"
+  ]
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "unknown_operator",
+   "message": "Формат op_key изменился: префикса воркера больше нет. Используйте ключ единицы вида 'mts|цфо|off' (или шаблон: 'mts' / 'mts|*|on' / '*|цфо|on') — готовые ключи берите из GET /v1/operators",
+   "details": {
+    "got": "ufo1:mts",
+    "request_id": "6a83b314de0c",
+    "retryable": false
+   }
+  }
+ }
+}

@@ -1,0 +1,20 @@
+{
+ "name": "sB_cancel",
+ "status": 200,
+ "elapsed_sec": 0.44,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "677f785ee555",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "scan_id": 5358,
+  "state": "cancelled",
+  "done_ips": 0,
+  "total_ips": 1536,
+  "n_jobs_stopped": 6
+ }
+}

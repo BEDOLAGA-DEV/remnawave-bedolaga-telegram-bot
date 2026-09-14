@@ -272,7 +272,13 @@ class BlockedUsersService:
         return result
 
     async def delete_user_from_remnawave(self, remnawave_id: int) -> bool:
-        """Удаляет пользователя из панели Remnawave."""
+        """Удаляет пользователя из панели Remnawave.
+
+        ``REMNAWAVE_USER_DELETE_MODE`` здесь намеренно не спрашивается: это не
+        побочная уборка, а явно выбранное админом действие «удалить из Remnawave»
+        в разделе заблокированных — как ``force_panel_delete`` при полном удалении
+        пользователя. Кому нужна только деактивация, выбирает соседнее действие.
+        """
         if not remnawave_id:
             return False
 

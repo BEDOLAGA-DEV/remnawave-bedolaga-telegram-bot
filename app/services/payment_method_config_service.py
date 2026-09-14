@@ -273,6 +273,26 @@ def _get_method_defaults() -> dict:
                 {'id': 'sbp', 'name': 'СБП'},
             ],
         },
+        'paritypay': {
+            'default_display_name': settings.get_paritypay_display_name(),
+            'is_configured': settings.is_paritypay_enabled(),
+            'default_min': settings.PARITYPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.PARITYPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
+        'tabpay': {
+            'default_display_name': settings.get_tabpay_display_name(),
+            'is_configured': settings.is_tabpay_enabled(),
+            'default_min': settings.TABPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.TABPAY_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
     }
 
 
@@ -335,6 +355,8 @@ DEFAULT_METHOD_ORDER = [
     'donut',
     'lava',
     'cispay',
+    'tabpay',
+    'paritypay',
 ]
 
 

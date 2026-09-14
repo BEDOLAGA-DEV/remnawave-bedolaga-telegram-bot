@@ -28,13 +28,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 # ``from __future__ import annotations``. Такие не вычисляются при исполнении и
 # упасть не могут; это проверено импортом каждого модуля.
 #
-# 'activate_guest_purchase' — НАСТОЯЩИЙ пробел: функции с таким именем нет нигде
-# в проекте, и POST /activate/{token} падает NameError на каждом вызове. Чинить
-# его импортом нельзя — нужно решение о том, что этот эндпоинт должен делать,
-# поэтому он оставлен в базе как известный долг, а не замаскирован.
+# 'activate_guest_purchase' отсюда убрано: это был не долг, а регрессия. Имя —
+# алиас существующей guest_purchase_service.activate_purchase, и разделение
+# подарочной активации (b42b75d5) сняло импорт, оставив одну из двух точек
+# вызова. Комментарий утверждал, что функции нет нигде в проекте; это было
+# неверно, и запись в базе мешала вернуть строку обратно.
 KNOWN: dict[str, set[str]] = {
-    'app/cabinet/routes/landing.py': {'activate_guest_purchase'},
-    'app/cabinet/services/email_templates.py': {'NotificationType'},
     'app/handlers/start.py': {'User'},
     'app/services/payment/heleket.py': {'HeleketPayment'},
     'app/services/payment_method_config_service.py': {'User'},
@@ -43,7 +42,7 @@ KNOWN: dict[str, set[str]] = {
 
 
 def _undefined_names() -> dict[str, set[str]]:
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [sys.executable, '-m', 'ruff', 'check', '--select', 'F821', '--no-cache', '--output-format', 'json', 'app'],
         capture_output=True,
         text=True,

@@ -37,9 +37,11 @@ def _is_blocked_non_admin(user: Any) -> bool:
 
 async def _refresh_remnawave_description(remnawave_id: int, description: str, telegram_id: int) -> None:
     try:
+        from app.services.panel_sync import patch_panel_account
+
         remnawave_service = RemnaWaveService()
         async with remnawave_service.get_api_client() as api:
-            await api.update_user(user_id=remnawave_id, description=description)
+            await patch_panel_account(api, user_id=remnawave_id, description=description)
         logger.info('✅ [Middleware] Описание пользователя обновлено в RemnaWave', telegram_id=telegram_id)
     except Exception as remnawave_error:
         logger.error(

@@ -108,7 +108,6 @@ async def test_topup_notification_swallows_router_errors(monkeypatch: pytest.Mon
 async def test_topup_hook_notifies_before_auto_purchase(monkeypatch: pytest.MonkeyPatch) -> None:
     """Порядок каналов: письмо о пополнении уходит ДО автопокупки из корзины,
     чтобы уведомления пришли в хронологическом порядке «пополнение → подписка»."""
-    import app.services.subscription_auto_purchase_service as auto_mod
 
     order: list[str] = []
 
@@ -127,8 +126,12 @@ async def test_topup_hook_notifies_before_auto_purchase(monkeypatch: pytest.Monk
         return None
 
     monkeypatch.setattr(payment_common, 'notify_email_user_topup', fake_topup_notify)
-    monkeypatch.setattr(auto_mod, 'try_resume_disabled_daily_after_topup', fake_daily)
-    monkeypatch.setattr(auto_mod, 'try_auto_extend_expired_after_topup', fake_extend)
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.try_resume_disabled_daily_after_topup', fake_daily
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_auto_purchase_service.try_auto_extend_expired_after_topup', fake_extend
+    )
     monkeypatch.setattr(payment_common.user_cart_service, 'get_user_cart', fake_get_cart)
 
     await payment_common.send_cart_notification_after_topup(_email_user(), 25000, db=None, bot=None)

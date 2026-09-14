@@ -55,7 +55,7 @@ Bedolaga — полнофункциональная платформа для п
 
 ### 💳 Платежи
 
-- 🏦 **24+ платёжных провайдера** одновременно
+- 🏦 **27 платёжных провайдеров** одновременно
 - 💰 Единый баланс: пополнение любым способом → покупка с баланса
 - ⚡ Автопокупка подписки после пополнения
 - 💾 Рекуррентные платежи (сохранённые карты)
@@ -176,6 +176,9 @@ Bedolaga поддерживает полный кросс-канальный ж�
 | 🪐 | **[Jupiter](https://t.me/k_juppiter)** 🔸 | СБП через QR (FPGate P2P v2.1) | RUB |
 | 🍩 | **[Donut](https://t.me/donut_payment)** 🔸 | Карты, СБП по телефону, СБП QR (P2P) | RUB |
 | 🌋 | **Lava Business** | Карты, СБП (gate.lava.ru) | RUB |
+| 💳 | **CisPay** | СБП, карты (api.cispay.app) | RUB |
+| 💳 | **TabPay** | СБП, карты с 3-D Secure (tabpay.org) | RUB |
+| 💳 | **ParityPay** | СБП, карты (api.paritypay.net) | RUB |
 | 🍎 | **Apple In-App Purchase** | Покупки через iOS App Store | USD |
 | 📲 | **Tribute** | Telegram-платежи | RUB |
 
@@ -339,7 +342,7 @@ docker compose up -d
 | | Раздел | Описание |
 |:---:|:---|:---|
 | 🚀 | [Быстрый старт](https://docs.bedolagam.ru/getting-started/quickstart) | Развёртывание за 5 минут |
-| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 24+ провайдера, webhook, фискализация, Apple IAP |
+| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 27 провайдеров, webhook, фискализация, Apple IAP |
 | 📦 | [Подписки и тарифы](https://docs.bedolagam.ru/bot/subscriptions) | Конфигурация планов и трафика |
 | 👥 | [Реферальная программа](https://docs.bedolagam.ru/bot/referral-program) | Партнёрка и вывод средств |
 | 🖥 | [Cabinet](https://docs.bedolagam.ru/cabinet/overview) | Настройка веб-кабинета |

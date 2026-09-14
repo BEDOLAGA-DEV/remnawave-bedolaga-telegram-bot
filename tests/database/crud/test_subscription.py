@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-from app.database.crud.subscription import create_trial_subscription
+from app.database.crud import subscription as subscription_crud
 
 
 async def test_create_trial_subscription_uses_all_available_squads_by_default(monkeypatch):
@@ -26,7 +26,7 @@ async def test_create_trial_subscription_uses_all_available_squads_by_default(mo
     monkeypatch.setattr('app.database.crud.server_squad.get_server_ids_by_uuids', get_server_ids_mock)
     monkeypatch.setattr('app.database.crud.server_squad.add_user_to_servers', add_user_to_servers_mock)
 
-    subscription = await create_trial_subscription(
+    subscription = await subscription_crud.create_trial_subscription(
         db,
         user_id=1,
         duration_days=14,
@@ -43,13 +43,11 @@ async def test_create_trial_subscription_uses_all_available_squads_by_default(mo
 
 
 async def test_extend_subscription_convert_trial_false_keeps_trial(monkeypatch):
-    """Bug #629889 guardrail: extend_subscription(tariff_id=..., convert_trial=False)
+    """Bug #629889 guardrail: subscription_crud.extend_subscription(tariff_id=..., convert_trial=False)
     must NOT clear is_trial. A free relabel keeps the sub a trial so it stays gated
     out of try_auto_extend_expired_after_topup and never self-renews to a full period.
     """
     from datetime import UTC, datetime, timedelta
-
-    from app.database.crud.subscription import extend_subscription
 
     monkeypatch.setattr('app.database.crud.subscription._lock_subscription_row', AsyncMock())
     monkeypatch.setattr('app.database.crud.subscription._housekeep_expired_purchases', AsyncMock())
@@ -80,7 +78,7 @@ async def test_extend_subscription_convert_trial_false_keeps_trial(monkeypatch):
         updated_at=now,
     )
 
-    result = await extend_subscription(db, sub, 14, tariff_id=2, convert_trial=False, commit=False)
+    result = await subscription_crud.extend_subscription(db, sub, 14, tariff_id=2, convert_trial=False, commit=False)
 
     assert result.is_trial is True  # NOT converted on a free relabel
     assert result.tariff_id == 2  # the relabel still applied
@@ -90,8 +88,6 @@ async def test_extend_subscription_convert_trial_false_keeps_trial(monkeypatch):
 async def test_extend_subscription_default_converts_trial_on_purchase(monkeypatch):
     """Default convert_trial=True (a real tariff purchase) still clears is_trial."""
     from datetime import UTC, datetime, timedelta
-
-    from app.database.crud.subscription import extend_subscription
 
     monkeypatch.setattr('app.database.crud.subscription._lock_subscription_row', AsyncMock())
     monkeypatch.setattr('app.database.crud.subscription._housekeep_expired_purchases', AsyncMock())
@@ -123,7 +119,7 @@ async def test_extend_subscription_default_converts_trial_on_purchase(monkeypatc
         updated_at=now,
     )
 
-    result = await extend_subscription(db, sub, 14, tariff_id=2, commit=False)
+    result = await subscription_crud.extend_subscription(db, sub, 14, tariff_id=2, commit=False)
 
     assert result.is_trial is False  # genuine purchase converts the trial
 
@@ -143,12 +139,10 @@ def _trial_sub(sub_id, user_id, panel_user_id):
     )
 
 
-def _patch_reset_env(monkeypatch, *, subs, is_configured, delete_side_effect=None):
+def _patch_reset_env(monkeypatch, *, subs, is_configured, delete_side_effect=None, delete_mode='delete'):
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, MagicMock
-
-    import app.database.crud.subscription as crud
 
     # SELECT result -> subs; later delete/update calls ignore the return.
     result_mock = MagicMock()
@@ -170,10 +164,13 @@ def _patch_reset_env(monkeypatch, *, subs, is_configured, delete_side_effect=Non
 
     fake_settings = MagicMock()
     fake_settings.is_multi_tariff_enabled.return_value = False  # single-tariff
-    monkeypatch.setattr(crud, 'settings', fake_settings)
-    monkeypatch.setattr(crud, 'decrement_subscription_server_counts', AsyncMock())
+    # Заглушка настроек — MagicMock: незаданный геттер вернул бы объект-мок, и
+    # сравнение с 'delete' молча выбрало бы ветку disable. Режим задаём явно.
+    fake_settings.get_remnawave_user_delete_mode.return_value = delete_mode
+    monkeypatch.setattr(subscription_crud, 'settings', fake_settings)
+    monkeypatch.setattr(subscription_crud, 'decrement_subscription_server_counts', AsyncMock())
 
-    return crud, db, fake_api
+    return subscription_crud, db, fake_api
 
 
 async def test_reset_trials_deletes_panel_first_and_skips_panel_failures(monkeypatch):
@@ -186,11 +183,11 @@ async def test_reset_trials_deletes_panel_first_and_skips_panel_failures(monkeyp
             raise RuntimeError('panel 500')
         return True
 
-    crud, db, fake_api = _patch_reset_env(
+    subscription_crud, db, fake_api = _patch_reset_env(
         monkeypatch, subs=subs, is_configured=True, delete_side_effect=delete_side_effect
     )
 
-    count = await crud.reset_trials_for_users_without_paid_subscription(db)
+    count = await subscription_crud.reset_trials_for_users_without_paid_subscription(db)
 
     # Панель дёрнули для обоих, по числовому id (не по UUID).
     called = {c.args[0] for c in fake_api.delete_user.await_args_list}
@@ -213,22 +210,43 @@ async def test_reset_trials_keeps_row_when_panel_id_is_unusable(monkeypatch):
             raise RemnaWaveInvalidUserIdError('Invalid panel user id')
         return True
 
-    crud, db, fake_api = _patch_reset_env(
+    subscription_crud, db, fake_api = _patch_reset_env(
         monkeypatch, subs=subs, is_configured=True, delete_side_effect=delete_side_effect
     )
 
-    count = await crud.reset_trials_for_users_without_paid_subscription(db)
+    count = await subscription_crud.reset_trials_for_users_without_paid_subscription(db)
 
     assert count == 1
     db.commit.assert_awaited()
 
 
+async def test_reset_trials_disable_mode_keeps_panel_account(monkeypatch):
+    """REMNAWAVE_USER_DELETE_MODE=disable: аккаунт в панели отключается, а не удаляется,
+    и ссылка на него на пользователе сохраняется — следующая покупка включит тот же."""
+    subs = [_trial_sub(1, 11, 9001)]
+    subscription_crud, db, fake_api = _patch_reset_env(
+        monkeypatch, subs=subs, is_configured=True, delete_mode='disable'
+    )
+    fake_api.disable_user = AsyncMock(return_value=True)
+
+    count = await subscription_crud.reset_trials_for_users_without_paid_subscription(db)
+
+    assert count == 1
+    fake_api.delete_user.assert_not_awaited()
+    fake_api.disable_user.assert_awaited_once_with(9001)
+
+    from sqlalchemy.sql.dml import Update
+
+    updates = [call.args[0] for call in db.execute.await_args_list if isinstance(call.args[0], Update)]
+    assert updates == []
+
+
 async def test_reset_trials_panel_not_configured_db_only(monkeypatch):
     """Панель не настроена → orphan'ить нечего, чистим только БД, без вызовов панели."""
     subs = [_trial_sub(1, 11, 9001), _trial_sub(2, 22, 9002)]
-    crud, db, fake_api = _patch_reset_env(monkeypatch, subs=subs, is_configured=False)
+    subscription_crud, db, fake_api = _patch_reset_env(monkeypatch, subs=subs, is_configured=False)
 
-    count = await crud.reset_trials_for_users_without_paid_subscription(db)
+    count = await subscription_crud.reset_trials_for_users_without_paid_subscription(db)
 
     fake_api.delete_user.assert_not_awaited()
     assert count == 2

@@ -1,0 +1,21 @@
+{
+ "name": "s1_poll_00",
+ "status": 200,
+ "elapsed_sec": 0.43,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "39d62e02aedb",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "scan_id": 5355,
+  "cidr": "192.0.2.0/24",
+  "state": "running",
+  "result_ready": false,
+  "created_at": "2026-09-05T14:13:28.996144+00:00",
+  "completed_at": null
+ }
+}

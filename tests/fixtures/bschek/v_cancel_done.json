@@ -1,0 +1,23 @@
+{
+ "name": "v_cancel_done",
+ "status": 404,
+ "elapsed_sec": 0.44,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "42f827938705",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "not_found",
+   "message": "Тест не найден или уже завершён",
+   "details": {
+    "request_id": "42f827938705",
+    "retryable": false
+   }
+  }
+ }
+}

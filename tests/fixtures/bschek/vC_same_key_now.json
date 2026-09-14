@@ -1,0 +1,55 @@
+{
+ "name": "vC_same_key_now",
+ "status": 200,
+ "elapsed_sec": 0.47,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "b4d8cc97c097",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "vless://00000000-0000-4000-8000-000000000001@eu-host.example:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=eu-host.example&fp=firefox&pbk=PUBKEY#%F0%9F%87%A9%F0%9F%87%AA%20Germany\nvless://00000000-0000-4000-8000-000000000001@eu-host-2.example:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=eu-host-2.example&fp=firefox&pbk=PUBKEY#%F0%9F%87%AB%F0%9F%87%AE%20Finland\nvless://00000000-0000-4000-8000-000000000001@eu-host-3.example:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=eu-host-3.example&fp=firefox&pbk=PUBKEY#%F0%9F%87%B3%F0%9F%87%B1%20Netherlands\nvless://00000000-0000-4000-8000-000000000001@eu-host-4.example:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=eu-host-4.example&fp=firefox&pbk=PUBKEY#%F0%9F%87%B5%F0%9F%87%B1%20Poland\nvless://00000000-0000-4000-8000-000000000001@bs-host.example:9443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=whitelisted.example&fp=firefox&pbk=PUBKEY&sid=def012&spx=%2Fpath#%F0%9F%87%B7%F0%9F%87%BA%20Russia%20%7C%20LTE%20%7C%20%D0%91%D0%A1",
+  "selected_servers": [
+   {
+    "address": "eu-host.example",
+    "port": 443,
+    "name": "🇩🇪 Germany"
+   },
+   {
+    "address": "eu-host-3.example",
+    "port": 443,
+    "name": "🇳🇱 Netherlands"
+   }
+  ],
+  "selected_modems": [
+   "dobro|цфо|on"
+  ],
+  "dpi": "on",
+  "core": "prerelease"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "tx_id": 868685,
+  "configs": [
+   {
+    "name": "🇩🇪 Germany",
+    "port": 443,
+    "address": "eu-host.example",
+    "protocol": "vless"
+   },
+   {
+    "name": "🇳🇱 Netherlands",
+    "port": 443,
+    "address": "eu-host-3.example",
+    "protocol": "vless"
+   }
+  ],
+  "outcome": "queued",
+  "test_id": 43306,
+  "n_modems": 1,
+  "n_servers": 2,
+  "queue_pos": 0,
+  "cost_credits": 206
+ }
+}

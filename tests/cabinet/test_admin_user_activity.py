@@ -40,6 +40,7 @@ def test_activity_sources_shape() -> None:
         'withdrawal',
         'button_click',
         'cabinet_action',
+        'miniapp_action',
     }
     for query, count_query, ts_column, mapper in sources.values():
         assert callable(mapper)

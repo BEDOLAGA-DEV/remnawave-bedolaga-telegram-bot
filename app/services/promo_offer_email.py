@@ -72,6 +72,11 @@ async def send_promo_offer_email(
     template = None
     try:
         from app.cabinet.services.email_template_overrides import get_rendered_override
+        from app.cabinet.services.email_type_switch import is_email_type_enabled
+
+        if not is_email_type_enabled(NotificationType.PROMO_OFFER.value):
+            logger.debug('Промо-письмо отключено админом')
+            return False
 
         rendered = await get_rendered_override(NotificationType.PROMO_OFFER.value, language, context)
         if rendered:

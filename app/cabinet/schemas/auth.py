@@ -106,6 +106,12 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str = Field(..., max_length=2048, description='Refresh token')
 
 
+class VerificationResendRequest(BaseModel):
+    """Request to resend the verification email from the «check your inbox» screen."""
+
+    email: EmailStr = Field(..., description='Email address awaiting verification')
+
+
 class PasswordForgotRequest(BaseModel):
     """Request to initiate password reset."""
 
@@ -153,6 +159,12 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class UserAvatarResponse(BaseModel):
+    """Фото профиля Telegram для шапки кабинета: подписанная ссылка на прокси медиа или null."""
+
+    photo_url: str | None = None
 
 
 class EmailRegisterStandaloneRequest(BaseModel):

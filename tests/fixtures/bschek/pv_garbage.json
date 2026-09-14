@@ -1,0 +1,37 @@
+{
+ "name": "pv_garbage",
+ "status": 422,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "d1beab9df4fe",
+  "server": "cloudflare"
+ },
+ "request": "not json",
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "invalid_request",
+   "message": "Тело запроса не прошло валидацию",
+   "details": {
+    "fields": [
+     {
+      "type": "json_invalid",
+      "loc": [
+       "body",
+       0
+      ],
+      "msg": "JSON decode error",
+      "input": {},
+      "ctx": {
+       "error": "Expecting value"
+      }
+     }
+    ],
+    "request_id": "d1beab9df4fe",
+    "retryable": false
+   }
+  }
+ }
+}

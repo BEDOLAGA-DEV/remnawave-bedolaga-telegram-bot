@@ -14,6 +14,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from app.config import get_traffic_prices, settings
 from app.database.models import Subscription, User
 from app.localization.texts import get_texts
+from app.utils.incy_crypt1 import wrap_incy_deep_link
 from app.utils.pricing_utils import (
     apply_percentage_discount,
 )
@@ -529,7 +530,7 @@ def resolve_button_url(
             result = re.sub(r'happ://crypt\d+/(?=\{\{HAPP_CRYPT[34]_LINK\}\})', '', result, flags=re.IGNORECASE)
         result = result.replace('{{HAPP_CRYPT3_LINK}}', crypto_link)
         result = result.replace('{{HAPP_CRYPT4_LINK}}', crypto_link)
-    return result
+    return wrap_incy_deep_link(result, subscription_url)
 
 
 def create_deep_link(app: dict[str, Any], subscription_url: str) -> str | None:
@@ -559,6 +560,8 @@ def create_deep_link(app: dict[str, Any], subscription_url: str) -> str | None:
                 payload = subscription_url
 
         scheme_link = f'{scheme}{payload}' if scheme else None
+
+    scheme_link = wrap_incy_deep_link(scheme_link, subscription_url)
 
     template = settings.get_happ_cryptolink_redirect_template()
     redirect_link = build_redirect_link(scheme_link, template) if scheme_link and template else None

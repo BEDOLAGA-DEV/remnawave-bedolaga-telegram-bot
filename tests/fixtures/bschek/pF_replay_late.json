@@ -1,0 +1,696 @@
+{
+ "name": "pF_replay_late",
+ "status": 200,
+ "elapsed_sec": 0.41,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "414b56b8cab2",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "bs-host.example:9443",
+  "probes": {
+   "tcp": true,
+   "sni": true
+  },
+  "sni_hosts": [
+   "whitelisted.example"
+  ]
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "refunded": 0,
+  "by_target": {
+   "bs-host.example:9443": {
+    "is_domain": true,
+    "by_operator": {
+     "mts|пфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "kind": "sni",
+        "detail": "connect: failed to connect to /198.51.100.44 (port 9443) from /172.26.234.170 (port 52810) after 1000ms",
+        "rtt_ms": 1012,
+        "verdict": "down",
+        "evidence": {
+         "sni": "bs-host.example",
+         "phase": "connect"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "down",
+       "received": 0,
+       "cert_names": [],
+       "matches_sni": null
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "failed to connect to /198.51.100.44 (port 9443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2013
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ПФО",
+      "target": "bs-host.example",
+      "operator": "mts",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     },
+     "rtk|пфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 230,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.3",
+         "cipher": "TLS_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "blocked",
+       "received": 0,
+       "cert_names": [],
+       "matches_sni": null
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 447,
+       "throughput_kbps": 9
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ПФО",
+      "target": "bs-host.example",
+      "operator": "rtk",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     },
+     "beeline|kgd|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 142,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.3",
+         "cipher": "TLS_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "blocked",
+       "received": 0,
+       "cert_names": [
+        "CN=*.whitelisted.example"
+       ],
+       "matches_sni": false
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 1263,
+       "throughput_kbps": 3
+      },
+      "icmp": null,
+      "error": null,
+      "region": "KGD",
+      "target": "bs-host.example",
+      "operator": "beeline",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     },
+     "yota|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "kind": "sni",
+        "detail": "handshake: Read timed out",
+        "rtt_ms": 3580,
+        "verdict": "blocked",
+        "evidence": {
+         "sni": "bs-host.example",
+         "phase": "handshake"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "Read timed out",
+       "method": "GET",
+       "elapsed_ms": 2076
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "yota",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "dobro|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 162,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.2",
+         "cipher": "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 222,
+       "throughput_kbps": 19
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "dobro",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "sberm|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 253,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.2",
+         "cipher": "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 309,
+       "throughput_kbps": 14
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "sberm",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "tele2|пфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "kind": "sni",
+        "detail": "handshake: Read timed out",
+        "rtt_ms": 3574,
+        "verdict": "blocked",
+        "evidence": {
+         "sni": "bs-host.example",
+         "phase": "handshake"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "Read timed out",
+       "method": "GET",
+       "elapsed_ms": 2076
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ПФО",
+      "target": "bs-host.example",
+      "operator": "tele2",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "tele2|уфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 175,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.3",
+         "cipher": "TLS_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 378,
+       "throughput_kbps": 11
+      },
+      "icmp": null,
+      "error": null,
+      "region": "УФО",
+      "target": "bs-host.example",
+      "operator": "tele2",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "tele2|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 102,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.3",
+         "cipher": "TLS_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "blocked",
+       "received": 0,
+       "cert_names": [
+        "CN=*.whitelisted.example"
+       ],
+       "matches_sni": false
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 238,
+       "throughput_kbps": 18
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "tele2",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     },
+     "beeline|пфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 336,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.3",
+         "cipher": "TLS_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 274,
+       "throughput_kbps": 16
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ПФО",
+      "target": "bs-host.example",
+      "operator": "beeline",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "beeline|юфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "kind": "sni",
+        "detail": "handshake: Read timed out",
+        "rtt_ms": 3596,
+        "verdict": "blocked",
+        "evidence": {
+         "sni": "bs-host.example",
+         "phase": "handshake"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "Read timed out",
+       "method": "GET",
+       "elapsed_ms": 2087
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЮФО",
+      "target": "bs-host.example",
+      "operator": "beeline",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "megafon|пфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "kind": "sni",
+        "detail": "handshake: Read timed out",
+        "rtt_ms": 3722,
+        "verdict": "blocked",
+        "evidence": {
+         "sni": "bs-host.example",
+         "phase": "handshake"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 356,
+       "throughput_kbps": 12
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ПФО",
+      "target": "bs-host.example",
+      "operator": "megafon",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "megafon|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": true,
+        "kind": "sni",
+        "rtt_ms": 234,
+        "verdict": "alive",
+        "evidence": {
+         "sni": "bs-host.example",
+         "tls": "TLSv1.3",
+         "cipher": "TLS_AES_256_GCM_SHA384"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": true,
+       "error": "",
+       "total": 3,
+       "received": 3
+      },
+      "http": {
+       "ok": true,
+       "url": "https://bs-host.example:9443/",
+       "bytes": 548,
+       "method": "GET",
+       "server": "nginx",
+       "status": 403,
+       "body_head": "<html>\r\n<head><title>403 Forbidden</title></head>\r\n<body>\r\n<center><h1>403 Forbidden</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n<!-- a padding to disable MSIE and Chrome friendly err",
+       "elapsed_ms": 344,
+       "throughput_kbps": 12
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "megafon",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "t-mobile|уфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "kind": "sni",
+        "detail": "connect: failed to connect to /198.51.100.44 (port 9443) from /10.78.78.109 (port 58496) after 1000ms",
+        "rtt_ms": 1011,
+        "verdict": "down",
+        "evidence": {
+         "sni": "bs-host.example",
+         "phase": "connect"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "error": "failed to connect to /198.51.100.44 (port 9443) after 2000ms",
+       "total": 3,
+       "received": 0
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "failed to connect to /198.51.100.44 (port 9443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2007
+      },
+      "icmp": null,
+      "error": null,
+      "region": "УФО",
+      "target": "bs-host.example",
+      "operator": "t-mobile",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "t-mobile|цфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "kind": "sni",
+        "detail": "connect: failed to connect to /198.51.100.44 (port 9443) from /100.106.124.135 (port 58556) after 1000ms",
+        "rtt_ms": 1008,
+        "verdict": "down",
+        "evidence": {
+         "sni": "bs-host.example",
+         "phase": "connect"
+        }
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "error": "failed to connect to /198.51.100.44 (port 9443) after 2000ms",
+       "total": 3,
+       "received": 0
+      },
+      "http": {
+       "ok": false,
+       "url": "https://bs-host.example:9443/",
+       "error": "failed to connect to /198.51.100.44 (port 9443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2013
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЦФО",
+      "target": "bs-host.example",
+      "operator": "t-mobile",
+      "tcp_is_tls": false,
+      "channel_state": "DPI_ON"
+     },
+     "winmobile|юфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": [
+       {
+        "ok": false,
+        "host": "whitelisted.example",
+        "error": "timeout",
+        "verdict": "down",
+        "latency_ms": 4503
+       }
+      ],
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "down",
+       "received": 0,
+       "cert_names": [],
+       "matches_sni": null
+      },
+      "http": {
+       "ok": false,
+       "bytes": 0,
+       "error": "timeout",
+       "status": 0,
+       "elapsed_ms": 3004,
+       "latency_ms": 3004,
+       "resolved_ip": "198.51.100.44",
+       "status_code": 0,
+       "bytes_received": 0
+      },
+      "icmp": null,
+      "error": null,
+      "region": "ЮФО",
+      "target": "bs-host.example",
+      "operator": "winmobile",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     }
+    },
+    "target_resolved": "bs-host.example"
+   }
+  },
+  "n_targets": 1,
+  "operators": [
+   "beeline|юфо|on",
+   "beeline|kgd|on",
+   "beeline|пфо|on",
+   "mts|пфо|on",
+   "megafon|пфо|on",
+   "megafon|цфо|on",
+   "rtk|пфо|on",
+   "tele2|пфо|on",
+   "tele2|уфо|on",
+   "tele2|цфо|on",
+   "yota|цфо|on",
+   "t-mobile|уфо|on",
+   "t-mobile|цфо|on",
+   "dobro|цфо|on",
+   "sberm|цфо|on",
+   "winmobile|юфо|on"
+  ],
+  "cost_credits": 357
+ }
+}

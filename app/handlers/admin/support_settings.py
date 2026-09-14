@@ -180,7 +180,7 @@ async def show_support_settings(callback: types.CallbackQuery, db_user: User, db
 @error_handler
 async def toggle_support_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     current = SupportSettingsService.is_support_menu_enabled()
-    SupportSettingsService.set_support_menu_enabled(not current)
+    await SupportSettingsService.set_support_menu_enabled(db, not current)
     await show_support_settings(callback, db_user, db)
 
 
@@ -188,7 +188,7 @@ async def toggle_support_menu(callback: types.CallbackQuery, db_user: User, db: 
 @error_handler
 async def toggle_admin_notifications(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     current = SupportSettingsService.get_admin_ticket_notifications_enabled()
-    SupportSettingsService.set_admin_ticket_notifications_enabled(not current)
+    await SupportSettingsService.set_admin_ticket_notifications_enabled(db, not current)
     await show_support_settings(callback, db_user, db)
 
 
@@ -196,7 +196,7 @@ async def toggle_admin_notifications(callback: types.CallbackQuery, db_user: Use
 @error_handler
 async def toggle_user_notifications(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     current = SupportSettingsService.get_user_ticket_notifications_enabled()
-    SupportSettingsService.set_user_ticket_notifications_enabled(not current)
+    await SupportSettingsService.set_user_ticket_notifications_enabled(db, not current)
     await show_support_settings(callback, db_user, db)
 
 
@@ -204,7 +204,7 @@ async def toggle_user_notifications(callback: types.CallbackQuery, db_user: User
 @error_handler
 async def toggle_sla(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     current = SupportSettingsService.get_sla_enabled()
-    SupportSettingsService.set_sla_enabled(not current)
+    await SupportSettingsService.set_sla_enabled(db, not current)
     await show_support_settings(callback, db_user, db)
 
 
@@ -243,7 +243,7 @@ async def handle_sla_minutes(message: types.Message, db_user: User, db: AsyncSes
     except Exception:
         await message.answer(texts.t('ADMIN_SUPPORT_SLA_INVALID', '❌ Введите корректное число минут (1-1440)'))
         return
-    SupportSettingsService.set_sla_minutes(minutes)
+    await SupportSettingsService.set_sla_minutes(db, minutes)
     await state.clear()
     markup = types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -308,14 +308,14 @@ async def handle_moderator_id(message: types.Message, db_user: User, db: AsyncSe
         await message.answer(texts.t('ADMIN_SUPPORT_INVALID_TELEGRAM_ID', '❌ Введите корректный Telegram ID (число)'))
         return
     if action == 'remove_moderator':
-        ok = SupportSettingsService.remove_moderator(tid)
+        ok = await SupportSettingsService.remove_moderator(db, tid)
         msg = (
             texts.t('ADMIN_SUPPORT_MODERATOR_REMOVED_SUCCESS', '✅ Модератор {tid} удалён').format(tid=tid)
             if ok
             else texts.t('ADMIN_SUPPORT_MODERATOR_REMOVED_FAIL', '❌ Не удалось удалить модератора')
         )
     else:
-        ok = SupportSettingsService.add_moderator(tid)
+        ok = await SupportSettingsService.add_moderator(db, tid)
         msg = (
             texts.t('ADMIN_SUPPORT_MODERATOR_ADDED_SUCCESS', '✅ Пользователь {tid} назначен модератором').format(
                 tid=tid
@@ -359,21 +359,21 @@ async def list_moderators(callback: types.CallbackQuery, db_user: User, db: Asyn
 @admin_required
 @error_handler
 async def set_mode_tickets(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    SupportSettingsService.set_system_mode('tickets')
+    await SupportSettingsService.set_system_mode(db, 'tickets')
     await show_support_settings(callback, db_user, db)
 
 
 @admin_required
 @error_handler
 async def set_mode_contact(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    SupportSettingsService.set_system_mode('contact')
+    await SupportSettingsService.set_system_mode(db, 'contact')
     await show_support_settings(callback, db_user, db)
 
 
 @admin_required
 @error_handler
 async def set_mode_both(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    SupportSettingsService.set_system_mode('both')
+    await SupportSettingsService.set_system_mode(db, 'both')
     await show_support_settings(callback, db_user, db)
 
 
@@ -427,7 +427,7 @@ async def start_edit_desc(callback: types.CallbackQuery, db_user: User, db: Asyn
 async def handle_new_desc(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
     texts = get_texts(db_user.language)
     new_text = message.html_text or message.text
-    SupportSettingsService.set_support_info_text(db_user.language, new_text)
+    await SupportSettingsService.set_support_info_text(db, db_user.language, new_text)
     await state.clear()
     markup = types.InlineKeyboardMarkup(
         inline_keyboard=[

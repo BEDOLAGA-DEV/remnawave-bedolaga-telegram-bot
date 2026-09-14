@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time
 from typing import Any
 
 import structlog
@@ -15,6 +15,7 @@ from app.services.remnawave_service import (
     RemnaWaveService,
 )
 from app.utils.cache import cache
+from app.utils.timezone import next_local_wall_clock
 
 
 logger = structlog.get_logger(__name__)
@@ -33,6 +34,26 @@ class RemnaWaveAutoSyncStatus:
     last_user_stats: dict[str, Any] | None
     last_server_stats: dict[str, Any] | None
     is_running: bool
+
+
+class FullSyncAlreadyRunning(RuntimeError):
+    """Полная синхронизация уже идёт — второй проход параллельно не запускаем.
+
+    Проход «в панель» по тысячам подписок идёт десятки минут; запрос из кабинета
+    отваливается по таймауту и показывает ошибку, оператор жмёт ещё раз — и второй
+    проход удваивал нагрузку на панель и ловил её лимит частоты. Замок один на
+    все поверхности: бот, кабинет, расписание.
+    """
+
+    def __init__(self) -> None:
+        super().__init__('Полная синхронизация уже выполняется')
+
+
+_full_sync_lock = asyncio.Lock()
+
+
+def is_full_sync_running() -> bool:
+    return _full_sync_lock.locked()
 
 
 class RemnaWaveAutoSyncService:
@@ -124,7 +145,7 @@ class RemnaWaveAutoSyncService:
             self._next_run = None
 
     async def run_sync_now(self, *, reason: str = 'manual') -> dict[str, Any]:
-        if self._sync_lock.locked():
+        if self._sync_lock.locked() or is_full_sync_running():
             return {'started': False, 'reason': 'already_running'}
 
         async with self._sync_lock:
@@ -196,7 +217,7 @@ class RemnaWaveAutoSyncService:
             last_run_error=self._last_run_error,
             last_user_stats=self._last_user_stats,
             last_server_stats=self._last_server_stats,
-            is_running=self._sync_lock.locked(),
+            is_running=self._sync_lock.locked() or is_full_sync_running(),
         )
 
     async def _run_scheduler(self, times: list[time]) -> None:
@@ -226,49 +247,53 @@ class RemnaWaveAutoSyncService:
             raise RemnaWaveConfigurationError(service.configuration_error or 'RemnaWave API не настроен')
 
         async with AsyncSessionLocal() as session:
-            user_stats = await service.sync_users_from_panel(session, 'all')
-            server_stats = await self._sync_servers(session, service)
-
-        return user_stats, server_stats
-
-    async def _sync_servers(
-        self,
-        session: AsyncSession,
-        service: RemnaWaveService,
-    ) -> dict[str, Any]:
-        squads = await service.get_all_squads()
-
-        if not squads:
-            logger.warning('⚠️ Не удалось получить сквады из RemnaWave для автосинхронизации')
-            return {'created': 0, 'updated': 0, 'removed': 0, 'total': 0}
-
-        created, updated, removed = await sync_with_remnawave(session, squads)
-
-        try:
-            await cache.delete_pattern('available_countries*')
-        except Exception as error:
-            logger.warning('⚠️ Не удалось очистить кеш стран после автосинхронизации', error=error)
-
-        return {
-            'created': created,
-            'updated': updated,
-            'removed': removed,
-            'total': len(squads),
-        }
+            return await perform_full_sync(session, service)
 
     @staticmethod
-    def _calculate_next_run(times: list[time]) -> datetime:
-        now = datetime.now(UTC)
-        today = now.date()
+    def _calculate_next_run(times: list[time], reference: datetime | None = None) -> datetime:
+        """REMNAWAVE_AUTO_SYNC_TIMES — локальное время оператора (settings.TIMEZONE), наружу — UTC."""
+        return next_local_wall_clock(times, reference)
 
-        for scheduled in sorted(times):
-            candidate = datetime.combine(today, scheduled, tzinfo=UTC)
-            if candidate > now:
-                return candidate
 
-        first_time = sorted(times)[0]
-        next_day = today + timedelta(days=1)
-        return datetime.combine(next_day, first_time, tzinfo=UTC)
+async def perform_full_sync(session: AsyncSession, service: RemnaWaveService) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Полная синхронизация — одна для бота, кабинета и расписания.
+
+    Панель — истина (решение владельца 2026-09-11): «синхронизация = из панели в
+    бота». Два шага: пользователи из панели в бота, серверы из панели. В панель
+    отсюда не уезжает ничего — туда бот пишет только при покупке, продлении и
+    явных действиях админа; кнопка «из бота в панель» остаётся отдельной ручной
+    командой на крайний случай. До этого «полная» после чтения ещё и переписывала
+    панель состоянием бота, и правка руками в панели жила до ближайшего прохода.
+    """
+    if _full_sync_lock.locked():
+        raise FullSyncAlreadyRunning
+    async with _full_sync_lock:
+        user_stats = dict(await service.sync_users_from_panel(session, 'all'))
+        server_stats = await sync_servers_from_panel(session, service)
+        return user_stats, server_stats
+
+
+async def sync_servers_from_panel(session: AsyncSession, service: RemnaWaveService) -> dict[str, Any]:
+    """Сквады панели → серверы бота; кеш стран сбрасывается."""
+    squads = await service.get_all_squads()
+
+    if not squads:
+        logger.warning('⚠️ Не удалось получить сквады из RemnaWave для синхронизации серверов')
+        return {'created': 0, 'updated': 0, 'removed': 0, 'total': 0}
+
+    created, updated, removed = await sync_with_remnawave(session, squads)
+
+    try:
+        await cache.delete_pattern('available_countries*')
+    except Exception as error:
+        logger.warning('⚠️ Не удалось очистить кеш стран после синхронизации серверов', error=error)
+
+    return {
+        'created': created,
+        'updated': updated,
+        'removed': removed,
+        'total': len(squads),
+    }
 
 
 def _create_service() -> RemnaWaveAutoSyncService:

@@ -18,6 +18,7 @@ from app.external.remnawave_api import RemnaWaveUser, UserStatus
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.remnawave_service import RemnaWaveService
 from app.utils.cache import cache, cache_key
+from app.utils.timezone import next_local_wall_clock
 
 
 logger = structlog.get_logger(__name__)
@@ -917,15 +918,17 @@ class TrafficMonitoringSchedulerV2:
                 logger.error('❌ Ошибка в цикле быстрой проверки', error=e)
                 await asyncio.sleep(interval_seconds)
 
+    @staticmethod
+    def _next_daily_check(check_time: time, reference: datetime | None = None) -> datetime:
+        """TRAFFIC_DAILY_CHECK_TIME — локальное время оператора (settings.TIMEZONE), наружу — UTC."""
+        return next_local_wall_clock([check_time], reference)
+
     async def _run_daily_check_loop(self, check_time: time):
         """Цикл суточной проверки"""
         while self._is_running:
             try:
-                # Вычисляем время до следующей проверки
                 now = datetime.now(UTC)
-                next_run = datetime.combine(now.date(), check_time, tzinfo=UTC)
-                if next_run <= now:
-                    next_run += timedelta(days=1)
+                next_run = self._next_daily_check(check_time, now)
 
                 delay = (next_run - now).total_seconds()
                 logger.debug('⏰ Запланирована следующая суточная проверка', delay=round(delay / 3600, 1))

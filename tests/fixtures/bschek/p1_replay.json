@@ -1,0 +1,71 @@
+{
+ "name": "p1_replay",
+ "status": 200,
+ "elapsed_sec": 0.43,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "c700bf5c8d2d",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "target": "eu-host.example",
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "outcome": "done",
+  "refunded": 0,
+  "by_target": {
+   "eu-host.example": {
+    "is_domain": true,
+    "by_operator": {
+     "mts|пфо|on": {
+      "ok": true,
+      "dpi": "on",
+      "sni": null,
+      "tcp": {
+       "ok": false,
+       "total": 1,
+       "verdict": "down",
+       "received": 0,
+       "cert_names": [],
+       "matches_sni": null
+      },
+      "http": {
+       "ok": false,
+       "url": "https://eu-host.example/",
+       "error": "failed to connect to /192.0.2.142 (port 443) after 2000ms",
+       "method": "GET",
+       "elapsed_ms": 2007
+      },
+      "icmp": {
+       "ok": false,
+       "sent": 3,
+       "rtt_ms": 0.0,
+       "loss_pct": 100.0,
+       "received": 0,
+       "rtt_avg_ms": 0.0,
+       "rtt_max_ms": 0.0,
+       "rtt_min_ms": 0.0
+      },
+      "error": null,
+      "region": "ПФО",
+      "target": "eu-host.example",
+      "operator": "mts",
+      "tcp_is_tls": true,
+      "channel_state": "DPI_ON"
+     }
+    },
+    "target_resolved": "eu-host.example"
+   }
+  },
+  "n_targets": 1,
+  "operators": [
+   "mts|пфо|on"
+  ],
+  "cost_credits": 18
+ }
+}

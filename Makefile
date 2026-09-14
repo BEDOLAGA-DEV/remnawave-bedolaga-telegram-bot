@@ -27,6 +27,39 @@ reload-follow: ## Перезапустить контейнеры с логам�
 test: ## Запустить тесты
 	uv run pytest -v
 
+# Имя и порт совпадают с тем, что прописано в CI-workflow tests.yml, образ —
+# с docker-compose.yml. Порт 55433 выбран нестандартным, чтобы не столкнуться
+# с локальной боевой базой на 5432.
+PG_TEST_CONTAINER ?= bedolaga_test_pg
+PG_TEST_PORT ?= 55433
+PG_TEST_URL ?= postgresql+asyncpg://test:test@localhost:$(PG_TEST_PORT)/test
+
+.PHONY: pg-test-up
+pg-test-up: ## Поднять PostgreSQL для тестов
+	@docker rm -f $(PG_TEST_CONTAINER) >/dev/null 2>&1 || true
+	docker run -d --name $(PG_TEST_CONTAINER) \
+		-e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test \
+		-p $(PG_TEST_PORT):5432 postgres:15-alpine >/dev/null
+	@echo "⏳ Ждём готовности PostgreSQL..."
+	@for i in $$(seq 1 30); do \
+		docker exec $(PG_TEST_CONTAINER) pg_isready -U test -d test >/dev/null 2>&1 && break; \
+		sleep 1; \
+	done
+	@docker exec $(PG_TEST_CONTAINER) pg_isready -U test -d test
+
+.PHONY: pg-test-down
+pg-test-down: ## Убрать PostgreSQL для тестов
+	@docker rm -f $(PG_TEST_CONTAINER) >/dev/null 2>&1 || true
+	@echo "🧹 Контейнер $(PG_TEST_CONTAINER) удалён"
+
+.PHONY: test-postgres
+test-postgres: ## Только тесты, которым нужен настоящий PostgreSQL
+	TEST_DATABASE_URL=$(PG_TEST_URL) REQUIRE_POSTGRES_TESTS=1 uv run pytest -m postgres -q
+
+.PHONY: test-all
+test-all: ## Весь прогон вместе с тестами на PostgreSQL
+	TEST_DATABASE_URL=$(PG_TEST_URL) REQUIRE_POSTGRES_TESTS=1 uv run pytest -q
+
 .PHONY: lint
 lint: ## Проверить код (ruff check)
 	uv run ruff check .
@@ -39,6 +72,10 @@ format: ## Форматировать код (ruff format)
 fix: ## Исправить код (ruff check --fix + format)
 	uv run ruff check . --fix
 	uv run ruff format .
+
+.PHONY: docs-structure
+docs-structure: ## Пересобрать docs/project_structure_reference.md из кода
+	uv run python -m scripts.generate_structure_reference
 
 .PHONY: migrate
 migrate: ## Применить миграции (alembic upgrade head)

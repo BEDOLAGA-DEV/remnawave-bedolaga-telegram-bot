@@ -38,6 +38,18 @@ def no_panel_sync(monkeypatch):
         return None
 
     monkeypatch.setattr('app.services.subscription_service.SubscriptionService.update_remnawave_user', noop)
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService.create_remnawave_user', noop)
+
+
+def _panel_spy(monkeypatch):
+    """Кто из двух методов панели был вызван: create (upsert) или update."""
+    from unittest.mock import AsyncMock
+
+    create = AsyncMock(return_value=None)
+    update = AsyncMock(return_value=None)
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService.create_remnawave_user', create)
+    monkeypatch.setattr('app.services.subscription_service.SubscriptionService.update_remnawave_user', update)
+    return create, update
 
 
 def _tariff(tariff_id: int, name: str) -> Tariff:
@@ -236,11 +248,47 @@ class TestPanelSyncFailure:
                 raise RuntimeError('panel is down')
 
             monkeypatch.setattr('app.services.subscription_service.SubscriptionService.update_remnawave_user', boom)
+            monkeypatch.setattr('app.services.subscription_service.SubscriptionService.create_remnawave_user', boom)
 
             grant = await engine.grant_reward_days(db, await db.get(User, 1), 7, PRO_TARIFF_ID)
 
             assert grant.days == 7, 'сбой панели не отменяет выданные дни'
             assert (await _reload(db, target.id)).end_date == before + timedelta(days=7)
+
+
+class TestPanelRollback:
+    """Панельный вызов при ошибке откатывает сессию, и ORM-объекты протухают.
+
+    Дни уже закоммичены, но любое обращение к ``subscription.id`` или ``user.id``
+    после отката — неявный запрос, в async-сессии это MissingGreenlet. Исход
+    награды должен собираться из значений, снятых до похода в панель.
+    """
+
+    @pytest.mark.asyncio
+    async def test_days_survive_a_panel_rollback(self, monkeypatch):
+        async with memory_session(monkeypatch, TABLES) as db:
+            target = _subscription(1, tariff_id=PRO_TARIFF_ID)
+            await _seed(db, [target])
+            before = target.end_date
+            target_id = target.id
+
+            async def rollback_and_fail(self, db_, subscription, **kwargs):
+                await db_.rollback()
+                raise RuntimeError('REMNAWAVE_API_URL не настроен')
+
+            monkeypatch.setattr(
+                'app.services.subscription_service.SubscriptionService.create_remnawave_user', rollback_and_fail
+            )
+            monkeypatch.setattr(
+                'app.services.subscription_service.SubscriptionService.update_remnawave_user', rollback_and_fail
+            )
+
+            grant = await engine.grant_reward_days(db, await db.get(User, 1), 7, PRO_TARIFF_ID)
+
+            assert grant.days == 7
+            assert grant.subscription_id == target_id
+            assert grant.tariff_name == 'Pro'
+            assert (await _reload(db, target_id)).end_date == before + timedelta(days=7)
 
 
 class TestSubscriptionOnAnotherTariff:
@@ -485,3 +533,52 @@ class TestClassicMode:
 
             assert grant.days == 0
             assert (await _reload(db, only.id)).end_date == before
+
+
+class TestPanelSync:
+    """Подписка, заведённая с нуля под награду, должна ПОЯВИТЬСЯ в панели.
+
+    Баг: бонус за регистрацию создавал подписку в базе и слал в панель update —
+    тот требует уже известный id панели и падал с «RemnaWave id не найден»;
+    пользователь в панели не создавался и ссылку на подключение не получал.
+    """
+
+    @pytest.mark.asyncio
+    async def test_created_subscription_calls_create_remnawave_user(self, monkeypatch):
+        create, update = _panel_spy(monkeypatch)
+        async with memory_session(monkeypatch, TABLES) as db:
+            await _seed(db, [])
+
+            grant = await engine.grant_reward_days(db, await db.get(User, 1), 7, PRO_TARIFF_ID)
+
+            assert grant.days == 7
+            create.assert_awaited_once()
+            update.assert_not_awaited()
+            assert create.await_args.args[1].id == grant.subscription_id
+
+    @pytest.mark.asyncio
+    async def test_extended_subscription_known_to_panel_calls_update(self, monkeypatch):
+        monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+        monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
+        create, update = _panel_spy(monkeypatch)
+        async with memory_session(monkeypatch, TABLES) as db:
+            target = _subscription(1, tariff_id=PRO_TARIFF_ID)
+            target.remnawave_id = 555
+            await _seed(db, [target])
+
+            await engine.grant_reward_days(db, await db.get(User, 1), 7, PRO_TARIFF_ID)
+
+            update.assert_awaited_once()
+            create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_extended_subscription_unknown_to_panel_is_created_there(self, monkeypatch):
+        """Старая подписка без id панели — тот же случай: update упал бы, create заведёт."""
+        create, update = _panel_spy(monkeypatch)
+        async with memory_session(monkeypatch, TABLES) as db:
+            await _seed(db, [_subscription(1, tariff_id=PRO_TARIFF_ID)])
+
+            await engine.grant_reward_days(db, await db.get(User, 1), 7, PRO_TARIFF_ID)
+
+            create.assert_awaited_once()
+            update.assert_not_awaited()

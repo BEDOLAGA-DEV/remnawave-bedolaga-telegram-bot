@@ -1,0 +1,35 @@
+{
+ "name": "sB_after_0",
+ "status": 200,
+ "elapsed_sec": 0.42,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "23dbb1432c3e",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "scan_id": 5358,
+  "cidr": "192.0.2.0/24",
+  "state": "cancelled",
+  "result_ready": true,
+  "created_at": "2026-09-05T14:19:06.399484+00:00",
+  "completed_at": "2026-09-05T14:19:10.890873+00:00",
+  "result": {
+   "id": null,
+   "cidr": "192.0.2.0/24",
+   "kind": "cidr",
+   "up_n": 0,
+   "total": 256,
+   "outcome": "done",
+   "results": [],
+   "scan_ok": false,
+   "refunded": true,
+   "operators": [],
+   "elapsed_sec": 5.0,
+   "cost_credits": 0
+  }
+ }
+}

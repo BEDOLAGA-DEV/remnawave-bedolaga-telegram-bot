@@ -1,4 +1,3 @@
-import redis.asyncio as redis
 import structlog
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -82,6 +81,7 @@ from app.middlewares.throttling import ThrottlingMiddleware
 from app.services.maintenance_service import maintenance_service
 from app.utils.cache import cache
 from app.utils.message_patch import patch_message_methods
+from app.utils.redis_client import create_redis
 
 
 patch_message_methods()
@@ -128,7 +128,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     logger.info('Бот установлен в maintenance_service')
 
     try:
-        redis_client = redis.from_url(settings.REDIS_URL)
+        redis_client = create_redis()
         await redis_client.ping()
         storage = RedisStorage(redis_client)
         logger.info('Подключено к Redis для FSM storage')

@@ -1,0 +1,31 @@
+{
+ "name": "pv_sni_no_hosts",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "37d7ef794c38",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "mts|пфо|on"
+  ],
+  "probes": {
+   "sni": true
+  }
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "invalid_request",
+   "message": "probes.sni требует непустой sni_hosts — укажите имена для TLS-SNI",
+   "details": {
+    "request_id": "37d7ef794c38",
+    "retryable": false
+   }
+  }
+ }
+}

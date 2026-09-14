@@ -1,0 +1,200 @@
+{
+ "name": "vD_poll_19",
+ "status": 200,
+ "elapsed_sec": 0.42,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "cf612733e0dd",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "test_id": 43312,
+  "state": "done",
+  "queue_pos": null,
+  "queue_total": null,
+  "result_ready": true,
+  "completed_at": "2026-09-05T14:38:20.967071+00:00",
+  "result": [
+   {
+    "ok": false,
+    "sni": "eu-host.example",
+    "stage": "",
+    "tcp_ok": false,
+    "targets": [
+     {
+      "ok": false,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": false,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "vmess",
+    "diagnosis": "Сервер режется на этом операторе: TCP проходит, но TLS/Reality-handshake обрывается (DPI)",
+    "tunnel_up": false,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "tcp_timeout",
+    "server_addr": "eu-host.example:443",
+    "server_name": "vmess-test",
+    "speed_error": "",
+    "sni_check_ok": false,
+    "tcp_latency_ms": 3004,
+    "tsp_latency_ms": 7513,
+    "sni_check_error": "timeout",
+    "sni_check_latency_ms": 2504,
+    "operator": "dobro",
+    "operator_name": "dobro",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON"
+   },
+   {
+    "ok": false,
+    "sni": "eu-host.example",
+    "stage": "",
+    "tcp_ok": false,
+    "targets": [
+     {
+      "ok": false,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": false,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "trojan",
+    "diagnosis": "Сервер режется на этом операторе: TCP проходит, но TLS/Reality-handshake обрывается (DPI)",
+    "tunnel_up": false,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "tcp_timeout",
+    "server_addr": "eu-host.example:443",
+    "server_name": "trojan-test",
+    "speed_error": "",
+    "sni_check_ok": false,
+    "tcp_latency_ms": 3001,
+    "tsp_latency_ms": 7513,
+    "sni_check_error": "timeout",
+    "sni_check_latency_ms": 2505,
+    "operator": "dobro",
+    "operator_name": "dobro",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON"
+   },
+   {
+    "ok": false,
+    "sni": "",
+    "stage": "",
+    "tcp_ok": false,
+    "targets": [
+     {
+      "ok": false,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": false,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "shadowsocks",
+    "diagnosis": "Сервер режется на этом операторе: TCP проходит, но TLS/Reality-handshake обрывается (DPI)",
+    "tunnel_up": false,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "tcp_timeout",
+    "server_addr": "eu-host.example:8388",
+    "server_name": "ss-test",
+    "speed_error": "",
+    "tcp_latency_ms": 3004,
+    "operator": "dobro",
+    "operator_name": "dobro",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON"
+   },
+   {
+    "ok": false,
+    "sni": "eu-host.example",
+    "stage": "",
+    "tcp_ok": true,
+    "targets": [
+     {
+      "ok": false,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": false,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": false,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "hysteria2",
+    "diagnosis": "Туннель до сервера есть, но целевые сайты режутся (DPI после TLS на этом операторе)",
+    "tunnel_up": true,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "dataplane_dead",
+    "server_addr": "eu-host.example:443",
+    "server_name": "hy2-test",
+    "speed_error": "",
+    "operator": "dobro",
+    "operator_name": "dobro",
+    "region": "ЦФО",
+    "channel_state": "DPI_ON"
+   }
+  ],
+  "used_core": "prerelease",
+  "core_requested": "auto"
+ }
+}

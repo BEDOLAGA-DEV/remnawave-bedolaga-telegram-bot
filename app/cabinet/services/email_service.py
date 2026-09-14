@@ -3,6 +3,7 @@
 import re
 import smtplib
 import time
+from datetime import UTC, datetime, timedelta
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -155,6 +156,35 @@ class EmailService:
 
         return smtp
 
+    def _queue_for_retry(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        body_html: str,
+        body_text: str | None,
+        attachments: list[tuple[str, bytes, str]] | None,
+        unsubscribe_url: str | None,
+        retry_until: datetime | None,
+    ) -> bool:
+        """Отложить письмо для повторной отправки.
+
+        Вызывается ТОЛЬКО там, где виновата недоступность канала: остывание и
+        обе сетевые ветки. Отказ сервера по конкретному адресу (SMTPException)
+        и ошибка сборки письма не откладываются — повтор их не починит.
+        """
+        from app.services.email_retry_service import email_retry_service
+
+        return email_retry_service.enqueue(
+            to_email=to_email,
+            subject=subject,
+            body_html=body_html,
+            body_text=body_text,
+            attachments=attachments,
+            unsubscribe_url=unsubscribe_url,
+            retry_until=retry_until,
+        )
+
     def send_email(
         self,
         to_email: str,
@@ -163,6 +193,8 @@ class EmailService:
         body_text: str | None = None,
         attachments: list[tuple[str, bytes, str]] | None = None,
         unsubscribe_url: str | None = None,
+        queue_on_failure: bool = True,
+        retry_until: datetime | None = None,
     ) -> bool:
         """
         Send an email.
@@ -203,6 +235,16 @@ class EmailService:
                 last_failure=self._unreachable_reason,
                 **self._endpoint(),
             )
+            if queue_on_failure:
+                self._queue_for_retry(
+                    to_email=to_email,
+                    subject=subject,
+                    body_html=body_html,
+                    body_text=body_text,
+                    attachments=attachments,
+                    unsubscribe_url=unsubscribe_url,
+                    retry_until=retry_until,
+                )
             return False
 
         try:
@@ -279,6 +321,16 @@ class EmailService:
             except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected) as connection_error:
                 self._note_connection_failure(connection_error)
                 self._log_connection_failure(to_email, connection_error)
+                if queue_on_failure:
+                    self._queue_for_retry(
+                        to_email=to_email,
+                        subject=subject,
+                        body_html=body_html,
+                        body_text=body_text,
+                        attachments=attachments,
+                        unsubscribe_url=unsubscribe_url,
+                        retry_until=retry_until,
+                    )
                 return False
             except smtplib.SMTPException as smtp_error:
                 # Сервер ответил отказом: отклонён адрес, не прошла авторизация,
@@ -295,6 +347,16 @@ class EmailService:
                 # Сеть: недоступный маршрут, таймаут, отказ в соединении, DNS.
                 self._note_connection_failure(connection_error)
                 self._log_connection_failure(to_email, connection_error)
+                if queue_on_failure:
+                    self._queue_for_retry(
+                        to_email=to_email,
+                        subject=subject,
+                        body_html=body_html,
+                        body_text=body_text,
+                        attachments=attachments,
+                        unsubscribe_url=unsubscribe_url,
+                        retry_until=retry_until,
+                    )
                 return False
 
             self._note_success()
@@ -366,8 +428,9 @@ class EmailService:
         Returns:
             True if email was sent successfully, False otherwise
         """
+        retry_until = datetime.now(tz=UTC) + timedelta(hours=settings.get_cabinet_email_verification_expire_hours())
         if custom_subject and custom_body_html:
-            return self.send_email(to_email, custom_subject, custom_body_html)
+            return self.send_email(to_email, custom_subject, custom_body_html, retry_until=retry_until)
 
         rendered = self._render_default_template(
             'email_verification',
@@ -380,7 +443,7 @@ class EmailService:
         )
         if not rendered:
             return False
-        return self.send_email(to_email, *rendered)
+        return self.send_email(to_email, *rendered, retry_until=retry_until)
 
     def send_password_reset_email(
         self,
@@ -407,8 +470,9 @@ class EmailService:
         Returns:
             True if email was sent successfully, False otherwise
         """
+        retry_until = datetime.now(tz=UTC) + timedelta(hours=settings.get_cabinet_password_reset_expire_hours())
         if custom_subject and custom_body_html:
-            return self.send_email(to_email, custom_subject, custom_body_html)
+            return self.send_email(to_email, custom_subject, custom_body_html, retry_until=retry_until)
 
         rendered = self._render_default_template(
             'password_reset',
@@ -421,7 +485,7 @@ class EmailService:
         )
         if not rendered:
             return False
-        return self.send_email(to_email, *rendered)
+        return self.send_email(to_email, *rendered, retry_until=retry_until)
 
     def send_email_change_code(
         self,
@@ -446,8 +510,9 @@ class EmailService:
         Returns:
             True if email was sent successfully, False otherwise
         """
+        retry_until = datetime.now(tz=UTC) + timedelta(minutes=settings.get_cabinet_email_change_code_expire_minutes())
         if custom_subject and custom_body_html:
-            return self.send_email(to_email, custom_subject, custom_body_html)
+            return self.send_email(to_email, custom_subject, custom_body_html, retry_until=retry_until)
 
         rendered = self._render_default_template(
             'email_change_code',
@@ -460,7 +525,7 @@ class EmailService:
         )
         if not rendered:
             return False
-        return self.send_email(to_email, *rendered)
+        return self.send_email(to_email, *rendered, retry_until=retry_until)
 
 
 # Singleton instance

@@ -1,0 +1,38 @@
+{
+ "name": "pv_conflict",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "e7b4c8b70afd",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "yota|уфо|off"
+  ],
+  "dpi": "on"
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "no_dpi_on",
+   "message": "Под фильтр dpi не попала ни одна единица — повторите с dpi:\"any\" или выберите другие",
+   "details": {
+    "dpi": "on",
+    "skipped_dpi_off": [
+     {
+      "op_key": "yota|уфо|off",
+      "operator": "yota",
+      "region": "УФО",
+      "dpi": "off"
+     }
+    ],
+    "retryable": false,
+    "request_id": "e7b4c8b70afd"
+   }
+  }
+ }
+}

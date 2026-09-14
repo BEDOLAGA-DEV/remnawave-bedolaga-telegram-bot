@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff
+from app.utils.panel_tag import normalize_panel_tag
 
 
 logger = structlog.get_logger(__name__)
@@ -27,6 +28,22 @@ def _normalize_period_prices(period_prices: dict[int, int] | None) -> dict[str, 
             normalized[str(period)] = price
 
     return normalized
+
+
+def _resolve_highlight_period(period_prices: dict[str, int], highlight: int | None) -> int | None:
+    """Выделенным может быть только период, который у тарифа действительно есть.
+
+    Периоды правят, и выделенный могут удалить. Хранить его после этого нельзя:
+    метка молча ничего не выделяет, а если тот же период когда-нибудь вернут —
+    внезапно всплывает старое решение оператора.
+    """
+    if highlight is None:
+        return None
+    try:
+        days = int(highlight)
+    except (TypeError, ValueError):
+        return None
+    return days if str(days) in period_prices else None
 
 
 async def get_all_tariffs(
@@ -175,6 +192,8 @@ async def create_tariff(
     allowed_squads: list[str] | None = None,
     server_traffic_limits: dict[str, dict] | None = None,
     period_prices: dict[int, int] | None = None,
+    highlight_period_days: int | None = None,
+    is_highlighted: bool = False,
     tier_level: int = 1,
     is_trial_available: bool = False,
     allow_traffic_topup: bool = True,
@@ -202,6 +221,10 @@ async def create_tariff(
     traffic_reset_mode: str | None = None,  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = None,
+    # Свой тег панели (нормализуется; недопустимый — ValueError)
+    panel_tag: str | None = None,
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = None,
 ) -> Tariff:
     """Создает новый тариф."""
     normalized_prices = _normalize_period_prices(period_prices)
@@ -218,6 +241,8 @@ async def create_tariff(
         allowed_squads=allowed_squads or [],
         server_traffic_limits=server_traffic_limits or {},
         period_prices=normalized_prices,
+        highlight_period_days=_resolve_highlight_period(normalized_prices, highlight_period_days),
+        is_highlighted=is_highlighted,
         tier_level=max(1, tier_level),
         is_trial_available=is_trial_available,
         allow_traffic_topup=allow_traffic_topup,
@@ -243,6 +268,8 @@ async def create_tariff(
         traffic_reset_mode=traffic_reset_mode,
         # Внешний сквад
         external_squad_uuid=external_squad_uuid,
+        panel_tag=normalize_panel_tag(panel_tag),
+        trial_duration_days=trial_duration_days,
     )
 
     db.add(tariff)
@@ -287,6 +314,8 @@ async def update_tariff(
     allowed_squads: list[str] | None = None,
     server_traffic_limits: dict[str, dict] | None = None,
     period_prices: dict[int, int] | None = None,
+    highlight_period_days: int | None = ...,  # ... = не передан, None = снять выделение
+    is_highlighted: bool | None = None,
     tier_level: int | None = None,
     is_trial_available: bool | None = None,
     trial_duration_days: int | None = ...,  # ... = не передан, None = сбросить к дефолту (TRIAL_DURATION_DAYS)
@@ -314,6 +343,8 @@ async def update_tariff(
     traffic_reset_mode: str | None = ...,  # ... = не передан, None = сбросить к глобальной настройке
     # Внешний сквад RemnaWave
     external_squad_uuid: str | None = ...,  # ... = не передан, None = убрать внешний сквад
+    # Свой тег панели: ... = не передан, None/'' = снять
+    panel_tag: str | None = ...,
 ) -> Tariff:
     """Обновляет существующий тариф."""
     if name is not None:
@@ -342,6 +373,16 @@ async def update_tariff(
         tariff.allow_traffic_topup = allow_traffic_topup
     if period_prices is not None:
         tariff.period_prices = _normalize_period_prices(period_prices)
+    if highlight_period_days is not ...:
+        tariff.highlight_period_days = _resolve_highlight_period(tariff.period_prices or {}, highlight_period_days)
+    elif period_prices is not None:
+        # Периоды переписали, а выделение осталось прежним — проверяем, что
+        # выделенный период пережил правку.
+        tariff.highlight_period_days = _resolve_highlight_period(
+            tariff.period_prices or {}, tariff.highlight_period_days
+        )
+    if is_highlighted is not None:
+        tariff.is_highlighted = is_highlighted
     if tier_level is not None:
         tariff.tier_level = max(1, tier_level)
     if is_trial_available is not None:
@@ -386,6 +427,8 @@ async def update_tariff(
     # Режим сброса трафика
     if traffic_reset_mode is not ...:
         tariff.traffic_reset_mode = traffic_reset_mode
+    if panel_tag is not ...:
+        tariff.panel_tag = normalize_panel_tag(panel_tag)
     # Внешний сквад
     if external_squad_uuid is not ...:
         tariff.external_squad_uuid = external_squad_uuid

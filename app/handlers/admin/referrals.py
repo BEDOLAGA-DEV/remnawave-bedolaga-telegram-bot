@@ -1,7 +1,7 @@
 import asyncio
 import html
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import structlog
 from aiogram import Dispatcher, F, types
@@ -20,6 +20,7 @@ from app.localization.texts import get_texts
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
+from app.utils.timezone import local_day_bounds, local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -786,28 +787,18 @@ async def process_test_referral_earning(message: types.Message, db_user: User, d
 
 
 def _get_period_dates(period: str) -> tuple[datetime, datetime]:
-    """Возвращает начальную и конечную даты для заданного периода."""
+    """Границы периода — календарные дни settings.TIMEZONE, как моменты в UTC."""
     now = datetime.now(UTC)
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start, tomorrow_start = local_day_bounds(now)
 
-    if period == 'today':
-        start_date = today
-        end_date = today + timedelta(days=1)
-    elif period == 'yesterday':
-        start_date = today - timedelta(days=1)
-        end_date = today
-    elif period == 'week':
-        start_date = today - timedelta(days=7)
-        end_date = today + timedelta(days=1)
-    elif period == 'month':
-        start_date = today - timedelta(days=30)
-        end_date = today + timedelta(days=1)
-    else:
-        # По умолчанию — сегодня
-        start_date = today
-        end_date = today + timedelta(days=1)
-
-    return start_date, end_date
+    if period == 'yesterday':
+        return local_day_start(now, days_back=1), today_start
+    if period == 'week':
+        return local_day_start(now, days_back=7), tomorrow_start
+    if period == 'month':
+        return local_day_start(now, days_back=30), tomorrow_start
+    # 'today' и всё неизвестное — сегодня
+    return today_start, tomorrow_start
 
 
 def _get_period_display_name(period: str) -> str:

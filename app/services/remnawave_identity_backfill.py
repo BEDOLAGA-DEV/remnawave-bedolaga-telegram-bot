@@ -18,7 +18,11 @@ order of trust:
 3. Reconstructed username — deterministic only while ``REMNAWAVE_USER_USERNAME_TEMPLATE``
    depends on stable fields (the default ``user_{telegram_id}`` does; a template
    built from ``full_name`` does not, because the name may have changed since the
-   panel user was created).  Best-effort, applied last.
+   panel user was created).  Best-effort, applied last — and only when the
+   account also carries the identity the bot writes into every account it
+   creates (``telegramId``, or ``email`` for email-only users).  A name-only hit
+   is an account somebody created by hand following the bot's naming; it is
+   reported as ``account_not_created_by_bot`` and left alone.
 4. ``email`` — for email-only users with no telegram_id.
 
 The whole panel roster is streamed once and matched locally, rather than issuing
@@ -205,12 +209,15 @@ def _match_subscription(
         if len(candidates) > 1:
             return None, 'ambiguous_telegram_id'
 
+    foreign_name_match = False
     if user is not None:
         rebuilt = _rebuild_username(user, suffix)
         if rebuilt:
             panel_user = index.by_username.get(rebuilt)
             if panel_user is not None and panel_user.id not in claimed:
-                return panel_user, 'reconstructed_username'
+                if _account_created_for(panel_user, user):
+                    return panel_user, 'reconstructed_username'
+                foreign_name_match = True
 
     email = (getattr(user, 'email', None) or '').strip().lower() if user is not None else ''
     if email:
@@ -220,7 +227,29 @@ def _match_subscription(
         if len(candidates) > 1:
             return None, 'ambiguous_email'
 
+    if foreign_name_match:
+        return None, 'account_not_created_by_bot'
     return None, 'no_surviving_identifier'
+
+
+def _account_created_for(panel_user: RemnaWaveUser, user: User) -> bool:
+    """Несёт ли аккаунт панели личность человека, для которого бот его создавал.
+
+    Бот пишет в каждый свой аккаунт ``telegramId``, а почтовому пользователю —
+    ``email``. Аккаунт с тем же именем, но без этой личности (или с чужой) бот
+    не создавал: его завёл админ руками по тому же шаблону. Привязать к нему
+    строку — значит дальше писать в чужой аккаунт наш Telegram id и дату.
+    """
+    telegram_id = getattr(user, 'telegram_id', None)
+    if telegram_id is not None:
+        panel_telegram_id = getattr(panel_user, 'telegram_id', None)
+        return panel_telegram_id is not None and int(panel_telegram_id) == int(telegram_id)
+
+    email = (getattr(user, 'email', None) or '').strip().lower()
+    if email:
+        return (getattr(panel_user, 'email', None) or '').strip().lower() == email
+
+    return False
 
 
 def _rebuild_username(user: User, suffix: str) -> str | None:

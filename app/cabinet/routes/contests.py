@@ -118,6 +118,10 @@ async def _award_prize(db: AsyncSession, user_id: int, prize_type: str, prize_va
 
         subscription.end_date = subscription.end_date + timedelta(days=days)
         subscription.updated_at = datetime.now(UTC)
+        # Условия тарифа на новый срок: база тарифа + активные докупки.
+        from app.database.crud.subscription import reconcile_tariff_traffic_limit
+
+        await reconcile_tariff_traffic_limit(db, subscription)
         await db.commit()
         await db.refresh(subscription)
 

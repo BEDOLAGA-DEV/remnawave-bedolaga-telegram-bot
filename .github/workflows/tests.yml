@@ -1,0 +1,62 @@
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (PostgreSQL 15)
+    runs-on: ubuntu-latest
+
+    # Тот же образ, что и в docker-compose.yml. Проверки блокировок строк,
+    # ограничений VARCHAR и TIMESTAMPTZ имеют смысл только против настоящего
+    # PostgreSQL: на SQLite они молча проходят, ничего не проверяя.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+      # Без базы тесты на PostgreSQL молча пропускаются — в CI это выглядит
+      # как успех. Флаг превращает пропуск в падение.
+      REQUIRE_POSTGRES_TESTS: '1'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Sync dependencies (locked)
+        run: uv sync --frozen --group dev
+
+      # Отдельным шагом и первыми: если инфраструктура PostgreSQL сломалась,
+      # это должно быть видно сразу, а не утонуть в общем прогоне.
+      - name: Run PostgreSQL tests
+        run: uv run pytest -m postgres -q
+
+      - name: Run full test suite
+        run: uv run pytest -q

@@ -1,0 +1,35 @@
+{
+ "name": "s1_poll_03",
+ "status": 200,
+ "elapsed_sec": 0.42,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "376fb8e3aff1",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "scan_id": 5355,
+  "cidr": "192.0.2.0/24",
+  "state": "done",
+  "result_ready": true,
+  "created_at": "2026-09-05T14:13:28.996144+00:00",
+  "completed_at": "2026-09-05T14:13:40.307110+00:00",
+  "result": {
+   "id": 761894,
+   "cidr": "192.0.2.0/24",
+   "kind": "cidr",
+   "up_n": 0,
+   "total": 256,
+   "outcome": "done",
+   "results": [],
+   "scan_ok": false,
+   "refunded": false,
+   "operators": [],
+   "elapsed_sec": 11.3,
+   "cost_credits": 61
+  }
+ }
+}

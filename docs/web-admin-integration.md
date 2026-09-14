@@ -59,9 +59,8 @@ cp .env.example .env
 nano .env  # проставьте WEB_API_* переменные и BOT_TOKEN
 
 # Запускаем бота (локально)
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
+uv sync
+uv run python main.py
 ```
 
 В Docker достаточно пробросить порт `WEB_API_PORT` из контейнера бота. После запуска API будет доступно по адресу `http://<WEB_API_HOST>:<WEB_API_PORT>`.

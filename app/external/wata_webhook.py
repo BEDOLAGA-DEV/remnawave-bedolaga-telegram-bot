@@ -6,9 +6,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import aiohttp
 import structlog
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, ContentTypeError, web
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -61,10 +60,10 @@ class WataPublicKeyProvider:
 
     async def _fetch_public_key(self) -> str | None:
         url = settings.WATA_PUBLIC_KEY_URL or f'{settings.WATA_BASE_URL.rstrip("/")}/public-key'
-        timeout = aiohttp.ClientTimeout(total=settings.WATA_REQUEST_TIMEOUT)
+        timeout = ClientTimeout(total=settings.WATA_REQUEST_TIMEOUT)
 
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session, session.get(url) as response:
+            async with ClientSession(timeout=timeout) as session, session.get(url) as response:
                 text = await response.text()
                 if response.status >= 400:
                     logger.error('Ошибка получения публичного ключа WATA', response_status=response.status, text=text)
@@ -72,7 +71,7 @@ class WataPublicKeyProvider:
 
                 try:
                     payload = await response.json()
-                except aiohttp.ContentTypeError:
+                except ContentTypeError:
                     logger.error('Ответ WATA public-key не является JSON', text=text)
                     return None
 

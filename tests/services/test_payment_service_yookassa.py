@@ -12,7 +12,6 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import app.services.payment_service as payment_service_module
 from app.config import settings
 from app.services.payment_service import PaymentService
 
@@ -96,8 +95,7 @@ async def test_create_yookassa_payment_success(monkeypatch: pytest.MonkeyPatch) 
         return DummyLocalPayment(payment_id=555)
 
     monkeypatch.setattr(
-        payment_service_module,
-        'create_yookassa_payment',
+        'app.services.payment_service.create_yookassa_payment',
         fake_create_yookassa_payment,
         raising=False,
     )
@@ -160,8 +158,7 @@ async def test_create_yookassa_payment_handles_error_response(monkeypatch: pytes
         return DummyLocalPayment()
 
     monkeypatch.setattr(
-        payment_service_module,
-        'create_yookassa_payment',
+        'app.services.payment_service.create_yookassa_payment',
         fake_create_yookassa_payment,
         raising=False,
     )
@@ -197,8 +194,7 @@ async def test_create_yookassa_sbp_payment_success(monkeypatch: pytest.MonkeyPat
         return DummyLocalPayment(payment_id=777)
 
     monkeypatch.setattr(
-        payment_service_module,
-        'create_yookassa_payment',
+        'app.services.payment_service.create_yookassa_payment',
         fake_create_yookassa_payment,
         raising=False,
     )
@@ -231,8 +227,7 @@ async def test_create_yookassa_sbp_payment_returns_none_on_error(monkeypatch: py
         return DummyLocalPayment()
 
     monkeypatch.setattr(
-        payment_service_module,
-        'create_yookassa_payment',
+        'app.services.payment_service.create_yookassa_payment',
         fake_create_yookassa_payment,
         raising=False,
     )

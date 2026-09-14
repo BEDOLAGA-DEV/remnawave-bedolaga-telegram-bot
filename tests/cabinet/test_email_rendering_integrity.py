@@ -64,7 +64,7 @@ def captured_send(monkeypatch):
     """Перехватывает send_email и притворяется, что SMTP настроен."""
     sent: dict = {}
 
-    def fake_send_email(self, to_email, subject, body_html, body_text=None):
+    def fake_send_email(self, to_email, subject, body_html, body_text=None, **kwargs):
         sent.update({'to': to_email, 'subject': subject, 'body': body_html})
         return True
 

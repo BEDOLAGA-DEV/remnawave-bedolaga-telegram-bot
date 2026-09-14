@@ -1295,10 +1295,12 @@ class UserService:
                 JupiterPayment,
                 LavaPayment,
                 OverpayPayment,
+                ParityPayPayment,
                 PayPearPayment,
                 RioPayPayment,
                 RollyPayPayment,
                 SeverPayPayment,
+                TabPayPayment,
             )
 
             extra_payment_models = (
@@ -1314,6 +1316,8 @@ class UserService:
                 DonutPayment,
                 LavaPayment,
                 CisPayPayment,
+                TabPayPayment,
+                ParityPayPayment,
             )
             for model in extra_payment_models:
                 try:

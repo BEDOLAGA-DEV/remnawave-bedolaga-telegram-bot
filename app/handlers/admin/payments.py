@@ -54,6 +54,10 @@ def _method_display(method: PaymentMethod) -> str:
         return settings.get_freekassa_display_name()
     if method == PaymentMethod.CISPAY:
         return settings.get_cispay_display_name()
+    if method == PaymentMethod.TABPAY:
+        return settings.get_tabpay_display_name()
+    if method == PaymentMethod.PARITYPAY:
+        return settings.get_paritypay_display_name()
     return method.value
 
 

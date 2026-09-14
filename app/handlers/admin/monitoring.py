@@ -437,7 +437,11 @@ async def admin_notify_settings(callback: CallbackQuery):
 @admin_required
 async def toggle_trial_channel_notification(callback: CallbackQuery):
     enabled = NotificationSettingsService.is_trial_channel_unsubscribed_enabled()
-    NotificationSettingsService.set_trial_channel_unsubscribed_enabled(not enabled)
+    async with AsyncSessionLocal() as db:
+        saved = await NotificationSettingsService.set_trial_channel_unsubscribed_enabled(db, not enabled)
+    if not saved:
+        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        return
     await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
     await _render_notification_settings(callback)
 
@@ -458,7 +462,11 @@ async def preview_trial_channel_notification(callback: CallbackQuery):
 @admin_required
 async def toggle_expired_1d_notification(callback: CallbackQuery):
     enabled = NotificationSettingsService.is_expired_1d_enabled()
-    NotificationSettingsService.set_expired_1d_enabled(not enabled)
+    async with AsyncSessionLocal() as db:
+        saved = await NotificationSettingsService.set_expired_1d_enabled(db, not enabled)
+    if not saved:
+        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        return
     await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
     await _render_notification_settings(callback)
 
@@ -479,7 +487,11 @@ async def preview_expired_1d_notification(callback: CallbackQuery):
 @admin_required
 async def toggle_second_wave_notification(callback: CallbackQuery):
     enabled = NotificationSettingsService.is_second_wave_enabled()
-    NotificationSettingsService.set_second_wave_enabled(not enabled)
+    async with AsyncSessionLocal() as db:
+        saved = await NotificationSettingsService.set_second_wave_enabled(db, not enabled)
+    if not saved:
+        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        return
     await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
     await _render_notification_settings(callback)
 
@@ -500,7 +512,11 @@ async def preview_second_wave_notification(callback: CallbackQuery):
 @admin_required
 async def toggle_third_wave_notification(callback: CallbackQuery):
     enabled = NotificationSettingsService.is_third_wave_enabled()
-    NotificationSettingsService.set_third_wave_enabled(not enabled)
+    async with AsyncSessionLocal() as db:
+        saved = await NotificationSettingsService.set_third_wave_enabled(db, not enabled)
+    if not saved:
+        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        return
     await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
     await _render_notification_settings(callback)
 
@@ -1683,17 +1699,18 @@ async def process_notification_value_input(message: Message, state: FSMContext):
             await message.answer('❌ Количество дней должно быть не менее 2.')
             return
 
+    setters = {
+        ('expired_second_wave', 'percent'): NotificationSettingsService.set_second_wave_discount_percent,
+        ('expired_second_wave', 'hours'): NotificationSettingsService.set_second_wave_valid_hours,
+        ('expired_third_wave', 'percent'): NotificationSettingsService.set_third_wave_discount_percent,
+        ('expired_third_wave', 'hours'): NotificationSettingsService.set_third_wave_valid_hours,
+        ('expired_third_wave', 'trigger'): NotificationSettingsService.set_third_wave_trigger_days,
+    }
+    setter = setters.get((key, field))
     success = False
-    if key == 'expired_second_wave' and field == 'percent':
-        success = NotificationSettingsService.set_second_wave_discount_percent(value)
-    elif key == 'expired_second_wave' and field == 'hours':
-        success = NotificationSettingsService.set_second_wave_valid_hours(value)
-    elif key == 'expired_third_wave' and field == 'percent':
-        success = NotificationSettingsService.set_third_wave_discount_percent(value)
-    elif key == 'expired_third_wave' and field == 'hours':
-        success = NotificationSettingsService.set_third_wave_valid_hours(value)
-    elif key == 'expired_third_wave' and field == 'trigger':
-        success = NotificationSettingsService.set_third_wave_trigger_days(value)
+    if setter is not None:
+        async with AsyncSessionLocal() as db:
+            success = await setter(db, value)
 
     if not success:
         await message.answer(texts.get('NOTIFICATION_VALUE_INVALID', '❌ Некорректное значение, попробуйте снова.'))
@@ -1930,7 +1947,7 @@ async def edit_daily_time(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
     await callback.message.answer(
-        '🕐 Введите время суточной проверки в формате HH:MM (UTC):\nНапример: 00:00, 03:00, 12:30'
+        '🕐 Введите время суточной проверки в формате HH:MM (в часовом поясе бота):\nНапример: 00:00, 03:00, 12:30'
     )
 
 

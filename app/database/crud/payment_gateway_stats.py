@@ -33,12 +33,14 @@ from app.database.models import (
     MulenPayPayment,
     OverpayPayment,
     Pal24Payment,
+    ParityPayPayment,
     PaymentMethod,
     PayPearPayment,
     PlategaPayment,
     RioPayPayment,
     RollyPayPayment,
     SeverPayPayment,
+    TabPayPayment,
     WataPayment,
     YooKassaPayment,
 )
@@ -69,6 +71,8 @@ _GATEWAY_REGISTRY: list[tuple[str, type, object]] = [
     (PaymentMethod.DONUT.value, DonutPayment, DonutPayment.is_paid.is_(True)),
     (PaymentMethod.LAVA.value, LavaPayment, LavaPayment.is_paid.is_(True)),
     (PaymentMethod.CISPAY.value, CisPayPayment, CisPayPayment.is_paid.is_(True)),
+    (PaymentMethod.TABPAY.value, TabPayPayment, TabPayPayment.is_paid.is_(True)),
+    (PaymentMethod.PARITYPAY.value, ParityPayPayment, ParityPayPayment.is_paid.is_(True)),
 ]
 
 

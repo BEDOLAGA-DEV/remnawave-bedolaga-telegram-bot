@@ -1,0 +1,32 @@
+{
+ "name": "p_blocked",
+ "status": 400,
+ "elapsed_sec": 0.57,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "cd88e6530aa9",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "targets": [
+   "127.0.0.1",
+   "10.0.0.1",
+   "localhost"
+  ],
+  "operators": [
+   "mts|пфо|on"
+  ]
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "blocked_target",
+   "message": "Все цели запрещены к проверке",
+   "details": {
+    "retryable": false,
+    "request_id": "cd88e6530aa9"
+   }
+  }
+ }
+}

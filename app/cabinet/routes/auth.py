@@ -11,10 +11,15 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.auth.email_auth_gate import require_email_auth_enabled
 from app.cabinet.auth.registration_access import (
     evaluate_public_registration,
     is_env_admin_recovery,
     raise_for_registration_decision,
+)
+from app.cabinet.auth.registration_throttle import (
+    enforce_email_registration_throttle,
+    enforce_verification_resend_throttle,
 )
 from app.config import settings
 from app.database.crud.rbac import UserRoleCRUD
@@ -35,6 +40,12 @@ from app.database.models import CabinetRefreshToken, User, UserStatus
 from app.services import legal_consent_service
 from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
+from app.services.panel_sync import (
+    ADMIN_PULL,
+    panel_status_for_new_subscription,
+    project_onto_subscription,
+    read_panel_user,
+)
 from app.services.rbac_bootstrap_service import (
     ensure_superadmin_role_on_login,
     is_user_admin_by_env,
@@ -52,7 +63,6 @@ from app.services.web_auth_service import (
 )
 from app.utils.cache import RateLimitCache, TokenReplayCache
 from app.utils.subscription_utils import coerce_panel_device_limit
-from app.utils.timezone import panel_datetime_to_utc
 
 from ..auth import (
     create_access_token,
@@ -104,7 +114,9 @@ from ..schemas.auth import (
     TelegramOIDCAuthRequest,
     TelegramWidgetAuthRequest,
     TokenResponse,
+    UserAvatarResponse,
     UserResponse,
+    VerificationResendRequest,
 )
 from ..services.email_service import email_service
 from ..services.email_template_overrides import get_rendered_override
@@ -296,6 +308,39 @@ async def _require_legal_consent(
     return requirement.documents
 
 
+async def _consume_widget_payload(widget_data: dict) -> None:
+    """Погасить одноразовый payload Login Widget.
+
+    SECURITY: one-time use. A widget payload can travel in the redirect URL
+    (browser history / referrer / access logs); without a replay guard a
+    captured payload would be a reusable login credential for the whole window.
+
+    Вызывать строго ПОСЛЕ гейта согласия: на 428 кабинет рисует чекбоксы и
+    повторяет запрос с тем же payload, поэтому 428 не должен его гасить.
+    """
+    widget_replay = hashlib.sha256(f'tg_widget:{widget_data.get("hash", "")}'.encode()).hexdigest()
+    if await TokenReplayCache.is_token_replayed(widget_replay, ttl=86400):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='This Telegram authorization has already been used. Please log in again.',
+        )
+
+
+async def _consume_oidc_token(id_token: str, claims: dict) -> None:
+    """Погасить одноразовый OIDC id_token (replay detection).
+
+    Как и у виджета — только после гейта согласия, иначе повтор с галочками
+    получит 401 «уже использован» и новый пользователь не войдёт вовсе.
+    """
+    token_hash = hashlib.sha256(id_token.encode()).hexdigest()
+    token_ttl = max(int(claims.get('exp', 0) - datetime.now(UTC).timestamp()), 60)
+    if await TokenReplayCache.is_token_replayed(token_hash, ttl=min(token_ttl, 600)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or expired Telegram OIDC token',
+        )
+
+
 async def _process_campaign_bonus(
     db: AsyncSession,
     user: User,
@@ -412,6 +457,58 @@ async def _process_referral_code(
         logger.error('Failed to process referral code', error=e, referral_code=referral_code)
 
 
+async def _issue_verification_email(
+    db: AsyncSession,
+    user: User,
+    *,
+    language: str,
+    username: str | None,
+) -> bool:
+    """Выдаёт новый токен подтверждения и отправляет письмо со ссылкой.
+
+    Токен записывается всегда — даже когда письмо отправить нечем: иначе старая
+    ссылка продолжала бы работать после запроса новой. Возвращает False, если
+    письмо не ушло (верификация выключена или SMTP не настроен); решать, что при
+    этом ответить пользователю, — дело вызывающей ручки: одна вправе сказать
+    прямо, другая обязана молчать, чтобы не выдать чужой адрес.
+    """
+    user.email_verification_token = generate_verification_token()
+    user.email_verification_expires = get_verification_expires_at()
+    await db.commit()
+
+    if not settings.is_cabinet_email_verification_enabled() or not email_service.is_configured():
+        return False
+
+    verification_url = f'{settings.CABINET_URL}/verify-email'
+    expire_hours = settings.get_cabinet_email_verification_expire_hours()
+    override = await get_rendered_override(
+        'email_verification',
+        language,
+        context={
+            'username': username or '',
+            'email': user.email,
+            'verification_url': f'{verification_url}?token={user.email_verification_token}',
+            'expire_hours': str(expire_hours),
+        },
+        db=db,
+        required_vars=['verification_url'],
+    )
+    custom_subject, custom_body = override or (None, None)
+
+    # smtplib блокирующий — уводим в поток, иначе встаёт весь event loop.
+    await asyncio.to_thread(
+        email_service.send_verification_email,
+        to_email=user.email,
+        verification_token=user.email_verification_token,
+        verification_url=verification_url,
+        username=username,
+        language=language,
+        custom_subject=custom_subject,
+        custom_body_html=custom_body,
+    )
+    return True
+
+
 async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -> None:
     """
     Check if user has subscription in RemnaWave panel by email and sync it.
@@ -441,7 +538,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
             # In multi-tariff mode, sync ALL panel users (each = one subscription)
             # In single-tariff mode, process only the first
             from app.database.crud.subscription import get_active_subscriptions_by_user_id, get_subscription_by_user_id
-            from app.database.models import Subscription, SubscriptionStatus
+            from app.database.models import Subscription
 
             panel_users_to_sync = panel_users if settings.is_multi_tariff_enabled() else panel_users[:1]
 
@@ -493,40 +590,23 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                 else:
                     existing_sub = await get_subscription_by_user_id(db, user.id)
 
-                # Parse panel data
-                expire_at = panel_datetime_to_utc(panel_user.expire_at)
-                traffic_limit_gb = (
-                    panel_user.traffic_limit_bytes // (1024**3) if panel_user.traffic_limit_bytes > 0 else 0
-                )
-                traffic_used_gb = panel_user.used_traffic_bytes / (1024**3) if panel_user.used_traffic_bytes > 0 else 0
-                connected_squads = [
-                    s.get('uuid', '') for s in (panel_user.active_internal_squads or []) if s.get('uuid')
-                ]
+                snapshot = read_panel_user(panel_user)
+                current_time = datetime.now(UTC)
+                expire_at = snapshot.expire_at or current_time
+                connected_squads = list(snapshot.squads)
+                traffic_limit_gb = snapshot.traffic_limit_gb or 0
+                traffic_used_gb = snapshot.traffic_used_gb or 0
                 device_limit = coerce_panel_device_limit(panel_user.hwid_device_limit, default=0)
 
-                # Determine status
-                current_time = datetime.now(UTC)
-                if panel_user.status.value == 'ACTIVE' and expire_at > current_time:
-                    sub_status = SubscriptionStatus.ACTIVE
-                elif expire_at <= current_time:
-                    sub_status = SubscriptionStatus.EXPIRED
-                else:
-                    sub_status = SubscriptionStatus.DISABLED
-
                 if existing_sub:
-                    existing_sub.end_date = expire_at
-                    existing_sub.traffic_limit_gb = traffic_limit_gb
-                    existing_sub.traffic_used_gb = traffic_used_gb
-                    existing_sub.status = sub_status.value
-                    existing_sub.remnawave_short_uuid = panel_user.short_uuid
-                    existing_sub.subscription_url = panel_user.subscription_url
-                    # Не затираем рабочую ссылку пустым значением: панель
-                    # отдаёт happ-ссылку не на всех путях, а потеря сохранённой
-                    # ломает кнопку подключения у живого клиента.
-                    if panel_user.happ_crypto_link:
-                        existing_sub.subscription_crypto_link = panel_user.happ_crypto_link
-                    existing_sub.connected_squads = connected_squads
-                    existing_sub.device_limit = device_limit
+                    # Вход по почте усыновляет уже существующий аккаунт панели:
+                    # здесь панель — источник истины целиком, включая лимиты.
+                    project_onto_subscription(
+                        existing_sub,
+                        snapshot,
+                        policy=ADMIN_PULL,
+                        now=current_time,
+                    )
                     existing_sub.is_trial = False
                     logger.info(
                         'Updated subscription for email user',
@@ -543,7 +623,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                         end_date=expire_at,
                         traffic_limit_gb=traffic_limit_gb,
                         traffic_used_gb=traffic_used_gb,
-                        status=sub_status.value,
+                        status=panel_status_for_new_subscription(snapshot, now=current_time),
                         is_trial=False,
                         remnawave_id=panel_user.id if settings.is_multi_tariff_enabled() else None,
                         remnawave_short_id=_short_id,
@@ -784,15 +864,7 @@ async def auth_telegram_widget(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Invalid or expired Telegram authentication data',
         )
-    # SECURITY: one-time use. A widget payload can travel in the redirect URL
-    # (browser history / referrer / access logs); without a replay guard a
-    # captured payload would be a reusable login credential for the whole window.
-    widget_replay = hashlib.sha256(f'tg_widget:{widget_data.get("hash", "")}'.encode()).hexdigest()
-    if await TokenReplayCache.is_token_replayed(widget_replay, ttl=86400):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='This Telegram authorization has already been used. Please log in again.',
-        )
+    # Одноразовость payload гасится ниже, после гейта согласия — см. _consume_widget_payload.
 
     user = await get_user_by_telegram_id(db, request.id)
     access_decision = await _gate_cabinet_identity(
@@ -844,8 +916,11 @@ async def auth_telegram_widget(
 
     is_new_user = not user
     consent_documents: list[str] = []
-    if not user:
+    if is_new_user:
+        # Согласие проверяем ДО того, как погасить payload: 428 просит повторить запрос с ним же.
         consent_documents = await _require_legal_consent(db, accepted=request.accepted_legal_documents, language='ru')
+    await _consume_widget_payload(widget_data)
+    if is_new_user:
         # Create new user from Telegram data
         logger.info(
             'Creating new user from cabinet: telegram_id=, username', request_id=request.id, username=request.username
@@ -960,14 +1035,7 @@ async def auth_telegram_oidc(
             detail='Invalid or expired Telegram OIDC token',
         )
 
-    # Replay detection: reject if this exact token was already used
-    token_hash = hashlib.sha256(request.id_token.encode()).hexdigest()
-    token_ttl = max(int(claims.get('exp', 0) - datetime.now(UTC).timestamp()), 60)
-    if await TokenReplayCache.is_token_replayed(token_hash, ttl=min(token_ttl, 600)):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Invalid or expired Telegram OIDC token',
-        )
+    # Replay detection гасит id_token ниже, после гейта согласия — см. _consume_oidc_token.
 
     # Extract user info from OIDC claims
     try:
@@ -1037,10 +1105,13 @@ async def auth_telegram_oidc(
 
     is_new_user = not user
     consent_documents: list[str] = []
-    if not user:
+    if is_new_user:
+        # Согласие проверяем ДО того, как погасить id_token: 428 просит повторить запрос с ним же.
         consent_documents = await _require_legal_consent(
             db, accepted=request.accepted_legal_documents, language=language or 'ru'
         )
+    await _consume_oidc_token(request.id_token, claims)
+    if is_new_user:
         logger.info('Creating new user from cabinet OIDC', telegram_id=telegram_id, username=username)
         user = await create_user(
             db=db,
@@ -1120,6 +1191,7 @@ async def register_email(
     Sends verification email to the provided address.
     If the email belongs to another active user, offers account merge.
     """
+    await require_email_auth_enabled(db)
     # Rate limit
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_register', limit=5, window=60, fail_closed=True):
@@ -1295,6 +1367,7 @@ async def verify_email_merge(
     Proves the caller controls that account's inbox, then mints the merge token
     (consumed at POST /cabinet/auth/merge/{token}).
     """
+    await require_email_auth_enabled(db)
     # Rate-limit like the other OTP-verify endpoints (IP + per-account); on the
     # per-account cap, burn the pending merge so a brute force can't grind the
     # live code — the caller must restart (re-emailing the existing owner).
@@ -1373,13 +1446,9 @@ async def register_email_standalone(
 
     If TEST_EMAIL is configured, test email accounts are auto-verified.
     """
+    await require_email_auth_enabled(db)
     client_ip = get_client_ip(raw_request)
-    if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_register', limit=5, window=60, fail_closed=True):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail='Too many requests',
-            headers={'Retry-After': '60'},
-        )
+    await enforce_email_registration_throttle(client_ip)
     email_access = await evaluate_public_registration(
         db,
         channel=RegistrationChannel.CABINET_EMAIL,
@@ -1504,46 +1573,12 @@ async def register_email_standalone(
             user.pending_campaign_slug = None
             await db.commit()
     else:
-        # Сгенерировать токен верификации
-        verification_token = generate_verification_token()
-        verification_expires = get_verification_expires_at()
-
-        user.email_verification_token = verification_token
-        user.email_verification_expires = verification_expires
-        await db.commit()
-
-        # Отправить email верификации
-        if settings.is_cabinet_email_verification_enabled() and email_service.is_configured():
-            cabinet_url = settings.CABINET_URL
-            verification_url = f'{cabinet_url}/verify-email'
-            lang = user.language or request.language or 'ru'
-            full_url = f'{verification_url}?token={verification_token}'
-            expire_hours = settings.get_cabinet_email_verification_expire_hours()
-
-            override = await get_rendered_override(
-                'email_verification',
-                lang,
-                context={
-                    'username': user.first_name or 'User',
-                    'email': request.email,
-                    'verification_url': full_url,
-                    'expire_hours': str(expire_hours),
-                },
-                db=db,
-                required_vars=['verification_url'],
-            )
-            custom_subject, custom_body = override or (None, None)
-
-            await asyncio.to_thread(
-                email_service.send_verification_email,
-                to_email=request.email,
-                verification_token=verification_token,
-                verification_url=verification_url,
-                username=user.first_name or 'User',
-                language=lang,
-                custom_subject=custom_subject,
-                custom_body_html=custom_body,
-            )
+        await _issue_verification_email(
+            db,
+            user,
+            language=user.language or request.language or 'ru',
+            username=user.first_name or 'User',
+        )
 
     # Обработать реферальную регистрацию (если есть реферер)
     if referrer:
@@ -1576,6 +1611,7 @@ async def verify_email(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Verify email with token and return auth tokens."""
+    await require_email_auth_enabled(db)
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_verify', limit=10, window=60, fail_closed=True):
         raise HTTPException(
@@ -1635,6 +1671,7 @@ async def resend_verification(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Resend verification email."""
+    await require_email_auth_enabled(db)
     if not user.email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1647,59 +1684,51 @@ async def resend_verification(
             detail='Email is already verified',
         )
 
-    # Generate new token
-    verification_token = generate_verification_token()
-    verification_expires = get_verification_expires_at()
-
-    user.email_verification_token = verification_token
-    user.email_verification_expires = verification_expires
-
-    await db.commit()
-
-    # Send verification email asynchronously (smtplib is blocking)
-    if settings.is_cabinet_email_verification_enabled() and email_service.is_configured():
-        cabinet_url = settings.CABINET_URL
-        verification_url = f'{cabinet_url}/verify-email'
-        lang = user.language or 'ru'
-        full_url = f'{verification_url}?token={verification_token}'
-        expire_hours = settings.get_cabinet_email_verification_expire_hours()
-
-        override = await get_rendered_override(
-            'email_verification',
-            lang,
-            context={
-                'username': user.first_name or '',
-                'email': user.email,
-                'verification_url': full_url,
-                'expire_hours': str(expire_hours),
-            },
-            db=db,
-            required_vars=['verification_url'],
-        )
-        custom_subject, custom_body = override or (None, None)
-
-        await asyncio.to_thread(
-            email_service.send_verification_email,
-            to_email=user.email,
-            verification_token=verification_token,
-            verification_url=verification_url,
-            username=user.first_name,
-            language=lang,
-            custom_subject=custom_subject,
-            custom_body_html=custom_body,
-        )
-    elif not settings.is_cabinet_email_verification_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Email verification is disabled',
-        )
-    elif not email_service.is_configured():
+    sent = await _issue_verification_email(db, user, language=user.language or 'ru', username=user.first_name)
+    if not sent:
+        if not settings.is_cabinet_email_verification_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Email verification is disabled',
+            )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail='Email service is not configured',
         )
 
     return {'message': 'Verification email sent'}
+
+
+@router.post('/email/register/resend')
+async def resend_verification_public(
+    request: VerificationResendRequest,
+    raw_request: Request,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Повторно отправить письмо подтверждения с экрана «Проверьте почту».
+
+    Экран показывается сразу после регистрации, когда войти ещё нельзя, поэтому
+    ручка неаутентифицированная — в отличие от `/email/resend`. Из этого следуют
+    два ограничения:
+
+    * ответ всегда одинаковый. Разная реакция на «адрес не найден», «уже
+      подтверждён» и «письмо ушло» превратила бы ручку в проверялку чужих
+      адресов;
+    * дроссель по IP и по самому адресу — иначе кнопкой можно заваливать чужой
+      ящик письмами от нашего имени.
+    """
+    await require_email_auth_enabled(db)
+    client_ip = get_client_ip(raw_request)
+    await enforce_verification_resend_throttle(client_ip, request.email)
+
+    email_lower = (request.email or '').strip().lower()
+    result = await db.execute(select(User).where(func.lower(User.email) == email_lower))
+    user = result.scalar_one_or_none()
+
+    if user and not user.email_verified:
+        await _issue_verification_email(db, user, language=user.language or 'ru', username=user.first_name)
+
+    return {'message': 'If the email is awaiting confirmation, the verification link has been sent'}
 
 
 @router.post('/email/login', response_model=AuthResponse)
@@ -1712,6 +1741,7 @@ async def login_email(
 
     Test email accounts (configured via TEST_EMAIL) bypass email verification.
     """
+    await require_email_auth_enabled(db)
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'email_login', limit=10, window=60, fail_closed=True):
         raise HTTPException(
@@ -1981,6 +2011,7 @@ async def forgot_password(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Request password reset."""
+    await require_email_auth_enabled(db)
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'password_forgot', limit=3, window=60, fail_closed=True):
         raise HTTPException(
@@ -2057,6 +2088,7 @@ async def reset_password(
     db: AsyncSession = Depends(get_cabinet_db),
 ):
     """Reset password with token."""
+    await require_email_auth_enabled(db)
     client_ip = get_client_ip(raw_request)
     if await RateLimitCache.is_ip_rate_limited(client_ip, 'password_reset', limit=5, window=60, fail_closed=True):
         raise HTTPException(
@@ -2095,6 +2127,32 @@ async def get_current_user(
 ):
     """Get current authenticated user info."""
     return _user_to_response(user)
+
+
+@router.get('/me/avatar', response_model=UserAvatarResponse)
+async def get_my_avatar(
+    request: Request,
+    user: User = Depends(get_current_cabinet_user),
+) -> UserAvatarResponse:
+    """Фото профиля Telegram для шапки кабинета.
+
+    initData Mini App несёт photo_url не всегда, а при входе с сайта его нет
+    вовсе, поэтому спрашиваем Telegram сами. Ссылка подписана и живёт сутки,
+    как у вложений тикетов: сырой file_id наружу не уходит.
+    """
+    if not user.telegram_id:
+        return UserAvatarResponse(photo_url=None)
+
+    from app.bot_factory import create_bot
+    from app.services.user_avatar_service import get_avatar_file_id
+
+    from .media import _build_media_url
+
+    async with create_bot() as bot:
+        file_id = await get_avatar_file_id(bot, user.telegram_id)
+    if not file_id:
+        return UserAvatarResponse(photo_url=None)
+    return UserAvatarResponse(photo_url=_build_media_url(request, file_id))
 
 
 @router.get('/me/permissions')

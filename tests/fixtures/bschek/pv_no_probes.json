@@ -1,0 +1,32 @@
+{
+ "name": "pv_no_probes",
+ "status": 400,
+ "elapsed_sec": null,
+ "headers": {
+  "content-type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "c620ac1892bf",
+  "server": "cloudflare"
+ },
+ "request": {
+  "target": "example.com",
+  "operators": [
+   "mts|пфо|on"
+  ],
+  "probes": {
+   "icmp": false,
+   "tcp": false
+  }
+ },
+ "idempotency_key": null,
+ "body": {
+  "error": {
+   "code": "no_probes",
+   "message": "Не выбрано ни одной пробы",
+   "details": {
+    "request_id": "c620ac1892bf",
+    "retryable": false
+   }
+  }
+ }
+}

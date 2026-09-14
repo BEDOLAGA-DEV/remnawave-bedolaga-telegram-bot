@@ -21,11 +21,11 @@
 ```python
 await MenuLayoutService.log_button_click(
     db,
-    button_id="menu_balance",
+    button_id='menu_balance',
     user_id=123456789,
-    callback_data="menu_balance",
-    button_type="builtin",
-    button_text="💰 Баланс"
+    callback_data='menu_balance',
+    button_type='builtin',
+    button_text='💰 Баланс',
 )
 ```
 
@@ -44,7 +44,7 @@ await MenuLayoutService.log_button_click(
 
 **Пример:**
 ```python
-stats = await MenuLayoutService.get_button_stats(db, "menu_balance", days=30)
+stats = await MenuLayoutService.get_button_stats(db, 'menu_balance', days=30)
 # Возвращает:
 # {
 #     "button_id": "menu_balance",
@@ -100,21 +100,21 @@ total = await MenuLayoutService.get_total_clicks(db, days=30)
 # Через сервис
 await MenuLayoutService.log_button_click(
     db,
-    button_id="custom_button",
+    button_id='custom_button',
     user_id=user_id,
-    callback_data="custom_callback",
-    button_type="callback",
-    button_text="Кастомная кнопка"
+    callback_data='custom_callback',
+    button_type='callback',
+    button_text='Кастомная кнопка',
 )
 
 # Или через API эндпоинт
-POST /menu-layout/stats/log-click
+POST / menu - layout / stats / log - click
 {
-    "button_id": "custom_button",
-    "user_id": 123456789,
-    "callback_data": "custom_callback",
-    "button_type": "callback",
-    "button_text": "Кастомная кнопка"
+    'button_id': 'custom_button',
+    'user_id': 123456789,
+    'callback_data': 'custom_callback',
+    'button_type': 'callback',
+    'button_text': 'Кастомная кнопка',
 }
 ```
 
@@ -150,7 +150,7 @@ stats = await MenuLayoutService.get_stats_by_button_type(db, days=30)
 
 **Пример:**
 ```python
-stats = await MenuLayoutService.get_clicks_by_hour(db, button_id="menu_balance", days=30)
+stats = await MenuLayoutService.get_clicks_by_hour(db, button_id='menu_balance', days=30)
 # Возвращает:
 # [
 #     {"hour": 9, "count": 50},
@@ -168,7 +168,7 @@ stats = await MenuLayoutService.get_clicks_by_hour(db, button_id="menu_balance",
 
 **Пример:**
 ```python
-stats = await MenuLayoutService.get_clicks_by_weekday(db, button_id="menu_balance", days=30)
+stats = await MenuLayoutService.get_clicks_by_weekday(db, button_id='menu_balance', days=30)
 # Возвращает:
 # [
 #     {"weekday": 0, "weekday_name": "Понедельник", "count": 100},
@@ -191,7 +191,7 @@ stats = await MenuLayoutService.get_clicks_by_weekday(db, button_id="menu_balanc
 
 **Пример:**
 ```python
-top_users = await MenuLayoutService.get_top_users(db, button_id="menu_balance", limit=10, days=30)
+top_users = await MenuLayoutService.get_top_users(db, button_id='menu_balance', limit=10, days=30)
 # Возвращает:
 # [
 #     {"user_id": 123456789, "clicks_count": 50, "last_click_at": datetime(...)},
@@ -216,7 +216,7 @@ top_users = await MenuLayoutService.get_top_users(db, button_id="menu_balance", 
 **Пример:**
 ```python
 comparison = await MenuLayoutService.get_period_comparison(
-    db, button_id="menu_balance", current_days=7, previous_days=7
+    db, button_id='menu_balance', current_days=7, previous_days=7
 )
 # Возвращает:
 # {

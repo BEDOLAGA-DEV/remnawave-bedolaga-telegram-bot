@@ -54,6 +54,9 @@ FIELD_KEYS: dict[str, str] = {
     'reconcile_interval_seconds': 'GRACE_ACCESS_RECONCILE_INTERVAL_SECONDS',
     'reconcile_batch_size': 'GRACE_ACCESS_RECONCILE_BATCH_SIZE',
     'candidate_lookback_minutes': 'GRACE_ACCESS_CANDIDATE_LOOKBACK_MINUTES',
+    'allowed_services': 'GRACE_ACCESS_ALLOWED_SERVICES',
+    'notify_admins': 'GRACE_ACCESS_NOTIFY_ADMINS',
+    'notify_user': 'GRACE_ACCESS_NOTIFY_USER',
 }
 
 # Read once at startup by GraceAccessRuntime.start / _run_loop, so a saved value sits
@@ -108,6 +111,10 @@ class GraceAccessConfig(BaseModel):
     reconcile_interval_seconds: int
     reconcile_batch_size: int
     candidate_lookback_minutes: int
+    # Что остаётся доступным во время grace — фраза оператора для сообщений человеку.
+    allowed_services: str
+    notify_admins: bool
+    notify_user: bool
 
 
 class GraceAccessRuntimeState(BaseModel):
@@ -173,6 +180,9 @@ class GraceAccessUpdate(BaseModel):
     reconcile_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
     reconcile_batch_size: int | None = Field(default=None, ge=1, le=10000)
     candidate_lookback_minutes: int | None = Field(default=None, ge=1, le=10080)
+    allowed_services: str | None = Field(default=None, max_length=120)
+    notify_admins: bool | None = None
+    notify_user: bool | None = None
 
 
 class GraceSessionUser(BaseModel):
@@ -212,11 +222,13 @@ class GraceSquadOption(BaseModel):
 class GraceSquadsResponse(BaseModel):
     """Squad picker source.
 
-    ``available=False`` means the panel could not be reached; the page then falls back
-    to a plain UUID field instead of pretending the panel has no squads at all.
+    ``available=False`` means neither the panel nor the bot's synced copy has squads;
+    the page then falls back to a plain identifier field instead of pretending the
+    panel has no squads at all. ``source`` says where a non-empty list came from.
     """
 
     available: bool
+    source: Literal['panel', 'synced'] | None = None
     items: list[GraceSquadOption]
 
 
@@ -295,6 +307,9 @@ def _collect_issues(config: GraceAccessConfig, *, open_sessions: int, running_mo
 
     if config.traffic_gb < 1:
         issues.append(GraceAccessIssue(field='traffic_gb', code='traffic_required', severity=weight))
+    if config.notify_user and not (config.allowed_services or '').strip():
+        # Сообщение человеку начинается с «доступ только к …» — без фразы оно бессмысленно.
+        issues.append(GraceAccessIssue(field='allowed_services', code='allowed_required', severity=weight))
 
     # A non-mutating runtime never finishes what an earlier active run started: those
     # users keep the grace overlay in the panel until someone switches to drain or runs
@@ -331,6 +346,7 @@ def _validate_for_mode(config: GraceAccessConfig, *, running_mode: str) -> None:
         'squad_required': "'{field}' is required while grace is active",
         'squad_invalid': "'{field}' must contain a valid UUID",
         'traffic_required': "'traffic_gb' must be at least 1 while grace is active",
+        'allowed_required': "'allowed_services' must name what stays reachable while user notifications are on",
     }
     reasons = '; '.join(labels[issue.code].format(field=issue.field) for issue in blockers)
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f'Grace access cannot run with this configuration: {reasons}')
@@ -388,12 +404,46 @@ async def get_grace_access_overview(
 @router.get('/squads', response_model=GraceSquadsResponse)
 async def list_grace_squads(
     admin: User = Depends(require_permission('settings:read')),
+    db: AsyncSession | None = Depends(get_cabinet_db),
 ):
-    """Squads offered by the panel, for picking the grace squads by name.
+    """Squads for picking the grace squads by name — live from the panel, else from the bot's own copy.
 
     Guarded by the same permission as the rest of this page on purpose: an admin who
     may configure grace must be able to see the list, without also being granted the
     full RemnaWave section.
+
+    Владелец: «указывать UUID сквада зачем, бот же сам их тянет при синхроне». Панель
+    недоступна — список берётся из ``server_squads``, которые синхронизация уже
+    привезла; ручной ввод остаётся только когда нет ни того, ни другого.
+    """
+    try:
+        from app.services.remnawave_service import RemnaWaveService
+
+        service = RemnaWaveService()
+        if not service.is_configured:
+            return await _synced_grace_squads(db)
+        # Напрямую через клиент, а не через get_all_squads: тот глотает любую
+        # ошибку и возвращает пустой список, из-за чего лежащая панель была бы
+        # неотличима от панели без сквадов — и экран сказал бы не то.
+        async with service.get_api_client() as api:
+            squads = await api.get_internal_squads()
+    except Exception as error:
+        logger.warning('Grace squad list unavailable from the panel; using the synced copy', error=str(error))
+        return await _synced_grace_squads(db)
+
+    return GraceSquadsResponse(available=True, source='panel', items=_panel_squad_options(squads))
+
+
+@router.get('/external-squads', response_model=GraceSquadsResponse)
+async def list_grace_external_squads(
+    admin: User = Depends(require_permission('settings:read')),
+):
+    """External squads for «Replace with a chosen one» — picked by name, not typed as a UUID.
+
+    Владелец (2026-09-14): «есть 3 варианта по внешнему скваду, бот тоже их получает,
+    поэтому ввод вручную там тоже не нужен». Синхронизированной копии внешних
+    сквадов у бота нет (в отличие от внутренних), поэтому при недоступной панели
+    список недоступен и поле остаётся ручным — как и у внутренних без копии.
     """
     try:
         from app.services.remnawave_service import RemnaWaveService
@@ -401,25 +451,48 @@ async def list_grace_squads(
         service = RemnaWaveService()
         if not service.is_configured:
             return GraceSquadsResponse(available=False, items=[])
-        # Напрямую через клиент, а не через get_all_squads: тот глотает любую
-        # ошибку и возвращает пустой список, из-за чего лежащая панель была бы
-        # неотличима от панели без сквадов — и экран сказал бы не то.
         async with service.get_api_client() as api:
-            squads = await api.get_internal_squads()
+            squads = await api.get_external_squads()
     except Exception as error:
-        logger.warning('Grace squad list unavailable; falling back to manual UUID entry', error=str(error))
+        logger.warning('Grace external squad list unavailable from the panel', error=str(error))
         return GraceSquadsResponse(available=False, items=[])
 
+    return GraceSquadsResponse(available=True, source='panel', items=_panel_squad_options(squads))
+
+
+def _panel_squad_options(squads: list[Any]) -> list[GraceSquadOption]:
+    """Сквады панели (внутренние или внешние) как варианты выбора; без uuid выбрать нельзя."""
+    return [
+        GraceSquadOption(
+            uuid=str(squad.uuid),
+            name=str(squad.name or ''),
+            members_count=int(squad.members_count or 0),
+        )
+        for squad in squads
+        if getattr(squad, 'uuid', None)
+    ]
+
+
+async def _synced_grace_squads(db: AsyncSession | None) -> GraceSquadsResponse:
+    """Сквады из последней синхронизации — те же, что показывает раздел «Сквады»."""
+    if not isinstance(db, AsyncSession):
+        return GraceSquadsResponse(available=False, items=[])
+    from app.database.crud.server_squad import get_all_server_squads
+
+    squads, _total = await get_all_server_squads(db, limit=1000)
+    if not squads:
+        return GraceSquadsResponse(available=False, items=[])
     return GraceSquadsResponse(
         available=True,
+        source='synced',
         items=[
             GraceSquadOption(
-                uuid=str(squad.uuid),
-                name=str(squad.name or ''),
-                members_count=int(squad.members_count or 0),
+                uuid=str(squad.squad_uuid),
+                name=str(squad.display_name or squad.original_name or ''),
+                members_count=int(squad.current_users or 0),
             )
             for squad in squads
-            if getattr(squad, 'uuid', None)
+            if squad.squad_uuid
         ],
     )
 
@@ -511,6 +584,8 @@ async def update_grace_access(
     for field in ('expired_squad_uuid', 'limited_squad_uuid', 'external_squad_uuid'):
         if field in patch:
             patch[field] = _normalize_squad(patch[field] or '')
+    if 'allowed_services' in patch:
+        patch['allowed_services'] = ' '.join(str(patch['allowed_services'] or '').split())
 
     # Unchanged fields are dropped before the env-lock check: the page submits the whole
     # form, and rejecting it because one pinned field came back with its own value would
@@ -525,9 +600,11 @@ async def update_grace_access(
     merged = current.model_copy(update=changed)
     _validate_for_mode(merged, running_mode=grace_access_runtime.mode.value)
 
+    # commit=False + один коммит в конце: набор полей грейса применяется
+    # целиком, иначе половина правил осталась бы от прежней настройки.
     for field, value in changed.items():
         try:
-            await bot_configuration_service.set_value(db, FIELD_KEYS[field], value)
+            await bot_configuration_service.set_value(db, FIELD_KEYS[field], value, commit=False)
         except ReadOnlySettingError as error:
             raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
     await db.commit()

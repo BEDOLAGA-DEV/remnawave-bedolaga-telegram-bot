@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,6 +42,7 @@ from app.services.admin_notification_service import AdminNotificationService
 from app.services.grace_access_runtime import get_open_grace_subscription_ids, grace_access_runtime
 from app.services.grace_access_service import GraceReason
 from app.services.notification_delivery_service import NotificationType, notification_delivery_service
+from app.services.panel_sync import WEBHOOK, project_onto_subscription, read_panel_user
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button, build_subscription_extend_button
 
 
@@ -1306,102 +1308,23 @@ class RemnaWaveWebhookService:
         if not subscription:
             return
 
-        changed = False
         grace_open = subscription.id in await get_open_grace_subscription_ids(db)
 
-        # Sync traffic limit
-        traffic_limit_bytes = data.get('trafficLimitBytes')
-        if traffic_limit_bytes is not None and not grace_open:
-            try:
-                new_limit_gb = int(traffic_limit_bytes) // (1024**3)
-                if subscription.traffic_limit_gb != new_limit_gb:
-                    subscription.traffic_limit_gb = new_limit_gb
-                    changed = True
-            except (ValueError, TypeError):
-                pass
+        snapshot = read_panel_user(data)
+        # Ссылки приходят по сети: сохраняем только то, что прошло проверку, иначе
+        # в базу попадает чужой адрес и уезжает пользователю (хранимый XSS).
+        if snapshot.subscription_url and not self._is_valid_url(snapshot.subscription_url):
+            snapshot = replace(snapshot, subscription_url=None)
+        if snapshot.crypto_link and not self._is_valid_link(snapshot.crypto_link):
+            snapshot = replace(snapshot, crypto_link=None)
 
-        # Sync used traffic. usedTrafficBytes живёт в nested userTraffic
-        # (ExtendedUsersSchema.userTraffic; базовый UsersSchema плоского поля не
-        # содержит) — читаем nested-first, как _get_user_traffic_bytes в sync-сервисе,
-        # с fallback на плоский ключ для старых панелей. Без этого used-traffic не
-        # синхронизировался из user.modified-вебхуков (поле всегда было None).
-        user_traffic = data.get('userTraffic')
-        used_traffic_bytes = (
-            user_traffic.get('usedTrafficBytes')
-            if isinstance(user_traffic, dict) and user_traffic.get('usedTrafficBytes') is not None
-            else data.get('usedTrafficBytes')
+        changed_fields = project_onto_subscription(
+            subscription,
+            snapshot,
+            policy=WEBHOOK,
+            grace_open=grace_open,
         )
-        if used_traffic_bytes is not None:
-            try:
-                new_used_gb = round(int(used_traffic_bytes) / (1024**3), 2)
-                subscription.traffic_used_gb = new_used_gb
-                changed = True
-            except (ValueError, TypeError):
-                pass
-
-        # Sync expire date — panel is the source of truth for user.modified events.
-        # НО: если подписка намеренно ОТКЛЮЧЕНА в боте (обнуление/деактивация админом),
-        # не воскрешаем её срок из устаревшего panel expireAt — иначе наспамленные дни
-        # могли бы «вернуться» после обнуления (см. crud.reset_subscription). Статус
-        # отдельно синхронизируется ниже: при panel ACTIVE + future end_date подписка
-        # всё равно может корректно реактивироваться через обычное продление/активацию.
-        expire_at = data.get('expireAt')
-        if expire_at and not grace_open and subscription.status != SubscriptionStatus.DISABLED.value:
-            try:
-                parsed_dt = datetime.fromisoformat(expire_at.replace('Z', '+00:00'))
-                new_end_date = parsed_dt.astimezone(UTC)
-                if subscription.end_date != new_end_date:
-                    old_end_date = subscription.end_date
-                    subscription.end_date = new_end_date
-                    changed = True
-                    if old_end_date and new_end_date < old_end_date:
-                        logger.info(
-                            'Webhook: end_date обновлена назад (панель авторитетна)',
-                            subscription_id=subscription.id,
-                            old_end_date=old_end_date,
-                            new_end_date=new_end_date,
-                        )
-            except (ValueError, TypeError):
-                pass
-
-        # Sync status from panel
-        panel_status = data.get('status')
-        if panel_status and not grace_open:
-            now = datetime.now(UTC)
-            end_date = subscription.end_date
-            if panel_status == 'ACTIVE' and end_date and end_date > now:
-                if subscription.status != SubscriptionStatus.ACTIVE.value:
-                    subscription.status = SubscriptionStatus.ACTIVE.value
-                    changed = True
-                    logger.info(
-                        'Webhook: subscription reactivated (→ active) for user',
-                        subscription_id=subscription.id,
-                        subscription_status=subscription.status,
-                        user_id=user.id,
-                    )
-            elif panel_status == 'DISABLED':
-                if subscription.status != SubscriptionStatus.DISABLED.value:
-                    subscription.status = SubscriptionStatus.DISABLED.value
-                    changed = True
-
-        # Sync subscription URL (validate to prevent stored XSS)
-        subscription_url = data.get('subscriptionUrl')
-        if (
-            subscription_url
-            and self._is_valid_url(subscription_url)
-            and subscription.subscription_url != subscription_url
-        ):
-            subscription.subscription_url = subscription_url
-            changed = True
-
-        # Sync subscription crypto link (for HAPP_CRYPT4_LINK)
-        subscription_crypto_link = data.get('subscriptionCryptoLink') or (data.get('happ') or {}).get('cryptoLink', '')
-        if subscription_crypto_link and self._is_valid_link(subscription_crypto_link):
-            if subscription.subscription_crypto_link != subscription_crypto_link:
-                subscription.subscription_crypto_link = subscription_crypto_link
-                changed = True
-        # NOTE: панель не включает cryptoLink в каждый webhook user.modified
-        # Отсутствие поля не означает что его нужно сбрасывать
+        changed = bool(changed_fields)
 
         # Always stamp to protect from sync overwrite, even if no fields changed
         self._stamp_webhook_update(subscription)
@@ -1416,6 +1339,7 @@ class RemnaWaveWebhookService:
                 'Webhook: subscription modified (synced from panel) for user',
                 subscription_id=subscription.id,
                 user_id=user.id,
+                fields=sorted(changed_fields),
             )
         await db.commit()
 
@@ -1842,8 +1766,10 @@ class RemnaWaveWebhookService:
             logger.debug('Traffic warning disabled by user prefs', user_id=user.id)
             return
 
-        # Extract threshold percentage from meta or data
-        percent = data.get('thresholdPercent') or data.get('threshold', '')
+        # 3.4.3: data — объект пользователя, сработавший порог лежит в
+        # lastTriggeredThreshold (0 = ещё не срабатывал). thresholdPercent/threshold
+        # и _meta.thresholdPercent — терпимость к нестандартным панелям.
+        percent = data.get('lastTriggeredThreshold') or data.get('thresholdPercent') or data.get('threshold', '')
         if not percent:
             # Envelope-meta живёт в data['_meta'] (ресивер), не в 'meta'.
             meta = data.get('_meta', {})
@@ -1878,7 +1804,7 @@ class RemnaWaveWebhookService:
             user,
             'WEBHOOK_USER_NOT_CONNECTED',
             reply_markup=self._get_connect_keyboard(user),
-            format_kwargs=format_kwargs if format_kwargs else None,
+            format_kwargs=format_kwargs or None,
             subscription=subscription,
         )
 

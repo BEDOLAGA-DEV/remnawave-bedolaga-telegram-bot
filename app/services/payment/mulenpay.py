@@ -114,7 +114,7 @@ class MulenPayPaymentMixin:
             payment_uuid = f'mulen_{user_id or "guest"}_{uuid.uuid4().hex}'
             amount_rubles = amount_kopeks / 100
 
-            payer_client = client if client else await self._resolve_mulenpay_client(db, user_id)
+            payer_client = client or await self._resolve_mulenpay_client(db, user_id)
 
             items = [
                 {

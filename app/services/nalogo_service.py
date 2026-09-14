@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -709,35 +710,68 @@ async def _download_receipt_file(receipt_url: str) -> tuple[bytes, str] | None:
             return data, content_type
 
 
+_RECEIPT_FILENAME_FORBIDDEN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
+
+
+def _receipt_file_stem(receipt_uuid: str) -> str:
+    """Имя файла чека без расширения по настройке NALOGO_RECEIPT_FILENAME.
+
+    ``{uuid}`` — id чека. Битый шаблон, пустое имя или одни запрещённые символы
+    дают прежнее ``receipt_<uuid>``: имя файла не повод потерять чек.
+    """
+    pattern = str(getattr(settings, 'NALOGO_RECEIPT_FILENAME', '') or '').strip()
+    try:
+        stem = pattern.format(uuid=receipt_uuid) if pattern else ''
+    except (KeyError, IndexError, ValueError):
+        stem = ''
+    stem = _RECEIPT_FILENAME_FORBIDDEN.sub('_', stem).strip(' ._')
+    return stem or f'receipt_{receipt_uuid}'
+
+
 async def _send_receipt_email(
     to_email: str,
     amount_text: str,
     receipt_url: str,
     attachment: tuple[str, bytes, str] | None,
+    language: str = 'ru',
 ) -> bool:
     """Отправляет чек NaloGO на почту: файл во вложении + ссылка в тексте.
 
     Ссылка lknpd.nalog.ru у покупателя с включённым VPN не открывается
     (см. _download_receipt_file), поэтому главный носитель чека — вложение;
     ссылка — запасной вариант. Возвращает True при успешной отправке.
+
+    Письмо строится по шаблону nalogo_receipt: сохранённый в редакторе, иначе
+    дефолтный. Раньше текст был зашит здесь — без обёртки и без возможности
+    поменять.
     """
     import asyncio
 
     from app.cabinet.services.email_service import email_service
+    from app.cabinet.services.email_template_overrides import get_rendered_override
+    from app.cabinet.services.email_templates import EmailNotificationTemplates
+    from app.services.notification_delivery_service import NotificationType
 
     if not email_service.is_configured():
         logger.warning('SMTP не настроен — чек NaloGO не отправлен на почту')
         return False
 
-    subject = 'Чек по вашему платежу'
-    body_html = (
-        '<h2>🧾 Чек по вашему платежу сформирован</h2>'
-        f'<p>💰 Сумма: <b>{amount_text}</b></p>'
-        '<p>Чек зарегистрирован в ФНС через сервис «Мой налог».</p>'
-        + ('<p>Файл чека — во вложении к этому письму.</p>' if attachment else '')
-        + f'<p><a href="{receipt_url}">Открыть чек на сайте ФНС</a> '
-        '(ссылка может не открываться при включённом VPN или из-за рубежа).</p>'
-    )
+    from app.cabinet.services.email_type_switch import is_email_type_enabled
+
+    if not is_email_type_enabled(NotificationType.NALOGO_RECEIPT.value):
+        logger.info('Письмо с чеком NaloGO отключено админом — не отправляем')
+        return False
+
+    context = {'amount': amount_text, 'receipt_url': receipt_url, 'has_attachment': attachment is not None}
+    rendered = await get_rendered_override(NotificationType.NALOGO_RECEIPT.value, language, context)
+    if rendered:
+        subject, body_html = rendered
+    else:
+        template = EmailNotificationTemplates().get_template(NotificationType.NALOGO_RECEIPT, language, context)
+        if not template:
+            logger.error('Нет email-шаблона чека NaloGO')
+            return False
+        subject, body_html = template['subject'], template['body_html']
     return await asyncio.to_thread(
         email_service.send_email,
         to_email,
@@ -802,12 +836,13 @@ async def send_nalogo_receipt_notifications(
         downloaded = await _download_receipt_file(receipt_url)
         if downloaded is not None:
             data, content_type = downloaded
+            stem = _receipt_file_stem(str(receipt_uuid))
             if 'pdf' in content_type:
-                filename, receipt_is_image = f'receipt_{receipt_uuid}.pdf', False
+                filename, receipt_is_image = f'{stem}.pdf', False
             elif 'png' in content_type:
-                filename, receipt_is_image = f'receipt_{receipt_uuid}.png', True
+                filename, receipt_is_image = f'{stem}.png', True
             else:  # печатная форма lknpd отдаётся как jpeg
-                filename, receipt_is_image = f'receipt_{receipt_uuid}.jpg', True
+                filename, receipt_is_image = f'{stem}.jpg', True
             receipt_file = types.BufferedInputFile(data, filename=filename)
             email_attachment = (filename, data, content_type.split(';')[0].strip())
     except Exception as download_error:
@@ -931,6 +966,7 @@ async def send_nalogo_receipt_notifications(
     # дойти до покупателя хотя бы одним каналом. ---
     if not tg_delivered:
         recipient_email = (user_email or '').strip()
+        recipient_language = 'ru'
         if not recipient_email and telegram_user_id:
             try:
                 from app.database.crud.user import get_user_by_telegram_id
@@ -940,6 +976,7 @@ async def send_nalogo_receipt_notifications(
                     email_user = await get_user_by_telegram_id(session, telegram_user_id)
                 if email_user and email_user.email:
                     recipient_email = email_user.email.strip()
+                    recipient_language = getattr(email_user, 'language', None) or 'ru'
             except Exception as lookup_error:
                 logger.warning(
                     'Не удалось найти почту пользователя для отправки чека NaloGO',
@@ -948,7 +985,9 @@ async def send_nalogo_receipt_notifications(
                 )
         if recipient_email:
             try:
-                if await _send_receipt_email(recipient_email, amount_text, receipt_url, email_attachment):
+                if await _send_receipt_email(
+                    recipient_email, amount_text, receipt_url, email_attachment, language=recipient_language
+                ):
                     logger.info('Чек NaloGO отправлен на почту', receipt_uuid=receipt_uuid)
             except Exception as email_error:
                 logger.error(

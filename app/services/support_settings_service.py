@@ -1,111 +1,102 @@
-import json
+"""Настройки поддержки: режим (тикеты / контакт / оба), меню, уведомления о тикетах, SLA,
+модераторы, тексты «о поддержке» по языкам.
+
+Обычные настройки бота (ключи ``SUPPORT_*``): база через слой системных настроек, кабинет,
+живое чтение из ``settings``. Раньше — файл ``data/support_settings.json`` с вечным кэшем в
+памяти процесса (тот же класс дефекта, что у переключателей уведомлений истёкшим). Старый файл
+импортируется один раз при старте (``import_legacy_file``) и переименовывается.
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.settings_store import import_legacy_values, read_legacy_json, store_setting
 
 
 logger = structlog.get_logger(__name__)
 
+MODES = frozenset({'tickets', 'contact', 'both'})
+SLA_MINUTES_DEFAULT = 60
+
+KEY_MODE = 'SUPPORT_SYSTEM_MODE'
+KEY_MENU = 'SUPPORT_MENU_ENABLED'
+KEY_SLA_ENABLED = 'SUPPORT_TICKET_SLA_ENABLED'
+KEY_SLA_MINUTES = 'SUPPORT_TICKET_SLA_MINUTES'
+KEY_ADMIN_TICKET_NOTIFICATIONS = 'SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED'
+KEY_USER_TICKET_NOTIFICATIONS = 'SUPPORT_USER_TICKET_NOTIFICATIONS_ENABLED'
+KEY_CABINET_USER_NOTIFICATIONS = 'SUPPORT_CABINET_USER_NOTIFICATIONS_ENABLED'
+KEY_CABINET_ADMIN_NOTIFICATIONS = 'SUPPORT_CABINET_ADMIN_NOTIFICATIONS_ENABLED'
+KEY_MODERATORS = 'SUPPORT_MODERATOR_IDS'
+
+#: Булевы поля старого файла → ключи настроек.
+_LEGACY_FLAGS: tuple[tuple[str, str], ...] = (
+    ('menu_enabled', KEY_MENU),
+    ('admin_ticket_notifications_enabled', KEY_ADMIN_TICKET_NOTIFICATIONS),
+    ('user_ticket_notifications_enabled', KEY_USER_TICKET_NOTIFICATIONS),
+    ('ticket_sla_enabled', KEY_SLA_ENABLED),
+    ('cabinet_user_notifications_enabled', KEY_CABINET_USER_NOTIFICATIONS),
+    ('cabinet_admin_notifications_enabled', KEY_CABINET_ADMIN_NOTIFICATIONS),
+)
+
+
+def _normalize_mode(value: Any) -> str | None:
+    mode = str(value or '').strip().lower()
+    return mode if mode in MODES else None
+
+
+def _language_key(language: str | None) -> str:
+    lang = (language or settings.DEFAULT_LANGUAGE).split('-')[0].lower()
+    return f'SUPPORT_INFO_TEXT_{lang.upper()}'
+
+
+def _parse_ids(raw: Any) -> list[int]:
+    """Telegram ID из строки через запятую или списка; мусор пропускается поштучно."""
+    items = raw.split(',') if isinstance(raw, str) else raw if isinstance(raw, list | tuple) else []
+    ids: list[int] = []
+    for item in items:
+        try:
+            ids.append(int(str(item).strip()))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _ids_csv(ids: set[int]) -> str:
+    return ','.join(str(item) for item in sorted(ids))
+
 
 class SupportSettingsService:
-    """Runtime editable support settings with JSON persistence."""
+    """Фасад над ``settings``: чтение живьём, запись — через слой системных настроек (база + процесс)."""
 
-    _storage_path: Path = Path('data/support_settings.json')
-    _data: dict = {}
-    _loaded: bool = False
+    _legacy_path: Path = Path('data/support_settings.json')
 
-    @classmethod
-    def _ensure_dir(cls) -> None:
-        try:
-            cls._storage_path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error('Failed to ensure settings dir', error=e)
+    # ------------------------------------------------------------ режим и меню
 
-    @classmethod
-    def _load(cls) -> None:
-        if cls._loaded:
-            return
-        cls._ensure_dir()
-        try:
-            if cls._storage_path.exists():
-                cls._data = json.loads(cls._storage_path.read_text(encoding='utf-8'))
-            else:
-                cls._data = {}
-        except Exception as e:
-            logger.error('Failed to load support settings', error=e)
-            cls._data = {}
-        cls._loaded = True
-        cls._sync_settings()
-
-    @classmethod
-    def _sync_settings(cls) -> None:
-        """Отзеркалить сохранённые значения в ``settings``.
-
-        Часть кода читает режим поддержки не через сервис, а напрямую из
-        ``settings`` — в первую очередь веб-кабинет
-        (``cabinet/routes/tickets.py``, ``cabinet/routes/info.py``).
-        ``set_system_mode`` обновлял ``settings`` в памяти, а ``_load`` при
-        старте — нет: после рестарта бот брал режим из JSON, а кабинет —
-        значение из ``.env``. Режим ``contact``, выставленный из админки бота,
-        переживал рестарт только для бота, и тикеты в кабинете снова
-        открывались.
-
-        JSON здесь — источник истины: он пишется только явным действием
-        админа, ``.env`` задаёт лишь начальное значение.
-        """
-        mode = cls._data.get('system_mode')
-        if isinstance(mode, str):
-            mode_clean = mode.strip().lower()
-            if mode_clean in {'tickets', 'contact', 'both'}:
-                settings.SUPPORT_SYSTEM_MODE = mode_clean
-        if 'menu_enabled' in cls._data:
-            settings.SUPPORT_MENU_ENABLED = bool(cls._data['menu_enabled'])
-
-    @classmethod
-    def _save(cls) -> bool:
-        cls._ensure_dir()
-        try:
-            cls._storage_path.write_text(json.dumps(cls._data, ensure_ascii=False, indent=2), encoding='utf-8')
-            return True
-        except Exception as e:
-            logger.error('Failed to save support settings', error=e)
-            return False
-
-    # Mode
     @classmethod
     def get_system_mode(cls) -> str:
-        cls._load()
-        mode = (cls._data.get('system_mode') or settings.get_support_system_mode()).strip().lower()
-        return mode if mode in {'tickets', 'contact', 'both'} else 'both'
+        return settings.get_support_system_mode()
 
     @classmethod
-    def set_system_mode(cls, mode: str) -> bool:
-        mode_clean = (mode or '').strip().lower()
-        if mode_clean not in {'tickets', 'contact', 'both'}:
+    async def set_system_mode(cls, db: AsyncSession, mode: str) -> bool:
+        mode_clean = _normalize_mode(mode)
+        if mode_clean is None:
             return False
-        cls._load()
-        cls._data['system_mode'] = mode_clean
-        cls._sync_settings()
-        return cls._save()
+        return await store_setting(db, KEY_MODE, mode_clean)
 
-    # Main menu visibility
     @classmethod
     def is_support_menu_enabled(cls) -> bool:
-        cls._load()
-        if 'menu_enabled' in cls._data:
-            return bool(cls._data['menu_enabled'])
         return bool(settings.SUPPORT_MENU_ENABLED)
 
     @classmethod
-    def set_support_menu_enabled(cls, enabled: bool) -> bool:
-        cls._load()
-        cls._data['menu_enabled'] = bool(enabled)
-        cls._sync_settings()
-        return cls._save()
+    async def set_support_menu_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
+        return await store_setting(db, KEY_MENU, bool(enabled))
 
-    # Contact vs tickets helpers
     @classmethod
     def is_tickets_enabled(cls) -> bool:
         return cls.get_system_mode() in {'tickets', 'both'}
@@ -114,163 +105,151 @@ class SupportSettingsService:
     def is_contact_enabled(cls) -> bool:
         return cls.get_system_mode() in {'contact', 'both'}
 
-    # Descriptions (per language)
+    # ------------------------------------------------------------ тексты «о поддержке»
+
     @classmethod
     def get_support_info_text(cls, language: str) -> str:
-        cls._load()
-        lang = (language or settings.DEFAULT_LANGUAGE).split('-')[0].lower()
-        overrides = cls._data.get('support_info_texts') or {}
-        text = overrides.get(lang)
-        if text and isinstance(text, str) and text.strip():
+        text = getattr(settings, _language_key(language), '')
+        if isinstance(text, str) and text.strip():
             return text
-        # Fallback to dynamic localization default
         from app.localization.texts import get_texts
 
+        lang = (language or settings.DEFAULT_LANGUAGE).split('-')[0].lower()
         return get_texts(lang).SUPPORT_INFO
 
     @classmethod
-    def set_support_info_text(cls, language: str, text: str) -> bool:
-        cls._load()
-        lang = (language or settings.DEFAULT_LANGUAGE).split('-')[0].lower()
-        texts_map = cls._data.get('support_info_texts') or {}
-        texts_map[lang] = text or ''
-        cls._data['support_info_texts'] = texts_map
-        return cls._save()
+    async def set_support_info_text(cls, db: AsyncSession, language: str, text: str) -> bool:
+        key = _language_key(language)
+        if not hasattr(settings, key):
+            logger.warning('Для языка нет поля текста поддержки', language=language, key=key)
+            return False
+        return await store_setting(db, key, text or '')
 
-    # Notifications & SLA
+    # ------------------------------------------------------------ уведомления и SLA
+
     @classmethod
     def get_admin_ticket_notifications_enabled(cls) -> bool:
-        cls._load()
-        if 'admin_ticket_notifications_enabled' in cls._data:
-            return bool(cls._data['admin_ticket_notifications_enabled'])
-        # fallback to global admin notifications setting
-        return bool(settings.is_admin_notifications_enabled())
+        return bool(settings.SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED)
 
     @classmethod
-    def set_admin_ticket_notifications_enabled(cls, enabled: bool) -> bool:
-        cls._load()
-        cls._data['admin_ticket_notifications_enabled'] = bool(enabled)
-        return cls._save()
+    async def set_admin_ticket_notifications_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
+        return await store_setting(db, KEY_ADMIN_TICKET_NOTIFICATIONS, bool(enabled))
 
     @classmethod
     def get_user_ticket_notifications_enabled(cls) -> bool:
-        cls._load()
-        if 'user_ticket_notifications_enabled' in cls._data:
-            return bool(cls._data['user_ticket_notifications_enabled'])
-        # fallback to global enable notifications
-        return bool(getattr(settings, 'ENABLE_NOTIFICATIONS', True))
+        # Общий выключатель уведомлений пользователям главнее.
+        return bool(settings.SUPPORT_USER_TICKET_NOTIFICATIONS_ENABLED) and bool(
+            getattr(settings, 'ENABLE_NOTIFICATIONS', True)
+        )
 
     @classmethod
-    def set_user_ticket_notifications_enabled(cls, enabled: bool) -> bool:
-        cls._load()
-        cls._data['user_ticket_notifications_enabled'] = bool(enabled)
-        return cls._save()
+    async def set_user_ticket_notifications_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
+        return await store_setting(db, KEY_USER_TICKET_NOTIFICATIONS, bool(enabled))
 
     @classmethod
     def get_sla_enabled(cls) -> bool:
-        cls._load()
-        if 'ticket_sla_enabled' in cls._data:
-            return bool(cls._data['ticket_sla_enabled'])
-        return bool(getattr(settings, 'SUPPORT_TICKET_SLA_ENABLED', False))
+        return bool(settings.SUPPORT_TICKET_SLA_ENABLED)
 
     @classmethod
-    def set_sla_enabled(cls, enabled: bool) -> bool:
-        cls._load()
-        cls._data['ticket_sla_enabled'] = bool(enabled)
-        return cls._save()
+    async def set_sla_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
+        return await store_setting(db, KEY_SLA_ENABLED, bool(enabled))
 
     @classmethod
     def get_sla_minutes(cls) -> int:
-        cls._load()
-        minutes = cls._data.get('ticket_sla_minutes')
-        if isinstance(minutes, int) and minutes > 0:
-            return minutes
-        return int(getattr(settings, 'SUPPORT_TICKET_SLA_MINUTES', 60))
+        try:
+            minutes = int(settings.SUPPORT_TICKET_SLA_MINUTES)
+        except (TypeError, ValueError):
+            return SLA_MINUTES_DEFAULT
+        return minutes if minutes > 0 else SLA_MINUTES_DEFAULT
 
     @classmethod
-    def set_sla_minutes(cls, minutes: int) -> bool:
+    async def set_sla_minutes(cls, db: AsyncSession, minutes: Any) -> bool:
         try:
             minutes_int = int(minutes)
-        except Exception:
+        except (TypeError, ValueError):
             return False
         if minutes_int <= 0:
             return False
-        cls._load()
-        cls._data['ticket_sla_minutes'] = minutes_int
-        return cls._save()
+        return await store_setting(db, KEY_SLA_MINUTES, minutes_int)
 
-    # Moderators management
+    # ------------------------------------------------------------ модераторы
+
     @classmethod
     def get_moderators(cls) -> list[int]:
-        cls._load()
-        raw = cls._data.get('moderators') or []
-        moderators: list[int] = []
-        for item in raw:
-            try:
-                moderators.append(int(item))
-            except Exception:
-                continue
-        return moderators
+        return _parse_ids(settings.SUPPORT_MODERATOR_IDS)
 
     @classmethod
-    def is_moderator(cls, telegram_id: int) -> bool:
+    def is_moderator(cls, telegram_id: Any) -> bool:
         try:
-            tid = int(telegram_id)
-        except Exception:
+            return int(telegram_id) in cls.get_moderators()
+        except (TypeError, ValueError):
             return False
-        return tid in cls.get_moderators()
 
     @classmethod
-    def add_moderator(cls, telegram_id: int) -> bool:
+    async def add_moderator(cls, db: AsyncSession, telegram_id: Any) -> bool:
         try:
             tid = int(telegram_id)
-        except Exception:
+        except (TypeError, ValueError):
             return False
-        cls._load()
+        return await store_setting(db, KEY_MODERATORS, _ids_csv({*cls.get_moderators(), tid}))
+
+    @classmethod
+    async def remove_moderator(cls, db: AsyncSession, telegram_id: Any) -> bool:
+        try:
+            tid = int(telegram_id)
+        except (TypeError, ValueError):
+            return False
         moderators = set(cls.get_moderators())
-        moderators.add(tid)
-        cls._data['moderators'] = sorted(moderators)
-        return cls._save()
+        if tid not in moderators:
+            return True
+        moderators.discard(tid)
+        return await store_setting(db, KEY_MODERATORS, _ids_csv(moderators))
 
-    @classmethod
-    def remove_moderator(cls, telegram_id: int) -> bool:
-        try:
-            tid = int(telegram_id)
-        except Exception:
-            return False
-        cls._load()
-        moderators = set(cls.get_moderators())
-        if tid in moderators:
-            moderators.remove(tid)
-            cls._data['moderators'] = sorted(moderators)
-            return cls._save()
-        return True
+    # ------------------------------------------------------------ уведомления в кабинет
 
-    # Cabinet notifications (веб-кабинет)
     @classmethod
     def get_cabinet_user_notifications_enabled(cls) -> bool:
-        """Уведомления юзерам в кабинет о ответе админа на тикет."""
-        cls._load()
-        if 'cabinet_user_notifications_enabled' in cls._data:
-            return bool(cls._data['cabinet_user_notifications_enabled'])
-        return True  # По умолчанию включено
+        """Уведомления пользователям в кабинет об ответе на тикет."""
+        return bool(settings.SUPPORT_CABINET_USER_NOTIFICATIONS_ENABLED)
 
     @classmethod
-    def set_cabinet_user_notifications_enabled(cls, enabled: bool) -> bool:
-        cls._load()
-        cls._data['cabinet_user_notifications_enabled'] = bool(enabled)
-        return cls._save()
+    async def set_cabinet_user_notifications_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
+        return await store_setting(db, KEY_CABINET_USER_NOTIFICATIONS, bool(enabled))
 
     @classmethod
     def get_cabinet_admin_notifications_enabled(cls) -> bool:
-        """Уведомления админам в кабинет о новых тикетах."""
-        cls._load()
-        if 'cabinet_admin_notifications_enabled' in cls._data:
-            return bool(cls._data['cabinet_admin_notifications_enabled'])
-        return True  # По умолчанию включено
+        """Уведомления администраторам в кабинет о новых тикетах."""
+        return bool(settings.SUPPORT_CABINET_ADMIN_NOTIFICATIONS_ENABLED)
 
     @classmethod
-    def set_cabinet_admin_notifications_enabled(cls, enabled: bool) -> bool:
-        cls._load()
-        cls._data['cabinet_admin_notifications_enabled'] = bool(enabled)
-        return cls._save()
+    async def set_cabinet_admin_notifications_enabled(cls, db: AsyncSession, enabled: bool) -> bool:
+        return await store_setting(db, KEY_CABINET_ADMIN_NOTIFICATIONS, bool(enabled))
+
+    # ------------------------------------------------------------ перенос старого файла
+
+    @classmethod
+    async def import_legacy_file(cls, db: AsyncSession) -> dict[str, Any]:
+        """Один раз перенести ``data/support_settings.json`` в базу; мусор пропускается, база главнее."""
+        raw = read_legacy_json(cls._legacy_path)
+        if raw is None:
+            return {}
+        values: dict[str, Any] = {}
+        mode = _normalize_mode(raw.get('system_mode'))
+        if mode is not None:
+            values[KEY_MODE] = mode
+        for legacy_key, key in _LEGACY_FLAGS:
+            if isinstance(raw.get(legacy_key), bool):
+                values[key] = raw[legacy_key]
+        minutes = raw.get('ticket_sla_minutes')
+        if isinstance(minutes, int) and not isinstance(minutes, bool) and minutes > 0:
+            values[KEY_SLA_MINUTES] = minutes
+        texts = raw.get('support_info_texts')
+        if isinstance(texts, dict):
+            for language, text in texts.items():
+                key = _language_key(str(language))
+                if hasattr(settings, key) and isinstance(text, str) and text.strip():
+                    values[key] = text
+        moderators = _parse_ids(raw.get('moderators'))
+        if moderators:
+            values[KEY_MODERATORS] = _ids_csv(set(moderators))
+        return await import_legacy_values(db, cls._legacy_path, values)

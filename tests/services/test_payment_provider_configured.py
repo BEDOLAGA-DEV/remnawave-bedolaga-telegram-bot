@@ -40,11 +40,13 @@ PROVIDERS = [
     'mulenpay',
     'overpay',
     'pal24',
+    'paritypay',
     'paypear',
     'platega',
     'riopay',
     'rollypay',
     'severpay',
+    'tabpay',
     'wata',
     'yookassa',
 ]
@@ -88,16 +90,30 @@ def test_enabled_is_flag_and_configured(monkeypatch, provider: str, flag: bool) 
     assert enabled == (flag and configured)
 
 
+# Провайдеры, у которых `configured` нельзя получить присваиванием атрибутов:
+# Apple IAP дополнительно читает файлы сертификатов. Список закрытый нарочно —
+# иначе новый провайдер с таким же поведением начал бы тихо пропускаться, и две
+# проверки ниже перестали бы его касаться, не сказав ни слова.
+UNFAKEABLE_CREDENTIALS = frozenset({'apple_iap'})
+
+
+def _skip_if_unfakeable(provider: str) -> None:
+    if getattr(settings, f'is_{provider}_configured')():
+        return
+    assert provider in UNFAKEABLE_CREDENTIALS, (
+        f'{provider}: учётные данные перестали подделываться присваиванием — '
+        'проверка молча выключилась бы; разберитесь или внесите его в UNFAKEABLE_CREDENTIALS'
+    )
+    pytest.skip(f'{provider}: учётные данные не подделываются присваиванием')
+
+
 @pytest.mark.parametrize('provider', PROVIDERS)
 def test_enabled_is_flag_when_credentials_are_present(monkeypatch, provider: str) -> None:
     """С заполненными кредами включение решает только флаг."""
     for name in _credential_names(provider):
         monkeypatch.setattr(settings, name, 'x', raising=False)
 
-    if not getattr(settings, f'is_{provider}_configured')():
-        # apple_iap дополнительно требует файлы сертификатов — подделать
-        # присваиванием нельзя, и ветка configured=True тут недостижима.
-        pytest.skip(f'{provider}: учётные данные не подделываются присваиванием')
+    _skip_if_unfakeable(provider)
 
     monkeypatch.setattr(settings, _flag_name(provider), True, raising=False)
     assert getattr(settings, f'is_{provider}_enabled')() is True
@@ -112,8 +128,7 @@ def test_missing_credential_disables_the_provider(monkeypatch, provider: str) ->
     credentials = _credential_names(provider)
     for name in credentials:
         monkeypatch.setattr(settings, name, 'x', raising=False)
-    if not getattr(settings, f'is_{provider}_configured')():
-        pytest.skip(f'{provider}: учётные данные не подделываются присваиванием')
+    _skip_if_unfakeable(provider)
 
     for missing in credentials:
         monkeypatch.setattr(settings, missing, None, raising=False)

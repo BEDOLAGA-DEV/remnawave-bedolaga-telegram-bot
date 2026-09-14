@@ -1,5 +1,5 @@
 """Самолечение при удалённом из панели юзере: PATCH /api/users отвечает
-«User not found» (404 / A018 / A063), когда подписка в боте живая, — сервисы
+«User not found» (A025 / A063, см. is_user_not_found_error), когда подписка в боте живая, — сервисы
 должны пересоздать панель-юзера, а не падать в ошибку (кейс: админ удалил
 пользователя из RemnaWave вручную, бот об этом не знает)."""
 
@@ -10,8 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import app.services.monitoring_service as monitoring_service_mod
-import app.services.subscription_service as subscription_service_mod
 from app.config import Settings
 from app.database.models import SubscriptionStatus
 from app.external.remnawave_api import (
@@ -32,9 +30,21 @@ def test_not_found_by_status_404():
 
 
 def test_not_found_by_error_code_without_404():
-    # Разные версии RemnaWave отвечают A018/A063 и не всегда со статусом 404
-    assert is_user_not_found_error(RemnaWaveAPIError('x', 400, {'errorCode': 'A018'}))
+    # Старые панели отвечали A063 не всегда со статусом 404 — код однозначен.
     assert is_user_not_found_error(RemnaWaveAPIError('x', 500, {'errorCode': 'A063'}))
+    assert is_user_not_found_error(RemnaWaveAPIError('x', 500, {'errorCode': 'A025'}))
+
+
+def test_a018_is_a_create_failure_not_absence():
+    """3.4.3: A018 = «Failed to create user» (500). Раньше код считал его «юзера нет»
+    и уводил в пересоздание — то есть на сбое создания создавал бы ещё раз."""
+    assert not is_user_not_found_error(RemnaWaveAPIError('Failed to create user', 500, {'errorCode': 'A018'}))
+    assert not is_user_not_found_error(RemnaWaveAPIError('x', 400, {'errorCode': 'A018'}))
+
+
+def test_404_for_another_entity_is_not_user_absence():
+    """404 у панели имеет 27 причин; чужой 404 (внешний сквад A182) не должен плодить дубли."""
+    assert not is_user_not_found_error(RemnaWaveAPIError('External squad not found', 404, {'errorCode': 'A182'}))
 
 
 def test_other_errors_are_not_not_found():
@@ -57,7 +67,7 @@ def test_invalid_user_id_error_is_never_not_found():
     колонке), а не «панель потеряла юзера». Даже со статусом 404 в конверте она
     НЕ должна открывать ветку пересоздания."""
     assert not is_user_not_found_error(RemnaWaveInvalidUserIdError('Invalid panel user id: None'))
-    assert not is_user_not_found_error(RemnaWaveInvalidUserIdError('x', 404, {'errorCode': 'A018'}))
+    assert not is_user_not_found_error(RemnaWaveInvalidUserIdError('x', 404, {'errorCode': 'A025'}))
 
 
 def test_coerce_panel_user_id_rejects_non_numeric_identifiers():
@@ -185,8 +195,8 @@ async def test_recreate_skips_active_status_with_past_end_date():
 def _setup_subscription_service(monkeypatch, api):
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     service = SubscriptionService()
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=_make_user()))
-    monkeypatch.setattr(subscription_service_mod, 'resolve_hwid_device_limit_for_payload', lambda s: None)
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=_make_user()))
+    monkeypatch.setattr('app.services.subscription_service.resolve_hwid_device_limit_for_payload', lambda s: None)
     _patch_api_client(monkeypatch, service, api)
     return service
 
@@ -216,7 +226,7 @@ async def test_update_skips_panel_when_no_panel_id(monkeypatch):
     service = _setup_subscription_service(monkeypatch, api)
     user_without_panel = _make_user()
     user_without_panel.remnawave_id = None
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=user_without_panel))
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user_without_panel))
     service.create_remnawave_user = AsyncMock()
 
     result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
@@ -228,7 +238,7 @@ async def test_update_skips_panel_when_no_panel_id(monkeypatch):
 
 async def test_update_recreates_deleted_panel_user(monkeypatch):
     api = AsyncMock()
-    api.update_user.side_effect = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A018'})
+    api.update_user.side_effect = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A025'})
     service = _setup_subscription_service(monkeypatch, api)
 
     recreated = object()
@@ -568,8 +578,8 @@ def _setup_monitoring_service(monkeypatch, api):
     service = MonitoringService()
     service.subscription_service._config_error = None  # is_configured → True
 
-    monkeypatch.setattr(monitoring_service_mod, 'get_user_by_id', AsyncMock(return_value=_make_user()))
-    monkeypatch.setattr(monitoring_service_mod, 'resolve_hwid_device_limit_for_payload', lambda s: None)
+    monkeypatch.setattr('app.services.monitoring_service.get_user_by_id', AsyncMock(return_value=_make_user()))
+    monkeypatch.setattr('app.services.panel_sync.payload.resolve_hwid_device_limit_for_payload', lambda s: None)
     _patch_api_client(monkeypatch, service.subscription_service, api)
     return service
 
@@ -650,19 +660,18 @@ async def test_monitoring_update_does_not_recreate_on_plain_400(monkeypatch):
     service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
 
 
-async def test_monitoring_update_recreates_on_a018_without_404(monkeypatch):
-    """A018 (без статуса 404) — маркер удалённого панель-юзера: пересоздаём."""
+async def test_monitoring_update_does_not_recreate_on_a018_create_failure(monkeypatch):
+    """3.4.3: A018 = «Failed to create user» (500) — сбой записи, а не «юзера нет».
+    Пересоздание здесь дало бы второй аккаунт в панели."""
     api = AsyncMock()
-    api.update_user.side_effect = RemnaWaveAPIError('x', 500, {'errorCode': 'A018'})
+    api.update_user.side_effect = RemnaWaveAPIError('Failed to create user', 500, {'errorCode': 'A018'})
     service = _setup_monitoring_service(monkeypatch, api)
-
-    recreated = object()
-    service.subscription_service.recreate_deleted_panel_user = AsyncMock(return_value=recreated)
+    service.subscription_service.recreate_deleted_panel_user = AsyncMock()
 
     result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
 
-    assert result is recreated
-    service.subscription_service.recreate_deleted_panel_user.assert_awaited_once()
+    assert result is None
+    service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
 
 
 # ---- Апгрейд на 3.0.0: строка ещё без числового id, но с живым shortUuid ----
@@ -909,7 +918,7 @@ async def test_update_adopts_panel_id_by_short_uuid_instead_of_giving_up(monkeyp
 
     service = SubscriptionService()
     _patch_api_client(monkeypatch, service, api)
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=_make_user()))
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=_make_user()))
 
     sub = _sub_for_multi()
     sub.remnawave_id = None
@@ -933,7 +942,7 @@ async def test_update_still_gives_up_when_the_panel_does_not_know_the_short_uuid
 
     service = SubscriptionService()
     _patch_api_client(monkeypatch, service, api)
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=_make_user()))
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=_make_user()))
 
     sub = _sub_for_multi()
     sub.remnawave_id = None
@@ -951,7 +960,7 @@ async def test_update_gives_up_when_the_panel_is_unreachable(monkeypatch):
 
     service = SubscriptionService()
     _patch_api_client(monkeypatch, service, api)
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=_make_user()))
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=_make_user()))
 
     sub = _sub_for_multi()
     sub.remnawave_id = None
@@ -992,8 +1001,8 @@ async def test_single_mode_prefers_exact_keys_over_ambiguous_telegram_search(mon
 
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     service = SubscriptionService()
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr(subscription_service_mod, 'resolve_hwid_device_limit_for_payload', lambda s: None)
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.subscription_service.resolve_hwid_device_limit_for_payload', lambda s: None)
     _patch_api_client(monkeypatch, service, api)
 
     async with service.get_api_client() as client:
@@ -1043,8 +1052,8 @@ async def test_single_mode_uses_the_subscription_own_panel_id(monkeypatch):
 
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     service = SubscriptionService()
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr(subscription_service_mod, 'resolve_hwid_device_limit_for_payload', lambda s: None)
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.subscription_service.resolve_hwid_device_limit_for_payload', lambda s: None)
     _patch_api_client(monkeypatch, service, api)
 
     async with service.get_api_client() as client:
@@ -1106,9 +1115,9 @@ async def test_create_does_not_break_on_the_partial_unique_index(monkeypatch):
         updated = SimpleNamespace(id=77, short_uuid='s77', subscription_url='https://s/u', happ_crypto_link=None)
 
         monkeypatch.setattr(
-            subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=await db.get(UserModel, 1))
+            'app.services.subscription_service.get_user_by_id', AsyncMock(return_value=await db.get(UserModel, 1))
         )
-        monkeypatch.setattr(subscription_service_mod, 'resolve_hwid_device_limit_for_payload', lambda s: None)
+        monkeypatch.setattr('app.services.subscription_service.resolve_hwid_device_limit_for_payload', lambda s: None)
         monkeypatch.setattr(service, 'validate_and_clean_subscription', AsyncMock(return_value=True))
         monkeypatch.setattr(service, '_create_or_update_remnawave_user_single', AsyncMock(return_value=updated))
         monkeypatch.setattr(service, '_create_or_update_remnawave_user_multi', AsyncMock(return_value=updated))
@@ -1205,8 +1214,8 @@ async def test_degraded_short_uuid_endpoint_does_not_abort_a_resolvable_sync(mon
 
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     service = SubscriptionService()
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr(subscription_service_mod, 'resolve_hwid_device_limit_for_payload', lambda s: None)
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.subscription_service.resolve_hwid_device_limit_for_payload', lambda s: None)
     _patch_api_client(monkeypatch, service, api)
 
     async with service.get_api_client() as client:
@@ -1244,8 +1253,8 @@ async def test_degraded_short_uuid_endpoint_still_refuses_to_create_a_duplicate(
 
     monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
     service = SubscriptionService()
-    monkeypatch.setattr(subscription_service_mod, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr(subscription_service_mod, 'resolve_hwid_device_limit_for_payload', lambda s: None)
+    monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.services.subscription_service.resolve_hwid_device_limit_for_payload', lambda s: None)
     _patch_api_client(monkeypatch, service, api)
 
     with pytest.raises(RemnaWaveAPIError):

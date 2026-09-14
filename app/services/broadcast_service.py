@@ -55,6 +55,41 @@ EMAIL_RATE_LIMIT = 8
 EMAIL_BATCH_SIZE = 50
 
 
+# Текст отказа Telegram в логе: хватает, чтобы отличить MEDIA_CAPTION_TOO_LONG от
+# can't parse entities и wrong file identifier, и не хватает, чтобы залить журнал.
+_BAD_REQUEST_TEXT_LIMIT = 300
+
+
+def _note_bad_request(
+    causes: dict[str, int],
+    *,
+    broadcast_id: int,
+    telegram_id: int,
+    config: BroadcastConfig,
+    error: TelegramBadRequest,
+) -> None:
+    """Первый отказ по каждой причине — error (уходит админу и в журнал системных
+    ошибок), повторы только считаем: у 10 000 получателей причина одна и та же."""
+    text = str(error)[:_BAD_REQUEST_TEXT_LIMIT]
+    causes[text] = causes.get(text, 0) + 1
+    if causes[text] > 1:
+        return
+    caption = (config.media.caption or config.message_text) if config.media else config.message_text
+    logger.error(
+        'Telegram отклонил сообщение рассылки',
+        broadcast_id=broadcast_id,
+        telegram_id=telegram_id,
+        error=text,
+        media_type=config.media.type if config.media else None,
+        caption_length=len(caption or ''),
+    )
+
+
+def _log_bad_request_summary(causes: dict[str, int], *, broadcast_id: int) -> None:
+    if causes:
+        logger.warning('Рассылка: отказы Telegram по причинам', broadcast_id=broadcast_id, failed_by_error=dict(causes))
+
+
 @dataclass(slots=True)
 class BroadcastMediaConfig:
     type: str
@@ -97,6 +132,7 @@ class _EmailRecipient:
     email: str
     user_name: str
     user_id: int = 0
+    language: str = 'ru'
 
 
 @dataclass(slots=True)
@@ -300,6 +336,8 @@ class BroadcastService:
         flood_wait_until: float = 0.0
         last_progress_update: float = 0.0
         last_progress_count: int = 0
+        # Отказы Telegram (BadRequest) по тексту причины — для лога и сводки.
+        bad_request_causes: dict[str, int] = {}
 
         async def send_single(telegram_id: int) -> str:
             """Returns 'sent', 'blocked', or 'failed'."""
@@ -342,6 +380,16 @@ class BroadcastService:
                     err = str(e).lower()
                     if 'bot was blocked' in err or 'user is deactivated' in err or 'chat not found' in err:
                         return 'blocked'
+                    # Не ретраим: Telegram отверг само сообщение (подпись, разметка,
+                    # file_id), и у следующей попытки будет тот же ответ. Но и молчать
+                    # нельзя — иначе админ видит только failed = total.
+                    _note_bad_request(
+                        bad_request_causes,
+                        broadcast_id=broadcast_id,
+                        telegram_id=telegram_id,
+                        config=config,
+                        error=e,
+                    )
                     return 'failed'
 
                 except (TelegramNetworkError, TelegramServerError) as exc:
@@ -376,6 +424,7 @@ class BroadcastService:
         for i in range(0, len(recipient_ids), _TG_BATCH_SIZE):
             if cancel_event.is_set():
                 await self._mark_cancelled(broadcast_id, sent_count, failed_count, blocked_count)
+                _log_bad_request_summary(bad_request_causes, broadcast_id=broadcast_id)
                 return sent_count, failed_count, blocked_count, True
 
             batch = recipient_ids[i : i + _TG_BATCH_SIZE]
@@ -411,6 +460,7 @@ class BroadcastService:
             # Задержка между батчами для rate limiting
             await asyncio.sleep(_TG_BATCH_DELAY)
 
+        _log_bad_request_summary(bad_request_causes, broadcast_id=broadcast_id)
         return sent_count, failed_count, blocked_count, False
 
     def _build_keyboard(
@@ -896,7 +946,11 @@ class EmailBroadcastService:
                     if not user_name:
                         user_name = email.split('@')[0]
 
-                    recipients.append(_EmailRecipient(email=email, user_name=user_name, user_id=user.id))
+                    recipients.append(
+                        _EmailRecipient(
+                            email=email, user_name=user_name, user_id=user.id, language=user.language or 'ru'
+                        )
+                    )
 
                 offset += batch_size
 
@@ -930,14 +984,14 @@ class EmailBroadcastService:
                 if cancel_event.is_set():
                     return None
 
-                html_content = self._render_template(config.email_html_content, recipient)
-                subject = self._render_template(config.email_subject, recipient)
-
                 # Системные рассылки отписке не подлежат — заголовок им не ставим.
                 unsubscribe_url = (
                     build_unsubscribe_url(recipient.user_id, recipient.email)
                     if config.category in ('news', 'promo')
                     else ''
+                )
+                subject, html_content = self.render_email(
+                    config.email_subject, config.email_html_content, recipient, unsubscribe_url
                 )
 
                 try:
@@ -950,6 +1004,10 @@ class EmailBroadcastService:
                             subject=subject,
                             body_html=html_content,
                             unsubscribe_url=unsubscribe_url or None,
+                            # Рассылки не ставим в очередь повторов: обрыв SMTP
+                            # посреди рассылки забил бы её тысячами писем,
+                            # которые потом сутки долбились бы повторами.
+                            queue_on_failure=False,
                         ),
                     )
                     return success
@@ -994,14 +1052,38 @@ class EmailBroadcastService:
         return sent_count, failed_count, False
 
     @staticmethod
-    def _render_template(template: str, recipient: _EmailRecipient) -> str:
+    def _render_template(template: str, recipient: _EmailRecipient, unsubscribe_url: str = '') -> str:
         """Подставляет переменные в шаблон email."""
         if not template:
             return template
 
         result = template.replace('{{user_name}}', recipient.user_name)
         result = result.replace('{{email}}', recipient.email)
+        result = result.replace('{{unsubscribe_url}}', unsubscribe_url)
         return result
+
+    @staticmethod
+    def render_email(
+        subject: str, html_content: str, recipient: _EmailRecipient, unsubscribe_url: str = ''
+    ) -> tuple[str, str]:
+        """Тема и тело письма рассылки для адресата — ровно то, что уйдёт.
+
+        После подстановки переменных фрагмент HTML встаёт в общую обёртку писем
+        (как шаблоны из редактора: полный документ уходит как есть, стилизованный
+        фрагмент — в минимальной обёртке). Раньше рассылка уходила голым HTML и
+        обходила обёртку, которую админ настроил для всех остальных писем.
+        """
+        from app.cabinet.services.email_templates import EmailNotificationTemplates
+
+        render = EmailBroadcastService._render_template
+        fragment = render(html_content, recipient, unsubscribe_url)
+        body_html = EmailNotificationTemplates()._wrap_override_template(
+            fragment,
+            recipient.language,
+            unsubscribe_url=unsubscribe_url,
+            context={'username': recipient.user_name, 'email': recipient.email, 'unsubscribe_url': unsubscribe_url},
+        )
+        return render(subject, recipient, unsubscribe_url), body_html
 
     async def _mark_finished(
         self,

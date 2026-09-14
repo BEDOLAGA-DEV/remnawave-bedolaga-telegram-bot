@@ -1,6 +1,7 @@
 """Admin routes for managing email notification templates."""
 
 import asyncio
+import re
 from typing import Any
 
 import structlog
@@ -11,8 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import User
 
 from ..dependencies import get_cabinet_db, require_permission
+from ..services.email_layout import (
+    DEFAULT_EMAIL_LAYOUT,
+    EMAIL_LAYOUT_TYPE,
+    LAYOUT_CONTEXT_VARS,
+    extract_content_fragment,
+    layout_is_valid,
+    refresh_email_layout_cache,
+    render_email_layout,
+)
 from ..services.email_template_overrides import (
     COMMON_CONTEXT_VARS,
+    LEGACY_PLACEHOLDER_ALIASES,
+    apply_legacy_aliases,
     build_common_context,
     delete_template_override,
     get_all_overrides,
@@ -21,6 +33,7 @@ from ..services.email_template_overrides import (
     substitute_context_vars,
 )
 from ..services.email_templates import EmailNotificationTemplates
+from ..services.email_type_switch import can_disable_email_type, is_email_type_enabled, set_email_type_enabled
 
 
 logger = structlog.get_logger(__name__)
@@ -30,7 +43,107 @@ router = APIRouter(prefix='/admin/email-templates', tags=['Admin Email Templates
 
 # ============ Template type metadata ============
 
+EDITOR_LANGUAGES = ('ru', 'en', 'zh', 'ua')
+
+# Общая обёртка писем — псевдо-тип в том же редакторе. Не NotificationType:
+# это не письмо, а каркас, в который встают все письма (см. email_layout).
+LAYOUT_TEMPLATE_META: dict[str, Any] = {
+    'type': EMAIL_LAYOUT_TYPE,
+    'label': {
+        'ru': 'Общая обёртка писем',
+        'en': 'Email Layout (all emails)',
+        'zh': '邮件通用外框（所有邮件）',
+        'ua': 'Загальна обгортка листів',
+    },
+    'description': {
+        'ru': 'Каркас всех писем: шапка, стили, подвал. Тело письма встаёт в {content}. '
+        'Если для языка нет своей обёртки, берётся русская; без сохранённой — встроенная.',
+        'en': 'The frame of every email: header, styles, footer. The email body goes into {content}. '
+        'Languages without their own layout use the Russian one; without any saved layout the built-in is used.',
+        'zh': '所有邮件的外框：页眉、样式、页脚。邮件正文放入 {content}。'
+        '没有自己外框的语言使用俄语外框；未保存任何外框时使用内置外框。',
+        'ua': 'Каркас усіх листів: шапка, стилі, підвал. Тіло листа стає у {content}. '
+        'Якщо для мови немає своєї обгортки, береться російська; без збереженої — вбудована.',
+    },
+    'context_vars': LAYOUT_CONTEXT_VARS,
+}
+
+_WEBHOOK_DESCRIPTION = {
+    'ru': 'Уведомление Remnawave: {subject}',
+    'en': 'Remnawave notification: {subject}',
+    'zh': 'Remnawave 通知：{subject}',
+    'ua': 'Сповіщення Remnawave: {subject}',
+}
+_WEBHOOK_SAMPLE_DEVICE = 'iPhone 15'
+
+
+def _webhook_uses_device(kind: str) -> bool:
+    copy = EmailNotificationTemplates.WEBHOOK_EMAIL_COPY[kind]
+    return any('{device}' in copy[lang][1] for lang in EDITOR_LANGUAGES)
+
+
+def _webhook_template_types() -> list[dict[str, Any]]:
+    """Записи редактора для WEBHOOK_* писем.
+
+    Собираются из тех же текстов, что и сами письма (WEBHOOK_EMAIL_KINDS +
+    WEBHOOK_EMAIL_COPY): рукописный список рядом с реестром шаблонов отставал,
+    и 14 уведомлений уходили со стандартным шаблоном без возможности его
+    поменять. Новый вебхук-тип попадает в редактор сам.
+    """
+    copy = EmailNotificationTemplates.WEBHOOK_EMAIL_COPY
+    return [
+        {
+            'type': type_value,
+            'label': {lang: copy[kind][lang][0] for lang in EDITOR_LANGUAGES},
+            'description': {
+                lang: _WEBHOOK_DESCRIPTION[lang].format(subject=copy[kind][lang][0]) for lang in EDITOR_LANGUAGES
+            },
+            'context_vars': ['device'] if _webhook_uses_device(kind) else [],
+        }
+        for type_value, kind in EmailNotificationTemplates.WEBHOOK_EMAIL_KINDS.items()
+    ]
+
+
+def _webhook_sample_contexts() -> dict[str, dict[str, Any]]:
+    return {
+        type_value: ({'device': _WEBHOOK_SAMPLE_DEVICE} if _webhook_uses_device(kind) else {})
+        for type_value, kind in EmailNotificationTemplates.WEBHOOK_EMAIL_KINDS.items()
+    }
+
+
 TEMPLATE_TYPES = [
+    {
+        'type': 'grace_access_granted',
+        'label': {
+            'ru': 'Grace-доступ выдан',
+            'en': 'Grace access granted',
+            'zh': '已发放宽限访问',
+            'ua': 'Grace-доступ надано',
+        },
+        'description': {
+            'ru': 'Подписка закончилась, но на время оставлен доступ к тому, что назвал оператор ({allowed})',
+            'en': 'The subscription ended, but access to what the operator named ({allowed}) is kept for a while',
+            'zh': '订阅已到期，但暂时保留对运营者指定内容（{allowed}）的访问',
+            'ua': 'Підписка закінчилась, але на час залишено доступ до того, що назвав оператор ({allowed})',
+        },
+        'context_vars': ['allowed', 'hours', 'traffic_gb', 'until', 'reason', 'tariff_name'],
+    },
+    {
+        'type': 'grace_access_ended',
+        'label': {
+            'ru': 'Grace-доступ закончился',
+            'en': 'Grace access ended',
+            'zh': '宽限访问已结束',
+            'ua': 'Grace-доступ закінчився',
+        },
+        'description': {
+            'ru': 'Временный доступ закрыт: подписку так и не продлили',
+            'en': 'Temporary access is closed: the subscription was never renewed',
+            'zh': '临时访问已关闭：订阅一直未续订',
+            'ua': 'Тимчасовий доступ закрито: підписку так і не продовжили',
+        },
+        'context_vars': ['allowed', 'hours', 'traffic_gb', 'until', 'reason', 'tariff_name'],
+    },
     {
         'type': 'balance_topup',
         'label': {'ru': 'Пополнение баланса', 'en': 'Balance Top-up', 'zh': '余额充值', 'ua': 'Поповнення балансу'},
@@ -116,6 +229,54 @@ TEMPLATE_TYPES = [
             'ua': 'Сповіщення про активацію підписки',
         },
         'context_vars': ['expires_at', 'tariff_name', 'traffic_limit_gb', 'device_limit'],
+    },
+    {
+        'type': 'winback_expired_1d',
+        'label': {
+            'ru': 'Подписка закончилась (возврат, 1 день)',
+            'en': 'Subscription Ended (Win-back, Day 1)',
+            'zh': '订阅已结束（挽回，第 1 天）',
+            'ua': 'Підписка закінчилася (повернення, 1 день)',
+        },
+        'description': {
+            'ru': 'Письмо через день после окончания подписки',
+            'en': 'Sent one day after the subscription ended',
+            'zh': '订阅结束一天后发送',
+            'ua': 'Лист через день після закінчення підписки',
+        },
+        'context_vars': ['end_date'],
+    },
+    {
+        'type': 'winback_discount',
+        'label': {
+            'ru': 'Скидка на продление (возврат)',
+            'en': 'Renewal Discount (Win-back)',
+            'zh': '续订折扣（挽回）',
+            'ua': 'Знижка на продовження (повернення)',
+        },
+        'description': {
+            'ru': 'Персональная скидка на продление после окончания подписки',
+            'en': 'Personal renewal discount after the subscription ended',
+            'zh': '订阅结束后的个人续订折扣',
+            'ua': 'Персональна знижка на продовження після закінчення підписки',
+        },
+        'context_vars': ['percent', 'expires_at'],
+    },
+    {
+        'type': 'winback_trial_ending',
+        'label': {
+            'ru': 'Пробная подписка скоро закончится',
+            'en': 'Trial Ending Soon',
+            'zh': '试用即将结束',
+            'ua': 'Пробна підписка скоро закінчиться',
+        },
+        'description': {
+            'ru': 'Напоминание за 2 часа до окончания тестовой подписки',
+            'en': 'Reminder 2 hours before the trial ends',
+            'zh': '试用结束前 2 小时提醒',
+            'ua': 'Нагадування за 2 години до кінця тестової підписки',
+        },
+        'context_vars': [],
     },
     {
         'type': 'autopay_success',
@@ -262,6 +423,22 @@ TEMPLATE_TYPES = [
         'context_vars': ['referral_name'],
     },
     {
+        'type': 'referral_welcome',
+        'label': {
+            'ru': 'Приветствие приглашённого',
+            'en': 'Referral Welcome',
+            'zh': '推荐用户欢迎',
+            'ua': 'Привітання запрошеного',
+        },
+        'description': {
+            'ru': 'Письмо новому пользователю, зарегистрировавшемуся по реферальной ссылке',
+            'en': 'Welcome email to a user who signed up via a referral link',
+            'zh': '通过推荐链接注册的新用户的欢迎邮件',
+            'ua': 'Лист новому користувачу, який зареєструвався за реферальним посиланням',
+        },
+        'context_vars': ['referrer_name', 'bonus_promise'],
+    },
+    {
         'type': 'traffic_reset',
         'label': {'ru': 'Сброс трафика', 'en': 'Traffic Reset', 'zh': '流量重置', 'ua': 'Скидання трафіку'},
         'description': {
@@ -282,6 +459,17 @@ TEMPLATE_TYPES = [
             'ua': 'Сповіщення про отримання платежу',
         },
         'context_vars': ['formatted_amount', 'payment_method'],
+    },
+    {
+        'type': 'ticket_reply',
+        'label': {'ru': 'Ответ поддержки', 'en': 'Support Reply', 'zh': '工单回复', 'ua': 'Відповідь підтримки'},
+        'description': {
+            'ru': 'Ответ поддержки в тикете — уходит юзерам без Telegram',
+            'en': 'Support reply in a ticket — sent to users without Telegram',
+            'zh': '工单中的支持回复 — 发送给没有 Telegram 的用户',
+            'ua': 'Відповідь підтримки в тікеті — надходить юзерам без Telegram',
+        },
+        'context_vars': ['ticket_id', 'reply_preview'],
     },
     {
         'type': 'email_verification',
@@ -461,9 +649,117 @@ TEMPLATE_TYPES = [
         },
         'context_vars': ['tariff_name', 'period_days', 'cabinet_url', 'cabinet_email', 'cabinet_password'],
     },
+    {
+        'type': 'promo_offer',
+        'label': {
+            'ru': 'Персональное предложение',
+            'en': 'Personal Offer',
+            'zh': '专属优惠',
+            'ua': 'Персональна пропозиція',
+        },
+        'description': {
+            'ru': 'Промо-предложение, отправленное пользователю из админки',
+            'en': 'Promo offer sent to the user from the admin panel',
+            'zh': '从管理面板发送给用户的促销优惠',
+            'ua': 'Промопропозиція, надіслана користувачу з адмінки',
+        },
+        'context_vars': ['message_html', 'valid_hours', 'discount_percent'],
+    },
+    {
+        'type': 'nalogo_receipt',
+        'label': {
+            'ru': 'Чек NaloGO по платежу',
+            'en': 'NaloGO Payment Receipt',
+            'zh': 'NaloGO 付款收据',
+            'ua': 'Чек NaloGO за платежем',
+        },
+        'description': {
+            'ru': 'Чек из сервиса «Мой налог» после оплаты: файл во вложении, ссылка в тексте',
+            'en': 'Receipt from the “Moy Nalog” service after a payment: file attached, link in the text',
+            'zh': '付款后来自“Мой налог”服务的收据：附件文件，正文含链接',
+            'ua': 'Чек із сервісу «Мой налог» після оплати: файл у вкладенні, посилання в тексті',
+        },
+        'context_vars': ['amount', 'receipt_url'],
+    },
+    {
+        'type': 'guest_gift_link_buyer',
+        'label': {
+            'ru': 'Ссылка на подарок покупателю',
+            'en': 'Gift Link for the Buyer',
+            'zh': '发给购买者的礼物链接',
+            'ua': 'Посилання на подарунок покупцю',
+        },
+        'description': {
+            'ru': 'Письмо покупателю подарка со ссылкой на активацию, чтобы переслать получателю',
+            'en': 'Sent to the gift buyer with the claim link to forward to the recipient',
+            'zh': '发送给礼物购买者，附带可转发给接收者的领取链接',
+            'ua': 'Лист покупцю подарунка з посиланням на активацію, щоб переслати отримувачу',
+        },
+        'context_vars': ['claim_url', 'tariff_name', 'period_days'],
+    },
+    *_webhook_template_types(),
 ]
 
+# Плейсхолдеры, без которых письмо бесполезно: шаблон без них редактор не
+# сохраняет (раньше бот молча подменял такой override стандартным письмом).
+REQUIRED_PLACEHOLDERS: dict[str, list[str]] = {
+    'email_verification': ['verification_url'],
+    'password_reset': ['reset_url'],
+    'email_change_code': ['code'],
+    'guest_cabinet_credentials': ['cabinet_email', 'cabinet_password'],
+}
+
+
+_PLACEHOLDER_RE = re.compile(r'\{([a-z_]+)\}')
+
+
+def _unknown_placeholders(notification_type: str, subject: str, body_html: str) -> list[str]:
+    """Плейсхолдеры, которых бот не подставит: опечатка ушла бы в письмо литералом."""
+    type_meta = _get_type_meta(notification_type) or {}
+    known = set(type_meta.get('context_vars', [])) | set(COMMON_CONTEXT_VARS) | set(LEGACY_PLACEHOLDER_ALIASES)
+    if notification_type == EMAIL_LAYOUT_TYPE:
+        known |= set(LAYOUT_CONTEXT_VARS)
+    used = set(_PLACEHOLDER_RE.findall(subject)) | set(_PLACEHOLDER_RE.findall(body_html))
+    return sorted(used - known)
+
+
+def _missing_required_placeholders(notification_type: str, subject: str, body_html: str) -> list[str]:
+    return [
+        var
+        for var in REQUIRED_PLACEHOLDERS.get(notification_type, [])
+        if f'{{{var}}}' not in body_html and f'{{{var}}}' not in subject
+    ]
+
+
+# Список редактора: обёртка первой, дальше типы писем.
+EDITOR_TEMPLATE_TYPES: list[dict[str, Any]] = [LAYOUT_TEMPLATE_META, *TEMPLATE_TYPES]
+
+# Пример письма для превью обёртки — без плейсхолдеров, чтобы превью показывало
+# ровно этот фрагмент внутри каркаса.
+SAMPLE_LAYOUT_CONTENT = (
+    '<h2>Пример письма</h2>'
+    '<div class="highlight"><p>Здесь будет текст уведомления — тема и содержимое зависят от типа письма.</p></div>'
+    '<p style="text-align: center;"><a href="#" class="button">Открыть личный кабинет</a></p>'
+)
+
 SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
+    'grace_access_granted': {
+        'allowed': 'Telegram и личный кабинет',
+        'hours': 72,
+        'traffic_gb': '1',
+        'until': '17.09.2026 12:00',
+        'reason': 'expired',
+        'tariff_name': 'Стартовый',
+    },
+    'grace_access_ended': {
+        'allowed': 'Telegram и личный кабинет',
+        'hours': 72,
+        'traffic_gb': '1',
+        'until': '17.09.2026 12:00',
+        'reason': 'expired',
+        'tariff_name': 'Стартовый',
+    },
+    EMAIL_LAYOUT_TYPE: {'content': SAMPLE_LAYOUT_CONTENT},
     'balance_topup': {
         'formatted_amount': '500.00 ₽',
         'formatted_balance': '1500.00 ₽',
@@ -518,8 +814,10 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
         'level': 2,
     },
     'referral_registered': {'referral_name': 'John'},
+    'referral_welcome': {'referrer_name': 'John', 'bonus_promise': '100.00 ₽ при первом пополнении от 500.00 ₽'},
     'traffic_reset': {'reset_gb': 50, 'current_limit_gb': 100},
     'payment_received': {'formatted_amount': '500.00 ₽', 'amount_rubles': 500, 'payment_method': 'YooKassa'},
+    'ticket_reply': {'ticket_id': 42, 'reply_preview': 'Проверьте настройки подключения', 'has_photo': False},
     'email_verification': {
         'username': 'John',
         'verification_url': 'https://example.com/verify?token=abc123',
@@ -560,6 +858,25 @@ SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
         'cabinet_email': 'user@example.com',
         'cabinet_password': 'SecurePass123',
     },
+    'winback_expired_1d': {'end_date': '30.01.2026, 23:59'},
+    'winback_discount': {'percent': 20, 'expires_at': '05.02.2026, 23:59'},
+    'winback_trial_ending': {},
+    'promo_offer': {
+        'message_html': 'Вернитесь и получите <b>скидку 20%</b> на любой тариф.',
+        'valid_hours': 24,
+        'discount_percent': 20,
+    },
+    'nalogo_receipt': {
+        'amount': '500.00 ₽',
+        'receipt_url': 'https://lknpd.nalog.ru/api/v1/receipt/123456789012/20260904abc/print',
+        'has_attachment': True,
+    },
+    'guest_gift_link_buyer': {
+        'claim_url': 'https://example.com/buy/gift/abc123',
+        'tariff_name': 'Premium',
+        'period_days': 30,
+    },
+    **_webhook_sample_contexts(),
 }
 
 AVAILABLE_LANGUAGES = ['ru', 'en', 'zh', 'ua', 'fa']
@@ -570,16 +887,22 @@ COMMON_SAMPLE_CONTEXT = {'username': 'John', 'email': 'user@example.com'}
 
 
 def _build_sample_context(notification_type: str) -> dict[str, Any]:
-    """Common (real instance values) + recipient samples + per-type samples."""
-    return {
-        **build_common_context(),
-        **COMMON_SAMPLE_CONTEXT,
-        **SAMPLE_CONTEXTS.get(notification_type, {}),
-    }
+    """Common (real instance values) + recipient samples + per-type samples.
+
+    Старые имена плейсхолдеров подставляются так же, как при отправке, — иначе
+    тестовое письмо показывало «{amount}» литералом там, где боевое работало.
+    """
+    return apply_legacy_aliases(
+        {
+            **build_common_context(),
+            **COMMON_SAMPLE_CONTEXT,
+            **SAMPLE_CONTEXTS.get(notification_type, {}),
+        }
+    )
 
 
 def _get_type_meta(notification_type: str) -> dict[str, Any] | None:
-    return next((t for t in TEMPLATE_TYPES if t['type'] == notification_type), None)
+    return next((t for t in EDITOR_TEMPLATE_TYPES if t['type'] == notification_type), None)
 
 
 def _validate_template_type(notification_type: str) -> dict[str, Any]:
@@ -596,7 +919,7 @@ def _validate_template_type(notification_type: str) -> dict[str, Any]:
 # f'{context.get("amount_rubles", 0):.2f}', which raises on a string placeholder.
 # Omitted from the placeholder context — defaults render via formatted_* anyway,
 # and at send time the real numeric values substitute {amount_rubles} fine.
-_NUMERIC_FALLBACK_VARS = {'amount_rubles', 'new_balance_rubles', 'bonus_rubles'}
+_NUMERIC_FALLBACK_VARS = {'amount_rubles', 'new_balance_rubles', 'bonus_rubles', 'valid_hours', 'discount_percent'}
 
 
 def _placeholder_context(notification_type: str) -> dict[str, Any]:
@@ -616,6 +939,13 @@ def _placeholder_context(notification_type: str) -> dict[str, Any]:
 def _get_default_template(notification_type: str, language: str, context: dict[str, Any]) -> dict[str, str] | None:
     """Render the built-in default template, or None if unavailable."""
     from app.services.notification_delivery_service import NotificationType
+
+    if notification_type == EMAIL_LAYOUT_TYPE:
+        # Обёртка без маркеров тела: редактор показывает её как есть, с {content}.
+        return {
+            'subject': '',
+            'body_html': render_email_layout(DEFAULT_EMAIL_LAYOUT, language, context, mark_content=False),
+        }
 
     try:
         ntype_enum = NotificationType(notification_type)
@@ -642,6 +972,12 @@ class EmailTemplateUpdate(BaseModel):
 
     subject: str = Field(..., min_length=1, max_length=500)
     body_html: str = Field(..., min_length=1)
+
+
+class EmailTemplateEnabledRequest(BaseModel):
+    """Включить/выключить отправку писем этого типа."""
+
+    enabled: bool
 
 
 class EmailTemplatePreviewRequest(BaseModel):
@@ -685,7 +1021,7 @@ async def list_template_types(
         override_map[ntype][o['language']] = o['is_active']
 
     result = []
-    for tpl_type in TEMPLATE_TYPES:
+    for tpl_type in EDITOR_TEMPLATE_TYPES:
         type_key = tpl_type['type']
         languages = {}
         for lang in AVAILABLE_LANGUAGES:
@@ -696,6 +1032,8 @@ async def list_template_types(
             {
                 **tpl_type,
                 'languages': languages,
+                'enabled': is_email_type_enabled(type_key),
+                'can_disable': can_disable_email_type(type_key),
             }
         )
 
@@ -736,6 +1074,10 @@ async def get_templates_for_type(
         if default_template:
             default_subject = default_template.get('subject', '')
             default_body_html = default_template.get('body_html', '')
+            # Редактор правит тело письма, а не обёртку: отдаём фрагмент по
+            # маркерам, чтобы вырезание не зависело от разметки обёртки.
+            if notification_type != EMAIL_LAYOUT_TYPE:
+                default_body_html = extract_content_fragment(default_body_html) or default_body_html
 
         # Check for override
         override = override_map.get(lang)
@@ -761,7 +1103,10 @@ async def get_templates_for_type(
         'label': type_meta['label'],
         'description': type_meta['description'],
         'context_vars': type_meta['context_vars'],
+        'required_vars': REQUIRED_PLACEHOLDERS.get(notification_type, []),
         'common_context_vars': COMMON_CONTEXT_VARS,
+        'enabled': is_email_type_enabled(notification_type),
+        'can_disable': can_disable_email_type(notification_type),
         'languages': languages,
     }
 
@@ -783,19 +1128,66 @@ async def update_template(
             detail=f'Invalid language: {language}. Available: {AVAILABLE_LANGUAGES}',
         )
 
+    unknown = _unknown_placeholders(notification_type, data.subject, data.body_html)
+    if unknown:
+        listed = ', '.join(f'{{{var}}}' for var in unknown)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Неизвестные плейсхолдеры: {listed} — бот их не подставит, и они уйдут в письмо как есть',
+        )
+    missing = _missing_required_placeholders(notification_type, data.subject, data.body_html)
+    if missing:
+        listed = ', '.join(f'{{{var}}}' for var in missing)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'В шаблоне нет обязательных плейсхолдеров: {listed} — без них письмо бесполезно',
+        )
+    is_layout = notification_type == EMAIL_LAYOUT_TYPE
+    if is_layout and not layout_is_valid(data.body_html):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='В обёртке нет плейсхолдера {content} — без него письма остались бы без текста',
+        )
     result = await save_template_override(
         notification_type=notification_type,
         language=language,
-        subject=data.subject,
+        # У обёртки нет темы — колонка обязательная, кладём имя типа.
+        subject=EMAIL_LAYOUT_TYPE if is_layout else data.subject,
         body_html=data.body_html,
         db=db,
     )
+    if is_layout:
+        await refresh_email_layout_cache(db, force=True)
 
     logger.info(
         'Админ обновил email шаблон /', admin_id=admin.id, notification_type=notification_type, language=language
     )
 
     return {'status': 'ok', 'template': result}
+
+
+@router.patch('/{notification_type}/enabled', summary='Enable or disable sending emails of a type')
+async def set_template_enabled(
+    notification_type: str,
+    data: EmailTemplateEnabledRequest,
+    admin: User = Depends(require_permission('email_templates:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """Выключатель писем по типу: отключённое письмо не отправляется никому."""
+    _validate_template_type(notification_type)
+    if not data.enabled and not can_disable_email_type(notification_type):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Это письмо нельзя отключить: без него пользователь не сможет войти или получить купленное',
+        )
+    disabled = await set_email_type_enabled(db, notification_type, data.enabled)
+    logger.info(
+        'Админ переключил отправку email-типа',
+        admin_id=admin.id,
+        notification_type=notification_type,
+        enabled=data.enabled,
+    )
+    return {'status': 'ok', 'enabled': notification_type not in disabled, 'disabled_types': sorted(disabled)}
 
 
 @router.delete('/{notification_type}/{language}', summary='Reset template to default')
@@ -809,6 +1201,8 @@ async def reset_template(
     _validate_template_type(notification_type)
 
     deleted = await delete_template_override(notification_type, language, db)
+    if notification_type == EMAIL_LAYOUT_TYPE:
+        await refresh_email_layout_cache(db, force=True)
 
     if deleted:
         logger.info(
@@ -836,12 +1230,20 @@ async def preview_template(
 
     language = data.language if data.language in AVAILABLE_LANGUAGES else 'ru'
     sample_context = _build_sample_context(notification_type)
+    # Превью письма идёт в сохранённой обёртке — подтянуть её, если кэш устарел.
+    await refresh_email_layout_cache()
 
-    if data.body_html:
+    if notification_type == EMAIL_LAYOUT_TYPE and data.body_html:
+        # Превью самой обёртки: пример письма встаёт в {content} как HTML.
+        rendered_html = render_email_layout(data.body_html, language, sample_context)
+        subject = ''
+    elif data.body_html:
         # Preview custom content — substitute sample values, then wrap
         # (auto-detects styled vs simple HTML)
         body_html = substitute_context_vars(data.body_html, sample_context)
-        rendered_html = EmailNotificationTemplates()._wrap_override_template(body_html, language)
+        rendered_html = EmailNotificationTemplates()._wrap_override_template(
+            body_html, language, context=sample_context
+        )
         subject = substitute_context_vars(data.subject, sample_context, escape=False) or notification_type
     else:
         # Preview default template
@@ -886,11 +1288,16 @@ async def send_test_email(
 
     language = data.language if data.language in AVAILABLE_LANGUAGES else 'ru'
     sample_context = _build_sample_context(notification_type)
+    await refresh_email_layout_cache(db)
 
-    if data.body_html:
+    if notification_type == EMAIL_LAYOUT_TYPE and data.body_html:
+        # Тест самой обёртки (возможно, несохранённой): пример письма внутри.
+        body_html = render_email_layout(data.body_html, language, sample_context)
+        subject = notification_type
+    elif data.body_html:
         # Test the current editor content (possibly unsaved)
         body_html = substitute_context_vars(data.body_html, sample_context)
-        body_html = EmailNotificationTemplates()._wrap_override_template(body_html, language)
+        body_html = EmailNotificationTemplates()._wrap_override_template(body_html, language, context=sample_context)
         subject = substitute_context_vars(data.subject, sample_context, escape=False) or notification_type
     else:
         # Check for DB override (get_rendered_override substitutes sample context vars)

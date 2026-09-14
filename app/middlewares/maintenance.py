@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject, User as TgUser
 
 from app.config import settings
 from app.services.maintenance_service import maintenance_service
+from app.utils.telegram_delivery import is_user_unreachable
 
 
 logger = structlog.get_logger(__name__)
@@ -18,8 +19,6 @@ logger = structlog.get_logger(__name__)
 _EXPECTED_NOTIFY_ERRORS = (
     'query is too old',
     'query id is invalid',
-    'chat not found',
-    'user is deactivated',
 )
 
 
@@ -62,7 +61,7 @@ class MaintenanceMiddleware(BaseMiddleware):
         except TelegramForbiddenError as e:
             logger.debug('Сообщение о техработах не доставлено: бот заблокирован', user_id=user.id, error=str(e))
         except TelegramBadRequest as e:
-            if any(marker in str(e).lower() for marker in _EXPECTED_NOTIFY_ERRORS):
+            if is_user_unreachable(e) or any(marker in str(e).lower() for marker in _EXPECTED_NOTIFY_ERRORS):
                 logger.debug(
                     'Сообщение о техработах не доставлено (устаревший callback/недоступный чат)',
                     user_id=user.id,

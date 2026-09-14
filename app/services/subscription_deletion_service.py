@@ -110,13 +110,15 @@ async def delete_subscription_record(
             from app.services.subscription_service import SubscriptionService
 
             service = SubscriptionService()
-            if panel_deletable:
+            # ``REMNAWAVE_USER_DELETE_MODE=disable`` — аккаунт в панели не удаляем
+            # никогда, даже когда он принадлежит только этой подписке.
+            if panel_deletable and settings.get_remnawave_user_delete_mode() == 'delete':
                 RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_user_ids=[panel_user_id])
                 await service.delete_remnawave_user(panel_user_id)
             else:
-                # Общий аккаунт однотарифного режима: доступ снимаем, но сам
-                # аккаунт оставляем — на него ещё смотрит users.remnawave_id,
-                # и следующая покупка переиспользует его же.
+                # Общий аккаунт однотарифного режима (или режим disable): доступ
+                # снимаем, но сам аккаунт оставляем — на него ещё смотрит
+                # users.remnawave_id, и следующая покупка переиспользует его же.
                 await service.disable_remnawave_user(panel_user_id, db=db)
         except Exception as error:
             logger.warning('Failed to delete RemnaWave user on subscription delete', error=error)

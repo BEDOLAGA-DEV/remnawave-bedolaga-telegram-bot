@@ -103,19 +103,14 @@ git clone https://github.com/Fr1ngg/remnawave-bedolaga-telegram-bot.git
 cd remnawave-bedolaga-telegram-bot
 ```
 
-2. **Создайте виртуальное окружение:**
+2. **Поставьте зависимости:**
 ```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# или
-venv\Scripts\activate  # Windows
+uv sync --group dev
 ```
 
-3. **Установите зависимости:**
-```bash
-pip install -r requirements.txt
-pip install -r requirements-dev.txt  # если есть dev зависимости
-```
+`uv` сам создаст `.venv` и поставит версии из `uv.lock` — те же, что в Docker
+и в CI. Активировать окружение вручную не нужно: команды запускаются через
+`uv run` (`uv run pytest`, `uv run ruff check .`).
 
 4. **Настройте окружение:**
 ```bash
@@ -140,11 +135,18 @@ bedolaga_bot/
 │   ├── utils/              # Утилиты
 │   ├── middlewares/        # Middleware
 │   └── external/           # Внешние API
-├── migrations/             # Миграции БД (если нужны)
-├── tests/                  # Тесты (создать при необходимости)
+├── migrations/             # Миграции БД (alembic)
+├── scripts/                # Служебные скрипты (генераторы, бэкфилы)
+├── tests/                  # Тесты (pytest)
 ├── docs/                   # Документация
-└── requirements.txt        # Зависимости
+├── pyproject.toml          # Зависимости и настройки инструментов
+└── uv.lock                 # Зафиксированные версии
 ```
+
+Полная карта модулей с классами и функциями —
+[docs/project_structure_reference.md](docs/project_structure_reference.md).
+Она собирается из кода: `make docs-structure`. Править руками не нужно, за
+свежестью следит тест.
 
 ## 🎨 Стандарты кода
 
@@ -158,16 +160,15 @@ async def get_user_subscription(user_id: int) -> Optional[Subscription]:
     """Получает активную подписку пользователя."""
     async with get_session() as session:
         result = await session.execute(
-            select(Subscription)
-            .where(Subscription.user_id == user_id)
-            .where(Subscription.is_active == True)
+            select(Subscription).where(Subscription.user_id == user_id).where(Subscription.is_active == True)
         )
         return result.scalar_one_or_none()
+
 
 # ❌ Плохо
 async def getUserSub(uid):
     session = get_session()
-    sub = session.query(Subscription).filter(Subscription.user_id==uid,Subscription.is_active==True).first()
+    sub = session.query(Subscription).filter(Subscription.user_id == uid, Subscription.is_active == True).first()
     return sub
 ```
 
@@ -185,11 +186,8 @@ async def getUserSub(uid):
 ```python
 from typing import Optional, List, Dict, Any
 
-async def create_subscription(
-    user_id: int, 
-    duration_days: int,
-    traffic_limit_gb: Optional[int] = None
-) -> Subscription:
+
+async def create_subscription(user_id: int, duration_days: int, traffic_limit_gb: Optional[int] = None) -> Subscription:
     """Создает новую подписку."""
     # implementation
 ```
@@ -216,20 +214,20 @@ pricing = PricingEngine.calculate_renewal_price(
 # ✅ Хорошо
 try:
     subscription = await subscription_service.create_subscription(user_id, data)
-    await message.answer("✅ Подписка создана успешно!")
+    await message.answer('✅ Подписка создана успешно!')
 except RemnaWaveAPIError as e:
-    logger.error(f"RemnaWave API error: {e}")
-    await message.answer("❌ Ошибка при создании подписки. Попробуйте позже.")
+    logger.error(f'RemnaWave API error: {e}')
+    await message.answer('❌ Ошибка при создании подписки. Попробуйте позже.')
 except ValidationError as e:
-    logger.warning(f"Validation error: {e}")
-    await message.answer("❌ Некорректные данные для создания подписки.")
+    logger.warning(f'Validation error: {e}')
+    await message.answer('❌ Некорректные данные для создания подписки.')
 
 # ❌ Плохо
 try:
     subscription = await subscription_service.create_subscription(user_id, data)
-    await message.answer("✅ Подписка создана успешно!")
+    await message.answer('✅ Подписка создана успешно!')
 except:
-    await message.answer("Ошибка")
+    await message.answer('Ошибка')
 ```
 
 ### Логирование
@@ -240,11 +238,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Уровни логирования
-logger.debug("Детальная информация для отладки")
-logger.info("Общая информация о работе")
-logger.warning("Предупреждение о потенциальной проблеме") 
-logger.error("Ошибка, которая не прерывает работу")
-logger.critical("Критическая ошибка")
+logger.debug('Детальная информация для отладки')
+logger.info('Общая информация о работе')
+logger.warning('Предупреждение о потенциальной проблеме')
+logger.error('Ошибка, которая не прерывает работу')
+logger.critical('Критическая ошибка')
 ```
 
 ## 🔄 Работа с Git
@@ -318,14 +316,66 @@ git checkout -b feature/new-payment-method
 
 ## 🧪 Тестирование
 
-### Локальное тестирование
+### Локальный прогон
 
 ```bash
-# Запуск с тестовой базой
-export DATABASE_URL="sqlite:///test.db"
-export BOT_TOKEN="test_token"
-python main.py
+make test            # весь набор
+uv run pytest tests/services/test_pricing_engine.py -q   # один файл
 ```
+
+### Тесты на настоящем PostgreSQL
+
+Часть гарантий на SQLite проверить нельзя в принципе: он молча игнорирует
+`SELECT ... FOR UPDATE`, не проверяет длину `VARCHAR(n)` и не хранит часовой
+пояс. Блокировки строк, конкурентная доставка вебхуков и ограничения схемы
+проверяются на том же движке, что и в проде.
+
+```bash
+make pg-test-up      # поднять PostgreSQL 15 на порту 55433
+make test-postgres   # только тесты с маркером postgres
+make test-all        # весь набор вместе с ними
+make pg-test-down    # убрать контейнер
+```
+
+Такие тесты помечены `@pytest.mark.postgres` и берут базу из
+`TEST_DATABASE_URL`. Без этой переменной они **пропускаются** — чтобы
+окружение без PostgreSQL не роняло прогон. В CI пропуск запрещён:
+переменная `REQUIRE_POSTGRES_TESTS=1` превращает его в падение, иначе
+отвалившаяся база выглядела бы как зелёный пайплайн.
+
+Схема создаётся `Base.metadata.create_all` — ровно так, как её получает
+свежая боевая база (`app/database/migrations.py` на пустой БД делает
+`create_all` и `alembic stamp head`, а не прогон цепочки миграций).
+
+### Зелёный тест — ещё не работающий тест
+
+Прежде чем отчитываться о покрытии, сломайте проверяемое поведение и
+убедитесь, что тест падает. Тест, который не падает ни на одной мутации,
+не проверяет ничего.
+
+Двух вещей мало по отдельности, нужны обе:
+
+1. **Мутация должна убивать тест.** Снимите `FOR UPDATE`, уберите сверку суммы,
+   расширьте `VARCHAR` — тест обязан покраснеть.
+2. **Падать он должен по существу.** Если тест ломается на своей же
+   синхронизации, из отчёта пропадает главное. Утверждение «баланс зачислен
+   дважды» ценнее, чем «инструментовка не дождалась соперника», поэтому
+   денежные проверки идут раньше служебных.
+
+И отдельно: тест, который повторяет проверяемую логику своим кодом, слеп к
+порядку операций в настоящей функции. Поэтому рядом с проверками примитивов
+(`tests/database/test_payment_locking_postgres.py`) лежат сквозные, где
+вызывается сам боевой обработчик
+(`tests/database/test_payment_callback_concurrency_postgres.py`). Первые
+показали, что блокировка работает; вторые — что обработчик ею пользуется
+правильно.
+
+### Версии в CI
+
+Одно действие — одна версия во всех workflow, версия Python совпадает с
+`requires-python`, образ PostgreSQL — с `docker-compose.yml`. Это проверяется
+тестами в `tests/ci/`, потому что глазами разнобой не ловится: он копится по
+одному новому workflow за раз.
 
 ### Тестирование компонентов
 
@@ -333,6 +383,7 @@ python main.py
 # tests/services/test_pricing_engine.py
 import pytest
 from app.services.pricing_engine import PricingEngine
+
 
 def test_calculate_renewal_price():
     pricing = PricingEngine.calculate_renewal_price(

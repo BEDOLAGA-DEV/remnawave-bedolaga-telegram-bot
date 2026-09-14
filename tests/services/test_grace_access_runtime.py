@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 
 from app.database.models import GraceAccessSessionModel
 from app.external.remnawave_api import (
@@ -17,7 +18,9 @@ from app.external.remnawave_api import (
 from app.services.grace_access_runtime import (
     GraceSnapshotError,
     RemnawaveGracePanelGateway,
+    _build_billing_target,
     _model_to_session,
+    _panel_matches_target,
     _PanelTarget,
     _serialize_panel_target,
     _session_to_model,
@@ -784,3 +787,537 @@ async def test_get_open_no_longer_explodes_on_a_session_without_panel_id(monkeyp
 
         assert session is not None
         assert session.remnawave_id == PANEL_ID
+
+
+# ==================== истёкший снимок: без DISABLED, панель гасит сама ====================
+#
+# Жалоба владельца (2026-09-14): «грейс не работает от слова совсем». На стенде
+# (remnawave/backend:3 = 3.4.3) выдача работала, а вот конец грейса — нет:
+# восстановление истёкшего снимка слало ``status=DISABLED``. Если согласователь
+# успевал раньше планировщика панели, аккаунт становился DISABLED, вебхук
+# ``user.modified`` переносил это в бота как «отключена администратором», и
+# кабинет отказывал в продлении. Если панель гасила первой, PATCH DISABLED на
+# EXPIRED панель молча игнорировала — но дата грейса оставалась в панели,
+# импорт «панель — истина» двигал дату окончания в боте на конец грейса, воркер
+# видел «только что истекла» и выдавал грейс заново. Бесконечно, раз в 72 часа.
+#
+# Правило теперь общее с panel_sync: истёкшей подписке статус не шлём, панель
+# гасит аккаунт сама; бот восстанавливает лимит и сквады и ждёт (RESTORING),
+# пока панель не выведет EXPIRED. Дата, которую грейс оставил в панели,
+# запоминается на подписке (``grace_tail_expire_at``) и в бота не импортируется.
+
+
+def make_expired_snapshot() -> GracePanelSnapshot:
+    return GracePanelSnapshot(
+        remnawave_id=PANEL_ID,
+        status='EXPIRED',
+        expire_at=NOW - timedelta(days=1),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+
+def make_timed_out_overlay() -> GracePanelOverlay:
+    """Оверлей, срок которого только что прошёл: планировщик панели ещё не сработал."""
+    return GracePanelOverlay(
+        status='ACTIVE',
+        expire_at=NOW - timedelta(seconds=30),
+        traffic_limit_bytes=11 * GIB,
+        squad_uuids=(GRACE_SQUAD,),
+        external_squad_uuid=None,
+    )
+
+
+def make_expired_billing() -> GraceBillingState:
+    return GraceBillingState(
+        subscription_id=42,
+        remnawave_id=PANEL_ID,
+        status='expired',
+        end_at=NOW - timedelta(days=1),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=10 * GIB,
+        device_limit=4,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=EXTERNAL_SQUAD,
+    )
+
+
+def assert_no_disable_writes(api: FakeRemnawaveApi) -> None:
+    assert all(update.get('status') is not UserStatus.DISABLED for update in api.updates), api.updates
+
+
+@pytest.mark.asyncio
+async def test_restore_expired_snapshot_never_disables_and_waits_for_the_panel_to_expire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_timed_out_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+    gateway = RemnawaveGracePanelGateway()
+
+    with pytest.raises(GracePanelTransitionPending):
+        await gateway.restore_snapshot(PANEL_ID, snapshot, overlay)
+
+    assert_no_disable_writes(api)
+    assert_no_derived_status_writes(api)
+    assert len(api.updates) == 1
+    assert 'expire_at' not in api.updates[0], 'дата уже прошла — двигать её нечего'
+    assert api.user.status is UserStatus.ACTIVE
+    assert api.user.traffic_limit_bytes == snapshot.traffic_limit_bytes
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+
+    api.user.status = UserStatus.EXPIRED
+    outcome = await gateway.restore_snapshot(PANEL_ID, snapshot, overlay)
+
+    assert outcome is GraceRestoreOutcome.ALREADY_RESTORED
+    assert len(api.updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_restore_expired_snapshot_from_a_panel_that_already_expired_is_one_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_timed_out_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.EXPIRED,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().restore_snapshot(PANEL_ID, snapshot, overlay)
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert_no_disable_writes(api)
+    assert_no_derived_status_writes(api)
+    assert len(api.updates) == 1
+    assert 'status' not in api.updates[0]
+    assert api.user.status is UserStatus.EXPIRED
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.traffic_limit_bytes == snapshot.traffic_limit_bytes
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+
+
+@pytest.mark.asyncio
+async def test_early_restore_of_expired_snapshot_extinguishes_the_far_future_grace_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Аварийный restore-all и конфликты закрывают грейс до срока: панель ещё ACTIVE
+    с датой через несколько дней. Прошедшую дату PATCH не примет, DISABLED — это
+    «отключена админом»; остаётся общее правило гашения: ближайший допустимый момент."""
+    snapshot = make_expired_snapshot()
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    with pytest.raises(GracePanelTransitionPending):
+        await RemnawaveGracePanelGateway().restore_snapshot(PANEL_ID, snapshot, overlay)
+
+    assert_no_disable_writes(api)
+    assert len(api.updates) == 1
+    sent = api.updates[0]['expire_at']
+    assert timedelta(minutes=4) <= sent - datetime.now(UTC) <= timedelta(minutes=6)
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+
+
+@pytest.mark.asyncio
+async def test_restore_of_a_truly_disabled_snapshot_still_disables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = GracePanelSnapshot(
+        remnawave_id=PANEL_ID,
+        status='DISABLED',
+        expire_at=NOW + timedelta(days=20),
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=1 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=None,
+    )
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().restore_snapshot(PANEL_ID, snapshot, overlay)
+
+    assert outcome is GraceRestoreOutcome.RESTORED
+    assert api.updates[0]['status'] is UserStatus.DISABLED
+
+
+@pytest.mark.asyncio
+async def test_restore_expired_snapshot_does_not_touch_an_unrelated_panel_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = make_expired_snapshot()
+    overlay = make_timed_out_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=NOW + timedelta(days=40),
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=(OTHER_SQUAD,),
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    outcome = await RemnawaveGracePanelGateway().restore_snapshot(PANEL_ID, snapshot, overlay)
+
+    assert outcome is GraceRestoreOutcome.CONFLICT
+    assert api.updates == []
+
+
+@pytest.mark.asyncio
+async def test_restore_expired_snapshot_records_the_grace_tail_on_the_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Дата, оставшаяся в панели после грейса, запоминается на подписке — по ней
+    импорт отличит хвост грейса от настоящего продления в панели."""
+    from sqlalchemy import select
+
+    from app.database.models import Base, Subscription, User
+    from tests.fixtures.sqlite_memory import memory_session
+
+    snapshot = make_expired_snapshot()
+    overlay = make_timed_out_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.EXPIRED,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        db.add(User(id=1, telegram_id=1001, first_name='U', language='ru', status='active', balance_kopeks=0))
+        db.add(
+            Subscription(
+                id=42,
+                remnawave_short_id='sub42',
+                user_id=1,
+                status='expired',
+                is_trial=False,
+                start_date=NOW - timedelta(days=31),
+                end_date=NOW - timedelta(days=1),
+                traffic_limit_gb=10,
+                traffic_used_gb=10.0,
+                device_limit=4,
+                connected_squads=[REGULAR_SQUAD],
+            )
+        )
+        await db.commit()
+
+        outcome = await RemnawaveGracePanelGateway(db=db, subscription_id=42).restore_snapshot(
+            PANEL_ID, snapshot, overlay
+        )
+        await db.commit()
+
+        assert outcome is GraceRestoreOutcome.RESTORED
+        stored = (await db.execute(select(Subscription.grace_tail_expire_at).where(Subscription.id == 42))).scalar_one()
+        assert stored is not None
+        assert abs((stored.replace(tzinfo=UTC) - overlay.expire_at).total_seconds()) < 1
+        end_date = (await db.execute(select(Subscription.end_date).where(Subscription.id == 42))).scalar_one()
+        assert end_date.replace(tzinfo=UTC) == NOW - timedelta(days=1), 'дата окончания в боте не трогается'
+
+
+@pytest.mark.asyncio
+async def test_apply_expired_billing_state_never_disables_and_waits_for_the_panel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Конфликт посреди грейса у истёкшей подписки: канон панели для неё — EXPIRED,
+    который панель выводит сама; DISABLED значил бы «отключена админом»."""
+    billing = make_expired_billing()
+    overlay = make_overlay()
+    api = FakeRemnawaveApi(
+        make_panel_user(
+            status=UserStatus.ACTIVE,
+            expire_at=overlay.expire_at,
+            traffic_limit_bytes=overlay.traffic_limit_bytes,
+            squad_uuids=overlay.squad_uuids,
+        )
+    )
+    install_fake_api(monkeypatch, api)
+    gateway = RemnawaveGracePanelGateway()
+
+    with pytest.raises(GracePanelTransitionPending):
+        await gateway.apply_billing_state(billing, expected_overlay=overlay)
+
+    assert_no_disable_writes(api)
+    assert_no_derived_status_writes(api)
+    assert len(api.updates) == 1
+    sent = api.updates[0]['expire_at']
+    assert timedelta(minutes=4) <= sent - datetime.now(UTC) <= timedelta(minutes=6), 'дата грейса гасится'
+    assert api.user.active_internal_squads == [{'uuid': REGULAR_SQUAD}]
+    assert api.user.traffic_limit_bytes == billing.traffic_limit_bytes
+    assert api.user.external_squad_uuid == EXTERNAL_SQUAD
+    assert api.user.hwid_device_limit == billing.device_limit
+
+    api.user.status = UserStatus.EXPIRED
+    await gateway.apply_billing_state(billing, expected_overlay=overlay)
+
+    assert len(api.updates) == 1
+
+
+@pytest.mark.parametrize(
+    ('billing_status', 'user_status', 'end_at', 'expected'),
+    [
+        ('expired', 'active', NOW - timedelta(days=1), UserStatus.EXPIRED),
+        ('active', 'active', NOW - timedelta(days=1), UserStatus.EXPIRED),
+        ('expired', 'blocked', NOW - timedelta(days=1), UserStatus.DISABLED),
+        ('disabled', 'active', NOW + timedelta(days=1), UserStatus.DISABLED),
+        ('limited', 'active', NOW + timedelta(days=1), UserStatus.LIMITED),
+        ('active', 'active', NOW + timedelta(days=1), UserStatus.ACTIVE),
+    ],
+)
+def test_billing_target_status_follows_the_shared_panel_rule(
+    billing_status: str,
+    user_status: str,
+    end_at: datetime,
+    expected: UserStatus,
+) -> None:
+    billing = GraceBillingState(
+        subscription_id=42,
+        remnawave_id=PANEL_ID,
+        status=billing_status,
+        end_at=end_at,
+        traffic_limit_bytes=10 * GIB,
+        used_traffic_bytes=1 * GIB,
+        device_limit=4,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=None,
+        user_status=user_status,
+    )
+
+    assert _build_billing_target(billing, now=NOW).status is expected
+
+
+def test_expired_target_matches_only_an_expired_panel_and_ignores_the_date() -> None:
+    target = _PanelTarget(
+        status=UserStatus.EXPIRED,
+        expire_at=None,
+        traffic_limit_bytes=10 * GIB,
+        squad_uuids=(REGULAR_SQUAD,),
+        external_squad_uuid=None,
+    )
+
+    def snapshot(status: str) -> GracePanelSnapshot:
+        return GracePanelSnapshot(
+            remnawave_id=PANEL_ID,
+            status=status,
+            expire_at=NOW + timedelta(days=3),
+            traffic_limit_bytes=10 * GIB,
+            used_traffic_bytes=1 * GIB,
+            squad_uuids=(REGULAR_SQUAD,),
+            external_squad_uuid=None,
+        )
+
+    assert _panel_matches_target(snapshot('EXPIRED'), target)
+    assert not _panel_matches_target(snapshot('ACTIVE'), target)
+    assert not _panel_matches_target(snapshot('DISABLED'), target), 'DISABLED — чужое решение, не наш EXPIRED'
+
+
+# ==================== уведомления из рантайма ====================
+
+
+class _StubCore:
+    def __init__(self, *, start=None, reconcile=None) -> None:
+        self._start = start
+        self._reconcile = reconcile
+
+    async def start_if_eligible(self, billing, reason):
+        return self._start
+
+    async def reconcile(self, *, limit=None):
+        return self._reconcile
+
+    async def drain(self, *, limit=None, force_restore=False):
+        return self._reconcile
+
+
+@pytest_asyncio.fixture
+async def runtime_lab(monkeypatch):
+    """Рантайм на реальной SQLite с подменённым ядром: проверяем только обвязку."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.database.models import Base, Subscription, User
+    from app.services import grace_access_runtime as rt
+    from app.services.grace_access_service import GraceAccessMode
+    from tests.fixtures.sqlite_memory import ensure_real_aiosqlite
+
+    ensure_real_aiosqlite(monkeypatch)
+    engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=list(Base.metadata.sorted_tables)))
+    maker = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    async with maker() as db:
+        db.add(User(id=1, telegram_id=1001, first_name='U', language='ru', status='active', balance_kopeks=0))
+        await db.flush()
+        db.add(
+            Subscription(
+                id=42,
+                remnawave_short_id='sub42',
+                user_id=1,
+                status='expired',
+                is_trial=False,
+                start_date=NOW - timedelta(days=31),
+                end_date=NOW - timedelta(days=1),
+                traffic_limit_gb=10,
+                traffic_used_gb=1.0,
+                device_limit=3,
+                connected_squads=[REGULAR_SQUAD],
+                remnawave_id=PANEL_ID,
+            )
+        )
+        await db.commit()
+    monkeypatch.setattr(rt, 'AsyncSessionLocal', maker)
+    announce = AsyncMock()
+    monkeypatch.setattr(rt, 'announce_grace_event', announce)
+    runtime = rt.GraceAccessRuntime()
+    runtime._mode = GraceAccessMode.ACTIVE
+    runtime.bot = object()
+    # Хук после коммита берёт бота с общего синглтона — как в проде (main.py).
+    monkeypatch.setattr(rt.grace_access_runtime, 'bot', runtime.bot)
+    try:
+        yield SimpleNamespace(rt=rt, runtime=runtime, announce=announce)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_grant_is_announced_after_the_commit(runtime_lab, monkeypatch):
+    from app.services.grace_access_service import GraceStartDecision, GraceStartResult
+
+    session = SimpleNamespace(state=GraceSessionState.ACTIVE)
+    monkeypatch.setattr(
+        runtime_lab.rt,
+        '_build_core',
+        lambda db, subscription_id=None: _StubCore(start=GraceStartResult(GraceStartDecision.STARTED, session)),
+    )
+
+    await runtime_lab.runtime.consider_candidate(42, GraceReason.EXPIRED, source='worker')
+
+    runtime_lab.announce.assert_awaited_once_with(runtime_lab.runtime.bot, 42, 'granted')
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_incident_is_not_announced_again(runtime_lab, monkeypatch):
+    from app.services.grace_access_service import GraceStartDecision, GraceStartResult
+
+    monkeypatch.setattr(
+        runtime_lab.rt,
+        '_build_core',
+        lambda db, subscription_id=None: _StubCore(start=GraceStartResult(GraceStartDecision.ALREADY_GRANTED, None)),
+    )
+
+    await runtime_lab.runtime.consider_candidate(42, GraceReason.EXPIRED, source='webhook')
+
+    runtime_lab.announce.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('outcome', 'event'),
+    [
+        ({'activated': 1}, 'granted'),
+        ({'paid': 1}, 'ended'),
+        ({'timed_out': 1}, 'ended'),
+        ({'drained': 1}, 'ended'),
+        ({'revoked': 1}, 'ended'),
+        ({'conflicts': 1}, 'ended'),
+    ],
+)
+async def test_reconciliation_outcomes_are_announced(runtime_lab, monkeypatch, outcome, event):
+    from app.services.grace_access_service import GraceReconcileResult
+
+    monkeypatch.setattr(
+        runtime_lab.rt,
+        '_build_core',
+        lambda db, subscription_id=None: _StubCore(reconcile=GraceReconcileResult(inspected=1, **outcome)),
+    )
+
+    await runtime_lab.runtime._process_open(42, drain=False, force_restore=False)
+
+    runtime_lab.announce.assert_awaited_once_with(runtime_lab.runtime.bot, 42, event)
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_reconciliation_is_silent(runtime_lab, monkeypatch):
+    from app.services.grace_access_service import GraceReconcileResult
+
+    monkeypatch.setattr(
+        runtime_lab.rt,
+        '_build_core',
+        lambda db, subscription_id=None: _StubCore(reconcile=GraceReconcileResult(inspected=1, unchanged=1)),
+    )
+
+    await runtime_lab.runtime._process_open(42, drain=False, force_restore=False)
+
+    runtime_lab.announce.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_renewal_announces_grace_end_only_after_the_callers_commit(runtime_lab):
+    """Продление закрывает grace внутри чужой транзакции: объявлять — после её коммита."""
+    import asyncio
+
+    rt = runtime_lab.rt
+    async with rt.AsyncSessionLocal() as db:
+        rt.announce_grace_event_after_commit(db, 42, 'ended')
+        await db.execute(rt.select(rt.Subscription.id).where(rt.Subscription.id == 42))
+        await asyncio.sleep(0)
+        runtime_lab.announce.assert_not_awaited()
+
+        await db.commit()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    runtime_lab.announce.assert_awaited_once_with(runtime_lab.runtime.bot, 42, 'ended')
+
+    # Хук одноразовый: следующий коммит той же сессии ничего не объявляет.
+    async with rt.AsyncSessionLocal() as db:
+        await db.commit()
+        await asyncio.sleep(0)
+    runtime_lab.announce.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_rolled_back_renewal_announces_nothing(runtime_lab):
+    import asyncio
+
+    rt = runtime_lab.rt
+    async with rt.AsyncSessionLocal() as db:
+        rt.announce_grace_event_after_commit(db, 42, 'ended')
+        await db.execute(rt.select(rt.Subscription.id).where(rt.Subscription.id == 42))
+        await db.rollback()
+        await asyncio.sleep(0)
+
+    runtime_lab.announce.assert_not_awaited()

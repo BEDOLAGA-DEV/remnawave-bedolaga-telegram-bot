@@ -185,10 +185,14 @@ def test_invalid_user_id_error_is_a_remnawave_api_error():
 @pytest.mark.parametrize(
     ('error', 'expected'),
     [
-        (RemnaWaveAPIError('not found', 404, {}), True),
-        (RemnaWaveAPIError('user not found', 500, {'errorCode': 'A018'}), True),
+        (RemnaWaveAPIError('User not found', 404, {}), True),
+        (RemnaWaveAPIError('User not found', 404, {'errorCode': 'A025'}), True),
         (RemnaWaveAPIError('user not found', 500, {'errorCode': 'A063'}), True),
         (RemnaWaveAPIError('user not found', 404, {'errorCode': 'A063'}), True),
+        # 3.4.3: A018 = «Failed to create user» (500), не «юзера нет»; голый 404 без
+        # сообщения панели (прокси/чужая ручка) — тоже не признак отсутствия.
+        (RemnaWaveAPIError('Failed to create user', 500, {'errorCode': 'A018'}), False),
+        (RemnaWaveAPIError('not found', 404, {}), False),
         # 400 = панель отвергла сам запрос (например, id не коерсится в число).
         (RemnaWaveAPIError('Validation failed', 400, {}), False),
         (RemnaWaveAPIError('Validation failed', 400, {'errorCode': 'A001'}), False),
@@ -344,8 +348,8 @@ async def test_resolve_user_rejects_zero_or_multiple_identifiers(kwargs: dict[st
 @pytest.mark.parametrize(
     'error',
     [
-        RemnaWaveAPIError('not found', 404, {}),
-        RemnaWaveAPIError('user not found', 500, {'errorCode': 'A018'}),
+        RemnaWaveAPIError('User not found', 404, {}),
+        RemnaWaveAPIError('User not found', 404, {'errorCode': 'A025'}),
         RemnaWaveAPIError('user not found', 500, {'errorCode': 'A063'}),
     ],
 )

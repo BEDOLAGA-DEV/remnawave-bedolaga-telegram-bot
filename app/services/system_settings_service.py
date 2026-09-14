@@ -155,6 +155,8 @@ class BotConfigurationService:
         'ETOPLATEZHI': '💳 Etoplatezhi',
         'JUPITER': '🪐 Jupiter',
         'CISPAY': '💳 CisPay',
+        'TABPAY': '💳 TabPay',
+        'PARITYPAY': '💳 ParityPay',
         'DONUT': '🍩 Donut',
         'LAVA': '🌋 Lava',
         'YOOKASSA': '🟣 YooKassa',
@@ -181,6 +183,7 @@ class BotConfigurationService:
         'CONNECT_BUTTON': '🚀 Кнопка подключения',
         'MINIAPP': '📱 Mini App',
         'HAPP': '🅷 Happ',
+        'INCY': '🅸 INCY',
         'SKIP': '⚡ Быстрый старт',
         'ADDITIONAL': '📱 Дополнительные приложения',
         'DATABASE': '💾 База данных',
@@ -202,6 +205,7 @@ class BotConfigurationService:
         'BAN_NOTIFICATIONS': '🚫 Тексты уведомлений о блокировках',
         'INFO_PAGES': '📄 Инфо-страницы',
         'GRACE_ACCESS': '🛟 Grace-доступ',
+        'BSCHEK': '📶 BSCHEKER (bschekbot)',
     }
 
     CATEGORY_DESCRIPTIONS: dict[str, str] = {
@@ -228,6 +232,8 @@ class BotConfigurationService:
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
         'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
+        'TABPAY': 'TabPay: tabpay.org, СБП и карты с 3-D Secure; вебхуки подписаны HMAC-SHA256 (X-Signature-V2).',
+        'PARITYPAY': 'ParityPay: api.paritypay.net v2, СБП и карты; уведомления подписаны HMAC-SHA256 (X-SIGNATURE).',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
         'LAVA': 'Lava Business: gate.lava.ru, оплата картой и СБП с HMAC-SHA256 и подтверждением через webhook.',
         'PLATEGA': '{platega_name}: merchant ID, секрет, ссылки возврата и методы оплаты.',
@@ -256,6 +262,7 @@ class BotConfigurationService:
         'CONNECT_BUTTON': 'Поведение кнопки «Подключиться» и miniapp.',
         'MINIAPP': 'Mini App и кастомные ссылки.',
         'HAPP': 'Интеграция Happ и связанные ссылки.',
+        'INCY': 'Шифрованные deep links INCY (incy://crypt1/...).',
         'SKIP': 'Настройки быстрого старта и гайд по подключению.',
         'ADDITIONAL': 'Конфигурация deep links и кеша.',
         'DATABASE': 'Режим работы базы данных и пути до файлов.',
@@ -280,6 +287,10 @@ class BotConfigurationService:
             'Временный ограниченный доступ для истёкших и лимитных подписок. '
             'Здесь ключи лежат по отдельности; связанный экран с проверкой конфигурации и состоянием '
             'сессий — в админке кабинета, раздел «Grace-доступ».'
+        ),
+        'BSCHEK': (
+            'Проверка хостов и конфигов глазами мобильных операторов РФ через bschekbot API: '
+            'ключ, эталонная подписка панели, потолок цены одной задачи.'
         ),
     }
 
@@ -442,6 +453,7 @@ class BotConfigurationService:
         'REMNAWAVE_USER_USERNAME_TEMPLATE': 'REMNAWAVE',
         'REMNAWAVE_AUTO_SYNC_ENABLED': 'REMNAWAVE',
         'REMNAWAVE_AUTO_SYNC_TIMES': 'REMNAWAVE',
+        'REMNAWAVE_API_REQUESTS_PER_MINUTE': 'REMNAWAVE',
         'CABINET_REMNA_SUB_CONFIG': 'MINIAPP',
         # Date format applied to email-template variables
         # (expires_at, new_expires_at). Lives in the TIMEZONE
@@ -489,6 +501,8 @@ class BotConfigurationService:
         'ETOPLATEZHI_': 'ETOPLATEZHI',
         'JUPITER_': 'JUPITER',
         'CISPAY_': 'CISPAY',
+        'TABPAY_': 'TABPAY',
+        'PARITYPAY_': 'PARITYPAY',
         'DONUT_': 'DONUT',
         'LAVA_': 'LAVA',
         'PLATEGA_': 'PLATEGA',
@@ -500,6 +514,7 @@ class BotConfigurationService:
         'SIMPLE_SUBSCRIPTION_': 'SIMPLE_SUBSCRIPTION',
         'CONNECT_BUTTON_HAPP': 'HAPP',
         'HAPP_': 'HAPP',
+        'INCY_': 'INCY',
         'SKIP_': 'SKIP',
         'MINIAPP_': 'MINIAPP',
         'MONITORING_': 'MONITORING',
@@ -516,6 +531,7 @@ class BotConfigurationService:
         'DISPLAY_NAME_': 'MODERATION',
         'BAN_MSG_': 'BAN_NOTIFICATIONS',
         'GRACE_ACCESS_': 'GRACE_ACCESS',
+        'BSCHEK_': 'BSCHEK',
     }
 
     CHOICES: dict[str, list[ChoiceOption]] = {
@@ -685,6 +701,104 @@ class BotConfigurationService:
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
+        'SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED': {
+            'description': 'Сообщать администраторам в Telegram о новых тикетах и ответах пользователей.',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Действует вместе с общими оповещениями администраторам: выключены они — не будет и этих.',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED, ADMIN_NOTIFICATIONS_TICKET_TOPIC_ID',
+        },
+        'SUPPORT_USER_TICKET_NOTIFICATIONS_ENABLED': {
+            'description': 'Сообщать пользователю в Telegram об ответе поддержки на его тикет.',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Общий выключатель уведомлений пользователям (ENABLE_NOTIFICATIONS) главнее.',
+            'dependencies': 'ENABLE_NOTIFICATIONS',
+        },
+        'SUPPORT_CABINET_USER_NOTIFICATIONS_ENABLED': {
+            'description': 'Показывать пользователю в кабинете уведомление об ответе на тикет.',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Касается только кабинета; уведомления в Telegram — отдельный переключатель.',
+            'dependencies': 'SUPPORT_USER_TICKET_NOTIFICATIONS_ENABLED',
+        },
+        'SUPPORT_CABINET_ADMIN_NOTIFICATIONS_ENABLED': {
+            'description': 'Показывать администраторам в кабинете уведомления о новых тикетах.',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Касается только кабинета; оповещения в Telegram — отдельный переключатель.',
+            'dependencies': 'SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED',
+        },
+        'SUPPORT_MODERATOR_IDS': {
+            'description': 'Модераторы поддержки: пользователи, которым доступны тикеты без прав администратора.',
+            'format': 'Telegram ID через запятую, например 123456789,987654321.',
+            'example': '',
+            'warning': 'Пусто — модераторов нет. Меняется и из меню поддержки в админке бота.',
+            'dependencies': 'SUPPORT_SYSTEM_MODE',
+        },
+        'NOTIFICATION_TRIAL_CHANNEL_UNSUBSCRIBED_ENABLED': {
+            'description': 'Писать пользователю, когда он отписался от обязательного канала и доступ приостановлен.',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Выключено — пользователь узнаёт о приостановке только из бота.',
+            'dependencies': 'CHANNEL_IS_REQUIRED_FOR_TRIAL, CHANNEL_REQUIRED_FOR_ALL',
+        },
+        'NOTIFICATION_EXPIRED_1D_ENABLED': {
+            'description': 'Напоминание через день после истечения подписки (без скидки).',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Действует сразу, без перезапуска. Общий выключатель ENABLE_NOTIFICATIONS главнее.',
+            'dependencies': 'ENABLE_NOTIFICATIONS',
+        },
+        'NOTIFICATION_EXPIRED_WAVE2_ENABLED': {
+            'description': 'Предложение со скидкой через 2–3 дня после истечения подписки (expired_discount_wave2).',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Выключено — предложения этой волны не создаются и не отправляются. Действует сразу.',
+            'dependencies': 'NOTIFICATION_EXPIRED_WAVE2_DISCOUNT_PERCENT, NOTIFICATION_EXPIRED_WAVE2_VALID_HOURS',
+        },
+        'NOTIFICATION_EXPIRED_WAVE2_DISCOUNT_PERCENT': {
+            'description': 'Размер скидки в предложении через 2–3 дня после истечения.',
+            'format': 'Целое число от 0 до 100 (процентов).',
+            'example': '10',
+            'warning': 'Скидка суммируется с промогруппой пользователя.',
+            'dependencies': 'NOTIFICATION_EXPIRED_WAVE2_ENABLED',
+        },
+        'NOTIFICATION_EXPIRED_WAVE2_VALID_HOURS': {
+            'description': 'Сколько часов действует скидка из предложения через 2–3 дня.',
+            'format': 'Целое число от 1 до 168 (часов).',
+            'example': '24',
+            'warning': 'Считается с момента отправки предложения.',
+            'dependencies': 'NOTIFICATION_EXPIRED_WAVE2_ENABLED',
+        },
+        'NOTIFICATION_EXPIRED_WAVE3_ENABLED': {
+            'description': 'Позднее предложение со скидкой через N дней после истечения (expired_discount_wave3).',
+            'format': 'Булево значение (да/нет).',
+            'example': 'true',
+            'warning': 'Выключено — предложения этой волны не создаются и не отправляются. Действует сразу.',
+            'dependencies': 'NOTIFICATION_EXPIRED_WAVE3_TRIGGER_DAYS, NOTIFICATION_EXPIRED_WAVE3_DISCOUNT_PERCENT',
+        },
+        'NOTIFICATION_EXPIRED_WAVE3_DISCOUNT_PERCENT': {
+            'description': 'Размер скидки в позднем предложении.',
+            'format': 'Целое число от 0 до 100 (процентов).',
+            'example': '20',
+            'warning': 'Скидка суммируется с промогруппой пользователя.',
+            'dependencies': 'NOTIFICATION_EXPIRED_WAVE3_ENABLED',
+        },
+        'NOTIFICATION_EXPIRED_WAVE3_VALID_HOURS': {
+            'description': 'Сколько часов действует скидка из позднего предложения.',
+            'format': 'Целое число от 1 до 168 (часов).',
+            'example': '24',
+            'warning': 'Считается с момента отправки предложения.',
+            'dependencies': 'NOTIFICATION_EXPIRED_WAVE3_ENABLED',
+        },
+        'NOTIFICATION_EXPIRED_WAVE3_TRIGGER_DAYS': {
+            'description': 'Через сколько дней после истечения подписки отправлять позднее предложение.',
+            'format': 'Целое число от 2 до 60 (дней).',
+            'example': '5',
+            'warning': 'Подписки старше 30 дней после истечения не рассматриваются.',
+            'dependencies': 'NOTIFICATION_EXPIRED_WAVE3_ENABLED',
+        },
         'GRACE_ACCESS_MODE': {
             'description': (
                 'Режим grace-доступа: временного ограниченного VPN-доступа для истёкшей или упёршейся '
@@ -727,6 +841,22 @@ class BotConfigurationService:
             'format': 'Целое число часов.',
             'example': '72',
             'warning': 'По истечении срока панельное состояние возвращается к исходному из снимка сессии.',
+        },
+        'GRACE_ACCESS_NOTIFY_ADMINS': {
+            'description': 'Сообщать админам в чат уведомлений о каждой выдаче и завершении grace-доступа: кому, почему, до какого срока и чем закончилось.',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED, ADMIN_NOTIFICATIONS_RENEWALS_ENABLED',
+        },
+        'GRACE_ACCESS_ALLOWED_SERVICES': {
+            'description': 'Что остаётся доступным во время grace — так, как это увидит человек в сообщении бота и в письме: «Telegram», «Telegram и личный кабинет», «сайт проекта». Сам доступ определяют ноды сквада grace, бот только сообщает.',
+            'format': 'Короткая фраза.',
+            'example': 'Telegram и личный кабинет',
+        },
+        'GRACE_ACCESS_NOTIFY_USER': {
+            'description': 'Сообщать человеку в бота, что подписка закончилась, но на время grace оставлен доступ к тому, что названо в GRACE_ACCESS_ALLOWED_SERVICES, и когда этот доступ закрылся.',
+            'format': 'Булево значение.',
+            'example': 'true',
         },
         'SALES_MODE': {
             'description': (
@@ -1033,13 +1163,27 @@ class BotConfigurationService:
             'dependencies': 'REMNAWAVE_AUTO_SYNC_TIMES',
         },
         'REMNAWAVE_AUTO_SYNC_TIMES': {
-            'description': ('Список времени в формате HH:MM, когда запускается автосинхронизация в течение суток.'),
+            'description': (
+                'Список времени в формате HH:MM в часовом поясе бота (TIMEZONE), '
+                'когда запускается автосинхронизация в течение суток.'
+            ),
             'format': 'Перечислите время через запятую или с новой строки (например, 03:00, 15:00).',
             'example': '03:00, 15:00',
             'warning': (
                 'Минимальный интервал между запусками не ограничен, но слишком частые синхронизации нагружают панель.'
             ),
             'dependencies': 'REMNAWAVE_AUTO_SYNC_ENABLED',
+        },
+        'REMNAWAVE_API_REQUESTS_PER_MINUTE': {
+            'description': (
+                'Потолок запросов бота к панели RemnaWave в минуту. Нужен, если перед панелью '
+                'стоит прокси с лимитом частоты (например, rate_limit в Caddy) и адрес бота из него '
+                'не исключён: тогда массовая синхронизация упирается в лимит и ловит ошибки 429.'
+            ),
+            'format': 'Целое число. 0 — без ограничения.',
+            'example': '90 при лимите прокси 100 запросов в минуту.',
+            'warning': 'С потолком синхронизация тысяч подписок идёт часами; лучше исключить адрес бота в прокси.',
+            'dependencies': 'REMNAWAVE_API_URL',
         },
         'REMNAWAVE_USER_DESCRIPTION_TEMPLATE': {
             'description': (
@@ -1171,10 +1315,10 @@ class BotConfigurationService:
             'dependencies': 'TRAFFIC_DAILY_CHECK_TIME, TRAFFIC_DAILY_THRESHOLD_GB',
         },
         'TRAFFIC_DAILY_CHECK_TIME': {
-            'description': 'Время суточной проверки трафика в формате HH:MM (UTC).',
+            'description': 'Время суточной проверки трафика в формате HH:MM в часовом поясе бота (TIMEZONE).',
             'format': 'Строка времени HH:MM.',
             'example': '00:00',
-            'warning': 'Время указывается в UTC.',
+            'warning': 'Время указывается в часовом поясе бота (TIMEZONE), а не в UTC.',
             'dependencies': 'TRAFFIC_DAILY_CHECK_ENABLED',
         },
         'TRAFFIC_DAILY_THRESHOLD_GB': {
@@ -1286,7 +1430,10 @@ class BotConfigurationService:
             ),
             'format': 'Булево значение: выберите "Включить" или "Выключить".',
             'example': 'Выключено по умолчанию.',
-            'warning': 'При включении трафик будет обнуляться при каждом продлении подписки.',
+            'warning': (
+                'При включении трафик будет обнуляться при каждом продлении подписки, '
+                'включая суточное списание — то есть раз в сутки.'
+            ),
         },
         'TELEGRAM_WIDGET_SIZE': {
             'description': 'Размер кнопки виджета Telegram на странице авторизации.',
@@ -2061,12 +2208,27 @@ class BotConfigurationService:
         value: Any,
         *,
         force: bool = False,
+        commit: bool = True,
     ) -> None:
+        """Сохранить настройку в БД и применить к живому процессу.
+
+        Коммит по умолчанию делает сама запись. Раньше запись только флашила, а
+        коммит оставался на вызывающем — и три ручки реферальной программы плюс
+        выключатель писем его не делали. Значение применялось к процессу
+        (админка показывала новое), а в базу не доезжало: сессия кабинета
+        закрывается без коммита. После перезапуска возвращалось старое, сколько
+        ни переключай.
+
+        ``commit=False`` — для пакетной записи, где несколько ключей должны
+        лечь одной транзакцией; такой вызывающий обязан коммитить сам.
+        """
         if cls.is_read_only(key) and not force:
             raise ReadOnlySettingError(f'Setting {key} is read-only')
 
         raw_value = cls.serialize_value(key, value)
         await upsert_system_setting(db, key, raw_value)
+        if commit:
+            await db.commit()
         if cls._is_env_override(key):
             logger.info('Настройка сохранена в БД, но не применена: значение задаётся через окружение', key=key)
             cls._overrides_raw.pop(key, None)
@@ -2089,11 +2251,19 @@ class BotConfigurationService:
         key: str,
         *,
         force: bool = False,
+        commit: bool = True,
     ) -> None:
+        """Убрать настройку из БД и вернуть значение по умолчанию.
+
+        Коммит — как у ``set_value``: по умолчанию свой, ``commit=False`` для
+        пакетной записи.
+        """
         if cls.is_read_only(key) and not force:
             raise ReadOnlySettingError(f'Setting {key} is read-only')
 
         await delete_system_setting(db, key)
+        if commit:
+            await db.commit()
         cls._overrides_raw.pop(key, None)
         if cls._is_env_override(key):
             logger.info('Настройка сброшена в БД, используется значение из окружения', key=key)
@@ -2142,13 +2312,6 @@ class BotConfigurationService:
                     )
                 except Exception as error:
                     logger.error('Не удалось обновить сервис автосинхронизации RemnaWave', error=error)
-            elif key == 'SUPPORT_SYSTEM_MODE':
-                try:
-                    from app.services.support_settings_service import SupportSettingsService
-
-                    SupportSettingsService.set_system_mode(str(value))
-                except Exception as error:
-                    logger.error('Не удалось синхронизировать SupportSettingsService', error=error)
             elif key in {
                 'BACKUP_AUTO_ENABLED',
                 'BACKUP_INTERVAL_HOURS',

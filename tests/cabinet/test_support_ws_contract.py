@@ -41,9 +41,10 @@ def _support_guards_open(monkeypatch):
     Подменяются источники, а не сами guard'ы: режим берётся из данных сервиса,
     глобальная блокировка — из CRUD, так что реальная логика исполняется.
     """
+    from app.config import settings
+
     monkeypatch.setattr(support_ws.TicketCRUD, 'is_user_globally_blocked', AsyncMock(return_value=None))
-    monkeypatch.setattr(support_ws.SupportSettingsService, '_loaded', True)
-    monkeypatch.setattr(support_ws.SupportSettingsService, '_data', {'system_mode': 'both'})
+    monkeypatch.setattr(settings, 'SUPPORT_SYSTEM_MODE', 'both')
 
 
 class _FakeDb:
@@ -235,8 +236,10 @@ async def test_owner_ws_reply_rejected_when_tickets_disabled(monkeypatch) -> Non
     async def fake_get_visible_ticket(_db, _context, _ticket_id):
         return ticket
 
+    from app.config import settings
+
     monkeypatch.setattr(support_ws, '_get_visible_ticket', fake_get_visible_ticket)
-    monkeypatch.setattr(support_ws.SupportSettingsService, '_data', {'system_mode': 'contact'})
+    monkeypatch.setattr(settings, 'SUPPORT_SYSTEM_MODE', 'contact')
 
     with pytest.raises(PermissionError):
         await support_ws._handle_ticket_reply(
@@ -732,7 +735,7 @@ async def test_bridge_message_added_broadcasts_contract_message_created(monkeypa
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     msg = _message(id=501, ticket_id=3, user_id=10, is_from_admin=False, message_text='hi')
     ticket = _ticket(id=3, messages=[msg])
@@ -762,7 +765,7 @@ async def test_bridge_message_added_noops_when_ticket_missing(monkeypatch):
         called = True
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     async def fake_load(_db, _ticket_id):
         return None
@@ -781,7 +784,7 @@ async def test_bridge_ticket_created_broadcasts_opening_message(monkeypatch):
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     opening = _message(id=700, ticket_id=8, message_text='first!')
     ticket = _ticket(id=8, messages=[opening])
@@ -805,7 +808,7 @@ async def test_bridge_status_changed_broadcasts_status_updated(monkeypatch):
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     ticket = _ticket(id=8, status='closed')
 
@@ -858,7 +861,7 @@ async def test_bridge_consumes_cabinet_emit_payload(monkeypatch):
         captured['event'] = event
 
     monkeypatch.setattr(support_ws.support_ws_manager, 'broadcast_ticket_event', fake_broadcast)
-    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', lambda: _SessionCtx())
+    monkeypatch.setattr(support_ws, 'AsyncSessionLocal', _SessionCtx)
 
     msg = _message(id=501, ticket_id=3, message_text='from cabinet')
     ticket = _ticket(id=3, messages=[msg])

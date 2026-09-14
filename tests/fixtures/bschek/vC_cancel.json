@@ -1,0 +1,19 @@
+{
+ "name": "vC_cancel",
+ "status": 200,
+ "elapsed_sec": 0.48,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "a4d198c486d3",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "test_id": 43306,
+  "cancelled": true,
+  "stopped_legs": 1,
+  "refunded_credits": 0
+ }
+}

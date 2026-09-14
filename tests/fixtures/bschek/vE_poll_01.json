@@ -1,0 +1,109 @@
+{
+ "name": "vE_poll_01",
+ "status": 200,
+ "elapsed_sec": 0.4,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "f505511abc51",
+  "Server": "cloudflare"
+ },
+ "request": null,
+ "idempotency_key": null,
+ "body": {
+  "test_id": 43314,
+  "state": "done",
+  "queue_pos": null,
+  "queue_total": null,
+  "result_ready": true,
+  "completed_at": "2026-09-05T14:38:30.853751+00:00",
+  "result": [
+   {
+    "ok": true,
+    "sni": "eu-host.example",
+    "stage": "",
+    "tcp_ok": true,
+    "targets": [
+     {
+      "ok": true,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": true,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "vless",
+    "diagnosis": "Туннель работает, целевые сайты достижимы",
+    "tunnel_up": true,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "",
+    "server_addr": "eu-host.example:443",
+    "server_name": "🇩🇪 Germany",
+    "speed_error": "",
+    "tcp_latency_ms": 109,
+    "operator": "mts",
+    "operator_name": "МТС",
+    "region": "ЦФО",
+    "channel_state": "DPI_OFF"
+   },
+   {
+    "ok": true,
+    "sni": "eu-host.example",
+    "stage": "",
+    "tcp_ok": true,
+    "targets": [
+     {
+      "ok": true,
+      "target": "https://www.google.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.wikipedia.org/"
+     },
+     {
+      "ok": true,
+      "target": "https://github.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://www.tiktok.com/"
+     },
+     {
+      "ok": true,
+      "target": "https://ya.ru/"
+     }
+    ],
+    "protocol": "vless",
+    "diagnosis": "Туннель работает, целевые сайты достижимы",
+    "tunnel_up": true,
+    "used_core": "prerelease",
+    "speed_mbps": 0,
+    "fail_reason": "",
+    "server_addr": "eu-host.example:443",
+    "server_name": "🇩🇪 Germany",
+    "speed_error": "",
+    "tcp_latency_ms": 236,
+    "operator": "mts",
+    "operator_name": "МТС",
+    "region": "ДФО",
+    "channel_state": "DPI_OFF"
+   }
+  ],
+  "used_core": "prerelease",
+  "core_requested": "prerelease"
+ }
+}

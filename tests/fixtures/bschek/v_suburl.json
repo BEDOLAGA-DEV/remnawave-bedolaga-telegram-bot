@@ -1,0 +1,25 @@
+{
+ "name": "v_suburl",
+ "status": 400,
+ "elapsed_sec": 0.41,
+ "headers": {
+  "Content-Type": "application/json",
+  "x-api-version": "1.1",
+  "x-request-id": "7c004ac745ce",
+  "Server": "cloudflare"
+ },
+ "request": {
+  "raw_input": "https://sub.example/REDACTED"
+ },
+ "idempotency_key": "IDEMPOTENCY-KEY",
+ "body": {
+  "error": {
+   "code": "subscription_not_supported",
+   "message": "API принимает только прямые ссылки (vless://, vmess://, trojan://, ss://, hysteria2://), не subscription-URL — вставьте конфиг(и) напрямую",
+   "details": {
+    "request_id": "7c004ac745ce",
+    "retryable": false
+   }
+  }
+ }
+}

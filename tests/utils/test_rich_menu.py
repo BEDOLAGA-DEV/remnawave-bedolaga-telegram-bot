@@ -655,9 +655,6 @@ async def test_show_main_menu_prefers_rich_and_falls_back(monkeypatch):
     rich False — классика рисует меню."""
     import app.handlers.menu as menu_mod
 
-    async def _noop(*args, **kwargs):
-        return None
-
     monkeypatch.setattr(menu_mod, 'has_subscription_checkout_draft', AsyncMock(return_value=False))
     monkeypatch.setattr(menu_mod, 'should_offer_checkout_resume', lambda *a, **k: False)
     monkeypatch.setattr(menu_mod.user_cart_service, 'has_user_cart', AsyncMock(return_value=False))
