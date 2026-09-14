@@ -1037,6 +1037,12 @@ async def purchase_tariff(
                 subscription.is_trial = False
                 await db.flush()
 
+            # Фиксируем ДО extend_subscription: он мутирует subscription.tariff_id
+            # на новый тариф прямо в переданном объекте, так что сравнение после
+            # вызова всегда было бы "тариф не менялся" — отсюда и баг с
+            # захардкоженным reset_traffic ниже.
+            _purchase_is_tariff_change = bool(subscription and subscription.tariff_id != tariff.id)
+
             if subscription:
                 # Extend/change tariff — сохраняем докупленные устройства при продлении того же тарифа
                 subscription = await extend_subscription(
@@ -1140,14 +1146,27 @@ async def purchase_tariff(
             # past the budget the sync is deferred to remnawave_retry_queue below.
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
                 if not _should_create:
+                    # Раньше здесь стоял голый reset_traffic=True — трафик слетал
+                    # на панели при ЛЮБОЙ покупке/продлении через кабинет, даже с
+                    # выключенным RESET_TRAFFIC_ON_PAYMENT (см. issue про сброс
+                    # трафика при продлении). Обычное продление того же тарифа
+                    # обязано подчиняться настройке, как это уже сделано в
+                    # extend_subscription для БД-счётчика; смена тарифа —
+                    # отдельному переключателю RESET_TRAFFIC_ON_TARIFF_SWITCH.
+                    _reset_traffic = (
+                        settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
+                        if _purchase_is_tariff_change
+                        else settings.RESET_TRAFFIC_ON_PAYMENT
+                    )
                     await service.update_remnawave_user(
                         db,
                         subscription,
-                        reset_traffic=True,
+                        reset_traffic=_reset_traffic,
                         reset_reason='покупка тарифа (cabinet)',
                         sync_squads=True,
                     )
                 else:
+                    # Новый панельный аккаунт — сбрасывать нечего, счётчик и так с нуля.
                     await service.create_remnawave_user(
                         db,
                         subscription,
