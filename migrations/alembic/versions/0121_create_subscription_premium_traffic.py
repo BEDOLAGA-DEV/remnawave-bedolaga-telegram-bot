@@ -1,7 +1,7 @@
 """create subscription_premium_traffic (premium squad traffic limits)
 
-Revision ID: 0120
-Revises: 0119
+Revision ID: 0121
+Revises: 0120
 Create Date: 2026-09-06
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = '0120'
-down_revision: Union[str, None] = '0119'
+revision: str = '0121'
+down_revision: Union[str, None] = '0120'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -24,7 +24,7 @@ def _has_table() -> bool:
 
 
 def upgrade() -> None:
-    # Номер миграции менялся при слияниях с dev (0116 → 0117 → 0119 → 0120).
+    # Номер миграции менялся при слияниях с dev (0116 → 0117 → 0119 → 0120 → 0121).
     # База, где она прошла под прежним номером, после перенумерации видит её
     # непройденной — повторный запуск не должен падать на готовой таблице.
     if _has_table():

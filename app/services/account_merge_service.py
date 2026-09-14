@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import structlog
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -37,6 +37,7 @@ from app.database.models import (
     PollResponse,
     PromoCode,
     PromoCodeUse,
+    PromoGroup,
     PromoOfferLog,
     PromoOfferTemplate,
     ReferralContest,
@@ -111,6 +112,23 @@ def compute_auth_methods(user: User) -> list[str]:
         if getattr(user, column, None):
             methods.append(provider)
     return methods
+
+
+async def _count_referrals(db: AsyncSession, user_id: int) -> int:
+    """Сколько людей пришло по реферальной ссылке аккаунта (User.referred_by_id)."""
+    result = await db.execute(select(func.count()).select_from(User).where(User.referred_by_id == user_id))
+    value = result.scalar()
+    return int(value) if isinstance(value, int) else 0
+
+
+async def _promo_group_priority(db: AsyncSession, group_id: int | None) -> int:
+    """Приоритет промогруппы по id; без группы — 0. Запросом, а не через relationship:
+    ленивая связь в async-сессии не загружается."""
+    if group_id is None:
+        return 0
+    result = await db.execute(select(PromoGroup.priority).where(PromoGroup.id == group_id))
+    value = result.scalar()
+    return int(value) if isinstance(value, int) else 0
 
 
 def _build_subscription_preview(sub: Subscription | None) -> dict[str, Any] | None:
@@ -786,27 +804,51 @@ async def execute_merge(
             secondary_id=secondary.id,
         )
 
-    # 3. Перенос email + password (unique constraint на email — тот же паттерн)
-    if not primary.email and secondary.email:
+    # 3. Перенос email + password (unique constraint на email — тот же паттерн).
+    # Email у аккаунта один, поэтому остаётся тот, за которым стоит способ входа:
+    # пароль — осознанный логин, email от OAuth-провайдера — производный (сам вход
+    # через провайдера сохраняется по provider id). Раньше email с паролем
+    # поглощаемого аккаунта пропадал, стоило инициатору иметь любой email — хотя
+    # страница объединения обещает «все способы входа объединятся» (жалоба 2026-09-14).
+    # Источник подтверждения едет вместе с email: пустой источник считается доверенным
+    # для ADMIN_EMAILS, и терять его — значит доверять непроверенному адресу.
+    secondary_login_wins = bool(secondary.password_hash) and not primary.password_hash
+    if secondary.email and (not primary.email or secondary_login_wins):
+        replaced_email = primary.email
         transferred_email = secondary.email
         transferred_verified = secondary.email_verified
         transferred_verified_at = secondary.email_verified_at
+        transferred_source = getattr(secondary, 'email_verification_source', None)
         transferred_password_hash = secondary.password_hash
         # Очищаем на secondary и flush перед установкой на primary
         secondary.email = None
         secondary.email_verified = False
         secondary.email_verified_at = None
+        secondary.email_verification_source = None
         secondary.password_hash = None
         await db.flush()
         primary.email = transferred_email
         primary.email_verified = transferred_verified
         primary.email_verified_at = transferred_verified_at
+        primary.email_verification_source = transferred_source
         primary.password_hash = transferred_password_hash
+        if replaced_email:
+            # Хвосты, привязанные к вытесненному адресу: смена email и сброс пароля.
+            primary.email_change_new = None
+            primary.email_change_code = None
+            primary.email_change_expires = None
+            primary.password_reset_token = None
+            primary.password_reset_expires = None
         logger.info(
             'Перенесены email и пароль',
             primary_id=primary.id,
             secondary_id=secondary.id,
+            replaced_oauth_email=bool(replaced_email),
         )
+
+    # Рефералов считаем ДО переназначения цепочки (§9): после него они все у primary.
+    absorbed_referrals = await _count_referrals(db, secondary.id) if secondary.referral_code else 0
+    keep_absorbed_referral_code = absorbed_referrals > 0 and await _count_referrals(db, primary.id) == 0
 
     # 4. Суммируем баланс (включая отрицательный — долг не должен исчезать)
     transferred_kopeks = secondary.balance_kopeks
@@ -1157,6 +1199,45 @@ async def execute_merge(
             value=primary.referral_commission_percent,
         )
 
+    # 13a. Реферальный код — один на аккаунт. Остаётся тот, по которому люди уже
+    # приходили: иначе разосланная ссылка поглощённого аккаунта умирает вместе с ним.
+    # Оба в ходу или оба без рефералов — остаётся код инициатора.
+    if keep_absorbed_referral_code:
+        transferred_code = secondary.referral_code
+        secondary.referral_code = None
+        await db.flush()  # unique constraint
+        primary.referral_code = transferred_code
+        logger.info(
+            'Перенесён реферальный код (по нему уже приходили люди)',
+            primary_id=primary.id,
+            secondary_id=secondary.id,
+            referrals=absorbed_referrals,
+        )
+
+    # 13b. Промогруппа — остаётся более высокая по приоритету: скидки не должны пропасть.
+    secondary_group_id = getattr(secondary, 'promo_group_id', None)
+    if secondary_group_id is not None:
+        primary_group_id = getattr(primary, 'promo_group_id', None)
+        secondary_priority = await _promo_group_priority(db, secondary_group_id)
+        primary_priority = await _promo_group_priority(db, primary_group_id)
+        if primary_group_id is None or secondary_priority > primary_priority:
+            primary.promo_group_id = secondary_group_id
+            logger.info(
+                'Перенесена промогруппа',
+                primary_id=primary.id,
+                secondary_id=secondary.id,
+                promo_group_id=secondary_group_id,
+            )
+
+    # 13c. Дата регистрации — самая ранняя: «история сохранится».
+    if secondary.created_at and (primary.created_at is None or secondary.created_at < primary.created_at):
+        primary.created_at = secondary.created_at
+
+    # 13d. Пустые поля профиля заполняем из поглощённого аккаунта; язык и заполненное не трогаем.
+    for field in ('username', 'first_name', 'last_name'):
+        if not getattr(primary, field, None) and getattr(secondary, field, None):
+            setattr(primary, field, getattr(secondary, field))
+
     # 14. Помечаем secondary как удалённый и очищаем ВСЕ unique constraint и FK поля
     # NOTE: In multi-tariff mode, all secondary subscriptions were already transferred to primary
     # in _handle_subscription_merge. Do NOT clear their remnawave_id — they are now primary's subs.
@@ -1170,6 +1251,7 @@ async def execute_merge(
     secondary.email = None
     secondary.email_verified = False
     secondary.email_verified_at = None
+    secondary.email_verification_source = None
     secondary.email_verification_token = None
     secondary.email_verification_expires = None
     secondary.email_change_new = None

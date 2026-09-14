@@ -15,6 +15,7 @@ from app.database.models import SubscriptionStatus
 from app.services.panel_sync import (
     ADMIN_PULL,
     BULK_SNAPSHOT,
+    WEBHOOK,
     PanelSnapshot,
     project_onto_subscription,
     read_panel_user,
@@ -38,6 +39,7 @@ def _sub(**kw):
         subscription_crypto_link='old-crypto',
         grace_candidate_reason=None,
         grace_candidate_at=None,
+        grace_tail_expire_at=None,
         updated_at=None,
         last_webhook_update_at=None,
     )
@@ -519,3 +521,88 @@ def test_reads_limits_from_both_shapes_of_the_answer():
 
     assert from_dict.traffic_limit_gb == 10 and from_dict.device_limit == 4
     assert from_object.traffic_limit_gb == 10 and from_object.device_limit == 4
+
+
+# ==================== хвост грейса ====================
+#
+# После грейса в панели остаётся его дата: прошедшую дату PATCH не принимает, а
+# вернуть настоящую нельзя. Бот запоминает эту дату на подписке
+# (``grace_tail_expire_at``). Импорт «панель — истина», увидев в панели ровно её,
+# не двигает дату окончания и статус в боте — иначе истёкшая подписка «истекала»
+# заново в конец грейса, воркер видел свежее истечение и выдавал грейс снова.
+
+
+def test_grace_tail_date_is_not_imported_after_grace_ended():
+    tail = NOW - timedelta(minutes=1)
+    subscription = _sub(
+        status=SubscriptionStatus.EXPIRED.value,
+        end_date=NOW - timedelta(days=3),
+        grace_tail_expire_at=tail,
+    )
+
+    changed = project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='EXPIRED', expire_at=tail, traffic_used_gb=7.0, short_uuid='new-short'),
+        now=NOW,
+    )
+
+    assert subscription.end_date == NOW - timedelta(days=3)
+    assert subscription.status == SubscriptionStatus.EXPIRED.value
+    assert subscription.traffic_used_gb == 7.0
+    assert subscription.remnawave_short_uuid == 'new-short'
+    assert changed == {'traffic_used_gb', 'remnawave_short_uuid'}
+
+
+def test_grace_tail_masks_the_status_while_the_panel_is_still_closing():
+    """Погашенная дата стоит на несколько минут вперёд: панель ещё ACTIVE."""
+    tail = NOW + timedelta(minutes=5)
+    subscription = _sub(
+        status=SubscriptionStatus.EXPIRED.value,
+        end_date=NOW - timedelta(days=3),
+        grace_tail_expire_at=tail,
+    )
+
+    for policy in (BULK_SNAPSHOT, WEBHOOK):
+        project_onto_subscription(
+            subscription,
+            PanelSnapshot(status='ACTIVE', expire_at=tail, traffic_used_gb=1.0),
+            now=NOW,
+            policy=policy,
+        )
+
+        assert subscription.status == SubscriptionStatus.EXPIRED.value
+        assert subscription.end_date == NOW - timedelta(days=3)
+
+
+def test_a_real_panel_renewal_after_grace_is_still_imported():
+    subscription = _sub(
+        status=SubscriptionStatus.EXPIRED.value,
+        end_date=NOW - timedelta(days=3),
+        grace_tail_expire_at=NOW - timedelta(minutes=1),
+    )
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='ACTIVE', expire_at=NOW + timedelta(days=30), traffic_used_gb=1.0),
+        now=NOW,
+    )
+
+    assert subscription.status == SubscriptionStatus.ACTIVE.value
+    assert subscription.end_date == NOW + timedelta(days=30)
+
+
+def test_grace_tail_tolerates_the_panel_millisecond_rounding():
+    tail = NOW - timedelta(minutes=1)
+    subscription = _sub(
+        status=SubscriptionStatus.EXPIRED.value,
+        end_date=NOW - timedelta(days=3),
+        grace_tail_expire_at=tail,
+    )
+
+    project_onto_subscription(
+        subscription,
+        PanelSnapshot(status='EXPIRED', expire_at=tail + timedelta(milliseconds=800)),
+        now=NOW,
+    )
+
+    assert subscription.end_date == NOW - timedelta(days=3)

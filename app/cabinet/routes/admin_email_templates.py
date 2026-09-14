@@ -113,6 +113,38 @@ def _webhook_sample_contexts() -> dict[str, dict[str, Any]]:
 
 TEMPLATE_TYPES = [
     {
+        'type': 'grace_access_granted',
+        'label': {
+            'ru': 'Grace-доступ выдан',
+            'en': 'Grace access granted',
+            'zh': '已发放宽限访问',
+            'ua': 'Grace-доступ надано',
+        },
+        'description': {
+            'ru': 'Подписка закончилась, но на время оставлен доступ к тому, что назвал оператор ({allowed})',
+            'en': 'The subscription ended, but access to what the operator named ({allowed}) is kept for a while',
+            'zh': '订阅已到期，但暂时保留对运营者指定内容（{allowed}）的访问',
+            'ua': 'Підписка закінчилась, але на час залишено доступ до того, що назвав оператор ({allowed})',
+        },
+        'context_vars': ['allowed', 'hours', 'traffic_gb', 'until', 'reason', 'tariff_name'],
+    },
+    {
+        'type': 'grace_access_ended',
+        'label': {
+            'ru': 'Grace-доступ закончился',
+            'en': 'Grace access ended',
+            'zh': '宽限访问已结束',
+            'ua': 'Grace-доступ закінчився',
+        },
+        'description': {
+            'ru': 'Временный доступ закрыт: подписку так и не продлили',
+            'en': 'Temporary access is closed: the subscription was never renewed',
+            'zh': '临时访问已关闭：订阅一直未续订',
+            'ua': 'Тимчасовий доступ закрито: підписку так і не продовжили',
+        },
+        'context_vars': ['allowed', 'hours', 'traffic_gb', 'until', 'reason', 'tariff_name'],
+    },
+    {
         'type': 'balance_topup',
         'label': {'ru': 'Пополнение баланса', 'en': 'Balance Top-up', 'zh': '余额充值', 'ua': 'Поповнення балансу'},
         'description': {
@@ -711,6 +743,22 @@ SAMPLE_LAYOUT_CONTENT = (
 )
 
 SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
+    'grace_access_granted': {
+        'allowed': 'Telegram и личный кабинет',
+        'hours': 72,
+        'traffic_gb': '1',
+        'until': '17.09.2026 12:00',
+        'reason': 'expired',
+        'tariff_name': 'Стартовый',
+    },
+    'grace_access_ended': {
+        'allowed': 'Telegram и личный кабинет',
+        'hours': 72,
+        'traffic_gb': '1',
+        'until': '17.09.2026 12:00',
+        'reason': 'expired',
+        'tariff_name': 'Стартовый',
+    },
     EMAIL_LAYOUT_TYPE: {'content': SAMPLE_LAYOUT_CONTENT},
     'balance_topup': {
         'formatted_amount': '500.00 ₽',

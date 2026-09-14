@@ -842,6 +842,22 @@ class BotConfigurationService:
             'example': '72',
             'warning': 'По истечении срока панельное состояние возвращается к исходному из снимка сессии.',
         },
+        'GRACE_ACCESS_NOTIFY_ADMINS': {
+            'description': 'Сообщать админам в чат уведомлений о каждой выдаче и завершении grace-доступа: кому, почему, до какого срока и чем закончилось.',
+            'format': 'Булево значение.',
+            'example': 'true',
+            'dependencies': 'ADMIN_NOTIFICATIONS_ENABLED, ADMIN_NOTIFICATIONS_RENEWALS_ENABLED',
+        },
+        'GRACE_ACCESS_ALLOWED_SERVICES': {
+            'description': 'Что остаётся доступным во время grace — так, как это увидит человек в сообщении бота и в письме: «Telegram», «Telegram и личный кабинет», «сайт проекта». Сам доступ определяют ноды сквада grace, бот только сообщает.',
+            'format': 'Короткая фраза.',
+            'example': 'Telegram и личный кабинет',
+        },
+        'GRACE_ACCESS_NOTIFY_USER': {
+            'description': 'Сообщать человеку в бота, что подписка закончилась, но на время grace оставлен доступ к тому, что названо в GRACE_ACCESS_ALLOWED_SERVICES, и когда этот доступ закрылся.',
+            'format': 'Булево значение.',
+            'example': 'true',
+        },
         'SALES_MODE': {
             'description': (
                 'Режим продажи подписок. '

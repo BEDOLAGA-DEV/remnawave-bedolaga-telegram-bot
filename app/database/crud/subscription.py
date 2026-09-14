@@ -878,7 +878,8 @@ async def _housekeep_expired_purchases(
     (детерминированная сходимость), в отличие от вычитания `expired_gb`, которое
     бы пропагандировало старую ошибку.
 
-    Безлимит (current_total == 0) не трогает.
+    Тарифная подписка пересобирается от базы ТАРИФА (см. ``_tariff_base_traffic_limit``);
+    без тарифа безлимит (current_total == 0) не трогает.
 
     Возвращает текущий `purchased_traffic_gb` после housekeeping.
     """
@@ -887,10 +888,19 @@ async def _housekeep_expired_purchases(
     # Lock subscription row — защита от lost update с конкурентным add_subscription_traffic
     await _lock_subscription_row(db, subscription)
 
+    # Тарифная подписка: база — тариф, поверх — активные докупки. Так ЛЮБОЕ
+    # продление возвращает подписку к условиям тарифа, в том числе ту, которой
+    # прежняя ошибка (база из FIXED_TRAFFIC_LIMIT_GB) выдала безлимит.
+    tariff_base = await _tariff_base_traffic_limit(db, subscription)
+    if tariff_base:
+        purchased, _ = await _apply_base_limit_preserving_active_purchases(db, subscription, tariff_base, now=now)
+        return purchased
+
     current_total = subscription.traffic_limit_gb or 0
 
-    # Безлимит — housekeeping только истёкших, инвариант не трогаем
-    if current_total == 0:
+    # Безлимит (тариф без лимита или классическая подписка с нулём) — housekeeping
+    # только истёкших, инвариант не трогаем
+    if tariff_base == 0 or current_total == 0:
         await db.execute(
             delete(TrafficPurchase)
             .where(
@@ -932,6 +942,60 @@ async def _housekeep_expired_purchases(
     subscription.traffic_reset_at = nearest_expiry
 
     return purchased_gb
+
+
+async def _tariff_base_traffic_limit(db: AsyncSession, subscription: Subscription) -> int | None:
+    """Базовый лимит трафика по тарифу подписки; ``None`` — подписка без тарифа.
+
+    Тариф — источник правды для базы: его лимит (0 — безлимит) плюс активные
+    докупки и есть трафик подписки. Тариф с произвольным трафиком хранит выбор
+    человека в самой подписке — тогда база берётся оттуда, а к лимиту тарифа
+    возвращаемся, только если она потеряна.
+    """
+    if subscription.tariff_id is None:
+        return None
+    from app.database.crud.tariff import get_tariff_by_id
+
+    tariff = await get_tariff_by_id(db, subscription.tariff_id)
+    if tariff is None:
+        return None
+    if getattr(tariff, 'custom_traffic_enabled', False):
+        current_base = max((subscription.traffic_limit_gb or 0) - (subscription.purchased_traffic_gb or 0), 0)
+        if current_base > 0:
+            return current_base
+    return max(0, int(tariff.traffic_limit_gb or 0))
+
+
+async def _resolve_base_traffic_limit(db: AsyncSession, subscription: Subscription) -> int:
+    """Базовый лимит трафика подписки (без докупок) для пересборки при продлении.
+
+    Тарифная подписка — по тарифу (``_tariff_base_traffic_limit``). Классическая
+    (без тарифа): в фиксированном режиме — настройка, иначе единственный источник —
+    текущий инвариант ``total = base + purchased``. Глобальные настройки трафика
+    описывают классический режим и к тарифной подписке отношения не имеют.
+    """
+    tariff_base = await _tariff_base_traffic_limit(db, subscription)
+    if tariff_base is not None:
+        return tariff_base
+    if settings.is_traffic_fixed():
+        return settings.get_fixed_traffic_limit()
+    return max((subscription.traffic_limit_gb or 0) - (subscription.purchased_traffic_gb or 0), 0)
+
+
+async def reconcile_tariff_traffic_limit(
+    db: AsyncSession, subscription: Subscription, *, now: datetime | None = None
+) -> None:
+    """Вернуть тарифную подписку к условиям тарифа: база тарифа + активные докупки.
+
+    ``extend_subscription`` делает это на каждом продлении сам. Отдельный вход нужен
+    продлениям, которые идут мимо него — рекуррентным списаниям Lava и Platega,
+    продлевающим через метод модели, — иначе подписка, которой прошлая ошибка
+    выдала безлимит, на таком продлении так и оставалась бы безлимитной.
+    Подписку без тарифа не трогает.
+    """
+    if subscription.tariff_id is None:
+        return
+    await _housekeep_expired_purchases(db, subscription, now=now or datetime.now(UTC))
 
 
 async def _apply_base_limit_preserving_active_purchases(
@@ -1263,17 +1327,11 @@ async def extend_subscription(
             # Истекают только истёкшие пакеты, активные сохраняются.
             # Раньше тут был хардкод DELETE всех TrafficPurchase — отсюда жалобы
             # «при продлении докупленный трафик слетел».
-            # Base берём из настроек (классический режим без тарифа), а не из
-            # `total - purchased` — если инвариант уже поломан, мы бы зафиксировали баг.
-            if settings.is_traffic_fixed():
-                base_limit = settings.get_fixed_traffic_limit()
-            else:
-                # Selectable mode без тарифа: единственный достоверный источник —
-                # текущий инвариант. Если он сломан, выправится при следующем смене тарифа.
-                base_limit = max(
-                    (subscription.traffic_limit_gb or 0) - (subscription.purchased_traffic_gb or 0),
-                    0,
-                )
+            # Базу решает тариф подписки, если он есть (см. _resolve_base_traffic_limit):
+            # раньше сюда попадала и истёкшая ТАРИФНАЯ подписка, а базу ей считали
+            # по правилам классического режима — из FIXED_TRAFFIC_LIMIT_GB, и при нуле
+            # там человек после продления получал безлимит вместо лимита тарифа.
+            base_limit = await _resolve_base_traffic_limit(db, subscription)
             purchased, _ = await _apply_base_limit_preserving_active_purchases(
                 db, subscription, base_limit, now=current_time
             )

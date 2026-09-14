@@ -1720,6 +1720,80 @@ class AdminNotificationService:
             logger.error('Ошибка отправки уведомления о гостевой покупке', error=e)
             return False
 
+    async def send_grace_access_notification(
+        self,
+        *,
+        event: str,
+        user: User,
+        subscription: Subscription,
+        tariff_name: str | None,
+        reason: str,
+        grace_until: datetime,
+        hours: int,
+        quota_gb: float,
+        allowed: str,
+        completion_reason: str | None = None,
+        last_error: str | None = None,
+    ) -> bool:
+        """Выдача или завершение grace-доступа — в чат админов, категория «Продления».
+
+        Владелец: «выдача втухлую — это тупо»: админ обязан видеть, кому, почему и до
+        какого срока бот временно оставил доступ к тому, что оператор назвал в
+        GRACE_ACCESS_ALLOWED_SERVICES (``allowed``, уже экранировано), и чем это
+        закончилось — продлением, истечением срока или конфликтом с панелью.
+        """
+        try:
+            user_display = self._get_user_display(user)
+            user_id_label = self._get_user_identifier_label(user)
+            user_id_display = self._get_user_identifier_display(user)
+            username = format_username_link(getattr(user, 'username', None), 'отсутствует')
+            subscription_line = f'#{subscription.id}'
+            if tariff_name:
+                subscription_line += f' «{html.escape(tariff_name)}»'
+            reason_line = 'исчерпан трафик' if reason == 'limited' else 'срок подписки истёк'
+            quota_text = f'{quota_gb:g} ГБ'
+            until_text = format_local_datetime(grace_until, '%d.%m.%Y %H:%M')
+
+            if event == 'granted':
+                message = f"""🛟 <b>GRACE-ДОСТУП ВЫДАН</b>
+
+👤 <b>Пользователь:</b> {user_display}
+🆔 <b>{user_id_label}:</b> {user_id_display}
+📱 <b>Username:</b> {username}
+
+📋 <b>Подписка:</b> {subscription_line}
+⚠️ <b>Почему:</b> {reason_line}
+🛟 <b>Что выдано:</b> {allowed}, {quota_text} на {hours} ч.
+⏳ <b>Действует до:</b> {until_text}
+
+⏰ <i>{format_local_datetime(datetime.now(UTC), '%d.%m.%Y %H:%M:%S')}</i>"""
+            else:
+                outcomes = {
+                    'paid': '✅ человек продлил подписку — вернули обычный тариф',
+                    'timeout': '⌛ срок grace вышел, подписку не продлили — доступ закрыт',
+                    'drained': '🚰 grace выключают (слив) — доступ закрыт',
+                    'revoked': '🚫 отозван: пользователь заблокирован или подписка отключена',
+                    'conflict': '⚠️ конфликт с панелью — доступ закрыт',
+                }
+                outcome = outcomes.get(completion_reason or '', f'завершён ({completion_reason or "?"})')
+                error_line = f'\n❗ <code>{html.escape(last_error)}</code>' if last_error else ''
+                message = f"""🛟 <b>GRACE-ДОСТУП ЗАВЕРШЁН</b>
+
+👤 <b>Пользователь:</b> {user_display}
+🆔 <b>{user_id_label}:</b> {user_id_display}
+📱 <b>Username:</b> {username}
+
+📋 <b>Подписка:</b> {subscription_line}
+⚠️ <b>Был выдан:</b> {reason_line}, до {until_text}
+🏁 <b>Итог:</b> {outcome}{error_line}
+
+⏰ <i>{format_local_datetime(datetime.now(UTC), '%d.%m.%Y %H:%M:%S')}</i>"""
+
+            return await self._send_message(message, category=NotificationCategory.RENEWALS)
+        except Exception as error:
+            logger.error('Ошибка отправки уведомления о grace-доступе', error=error)
+            return False
+
     async def send_webhook_notification(self, text: str) -> bool:
         """Send a generic webhook/infrastructure notification to admin chat.
 

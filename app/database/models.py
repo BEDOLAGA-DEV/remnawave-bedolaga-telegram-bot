@@ -2540,6 +2540,12 @@ class Subscription(Base):
     # Administrative cancellation/shortening suppresses only the current
     # incident. A later renewal has a newer end_date and becomes eligible again.
     grace_suppressed_until = Column(AwareDateTime(), nullable=True)
+    # Дата, которую грейс оставил в панели после завершения: прошедшую дату
+    # PATCH не принимает, вернуть настоящую нельзя. Импорт «панель — истина»,
+    # увидев в панели ровно её, не двигает дату и статус подписки — иначе
+    # истёкшая подписка «истекала» заново в конец грейса, воркер видел свежее
+    # истечение и выдавал грейс снова (проверено на стенде 2026-09-14).
+    grace_tail_expire_at = Column(AwareDateTime(), nullable=True)
 
     remnawave_short_uuid = Column(String(255), nullable=True)
     # Панельный идентификатор пользователя. С Remnawave 3.0.0 это числовой id —

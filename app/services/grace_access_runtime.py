@@ -37,6 +37,7 @@ from app.external.remnawave_api import (
     UserStatus as PanelUserStatus,
     coerce_panel_user_id,
 )
+from app.services.grace_access_notifications import announce_grace_event
 from app.services.grace_access_service import (
     GraceAccessMode,
     GraceAccessPolicy,
@@ -59,7 +60,8 @@ from app.services.grace_access_service import (
     panel_is_safe_pending_source,
     panel_matches_overlay,
 )
-from app.services.panel_sync import is_subscription_live, panel_expire_at
+from app.services.panel_sync import is_subscription_live, panel_date_is_closing, panel_expire_at
+from app.services.panel_sync.payload import resolve_panel_status
 
 
 logger = structlog.get_logger(__name__)
@@ -343,6 +345,28 @@ class _PanelTarget:
 class RemnawaveGracePanelGateway:
     """Changes only fields controlled by the temporary overlay."""
 
+    def __init__(self, *, db: AsyncSession | None = None, subscription_id: int | None = None) -> None:
+        # Сессия и подписка нужны одному: записать хвост грейса — дату, которую
+        # PATCH оставляет в панели, — в той же транзакции, что и состояние сессии.
+        self._db = db
+        self._subscription_id = subscription_id
+
+    async def _remember_grace_tail(self, expire_at: datetime | None) -> None:
+        """Запомнить на подписке дату, которую грейс оставляет в панели.
+
+        Прошедшую дату PATCH не принимает, вернуть настоящую нельзя — в панели
+        остаётся конец грейса (или погашенная «сейчас плюс пять минут»). Импорт
+        «панель — истина», увидев ровно её, дату и статус подписки не трогает:
+        иначе истёкшая подписка «истекала» заново, а воркер выдавал грейс снова.
+        """
+        if self._db is None or self._subscription_id is None or expire_at is None:
+            return
+        await self._db.execute(
+            update(Subscription)
+            .where(Subscription.id == self._subscription_id)
+            .values(grace_tail_expire_at=_as_utc(expire_at))
+        )
+
     async def read_snapshot(self, remnawave_id: int) -> GracePanelSnapshot | None:
         from app.services.remnawave_service import remnawave_service
 
@@ -396,7 +420,6 @@ class RemnawaveGracePanelGateway:
         from app.services.remnawave_service import remnawave_service
 
         now = datetime.now(UTC)
-        target = _build_restore_target(snapshot, now=now)
 
         async with remnawave_service.get_api_client() as api:
             # Only an explicit 404 reaches this as None.  A malformed local
@@ -408,8 +431,21 @@ class RemnawaveGracePanelGateway:
                 return GraceRestoreOutcome.ALREADY_RESTORED
 
             current = _panel_user_to_snapshot(current_user)
+            # Цель строится по тому, что стоит в панели сейчас: истёкшему снимку
+            # прошедшую дату не вернуть, и общее правило гашения смотрит на неё.
+            target = _build_restore_target(snapshot, now=now, panel_current=current.expire_at)
             if _panel_matches_target(current, target):
                 return GraceRestoreOutcome.ALREADY_RESTORED
+            if target.status is PanelUserStatus.EXPIRED:
+                return await self._restore_expired_target(
+                    api,
+                    remnawave_id=remnawave_id,
+                    target=target,
+                    snapshot=snapshot,
+                    expected_overlay=expected_overlay,
+                    current=current,
+                    now=now,
+                )
             if target.status is PanelUserStatus.LIMITED:
                 if not _limited_transition_source_is_safe(
                     current,
@@ -454,6 +490,51 @@ class RemnawaveGracePanelGateway:
                 return GraceRestoreOutcome.CONFLICT
         raise GracePanelError('Remnawave restore PATCH could not be verified')
 
+    async def _restore_expired_target(
+        self,
+        api: Any,
+        *,
+        remnawave_id: int,
+        target: _PanelTarget,
+        snapshot: GracePanelSnapshot,
+        expected_overlay: GracePanelOverlay,
+        current: GracePanelSnapshot,
+        now: datetime,
+    ) -> GraceRestoreOutcome:
+        """Вернуть истёкшему снимку лимит и сквады, не трогая статус.
+
+        Общее правило panel_sync: истёкшей подписке статус в панель не шлём —
+        EXPIRED панель выводит сама, а DISABLED значит «отключена админом» и
+        именно так импортируется в бота (кабинет тогда отказывает в продлении).
+        Пока панель держит аккаунт ACTIVE с уже прошедшей (или погашенной нами)
+        датой, сессия остаётся RESTORING и доводится следующим проходом.
+        """
+        if _expired_transition_is_pending(current, target, now=now):
+            raise GracePanelTransitionPending(
+                'Remnawave has not expired the account yet; canonical fields are in place'
+            )
+        if not panel_matches_overlay(current, expected_overlay, now=now) and not panel_is_safe_pending_source(
+            current,
+            snapshot,
+            expected_overlay,
+        ):
+            return GraceRestoreOutcome.CONFLICT
+
+        await self._remember_grace_tail(target.expire_at or current.expire_at)
+        updated = await api.update_user(**_serialize_panel_target(remnawave_id, target))
+        if updated is None:
+            updated = await api.get_user_by_id(remnawave_id)
+        if updated is None:
+            raise GracePanelError('Remnawave restore PATCH could not be verified')
+        after = _panel_user_to_snapshot(updated)
+        if _panel_matches_target(after, target):
+            return GraceRestoreOutcome.RESTORED
+        if _expired_transition_is_pending(after, target, now=now):
+            raise GracePanelTransitionPending(
+                'Remnawave has not expired the account yet; canonical fields are in place'
+            )
+        return GraceRestoreOutcome.CONFLICT
+
     async def apply_billing_state(
         self,
         billing: GraceBillingState,
@@ -468,6 +549,14 @@ class RemnawaveGracePanelGateway:
         target = _build_billing_target(billing, now=now)
 
         async with remnawave_service.get_api_client() as api:
+            if target.status is PanelUserStatus.EXPIRED:
+                await self._apply_expired_billing_target(
+                    api,
+                    billing=billing,
+                    expected_overlay=expected_overlay,
+                    now=now,
+                )
+                return
             if target.status is PanelUserStatus.LIMITED:
                 current_user = await api.get_user_by_id(billing.remnawave_id)
                 if current_user is None:
@@ -508,6 +597,55 @@ class RemnawaveGracePanelGateway:
                 raise GracePanelTransitionConflict('Remnawave changed while canonical LIMITED state was being applied')
             raise GracePanelError('Remnawave did not confirm canonical billing state')
 
+    async def _apply_expired_billing_target(
+        self,
+        api: Any,
+        *,
+        billing: GraceBillingState,
+        expected_overlay: GracePanelOverlay,
+        now: datetime,
+    ) -> None:
+        """Канон истёкшей подписки: поля тарифа без статуса, EXPIRED выводит панель.
+
+        Так закрываются конфликты посреди грейса (тариф, сквады или лимит
+        поменяли, пока подписка истёкшая). Дата грейса в панели ещё в будущем —
+        её гасит общее правило «ближайший допустимый момент», а до EXPIRED от
+        планировщика сессия ждёт как RESTORING.
+        """
+        current_user = await api.get_user_by_id(billing.remnawave_id)
+        if current_user is None:
+            raise GracePanelTransitionConflict('Canonical Remnawave user disappeared during EXPIRED restore')
+        current = _panel_user_to_snapshot(current_user)
+        target = _build_billing_target(billing, now=now, panel_current=current.expire_at)
+        if _panel_matches_target(current, target) and _panel_user_matches_device_limit(current_user, target):
+            return
+        if _expired_transition_is_pending(current, target, now=now) and _panel_user_matches_device_limit(
+            current_user, target
+        ):
+            raise GracePanelTransitionPending(
+                'Remnawave has not expired the account yet; canonical fields are in place'
+            )
+        if not _expired_transition_source_is_safe(current, target, expected_overlay, now=now):
+            raise GracePanelTransitionConflict(
+                'Remnawave changed outside grace; canonical EXPIRED state was not applied'
+            )
+
+        await self._remember_grace_tail(target.expire_at or current.expire_at)
+        updated = await api.update_user(**_serialize_panel_target(billing.remnawave_id, target))
+        if updated is None:
+            updated = await api.get_user_by_id(billing.remnawave_id)
+        if updated is None:
+            raise GracePanelTransitionConflict('Canonical Remnawave user disappeared during EXPIRED restore')
+        if _panel_user_matches_target(updated, target):
+            return
+        if _expired_transition_is_pending(
+            _panel_user_to_snapshot(updated), target, now=now
+        ) and _panel_user_matches_device_limit(updated, target):
+            raise GracePanelTransitionPending(
+                'Remnawave has not expired the account yet; canonical fields are in place'
+            )
+        raise GracePanelTransitionConflict('Remnawave changed while canonical EXPIRED state was being applied')
+
 
 class _KeyedLocks:
     """Process-local part of the subscription operation lock."""
@@ -543,6 +681,9 @@ class GraceAccessRuntime:
         self._mode = GraceAccessMode.DISABLED
         self._open_offset = 0
         self._candidate_offset = 0
+        # Бот для уведомлений о выдаче/завершении; ставит main.py, как у мониторинга.
+        # Без него grace работает молча (CLI, тесты).
+        self.bot: Any = None
 
     @property
     def mode(self) -> GraceAccessMode:
@@ -666,6 +807,7 @@ class GraceAccessRuntime:
                             .values(grace_candidate_reason=None, grace_candidate_at=None)
                         )
                         await db.commit()
+            await self._announce_start(subscription_id, result)
             logger.info(
                 'Grace candidate processed',
                 subscription_id=subscription_id,
@@ -682,6 +824,23 @@ class GraceAccessRuntime:
                 source=source,
             )
             return None
+
+    async def _announce_start(self, subscription_id: int, result: GraceStartResult) -> None:
+        """Сообщить о свежей выдаче — уже после коммита, чтобы не объявлять то, что откатилось."""
+        if result.decision in {GraceStartDecision.STARTED, GraceStartDecision.RETRIED}:
+            await announce_grace_event(self.bot, subscription_id, 'granted')
+        elif (
+            result.decision is GraceStartDecision.SUPERSEDED
+            and result.session is not None
+            and result.session.state is GraceSessionState.COMPLETED
+        ):
+            await announce_grace_event(self.bot, subscription_id, 'ended')
+
+    async def _announce_reconcile(self, subscription_id: int, result: GraceReconcileResult) -> None:
+        if result.activated:
+            await announce_grace_event(self.bot, subscription_id, 'granted')
+        elif result.paid or result.timed_out or result.drained or result.revoked or result.conflicts:
+            await announce_grace_event(self.bot, subscription_id, 'ended')
 
     async def should_suppress_webhook(
         self,
@@ -953,7 +1112,10 @@ class GraceAccessRuntime:
                     await core.drain(limit=1, force_restore=force_restore) if drain else await core.reconcile(limit=1)
                 )
                 await db.commit()
-                return result
+        # Уже после коммита и вне блокировки: уведомление не должно ни задерживать
+        # согласователь, ни объявлять состояние, которое не записалось.
+        await self._announce_reconcile(subscription_id, result)
+        return result
 
 
 async def get_open_grace_subscription_ids(db: AsyncSession) -> set[int]:
@@ -1051,12 +1213,42 @@ async def apply_recovered_grace_update_locked(
     if not completed:
         raise GracePanelError('Recovered grace session changed before it could be completed')
 
+    # Состояние сессии закоммитит вызывающий (продление, обычный апдейт панели):
+    # объявлять раньше нельзя — уведомление читает сессию из базы и увидело бы
+    # ещё открытую, а откат транзакции сделал бы объявление ложным.
+    announce_grace_event_after_commit(db, subscription_id, 'ended')
     logger.info(
         'Grace access completed by the canonical renewal update',
         subscription_id=subscription_id,
         source=source,
     )
     return True, updated
+
+
+#: Фоновые задачи уведомлений: без ссылки asyncio может собрать задачу до конца.
+_announce_tasks: set[asyncio.Task[None]] = set()
+
+
+def announce_grace_event_after_commit(db: AsyncSession, subscription_id: int, event: str) -> None:
+    """Объявить о событии grace, когда вызывающий закоммитит свою транзакцию.
+
+    Пути продления (CRUD, сервис подписок, обычный апдейт панели) закрывают grace
+    внутри чужой транзакции. Хук ``after_commit`` срабатывает один раз и только
+    на успешном коммите: откат — и объявления нет. Само уведомление — фоновая
+    задача: оно не должно ни задерживать продление, ни уронить его сбоем.
+    """
+    from sqlalchemy import event as sa_event
+
+    def _fire(_session: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(announce_grace_event(grace_access_runtime.bot, subscription_id, event))
+        _announce_tasks.add(task)
+        task.add_done_callback(_announce_tasks.discard)
+
+    sa_event.listen(db.sync_session, 'after_commit', _fire, once=True)
 
 
 @asynccontextmanager
@@ -1106,6 +1298,20 @@ async def update_panel_user_grace_safe(
     subscription_id: int,
     **update_kwargs: Any,
 ) -> Any:
+    """Обычный панельный апдейт, не затирающий открытый grace; продление закрывает grace.
+
+    О закрытии grace продлением объявляет ``apply_recovered_grace_update_locked``
+    хуком после коммита вызывающего — одинаково для всех путей продления.
+    """
+    updated, _completed = await _update_panel_user_grace_safe_locked(api, subscription_id, **update_kwargs)
+    return updated
+
+
+async def _update_panel_user_grace_safe_locked(
+    api: Any,
+    subscription_id: int,
+    **update_kwargs: Any,
+) -> tuple[Any, bool]:
     """Apply a normal panel update without overwriting an open grace overlay.
 
     Metadata and device-limit changes are still allowed while grace is open.
@@ -1118,7 +1324,7 @@ async def update_panel_user_grace_safe(
         # поведение и стоимость как до фичи. Оверлеи в этих режимах не защищаются:
         # рутинный синк приводит панель к каноническому биллингу (остаточные
         # открытые сессии отрапортованы CRITICAL-логом на старте).
-        return await api.update_user(**update_kwargs)
+        return await api.update_user(**update_kwargs), False
     async with grace_sensitive_panel_update(subscription_id) as lease:
         if lease.subscription is None:
             raise GracePanelError(f'Subscription {subscription_id} disappeared before its Remnawave update')
@@ -1138,7 +1344,7 @@ async def update_panel_user_grace_safe(
             raise GracePanelError(f'Remnawave user id changed before subscription {subscription_id} update')
 
         if not lease.has_open_grace:
-            return await api.update_user(**update_kwargs)
+            return await api.update_user(**update_kwargs), False
 
         completed, updated = await apply_recovered_grace_update_locked(
             lease.db,
@@ -1148,11 +1354,11 @@ async def update_panel_user_grace_safe(
             source='grace_safe_panel_update',
         )
         if completed:
-            return updated
+            return updated, True
 
         protected_present = _GRACE_OWNED_UPDATE_FIELDS.intersection(update_kwargs)
         if not protected_present:
-            return await api.update_user(**update_kwargs)
+            return await api.update_user(**update_kwargs), False
         safe_kwargs = {key: value for key, value in update_kwargs.items() if key not in _GRACE_OWNED_UPDATE_FIELDS}
         logger.info(
             'Deferred grace-owned fields from routine Remnawave update',
@@ -1160,12 +1366,12 @@ async def update_panel_user_grace_safe(
             fields=sorted(protected_present),
         )
         if len(safe_kwargs) > 1:
-            return await api.update_user(**safe_kwargs)
+            return await api.update_user(**safe_kwargs), False
 
         current = await api.get_user_by_id(supplied_id)
         if current is None:
             raise GracePanelError(f'Remnawave user {supplied_id} disappeared while grace was open')
-        return current
+        return current, False
 
 
 def _create_payload_as_patch(create_kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -1500,7 +1706,7 @@ async def ensure_no_open_grace_for_users(db: AsyncSession, user_ids: Sequence[in
 def _build_core(db: AsyncSession, *, subscription_id: int | None = None) -> GraceAccessService:
     return GraceAccessService(
         store=SQLAlchemyGraceSessionStore(db, subscription_id=subscription_id),
-        panel=RemnawaveGracePanelGateway(),
+        panel=RemnawaveGracePanelGateway(db=db, subscription_id=subscription_id),
         billing=SQLAlchemyGraceBillingGateway(db),
         policy=_build_policy(),
     )
@@ -1672,14 +1878,36 @@ def _panel_user_to_snapshot(panel_user: Any) -> GracePanelSnapshot:
     )
 
 
-def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _PanelTarget:
+def _build_restore_target(
+    snapshot: GracePanelSnapshot,
+    *,
+    now: datetime,
+    panel_current: datetime | None = None,
+) -> _PanelTarget:
+    """Каким аккаунт должен стать после отката грейса. ``panel_current`` — дата в панели сейчас."""
     status = _normalize(snapshot.status)
     expire_at = _as_utc(snapshot.expire_at) if snapshot.expire_at else now
-    if status in {'expired', 'disabled'} or expire_at <= now:
+    # Общее правило panel_sync: прошедшую дату при обновлении не шлём, а если в
+    # панели стоит будущее (оверлей ещё не истёк — аварийный откат), гасим её
+    # ближайшим допустимым моментом.
+    closing_expire_at = panel_expire_at(
+        expire_at, is_active=False, creating=False, now=now, panel_current=panel_current
+    )
+    if status == 'disabled':
+        # Настоящее отключение админом — единственный случай, когда DISABLED наш.
         return _PanelTarget(
             status=PanelUserStatus.DISABLED,
-            # Общее правило: истёкшей подписке дату при обновлении не шлём.
-            expire_at=panel_expire_at(expire_at, is_active=False, creating=False, now=now),
+            expire_at=closing_expire_at,
+            traffic_limit_bytes=snapshot.traffic_limit_bytes,
+            squad_uuids=snapshot.squad_uuids,
+            external_squad_uuid=snapshot.external_squad_uuid,
+        )
+    if status == 'expired' or expire_at <= now:
+        # EXPIRED панель выводит сама; DISABLED значил бы «отключена админом» —
+        # именно так его импортирует бот, и кабинет отказывает в продлении.
+        return _PanelTarget(
+            status=PanelUserStatus.EXPIRED,
+            expire_at=closing_expire_at,
             traffic_limit_bytes=snapshot.traffic_limit_bytes,
             squad_uuids=snapshot.squad_uuids,
             external_squad_uuid=snapshot.external_squad_uuid,
@@ -1697,28 +1925,32 @@ def _build_restore_target(snapshot: GracePanelSnapshot, *, now: datetime) -> _Pa
     )
 
 
-def _build_billing_target(billing: GraceBillingState, *, now: datetime) -> _PanelTarget:
+def _build_billing_target(
+    billing: GraceBillingState,
+    *,
+    now: datetime,
+    panel_current: datetime | None = None,
+) -> _PanelTarget:
+    """Каким аккаунт должен стать по биллингу бота. ``panel_current`` — дата в панели сейчас."""
     status = _normalize(billing.status)
     expire_at = _as_utc(billing.end_at) if billing.end_at else now
-    # «Жива ли подписка» — общее правило синхронизации: оно смотрит и на статус
-    # пользователя (заблокированного включать нельзя), и на дату. LIMITED —
-    # надстройка грейса: панель держит пользователя с исчерпанным трафиком в
-    # отдельном статусе, до общего правила это не относится.
+    # Статус — общее правило синхронизации (panel_sync.payload): живая — ACTIVE,
+    # заблокированный владелец или выключенная в боте — DISABLED, исчерпанный
+    # трафик — LIMITED, истёкшая — EXPIRED. Два последних панель выводит сама,
+    # и при обновлении они не отправляются (см. _serialize_panel_target).
     billing_user = SimpleNamespace(status=_normalize(billing.user_status))
     billing_subscription = SimpleNamespace(status=status, end_date=expire_at)
-    if is_subscription_live(billing_user, billing_subscription, now=now):
-        panel_status = PanelUserStatus.ACTIVE
-    elif _normalize(billing.user_status) == DatabaseUserStatus.ACTIVE.value and status == 'limited' and expire_at > now:
-        panel_status = PanelUserStatus.LIMITED
-    else:
-        panel_status = PanelUserStatus.DISABLED
+    is_live = is_subscription_live(billing_user, billing_subscription, now=now)
+    panel_status = resolve_panel_status(billing_user, billing_subscription, is_live=is_live, now=now)
     # Дату считает общее правило: живой — её настоящую, истёкшей при обновлении
-    # поле не отправляется вовсе, чтобы не затирать настоящий срок в панели.
+    # поле не отправляется вовсе (а будущую дату оверлея — гасит), чтобы не
+    # затирать настоящий срок в панели.
     safe_expire_at = panel_expire_at(
         expire_at,
-        is_active=panel_status is not PanelUserStatus.DISABLED,
+        is_active=panel_status is PanelUserStatus.ACTIVE,
         creating=False,
         now=now,
+        panel_current=panel_current,
     )
     return _PanelTarget(
         status=panel_status,
@@ -1795,6 +2027,37 @@ def _limited_transition_source_is_safe(
         current_status == 'expired' and _as_utc(now) >= _as_utc(expected_overlay.expire_at)
     )
     return overlay_status_is_safe and panel_matches_overlay(
+        current,
+        expected_overlay,
+        now=now,
+    )
+
+
+def _expired_transition_is_pending(
+    snapshot: GracePanelSnapshot,
+    target: _PanelTarget,
+    *,
+    now: datetime,
+) -> bool:
+    """Поля уже канонические, но панель ещё держит ACTIVE с прошедшей (или погашенной нами) датой."""
+    return (
+        _normalize(snapshot.status) == 'active'
+        and snapshot.expire_at is not None
+        and panel_date_is_closing(snapshot.expire_at, now=now)
+        and snapshot.traffic_limit_bytes == target.traffic_limit_bytes
+        and set(snapshot.squad_uuids) == set(target.squad_uuids)
+        and snapshot.external_squad_uuid == target.external_squad_uuid
+    )
+
+
+def _expired_transition_source_is_safe(
+    current: GracePanelSnapshot,
+    target: _PanelTarget,
+    expected_overlay: GracePanelOverlay,
+    *,
+    now: datetime,
+) -> bool:
+    return _expired_transition_is_pending(current, target, now=now) or panel_matches_overlay(
         current,
         expected_overlay,
         now=now,
@@ -1885,6 +2148,11 @@ def _panel_matches_target(snapshot: GracePanelSnapshot, target: _PanelTarget) ->
     expected_status = _normalize(target.status)
     if expected_status == 'disabled':
         status_matches = actual_status in {'disabled', 'expired'}
+        expiry_matches = True
+    elif expected_status == 'expired':
+        # Дату истёкшему аккаунту не вернуть — сверяем только статус и поля.
+        # DISABLED сюда не входит: это чужое решение, не наш EXPIRED.
+        status_matches = actual_status == 'expired'
         expiry_matches = True
     else:
         status_matches = actual_status == expected_status

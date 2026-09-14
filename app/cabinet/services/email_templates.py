@@ -60,6 +60,8 @@ class EmailNotificationTemplates:
             NotificationType.SUBSCRIPTION_EXPIRING: self._subscription_expiring_template,
             NotificationType.SUBSCRIPTION_EXPIRED: self._subscription_expired_template,
             NotificationType.SUBSCRIPTION_RENEWED: self._subscription_renewed_template,
+            NotificationType.GRACE_ACCESS_GRANTED: self._grace_access_granted_template,
+            NotificationType.GRACE_ACCESS_ENDED: self._grace_access_ended_template,
             NotificationType.SUBSCRIPTION_ACTIVATED: self._subscription_activated_template,
             NotificationType.WINBACK_EXPIRED_1D: self._winback_expired_1d_template,
             NotificationType.WINBACK_DISCOUNT: self._winback_discount_template,
@@ -831,6 +833,81 @@ class EmailNotificationTemplates:
             'subject': subject,
             'body_html': self._get_base_template(content, language),
         }
+
+    # Grace-доступ: подписка кончилась, но на время оставлен доступ к тому, что
+    # оператор назвал в GRACE_ACCESS_ALLOWED_SERVICES ({allowed}); {reason} —
+    # expired|limited, остальное — числа и даты. Всё экранируется: фразу и имя
+    # тарифа пишет оператор.
+    GRACE_EMAIL_COPY = {
+        'granted': {
+            'ru': (
+                'Подписка закончилась, но связь оставили',
+                '<p>Ваша подписка{tariff} {why}. На <strong>{hours} ч.</strong> доступно только: <strong>{allowed}</strong>. Трафика на это время — {traffic_gb} ГБ, чтобы вы успели продлить подписку.</p><p>Остальное не работает до продления. Доступ действует до <strong>{until}</strong>.</p>',
+                {'expired': 'закончилась', 'limited': 'исчерпала трафик'},
+            ),
+            'en': (
+                'Subscription ended, but you are not cut off',
+                '<p>Your subscription{tariff} {why}. For <strong>{hours} h</strong> only this stays available: <strong>{allowed}</strong>. You have {traffic_gb} GB of traffic for it, so you can renew.</p><p>Everything else stays off until you renew. Access lasts until <strong>{until}</strong>.</p>',
+                {'expired': 'has ended', 'limited': 'has used up its traffic'},
+            ),
+            'zh': (
+                '订阅已到期，但未完全断开',
+                '<p>您的订阅{tariff}{why}。在 <strong>{hours} 小时</strong>内仅可使用：<strong>{allowed}</strong>。此期间有 {traffic_gb} GB 流量，以便续订。</p><p>续订前其他一切不可用。访问有效至 <strong>{until}</strong>。</p>',
+                {'expired': '已到期', 'limited': '的流量已用完'},
+            ),
+            'ua': (
+                "Підписка закінчилась, але зв'язок залишили",
+                '<p>Ваша підписка{tariff} {why}. На <strong>{hours} год.</strong> доступно лише: <strong>{allowed}</strong>. Трафіку на цей час — {traffic_gb} ГБ, щоб ви встигли продовжити підписку.</p><p>Решта не працює до продовження. Доступ діє до <strong>{until}</strong>.</p>',
+                {'expired': 'закінчилась', 'limited': 'вичерпала трафік'},
+            ),
+        },
+        'ended': {
+            'ru': (
+                'Временный доступ закончился',
+                '<p>Подписка{tariff} так и не продлена, временный доступ закрыт. Больше не работает и то, что оставалось: <strong>{allowed}</strong>.</p><p>Продлите подписку, чтобы вернуть VPN.</p>',
+                {},
+            ),
+            'en': (
+                'Temporary access has ended',
+                '<p>Subscription{tariff} was not renewed, temporary access is closed. What was still available is now off too: <strong>{allowed}</strong>.</p><p>Renew to get your VPN back.</p>',
+                {},
+            ),
+            'zh': (
+                '临时访问已结束',
+                '<p>订阅{tariff}未续订，临时访问已关闭。此前保留的部分现已不可用：<strong>{allowed}</strong>。</p><p>请续订以恢复 VPN。</p>',
+                {},
+            ),
+            'ua': (
+                'Тимчасовий доступ закінчився',
+                '<p>Підписку{tariff} так і не продовжено, тимчасовий доступ закрито. Більше не працює і те, що залишалось: <strong>{allowed}</strong>.</p><p>Продовжте підписку, щоб повернути VPN.</p>',
+                {},
+            ),
+        },
+    }
+
+    def _grace_access_email(self, event: str, language: str, context: dict[str, Any]) -> dict[str, str]:
+        lang = language if language in ('ru', 'en', 'zh', 'ua') else 'ru'
+        subject, body, why_by_reason = self.GRACE_EMAIL_COPY[event][lang]
+        tariff_name = str(context.get('tariff_name') or '').strip()
+        reason = str(context.get('reason') or 'expired').strip().lower()
+        values = {
+            'tariff': f' «{html.escape(tariff_name)}»' if tariff_name else '',
+            'why': why_by_reason.get(reason, why_by_reason.get('expired', '')),
+            'allowed': html.escape(str(context.get('allowed') or 'Telegram')),
+            'hours': html.escape(str(context.get('hours') or '')),
+            'traffic_gb': html.escape(str(context.get('traffic_gb') or '')),
+            'until': html.escape(str(context.get('until') or '')),
+        }
+        for key, value in values.items():
+            body = body.replace('{' + key + '}', value)
+        content = f'<h2>{subject}</h2><div class="highlight">{body}</div>{self._get_cabinet_button(language)}'
+        return {'subject': subject, 'body_html': self._get_base_template(content, language)}
+
+    def _grace_access_granted_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        return self._grace_access_email('granted', language, context)
+
+    def _grace_access_ended_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        return self._grace_access_email('ended', language, context)
 
     def _winback_expired_1d_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
         """Email: subscription lapsed 1 day ago (email-only users)."""

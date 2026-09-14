@@ -2284,5 +2284,8 @@
   "GIFT_COPY_TEXT_HINT": "Tap the text below to copy all of it, then send it to the recipient.",
   "GIFT_COPY_TEXT_BODY": "🎁 I'm giving you a {tariff_name} subscription for {period_days} days.\n\nActivate: {claim_link}\n\nIf the link does not open, enter this code in the bot: {public_code}",
   "GIFT_ITEM_NOT_CLAIMABLE": "This gift has already been activated — there is nothing to share.",
-  "GIFT_MY_BACK_TO_CARD": "◀️ Back to gift"
+  "GIFT_MY_BACK_TO_CARD": "◀️ Back to gift",
+  "GRACE_ACCESS_GRANTED_EXPIRED": "🛟 <b>Subscription{tariff_label} has ended, but you are not cut off</b>\n\nFor {hours} h only this stays available: {allowed}. You have {traffic_gb} GB of traffic for it, so you can renew. Everything else stays off until you renew.\n\n⏳ Until {until}.",
+  "GRACE_ACCESS_GRANTED_LIMITED": "🛟 <b>Traffic on subscription{tariff_label} is used up, but you are not cut off</b>\n\nFor {hours} h only this stays available: {allowed}. You have {traffic_gb} GB of traffic for it, so you can buy more traffic or renew. Everything else stays off until you pay.\n\n⏳ Until {until}.",
+  "GRACE_ACCESS_ENDED": "⌛ <b>Temporary access has ended</b>\n\nSubscription{tariff_label} was not renewed, temporary access is closed. What was still available is now off too: {allowed}. Renew to get your VPN back."
 }

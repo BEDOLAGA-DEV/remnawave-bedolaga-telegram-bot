@@ -4589,6 +4589,7 @@ async def _activate_user_subscription(
     db: AsyncSession, user_id: int, admin_id: int, subscription_id: int | None = None
 ) -> bool:
     try:
+        from app.database.crud.subscription import reconcile_tariff_traffic_limit
         from app.database.models import SubscriptionStatus
         from app.services.subscription_service import SubscriptionService
 
@@ -4600,6 +4601,8 @@ async def _activate_user_subscription(
         subscription.status = SubscriptionStatus.ACTIVE.value
         if subscription.end_date <= datetime.now(UTC):
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        # Условия тарифа на новый срок: база тарифа + активные докупки.
+        await reconcile_tariff_traffic_limit(db, subscription)
 
         await db.commit()
         await db.refresh(subscription)

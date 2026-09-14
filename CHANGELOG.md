@@ -1,5 +1,33 @@
 # Changelog
 
+## [4.11.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.10.0...v4.11.0) (2026-09-14)
+
+
+### New Features
+
+* **grace:** объявлять о закрытии grace продлением после коммита вызывающего ([a06d928](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a06d9283fbe8b1488bf850d55a0cc80b8458df59))
+* **grace:** ручка внешних сквадов панели для выбора «Заменить на указанный» ([ac818ef](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/ac818ef227baec811827d3555890d0e72db0e86a))
+* **grace:** тексты людям — «что остаётся доступным» словами оператора, письма в реестре редактора ([6271802](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6271802927aab5513410ce59b2c6110223304a20))
+* **grace:** уведомления о выдаче и завершении grace-доступа; сквады из синхронизации при лежащей панели ([428c811](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/428c811f5e896743397a20d11eb6159da82edc60))
+
+
+### Bug Fixes
+
+* **auth:** отвязка провайдера забывает полученный от него email и предупреждает об этом ([1da7b0d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1da7b0dcb44301bffe2ddbbccbc7a8398045a0f5))
+* **grace:** конец grace-доступа — без DISABLED, без сдвига даты и без повторной выдачи ([370e781](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/370e781cc7140a70d46523b2a7abd032032c9b8a))
+* **grace:** фраза «что остаётся доступным» без склонения и в сообщении админам ([fdb46b7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fdb46b778241ac94e0184497fa1ab9316e965839))
+* **merge:** объединение аккаунтов не теряет способ входа, реферальный код, промогруппу и дату регистрации ([403383d](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/403383d18b819feba78370dceb271dca52d1ba4a))
+* даты в WebSocket-событиях кабинета — ISO в UTC, а не строка для писем ([33f34ed](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/33f34edc3d62cdea0260728ec6ed1761e5fc4cce))
+* имя зоны в SQL — литералом, иначе PostgreSQL не сводит GROUP BY ([#3136](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3136)) ([cc14474](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/cc144748a670d2b18d2139e840159748ce1a08f5))
+* календарный день отчётов — по settings.TIMEZONE, а не по UTC ([#3136](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3136)) ([69b0995](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/69b0995e0fb0dbf44b6d46426594f3f00fd4ba71))
+* лимит трафика после продления — по тарифу, а не из настройки классического режима ([6c343f7](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/6c343f74ead44e8a6f190afd2524798bc1a0fcdb))
+* расписания синхронизации и суточной проверки трафика — в поясе TIMEZONE, а не в UTC ([f82e5b1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f82e5b18f82ed5881975e2b7d93cb12c081a978f))
+
+
+### Refactoring
+
+* **merge:** один флаг вместо двух счётчиков рефералов — CodeQL: мёртвое присваивание ([36b9f45](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/36b9f452b01df6a573ce9f8a5b8a154b4dbf5a0d))
+
 ## [4.10.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.9.1...v4.10.0) (2026-09-11)
 
 

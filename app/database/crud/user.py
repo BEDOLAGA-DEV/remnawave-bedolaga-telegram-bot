@@ -1705,13 +1705,43 @@ async def set_user_oauth_provider_id(db: AsyncSession, user: User, provider: str
     logger.info('OAuth provider linked to user', provider=provider, provider_id=provider_id, user_id=user.id)
 
 
+def provider_attested_email(user: User, provider: str) -> str | None:
+    """Email, который держится только на этом провайдере: получен от него (backfill при
+    привязке или создание через него) и не стал самостоятельным логином — пароля нет.
+    Такой email уходит вместе с отвязкой провайдера; кабинет предупреждает об этом заранее.
+    """
+    if user.email and user.email_verification_source == f'oauth_{provider}' and not user.password_hash:
+        return str(user.email)
+    return None
+
+
 async def clear_user_oauth_provider_id(db: AsyncSession, user: User, provider: str) -> None:
-    """Unlink an OAuth provider from an existing user (set column to None)."""
+    """Unlink an OAuth provider from an existing user (set column to None).
+
+    Email, который аккаунт получил только от этого провайдера (backfill при привязке
+    или создание через него), уходит вместе с провайдером. Иначе он «висит» без
+    способа его убрать, а следующий вход через провайдера находит аккаунт по этому
+    email и привязывает провайдера обратно — цикл (жалоба 2026-09-14). Если человек
+    поставил пароль, email стал самостоятельным способом входа и остаётся.
+    """
     column_name = OAUTH_PROVIDER_COLUMNS.get(provider)
     if not column_name:
         logger.warning('Unknown OAuth provider in clear', provider=provider, user_id=user.id)
         return
     setattr(user, column_name, None)
+    if provider_attested_email(user, provider):
+        user.email = None
+        user.email_verified = False
+        user.email_verified_at = None
+        user.email_verification_source = None
+        user.email_verification_token = None
+        user.email_verification_expires = None
+        user.email_change_new = None
+        user.email_change_code = None
+        user.email_change_expires = None
+        user.password_reset_token = None
+        user.password_reset_expires = None
+        logger.info('Forgot the email attested only by the unlinked provider', provider=provider, user_id=user.id)
     user.updated_at = datetime.now(UTC)
     logger.info('Unlinked OAuth provider from user', provider=provider, user_id=user.id)
 

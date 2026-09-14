@@ -505,6 +505,10 @@ class PlategaPaymentMixin:
                 return
 
             subscription.extend_subscription(record.charge_days)
+            # Условия тарифа на новый период: база тарифа + активные докупки.
+            from app.database.crud.subscription import reconcile_tariff_traffic_limit
+
+            await reconcile_tariff_traffic_limit(db, subscription)
 
             # Списание по локально ОТМЕНЁННОЙ записи = удалённая отмена не
             # прошла (сбой Platega в момент cancel). Деньги взяты — продлеваем

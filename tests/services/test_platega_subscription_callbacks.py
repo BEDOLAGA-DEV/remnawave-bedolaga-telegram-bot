@@ -12,7 +12,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.crud import platega_subscription as sub_crud
-from app.database.models import Base, PlategaSubscription, Subscription, Transaction
+from app.database.models import (
+    Base,
+    PlategaSubscription,
+    PromoGroup,
+    Subscription,
+    Tariff,
+    TrafficPurchase,
+    Transaction,
+    tariff_promo_groups,
+)
 
 
 def _ensure_real_aiosqlite(monkeypatch) -> None:
@@ -48,7 +57,16 @@ async def _memory_session(monkeypatch):
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda c: Base.metadata.create_all(
-                c, tables=[PlategaSubscription.__table__, Subscription.__table__, Transaction.__table__]
+                c,
+                tables=[
+                    PlategaSubscription.__table__,
+                    Subscription.__table__,
+                    Transaction.__table__,
+                    Tariff.__table__,
+                    TrafficPurchase.__table__,
+                    PromoGroup.__table__,
+                    tariff_promo_groups,
+                ],
             )
         )
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -1286,3 +1304,58 @@ async def test_lowercase_confirmed_status_extends_subscription(monkeypatch):
         await db.refresh(rec)
         assert subscription.end_date >= end0 + timedelta(days=29)
         assert rec.charges_success == 1
+
+
+async def test_confirmed_charge_returns_a_zeroed_tariff_subscription_to_the_tariff_limit(monkeypatch):
+    """Продление Platega идёт мимо extend_subscription — условия тарифа обязаны примениться и здесь.
+
+    Подписка, которой прежняя ошибка продления выдала безлимит (ноль в базе при
+    тарифе с лимитом), на СБП-списании возвращается к лимиту тарифа.
+    """
+    from app.services.payment.platega import PlategaPaymentMixin
+
+    class Svc(PlategaPaymentMixin):
+        """Без атрибута bot."""
+
+    async with _memory_session(monkeypatch) as db:
+        db.add(
+            Tariff(id=1, name='Тариф', is_active=True, traffic_limit_gb=50, device_limit=1, period_prices={'30': 19900})
+        )
+        subscription = Subscription(
+            id=1,
+            user_id=1,
+            tariff_id=1,
+            status='active',
+            end_date=datetime.now(UTC) + timedelta(days=2),
+            traffic_limit_gb=0,
+        )
+        db.add(subscription)
+        await db.commit()
+        await sub_crud.create_platega_subscription(
+            db,
+            user_id=1,
+            subscription_id=1,
+            tariff_id=1,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-heal',
+            status='ACTIVE',
+        )
+
+        await Svc().process_platega_subscription_callback(
+            db,
+            {
+                'Status': 'CONFIRMED',
+                'Id': 'charge-heal',
+                'Amount': 199,
+                'Currency': 'RUB',
+                'PaymentMethod': 6,
+                'SubscriptionId': 'ps-heal',
+                'NextChargeAt': '2026-09-01T00:00:00Z',
+            },
+        )
+
+        await db.refresh(subscription)
+        assert subscription.traffic_limit_gb == 50

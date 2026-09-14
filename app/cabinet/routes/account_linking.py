@@ -25,6 +25,7 @@ from app.database.crud.user import (
     get_user_by_id,
     get_user_by_oauth_provider,
     get_user_by_telegram_id,
+    provider_attested_email,
     set_user_oauth_provider_id,
 )
 from app.database.models import User
@@ -101,6 +102,9 @@ class LinkedProvider(BaseModel):
     provider: str
     linked: bool
     identifier: str | None = None
+    #: Email, который будет забыт при отвязке: он получен от этого провайдера,
+    #: а пароля для входа по почте нет. Кабинет предупреждает перед отвязкой.
+    forgets_email: str | None = None
 
 
 class LinkedProvidersResponse(BaseModel):
@@ -388,6 +392,7 @@ async def get_linked_providers(
                 provider=provider,
                 linked=identifier is not None,
                 identifier=identifier,
+                forgets_email=provider_attested_email(user, provider) if identifier else None,
             )
         )
     return LinkedProvidersResponse(providers=providers)

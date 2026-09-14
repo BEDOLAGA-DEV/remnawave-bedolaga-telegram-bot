@@ -76,6 +76,10 @@ class NotificationType(Enum):
     WEBHOOK_DEVICE_DELETED = 'webhook_device_deleted'
     WEBHOOK_TORRENT_DETECTED = 'webhook_torrent_detected'
 
+    # Grace-доступ: временный Telegram-only доступ после истечения/лимита
+    GRACE_ACCESS_GRANTED = 'grace_access_granted'
+    GRACE_ACCESS_ENDED = 'grace_access_ended'
+
     # Support tickets
     TICKET_REPLY = 'ticket_reply'
 

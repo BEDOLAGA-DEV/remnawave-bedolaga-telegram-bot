@@ -112,3 +112,15 @@ def stale_panel_expire_at(
         # нечего: панель погасит аккаунт сама, как только дата пройдёт.
         return None
     return moment + _MINIMUM_FUTURE
+
+
+def panel_date_is_closing(expire_at: datetime, *, now: datetime | None = None) -> bool:
+    """Дата в панели уже прошла или это наше собственное гашение на несколько минут вперёд.
+
+    Окно то же, что у ``stale_panel_expire_at``: пока дата в нём, панель вот-вот
+    погасит аккаунт сама, и правильнее дождаться её, чем слать статус. Нужно
+    грейс-доступу: истёкший снимок он восстанавливает без DISABLED и ждёт EXPIRED
+    от планировщика панели.
+    """
+    moment = now or datetime.now(UTC)
+    return panel_datetime_to_utc(expire_at) <= moment + _ALREADY_EXTINGUISHED

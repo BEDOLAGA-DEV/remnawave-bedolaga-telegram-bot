@@ -183,6 +183,18 @@ def read_panel_user(panel_user) -> PanelSnapshot:
     )
 
 
+#: Панель хранит миллисекунды и округляет; секунды хватает с запасом.
+_GRACE_TAIL_TOLERANCE_SECONDS = 2
+
+
+def _panel_date_is_grace_tail(subscription, snapshot: PanelSnapshot) -> bool:
+    """Совпадает ли дата в панели с той, что грейс-доступ там оставил."""
+    tail = getattr(subscription, 'grace_tail_expire_at', None)
+    if tail is None or snapshot.expire_at is None:
+        return False
+    return abs((panel_datetime_to_utc(tail) - snapshot.expire_at).total_seconds()) <= _GRACE_TAIL_TOLERANCE_SECONDS
+
+
 def _next_status_from_webhook(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
     """Статус по событию панели.
 
@@ -310,6 +322,15 @@ def project_onto_subscription(
     if grace_open:
         # Грейс — временное состояние, которое бот держит сам: дату, статус и
         # сквады панель в это время не переписывает.
+        return changed
+
+    if _panel_date_is_grace_tail(subscription, snapshot):
+        # Хвост грейса: в панели стоит дата, которую оставил сам грейс-доступ
+        # (прошедшую дату PATCH не принимает, настоящую не вернуть). Это не
+        # правка в панели и не продление — дату и статус подписки не трогаем,
+        # иначе истёкшая подписка «истекала» бы заново в конец грейса, а воркер
+        # выдавал грейс снова. Настоящее продление в панели даёт другую дату
+        # и импортируется как обычно.
         return changed
 
     locally_disabled = subscription.status == SubscriptionStatus.DISABLED.value
