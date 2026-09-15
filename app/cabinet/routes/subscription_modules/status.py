@@ -30,7 +30,7 @@ from ...schemas.subscription import (
     ServerInfo,
     SubscriptionStatusResponse,
 )
-from .helpers import _subscription_to_response, resolve_subscription
+from .helpers import _subscription_to_response, build_premium_traffic_info, resolve_subscription
 
 
 logger = structlog.get_logger(__name__)
@@ -113,7 +113,12 @@ async def get_subscription(
         )
 
     subscription_data = _subscription_to_response(
-        subscription, servers, tariff_name, traffic_purchases_data, user=fresh_user
+        subscription,
+        servers,
+        tariff_name,
+        traffic_purchases_data,
+        user=fresh_user,
+        premium_traffic=await build_premium_traffic_info(db, subscription),
     )
     return SubscriptionStatusResponse(has_subscription=True, subscription=subscription_data)
 
