@@ -42,13 +42,15 @@ class RegistrationAccessReason(StrEnum):
 
 
 # Channels that can carry invite evidence in the request itself. Telegram /start
-# carries the start parameter; the web gift claim carries the full 64-char gift
-# token, which is the same bearer secret the ``GIFT_`` deep link wraps. Every other
-# channel offers no proof of an invitation and can never create or revive a user
-# while invite-only is on.
+# carries the start parameter; standalone Cabinet email registration carries a
+# referral/campaign start parameter; the web gift claim carries the full 64-char
+# gift token, which is the same bearer secret the ``GIFT_`` deep link wraps.
+# Every other channel offers no proof of an invitation and can never create or
+# revive a user while invite-only is on.
 INVITE_BEARING_CHANNELS = frozenset(
     {
         RegistrationChannel.TELEGRAM_START,
+        RegistrationChannel.CABINET_EMAIL,
         RegistrationChannel.LANDING_GIFT_CLAIM,
     }
 )
