@@ -1,5 +1,29 @@
 # Changelog
 
+## [4.12.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.11.0...v4.12.0) (2026-09-15)
+
+
+### New Features
+
+* **cabinet:** «онлайн» в списке пользователей — подключение к VPN по панели, а не кнопки в боте ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+* **cabinet:** карточка пользователя знает режим продаж — sales_mode и multi_tariff_enabled в ответе ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+* **cabinet:** фильтр списка пользователей «трафик на исходе» — израсходовано от N % лимита ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+* **cabinet:** фильтры списка пользователей — истекают, онлайн, без покупок, без подписки, ограничения; email в общем поиске ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+
+
+### Bug Fixes
+
+* **cabinet:** вход по Telegram забирает фантома с лендинга, а не заводит второй аккаунт ([#3247](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3247)) ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+* **grace:** продление лечит подписки, испорченные грейсом в 4.10–4.11; гонки мониторинга закрыты ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+* **grace:** синхронизация и мониторинг больше не ломают грейс — оверлей не принимается за продление ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+* **panel_sync:** чужой аккаунт панели больше не гасится и не присваивается ([#3245](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/issues/3245)) ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+* **payments:** данные плательщика в каждом платеже Platega и MulenPay ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+
+
+### Refactoring
+
+* разорвать круговые импорты грейса и «онлайна» ([8978967](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/8978967f99514dd698babd39787d6c31e5391c2c))
+
 ## [4.11.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.10.0...v4.11.0) (2026-09-14)
 
 
