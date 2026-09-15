@@ -539,6 +539,7 @@ class UserService:
             # Сохраняем старый баланс для уведомления
 
             if amount_kopeks > 0:
+                was_first_topup = not user.has_made_first_topup
                 await add_user_balance(
                     db, user, amount_kopeks, description=description, payment_method=PaymentMethod.MANUAL
                 )
@@ -549,6 +550,26 @@ class UserService:
                     amount_kopeks=amount_kopeks / 100,
                 )
                 success = True
+                try:
+                    from app.services.deposit_side_effects import after_successful_deposit
+
+                    await after_successful_deposit(
+                        db,
+                        user,
+                        amount_kopeks,
+                        bot=bot,
+                        was_first_topup=was_first_topup,
+                    )
+                    await db.commit()
+                    await db.refresh(user)
+                except Exception as side_error:
+                    logger.error(
+                        'Ошибка пост-обработки после пополнения админом',
+                        user_id=user.id,
+                        amount_kopeks=amount_kopeks,
+                        error=side_error,
+                        exc_info=True,
+                    )
             else:
                 success = await subtract_user_balance(
                     db,
