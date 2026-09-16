@@ -3841,7 +3841,7 @@ class Settings(BaseSettings):
         Неизвестное значение трактуется как 'chain', а не как ошибка: опечатка в
         .env не должна менять схему выплат на ту, которую админ не выбирал.
         """
-        from app.database.crud.referral_reward_level import LEVELS_MODE_CHAIN, LEVELS_MODE_TIERS
+        from app.referral_levels import LEVELS_MODE_CHAIN, LEVELS_MODE_TIERS
 
         value = str(self.REFERRAL_LEVELS_MODE or '').strip().lower()
         return LEVELS_MODE_TIERS if value == LEVELS_MODE_TIERS else LEVELS_MODE_CHAIN
@@ -3864,7 +3864,7 @@ class Settings(BaseSettings):
         Проверяется вместе со схемой: режим — это уточнение внутри 'levels', и
         сам по себе, при классической схеме, он ничего не значит.
         """
-        from app.database.crud.referral_reward_level import LEVELS_MODE_TIERS
+        from app.referral_levels import LEVELS_MODE_TIERS
 
         return self.is_referral_levels_scheme() and self.get_referral_levels_mode() == LEVELS_MODE_TIERS
 
@@ -3882,7 +3882,7 @@ class Settings(BaseSettings):
         get_referral_effective_max_level(), а показывать глубину пользователю в
         режиме рангов не нужно вовсе — там её нет.
         """
-        from app.database.crud.referral_reward_level import MAX_SUPPORTED_LEVEL
+        from app.referral_levels import MAX_SUPPORTED_LEVEL
 
         return max(1, min(MAX_SUPPORTED_LEVEL, int(self.REFERRAL_MAX_LEVEL_DEPTH or 1)))
 
@@ -3894,7 +3894,7 @@ class Settings(BaseSettings):
         В режиме рангов ограничения нет — ранг не обходится, а выбирается по числу
         рефералов, поэтому работают все заведённые уровни.
         """
-        from app.database.crud.referral_reward_level import MAX_SUPPORTED_LEVEL
+        from app.referral_levels import MAX_SUPPORTED_LEVEL
 
         if self.is_referral_tier_levels():
             return MAX_SUPPORTED_LEVEL

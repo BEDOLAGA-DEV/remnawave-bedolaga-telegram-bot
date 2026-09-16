@@ -5,75 +5,19 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from importlib import import_module
-from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
-from app.services.mulenpay_service import MULENPAY_CLIENT_MAX_LENGTH
+from app.services.payment.payer_identity import payer_from_guest, resolve_user_payer
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
 
 class MulenPayPaymentMixin:
     """Mixin с созданием платежей, обработкой callback и проверкой статусов MulenPay."""
-
-    @staticmethod
-    def _build_mulenpay_client(user: Any) -> str | None:
-        """Собирает значение поля ``client`` для MulenPay.
-
-        Отдаём только email и только подтверждённый. Документация MulenPay
-        (docs.mulenpay.ru, POST /v2/payments) описывает ``client`` единственным
-        примером со значением-email: ни формата, ни допустимых альтернатив там
-        нет, в схеме PaymentRequest и в модели официального SDK поля нет вовсе.
-        Класть туда telegram_id — ставка на непроверенный контракт, а поскольку
-        email есть далеко не у всех, именно он уходил бы у большинства: при
-        валидации формата на стороне провайдера сломалась бы оплата ровно у тех,
-        у кого email нет. Поле необязательное, поэтому не отправить его безопасно.
-
-        Подтверждённость обязательна по той же причине, по которой её проверяет
-        остальной код (см. cabinet/dependencies.py): адрес назначается до
-        верификации, а MulenPay фискализирует платёж — чек не должен уходить на
-        неподтверждённый чужой ящик.
-        """
-        if user is None:
-            return None
-
-        if not getattr(user, 'email_verified', False):
-            return None
-
-        email = getattr(user, 'email', None)
-        if not email:
-            return None
-
-        return str(email).strip()[:MULENPAY_CLIENT_MAX_LENGTH] or None
-
-    async def _resolve_mulenpay_client(self, db: AsyncSession, user_id: int | None) -> str | None:
-        """Достаёт контакт плательщика, не имея права сорвать создание платежа.
-
-        Контакт — необязательное поле, поэтому его получение обёрнуто отдельно:
-        в общем try/except метода любая ошибка превращается в «платёж не создан»,
-        и косметическое поле не должно получать такое право. Читаем два скаляра
-        точечным select: crud.get_user_by_id тянет четыре selectinload ради
-        одного адреса, а это горячий путь оплаты.
-        """
-        if user_id is None:
-            return None
-
-        try:
-            from app.database.models import User
-
-            result = await db.execute(select(User.email, User.email_verified).where(User.id == user_id))
-            row = result.first()
-            if row is None:
-                return None
-            return self._build_mulenpay_client(SimpleNamespace(email=row.email, email_verified=row.email_verified))
-        except Exception as error:
-            logger.warning('Не удалось получить контакт плательщика для MulenPay', error=str(error))
-            return None
 
     async def create_mulenpay_payment(
         self,
@@ -84,7 +28,12 @@ class MulenPayPaymentMixin:
         language: str | None = None,
         client: str | None = None,
     ) -> dict[str, Any] | None:
-        """Создаёт локальный платеж и инициализирует сессию в MulenPay."""
+        """Создаёт локальный платеж и инициализирует сессию в MulenPay.
+
+        ``client`` — контакт плательщика-гостя; у пользователя он читается по
+        ``user_id``. MulenPay (письмо провайдера 2026-09-15) требует поле в каждом
+        платеже: «почтой, телефоном или ТГ ид и т.п.» — см. payer_identity.
+        """
         display_name = settings.get_mulenpay_display_name()
         settings.get_mulenpay_display_name_html()
         if not getattr(self, 'mulenpay_service', None):
@@ -114,7 +63,12 @@ class MulenPayPaymentMixin:
             payment_uuid = f'mulen_{user_id or "guest"}_{uuid.uuid4().hex}'
             amount_rubles = amount_kopeks / 100
 
-            payer_client = client or await self._resolve_mulenpay_client(db, user_id)
+            if client:
+                payer_client = client
+            elif user_id is not None:
+                payer_client = (await resolve_user_payer(db, user_id)).contact
+            else:
+                payer_client = payer_from_guest(payment_uuid, contact_type=None, contact_value=None).contact
 
             items = [
                 {

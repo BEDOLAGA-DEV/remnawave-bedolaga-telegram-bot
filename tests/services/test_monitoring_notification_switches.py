@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -36,9 +37,11 @@ async def test_expiration_state_updates_even_when_notifications_are_disabled(mon
         'are_notifications_globally_enabled',
         classmethod(lambda cls: False),
     )
-    subscription = SimpleNamespace(id=7, user_id=42, tariff=None)
+    subscription = SimpleNamespace(
+        id=7, user_id=42, tariff=None, status='active', end_date=datetime.now(UTC) - timedelta(minutes=1)
+    )
     user = SimpleNamespace(id=42, notification_settings={})
-    expire_subscription = AsyncMock()
+    expire_subscription = AsyncMock(return_value=True)
 
     monkeypatch.setattr(monitoring_service, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
     monkeypatch.setattr(monitoring_service, 'get_user_by_id', AsyncMock(return_value=user))
@@ -46,12 +49,12 @@ async def test_expiration_state_updates_even_when_notifications_are_disabled(mon
         'app.database.crud.subscription.is_recently_updated_by_webhook',
         lambda subscription: False,
     )
-    monkeypatch.setattr('app.database.crud.subscription.expire_subscription', expire_subscription)
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire_subscription)
 
     service = _service()
     service._send_subscription_expired_notification = AsyncMock()
     service._log_monitoring_event = AsyncMock()
-    db = SimpleNamespace(execute=AsyncMock())
+    db = SimpleNamespace(execute=AsyncMock(), refresh=AsyncMock())
 
     await service._check_expired_subscriptions(db)
 

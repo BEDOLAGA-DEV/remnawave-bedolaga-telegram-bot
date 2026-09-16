@@ -64,7 +64,9 @@ async def list_transactions(
     if conditions:
         base_query = base_query.where(and_(*conditions))
 
-    total_query = base_query.with_only_columns(func.count()).order_by(None)
+    # По колонке, а не func.count(): иначе без фильтров FROM теряется и total = 1.
+    # См. tests/webapi/test_list_total_counts_rows.py.
+    total_query = base_query.with_only_columns(func.count(Transaction.id)).order_by(None)
     total = await db.scalar(total_query) or 0
 
     result = await db.execute(base_query.order_by(Transaction.created_at.desc()).offset(offset).limit(limit))

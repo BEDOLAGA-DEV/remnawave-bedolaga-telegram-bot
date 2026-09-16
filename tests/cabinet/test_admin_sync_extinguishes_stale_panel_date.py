@@ -99,7 +99,7 @@ def _panel_double(monkeypatch, *, panel_expire_at: datetime) -> list[dict]:
 
 def _db() -> AsyncMock:
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, first=lambda: None))
     return db
 
 

@@ -7,12 +7,16 @@
 ничего — то есть поле пустовало ровно там, где нужнее всего.
 """
 
+import hashlib
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 import app.services.payment_service as payment_service_module
+
+
+GUEST_ID = 'guest-' + hashlib.sha256(('t' * 64).encode()).hexdigest()[:16]
 
 
 @pytest.fixture
@@ -81,11 +85,11 @@ async def test_guest_email_contact_is_forwarded(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.anyio('asyncio')
-async def test_guest_telegram_contact_is_not_sent_as_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    """@username — не тот контакт, который документирован примером с email."""
+async def test_guest_telegram_contact_is_sent_as_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MulenPay 2026-09-15: client — почта, телефон или Telegram «и т.п.»; @username гостя — его контакт."""
     captured = await _run_guest_payment(monkeypatch, SimpleNamespace(contact_type='telegram', contact_value='@someone'))
 
-    assert captured['client'] is None
+    assert captured['client'] == '@someone'
 
 
 @pytest.mark.anyio('asyncio')
@@ -94,11 +98,11 @@ async def test_guest_contact_lookup_failure_does_not_block_payment(
 ) -> None:
     captured = await _run_guest_payment(monkeypatch, None, raises=RuntimeError('БД недоступна'))
 
-    assert captured['client'] is None
+    assert captured['client'] == GUEST_ID
 
 
 @pytest.mark.anyio('asyncio')
-async def test_guest_missing_purchase_yields_no_client(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_guest_missing_purchase_still_sends_client(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = await _run_guest_payment(monkeypatch, None)
 
-    assert captured['client'] is None
+    assert captured['client'] == GUEST_ID

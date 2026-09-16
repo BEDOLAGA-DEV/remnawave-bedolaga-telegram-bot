@@ -60,7 +60,12 @@ from app.services.notification_delivery_service import (
 )
 from app.services.notification_settings_service import NotificationSettingsService
 from app.services.panel_sync import (
+    GRACE_MARKER_FIELDS,
+    PanelAccountOwnedByAnotherUser,
+    PanelSnapshot,
     is_subscription_live,
+    panel_date_is_grace_overlay,
+    panel_date_is_grace_tail,
     project_onto_subscription,
     push_subscription,
     read_panel_user,
@@ -199,6 +204,26 @@ logger = structlog.get_logger(__name__)
 
 
 LOGO_PATH = Path(settings.LOGO_FILE)
+
+
+async def _reload_subscription(db: AsyncSession, subscription_id: int) -> Subscription | None:
+    result = await db.execute(
+        select(Subscription)
+        .options(selectinload(Subscription.user), selectinload(Subscription.tariff))
+        .execution_options(populate_existing=True)
+        .where(Subscription.id == subscription_id)
+    )
+    return result.scalar_one_or_none()
+
+
+def _expires_by_own_date(subscription: Subscription, *, now: datetime) -> bool:
+    """Подписка всё ещё та, что попала в выборку истёкших: ACTIVE с прошедшей датой."""
+    end_date = subscription.end_date
+    if end_date is None or subscription.status != SubscriptionStatus.ACTIVE.value:
+        return False
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=UTC)
+    return end_date <= now
 
 
 class MonitoringService:
@@ -563,56 +588,28 @@ class MonitoringService:
 
     async def _check_expired_subscriptions(self, db: AsyncSession):
         try:
-            from app.database.crud.subscription import is_recently_updated_by_webhook
-
             expired_subscriptions = await get_expired_subscriptions(db)
 
-            for subscription in expired_subscriptions:
-                if is_recently_updated_by_webhook(subscription):
-                    logger.debug(
-                        'Пропуск expire подписки : обновлена вебхуком недавно', subscription_id=subscription.id
-                    )
-                    continue
-
-                # Панель — истина по сроку: продлили руками в панели, а бот ещё не читал —
-                # забираем дату оттуда и не гасим.
-                if await self._panel_keeps_alive(db, subscription):
-                    continue
-
-                from app.database.crud.subscription import expire_subscription
-
-                # Capture tariff name before expire_subscription's db.refresh() expires the relationship
-                _tariff_name = subscription.tariff.name if getattr(subscription, 'tariff', None) else None
-
-                await expire_subscription(db, subscription)
-
-                user = await get_user_by_id(db, subscription.user_id)
-                if user and self.bot:
-                    from app.utils.notification_prefs import is_subscription_expiry_enabled
-
-                    # Skip notification if user has another ACTIVE subscription (multi-tariff)
-                    skip_notify = (
-                        not NotificationSettingsService.are_notifications_globally_enabled()
-                        or not is_subscription_expiry_enabled(user)
-                    )
-                    if settings.is_multi_tariff_enabled():
-                        other_active = await db.execute(
-                            select(Subscription.id)
-                            .where(
-                                Subscription.user_id == user.id,
-                                Subscription.id != subscription.id,
-                                Subscription.status == SubscriptionStatus.ACTIVE.value,
-                                Subscription.end_date > datetime.now(UTC),
-                            )
-                            .limit(1)
-                        )
-                        skip_notify = skip_notify or other_active.scalar_one_or_none() is not None
-                    if not skip_notify:
-                        await self._send_subscription_expired_notification(user, subscription, tariff_name=_tariff_name)
-
-                logger.info(
-                    "🔴 Подписка пользователя истекла и статус изменен на 'expired'", user_id=subscription.user_id
-                )
+            rolled_back = False
+            # Идентификаторы — заранее: после отката обращение к объектам из списка
+            # полезло бы в базу ленивой подгрузкой.
+            listed_pairs = [(listed.id, listed) for listed in expired_subscriptions]
+            for subscription_id, listed in listed_pairs:
+                try:
+                    subscription = listed
+                    if rolled_back:
+                        # Откат сбросил загруженное: перечитываем подписку со связями,
+                        # иначе ленивая подгрузка в асинхронном коде уронит и её.
+                        subscription = await _reload_subscription(db, subscription_id)
+                        if subscription is None:
+                            continue
+                    await self._expire_if_due(db, subscription)
+                except Exception:
+                    # Одна подписка (удалили во время прохода, панель ответила мусором) не
+                    # должна останавливать гашение всех остальных.
+                    logger.exception('Не удалось обработать истёкшую подписку', subscription_id=subscription_id)
+                    await db.rollback()
+                    rolled_back = True
 
             if expired_subscriptions:
                 await self._log_monitoring_event(
@@ -625,6 +622,55 @@ class MonitoringService:
         except Exception as e:
             logger.error('Ошибка проверки истёкших подписок', error=e)
 
+    async def _expire_if_due(self, db: AsyncSession, subscription: Subscription) -> None:
+        """Погасить одну подписку из выборки истёкших, если её не продлили ни в панели, ни в боте."""
+        from app.database.crud.subscription import is_recently_updated_by_webhook
+
+        if is_recently_updated_by_webhook(subscription):
+            logger.debug('Пропуск expire подписки : обновлена вебхуком недавно', subscription_id=subscription.id)
+            return
+
+        # Панель — истина по сроку: продлили руками в панели, а бот ещё не читал —
+        # забираем дату оттуда и не гасим.
+        if await self._panel_keeps_alive(db, subscription):
+            return
+
+        from app.database.crud.subscription import expire_subscription_if_still_due
+
+        # Capture tariff name before the expiry's db.refresh() expires the relationship
+        _tariff_name = subscription.tariff.name if getattr(subscription, 'tariff', None) else None
+
+        if not await expire_subscription_if_still_due(db, subscription):
+            # Продлили в последний момент — между проверкой и записью.
+            logger.info('Подписку продлили, пока её гасили, — оставляем', subscription_id=subscription.id)
+            return
+
+        user = await get_user_by_id(db, subscription.user_id)
+        if user and self.bot:
+            from app.utils.notification_prefs import is_subscription_expiry_enabled
+
+            # Skip notification if user has another ACTIVE subscription (multi-tariff)
+            skip_notify = (
+                not NotificationSettingsService.are_notifications_globally_enabled()
+                or not is_subscription_expiry_enabled(user)
+            )
+            if settings.is_multi_tariff_enabled():
+                other_active = await db.execute(
+                    select(Subscription.id)
+                    .where(
+                        Subscription.user_id == user.id,
+                        Subscription.id != subscription.id,
+                        Subscription.status == SubscriptionStatus.ACTIVE.value,
+                        Subscription.end_date > datetime.now(UTC),
+                    )
+                    .limit(1)
+                )
+                skip_notify = skip_notify or other_active.scalar_one_or_none() is not None
+            if not skip_notify:
+                await self._send_subscription_expired_notification(user, subscription, tariff_name=_tariff_name)
+
+        logger.info("🔴 Подписка пользователя истекла и статус изменен на 'expired'", user_id=subscription.user_id)
+
     async def _panel_keeps_alive(self, db: AsyncSession, subscription: Subscription) -> bool:
         """Спросить панель перед гашением по своей дате.
 
@@ -632,30 +678,42 @@ class MonitoringService:
         будущем, срок продлили в обход бота (руками в панели, вебхуков нет,
         расписание раз в сутки) — берём дату и статус оттуда и подписку не гасим.
         Панель молчит, аккаунта нет или он истёк — гасим по своей дате, как раньше.
+
+        Во время грейса (и в его хвосте) ACTIVE в панели — это оверлей грейса, а не
+        продление: его дата, сквад и лимит в бота не переносятся, подписка гасится
+        по своей дате. 2026-09-15 мониторинг принял оверлей за продление, и воркер
+        закрыл грейс «человек продлил», оставив аккаунт в скваде грейса.
+
+        Подписку перечитываем из базы ПОСЛЕ снимка панели. Список истёкших взят в
+        начале прохода, а проход идёт с запросом в панель на каждую подписку: за это
+        время воркер успевает выдать грейс, а человек — продлить. Хранилище сессий
+        фиксирует признак грейса до того, как оверлей уходит в панель, поэтому
+        признак, прочитанный после снимка, видит любой грейс, который снимок мог
+        показать. Без этого на стенде (волна истечения, 2026-09-15) оверлей
+        переносился в подписку у 5% людей, а только что продлённая подписка гасилась.
         """
-        service = getattr(self, 'subscription_service', None)
-        if service is None or not getattr(service, 'is_configured', False):
-            return False
-        user = getattr(subscription, 'user', None) or await get_user_by_id(db, subscription.user_id)
-        if user is None:
-            return False
-        try:
-            async with service.get_api_client() as api:
-                identity = await resolve_panel_identity(
-                    api, user, subscription, multi_tariff=settings.is_multi_tariff_enabled()
-                )
-        except Exception as error:
-            logger.warning(
-                'Панель не ответила перед гашением подписки — гасим по своей дате',
+        snapshot = await self._read_panel_before_expiry(db, subscription)
+        # Всё, на чём стоит решение гасить: свой срок и признаки грейса.
+        await db.refresh(subscription, ['status', 'end_date', *GRACE_MARKER_FIELDS])
+        now = datetime.now(UTC)
+        if not _expires_by_own_date(subscription, now=now):
+            logger.info(
+                'Подписку изменили, пока мониторинг шёл по списку, — не гасим',
                 subscription_id=subscription.id,
-                error=str(error)[:200],
+                status=subscription.status,
+            )
+            return True
+        if getattr(subscription, 'grace_session_open', False):
+            logger.info(
+                'Открыт грейс — ACTIVE в панели это его оверлей, гасим по своей дате',
+                subscription_id=subscription.id,
             )
             return False
-        if identity.panel_user is None:
+        if snapshot is None or snapshot.status != 'ACTIVE' or snapshot.expire_at is None or snapshot.expire_at <= now:
             return False
-        snapshot = read_panel_user(identity.panel_user)
-        now = datetime.now(UTC)
-        if snapshot.status != 'ACTIVE' or snapshot.expire_at is None or snapshot.expire_at <= now:
+        if panel_date_is_grace_tail(subscription, snapshot) or panel_date_is_grace_overlay(subscription, snapshot):
+            # Хвост грейса (панель ещё несколько минут ACTIVE с погашенной датой) или
+            # снимок оверлея, снятый до досрочного закрытия грейса, — не продление.
             return False
         changed = project_onto_subscription(subscription, snapshot, now=now)
         if changed:
@@ -667,6 +725,32 @@ class MonitoringService:
             changed=sorted(changed),
         )
         return True
+
+    async def _read_panel_before_expiry(self, db: AsyncSession, subscription: Subscription) -> PanelSnapshot | None:
+        """Снимок аккаунта подписки в панели; ``None`` — панель молчит или аккаунта нет."""
+        service = getattr(self, 'subscription_service', None)
+        if service is None or not getattr(service, 'is_configured', False):
+            return None
+        user = getattr(subscription, 'user', None) or await get_user_by_id(db, subscription.user_id)
+        if user is None:
+            return None
+        try:
+            async with service.get_api_client() as api:
+                # С базой: аккаунт другого человека (та же почта у второй записи,
+                # #3245) не наш — его оплаченный срок себе не забираем.
+                identity = await resolve_panel_identity(
+                    api, user, subscription, multi_tariff=settings.is_multi_tariff_enabled(), db=db
+                )
+        except Exception as error:
+            logger.warning(
+                'Панель не ответила перед гашением подписки — гасим по своей дате',
+                subscription_id=subscription.id,
+                error=str(error)[:200],
+            )
+            return None
+        if identity.panel_user is None:
+            return None
+        return read_panel_user(identity.panel_user)
 
     async def update_remnawave_user(self, db: AsyncSession, subscription: Subscription) -> RemnaWaveUser | None:
         try:
@@ -780,6 +864,16 @@ class MonitoringService:
                 # и уход в пересоздание плодил бы дубли в панели.
                 return await self.subscription_service.recreate_deleted_panel_user(db, subscription, user=user)
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)
+            return None
+        except PanelAccountOwnedByAnotherUser as e:
+            # Две записи одного человека (#3245) — не сбой панели; оператор видит
+            # предупреждение поиска, а чужой аккаунт остаётся нетронутым.
+            logger.warning(
+                'Аккаунт панели закреплён за другим пользователем бота — не трогаем',
+                subscription_id=subscription.id,
+                panel_user_id=e.panel_user_id,
+                owner_user_id=e.owner_user_id,
+            )
             return None
         except Exception as e:
             logger.error('Ошибка обновления RemnaWave пользователя', error=e)

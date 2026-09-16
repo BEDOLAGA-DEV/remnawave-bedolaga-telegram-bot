@@ -5,6 +5,16 @@ import pytest
 from app.services.pricing_engine import PricingEngine, RenewalPricing
 
 
+@pytest.fixture(autouse=True)
+def _no_grace_history(monkeypatch):
+    """Цена классики смотрит историю грейса (сквады до оверлея); у этих подписок её нет."""
+
+    async def no_sessions(db, subscription_id):
+        return []
+
+    monkeypatch.setattr('app.services.grace_access_echo.list_sessions_for_subscription', no_sessions)
+
+
 def test_renewal_pricing_is_frozen():
     p = RenewalPricing(
         base_price=29000,

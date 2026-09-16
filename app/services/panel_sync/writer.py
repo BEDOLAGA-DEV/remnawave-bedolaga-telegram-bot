@@ -27,6 +27,7 @@ from app.external.remnawave_api import (
 from app.services.panel_sync.expiry import SKEW_RETRY_MARGIN, stale_panel_expire_at
 from app.services.panel_sync.identity import (
     PanelIdentity,
+    find_foreign_panel_owner,
     link_subscription_panel_identity,
     resolve_panel_identity,
 )
@@ -104,7 +105,17 @@ async def push_subscription(
             multi_tariff=multi_tariff,
             pinned=pinned,
             verify_recorded_id=verify_recorded_id,
+            db=db,
         )
+    elif db is not None and identity.user_id is not None:
+        # Адрес передали готовым (продление берёт ``users.remnawave_id``) — он мог
+        # прилипнуть от прошлой записи по почте в чужой аккаунт; проверяем так же.
+        owner = await find_foreign_panel_owner(db, user, subscription, identity.user_id, multi_tariff=multi_tariff)
+        if owner is not None:
+            identity = PanelIdentity(foreign_owner=owner, foreign_panel_id=identity.user_id)
+    # Нашёлся только аккаунт другого человека (#3245): писать туда — гасить его
+    # оплату, создавать новый — плодить двойника с той же почтой. Решает оператор.
+    identity.raise_if_foreign(subscription)
     if payload is None:
         payload = build_panel_payload(user, subscription, multi_tariff=multi_tariff, user_tag=user_tag, now=moment)
     payload = await _without_limited_premium_squads(payload, subscription, db=db)

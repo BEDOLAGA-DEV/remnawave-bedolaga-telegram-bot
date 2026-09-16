@@ -545,6 +545,57 @@ async def test_payment_wins_over_grace_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_grace_overlay_echoed_into_billing_is_not_a_payment() -> None:
+    """Баг 2026-09-15: импорт перенёс оверлей грейса в бота — ACTIVE, дата конца
+    грейса, сквад грейса, лимит «расход + квота». Воркер принял более позднюю дату
+    за продление и закрыл грейс как оплату, отправив это эхо в панель. Эхо
+    собственного оверлея — не оплата и не конфликт: грейс идёт дальше, панель не
+    трогаем."""
+    now = datetime(2026, 9, 15, 6, 16, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
+    snapshot = make_snapshot(expire_at=billing.end_at)
+    service, store, panel, billing_gateway = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    session = store.only_session()
+    assert session.state is GraceSessionState.ACTIVE
+    overlay = session.overlay
+
+    billing_gateway.state = replace(
+        billing,
+        status='active',
+        # Панель хранит миллисекунды — эхо может отличаться на доли секунды.
+        end_at=overlay.expire_at + timedelta(milliseconds=400),
+        traffic_limit_bytes=overlay.traffic_limit_bytes,
+        squad_uuids=overlay.squad_uuids,
+    )
+    clock.advance(timedelta(minutes=26))
+
+    result = await service.reconcile()
+
+    assert result.paid == 0
+    assert panel.applied_billing == [], 'эхо оверлея не уходит в панель как «оплаченное» состояние'
+    assert store.only_session().state is GraceSessionState.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_a_real_renewal_during_grace_is_still_a_payment() -> None:
+    now = datetime(2026, 9, 15, 6, 16, tzinfo=UTC)
+    clock = MutableClock(now)
+    billing = make_billing(status='expired', end_at=now - timedelta(minutes=1))
+    snapshot = make_snapshot(expire_at=billing.end_at)
+    service, store, panel, billing_gateway = make_service(billing=billing, snapshot=snapshot, clock=clock)
+    await service.start_if_eligible(billing, GraceReason.EXPIRED)
+    paid = replace(billing, status='active', end_at=now + timedelta(days=30))
+    billing_gateway.state = paid
+
+    result = await service.reconcile()
+
+    assert result.paid == 1
+    assert panel.applied_billing == [paid]
+
+
+@pytest.mark.asyncio
 async def test_confirmed_panel_sync_can_finish_payment_without_duplicate_panel_update() -> None:
     now = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
     clock = MutableClock(now)

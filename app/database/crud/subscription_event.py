@@ -60,7 +60,9 @@ async def list_subscription_events(
     if filters:
         base_query = base_query.where(and_(*filters))
 
-    total_query = base_query.with_only_columns(func.count()).order_by(None)
+    # По колонке, а не func.count(): иначе без фильтров FROM теряется и total = 1.
+    # См. tests/webapi/test_list_total_counts_rows.py.
+    total_query = base_query.with_only_columns(func.count(SubscriptionEvent.id)).order_by(None)
     total = await db.scalar(total_query) or 0
 
     result = await db.execute(

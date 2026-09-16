@@ -110,7 +110,7 @@ def _db(*, panel_id_taken: bool) -> AsyncMock:
     """SELECT «держит ли id другая строка» — единственный запрос помощника к базе."""
     db = AsyncMock()
     holder = 999 if panel_id_taken else None
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: holder))
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: holder, first=lambda: None))
     return db
 
 

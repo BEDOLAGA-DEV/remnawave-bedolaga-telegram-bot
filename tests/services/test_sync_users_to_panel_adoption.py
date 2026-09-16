@@ -58,7 +58,7 @@ def _db() -> AsyncMock:
     """Сессия-двойник: единственный запрос сервиса к базе — «не держит ли этот
     панельный id другая строка подписок»."""
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, first=lambda: None))
     return db
 
 

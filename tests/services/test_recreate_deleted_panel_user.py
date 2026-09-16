@@ -201,6 +201,14 @@ def _setup_subscription_service(monkeypatch, api):
     return service
 
 
+def _session():
+    """Сессия-заглушка: запись в панель спрашивает базу, не закреплён ли аккаунт за
+    другим человеком (#3245) — здесь не закреплён."""
+    db = AsyncMock()
+    db.execute.return_value.first = MagicMock(return_value=None)
+    return db
+
+
 async def test_update_addresses_panel_by_numeric_id(monkeypatch):
     """3.0.0: гейт «обновлять или создавать» и сам PATCH идут по числовому
     ``users.remnawave_id``. Регресс на remnawave_uuid дал бы 400 VALIDATION и
@@ -211,7 +219,7 @@ async def test_update_addresses_panel_by_numeric_id(monkeypatch):
     service = _setup_subscription_service(monkeypatch, api)
     service.create_remnawave_user = AsyncMock()
 
-    db = AsyncMock()
+    db = _session()
     result = await service.update_remnawave_user(db, _make_subscription())
 
     assert result is updated_user
@@ -229,7 +237,7 @@ async def test_update_skips_panel_when_no_panel_id(monkeypatch):
     monkeypatch.setattr('app.services.subscription_service.get_user_by_id', AsyncMock(return_value=user_without_panel))
     service.create_remnawave_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     api.update_user.assert_not_awaited()
@@ -244,7 +252,7 @@ async def test_update_recreates_deleted_panel_user(monkeypatch):
     recreated = object()
     service.create_remnawave_user = AsyncMock(return_value=recreated)
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is recreated
     api.update_user.assert_awaited_once()
@@ -257,7 +265,7 @@ async def test_update_does_not_recreate_on_other_api_errors(monkeypatch):
     service = _setup_subscription_service(monkeypatch, api)
     service.create_remnawave_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.create_remnawave_user.assert_not_awaited()
@@ -272,7 +280,7 @@ async def test_update_does_not_recreate_on_invalid_panel_user_id(monkeypatch):
     service = _setup_subscription_service(monkeypatch, api)
     service.create_remnawave_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.create_remnawave_user.assert_not_awaited()
@@ -286,7 +294,7 @@ async def test_update_does_not_recreate_on_plain_400(monkeypatch):
     service = _setup_subscription_service(monkeypatch, api)
     service.create_remnawave_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.create_remnawave_user.assert_not_awaited()
@@ -301,7 +309,7 @@ async def test_update_recreates_on_a063_without_404(monkeypatch):
     recreated = object()
     service.create_remnawave_user = AsyncMock(return_value=recreated)
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is recreated
     service.create_remnawave_user.assert_awaited_once()
@@ -315,7 +323,7 @@ async def test_update_does_not_recreate_on_a039_fk_violation(monkeypatch):
     service = _setup_subscription_service(monkeypatch, api)
     service.create_remnawave_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.create_remnawave_user.assert_not_awaited()
@@ -592,7 +600,7 @@ async def test_monitoring_update_happy_path_reaches_panel(monkeypatch):
     api.update_user.return_value = updated_user
     service = _setup_monitoring_service(monkeypatch, api)
 
-    db = AsyncMock()
+    db = _session()
     result = await service.update_remnawave_user(db, _make_subscription())
 
     assert result is updated_user
@@ -611,7 +619,7 @@ async def test_monitoring_update_recreates_deleted_panel_user(monkeypatch):
     recreated = object()
     service.subscription_service.recreate_deleted_panel_user = AsyncMock(return_value=recreated)
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is recreated
     api.update_user.assert_awaited_once()
@@ -625,7 +633,7 @@ async def test_monitoring_update_does_not_recreate_on_other_api_errors(monkeypat
 
     service.subscription_service.recreate_deleted_panel_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
@@ -641,7 +649,7 @@ async def test_monitoring_update_does_not_recreate_on_invalid_panel_user_id(monk
 
     service.subscription_service.recreate_deleted_panel_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
@@ -654,7 +662,7 @@ async def test_monitoring_update_does_not_recreate_on_plain_400(monkeypatch):
 
     service.subscription_service.recreate_deleted_panel_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
@@ -668,7 +676,7 @@ async def test_monitoring_update_does_not_recreate_on_a018_create_failure(monkey
     service = _setup_monitoring_service(monkeypatch, api)
     service.subscription_service.recreate_deleted_panel_user = AsyncMock()
 
-    result = await service.update_remnawave_user(AsyncMock(), _make_subscription())
+    result = await service.update_remnawave_user(_session(), _make_subscription())
 
     assert result is None
     service.subscription_service.recreate_deleted_panel_user.assert_not_awaited()
@@ -827,7 +835,9 @@ async def test_validation_adopts_panel_id_and_keeps_the_recovery_key(monkeypatch
     # Никакая другая подписка этот аккаунт не держит — защита индекса пропускает.
     # У AsyncMock дочерние атрибуты тоже асинхронные, поэтому результат execute
     # подменяем обычным моком: `scalar_one_or_none()` вызывается без await.
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=None), first=MagicMock(return_value=None)
+    )
 
     assert await service.validate_and_clean_subscription(db, sub, user) is True
 
@@ -926,7 +936,9 @@ async def test_update_adopts_panel_id_by_short_uuid_instead_of_giving_up(monkeyp
 
     db = AsyncMock()
     # Аккаунт свободен — защита частично-уникального индекса пропускает запись.
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=None), first=MagicMock(return_value=None)
+    )
     result = await service.update_remnawave_user(db, sub)
 
     assert result is updated
@@ -948,7 +960,7 @@ async def test_update_still_gives_up_when_the_panel_does_not_know_the_short_uuid
     sub.remnawave_id = None
     sub.remnawave_short_uuid = 'gone'
 
-    assert await service.update_remnawave_user(AsyncMock(), sub) is None
+    assert await service.update_remnawave_user(_session(), sub) is None
     api.update_user.assert_not_awaited()
 
 
@@ -966,7 +978,7 @@ async def test_update_gives_up_when_the_panel_is_unreachable(monkeypatch):
     sub.remnawave_id = None
     sub.remnawave_short_uuid = 'aBcD12'
 
-    assert await service.update_remnawave_user(AsyncMock(), sub) is None
+    assert await service.update_remnawave_user(_session(), sub) is None
     api.update_user.assert_not_awaited()
     assert sub.remnawave_id is None, 'битую идентичность записывать нельзя'
 
@@ -1152,7 +1164,9 @@ async def test_stale_panel_id_still_gets_rescued_by_short_uuid(monkeypatch):
     sub.remnawave_id = 4242
     user.remnawave_id = None
     db = AsyncMock()
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=None), first=MagicMock(return_value=None)
+    )
 
     assert await service.validate_and_clean_subscription(db, sub, user) is True
 
@@ -1178,7 +1192,9 @@ async def test_short_uuid_adoption_respects_the_partial_unique_index(monkeypatch
     sub, user = _validation_subject()
     db = AsyncMock()
     # Аккаунт 8812 уже держит подписка #10 того же человека.
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=10))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=10), first=MagicMock(return_value=None)
+    )
 
     assert await service.validate_and_clean_subscription(db, sub, user) is True
 
@@ -1294,7 +1310,9 @@ async def test_foreign_account_is_cleaned_not_re_anchored(monkeypatch):
     user.remnawave_id = 777
     user.telegram_id = 100  # а аккаунт принадлежит 999
     db = AsyncMock()
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=None), first=MagicMock(return_value=None)
+    )
 
     assert await service.validate_and_clean_subscription(db, sub, user) is True
 
@@ -1321,7 +1339,9 @@ async def test_short_uuid_rescue_refuses_a_foreign_account(monkeypatch):
     user.remnawave_id = None
     user.telegram_id = 100
     db = AsyncMock()
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=None), first=MagicMock(return_value=None)
+    )
 
     assert await service.validate_and_clean_subscription(db, sub, user) is True
 
@@ -1349,7 +1369,9 @@ async def test_ownership_mismatch_is_not_rescued_by_a_telegram_less_account(monk
     user.remnawave_id = 777
     user.telegram_id = 100
     db = AsyncMock()
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=None), first=MagicMock(return_value=None)
+    )
 
     assert await service.validate_and_clean_subscription(db, sub, user) is True
 
@@ -1375,7 +1397,9 @@ async def test_adoption_refuses_when_a_sibling_owns_the_account(monkeypatch):
     sub, user = _validation_subject()
     db = AsyncMock()
     # Аккаунт 8812 уже держит подписка #99 того же человека.
-    db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=99))
+    db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=99), first=MagicMock(return_value=None)
+    )
 
     result = await service._adopt_panel_id_for_update(db, sub, user, True)
 

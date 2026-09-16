@@ -73,8 +73,10 @@ def _api(**overrides):
 
 
 def _db(*, panel_id_holder=None):
+    """``scalar_one_or_none`` — занятость id для записи связи; ``first`` — поиск хозяина
+    аккаунта: здесь его нет (чужие аккаунты — ``test_foreign_panel_owner.py``)."""
     db = AsyncMock()
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: panel_id_holder))
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: panel_id_holder, first=lambda: None))
     return db
 
 

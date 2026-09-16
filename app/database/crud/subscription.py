@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, case, delete, func, select
+from sqlalchemy import and_, case, delete, func, select, update
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -364,6 +364,10 @@ async def _revive_paid_subscription(
     Mirrors the classic extend branch — extend from the current end_date if still
     alive, otherwise start a fresh period from now and reset used traffic.
     """
+    # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+    from app.services.grace_access_echo import undo_grace_overlay_echo
+
+    await undo_grace_overlay_echo(db, subscription)
     now = datetime.now(UTC)
     was_alive = subscription.end_date is not None and subscription.end_date > now
 
@@ -892,15 +896,19 @@ async def _housekeep_expired_purchases(
     # продление возвращает подписку к условиям тарифа, в том числе ту, которой
     # прежняя ошибка (база из FIXED_TRAFFIC_LIMIT_GB) выдала безлимит.
     tariff_base = await _tariff_base_traffic_limit(db, subscription)
-    if tariff_base:
+    if tariff_base is not None:
+        # Тариф без лимита (0) — тоже условие тарифа: подписка безлимитная, даже
+        # если в ней остался чужой лимит (грейс ставил «расход + 1 ГБ», правка
+        # админом). Раньше ноль проходил мимо, и безлимит не возвращался при
+        # продлении (жалоба 2026-09-15). Докупки с безлимитом не складываются.
         purchased, _ = await _apply_base_limit_preserving_active_purchases(db, subscription, tariff_base, now=now)
         return purchased
 
     current_total = subscription.traffic_limit_gb or 0
 
-    # Безлимит (тариф без лимита или классическая подписка с нулём) — housekeeping
-    # только истёкших, инвариант не трогаем
-    if tariff_base == 0 or current_total == 0:
+    # Классическая безлимитная подписка (без тарифа, лимит 0) — housekeeping
+    # только истёкших, инвариант не трогаем. Тарифную решает база тарифа выше.
+    if current_total == 0:
         await db.execute(
             delete(TrafficPurchase)
             .where(
@@ -991,7 +999,10 @@ async def reconcile_tariff_traffic_limit(
     продлениям, которые идут мимо него — рекуррентным списаниям Lava и Platega,
     продлевающим через метод модели, — иначе подписка, которой прошлая ошибка
     выдала безлимит, на таком продлении так и оставалась бы безлимитной.
-    Подписку без тарифа не трогает.
+    Подписку без тарифа не трогает. Оверлей грейса, осевший в подписке, отсюда не
+    убрать — к этому моменту дату уже сдвинули; такие продления зовут
+    ``undo_grace_overlay_echo`` до расчёта срока (сторож
+    ``test_renewal_undoes_grace_echo_first``).
     """
     if subscription.tariff_id is None:
         return
@@ -1159,6 +1170,14 @@ async def extend_subscription(
     # Повторный lock в той же транзакции — noop (SubscriptionRenewalService уже мог
     # взять lock через with_for_update).
     await _lock_subscription_row(db, subscription)
+
+    if days > 0:
+        # Оверлей грейса, осевший в подписке (v4.10–4.11 принимали его за продление
+        # в панели), — не условия подписки: сквад грейса, «расход + квота», дата
+        # конца грейса. Возвращаем прежние значения до расчёта нового срока.
+        from app.services.grace_access_echo import undo_grace_overlay_echo
+
+        await undo_grace_overlay_echo(db, subscription)
 
     logger.info('🔄 Продление подписки', subscription_id=subscription.id, days=days)
     logger.info(
@@ -2345,6 +2364,33 @@ async def expire_subscription(db: AsyncSession, subscription: Subscription) -> S
 
     logger.info('⏰ Подписка пользователя помечена как истёкшая', user_id=subscription.user_id)
     return subscription
+
+
+async def expire_subscription_if_still_due(db: AsyncSession, subscription: Subscription) -> bool:
+    """Погасить подписку, только если в базе она всё ещё ACTIVE с прошедшей датой.
+
+    Мониторинг решает по объекту, прочитанному чуть раньше; продление, закоммиченное
+    между чтением и записью, обычная запись статуса затёрла бы — оплаченная подписка
+    стала бы истёкшей. Условие в самом UPDATE делает проверку и запись одним шагом.
+    Возвращает, погашена ли подписка этим вызовом.
+    """
+    now = datetime.now(UTC)
+    result = await db.execute(
+        update(Subscription)
+        .where(
+            Subscription.id == subscription.id,
+            Subscription.status == SubscriptionStatus.ACTIVE.value,
+            Subscription.end_date <= now,
+        )
+        .values(status=SubscriptionStatus.EXPIRED.value, updated_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
+    await db.refresh(subscription)
+    expired = result.rowcount == 1
+    if expired:
+        logger.info('⏰ Подписка пользователя помечена как истёкшая', user_id=subscription.user_id)
+    return expired
 
 
 async def check_and_update_subscription_status(db: AsyncSession, subscription: Subscription) -> Subscription:

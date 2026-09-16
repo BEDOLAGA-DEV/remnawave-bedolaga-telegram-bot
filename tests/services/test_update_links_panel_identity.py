@@ -60,6 +60,7 @@ def _db(*, holder) -> AsyncMock:
     """Единственный SELECT привязки — «держит ли id другая строка»."""
     result = MagicMock()
     result.scalar_one_or_none.return_value = holder
+    result.first.return_value = None  # хозяина аккаунта в панели нет
     result.scalars.return_value.all.return_value = []
     db = AsyncMock()
     db.execute = AsyncMock(return_value=result)

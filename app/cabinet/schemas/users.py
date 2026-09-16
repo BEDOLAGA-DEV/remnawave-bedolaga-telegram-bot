@@ -117,6 +117,11 @@ class UserListItem(BaseModel):
     balance_rubles: float
     created_at: datetime
     last_activity: datetime | None = None
+    # Подключён к VPN прямо сейчас (по панели); None — панель не ответила, неизвестно.
+    is_online: bool | None = None
+    # Отметка последнего подключения из панели — по ней кабинет сам гасит зелёную точку,
+    # не дожидаясь следующего ответа сервера. None — сейчас не подключён либо панель молчит.
+    online_at: datetime | None = None
 
     # Subscription summary
     has_subscription: bool = False
@@ -282,6 +287,10 @@ class UserDetailResponse(BaseModel):
 
     # Remnawave panel user id
     remnawave_id: int | None = None
+
+    # Режим продаж бота: плитки карточки в классике, тарифах и мультитарифе разные.
+    sales_mode: str = 'tariffs'
+    multi_tariff_enabled: bool = False
 
 
 # === Panel Info ===

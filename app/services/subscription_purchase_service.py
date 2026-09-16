@@ -334,8 +334,16 @@ class MiniAppSubscriptionPurchaseService:
         )
         server_catalog: dict[str, ServerSquad] = {server.squad_uuid: server for server in available_servers}
 
-        if subscription and subscription.connected_squads:
-            for uuid in subscription.connected_squads:
+        # Серверы подписки — без сквада грейса, осевшего в ней (v4.10–4.11): иначе
+        # по умолчанию человеку предлагалось «купить» сквад грейса.
+        own_squads: list[str] = []
+        if subscription is not None:
+            from app.services.grace_access_echo import terms_without_grace_echo
+
+            own_squads, _ = await terms_without_grace_echo(db, subscription)
+
+        if own_squads:
+            for uuid in own_squads:
                 if uuid in server_catalog:
                     continue
                 try:
@@ -353,7 +361,7 @@ class MiniAppSubscriptionPurchaseService:
             except (TypeError, ValueError):
                 continue
 
-        default_connected = list(getattr(subscription, 'connected_squads', []) or [])
+        default_connected = list(own_squads)
         if not default_connected:
             for server in available_servers:
                 if getattr(server, 'is_available', True) and not getattr(server, 'is_full', False):
@@ -1076,6 +1084,10 @@ class MiniAppSubscriptionPurchaseService:
         now = datetime.now(UTC)
 
         if subscription:
+            # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+            from app.services.grace_access_echo import undo_grace_overlay_echo
+
+            await undo_grace_overlay_echo(db, subscription)
             bonus_period = timedelta()
             if subscription.is_trial:
                 was_trial_conversion = True

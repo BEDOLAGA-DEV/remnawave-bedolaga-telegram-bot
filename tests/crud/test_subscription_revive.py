@@ -12,6 +12,8 @@ Partial unique index ``uq_subscriptions_user_tariff_active`` сторожит т
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from app.database.crud import subscription as sub_crud
 from app.database.models import SubscriptionStatus
 
@@ -21,6 +23,12 @@ def _sub(**kw) -> MagicMock:
     for k, v in kw.items():
         setattr(s, k, v)
     return s
+
+
+@pytest.fixture(autouse=True)
+def _no_grace_history(monkeypatch):
+    """Реанимация сначала возвращает затёртое оверлеем грейса; у этих подписок истории нет."""
+    monkeypatch.setattr('app.services.grace_access_echo.undo_grace_overlay_echo', AsyncMock(return_value=set()))
 
 
 def _db() -> AsyncMock:

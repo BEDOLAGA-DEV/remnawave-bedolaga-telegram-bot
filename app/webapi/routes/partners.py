@@ -142,7 +142,9 @@ async def list_referrers(
     if search:
         base_query = _apply_search_filter(base_query, search)
 
-    total_query = base_query.with_only_columns(func.count()).order_by(None)
+    # По колонке, а не func.count(): здесь FROM держится условием WHERE, но держаться
+    # ему положено самим счётчиком. См. tests/webapi/test_list_total_counts_rows.py.
+    total_query = base_query.with_only_columns(func.count(User.id)).order_by(None)
     total = await db.scalar(total_query) or 0
 
     result = await db.execute(base_query.order_by(User.created_at.desc()).offset(offset).limit(limit))

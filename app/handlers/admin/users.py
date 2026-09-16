@@ -4598,6 +4598,10 @@ async def _activate_user_subscription(
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
             return False
 
+        # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+        from app.services.grace_access_echo import undo_grace_overlay_echo
+
+        await undo_grace_overlay_echo(db, subscription)
         subscription.status = SubscriptionStatus.ACTIVE.value
         if subscription.end_date <= datetime.now(UTC):
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
@@ -5065,6 +5069,10 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
             return
 
         if subscription:
+            # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+            from app.services.grace_access_echo import undo_grace_overlay_echo
+
+            await undo_grace_overlay_echo(db, subscription)
             current_time = datetime.now(UTC)
             bonus_period = timedelta()
 

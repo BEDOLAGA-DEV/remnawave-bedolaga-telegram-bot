@@ -17,32 +17,38 @@ def _sql(condition) -> str:
 
 def test_in_range_number_matches_telegram_id() -> None:
     conditions = _user_search_conditions('12345')
-    # 3 text columns + telegram_id
-    assert len(conditions) == 4
+    # 4 text columns (first/last name, username, email) + telegram_id
+    assert len(conditions) == 5
     assert 'telegram_id' in _sql(conditions[-1])
     assert '12345' in _sql(conditions[-1])
 
 
 def test_bigint_max_boundary_still_matches_telegram_id() -> None:
     conditions = _user_search_conditions(str(_BIGINT_MAX))
-    assert len(conditions) == 4
+    assert len(conditions) == 5
     assert 'telegram_id' in _sql(conditions[-1])
 
 
 def test_number_over_bigint_max_falls_back_to_text_only() -> None:
     # One past the BIGINT ceiling — would overflow the column and crash the query.
     conditions = _user_search_conditions(str(_BIGINT_MAX + 1))
-    assert len(conditions) == 3
+    assert len(conditions) == 4
     assert all('telegram_id' not in _sql(c) for c in conditions)
 
 
 def test_very_long_number_falls_back_to_text_only() -> None:
     conditions = _user_search_conditions('9' * 30)
-    assert len(conditions) == 3
+    assert len(conditions) == 4
     assert all('telegram_id' not in _sql(c) for c in conditions)
+
+
+def test_text_search_matches_email_column() -> None:
+    """Одно поле поиска в кабинете: email ищется тем же `search`, отдельного поля нет."""
+    conditions = _user_search_conditions('example.com')
+    assert any('email' in _sql(c) for c in conditions)
 
 
 def test_text_search_never_touches_telegram_id() -> None:
     conditions = _user_search_conditions('john_doe')
-    assert len(conditions) == 3
+    assert len(conditions) == 4
     assert all('telegram_id' not in _sql(c) for c in conditions)

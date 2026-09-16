@@ -164,7 +164,10 @@ async def list_users(
     if search:
         base_query = _apply_search_filter(base_query, search)
 
-    total_query = base_query.with_only_columns(func.count()).order_by(None)
+    # Считаем по колонке: with_only_columns пересобирает FROM по новым колонкам, и
+    # у безаргументного func.count() таблицы взяться неоткуда — без фильтров запрос
+    # вырождался в `SELECT count(*)` и отдавал 1 вместо числа пользователей.
+    total_query = base_query.with_only_columns(func.count(User.id)).order_by(None)
     total = await db.scalar(total_query) or 0
 
     result = await db.execute(base_query.order_by(User.created_at.desc()).offset(offset).limit(limit))

@@ -116,6 +116,10 @@ async def _award_prize(db: AsyncSession, user_id: int, prize_type: str, prize_va
         if not subscription:
             return 'Error: subscription not found'
 
+        # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+        from app.services.grace_access_echo import undo_grace_overlay_echo
+
+        await undo_grace_overlay_echo(db, subscription)
         subscription.end_date = subscription.end_date + timedelta(days=days)
         subscription.updated_at = datetime.now(UTC)
         # Условия тарифа на новый срок: база тарифа + активные докупки.

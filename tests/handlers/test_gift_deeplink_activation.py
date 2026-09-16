@@ -29,6 +29,7 @@ from app.database.crud.landing import generate_purchase_token
 from app.database.models import (
     AdvertisingCampaign,
     DiscountOffer,
+    GraceAccessSessionModel,
     GuestPurchase,
     GuestPurchaseStatus,
     MainMenuButton,
@@ -91,6 +92,7 @@ _TABLES = [
     Webhook.__table__,
     WebhookDelivery.__table__,
     PaymentMethodConfig.__table__,
+    GraceAccessSessionModel.__table__,
 ]
 
 

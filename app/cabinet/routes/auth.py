@@ -28,6 +28,7 @@ from app.database.crud.user import (
     clear_email_change_pending,
     create_user,
     create_user_by_email,
+    find_phantom_user_by_username,
     get_user_by_email_alias,
     get_user_by_id,
     get_user_by_referral_code,
@@ -42,6 +43,7 @@ from app.services.campaign_service import AdvertisingCampaignService
 from app.services.disposable_email_service import disposable_email_service
 from app.services.panel_sync import (
     ADMIN_PULL,
+    GRACE_MARKER_FIELDS,
     panel_status_for_new_subscription,
     project_onto_subscription,
     read_panel_user,
@@ -125,6 +127,73 @@ from ..services.email_template_overrides import get_rendered_override
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix='/auth', tags=['Cabinet Auth'])
+
+
+async def _create_or_claim_telegram_user(
+    db: AsyncSession,
+    *,
+    telegram_id: int,
+    username: str | None,
+    first_name: str | None,
+    last_name: str | None,
+    language: str | None,
+    referred_by_id: int | None,
+    source: str,
+) -> User:
+    """Заводит пользователя по Telegram-входу, не плодя второй аккаунт поверх фантома.
+
+    Покупка на лендинге по @username создаёт «фантома» — запись без telegram_id, на
+    которой уже висит подписка. Бот подхватывает такого при своём /start, а кабинет
+    (мини-апп, виджет, OIDC) заводил нового пользователя мимо этой проверки: клиент,
+    открывший кабинет посреди регистрации в боте, получал две учётки, и подписка
+    оставалась на фантоме. Порядок тот же, что в боте: сначала фантом по нику,
+    и только потом новая запись.
+    """
+    if username:
+        phantom = await find_phantom_user_by_username(db, username)
+        if phantom:
+            from app.services.phantom_service import claim_phantom
+
+            claimed, user = await claim_phantom(
+                db,
+                phantom,
+                telegram_id=telegram_id,
+                username=username,
+                first_name=first_name,
+                last_name=last_name,
+                language=language or 'ru',
+                referrer_id=referred_by_id,
+            )
+            if claimed and user:
+                logger.info(
+                    'Phantom user claimed from cabinet login',
+                    user_id=user.id,
+                    telegram_id=telegram_id,
+                    source=source,
+                )
+                return user
+            if user:
+                # Гонка с ботом: этот telegram_id уже завели, пока шёл claim. Берём ту
+                # запись, фантом сольётся при ближайшем /start в боте.
+                logger.warning(
+                    'Phantom claim lost the race, using existing user',
+                    user_id=user.id,
+                    telegram_id=telegram_id,
+                    source=source,
+                )
+                return user
+
+    user = await create_user(
+        db=db,
+        telegram_id=telegram_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        language=language,
+        referred_by_id=referred_by_id,
+    )
+    logger.info('User created successfully', user_id=user.id, telegram_id=user.telegram_id, source=source)
+    return user
 
 
 async def _gate_cabinet_identity(
@@ -545,36 +614,24 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
             for panel_user in panel_users_to_sync:
                 logger.info('Syncing panel subscription for email', email=user.email, panel_user_id=panel_user.id)
 
-                # Check if another user already owns this remnawave_id
-                if settings.is_multi_tariff_enabled():
-                    from sqlalchemy import select as _select
+                # Аккаунт уже закреплён за другим человеком — не забираем. Раньше в
+                # одиночном режиме смотрели только users.remnawave_id и пропускали
+                # аккаунт, который держит строка подписки второй записи того же
+                # человека (#3245): вход по почте забирал себе чужую оплату.
+                from app.services.panel_sync import find_foreign_panel_owner
 
-                    from app.database.models import Subscription as _Subscription
-
-                    _sub_result = await db.execute(
-                        _select(_Subscription).where(_Subscription.remnawave_id == panel_user.id)
+                owner = await find_foreign_panel_owner(
+                    db, user, None, panel_user.id, multi_tariff=settings.is_multi_tariff_enabled()
+                )
+                if owner is not None and owner.user_id != user.id:
+                    logger.warning(
+                        'Panel user already belongs to another bot user, skipping',
+                        email=user.email,
+                        panel_user_id=panel_user.id,
+                        existing_owner_id=owner.user_id,
+                        existing_owner_subscription_id=owner.subscription_id,
                     )
-                    _existing_sub = _sub_result.scalar_one_or_none()
-                    if _existing_sub and _existing_sub.user_id != user.id:
-                        logger.warning(
-                            'Panel user already owned by another user subscription, skipping',
-                            email=user.email,
-                            panel_user_id=panel_user.id,
-                            existing_owner_id=_existing_sub.user_id,
-                        )
-                        continue
-                else:
-                    from app.database.crud.user import get_user_by_remnawave_id
-
-                    existing_owner = await get_user_by_remnawave_id(db, panel_user.id)
-                    if existing_owner and existing_owner.id != user.id:
-                        logger.warning(
-                            'Panel user already belongs to another user, skipping',
-                            email=user.email,
-                            panel_user_id=panel_user.id,
-                            existing_owner_id=existing_owner.id,
-                        )
-                        continue
+                    continue
 
                 # Link user to panel (only in single-tariff mode)
                 if not settings.is_multi_tariff_enabled():
@@ -599,6 +656,9 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                 device_limit = coerce_panel_device_limit(panel_user.hwid_device_limit, default=0)
 
                 if existing_sub:
+                    # Признак грейса — из базы после снимка панели: объект мог
+                    # прийти из сессии раньше, а грейс — открыться между ними.
+                    await db.refresh(existing_sub, list(GRACE_MARKER_FIELDS))
                     # Вход по почте усыновляет уже существующий аккаунт панели:
                     # здесь панель — источник истины целиком, включая лимиты.
                     project_onto_subscription(
@@ -743,18 +803,18 @@ async def auth_telegram(
         consent_documents = await _require_legal_consent(
             db, accepted=request.accepted_legal_documents, language=tg_language or 'ru'
         )
-        # Create new user from Telegram initData
+        # Новый пользователь из initData — либо фантом с лендинга под этим ником
         logger.info('Creating new user from cabinet (initData): telegram_id', telegram_id=telegram_id)
-        user = await create_user(
-            db=db,
+        user = await _create_or_claim_telegram_user(
+            db,
             telegram_id=telegram_id,
             username=tg_username,
             first_name=tg_first_name,
             last_name=tg_last_name,
             language=tg_language,
             referred_by_id=referrer_id,
+            source='cabinet_telegram',
         )
-        logger.info('User created successfully: id=, telegram_id', user_id=user.id, telegram_id=user.telegram_id)
         await legal_consent_service.record_consent(
             db, user, consent_documents, source='cabinet_telegram', ip_address=client_ip
         )
@@ -921,20 +981,20 @@ async def auth_telegram_widget(
         consent_documents = await _require_legal_consent(db, accepted=request.accepted_legal_documents, language='ru')
     await _consume_widget_payload(widget_data)
     if is_new_user:
-        # Create new user from Telegram data
+        # Новый пользователь из виджета — либо фантом с лендинга под этим ником
         logger.info(
             'Creating new user from cabinet: telegram_id=, username', request_id=request.id, username=request.username
         )
-        user = await create_user(
-            db=db,
+        user = await _create_or_claim_telegram_user(
+            db,
             telegram_id=request.id,
             username=request.username,
             first_name=request.first_name,
             last_name=request.last_name,
             language='ru',
             referred_by_id=referrer_id,
+            source='cabinet_telegram_widget',
         )
-        logger.info('User created successfully: id=, telegram_id', user_id=user.id, telegram_id=user.telegram_id)
         await legal_consent_service.record_consent(
             db, user, consent_documents, source='cabinet_telegram_widget', ip_address=client_ip
         )
@@ -1113,16 +1173,16 @@ async def auth_telegram_oidc(
     await _consume_oidc_token(request.id_token, claims)
     if is_new_user:
         logger.info('Creating new user from cabinet OIDC', telegram_id=telegram_id, username=username)
-        user = await create_user(
-            db=db,
+        user = await _create_or_claim_telegram_user(
+            db,
             telegram_id=telegram_id,
             username=username,
             first_name=first_name,
             last_name=last_name,
             language=language,
             referred_by_id=referrer_id,
+            source='cabinet_telegram_oidc',
         )
-        logger.info('User created successfully', user_id=user.id, telegram_id=user.telegram_id)
         await legal_consent_service.record_consent(
             db, user, consent_documents, source='cabinet_telegram_oidc', ip_address=client_ip
         )

@@ -17,6 +17,7 @@ from Crypto.Cipher import PKCS1_v1_5
 from Crypto.PublicKey import RSA
 
 from app.config import settings
+from app.external.remnawave_errors import RemnaWaveAPIError, RemnaWaveInvalidUserIdError, coerce_panel_user_id
 
 
 logger = structlog.get_logger(__name__)
@@ -278,61 +279,12 @@ class RemnaWaveExternalSquad:
     updated_at: datetime | None = None
 
 
-class RemnaWaveAPIError(Exception):
-    def __init__(self, message: str, status_code: int = None, response_data: dict = None):
-        self.message = message
-        self.status_code = status_code
-        self.response_data = response_data
-        super().__init__(self.message)
-
-
 class RemnaWaveTransientError(RemnaWaveAPIError):
     """Transient panel failure (timeout / connection) after retries — the panel is
     slow or briefly unreachable, not a real API error. A distinct type so the
     admin-error forwarder (app/logging_handler.py) can skip these instead of
     spamming the admin chat on every slow-panel request; a persistent outage is
     surfaced by the monitoring service, not by per-request error logs."""
-
-
-class RemnaWaveInvalidUserIdError(RemnaWaveAPIError):
-    """Локальный идентификатор панельного пользователя непригоден к запросу.
-
-    Все user-эндпоинты 3.0.0 параметризованы ``numberParamSchema =
-    z.coerce.number().positive()``. Нечисловое значение (протухший UUID, None,
-    пустая строка) коерсится в NaN, и панель отвечает **400 VALIDATION, а не
-    404**. Это опасно: ``is_user_not_found_error`` такой ответ не распознаёт,
-    зато распознал бы, если бы мы ослабили её до «любой 400» — и тогда каждый
-    промах идентификатора уходил бы в ветку «пользователя нет → создать»,
-    плодя дубли в панели.
-
-    Поэтому мусорный идентификатор отсекается на границе клиента и никогда не
-    доходит до сети. Тип отдельный, чтобы вызывающий код мог отличить «у нас
-    битая ссылка в БД» от «панель отвергла запрос».
-    """
-
-
-def coerce_panel_user_id(value: Any) -> int:
-    """Привести локально хранимый идентификатор к числовому id панели.
-
-    Принимает int и строку из цифр (БД отдаёт BigInteger, но JSON/FSM могут
-    донести строку). Всё остальное — ошибка, а не запрос в панель.
-    """
-    if isinstance(value, bool):
-        raise RemnaWaveInvalidUserIdError(f'Invalid panel user id: {value!r}')
-    if isinstance(value, int):
-        candidate = value
-    elif isinstance(value, str) and (stripped := value.strip()).isascii() and stripped.isdigit():
-        # Строго ASCII-цифры. `isdigit()` в одиночку истинен для '²' и '٥',
-        # которые int() либо не принимает вовсе, либо молча переводит в число;
-        # а голый int() вдобавок принимает '4_2' и '+42' и превращает их в 42,
-        # то есть в id ДРУГОГО пользователя. Для граничной проверки расширять
-        # приём нельзя — только сужать.
-        candidate = int(stripped)
-    else:
-        raise RemnaWaveInvalidUserIdError(f'Invalid panel user id: {value!r}')
-    if candidate <= 0:
-        raise RemnaWaveInvalidUserIdError(f'Invalid panel user id: {value!r}')
-    return candidate
 
 
 def is_expire_in_past_error(error: RemnaWaveAPIError) -> bool:
@@ -1156,6 +1108,21 @@ class RemnaWaveAPI:
             users = [await self.enrich_user_with_happ_link(u) for u in users]
 
         return {'users': users, 'total': response['response']['total']}
+
+    async def get_users_by_last_online(self, start: int = 0, size: int = 1000) -> list[RemnaWaveUser]:
+        """Страница ``GET /api/users`` по убыванию ``userTraffic.onlineAt`` — как сортирует таблица панели.
+
+        Фильтр по ``onlineAt`` у панели — только точное равенство; «кто подключён сейчас»
+        выбирается этой сортировкой (никогда не подключавшиеся — в конце). ``size`` по
+        контракту 1..1000.
+        """
+        params = {
+            'start': max(0, start),
+            'size': max(1, min(size, 1000)),
+            'sorting': json.dumps([{'id': 'userTraffic.onlineAt', 'desc': True}]),
+        }
+        response = await self._make_request('GET', '/api/users', params=params)
+        return [self._parse_user(user) for user in response['response']['users']]
 
     async def get_all_users_page_stream(
         self,

@@ -63,7 +63,10 @@ from app.database.models import (
 )
 from app.services.panel_sync import (
     ADMIN_PULL,
+    GRACE_MARKER_FIELDS,
     ROUTINE,
+    PanelAccountOwnedByAnotherUser,
+    find_foreign_panel_owner,
     is_subscription_live,
     project_onto_subscription,
     read_panel_user,
@@ -446,6 +449,13 @@ async def list_users(
     promo_group_id: int | None = Query(None),
     campaign_id: int | None = Query(None),
     partner_id: int | None = Query(None),
+    expires_within_days: int | None = Query(None, ge=0, le=365),
+    active_within_minutes: int | None = Query(None, ge=1, le=1440),
+    has_restrictions: bool | None = Query(None),
+    has_subscription: bool | None = Query(None),
+    purchase_count: int | None = Query(None, ge=0, le=0),
+    traffic_used_percent_min: int | None = Query(None, ge=1, le=100),
+    online: bool | None = Query(None),
     sort_by: SortByEnum = Query(SortByEnum.CREATED_AT),
     admin: User = Depends(require_permission('users:read')),
     db: AsyncSession = Depends(get_cabinet_db),
@@ -455,9 +465,15 @@ async def list_users(
 
     - **offset**: Pagination offset
     - **limit**: Number of users per page (max 200)
-    - **search**: Search by telegram_id, username, first_name, last_name
+    - **search**: Search by telegram_id, username, first_name, last_name, email
     - **email**: Search by email
     - **status**: Filter by user status (active, blocked, deleted)
+    - **expires_within_days**: Active subscription ends within N days (daily tariffs excluded)
+    - **active_within_minutes**: Last activity in the bot or cabinet within N minutes
+    - **online**: Only users connected to the VPN right now (by the panel's onlineAt)
+    - **has_restrictions** / **has_subscription**: Restriction flags / any subscription at all
+    - **purchase_count**: Only 0 is supported — users without a completed subscription payment
+    - **traffic_used_percent_min**: Live subscription with at least N % of its traffic limit used (unlimited excluded)
     - **sort_by**: Sort field (created_at, balance, traffic, last_activity, total_spent, purchase_count, subscription_end_date)
     """
     # Convert status enum to model enum
@@ -481,6 +497,22 @@ async def list_users(
         except ValueError:
             tariff_ids = None
 
+    # «Онлайн» — подключение к VPN по панели, а не кнопки в боте (см. app/services/panel_online.py).
+    # Отметка «в сети» нужна каждой строке, поэтому снимок отметок берём всегда; он
+    # кэшируется на 20 секунд, а «кто онлайн» пересчитывается здесь, на момент ответа, —
+    # иначе кэш ещё двадцать секунд называл бы онлайн тех, кого панель уже погасила.
+    # Без ответа панели фильтр «онлайн» не угадывает, а честно отказывает.
+    from app.services.panel_online import get_online_snapshot
+
+    snapshot = await get_online_snapshot()
+    if online and snapshot is None:
+        raise HTTPException(
+            status_code=503,
+            detail='Панель не ответила — не удалось узнать, кто сейчас подключён. Попробуйте ещё раз.',
+        )
+    connected = snapshot.connected_now() if snapshot is not None else None
+    online_filter = connected if online else None
+
     users = await get_users_list(
         db=db,
         offset=offset,
@@ -493,6 +525,13 @@ async def list_users(
         promo_group_id=promo_group_id,
         campaign_id=campaign_id,
         partner_id=partner_id,
+        expires_within_days=expires_within_days,
+        active_within_minutes=active_within_minutes,
+        has_restrictions=has_restrictions,
+        has_subscription=has_subscription,
+        purchase_count=purchase_count,
+        traffic_used_percent_min=traffic_used_percent_min,
+        connected=online_filter,
         order_by_balance=order_by_balance,
         order_by_traffic=order_by_traffic,
         order_by_last_activity=order_by_last_activity,
@@ -511,13 +550,28 @@ async def list_users(
         promo_group_id=promo_group_id,
         campaign_id=campaign_id,
         partner_id=partner_id,
+        expires_within_days=expires_within_days,
+        active_within_minutes=active_within_minutes,
+        has_restrictions=has_restrictions,
+        has_subscription=has_subscription,
+        purchase_count=purchase_count,
+        traffic_used_percent_min=traffic_used_percent_min,
+        connected=online_filter,
     )
 
     # Get spending stats for all users
     user_ids = [u.id for u in users]
     spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
 
-    items = [_build_user_list_item(u, spending_stats) for u in users]
+    items = [
+        _build_user_list_item(u, spending_stats).model_copy(
+            update={
+                'is_online': connected.has_user(u) if connected is not None else None,
+                'online_at': snapshot.online_at_for(u) if snapshot is not None else None,
+            }
+        )
+        for u in users
+    ]
 
     return UsersListResponse(
         users=items,
@@ -669,6 +723,14 @@ async def get_user_by_remnawave_identifier(
     )
 
 
+def _sales_mode_fields() -> dict:
+    """Режим продаж для карточки: в классике тарифа нет, в мультитарифе подписок несколько."""
+    return {
+        'sales_mode': settings.get_sales_mode(),
+        'multi_tariff_enabled': settings.is_multi_tariff_enabled(),
+    }
+
+
 @router.get('/{user_id}', response_model=UserDetailResponse)
 async def get_user_detail(
     user_id: int,
@@ -772,6 +834,7 @@ async def get_user_detail(
         campaign_id = campaign_reg.campaign.id
 
     return UserDetailResponse(
+        **_sales_mode_fields(),
         id=user.id,
         telegram_id=user.telegram_id,
         username=user.username,
@@ -3898,6 +3961,25 @@ async def sync_user_from_panel(
                     errors=['No user found in Remnawave panel by panel id, telegram_id, or email'],
                 )
 
+            # По почте/Telegram находится и аккаунт второй записи того же человека
+            # (#3245): перенос сюда подарил бы этой записи чужую оплату, а запись
+            # users.remnawave_id упала бы на уникальности.
+            owner = await find_foreign_panel_owner(
+                db, user, selected_sub, panel_user.id, multi_tariff=settings.is_multi_tariff_enabled()
+            )
+            if owner is not None and owner.user_id != user.id:
+                logger.warning(
+                    'Sync from panel refused: panel account belongs to another bot user',
+                    user_id=user.id,
+                    panel_user_id=panel_user.id,
+                    owner_user_id=owner.user_id,
+                )
+                message = (
+                    f'Аккаунт в панели принадлежит другому пользователю бота (ID {owner.user_id}). '
+                    'Похоже, у человека две записи в боте — объедините их или удалите лишнюю.'
+                )
+                return SyncFromPanelResponse(success=False, message=message, errors=[message])
+
             # Build panel info. active_internal_squads is a list[dict] (see the
             # diagnostic in get_user_sync_status / auth.py); the previous .uuid/str
             # checks matched nothing, so panel squads were never extracted and the
@@ -3970,6 +4052,10 @@ async def sync_user_from_panel(
                         f'Panel value applied — check if auto-purchase extended subscription.'
                     )
 
+                # Подписка загружена до запроса в панель: грейс мог открыться между
+                # ними, а снимок — уже показывать его оверлей. Признак, прочитанный
+                # после снимка, это видит (хранилище пишет его до оверлея в панели).
+                await db.refresh(sync_sub, list(GRACE_MARKER_FIELDS))
                 changed_fields = project_onto_subscription(
                     sync_sub,
                     snapshot,
@@ -4156,6 +4242,15 @@ async def sync_user_to_panel(
 
     except HTTPException:
         raise
+    except PanelAccountOwnedByAnotherUser as e:
+        # Две записи одного человека (#3245): не сбой панели, а вопрос к админу.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f'Аккаунт в панели принадлежит другому пользователю бота (ID {e.owner_user_id}). '
+                'Похоже, у человека две записи в боте — объедините их или удалите лишнюю.'
+            ),
+        )
     except Exception as e:
         logger.error('Error syncing user to panel', user_id=user_id, error=e)
         raise HTTPException(

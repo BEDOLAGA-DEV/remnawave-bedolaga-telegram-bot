@@ -131,12 +131,32 @@ def _sends_a_date_itself(path: pathlib.Path) -> bool:
     return False
 
 
+#: Пишут словари с ``expire_at`` в базу, а не в панель: эвристика выше их путает с
+#: payload. Каждый обязан не звать запись в панель (test_snapshot_stores_never_write_to_the_panel).
+_SNAPSHOT_STORES = {
+    'app/services/grace_access_codec.py': 'снимки грейса (биллинг, панель, оверлей) в строке сессии',
+}
+
+
 def _modules_sending_a_date_to_the_panel() -> list[pathlib.Path]:
     return [
         path
         for path in sorted(pathlib.Path('app').rglob('*.py'))
-        if not any(str(path).startswith(owner) for owner in _RULE_OWNERS) and _sends_a_date_itself(path)
+        if not any(str(path).startswith(owner) for owner in _RULE_OWNERS)
+        and str(path) not in _SNAPSHOT_STORES
+        and _sends_a_date_itself(path)
     ]
+
+
+@pytest.mark.parametrize('path', sorted(_SNAPSHOT_STORES))
+def test_snapshot_stores_never_write_to_the_panel(path):
+    tree = ast.parse(pathlib.Path(path).read_text(encoding='utf-8'))
+    calls = {
+        getattr(node.func, 'attr', getattr(node.func, 'id', ''))
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    }
+    assert not calls & _PANEL_WRITE_CALLS, f'{path} исключён как хранилище снимков, но пишет в панель'
 
 
 @pytest.mark.parametrize('path', sorted(pathlib.Path('app').rglob('*.py')), ids=str)

@@ -245,6 +245,10 @@ async def _do_activate_subscription(
             username=user.username,
         )
 
+    # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+    from app.services.grace_access_echo import undo_grace_overlay_echo
+
+    await undo_grace_overlay_echo(db, sub)
     sub.status = SubscriptionStatus.ACTIVE.value
     if sub.end_date and sub.end_date <= datetime.now(UTC):
         # Extend by 30 days if expired

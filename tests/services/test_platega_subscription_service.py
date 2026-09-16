@@ -11,7 +11,11 @@ from app.config import settings
 from app.database.crud import platega_subscription as sub_crud
 from app.database.models import Base, PlategaSubscription
 from app.services.monitoring_service import MonitoringService
+from app.services.payment.payer_identity import PayerIdentity
 from app.services.platega_service import PlategaService
+
+
+PAYER = PayerIdentity(user_id='555', user_name='@neo', contact='555')
 
 
 def _configure(monkeypatch: pytest.MonkeyPatch, **overrides) -> None:
@@ -42,12 +46,19 @@ async def test_create_subscription_posts_method_6(monkeypatch: pytest.MonkeyPatc
         return (payload, 200) if return_status else payload
 
     monkeypatch.setattr(service, '_request', fake_request)
-    res = await service.create_subscription(amount=199.0, currency='RUB', interval=3, description='Тариф')
+    res = await service.create_subscription(payer=PAYER, amount=199.0, currency='RUB', interval=3, description='Тариф')
 
     assert captured['method'] == 'POST'
     assert captured['endpoint'] == '/transaction/process'
     assert captured['json_data']['paymentMethod'] == 6
-    assert captured['json_data']['paymentDetails'] == {'amount': 199, 'currency': 'RUB', 'interval': 3}
+    # docs.platega.io «Создать подписку»: intervalCount обязателен; каденс считаем «одно
+    # списание за interval» (resolve_platega_interval) — значит, 1.
+    assert captured['json_data']['paymentDetails'] == {
+        'amount': 199,
+        'currency': 'RUB',
+        'interval': 3,
+        'intervalCount': 1,
+    }
     assert captured['json_data']['description'] == 'Тариф'
     assert res['transactionId'] == 'tx-1'
 
@@ -64,7 +75,7 @@ async def test_create_subscription_uses_v2_endpoint_when_configured(monkeypatch:
         return (payload, 200) if return_status else payload
 
     monkeypatch.setattr(service, '_request', fake_request)
-    await service.create_subscription(amount=149.5, currency='RUB', interval=1)
+    await service.create_subscription(payer=PAYER, amount=149.5, currency='RUB', interval=1)
 
     assert service.api_version == 'v2'
     assert captured['endpoint'] == '/v2/transaction/process'
@@ -82,7 +93,7 @@ async def test_create_subscription_omits_description_when_not_provided(monkeypat
         return (payload, 200) if return_status else payload
 
     monkeypatch.setattr(service, '_request', fake_request)
-    await service.create_subscription(amount=100.0, currency='RUB', interval=2)
+    await service.create_subscription(payer=PAYER, amount=100.0, currency='RUB', interval=2)
 
     assert 'description' not in captured['json_data']
 
@@ -100,7 +111,9 @@ async def test_create_subscription_truncates_long_cyrillic_description(monkeypat
 
     monkeypatch.setattr(service, '_request', fake_request)
     long_description = 'Премиум тариф на 3 месяца безлимит и ещё немного текста'
-    await service.create_subscription(amount=199.0, currency='RUB', interval=3, description=long_description)
+    await service.create_subscription(
+        payer=PAYER, amount=199.0, currency='RUB', interval=3, description=long_description
+    )
 
     description_in_body = captured['json_data']['description']
     # Verify truncated to 64 bytes
@@ -421,7 +434,7 @@ async def test_create_subscription_raises_actionable_error_on_val0001(monkeypatc
     monkeypatch.setattr(service, '_request', fake_request)
 
     with pytest.raises(PlategaApiError) as exc_info:
-        await service.create_subscription(amount=199, currency='RUB', interval=3, description='x')
+        await service.create_subscription(payer=PAYER, amount=199, currency='RUB', interval=3, description='x')
 
     assert exc_info.value.http_status == 400
     assert 'paymentMethod: Subscription' in str(exc_info.value)
@@ -438,5 +451,23 @@ async def test_create_subscription_transport_failure_returns_none(monkeypatch: p
 
     monkeypatch.setattr(service, '_request', fake_request)
 
-    result = await service.create_subscription(amount=199, currency='RUB', interval=3)
+    result = await service.create_subscription(payer=PAYER, amount=199, currency='RUB', interval=3)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_create_subscription_sends_payer_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """СБП-подписка — тот же POST /transaction/process: metadata обязательна и здесь."""
+    _configure(monkeypatch)
+    service = PlategaService()
+    captured = {}
+
+    async def fake_request(method, endpoint, *, json_data=None, params=None, return_status=False):
+        captured.update(json_data=json_data)
+        payload = {'transactionId': 'tx-1', 'redirect': 'https://pay/x', 'status': 'PENDING'}
+        return (payload, 200) if return_status else payload
+
+    monkeypatch.setattr(service, '_request', fake_request)
+    await service.create_subscription(payer=PAYER, amount=199.0, currency='RUB', interval=3)
+
+    assert captured['json_data']['metadata'] == {'userId': '555', 'userName': '@neo'}

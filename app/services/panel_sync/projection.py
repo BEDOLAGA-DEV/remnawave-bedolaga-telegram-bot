@@ -76,6 +76,8 @@ class ProjectionPolicy:
     takes_device_limit: bool = False
     #: Не переносить дату, пока подписка намеренно отключена в боте.
     respects_local_disable: bool = False
+    #: Брать из панели сквады.
+    takes_squads: bool = True
 
 
 #: Панель — истина: дата, статус и лимиты при любом статусе аккаунта.
@@ -186,13 +188,43 @@ def read_panel_user(panel_user) -> PanelSnapshot:
 #: Панель хранит миллисекунды и округляет; секунды хватает с запасом.
 _GRACE_TAIL_TOLERANCE_SECONDS = 2
 
+#: Поля подписки, по которым проекция узнаёт грейс. Подписку, загруженную до снимка
+#: панели, перед переносом перечитывают целиком по этому списку: хранилище пишет их
+#: до отправки оверлея, и только прочитанные после снимка видят любой грейс, который
+#: снимок мог показать (сторож ``test_projection_reads_grace_marker_after_snapshot``).
+GRACE_MARKER_FIELDS = ('grace_session_open', 'grace_tail_expire_at', 'grace_overlay_expire_at')
 
-def _panel_date_is_grace_tail(subscription, snapshot: PanelSnapshot) -> bool:
+
+def panel_date_is_grace_tail(subscription, snapshot: PanelSnapshot) -> bool:
     """Совпадает ли дата в панели с той, что грейс-доступ там оставил."""
     tail = getattr(subscription, 'grace_tail_expire_at', None)
     if tail is None or snapshot.expire_at is None:
         return False
     return abs((panel_datetime_to_utc(tail) - snapshot.expire_at).total_seconds()) <= _GRACE_TAIL_TOLERANCE_SECONDS
+
+
+def panel_date_is_grace_overlay(subscription, snapshot: PanelSnapshot) -> bool:
+    """Совпадает ли дата в панели с «концом грейса», который выставил оверлей.
+
+    Такую дату (``сейчас + срок грейса`` до миллисекунд) даёт только грейс: ни
+    продление, ни админ её не повторят. Хранилище пишет её на подписку до
+    отправки оверлея в панель и при закрытии сессии не стирает.
+    """
+    marker = getattr(subscription, 'grace_overlay_expire_at', None)
+    if marker is None or snapshot.expire_at is None:
+        return False
+    return abs((panel_datetime_to_utc(marker) - snapshot.expire_at).total_seconds()) <= _GRACE_TAIL_TOLERANCE_SECONDS
+
+
+def _tail_confirms_own_expiry(
+    subscription, snapshot: PanelSnapshot, *, policy: ProjectionPolicy, trust_status: bool, now: datetime
+) -> bool:
+    """В хвосте грейса панель говорит «истёк», и по своей дате подписка тоже истекла."""
+    if not trust_status or policy.status_mode == 'webhook' or snapshot.status != 'EXPIRED':
+        return False
+    if subscription.status not in _RENEWABLE_STATUSES or subscription.end_date is None:
+        return False
+    return panel_datetime_to_utc(subscription.end_date) <= now
 
 
 def _next_status_from_webhook(subscription, snapshot: PanelSnapshot, *, now: datetime) -> str:
@@ -301,7 +333,11 @@ def project_onto_subscription(
             # Подписку изменили уже после того, как снимок был снят: применять
             # его поверх свежей правки — значит откатывать оплату.
             trust_status = False
-            policy = replace(policy, takes_date=False, takes_traffic_limit=False, takes_device_limit=False)
+            # Сквады — тоже: снимок со старыми сквадами откатывал бы сквады покупки
+            # (или приносил сквад грейса, если снимок сняли во время грейса).
+            policy = replace(
+                policy, takes_date=False, takes_traffic_limit=False, takes_device_limit=False, takes_squads=False
+            )
 
     if snapshot.short_uuid and subscription.remnawave_short_uuid != snapshot.short_uuid:
         subscription.remnawave_short_uuid = snapshot.short_uuid
@@ -319,18 +355,36 @@ def project_onto_subscription(
             subscription.traffic_used_gb = snapshot.traffic_used_gb
             changed.add('traffic_used_gb')
 
-    if grace_open:
-        # Грейс — временное состояние, которое бот держит сам: дату, статус и
-        # сквады панель в это время не переписывает.
+    if grace_open or getattr(subscription, 'grace_session_open', False):
+        # Грейс — временное состояние, которое бот держит сам: дату, статус,
+        # лимит и сквады панель в это время не переписывает. Признак лежит на
+        # самой подписке (его ведёт хранилище грейс-сессий в той же транзакции),
+        # поэтому защищён любой вызывающий, даже забывший передать ``grace_open``:
+        # 2026-09-15 мониторинг так перенёс в бота дату и сквад грейса, и воркер
+        # принял это за продление.
         return changed
 
-    if _panel_date_is_grace_tail(subscription, snapshot):
+    if panel_date_is_grace_tail(subscription, snapshot):
         # Хвост грейса: в панели стоит дата, которую оставил сам грейс-доступ
         # (прошедшую дату PATCH не принимает, настоящую не вернуть). Это не
-        # правка в панели и не продление — дату и статус подписки не трогаем,
-        # иначе истёкшая подписка «истекала» бы заново в конец грейса, а воркер
+        # правка в панели и не продление — дату подписки не трогаем, иначе
+        # истёкшая подписка «истекала» бы заново в конец грейса, а воркер
         # выдавал грейс снова. Настоящее продление в панели даёт другую дату
         # и импортируется как обычно.
+        if _tail_confirms_own_expiry(subscription, snapshot, policy=policy, trust_status=trust_status, now=moment):
+            # Панель погасила аккаунт, и собственный срок подписки вышел — «истекла»
+            # правда. Платные гасит мониторинг по своей дате, а триал и суточную —
+            # только этот импорт: без него они навсегда оставались «trial»/«active»
+            # (стенд, 2026-09-15). В кандидаты грейса не метим — инцидент его уже получил.
+            subscription.status = SubscriptionStatus.EXPIRED.value
+            changed.add('status')
+        return changed
+
+    if panel_date_is_grace_overlay(subscription, snapshot):
+        # Снимок оверлея, обработанный уже после закрытия грейса (досрочный откат,
+        # конфликт, слив; снимок полного прохода, снятый раньше), — не продление:
+        # признак открытой сессии уже снят, хвост — другая дата, а дата, сквад и
+        # лимит в снимке — грейса.
         return changed
 
     locally_disabled = subscription.status == SubscriptionStatus.DISABLED.value
@@ -382,7 +436,7 @@ def project_onto_subscription(
         changed.add('device_limit')
 
     # Пустой список сквадов значит «панель ещё не знает», а не «отобрать все».
-    if snapshot.squads and set(snapshot.squads) != set(subscription.connected_squads or []):
+    if policy.takes_squads and snapshot.squads and set(snapshot.squads) != set(subscription.connected_squads or []):
         subscription.connected_squads = list(snapshot.squads)
         changed.add('connected_squads')
 

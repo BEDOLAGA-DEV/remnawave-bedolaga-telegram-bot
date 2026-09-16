@@ -27,9 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud.referral_reward_level import (
-    LEVELS_MODE_CHAIN,
-    LEVELS_MODE_TIERS,
-    MAX_SUPPORTED_LEVEL,
     delete_reward_level,
     get_all_reward_levels,
     get_reward_level,
@@ -37,6 +34,7 @@ from app.database.crud.referral_reward_level import (
 )
 from app.database.crud.tariff import get_all_tariffs
 from app.database.models import ReferralRewardMode, ReferralRewardTrigger, User
+from app.referral_levels import LEVELS_MODE_CHAIN, LEVELS_MODE_TIERS, MAX_SUPPORTED_LEVEL
 from app.services.system_settings_service import bot_configuration_service
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler

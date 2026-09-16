@@ -81,6 +81,8 @@ def _subscription(user):
         subscription_crypto_link=None,
         grace_candidate_reason=None,
         grace_candidate_at=None,
+        grace_tail_expire_at=None,
+        grace_session_open=False,
         updated_at=None,
         last_webhook_update_at=None,
         tariff=None,
@@ -105,11 +107,11 @@ async def test_alive_in_the_panel_is_not_expired_and_takes_the_panel_date(monkey
     subscription = _subscription(user)
     api = _FakeApi(_panel_user('ACTIVE', NOW + timedelta(days=20)))
     service = _service(api)
-    expire = AsyncMock()
+    expire = AsyncMock(return_value=True)
     monkeypatch.setattr(monitoring_module, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
     monkeypatch.setattr(monitoring_module, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr('app.database.crud.subscription.expire_subscription', expire)
-    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
 
     await service._check_expired_subscriptions(db)
 
@@ -129,11 +131,11 @@ async def test_expired_in_the_panel_is_expired_in_the_bot(monkeypatch) -> None:
     subscription = _subscription(user)
     api = _FakeApi(_panel_user('EXPIRED', NOW - timedelta(minutes=5)))
     service = _service(api)
-    expire = AsyncMock()
+    expire = AsyncMock(return_value=True)
     monkeypatch.setattr(monitoring_module, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
     monkeypatch.setattr(monitoring_module, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr('app.database.crud.subscription.expire_subscription', expire)
-    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
 
     await service._check_expired_subscriptions(db)
 
@@ -151,12 +153,75 @@ async def test_silent_panel_falls_back_to_the_bot_date(monkeypatch) -> None:
     api = _FakeApi(None)
     api.get_user_by_id = AsyncMock(side_effect=RuntimeError('panel down'))
     service = _service(api)
-    expire = AsyncMock()
+    expire = AsyncMock(return_value=True)
     monkeypatch.setattr(monitoring_module, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
     monkeypatch.setattr(monitoring_module, 'get_user_by_id', AsyncMock(return_value=user))
-    monkeypatch.setattr('app.database.crud.subscription.expire_subscription', expire)
-    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock())
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
 
     await service._check_expired_subscriptions(db)
 
     expire.assert_awaited_once_with(db, subscription)
+
+
+# ==================== грейс: ACTIVE панели — это оверлей, а не продление ====================
+#
+# Баг 2026-09-15 (5+ аккаунтов на сторонних установках): грейс выдан в 06:16 —
+# в панели ACTIVE до конца грейса, сквад грейса, лимит «расход + 1 ГБ». В 06:42
+# мониторинг, гася подписку по своей дате, спросил панель, принял оверлей за
+# продление и перенёс его в бота. Воркер грейса увидел более позднюю дату и
+# закрыл грейс «человек продлил» — аккаунт остался в скваде грейса.
+
+
+def _grace_overlay_panel_user(expire_at: datetime):
+    panel_user = _panel_user('ACTIVE', expire_at)
+    panel_user.traffic_limit_bytes = 103 * 1024**3
+    panel_user.active_internal_squads = ['grace-squad']
+    return panel_user
+
+
+@pytest.mark.asyncio
+async def test_open_grace_overlay_is_not_taken_for_a_panel_renewal(monkeypatch) -> None:
+    user = SimpleNamespace(
+        id=42, telegram_id=1001, email=None, remnawave_id=9001, status='active', notification_settings={}
+    )
+    subscription = _subscription(user)
+    subscription.grace_session_open = True
+    subscription.traffic_limit_gb = 0
+    api = _FakeApi(_grace_overlay_panel_user(NOW + timedelta(hours=72)))
+    service = _service(api)
+    expire = AsyncMock(return_value=True)
+    monkeypatch.setattr(monitoring_module, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
+    monkeypatch.setattr(monitoring_module, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
+
+    await service._check_expired_subscriptions(db)
+
+    expire.assert_awaited_once_with(db, subscription)
+    assert subscription.end_date == NOW - timedelta(minutes=5), 'дата грейса не стала датой подписки'
+    assert subscription.connected_squads == ['squad-1'], 'сквад грейса не стал сквадом подписки'
+    assert subscription.traffic_limit_gb == 0, 'лимит грейса не стал лимитом подписки'
+
+
+@pytest.mark.asyncio
+async def test_grace_tail_left_in_the_panel_is_not_a_renewal_either(monkeypatch) -> None:
+    """После конца грейса панель ещё несколько минут ACTIVE с погашенной датой."""
+    user = SimpleNamespace(
+        id=42, telegram_id=1001, email=None, remnawave_id=9001, status='active', notification_settings={}
+    )
+    subscription = _subscription(user)
+    tail = NOW + timedelta(minutes=5)
+    subscription.grace_tail_expire_at = tail
+    api = _FakeApi(_panel_user('ACTIVE', tail))
+    service = _service(api)
+    expire = AsyncMock(return_value=True)
+    monkeypatch.setattr(monitoring_module, 'get_expired_subscriptions', AsyncMock(return_value=[subscription]))
+    monkeypatch.setattr(monitoring_module, 'get_user_by_id', AsyncMock(return_value=user))
+    monkeypatch.setattr('app.database.crud.subscription.expire_subscription_if_still_due', expire)
+    db = SimpleNamespace(execute=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
+
+    await service._check_expired_subscriptions(db)
+
+    expire.assert_awaited_once_with(db, subscription)
+    assert subscription.end_date == NOW - timedelta(minutes=5)

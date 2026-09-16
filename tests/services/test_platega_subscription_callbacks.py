@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.database.crud import platega_subscription as sub_crud
 from app.database.models import (
     Base,
+    GraceAccessSessionModel,
     PlategaSubscription,
     PromoGroup,
     Subscription,
@@ -66,6 +67,7 @@ async def _memory_session(monkeypatch):
                     TrafficPurchase.__table__,
                     PromoGroup.__table__,
                     tariff_promo_groups,
+                    GraceAccessSessionModel.__table__,
                 ],
             )
         )

@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import structlog
 
 from app.config import settings
+
+
+if TYPE_CHECKING:
+    from app.services.payment.payer_identity import PayerIdentity
 
 
 logger = structlog.get_logger(__name__)
@@ -71,6 +75,7 @@ class PlategaService:
     async def create_payment(
         self,
         *,
+        payer: PayerIdentity,
         payment_method: int,
         amount: float,
         currency: str,
@@ -85,6 +90,9 @@ class PlategaService:
                 'amount': round(amount, 2),
                 'currency': currency,
             },
+            # docs.platega.io: metadata.userId / userName обязательны для части
+            # категорий магазинов — без userId отключается антифрод и приём платежей.
+            'metadata': payer.platega_metadata(),
         }
 
         if description:
@@ -112,6 +120,7 @@ class PlategaService:
     async def create_subscription(
         self,
         *,
+        payer: PayerIdentity,
         amount: float,
         currency: str,
         interval: int,
@@ -123,7 +132,12 @@ class PlategaService:
                 'amount': self._format_amount(amount),
                 'currency': currency,
                 'interval': interval,
+                # docs.platega.io «Создать подписку»: intervalCount обязателен. Каденс
+                # считается «одно списание за interval» (resolve_platega_interval).
+                'intervalCount': 1,
             },
+            # Тот же POST /transaction/process — metadata обязательна и здесь.
+            'metadata': payer.platega_metadata(),
         }
 
         if description:

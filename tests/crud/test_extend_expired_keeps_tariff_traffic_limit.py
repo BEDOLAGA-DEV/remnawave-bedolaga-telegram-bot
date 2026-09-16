@@ -129,6 +129,27 @@ async def test_expired_unlimited_tariff_stays_unlimited(monkeypatch):
     assert subscription.traffic_limit_gb == 0
 
 
+@pytest.mark.parametrize(
+    ('status', 'days_from_now'),
+    [(SubscriptionStatus.EXPIRED.value, -3), (SubscriptionStatus.ACTIVE.value, 3)],
+)
+@pytest.mark.parametrize('reset_on_payment', [True, False])
+async def test_unlimited_tariff_renewal_drops_a_leftover_limit(monkeypatch, status, days_from_now, reset_on_payment):
+    """Жалоба 2026-09-15: грейс оставил в подписке лимит «расход + 1 ГБ» (103 ГБ)
+    на безлимитном тарифе, человек продлил — безлимит не вернулся: для тарифа без
+    лимита уборка продления только чистила просроченные докупки и лимит не трогала."""
+    _configure(monkeypatch, reset_on_payment=reset_on_payment, traffic_mode='fixed', fixed_gb=100)
+
+    subscription = await _renew(
+        monkeypatch,
+        _subscription(status=status, days_from_now=days_from_now, traffic_limit_gb=103),
+        tariff=_tariff(traffic_limit_gb=0),
+    )
+
+    assert subscription.traffic_limit_gb == 0
+    assert subscription.purchased_traffic_gb == 0
+
+
 # ── докупки поверх базы тарифа ──
 
 

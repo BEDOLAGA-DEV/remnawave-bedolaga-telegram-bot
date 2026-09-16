@@ -42,6 +42,7 @@ from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.payment.lava import LavaPaymentMixin
 from app.services.payment.overpay import OverpayPaymentMixin
 from app.services.payment.paritypay import ParityPayPaymentMixin
+from app.services.payment.payer_identity import resolve_guest_payer
 from app.services.payment.paypear import PayPearPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
 from app.services.payment.rollypay import RollyPayPaymentMixin
@@ -906,26 +907,6 @@ class PaymentService(
             'source': 'landing',
         }
 
-        async def _guest_contact_email() -> str | None:
-            """Email покупателя-гостя для провайдеров, принимающих контакт плательщика.
-
-            У гостя нет аккаунта, поэтому это единственный способ дать поддержке
-            провайдера зацепку. Берём только email: contact_value с
-            contact_type='telegram' — это @username, а не контакт в том виде, в
-            каком его ждут платёжные шлюзы. Best-effort: контакт необязателен и
-            не имеет права сорвать создание платежа.
-            """
-            try:
-                from app.database.crud.landing import get_purchase_by_token
-
-                purchase = await get_purchase_by_token(db, purchase_token)
-                if purchase is None or purchase.contact_type != 'email':
-                    return None
-                return (purchase.contact_value or '').strip() or None
-            except Exception as error:
-                logger.warning('Не удалось получить контакт гостевой покупки', error=str(error))
-                return None
-
         async def _patch_guest_metadata(local_payment_id: int, model_name: str) -> None:
             """Merge guest_metadata into the local payment record's metadata_json."""
             try:
@@ -1060,7 +1041,7 @@ class PaymentService(
                 user_id=None,
                 amount_kopeks=amount_kopeks,
                 description=description,
-                client=await _guest_contact_email(),
+                client=(await resolve_guest_payer(db, purchase_token)).contact,
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'mulenpay')
@@ -1125,6 +1106,7 @@ class PaymentService(
                 language=settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
                 return_url=return_url,
+                payer=await resolve_guest_payer(db, purchase_token),
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'platega')

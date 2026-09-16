@@ -10,6 +10,7 @@ import pytest
 
 from app.config import settings
 from app.database.models import (
+    GraceAccessSessionModel,
     LavaSubscription,
     PromoGroup,
     Subscription,
@@ -37,6 +38,7 @@ TABLES = (
     tariff_promo_groups,
     LavaSubscription.__table__,
     Transaction.__table__,
+    GraceAccessSessionModel.__table__,
 )
 
 PRODUCT_ID = '6be21df9-0bcd-44ac-9c2c-3be7bc94decc'

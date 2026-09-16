@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.services.payment.payer_identity import PayerIdentity, payer_from_guest, resolve_user_payer
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -52,7 +53,10 @@ class PlategaPaymentMixin:
         payment_method_code: int,
         return_url: str | None = None,
         failed_url: str | None = None,
+        payer: PayerIdentity | None = None,
     ) -> dict[str, Any] | None:
+        """Разовый платёж Platega. ``payer`` — плательщик-гость лендинга; у пользователя
+        он читается по ``user_id`` (metadata.userId/userName обязательны, см. payer_identity)."""
         service: PlategaService | None = getattr(self, 'platega_service', None)
         if not service or not service.is_configured:
             logger.error('Platega сервис не инициализирован')
@@ -82,8 +86,17 @@ class PlategaPaymentMixin:
         effective_return_url = return_url or settings.get_platega_return_url()
         effective_failed_url = failed_url or settings.get_platega_failed_url()
 
+        if payer is None:
+            payer = (
+                await resolve_user_payer(db, user_id)
+                if user_id is not None
+                # Ни пользователя, ни гостя вызывающий не дал — плательщик по id платежа.
+                else payer_from_guest(correlation_id, contact_type=None, contact_value=None)
+            )
+
         try:
             response = await service.create_payment(
+                payer=payer,
                 payment_method=payment_method_code,
                 amount=amount_value,
                 currency=settings.PLATEGA_CURRENCY,
@@ -238,6 +251,7 @@ class PlategaPaymentMixin:
             raise ValueError(f'Тариф не имеет цены за период {charge_days} дней — СБП-автопродление недоступно')
 
         response = await self.platega_service.create_subscription(
+            payer=await resolve_user_payer(db, user_id),
             amount=amount_kopeks / 100,
             currency=settings.PLATEGA_CURRENCY,
             interval=interval,
@@ -504,6 +518,11 @@ class PlategaPaymentMixin:
                 )
                 return
 
+            # Оверлей грейса, осевший в подписке, — не её срок: иначе новый период
+            # отсчитывался бы от конца грейса.
+            from app.services.grace_access_echo import undo_grace_overlay_echo
+
+            await undo_grace_overlay_echo(db, subscription)
             subscription.extend_subscription(record.charge_days)
             # Условия тарифа на новый период: база тарифа + активные докупки.
             from app.database.crud.subscription import reconcile_tariff_traffic_limit

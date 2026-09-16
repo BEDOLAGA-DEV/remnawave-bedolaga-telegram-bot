@@ -2,7 +2,11 @@ import pytest
 import structlog
 
 from app.config import settings
+from app.services.payment.payer_identity import PayerIdentity
 from app.services.platega_service import PlategaService
+
+
+PAYER = PayerIdentity(user_id='555', user_name='@neo', contact='555')
 
 
 def _configure_platega(monkeypatch: pytest.MonkeyPatch, **overrides) -> None:
@@ -27,7 +31,7 @@ async def _captured_create_endpoint(monkeypatch: pytest.MonkeyPatch, service: Pl
         return {'transactionId': 'tx', 'status': 'PENDING'}
 
     monkeypatch.setattr(service, '_request', fake_request)
-    await service.create_payment(payment_method=2, amount=100.0, currency='RUB')
+    await service.create_payment(payer=PAYER, payment_method=2, amount=100.0, currency='RUB')
     assert captured['method'] == 'POST'
     return captured['endpoint']
 
@@ -193,3 +197,32 @@ async def test_v2_url_field_reaches_returned_redirect_url(monkeypatch: pytest.Mo
 
     assert result is not None
     assert result['redirect_url'] == pay_link
+
+
+# --- Данные плательщика (docs.platega.io: metadata.userId / metadata.userName) ---
+# Без metadata.userId у магазинов части категорий отключается антифрод, и
+# Platega отключает приём платежей.
+
+
+@pytest.mark.parametrize('api_version', ['v1', 'v2'])
+async def test_create_payment_sends_payer_metadata(monkeypatch: pytest.MonkeyPatch, api_version: str) -> None:
+    _configure_platega(monkeypatch, PLATEGA_API_VERSION=api_version)
+    service = PlategaService()
+    captured: dict = {}
+
+    async def fake_request(method, endpoint, **kwargs):
+        captured.update(kwargs)
+        return {'transactionId': 'tx', 'status': 'PENDING'}
+
+    monkeypatch.setattr(service, '_request', fake_request)
+    await service.create_payment(payer=PAYER, payment_method=2, amount=100.0, currency='RUB')
+
+    assert captured['json_data']['metadata'] == {'userId': '555', 'userName': '@neo'}
+
+
+async def test_create_payment_requires_the_payer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Забыть плательщика нельзя: без него магазин отключат."""
+    _configure_platega(monkeypatch)
+
+    with pytest.raises(TypeError):
+        await PlategaService().create_payment(payment_method=2, amount=100.0, currency='RUB')  # type: ignore[call-arg]

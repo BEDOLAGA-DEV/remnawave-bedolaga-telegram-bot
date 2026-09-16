@@ -18,8 +18,10 @@ from dataclasses import dataclass
 import structlog
 from sqlalchemy.exc import DBAPIError
 
+from app.database.models import UserStatus
 from app.external.remnawave_api import RemnaWaveTransientError
 from app.services.panel_sync.db_session import rollback_quietly
+from app.services.panel_sync.identity import PanelAccountOwnedByAnotherUser
 from app.services.panel_sync.writer import push_subscription
 
 
@@ -91,8 +93,14 @@ async def push_all_subscriptions(
             break
 
         # Подписка без пользователя — осиротевшая строка: в панель её отправлять
-        # не от чьего имени.
-        valid = [subscription for subscription in subscriptions if subscription.user]
+        # не от чьего имени. Удалённого человека — тоже: иначе проход заводит
+        # аккаунты, которые удаление убрало из панели, и пишет в адреса, которые
+        # у него остались от прошлого (#3245: мягкое удаление не спасало).
+        valid = [
+            subscription
+            for subscription in subscriptions
+            if subscription.user and getattr(subscription.user, 'status', None) != UserStatus.DELETED.value
+        ]
         if not valid:
             if len(subscriptions) < batch_size:
                 break
@@ -126,6 +134,16 @@ async def push_all_subscriptions(
                     result = await push_subscription(
                         api, locked.user, locked, db=locked_db, verify_recorded_id=False, reset_devices=False
                     )
+                except PanelAccountOwnedByAnotherUser as error:
+                    # Не сбой, а две записи одного человека: поиск уже предупредил
+                    # с подробностями, проход идёт дальше.
+                    logger.warning(
+                        'Синхронизация в панель пропущена: аккаунт закреплён за другим пользователем бота',
+                        subscription_id=subscription.id,
+                        panel_user_id=error.panel_user_id,
+                        owner_user_id=error.owner_user_id,
+                    )
+                    return 'skipped'
                 except RemnaWaveTransientError as error:
                     # Троттлинг/недоступность панели — warning: это не ошибка приложения,
                     # и в админ-чат такому не место (форвардер шлёт только error+).

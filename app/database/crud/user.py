@@ -2,9 +2,10 @@ import hmac
 import secrets
 import string
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import structlog
-from sqlalchemy import and_, case, exists, func, nullslast, or_, select, text
+from sqlalchemy import and_, case, exists, false, func, nullslast, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,6 +34,10 @@ from app.utils.timezone import local_day_start
 from app.utils.validators import sanitize_telegram_name
 
 
+if TYPE_CHECKING:
+    from app.services.connected_accounts import ConnectedAccounts
+
+
 logger = structlog.get_logger(__name__)
 
 # PostgreSQL BIGINT upper bound. A numeric search term larger than this fits a
@@ -42,7 +47,7 @@ _BIGINT_MAX = 9223372036854775807
 
 
 def _user_search_conditions(search: str) -> list:
-    """Build the OR-conditions for the admin user search box (id/name/username).
+    """Build the OR-conditions for the admin user search box (id/name/username/email).
 
     Always matches the text columns; matches telegram_id only when the term is an
     in-range BIGINT number. A digit string that overflows BIGINT (or a non-ASCII
@@ -54,7 +59,7 @@ def _user_search_conditions(search: str) -> list:
     «Позитив». Подробности — в app/utils/text_search.py.
     """
     conditions = contains_conditions(
-        (User.first_name, User.last_name, User.username),
+        (User.first_name, User.last_name, User.username, User.email),
         search,
     )
     if search.isdigit():
@@ -945,6 +950,183 @@ async def cleanup_expired_promo_offer_discounts(db: AsyncSession) -> int:
     return len(users)
 
 
+def _users_list_conditions(
+    *,
+    status: UserStatus | None = None,
+    search: str | None = None,
+    email: str | None = None,
+    subscription_status: str | None = None,
+    tariff_ids: list[int] | None = None,
+    promo_group_id: int | None = None,
+    campaign_id: int | None = None,
+    partner_id: int | None = None,
+    expires_within_days: int | None = None,
+    active_within_minutes: int | None = None,
+    has_restrictions: bool | None = None,
+    has_subscription: bool | None = None,
+    purchase_count: int | None = None,
+    traffic_used_percent_min: int | None = None,
+    connected: 'ConnectedAccounts | None' = None,
+) -> list:
+    """Условия WHERE списка пользователей админки — одни для списка и для счётчика.
+
+    Раньше get_users_list и get_users_count повторяли эти ветки руками; новая ветка,
+    добавленная только в одну из них, давала «показано 12 из 40» при 12 найденных.
+    """
+    conditions: list = []
+
+    if status:
+        conditions.append(User.status == status.value)
+
+    if subscription_status or tariff_ids:
+        sub_conditions = []
+        if subscription_status:
+            sub_conditions.append(Subscription.status == subscription_status)
+        if tariff_ids:
+            sub_conditions.append(Subscription.tariff_id.in_(tariff_ids))
+        sub_query = (
+            select(Subscription.user_id).where(and_(*sub_conditions)).distinct().correlate(None).scalar_subquery()
+        )
+        conditions.append(User.id.in_(sub_query))
+
+    if promo_group_id:
+        # Юзер считается членом группы если она в legacy `user.promo_group_id` ИЛИ
+        # в M2M `user_promo_groups`. Без OR-условия админский фильтр пропускал юзеров
+        # с группой только в M2M (см. analogue issue #422 для payment methods).
+        conditions.append(
+            or_(
+                User.promo_group_id == promo_group_id,
+                User.id.in_(
+                    select(UserPromoGroup.user_id)
+                    .where(UserPromoGroup.promo_group_id == promo_group_id)
+                    .correlate(None)
+                ),
+            )
+        )
+
+    if campaign_id:
+        conditions.append(
+            exists(
+                select(AdvertisingCampaignRegistration.id)
+                .where(
+                    AdvertisingCampaignRegistration.user_id == User.id,
+                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                )
+                .correlate(User)
+            )
+        )
+
+    if partner_id:
+        conditions.append(
+            exists(
+                select(AdvertisingCampaignRegistration.id)
+                .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingCampaignRegistration.campaign_id)
+                .where(
+                    AdvertisingCampaignRegistration.user_id == User.id,
+                    AdvertisingCampaign.partner_user_id == partner_id,
+                )
+                .correlate(User)
+            )
+        )
+
+    if search:
+        conditions.append(or_(*_user_search_conditions(search)))
+
+    if email:
+        conditions.append(User.email.ilike(f'%{email}%'))
+
+    now = datetime.now(UTC)
+
+    if expires_within_days is not None:
+        # «Истекают за N дней»: живая подписка с концом в ближайшие N дней. Суточные
+        # тарифы исключены так же, как в сортировке по окончанию: у активной суточной
+        # конец всегда через сутки, и она навсегда заняла бы весь сегмент.
+        conditions.append(
+            exists(
+                select(Subscription.id)
+                .outerjoin(Tariff, Subscription.tariff_id == Tariff.id)
+                .where(
+                    Subscription.user_id == User.id,
+                    Subscription.status == SubscriptionStatus.ACTIVE.value,
+                    Subscription.end_date >= now,
+                    Subscription.end_date <= now + timedelta(days=expires_within_days),
+                    ~and_(Tariff.is_daily.is_(True), Subscription.is_daily_paused.is_(False)),
+                )
+                .correlate(User)
+            )
+        )
+
+    if active_within_minutes is not None:
+        conditions.append(User.last_activity >= now - timedelta(minutes=active_within_minutes))
+
+    if has_restrictions is not None:
+        restricted = or_(User.restriction_topup.is_(True), User.restriction_subscription.is_(True))
+        conditions.append(restricted if has_restrictions else ~restricted)
+
+    if has_subscription is not None:
+        any_subscription = exists(select(Subscription.id).where(Subscription.user_id == User.id).correlate(User))
+        conditions.append(any_subscription if has_subscription else ~any_subscription)
+
+    if purchase_count == 0:
+        # Покупка — ровно то, что считает статистика трат: завершённая оплата подписки.
+        conditions.append(
+            ~exists(
+                select(Transaction.id)
+                .where(
+                    Transaction.user_id == User.id,
+                    Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                    Transaction.is_completed.is_(True),
+                )
+                .correlate(User)
+            )
+        )
+
+    if traffic_used_percent_min is not None:
+        # «Трафик на исходе»: живая подписка с лимитом, израсходованным от N %. Исчерпанная
+        # (LIMITED) тоже здесь — ей трафик нужен больше всех; безлимит (0) не считается.
+        threshold = traffic_used_percent_min / 100
+        conditions.append(
+            exists(
+                select(Subscription.id)
+                .where(
+                    Subscription.user_id == User.id,
+                    Subscription.status.in_(
+                        (
+                            SubscriptionStatus.ACTIVE.value,
+                            SubscriptionStatus.TRIAL.value,
+                            SubscriptionStatus.LIMITED.value,
+                        )
+                    ),
+                    Subscription.traffic_limit_gb > 0,
+                    Subscription.traffic_used_gb >= Subscription.traffic_limit_gb * threshold,
+                )
+                .correlate(User)
+            )
+        )
+
+    if connected is not None:
+        # «Онлайн» = подключён к VPN сейчас (список панели, см. app/services/panel_online.py).
+        # Ключи — как у ConnectedAccounts.has_user: id панели у пользователя, у подписки, Telegram ID.
+        keys = []
+        if connected.panel_ids:
+            keys.append(User.remnawave_id.in_(connected.panel_ids))
+            keys.append(
+                exists(
+                    select(Subscription.id)
+                    .where(
+                        Subscription.user_id == User.id,
+                        Subscription.remnawave_id.in_(connected.panel_ids),
+                    )
+                    .correlate(User)
+                )
+            )
+        if connected.telegram_ids:
+            keys.append(User.telegram_id.in_(connected.telegram_ids))
+        conditions.append(or_(*keys) if keys else false())
+
+    return conditions
+
+
 async def get_users_list(
     db: AsyncSession,
     offset: int = 0,
@@ -957,6 +1139,13 @@ async def get_users_list(
     promo_group_id: int | None = None,
     campaign_id: int | None = None,
     partner_id: int | None = None,
+    expires_within_days: int | None = None,
+    active_within_minutes: int | None = None,
+    has_restrictions: bool | None = None,
+    has_subscription: bool | None = None,
+    purchase_count: int | None = None,
+    traffic_used_percent_min: int | None = None,
+    connected: 'ConnectedAccounts | None' = None,
     order_by_balance: bool = False,
     order_by_traffic: bool = False,
     order_by_last_activity: bool = False,
@@ -970,57 +1159,25 @@ async def get_users_list(
         selectinload(User.referrer),
     )
 
-    if status:
-        query = query.where(User.status == status.value)
-
-    # Subscription-level filters via subquery
-    if subscription_status or tariff_ids:
-        sub_conditions = []
-        if subscription_status:
-            sub_conditions.append(Subscription.status == subscription_status)
-        if tariff_ids:
-            sub_conditions.append(Subscription.tariff_id.in_(tariff_ids))
-        sub_query = select(Subscription.user_id).where(and_(*sub_conditions)).distinct().scalar_subquery()
-        query = query.where(User.id.in_(sub_query))
-
-    if promo_group_id:
-        # Юзер считается членом группы если она в legacy `user.promo_group_id` ИЛИ
-        # в M2M `user_promo_groups`. Без OR-условия админский фильтр пропускал юзеров
-        # с группой только в M2M (см. analogue issue #422 для payment methods).
-        query = query.where(
-            or_(
-                User.promo_group_id == promo_group_id,
-                User.id.in_(select(UserPromoGroup.user_id).where(UserPromoGroup.promo_group_id == promo_group_id)),
-            )
+    query = query.where(
+        *_users_list_conditions(
+            status=status,
+            search=search,
+            email=email,
+            subscription_status=subscription_status,
+            tariff_ids=tariff_ids,
+            promo_group_id=promo_group_id,
+            campaign_id=campaign_id,
+            partner_id=partner_id,
+            expires_within_days=expires_within_days,
+            active_within_minutes=active_within_minutes,
+            has_restrictions=has_restrictions,
+            has_subscription=has_subscription,
+            purchase_count=purchase_count,
+            traffic_used_percent_min=traffic_used_percent_min,
+            connected=connected,
         )
-
-    if campaign_id:
-        query = query.where(
-            exists(
-                select(AdvertisingCampaignRegistration.id).where(
-                    AdvertisingCampaignRegistration.user_id == User.id,
-                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
-                )
-            )
-        )
-
-    if partner_id:
-        query = query.where(
-            exists(
-                select(AdvertisingCampaignRegistration.id)
-                .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingCampaignRegistration.campaign_id)
-                .where(
-                    AdvertisingCampaignRegistration.user_id == User.id,
-                    AdvertisingCampaign.partner_user_id == partner_id,
-                )
-            )
-        )
-
-    if search:
-        query = query.where(or_(*_user_search_conditions(search)))
-
-    if email:
-        query = query.where(User.email.ilike(f'%{email}%'))
+    )
 
     sort_flags = [
         order_by_balance,
@@ -1048,9 +1205,18 @@ async def get_users_list(
         query = query.outerjoin(transactions_stats, transactions_stats.c.user_id == User.id)
 
     if order_by_traffic:
-        traffic_sort = func.coalesce(Subscription.traffic_used_gb, 0.0)
-        query = query.outerjoin(Subscription, Subscription.user_id == User.id)
-        query = query.order_by(traffic_sort.desc(), User.created_at.desc())
+        # Подзапросом, а не JOIN подписок: JOIN давал по строке на каждую подписку
+        # мультитарифа (страница короче запрошенной, «показано N из M» врало) и
+        # ломал выборки — их условия «есть такая подписка у этого человека»
+        # SQLAlchemy считала целиком связанными с внешним запросом и выкидывала
+        # из подзапроса все таблицы (см. tests/crud/test_users_list_filter_sort_matrix.py).
+        most_traffic = (
+            select(func.max(Subscription.traffic_used_gb))
+            .where(Subscription.user_id == User.id)
+            .correlate(User)
+            .scalar_subquery()
+        )
+        query = query.order_by(func.coalesce(most_traffic, 0.0).desc(), User.created_at.desc())
     elif order_by_total_spent:
         order_column = func.coalesce(transactions_stats.c.total_spent, 0)
         query = query.order_by(order_column.desc(), User.created_at.desc())
@@ -1089,6 +1255,7 @@ async def get_users_list(
             .select_from(Subscription)
             .outerjoin(Tariff, Subscription.tariff_id == Tariff.id)
             .where(*soonest_end_conditions)
+            .correlate(User)
             .scalar_subquery()
         )
         query = query.order_by(nullslast(soonest_end.asc()), User.created_at.desc())
@@ -1119,59 +1286,33 @@ async def get_users_count(
     promo_group_id: int | None = None,
     campaign_id: int | None = None,
     partner_id: int | None = None,
+    expires_within_days: int | None = None,
+    active_within_minutes: int | None = None,
+    has_restrictions: bool | None = None,
+    has_subscription: bool | None = None,
+    purchase_count: int | None = None,
+    traffic_used_percent_min: int | None = None,
+    connected: 'ConnectedAccounts | None' = None,
 ) -> int:
-    query = select(func.count(User.id))
-
-    if status:
-        query = query.where(User.status == status.value)
-
-    if subscription_status or tariff_ids:
-        sub_conditions = []
-        if subscription_status:
-            sub_conditions.append(Subscription.status == subscription_status)
-        if tariff_ids:
-            sub_conditions.append(Subscription.tariff_id.in_(tariff_ids))
-        sub_query = select(Subscription.user_id).where(and_(*sub_conditions)).distinct().scalar_subquery()
-        query = query.where(User.id.in_(sub_query))
-
-    if promo_group_id:
-        # Юзер считается членом группы если она в legacy `user.promo_group_id` ИЛИ
-        # в M2M `user_promo_groups`. Без OR-условия админский фильтр пропускал юзеров
-        # с группой только в M2M (см. analogue issue #422 для payment methods).
-        query = query.where(
-            or_(
-                User.promo_group_id == promo_group_id,
-                User.id.in_(select(UserPromoGroup.user_id).where(UserPromoGroup.promo_group_id == promo_group_id)),
-            )
+    query = select(func.count(User.id)).where(
+        *_users_list_conditions(
+            status=status,
+            search=search,
+            email=email,
+            subscription_status=subscription_status,
+            tariff_ids=tariff_ids,
+            promo_group_id=promo_group_id,
+            campaign_id=campaign_id,
+            partner_id=partner_id,
+            expires_within_days=expires_within_days,
+            active_within_minutes=active_within_minutes,
+            has_restrictions=has_restrictions,
+            has_subscription=has_subscription,
+            purchase_count=purchase_count,
+            traffic_used_percent_min=traffic_used_percent_min,
+            connected=connected,
         )
-
-    if campaign_id:
-        query = query.where(
-            exists(
-                select(AdvertisingCampaignRegistration.id).where(
-                    AdvertisingCampaignRegistration.user_id == User.id,
-                    AdvertisingCampaignRegistration.campaign_id == campaign_id,
-                )
-            )
-        )
-
-    if partner_id:
-        query = query.where(
-            exists(
-                select(AdvertisingCampaignRegistration.id)
-                .join(AdvertisingCampaign, AdvertisingCampaign.id == AdvertisingCampaignRegistration.campaign_id)
-                .where(
-                    AdvertisingCampaignRegistration.user_id == User.id,
-                    AdvertisingCampaign.partner_user_id == partner_id,
-                )
-            )
-        )
-
-    if search:
-        query = query.where(or_(*_user_search_conditions(search)))
-
-    if email:
-        query = query.where(User.email.ilike(f'%{email}%'))
+    )
 
     result = await db.execute(query)
     return result.scalar()

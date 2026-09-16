@@ -38,6 +38,13 @@ TRUSTED_FUNCTIONS = {
     ('app/services/guest_purchase_service.py', '_find_or_create_user'),
     ('app/webapi/routes/users.py', 'create_user_endpoint'),  # API-token protected administration
 }
+# Helpers that create a user on behalf of a route which has already passed the gate.
+# Not trusted blindly: every call site must sit in a function that calls a gate
+# earlier than the helper (test_gated_helpers_are_called_only_after_the_gate).
+GATED_HELPERS = {
+    # Telegram login (initData, widget, OIDC): claims the landing phantom or creates the user.
+    ('app/cabinet/routes/auth.py', '_create_or_claim_telegram_user'),
+}
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -64,12 +71,32 @@ def test_every_public_user_mutation_is_gated_or_narrowly_trusted() -> None:
             mutations = sorted(MUTATION_CALLS & calls)
             if not mutations:
                 continue
-            if (relative, function.name) in TRUSTED_FUNCTIONS:
+            if (relative, function.name) in TRUSTED_FUNCTIONS | GATED_HELPERS:
                 continue
             if not (GATE_CALLS & calls):
                 offenders.append(f'{relative}:{function.name} -> {mutations}')
 
     assert not offenders, 'Public User mutation without invite-only gate:\n' + '\n'.join(offenders)
+
+
+def test_gated_helpers_are_called_only_after_the_gate() -> None:
+    helper_names = {name for _, name in GATED_HELPERS}
+    offenders: list[str] = []
+    call_sites = 0
+    for relative in sorted(PUBLIC_MODULES):
+        path = ROOT / relative
+        for function in _functions(path):
+            calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+            helper_lines = [node.lineno for node in calls if _call_name(node) in helper_names]
+            if not helper_lines:
+                continue
+            call_sites += len(helper_lines)
+            gate_lines = [node.lineno for node in calls if _call_name(node) in GATE_CALLS]
+            if not gate_lines or min(gate_lines) > min(helper_lines):
+                offenders.append(f'{relative}:{function.name}')
+
+    assert call_sites, 'Gated helpers are no longer called — drop them from GATED_HELPERS'
+    assert not offenders, 'Gated helper called before (or without) the invite-only gate:\n' + '\n'.join(offenders)
 
 
 def test_legacy_guest_find_or_create_wrapper_cannot_reappear_in_public_routes() -> None:

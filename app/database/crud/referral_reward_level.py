@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import ReferralRewardLevel, ReferralRewardMode, ReferralRewardTrigger
+from app.referral_levels import MAX_SUPPORTED_LEVEL
 
 
 logger = structlog.get_logger(__name__)
@@ -22,14 +23,6 @@ logger = structlog.get_logger(__name__)
 _VALID_MODES = frozenset(mode.value for mode in ReferralRewardMode)
 _VALID_TRIGGERS = frozenset(trigger.value for trigger in ReferralRewardTrigger)
 
-# Ниже — не догма, а предел здравого смысла: цепочка глубже десятка уровней
-# означает обход десятка пользователей на каждом пополнении.
-MAX_SUPPORTED_LEVEL = 10
-
-# Что означает номер уровня. Значения лежат здесь, а не в Settings, чтобы движок
-# наград и конфиг ссылались на одну константу, а не на две одинаковые строки.
-LEVELS_MODE_CHAIN = 'chain'
-LEVELS_MODE_TIERS = 'tiers'
 
 # Десять лет подписки одной наградой — это уже не настройка, а опечатка. Граница
 # общая для бота и кабинета: раньше её знал только редактор бота, и через API
