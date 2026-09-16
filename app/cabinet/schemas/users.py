@@ -783,6 +783,12 @@ class PanelSyncStatusResponse(BaseModel):
     panel_device_limit: int = 0
     panel_squads: list[str] = []
 
+    # Открытый временный доступ (грейс): пока он идёт, панель намеренно держит
+    # его настройки — дату, статус, лимит и сквад. Бот их не перенимает, поэтому
+    # расхождением это не считается.
+    grace_open: bool = False
+    grace_until: datetime | None = None
+
     # Differences
     has_differences: bool = False
     differences: list[str] = []
@@ -821,6 +827,9 @@ class ResetTrialResponse(BaseModel):
     message: str
     subscription_deleted: bool = False
     has_used_trial_reset: bool = False
+    # Главный ответ на вопрос админа: сможет ли человек взять триал после нажатия.
+    # Без него кнопка сообщала «успешно» даже когда ничего не менялось.
+    trial_available: bool = False
 
 
 class ResetSubscriptionRequest(BaseModel):

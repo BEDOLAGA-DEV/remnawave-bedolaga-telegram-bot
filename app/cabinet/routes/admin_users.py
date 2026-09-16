@@ -3036,18 +3036,32 @@ async def reset_user_trial(
                 wiped = await wipe_trial_subscriptions(db, subs_to_delete)
                 subscription_deleted = wiped > 0
 
-    user.updated_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    # Отметку «когда-то платил» не снимаем — по ней считаются конверсия и выручка.
+    # Дата сброса перекрывает её до появления следующей подписки (User.is_trial_already_used).
+    user.trial_reset_at = now
+    user.updated_at = now
 
     await db.commit()
+    await db.refresh(user, ['subscriptions'])
 
     reason_text = f' (reason: {request.reason})' if request.reason else ''
     logger.info('Admin reset trial for user', admin_id=admin.id, user_id=user_id, reason_text=reason_text)
 
+    # Оставшаяся непробная подписка сама закрывает триал. Сносить её сброс триала не
+    # должен, но и молчать нельзя: раньше ответ был «успешно» даже тогда, когда для
+    # человека не менялось ничего, — и кнопка выглядела сломанной.
+    trial_available = not user.is_trial_already_used()
     return ResetTrialResponse(
-        success=True,
-        message='Trial reset successfully. User can now activate a new trial.',
+        success=trial_available,
+        message=(
+            'Trial reset successfully. User can now activate a new trial.'
+            if trial_available
+            else 'Trial is still unavailable: the user has another subscription. Remove it first.'
+        ),
         subscription_deleted=subscription_deleted,
         has_used_trial_reset=True,
+        trial_available=trial_available,
     )
 
 
@@ -3762,6 +3776,13 @@ async def get_user_sync_status(
         bot_device_limit = active_sub.device_limit or 0
         bot_squads = active_sub.connected_squads or []
 
+    # Пока открыт временный доступ, в панели стоит его оверлей: дата, статус, лимит
+    # и сквад — грейса, а не подписки. Бот их намеренно не перенимает
+    # (app/services/panel_sync/projection.py), поэтому и расхождением они не являются:
+    # иначе карточка сверки кричала бы «Есть отличия» на каждом человеке в грейсе.
+    grace_open = bool(active_sub and active_sub.grace_session_open)
+    grace_until = active_sub.grace_overlay_expire_at if grace_open and active_sub else None
+
     # In multi-tariff mode, the panel identity lives on subscription, not user
     effective_panel_user_id = (
         active_sub.remnawave_id
@@ -3820,13 +3841,13 @@ async def get_user_sync_status(
                     ]
 
                     # Check differences
-                    if bot_sub_status and panel_status:
+                    if bot_sub_status and panel_status and not grace_open:
                         bot_active = bot_sub_status in ('active', 'trial')
                         panel_active = panel_status.upper() == 'ACTIVE'
                         if bot_active != panel_active:
                             differences.append(f'Status: bot={bot_sub_status}, panel={panel_status}')
 
-                    if bot_sub_end_date and panel_expire_at:
+                    if bot_sub_end_date and panel_expire_at and not grace_open:
                         bot_end_utc = bot_sub_end_date if bot_sub_end_date.tzinfo else bot_sub_end_date
                         panel_end_utc = panel_datetime_to_utc(panel_expire_at)
 
@@ -3837,7 +3858,7 @@ async def get_user_sync_status(
                         if diff_seconds > 3600 and not is_timezone_diff:  # More than 1 hour and not timezone
                             differences.append(f'End date differs by {diff_seconds / 3600:.1f} hours')
 
-                    if abs(bot_traffic_limit - panel_traffic_limit) > 1:
+                    if not grace_open and abs(bot_traffic_limit - panel_traffic_limit) > 1:
                         differences.append(
                             f'Traffic limit: bot={bot_traffic_limit}GB, panel={panel_traffic_limit:.1f}GB'
                         )
@@ -3854,7 +3875,7 @@ async def get_user_sync_status(
                     # Compare squads
                     bot_squads_set = set(bot_squads) if bot_squads else set()
                     panel_squads_set = set(panel_squads) if panel_squads else set()
-                    if bot_squads_set != panel_squads_set:
+                    if not grace_open and bot_squads_set != panel_squads_set:
                         only_in_bot = bot_squads_set - panel_squads_set
                         only_in_panel = panel_squads_set - bot_squads_set
                         squad_diff_parts = []
@@ -3898,6 +3919,8 @@ async def get_user_sync_status(
         panel_traffic_used_gb=panel_traffic_used,
         panel_device_limit=panel_device_limit,
         panel_squads=panel_squads,
+        grace_open=grace_open,
+        grace_until=grace_until,
         has_differences=len(differences) > 0,
         differences=differences,
     )

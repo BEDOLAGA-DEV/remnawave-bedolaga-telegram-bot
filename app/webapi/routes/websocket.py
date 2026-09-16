@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 
 import structlog
@@ -9,6 +10,7 @@ from fastapi.security import APIKeyHeader
 from app.database.database import AsyncSessionLocal
 from app.services.event_emitter import event_emitter
 from app.services.web_api_token_service import web_api_token_service
+from app.utils.websocket_errors import CLIENT_GONE_ERRORS, is_client_gone
 
 
 logger = structlog.get_logger(__name__)
@@ -47,6 +49,13 @@ async def verify_websocket_token(
             return False
 
 
+async def _reject(websocket: WebSocket, reason: str) -> None:
+    """Принять и сразу закрыть соединение с кодом отказа."""
+    with contextlib.suppress(*CLIENT_GONE_ERRORS):
+        await websocket.accept()
+        await websocket.close(code=1008, reason=reason)
+
+
 @router.websocket('/ws')
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint для real-time обновлений."""
@@ -58,16 +67,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
     if not token:
         logger.debug('WebSocket: No token provided from', client_host=client_host)
-        # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: No token provided')
+        await _reject(websocket, 'Unauthorized: No token provided')
         return
 
     if not await verify_websocket_token(websocket, token):
         logger.debug('WebSocket: Invalid token from', client_host=client_host)
-        # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: Invalid token')
+        await _reject(websocket, 'Unauthorized: Invalid token')
         return
 
     # Только после успешной проверки принимаем соединение
@@ -75,6 +80,10 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.accept()
         logger.debug('WebSocket connection accepted from', client_host=client_host)
     except Exception as e:
+        # Клиент ушёл во время рукопожатия — это не авария приложения.
+        if is_client_gone(e):
+            logger.debug('WebSocket: client gone before accept', client_host=client_host)
+            return
         logger.error('WebSocket: Failed to accept connection from', client_host=client_host, e=e)
         return
 
@@ -107,12 +116,19 @@ async def websocket_endpoint(websocket: WebSocket):
             except WebSocketDisconnect:
                 break
             except Exception as error:
-                logger.exception('Error processing WebSocket message', error=error)
+                # Без выхода из цикла повторяющаяся ошибка чтения крутилась бы
+                # вечно, забивая журнал одним и тем же сообщением.
+                if not is_client_gone(error):
+                    logger.exception('Error processing WebSocket message', error=error)
+                break
 
     except WebSocketDisconnect:
         logger.debug('WebSocket client disconnected')
     except Exception as error:
-        logger.exception('WebSocket error', error=error)
+        if is_client_gone(error):
+            logger.debug('WebSocket: client gone')
+        else:
+            logger.exception('WebSocket error', error=error)
     finally:
         # Отменяем регистрацию при отключении
         event_emitter.unregister_websocket(websocket)

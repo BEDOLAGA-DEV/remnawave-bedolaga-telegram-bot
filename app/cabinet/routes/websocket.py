@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from datetime import UTC, datetime
 
@@ -13,6 +14,7 @@ from app.cabinet.auth.jwt_handler import get_token_payload
 from app.config import settings
 from app.database.crud.user import get_user_by_id
 from app.database.database import AsyncSessionLocal
+from app.utils.websocket_errors import CLIENT_GONE_ERRORS, is_client_gone
 
 
 logger = structlog.get_logger(__name__)
@@ -157,6 +159,16 @@ async def verify_cabinet_ws_token(token: str) -> tuple[int | None, bool]:
         return None, False
 
 
+async def _reject(websocket: WebSocket, reason: str) -> None:
+    """Принять и сразу закрыть соединение с кодом отказа.
+
+    Клиент может отвалиться и здесь — тогда закрывать уже нечего и некому.
+    """
+    with contextlib.suppress(*CLIENT_GONE_ERRORS):
+        await websocket.accept()
+        await websocket.close(code=1008, reason=reason)
+
+
 @router.websocket('/ws')
 async def cabinet_websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint для real-time уведомлений кабинета."""
@@ -167,9 +179,7 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
 
     if not token:
         logger.debug('Cabinet WS: No token from', client_host=client_host)
-        # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: No token')
+        await _reject(websocket, 'Unauthorized: No token')
         return
 
     # Верифицируем токен
@@ -177,9 +187,7 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
 
     if not user_id:
         logger.debug('Cabinet WS: Invalid token from', client_host=client_host)
-        # Принимаем и сразу закрываем с кодом ошибки
-        await websocket.accept()
-        await websocket.close(code=1008, reason='Unauthorized: Invalid token')
+        await _reject(websocket, 'Unauthorized: Invalid token')
         return
 
     # Принимаем соединение
@@ -187,6 +195,11 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
         await websocket.accept()
         logger.debug('Cabinet WS accepted: user_id is_admin', user_id=user_id, is_admin=is_admin)
     except Exception as e:
+        # Вкладку закрыли, пока шло рукопожатие, — это не авария: молча уходим.
+        # Иначе владельцу летел отчёт «Ошибка во время работы» по нескольку раз в день.
+        if is_client_gone(e):
+            logger.debug('Cabinet WS: client gone before accept', client_host=client_host)
+            return
         logger.error('Cabinet WS: Failed to accept from', client_host=client_host, e=e)
         return
 
@@ -218,13 +231,18 @@ async def cabinet_websocket_endpoint(websocket: WebSocket):
             except WebSocketDisconnect:
                 break
             except Exception as e:
+                if is_client_gone(e):
+                    break
                 logger.exception('Cabinet WS error for user', user_id=user_id, e=e)
                 break
 
     except WebSocketDisconnect:
         logger.debug('Cabinet WS disconnected: user_id', user_id=user_id)
     except Exception as e:
-        logger.exception('Cabinet WS error', e=e)
+        if is_client_gone(e):
+            logger.debug('Cabinet WS: client gone', user_id=user_id)
+        else:
+            logger.exception('Cabinet WS error', e=e)
     finally:
         await cabinet_ws_manager.disconnect(websocket, user_id)
 

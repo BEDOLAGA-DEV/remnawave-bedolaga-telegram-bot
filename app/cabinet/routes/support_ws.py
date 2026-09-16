@@ -53,6 +53,7 @@ from app.services.registration_access_service import (
 )
 from app.services.support_settings_service import SupportSettingsService
 from app.services.user_revival_service import NotDeletedError, revive_deleted_user
+from app.utils.websocket_errors import is_client_gone
 
 
 logger = structlog.get_logger(__name__)
@@ -1487,7 +1488,15 @@ async def support_mobile_websocket_endpoint(websocket: WebSocket):
         await _reject_upgrade(websocket, 401, error['code'] if error else 'AUTH_REQUIRED')
         return
 
-    await websocket.accept(subprotocol=SUPPORTED_SUBPROTOCOL)
+    try:
+        await websocket.accept(subprotocol=SUPPORTED_SUBPROTOCOL)
+    except Exception as exc:
+        # Приложение закрыли, пока шло рукопожатие, — разговор окончен, аварии нет.
+        if is_client_gone(exc):
+            logger.debug('Support WS: client gone before accept')
+            return
+        raise
+
     session = SupportWsSession(websocket=websocket, context=context)
     await support_ws_manager.connect(session)
     try:
@@ -1551,8 +1560,9 @@ async def support_mobile_websocket_endpoint(websocket: WebSocket):
                     command = command if 'command' in locals() else 'unknown'
                     request_id = request_id if 'request_id' in locals() else ''
                     await session.send_json(_command_result(command, request_id, error=_map_exception(command, exc)))
-                except Exception:
-                    logger.exception('Support WS failed to send command error')
+                except Exception as send_error:
+                    if not is_client_gone(send_error):
+                        logger.exception('Support WS failed to send command error')
                     break
     finally:
         await support_ws_manager.disconnect(session)

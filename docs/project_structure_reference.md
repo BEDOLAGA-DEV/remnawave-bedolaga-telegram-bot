@@ -2232,6 +2232,9 @@
 - `app/utils/validators.py` — Python-модуль
   Классы: нет
   Функции: `validate_email`, `validate_phone`, `validate_telegram_username`, `validate_promocode`, `validate_amount`, `validate_positive_integer`, `validate_date_string`, `validate_url`, `validate_uuid`, `validate_traffic_amount`, `validate_subscription_period`, `sanitize_html` — Безопасно санитизирует HTML-текст, заменяя HTML-сущности на соответствующие теги,, `sanitize_telegram_name` — Санитизация Telegram-имени для безопасной вставки в HTML и хранения., `validate_device_count`, `validate_referral_code`, `validate_html_tags`, `validate_html_structure`, `fix_html_tags`, `get_html_help_text`, `validate_rules_content`
+- `app/utils/websocket_errors.py` — Python-модуль
+  Классы: нет
+  Функции: `is_client_gone` — Ушёл ли клиент — или это настоящая ошибка, которую надо показать.
 
 ### app/webapi
 
@@ -2899,7 +2902,10 @@
 - `migrations/alembic/versions/0122_subscription_grace_overlay_expire_at.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
-- `migrations/alembic/versions/0123_create_subscription_premium_traffic.py` — Python-модуль
+- `migrations/alembic/versions/0123_user_trial_reset_at.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0124_create_subscription_premium_traffic.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 
@@ -3280,6 +3286,9 @@
 - `tests/cabinet/test_oauth_revival_security.py` — Python-модуль
   Классы: нет
   Функции: `test_email_merge_requires_local_user_email_verified` — Source-level guard: the email-merge branch checks user.email_verified., `test_revived_log_field_uses_pre_revival_snapshot` — `revived=<bool>` in the logger.info call must come from a snapshot, `test_revive_called_without_commit_kwarg` — Architect's call: revive_deleted_user no longer accepts `commit=`., `test_revive_service_does_not_commit` — Hard pin: revive_deleted_user implementation does not commit.
+- `tests/cabinet/test_panel_sync_status_grace.py` — Python-модуль
+  Классы: нет
+  Функции: `test_open_grace_is_not_a_difference` — Дата, статус, лимит и сквад грейса — так и задумано, а не расхождение., `test_without_grace_the_same_panel_data_is_a_difference` — Те же данные панели без грейса обязаны остаться расхождением., `test_traffic_used_is_still_compared_during_grace` — Расход трафика панель ведёт и в грейсе — его сверять надо по-прежнему.
 - `tests/cabinet/test_platega_recurrent_admin.py` — Python-модуль
   Классы: нет
   Функции: `test_async_builder_populates_sbp_status_when_gate_on`, `test_async_builder_leaves_sbp_status_none_without_active_record` — Gate on, but no active Platega subscription for this subscription_id., `test_async_builder_skips_query_when_gate_off`, `test_sync_builder_never_sets_sbp_fields` — The sync builder has no DB access and must leave both fields at their, `test_route_registered`, `test_cancel_sbp_recurring_owned_subscription_cancels_and_awaits_helper`, `test_cancel_sbp_recurring_wrong_owner_404_and_helper_not_called`, `test_cancel_sbp_recurring_missing_subscription_404` — Same 404 path for a subscription_id that doesn't exist at all.
@@ -3325,6 +3334,9 @@
 - `tests/cabinet/test_renewal_single_tariff_mode.py` — Python-модуль
   Классы: нет
   Функции: `single_tariff_mode`, `panel`, `test_expired_subscription_gets_tariff_periods_without_multi_tariff`, `test_resolve_subscription_without_multi_tariff_loads_the_tariff` — Любой маршрут, взявший подписку через resolve_subscription, может читать её тариф.
+- `tests/cabinet/test_reset_trial_actually_reopens_trial.py` — Python-модуль
+  Классы: нет
+  Функции: `test_paid_once_but_nothing_left_gets_the_trial_back`, `test_expired_trial_of_a_former_payer_is_wiped_and_reopened`, `test_new_trial_after_the_reset_closes_it_again` — Сброс одноразовый: взял новый триал — снова закрыто, второй раз не выдаст., `test_live_paid_subscription_gets_an_honest_refusal` — Живая платная подписка сама закрывает триал — кнопка обязана сказать это, а не врать.
 - `tests/cabinet/test_role_grant_subset.py` — Python-модуль
   Классы: нет
   Функции: `test_permission_covered_wildcards`, `test_cannot_grant_permissions_not_held`, `test_superadmin_exempt_and_does_not_query`
@@ -3388,6 +3400,9 @@
 - `tests/cabinet/test_webhook_email_templates.py` — Python-модуль
   Классы: нет
   Функции: `test_every_webhook_type_has_email_template_in_every_language` — Новый WEBHOOK_* тип без email-шаблона — регресс к «почта молча пропущена»., `test_webhook_email_language_fallback_to_ru`, `test_webhook_email_localized_subjects_differ_from_ru` — zh/ua — не заглушки: тема отличается от русской., `test_device_name_substitution_and_placeholder_hygiene`, `test_device_name_is_html_escaped`, `test_winback_types_have_email_template_in_every_language`, `test_winback_discount_renders_percent_everywhere`, `test_winback_expired_1d_escapes_end_date`
+- `tests/cabinet/test_websocket_client_gone_is_not_an_error.py` — Python-модуль
+  Классы: нет
+  Функции: `test_known_disconnects_are_recognised`, `test_real_failures_are_not_mistaken_for_a_disconnect`, `test_cabinet_socket_stays_quiet_when_client_is_gone`, `test_cabinet_socket_still_reports_a_real_failure`, `test_cabinet_socket_survives_a_disconnect_while_refusing` — Отказ неавторизованному тоже пишет в сокет — и тоже может не застать клиента., `test_webapi_socket_stays_quiet_when_client_is_gone`
 - `tests/cabinet/test_websocket_dates_are_iso.py` — Python-модуль
   Классы: нет
   Функции: `sent`, `test_renewed_event_carries_iso_utc_date`, `test_activated_event_carries_iso_utc_date`, `test_naive_datetime_is_treated_as_utc`, `test_missing_date_is_an_empty_string`, `test_no_caller_sends_a_human_formatted_date` — Ни один вызов notify_user_* не подсовывает в поле даты отформатированную строку.
