@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.12.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.12.0...v4.12.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* «онлайн» в списке показывал тех, кто отключился минуту назад ([c113fbc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c113fbcce8e08fbd627aeb6033771cabcf671a13))
+* «Сбросить триал» в кабинете действительно открывает триал заново ([cc31478](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/cc31478086c6c8d0a125bc9af071b0db46e4f474))
+* временный доступ больше не выглядит расхождением с панелью ([3856023](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/385602312050dc4242d6b7930c6634ea90cc2c40))
+* несколько тарифов у одного человека — выборки и строка списка ([5c6c46a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5c6c46a19e4be8c6e5e7771c5ed63168b891d8af))
+* обрыв клиента на вебсокете больше не уходит в отчёт об ошибке ([49765d1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/49765d11a5693723819e336712972c5b7d9cf729))
+* сортировка по трафику ломала выборки списка пользователей и повторяла людей ([9b2c600](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b2c600bad7b92ec5707d618714d36108bf63377))
+* списки API отдавали total: 1 вместо числа записей ([fc7b8c9](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/fc7b8c951048edfbd2aed36de21313ce0bab81a0))
+
+
+### Documentation
+
+* данные плательщика в платежах Platega и MulenPay ([78d2012](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/78d201279f74b4ca04fd6ad93d244b91416dac21))
+
 ## [4.12.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.11.0...v4.12.0) (2026-09-15)
 
 
