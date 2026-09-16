@@ -170,7 +170,58 @@ async def _get_owned_subscription_or_404(db: AsyncSession, subscription_id: int,
     return subscription
 
 
-def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListItem:
+#: Что именно строка списка обязана показать — зависит от открытой выборки.
+HIGHLIGHT_TRAFFIC = 'traffic'
+HIGHLIGHT_STATUS_PREFIX = 'status:'
+
+
+def _soonest(subscriptions: list[Subscription]) -> Subscription:
+    """Ближайшая к окончанию — по ней человек и оценивает, что у него кончается."""
+    return min(subscriptions, key=lambda s: (s.end_date is None, s.end_date))
+
+
+def _row_subscription(subs: list[Subscription], highlight: str | None) -> Subscription | None:
+    """Подписка, которую показывает строка списка.
+
+    По умолчанию — ближайшая к окончанию среди живых: так строка совпадает с
+    сортировкой по окончанию (при мультитарифе иначе выходило расхождение —
+    список отсортирован по одной дате, а в строке показана другая).
+
+    Но если выборка нашла человека по конкретной подписке, показать надо именно
+    её. В «Трафике на исходе» строка показывала полосу «0 / 600 ГБ» у человека,
+    который попал туда из-за другого тарифа, забитого под завязку, — и выборка
+    выглядела сломанной.
+    """
+    if not subs:
+        return None
+
+    if highlight == HIGHLIGHT_TRAFFIC:
+        with_limit = [s for s in subs if (s.traffic_limit_gb or 0) > 0]
+        if with_limit:
+            return max(with_limit, key=lambda s: (s.traffic_used_gb or 0.0) / s.traffic_limit_gb)
+    elif highlight and highlight.startswith(HIGHLIGHT_STATUS_PREFIX):
+        wanted = highlight.removeprefix(HIGHLIGHT_STATUS_PREFIX)
+        same_status = [s for s in subs if s.status == wanted]
+        if same_status:
+            return _soonest(same_status)
+
+    live = [s for s in subs if s.is_active]
+    return _soonest(live) if live else subs[0]
+
+
+def _grace_until(subscription: Subscription | None) -> datetime | None:
+    """До какого числа открыт временный доступ; ``None`` — обычная подписка.
+
+    Пока грейс-сессия открыта, в панели стоит её оверлей: человек с истёкшей
+    подпиской продолжает пользоваться VPN. По списку это было не отличить от
+    просто истёкшей — админ видел «истекла» и не понимал, почему человек в сети.
+    """
+    if subscription is None or not subscription.grace_session_open:
+        return None
+    return subscription.grace_overlay_expire_at
+
+
+def _build_user_list_item(user: User, spending_stats: dict = None, highlight: str | None = None) -> UserListItem:
     """Build UserListItem from User model."""
     stats = spending_stats or {}
     user_stats = stats.get(user.id, {'total_spent': 0, 'purchase_count': 0})
@@ -187,15 +238,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
     days_remaining = 0
 
     subs = getattr(user, 'subscriptions', None) or []
-    # Среди активных берём ту, что кончается РАНЬШЕ всех, а не самую свежую по
-    # дате создания (связь отсортирована по created_at). При мультитарифе иначе
-    # выходило расхождение: список отсортирован по ближайшему окончанию, а в
-    # строке показана дата другой подписки — сортировка выглядела сломанной.
-    _active_subs = [s for s in subs if s.is_active]
-    if _active_subs:
-        subscription = min(_active_subs, key=lambda s: (s.end_date is None, s.end_date))
-    else:
-        subscription = subs[0] if subs else None
+    subscription = _row_subscription(subs, highlight)
     if subscription:
         has_subscription = True
         subscription_status = subscription.status
@@ -230,6 +273,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
                     traffic_used_gb=s.traffic_used_gb or 0.0,
                     traffic_limit_gb=s.traffic_limit_gb or 0,
                     device_limit=s.device_limit or 0,
+                    grace_until=_grace_until(s),
                 )
             )
 
@@ -255,6 +299,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None) -> UserListIt
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,
         days_remaining=days_remaining,
+        grace_until=_grace_until(subscription),
         subscriptions=sub_list,
         promo_group_id=user.promo_group_id,
         promo_group_name=user.promo_group.name if user.promo_group else None,
@@ -290,6 +335,7 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
         autopay_enabled=subscription.autopay_enabled,
         is_active=is_active,
         days_remaining=days_remaining,
+        grace_until=_grace_until(subscription),
     )
 
 
@@ -563,8 +609,18 @@ async def list_users(
     user_ids = [u.id for u in users]
     spending_stats = await get_users_spending_stats(db, user_ids) if user_ids else {}
 
+    # Строка обязана показать ту подписку, по которой человек попал в выборку,
+    # иначе у владельца нескольких тарифов «Трафик на исходе» рисует полосу
+    # пустого тарифа. См. tests/cabinet/test_admin_users_multi_tariff_and_grace.py.
+    if traffic_used_percent_min is not None:
+        highlight = HIGHLIGHT_TRAFFIC
+    elif subscription_status:
+        highlight = f'{HIGHLIGHT_STATUS_PREFIX}{subscription_status}'
+    else:
+        highlight = None
+
     items = [
-        _build_user_list_item(u, spending_stats).model_copy(
+        _build_user_list_item(u, spending_stats, highlight=highlight).model_copy(
             update={
                 'is_online': connected.has_user(u) if connected is not None else None,
                 'online_at': snapshot.online_at_for(u) if snapshot is not None else None,

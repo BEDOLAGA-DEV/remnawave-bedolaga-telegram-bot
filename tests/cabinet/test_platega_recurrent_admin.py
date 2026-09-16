@@ -64,6 +64,8 @@ def _subscription(**overrides) -> SimpleNamespace:
         device_limit=1,
         tariff_id=None,
         autopay_enabled=False,
+        grace_session_open=False,
+        grace_overlay_expire_at=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)

@@ -950,6 +950,36 @@ async def cleanup_expired_promo_offer_discounts(db: AsyncSession) -> int:
     return len(users)
 
 
+#: Статусы, при которых подписка ещё даёт доступ (с непрошедшей датой окончания).
+LIVE_SUBSCRIPTION_STATUSES = (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+
+#: Статусы «доступа больше нет».
+#:
+#: В мультитарифе их нельзя проверять по одной подписке: у человека с тремя живыми
+#: тарифами одна старая истёкшая строка не делает его отвалившимся. Такие выборки
+#: ищут людей, у которых не осталось ни одной живой подписки.
+GONE_SUBSCRIPTION_STATUSES = frozenset(
+    {
+        SubscriptionStatus.EXPIRED.value,
+        SubscriptionStatus.DISABLED.value,
+        SubscriptionStatus.LIMITED.value,
+    }
+)
+
+
+def _has_live_subscription(now: datetime):
+    """Есть ли у пользователя хоть одна подписка, которая сейчас даёт доступ."""
+    return exists(
+        select(Subscription.id)
+        .where(
+            Subscription.user_id == User.id,
+            Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES),
+            Subscription.end_date > now,
+        )
+        .correlate(User)
+    )
+
+
 def _users_list_conditions(
     *,
     status: UserStatus | None = None,
@@ -974,6 +1004,7 @@ def _users_list_conditions(
     добавленная только в одну из них, давала «показано 12 из 40» при 12 найденных.
     """
     conditions: list = []
+    now = datetime.now(UTC)
 
     if status:
         conditions.append(User.status == status.value)
@@ -988,6 +1019,12 @@ def _users_list_conditions(
             select(Subscription.user_id).where(and_(*sub_conditions)).distinct().correlate(None).scalar_subquery()
         )
         conditions.append(User.id.in_(sub_query))
+
+    if subscription_status in GONE_SUBSCRIPTION_STATUSES:
+        # «Истекшие», «Отключена», «Лимит» — это «человек остался без доступа».
+        # Одной такой строки мало: у владельца нескольких тарифов она может лежать
+        # рядом с живыми. См. tests/cabinet/test_admin_users_multi_tariff_and_grace.py.
+        conditions.append(~_has_live_subscription(now))
 
     if promo_group_id:
         # Юзер считается членом группы если она в legacy `user.promo_group_id` ИЛИ
@@ -1034,8 +1071,6 @@ def _users_list_conditions(
 
     if email:
         conditions.append(User.email.ilike(f'%{email}%'))
-
-    now = datetime.now(UTC)
 
     if expires_within_days is not None:
         # «Истекают за N дней»: живая подписка с концом в ближайшие N дней. Суточные

@@ -68,6 +68,8 @@ class UserSubscriptionInfo(BaseModel):
     autopay_enabled: bool = False
     is_active: bool = False
     days_remaining: int = 0
+    # Открыт временный доступ (грейс) до этого числа; None — обычная подписка.
+    grace_until: datetime | None = None
     purchased_traffic_gb: int = 0
     traffic_purchases: list[TrafficPurchaseItem] = []
 
@@ -101,6 +103,8 @@ class SubscriptionListItem(BaseModel):
     traffic_used_gb: float = 0
     traffic_limit_gb: int = 0
     device_limit: int = 0
+    # Открыт временный доступ (грейс) до этого числа; None — обычная подписка.
+    grace_until: datetime | None = None
 
 
 class UserListItem(BaseModel):
@@ -134,6 +138,8 @@ class UserListItem(BaseModel):
     traffic_limit_gb: int = 0
     device_limit: int = 0
     days_remaining: int = 0
+    # Временный доступ (грейс) у показанной подписки — до какого числа он открыт.
+    grace_until: datetime | None = None
 
     # All subscriptions (multi-tariff)
     subscriptions: list[SubscriptionListItem] = []
