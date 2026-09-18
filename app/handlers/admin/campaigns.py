@@ -33,6 +33,7 @@ from app.keyboards.admin import (
 from app.localization.texts import Texts, get_texts
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -318,7 +319,7 @@ async def show_campaign_detail(
     text.append(f'• Средний доход на пользователя: <b>{texts.format_price(stats["avg_revenue_per_user_kopeks"])}</b>')
     text.append(f'• Средний первый платеж: <b>{texts.format_price(stats["avg_first_payment_kopeks"])}</b>')
     if stats['last_registration']:
-        text.append(f'• Последняя: {stats["last_registration"].strftime("%d.%m.%Y %H:%M")}')
+        text.append(f'• Последняя: {format_local_datetime(stats["last_registration"], "%d.%m.%Y %H:%M")}')
 
     await callback.message.edit_text(
         '\n'.join(text),
@@ -1151,7 +1152,7 @@ async def show_campaign_stats(
     text.append(f'Выдано баланса: <b>{texts.format_price(stats["balance_issued"])}</b>')
     text.append(f'Выдано подписок: <b>{stats["subscription_issued"]}</b>')
     if stats['last_registration']:
-        text.append(f'Последняя регистрация: {stats["last_registration"].strftime("%d.%m.%Y %H:%M")}')
+        text.append(f'Последняя регистрация: {format_local_datetime(stats["last_registration"], "%d.%m.%Y %H:%M")}')
 
     await callback.message.edit_text(
         '\n'.join(text),

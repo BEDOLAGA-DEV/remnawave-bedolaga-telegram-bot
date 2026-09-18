@@ -13,6 +13,7 @@ from app.services.server_status_service import (
     ServerStatusError,
     ServerStatusService,
 )
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -107,7 +108,7 @@ def _build_status_message(
         offline=len(offline_servers),
     )
 
-    updated_at = datetime.now(UTC).strftime('%H:%M:%S')
+    updated_at = format_local_datetime(datetime.now(UTC), '%H:%M:%S')
 
     lines.extend(
         [

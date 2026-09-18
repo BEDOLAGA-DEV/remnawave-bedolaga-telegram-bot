@@ -31,9 +31,7 @@ def upgrade() -> None:
     if _has_column('tariffs', 'is_highlighted'):
         return
     with op.batch_alter_table('tariffs') as batch:
-        batch.add_column(
-            sa.Column('is_highlighted', sa.Boolean(), nullable=False, server_default=sa.false())
-        )
+        batch.add_column(sa.Column('is_highlighted', sa.Boolean(), nullable=False, server_default=sa.false()))
 
 
 def downgrade() -> None:

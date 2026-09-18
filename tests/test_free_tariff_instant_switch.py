@@ -61,6 +61,7 @@ def _fake_sub(tariff) -> SimpleNamespace:
         id=1,
         actual_status='active',
         status='active',
+        tariff_id=tariff.id,
         tariff=tariff,
         traffic_limit_gb=0,
         end_date=None,

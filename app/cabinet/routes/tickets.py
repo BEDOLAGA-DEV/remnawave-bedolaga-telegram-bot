@@ -16,6 +16,7 @@ from app.database.crud.ticket_notification import TicketNotificationCRUD
 from app.database.models import Ticket, TicketMessage, User
 from app.handlers.tickets import notify_admins_about_new_ticket, notify_admins_about_ticket_reply
 from app.services.support_settings_service import SupportSettingsService
+from app.utils.timezone import format_local_datetime
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..schemas.tickets import (
@@ -64,7 +65,9 @@ async def _ensure_not_blocked(db: AsyncSession, user: User) -> None:
     if blocked_until.year >= _PERMANENT_BLOCK_YEAR:
         detail = 'You are blocked from contacting support'
     else:
-        detail = f'You are blocked from contacting support until {blocked_until.strftime("%d.%m.%Y %H:%M")} UTC'
+        detail = (
+            f'You are blocked from contacting support until {format_local_datetime(blocked_until, "%d.%m.%Y %H:%M")}'
+        )
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 

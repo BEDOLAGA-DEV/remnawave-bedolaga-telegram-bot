@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterable
 from ipaddress import (
     IPv4Address,
     IPv4Network,
@@ -107,18 +106,6 @@ def _parse_candidate_ip(candidate: str) -> IPAddress | None:
         return None
 
 
-def _should_trust_forwarded_headers(remote_ip: IPAddress | None) -> bool:
-    if remote_ip is None:
-        return True
-
-    if _is_trusted_proxy_ip(remote_ip):
-        return True
-
-    return any(
-        getattr(remote_ip, attribute) for attribute in ('is_private', 'is_loopback', 'is_link_local', 'is_reserved')
-    )
-
-
 _TRUSTED_PROXY_NETWORKS_CACHE: tuple[str, tuple[IPNetwork, ...]] = ('', ())
 
 
@@ -159,41 +146,61 @@ def _is_trusted_proxy_ip(ip_object: IPAddress) -> bool:
     return any(ip_object in network for network in _get_trusted_proxy_networks())
 
 
-def resolve_yookassa_ip(
-    candidates: Iterable[str],
-    *,
-    remote: str | None = None,
-) -> IPAddress | None:
-    remote_ip = _parse_candidate_ip(remote) if remote else None
+def _is_cloudflare_ip(ip_object: IPAddress) -> bool:
+    return any(ip_object in network for network in CLOUDFLARE_TRUSTED_NETWORKS)
 
-    if remote_ip is not None and remote_ip.is_global and not _is_trusted_proxy_ip(remote_ip):
+
+def resolve_webhook_client_ip(
+    remote: str | None,
+    *,
+    forwarded_for: str | None = None,
+    real_ip: str | None = None,
+    cf_connecting_ip: str | None = None,
+) -> IPAddress | None:
+    """Адрес отправителя вебхука без доверия к заголовкам, которые мог выставить сам клиент.
+
+    Локальный прокси (Caddy, nginx) пропускает клиентские заголовки как есть и от себя
+    дописывает только ``X-Forwarded-For``, поэтому читать можно лишь то, что выставил
+    сам прокси. Правила:
+
+    - peer публичный и не из доверенных прокси → отправитель он сам, заголовки не читаются;
+    - peer из сетей Cloudflare → ``Cf-Connecting-Ip`` выставил Cloudflare, ему верим;
+    - peer локальный/доверенный прокси → ``X-Forwarded-For`` справа налево, пропуская
+      доверенные хопы; первый недоверенный — отправитель. ``Cf-Connecting-Ip`` здесь
+      игнорируется. ``X-Real-IP`` — только когда ``X-Forwarded-For`` нет вовсе;
+    - peer неизвестен или все хопы доверенные → ``None``, вебхук отклоняется.
+
+    Прокси, который не дописывает свой peer в ``X-Forwarded-For``, отличить нельзя,
+    поэтому IP-гейт — лишь первый барьер: начисление всегда требует подтверждения
+    платежа запросом в API ЮKassa (``process_yookassa_webhook``).
+    """
+    remote_ip = _parse_candidate_ip(remote) if remote else None
+    if remote_ip is None:
+        return None
+
+    if not _is_trusted_proxy_ip(remote_ip):
         return remote_ip
 
-    candidate_list = list(candidates)
+    if _is_cloudflare_ip(remote_ip) and cf_connecting_ip:
+        cloudflare_client = _parse_candidate_ip(cf_connecting_ip)
+        if cloudflare_client is not None:
+            return cloudflare_client
 
-    if _should_trust_forwarded_headers(remote_ip):
-        last_hop = remote_ip
-        for candidate in reversed(candidate_list):
-            ip_object = _parse_candidate_ip(candidate)
-            if ip_object is not None:
-                if last_hop is None or _is_trusted_proxy_ip(last_hop):
-                    if _is_trusted_proxy_ip(ip_object):
-                        last_hop = ip_object
-                        continue
-                    return ip_object
-                break
+    hops = [
+        ip_object
+        for ip_object in (_parse_candidate_ip(part) for part in collect_yookassa_ip_candidates(forwarded_for))
+        if ip_object is not None
+    ]
+    for hop in reversed(hops):
+        if not _is_trusted_proxy_ip(hop):
+            return hop
 
-        if last_hop is not None and not _is_trusted_proxy_ip(last_hop):
-            return last_hop
+    if not hops and real_ip:
+        real_client = _parse_candidate_ip(real_ip)
+        if real_client is not None and not _is_trusted_proxy_ip(real_client):
+            return real_client
 
-    return (
-        remote_ip
-        if remote_ip is not None
-        else next(
-            (ip for ip in (_parse_candidate_ip(value) for value in candidate_list) if ip is not None),
-            None,
-        )
-    )
+    return None
 
 
 def is_yookassa_ip_allowed(ip_object: IPAddress) -> bool:
@@ -212,20 +219,18 @@ class YooKassaWebhookHandler:
             # который не пробрасывает реальный IP отправителя. В этом режиме подлинность
             # платежа гарантирует fail-closed API-проверка в process_yookassa_webhook.
             if not settings.YOOKASSA_SKIP_IP_CHECK:
-                header_ip_candidates = collect_yookassa_ip_candidates(
-                    request.headers.get('X-Forwarded-For'),
-                    request.headers.get('X-Real-IP'),
-                    request.headers.get('Cf-Connecting-Ip'),
-                )
-                client_ip = resolve_yookassa_ip(
-                    header_ip_candidates,
-                    remote=request.remote,
+                client_ip = resolve_webhook_client_ip(
+                    request.remote,
+                    forwarded_for=request.headers.get('X-Forwarded-For'),
+                    real_ip=request.headers.get('X-Real-IP'),
+                    cf_connecting_ip=request.headers.get('Cf-Connecting-Ip'),
                 )
 
                 if client_ip is None:
                     logger.warning(
-                        '🚫 Не удалось определить IP-адрес отправителя YooKassa webhook. Кандидаты',
-                        header_ip_candidates=header_ip_candidates + ([request.remote] if request.remote else []),
+                        '🚫 Не удалось определить IP-адрес отправителя YooKassa webhook',
+                        remote=request.remote,
+                        x_forwarded_for=request.headers.get('X-Forwarded-For'),
                     )
                     return web.Response(status=403, text='Forbidden')
 

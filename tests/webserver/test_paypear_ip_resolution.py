@@ -49,13 +49,24 @@ def test_direct_paypear_connection_without_proxy() -> None:
     assert _resolve_proxied_client_ip(req) == PAYPEAR_IP
 
 
-def test_no_peer_falls_back_to_forwarded() -> None:
+def test_no_peer_is_unknown_not_trusted() -> None:
+    # Без peer нельзя сказать, кто выставил заголовок — отправитель неизвестен, allowlist не пройдёт.
     req = _request(None, {'x-real-ip': PAYPEAR_IP})
-    assert _resolve_proxied_client_ip(req) == PAYPEAR_IP
+    assert _resolve_proxied_client_ip(req) is None
 
 
 def test_malformed_peer_does_not_crash_and_does_not_trust_forwarded() -> None:
     req = _request('not-an-ip', {'x-real-ip': PAYPEAR_IP})
-    # An unparseable peer is NOT a recognised local proxy, so the spoofable header is ignored
-    # and the raw peer is returned (which then fails the allowlist — safe).
-    assert _resolve_proxied_client_ip(req) == 'not-an-ip'
+    # Неразборчивый peer — не локальный прокси: заголовок не читается, отправитель неизвестен.
+    assert _resolve_proxied_client_ip(req) is None
+
+
+def test_x_real_ip_ignored_when_proxy_appended_forwarded_for() -> None:
+    # Прокси дописал настоящий адрес в X-Forwarded-For; X-Real-IP пришёл от клиента как есть.
+    req = _request('10.0.0.5', {'x-forwarded-for': '8.8.8.8', 'x-real-ip': PAYPEAR_IP})
+    assert _resolve_proxied_client_ip(req) == '8.8.8.8'
+
+
+def test_cf_connecting_ip_ignored_behind_local_proxy() -> None:
+    req = _request('172.18.0.5', {'x-forwarded-for': '8.8.8.8', 'cf-connecting-ip': PAYPEAR_IP})
+    assert _resolve_proxied_client_ip(req) == '8.8.8.8'

@@ -1415,23 +1415,14 @@ class YooKassaPaymentMixin:
             logger.warning('Webhook без payment id', webhook_event=event)
             return False
 
-        # Defence-in-depth cross-check: re-request the payment from the
-        # YooKassa API. YooKassa does NOT sign its webhooks (per the docs
-        # at https://yookassa.ru/developers/using-api/webhooks authenticity
-        # is verified either by sender IP or by re-requesting the object),
-        # so the incoming ``Signature`` header is NOT verifiable and the raw
-        # payload must never be trusted on its own.
-        #
-        # Two modes:
-        #   * IP gate ON (default): the request already passed the YooKassa
-        #     IP allowlist, so this API call is best-effort. Tight 8s budget;
-        #     on timeout/error we fall back to the payload status. This avoids
-        #     the incident where a mandatory 30s call serialised webhook
-        #     processing on the YK executor during API degradation.
-        #   * IP gate OFF (YOOKASSA_SKIP_IP_CHECK): there is no IP barrier, so
-        #     the API confirmation becomes MANDATORY (fail-closed) — see the
-        #     guard below. Without it a forged ``payment.succeeded`` for a
-        #     non-existent id would credit an attacker via the restore path.
+        # ЮKassa вебхуки не подписывает (https://yookassa.ru/developers/using-api/webhooks):
+        # подлинность подтверждается либо IP отправителя, либо повторным запросом объекта.
+        # Надёжность IP-гейта зависит от конфигурации прокси перед ботом, поэтому запрос
+        # платежа в API — ОБЯЗАТЕЛЬНЫЙ и fail-closed в любом режиме: без подтверждения
+        # тело запроса не используется ни для статуса, ни для восстановления записи.
+        # Нет ответа (404, таймаут, ошибка, нет клиента) → отказ и не-200, чтобы ЮKassa
+        # повторила настоящее уведомление позже. Бюджет 8 с: при деградации API
+        # длинный вызов сериализовал обработку вебхуков на исполнителе ЮKassa.
         remote_data: dict[str, Any] | None = None
         if getattr(self, 'yookassa_service', None):
             try:
@@ -1443,7 +1434,7 @@ class YooKassaPaymentMixin:
                 )
             except TimeoutError:
                 logger.warning(
-                    'YooKassa API не ответил за 8с при cross-check webhook — используем payload без подтверждения',
+                    'YooKassa API не ответил за 8с при подтверждении webhook — отказ, ЮKassa повторит уведомление',
                     yookassa_payment_id=yookassa_payment_id,
                     payload_status=event_object.get('status'),
                 )
@@ -1454,18 +1445,18 @@ class YooKassaPaymentMixin:
                     error=error,
                     exc_info=True,
                 )
+        else:
+            logger.error(
+                'YooKassa webhook получен, но клиент API YooKassa не сконфигурирован — подтвердить платёж нечем',
+                yookassa_payment_id=yookassa_payment_id,
+            )
 
-        # Fail-closed: with the IP allowlist disabled, the only proof of
-        # authenticity is the YooKassa API confirmation. No confirmation
-        # (404 / timeout / error → remote_data is None) means the payload
-        # cannot be trusted, so we refuse to process and return a non-200
-        # to make YooKassa retry the genuine notification later.
-        if settings.YOOKASSA_SKIP_IP_CHECK and remote_data is None:
+        if remote_data is None:
             logger.warning(
-                'YooKassa webhook отклонён: YOOKASSA_SKIP_IP_CHECK включён, но API YooKassa '
-                'не подтвердил платёж — fail-closed, начисление не выполнено',
+                'YooKassa webhook отклонён: API YooKassa не подтвердил платёж — fail-closed, начисление не выполнено',
                 yookassa_payment_id=yookassa_payment_id,
                 payload_status=event_object.get('status'),
+                ip_check_skipped=settings.YOOKASSA_SKIP_IP_CHECK,
             )
             return False
 

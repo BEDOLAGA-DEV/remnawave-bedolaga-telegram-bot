@@ -60,6 +60,8 @@ def _sub(user: User, suffix: str, status: str, days: int, *, used: float = 0.0, 
     return Subscription(
         user_id=user.id,
         status=status,
+        # Платные подписки: у модели is_trial по умолчанию True, а сегмент «Активные» — про платных.
+        is_trial=extra.pop('is_trial', False),
         start_date=NOW - timedelta(days=60),
         end_date=NOW + timedelta(days=days),
         traffic_limit_gb=limit,
@@ -177,7 +179,9 @@ async def _rows(db, monkeypatch: pytest.MonkeyPatch, **params):
         'purchase_count': None,
         'traffic_used_percent_min': None,
         'online': None,
+        'in_grace': None,
         'sort_by': admin_users.SortByEnum.CREATED_AT,
+        'sort_order': None,
     }
     response = await admin_users.list_users(**{**defaults, **params}, admin=None, db=db)
     return response.users

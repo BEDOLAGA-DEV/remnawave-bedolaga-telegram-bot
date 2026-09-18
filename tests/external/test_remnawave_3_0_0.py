@@ -1089,3 +1089,25 @@ async def test_delete_all_devices_reports_success_when_panel_is_empty(monkeypatc
 
     monkeypatch.setattr(api, '_make_request', fake)
     assert await api.reset_user_devices(42) is True
+
+
+async def test_update_user_sends_null_tag_to_clear_it():
+    """В контракте панели ``tag`` в PATCH — optional + nullable: не прислать = не
+    трогать, прислать ``null`` = снять. Без null триальный тег переживал бы покупку."""
+    api = _api()
+    api._make_request = AsyncMock(return_value={'response': _user_payload()})
+
+    await api.update_user(42, tag=None)
+
+    body = api._make_request.call_args.args[2]
+    assert 'tag' in body
+    assert body['tag'] is None
+
+
+async def test_update_user_leaves_tag_alone_when_not_given():
+    api = _api()
+    api._make_request = AsyncMock(return_value={'response': _user_payload()})
+
+    await api.update_user(42, telegram_id=555)
+
+    assert 'tag' not in api._make_request.call_args.args[2]

@@ -17,6 +17,7 @@ from app.database.crud.user_message import (
 from app.database.models import User
 from app.localization.texts import get_texts
 from app.utils.decorators import admin_required, error_handler
+from app.utils.timezone import format_local_datetime
 from app.utils.validators import (
     get_html_help_text,
     sanitize_html,
@@ -131,7 +132,7 @@ async def process_new_message_text(message: types.Message, state: FSMContext, db
             f'✅ <b>Сообщение добавлено!</b>\n\n'
             f'<b>ID:</b> {new_message.id}\n'
             f'<b>Статус:</b> {"🟢 Активно" if new_message.is_active else "🔴 Неактивно"}\n'
-            f'<b>Создано:</b> {new_message.created_at.strftime("%d.%m.%Y %H:%M")}\n\n'
+            f'<b>Создано:</b> {format_local_datetime(new_message.created_at, "%d.%m.%Y %H:%M")}\n\n'
             f'<b>Предварительный просмотр:</b>\n'
             f'<blockquote>{message_text}</blockquote>',
             reply_markup=get_user_messages_keyboard(db_user.language),
@@ -178,7 +179,7 @@ async def _render_user_messages_list(message: types.Message, db: AsyncSession, l
         preview = msg.message_text[:100] + '...' if len(msg.message_text) > 100 else msg.message_text
         preview = preview.replace('<', '&lt;').replace('>', '&gt;')
 
-        text += f'{status_emoji} <b>ID {msg.id}</b>\n{preview}\n📅 {msg.created_at.strftime("%d.%m.%Y %H:%M")}\n\n'
+        text += f'{status_emoji} <b>ID {msg.id}</b>\n{preview}\n📅 {format_local_datetime(msg.created_at, "%d.%m.%Y %H:%M")}\n\n'
 
     keyboard = []
 
@@ -241,8 +242,8 @@ async def view_user_message(callback: types.CallbackQuery, db_user: User, db: As
     text = (
         f'📋 <b>Сообщение ID {message.id}</b>\n\n'
         f'<b>Статус:</b> {status_text}\n'
-        f'<b>Создано:</b> {message.created_at.strftime("%d.%m.%Y %H:%M")}\n'
-        f'<b>Обновлено:</b> {message.updated_at.strftime("%d.%m.%Y %H:%M")}\n\n'
+        f'<b>Создано:</b> {format_local_datetime(message.created_at, "%d.%m.%Y %H:%M")}\n'
+        f'<b>Обновлено:</b> {format_local_datetime(message.updated_at, "%d.%m.%Y %H:%M")}\n\n'
         f'<b>Содержимое:</b>\n'
         f'<blockquote>{safe_content}</blockquote>'
     )
@@ -391,7 +392,7 @@ async def process_edit_message_text(message: types.Message, state: FSMContext, d
             await message.answer(
                 f'✅ <b>Сообщение обновлено!</b>\n\n'
                 f'<b>ID:</b> {updated_message.id}\n'
-                f'<b>Обновлено:</b> {updated_message.updated_at.strftime("%d.%m.%Y %H:%M")}\n\n'
+                f'<b>Обновлено:</b> {format_local_datetime(updated_message.updated_at, "%d.%m.%Y %H:%M")}\n\n'
                 f'<b>Новый текст:</b>\n'
                 f'<blockquote>{sanitize_html(new_text)}</blockquote>',
                 reply_markup=get_user_messages_keyboard(db_user.language),

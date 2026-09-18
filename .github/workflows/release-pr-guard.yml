@@ -1,0 +1,30 @@
+name: Release PR Guard
+
+# Выпуск собирает release-please из сообщения коммита слияния в main. Описание
+# PR в main обязано нести блок BEGIN_COMMIT_OVERRIDE … END_COMMIT_OVERRIDE —
+# только его release-please читает вместо склеенного сообщения squash-коммита.
+# Проверяем блок тем же разборщиком до слияния, чтобы выпуск не пропал молча.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  commit-override:
+    # Свои PR release-please («chore(main): release X») блока не несут и не должны.
+    if: ${{ !startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the parser release-please uses
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @conventional-commits/parser@0.4.1
+
+      - name: Check BEGIN_COMMIT_OVERRIDE block in the PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/check_release_pr_override.mjs

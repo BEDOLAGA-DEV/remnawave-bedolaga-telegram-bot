@@ -79,6 +79,7 @@ from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button, build_subscription_extend_button
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.rich_notify import try_send_rich_notification
+from app.utils.subscription_time import ends_within_days
 from app.utils.timezone import format_local_datetime
 
 
@@ -1639,8 +1640,7 @@ class MonitoringService:
                         logger.debug('Не удалось уведомить о пропуске autopay для legacy подписки', error=notify_err)
                     continue
 
-                days_before_expiry = (sub.end_date - current_time).days
-                if days_before_expiry <= min(sub.autopay_days_before or 3, 3):
+                if ends_within_days(sub.end_date, min(sub.autopay_days_before or 3, 3), current_time):
                     autopay_subscriptions.append(sub)
 
             processed_count = 0

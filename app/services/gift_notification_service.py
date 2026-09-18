@@ -28,6 +28,7 @@ from app.utils.gift_links import (
     build_gift_claim_artifacts,
     build_telegram_gift_share_url,
 )
+from app.utils.timezone import format_local_datetime
 
 
 if TYPE_CHECKING:
@@ -287,7 +288,7 @@ def build_gift_history_detail_presentation(
         else texts.t('GIFT_TRAFFIC_UNLIMITED', '∞ (безлимит)')
     )
     devices_str = texts.format_device_limit(item.device_limit)
-    created_str = item.created_at.strftime('%d.%m.%Y %H:%M') if item.created_at else '—'
+    created_str = format_local_datetime(item.created_at, '%d.%m.%Y %H:%M') if item.created_at else '—'
 
     if item.is_claimable:
         share_text = texts.t(
@@ -366,7 +367,7 @@ def build_gift_history_detail_presentation(
     status_text = texts.t('GIFT_STATUS_DELIVERED', '✅ Активирован')
     delivered_line = ''
     if item.delivered_at:
-        deliv_str = item.delivered_at.strftime('%d.%m.%Y %H:%M')
+        deliv_str = format_local_datetime(item.delivered_at, '%d.%m.%Y %H:%M')
         delivered_line = texts.t('GIFT_MY_DELIVERED_AT_LINE', '🎉 Активирован: <b>{delivered_at}</b>\n').format(
             delivered_at=deliv_str
         )

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import User
 from app.services.version_service import version_service
 from app.utils.decorators import admin_required, error_handler
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -51,7 +52,7 @@ async def show_updates_menu(callback: types.CallbackQuery, db_user: User, db: As
 
         last_check_text = ''
         if last_check:
-            last_check_text = f'\n🕐 Последняя проверка: {last_check.strftime("%d.%m.%Y %H:%M")}'
+            last_check_text = f'\n🕐 Последняя проверка: {format_local_datetime(last_check, "%d.%m.%Y %H:%M")}'
 
         message = f"""🔄 <b>СИСТЕМА ОБНОВЛЕНИЙ</b>
 
@@ -186,7 +187,7 @@ async def show_version_info(callback: types.CallbackQuery, db_user: User, db: As
         system_info += '🕐 <b>Интервал:</b> Каждый час\n'
 
         if last_check:
-            system_info += f'🕐 <b>Последняя проверка:</b> {last_check.strftime("%d.%m.%Y %H:%M")}\n'
+            system_info += f'🕐 <b>Последняя проверка:</b> {format_local_datetime(last_check, "%d.%m.%Y %H:%M")}\n'
 
         message_parts.append(system_info.rstrip())
 

@@ -17,6 +17,7 @@ from app.database.crud.subscription import (
     get_subscription_by_id_for_user,
 )
 from app.database.models import SubscriptionStatus, User
+from app.utils.legacy_subscription import is_legacy_subscription
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 
@@ -42,6 +43,9 @@ class SubscriptionListItem(BaseModel):
     is_daily_paused: bool = False
     autopay_enabled: bool = False
     connected_squads: list[str] | None = None
+    # Старая подписка (платная, без тарифа при включённых тарифах): продления
+    # и автоплатежа нет, карточка ведёт на выбор тарифа.
+    requires_tariff_selection: bool = False
 
 
 class SubscriptionsListResponse(BaseModel):
@@ -69,6 +73,7 @@ def _subscription_to_list_item(sub) -> SubscriptionListItem:
         is_daily=bool(sub.tariff and getattr(sub.tariff, 'is_daily', False)),
         is_daily_paused=bool(getattr(sub, 'is_daily_paused', False)),
         autopay_enabled=sub.autopay_enabled or False,
+        requires_tariff_selection=is_legacy_subscription(sub),
         connected_squads=sub.connected_squads,
     )
 

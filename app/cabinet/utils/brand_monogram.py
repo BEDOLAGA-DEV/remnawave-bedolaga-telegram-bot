@@ -53,7 +53,7 @@ def monogram_svg(letter: str | None) -> str:
     )
 
 
-def _bold_font(size: int) -> ImageFont.FreeTypeFont:
+def bold_font(size: int) -> ImageFont.FreeTypeFont:
     font = ImageFont.truetype(str(_FONT_PATH), size)
     font.set_variation_by_name(_FONT_WEIGHT)
     return font
@@ -75,7 +75,7 @@ def monogram_png(letter: str | None) -> bytes:
         (center, center),
         monogram_letter(letter),
         fill=MONOGRAM_FOREGROUND,
-        font=_bold_font(round(_SVG_FONT_SIZE * scale)),
+        font=bold_font(round(_SVG_FONT_SIZE * scale)),
         anchor='mm',
     )
     buffer = BytesIO()

@@ -15,6 +15,7 @@ from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.display_mode import display_mode_label
 from app.utils.telegram_html import stored_html_to_telegram_pages
+from app.utils.timezone import format_local_datetime
 from app.utils.validators import get_html_help_text, validate_html_tags
 
 
@@ -25,7 +26,7 @@ def _format_timestamp(value: datetime | None) -> str:
     if not value:
         return ''
     try:
-        return value.strftime('%d.%m.%Y %H:%M')
+        return format_local_datetime(value, '%d.%m.%Y %H:%M')
     except Exception:
         return ''
 

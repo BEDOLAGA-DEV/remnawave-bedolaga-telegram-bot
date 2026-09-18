@@ -948,7 +948,7 @@ class RemnaWaveAPI:
         email: str | None = None,
         hwid_device_limit: int | None = None,
         description: str | None = None,
-        tag: str | None = None,
+        tag: str | type(...) | None = ...,
         active_internal_squads: list[str] | None = None,
         external_squad_uuid: str | type(...) | None = ...,
     ) -> RemnaWaveUser:
@@ -974,7 +974,11 @@ class RemnaWaveAPI:
             data['hwidDeviceLimit'] = hwid_device_limit
         if description is not None:
             data['description'] = description
-        if tag is not None:
+        # Как и externalSquadUuid: не передать = не трогать, None = снять (в
+        # контракте поле optional + nullable). Бот владеет тегом аккаунта, и
+        # «тега нет» обязано доезжать до панели — иначе триальный тег
+        # переживает покупку, а тег прежнего тарифа — смену тарифа.
+        if tag is not ...:
             data['tag'] = tag
         if active_internal_squads is not None:
             data['activeInternalSquads'] = active_internal_squads

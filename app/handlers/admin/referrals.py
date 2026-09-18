@@ -20,7 +20,7 @@ from app.localization.texts import get_texts
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
-from app.utils.timezone import local_day_bounds, local_day_start
+from app.utils.timezone import format_local_datetime, local_day_bounds, local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -118,7 +118,7 @@ async def show_referral_statistics(callback: types.CallbackQuery, db_user: User,
         if stats.get('active_referrers', 0) > 0:
             avg_per_referrer = stats.get('total_paid_kopeks', 0) / stats['active_referrers']
 
-        current_time = datetime.now(UTC).strftime('%H:%M:%S')
+        current_time = format_local_datetime(datetime.now(UTC), '%H:%M:%S')
 
         text = f"""
 🤝 <b>Реферальная статистика</b>
@@ -196,7 +196,7 @@ async def show_referral_statistics(callback: types.CallbackQuery, db_user: User,
     except Exception as e:
         logger.error('Ошибка в show_referral_statistics', error=e, exc_info=True)
 
-        current_time = datetime.now(UTC).strftime('%H:%M:%S')
+        current_time = format_local_datetime(datetime.now(UTC), '%H:%M:%S')
         text = f"""
 🤝 <b>Реферальная статистика</b>
 
@@ -447,7 +447,7 @@ async def show_pending_withdrawal_requests(callback: types.CallbackQuery, db_use
 
         text += f'<b>#{req.id}</b> — {user_name} (ID{user_tg_id})\n'
         text += f'💰 {req.amount_kopeks / 100:.0f}₽ | {risk_emoji} Риск: {req.risk_score}/100\n'
-        text += f'📅 {req.created_at.strftime("%d.%m.%Y %H:%M")}\n\n'
+        text += f'📅 {format_local_datetime(req.created_at, "%d.%m.%Y %H:%M")}\n\n'
 
     keyboard_rows = []
     for req in requests[:5]:
@@ -509,7 +509,7 @@ async def view_withdrawal_request(callback: types.CallbackQuery, db_user: User, 
 💳 <b>Реквизиты:</b>
 <code>{html.escape(request.payment_details or '')}</code>
 
-📅 Создана: {request.created_at.strftime('%d.%m.%Y %H:%M')}
+📅 Создана: {format_local_datetime(request.created_at, '%d.%m.%Y %H:%M')}
 
 {referral_withdrawal_service.format_analysis_for_admin(analysis)}
 """

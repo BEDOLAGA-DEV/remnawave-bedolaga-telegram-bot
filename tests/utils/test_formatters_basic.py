@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 
 from app.utils import formatters
+from tests.fixtures.local_day import reset_local_timezone_cache, use_timezone  # noqa: F401
 
 
 def test_format_datetime_handles_iso_strings(fixed_datetime: datetime) -> None:
@@ -150,3 +151,14 @@ def test_format_username_link_escapes_html_metacharacters() -> None:
     """Значение попадает и в href, и в текст — экранируем оба."""
     assert formatters.format_username_link('bo&b') == '@bo&amp;b'
     assert formatters.format_username_link('<b>x</b>') == '@&lt;b&gt;x&lt;/b&gt;'
+
+
+def test_admin_dates_are_shown_in_operator_zone(monkeypatch, reset_local_timezone_cache) -> None:
+    """Жалоба 4.12.0: панель и «Моя подписка» — 18.09.2026 14:17, админка бота — 11:17 (UTC)."""
+    use_timezone(monkeypatch, 'Europe/Moscow')
+    end_date = datetime(2026, 9, 18, 11, 17, tzinfo=UTC)
+
+    assert formatters.format_datetime(end_date) == '18.09.2026 14:17'
+    assert formatters.format_datetime(end_date.replace(tzinfo=None)) == '18.09.2026 14:17'
+    assert formatters.format_datetime('2026-09-18T11:17:00Z') == '18.09.2026 14:17'
+    assert formatters.format_date(datetime(2026, 9, 18, 22, 30, tzinfo=UTC)) == '19.09.2026'

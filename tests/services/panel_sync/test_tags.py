@@ -114,3 +114,19 @@ def test_payload_keeps_explicit_tag_from_caller():
     )
 
     assert payload.tag == 'PAID'
+
+
+def test_without_a_configured_tag_the_account_gets_none(monkeypatch):
+    """«Тега нет» — тоже решение: в PATCH оно уезжает как null и снимает прежний
+    тег (триальный после покупки, тег прежнего тарифа после смены)."""
+    monkeypatch.setattr(
+        tags_module,
+        'settings',
+        SimpleNamespace(get_trial_user_tag=lambda: 'TRIAL', get_paid_subscription_user_tag=lambda: None),
+    )
+
+    assert resolve_panel_user_tag(_sub(tariff=_tariff(), is_trial=True)) == 'TRIAL'
+    assert resolve_panel_user_tag(_sub(tariff=_tariff())) is None
+
+    payload = build_panel_payload(_user(), _sub(tariff=_tariff()), multi_tariff=False, now=NOW)
+    assert payload.update_kwargs(user_id=7)['tag'] is None

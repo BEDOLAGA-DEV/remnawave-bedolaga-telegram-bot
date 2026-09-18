@@ -48,6 +48,8 @@ def _subscription(user: User, days_left: int, status: str = SubscriptionStatus.A
     return Subscription(
         user_id=user.id,
         status=status,
+        # Платные подписки: у модели is_trial по умолчанию True, а «истекают» — сегмент платных.
+        is_trial=False,
         start_date=NOW - timedelta(days=20),
         end_date=NOW + timedelta(days=days_left),
         traffic_limit_gb=100,
@@ -205,7 +207,9 @@ async def _list(db, **params):
         'purchase_count': None,
         'traffic_used_percent_min': None,
         'online': None,
+        'in_grace': None,
         'sort_by': admin_users.SortByEnum.CREATED_AT,
+        'sort_order': None,
     }
     return await admin_users.list_users(**{**defaults, **params}, admin=None, db=db)
 
@@ -236,6 +240,80 @@ async def test_route_marks_connected_rows_and_filters_online(monkeypatch: pytest
         only_online = await _list(db, online=True)
         assert [row.username for row in only_online.users] == ['later']
         assert only_online.total == 1
+
+
+@pytest.mark.parametrize(
+    ('sort_order', 'expected'),
+    [(None, None), ('asc', False), ('desc', True)],
+)
+async def test_route_passes_sort_direction(monkeypatch: pytest.MonkeyPatch, sort_order, expected) -> None:
+    """Направление сортировки доходит до выборки; без него — привычный порядок ключа."""
+    from app.cabinet.routes import admin_users
+    from app.services import panel_online
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _seed(db)
+        monkeypatch.setattr(panel_online, 'get_online_snapshot', AsyncMock(return_value=None))
+        seen: dict = {}
+        real = admin_users.get_users_list
+
+        async def spy(*args, **kwargs):
+            seen.update(kwargs)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(admin_users, 'get_users_list', spy)
+        order = admin_users.SortOrderEnum(sort_order) if sort_order else None
+        await _list(db, sort_by=admin_users.SortByEnum.BALANCE, sort_order=order)
+        assert seen['sort_descending'] is expected
+        assert seen['order_by_balance'] is True
+
+
+async def test_route_maps_grace_sort_to_the_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """«Грейс кончается» — свой ключ выборки, а не подмена окончания подписки."""
+    from app.cabinet.routes import admin_users
+    from app.services import panel_online
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _seed(db)
+        monkeypatch.setattr(panel_online, 'get_online_snapshot', AsyncMock(return_value=None))
+        seen: dict = {}
+        real = admin_users.get_users_list
+
+        async def spy(*args, **kwargs):
+            seen.update(kwargs)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(admin_users, 'get_users_list', spy)
+        await _list(db, sort_by=admin_users.SortByEnum.GRACE_UNTIL)
+        assert seen['order_by_grace'] is True
+        assert seen['order_by_subscription_end'] is False
+
+
+async def test_route_passes_grace_filter_to_list_and_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """«В грейсе» доходит и до списка, и до счётчика — иначе «показано N из M» врёт."""
+    from app.cabinet.routes import admin_users
+    from app.services import panel_online
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _seed(db)
+        monkeypatch.setattr(panel_online, 'get_online_snapshot', AsyncMock(return_value=None))
+        seen_list: dict = {}
+        seen_count: dict = {}
+        real_list, real_count = admin_users.get_users_list, admin_users.get_users_count
+
+        async def spy_list(*args, **kwargs):
+            seen_list.update(kwargs)
+            return await real_list(*args, **kwargs)
+
+        async def spy_count(*args, **kwargs):
+            seen_count.update(kwargs)
+            return await real_count(*args, **kwargs)
+
+        monkeypatch.setattr(admin_users, 'get_users_list', spy_list)
+        monkeypatch.setattr(admin_users, 'get_users_count', spy_count)
+        await _list(db, in_grace=True)
+        assert seen_list['in_grace'] is True
+        assert seen_count['in_grace'] is True
 
 
 async def test_route_refuses_online_filter_without_panel(monkeypatch: pytest.MonkeyPatch) -> None:

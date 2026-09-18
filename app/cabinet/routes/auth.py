@@ -44,6 +44,7 @@ from app.services.disposable_email_service import disposable_email_service
 from app.services.panel_sync import (
     ADMIN_PULL,
     GRACE_MARKER_FIELDS,
+    link_subscription_panel_identity,
     panel_status_for_new_subscription,
     project_onto_subscription,
     read_panel_user,
@@ -668,6 +669,7 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                         now=current_time,
                     )
                     existing_sub.is_trial = False
+                    await link_subscription_panel_identity(db, existing_sub, panel_user.id)
                     logger.info(
                         'Updated subscription for email user',
                         email=user.email,
@@ -685,7 +687,6 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                         traffic_used_gb=traffic_used_gb,
                         status=panel_status_for_new_subscription(snapshot, now=current_time),
                         is_trial=False,
-                        remnawave_id=panel_user.id if settings.is_multi_tariff_enabled() else None,
                         remnawave_short_id=_short_id,
                         remnawave_short_uuid=panel_user.short_uuid,
                         subscription_url=panel_user.subscription_url,
@@ -694,6 +695,10 @@ async def _sync_subscription_from_panel_by_email(db: AsyncSession, user: User) -
                         device_limit=device_limit,
                     )
                     db.add(new_sub)
+                    await db.flush()
+                    # Аккаунт панели — у подписки в любом режиме: устройства и трафик
+                    # по подписке читают строго её id.
+                    await link_subscription_panel_identity(db, new_sub, panel_user.id)
                     logger.info(
                         'Created subscription for email user',
                         email=user.email,

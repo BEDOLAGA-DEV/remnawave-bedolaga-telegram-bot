@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.cabinet.routes.subscription_modules.helpers import ensure_subscription_has_tariff
 from app.cabinet.utils.device_ownership import verify_hwid_belongs_to_user
 from app.config import settings
 from app.database.crud.tariff import get_tariff_by_id
@@ -34,6 +35,7 @@ from app.database.crud.user_device_alias import (
     set_alias,
 )
 from app.database.models import Subscription, TransactionType, User
+from app.services.panel_sync import should_create_panel_account
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 
@@ -63,7 +65,9 @@ def _resolve_panel_user_id(subscription: Subscription | None, user: User) -> int
     """
     if settings.is_multi_tariff_enabled() and subscription is not None:
         return subscription.remnawave_id
-    return user.remnawave_id
+    # Одиночный режим: аккаунт мог быть создан в мультитарифе и записан только у
+    # подписки — иначе после возврата оператора в одиночный режим «0 устройств».
+    return user.remnawave_id or (subscription.remnawave_id if subscription is not None else None)
 
 
 @router.post('/devices')
@@ -86,6 +90,7 @@ async def purchase_devices_legacy(
 
     # Resolve subscription (ownership validated), then lock the row for concurrent safety
     resolved = await resolve_subscription(db, user, subscription_id)
+    ensure_subscription_has_tariff(resolved)
     if not resolved:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No subscription found')
 
@@ -279,10 +284,7 @@ async def purchase_devices_legacy(
     # already committed, defer slow syncs to remnawave_retry_queue).
     try:
         service = SubscriptionService()
-        if settings.is_multi_tariff_enabled():
-            _should_create = not subscription.remnawave_id
-        else:
-            _should_create = not getattr(user, 'remnawave_id', None)
+        _should_create = await should_create_panel_account(db, subscription, user)
 
         async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
             if _should_create:
@@ -354,6 +356,7 @@ async def purchase_devices(
     try:
         # Resolve subscription (ownership validated), then lock the row for concurrent safety
         resolved = await resolve_subscription(db, user, subscription_id)
+        ensure_subscription_has_tariff(resolved)
         if not resolved:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='У вас нет активной подписки')
 
@@ -557,10 +560,7 @@ async def purchase_devices(
         # already committed, defer slow syncs to remnawave_retry_queue).
         service = SubscriptionService()
         try:
-            if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_id
-            else:
-                _should_create = not getattr(user, 'remnawave_id', None)
+            _should_create = await should_create_panel_account(db, subscription, user)
 
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
                 if _should_create:
@@ -666,6 +666,7 @@ async def save_devices_cart(
 ) -> dict[str, bool]:
     """Save cart for device purchase (for insufficient balance flow)."""
     subscription = await resolve_subscription(db, user, subscription_id)
+    ensure_subscription_has_tariff(subscription)
 
     if not subscription:
         raise HTTPException(
@@ -780,6 +781,7 @@ async def get_device_price(
 ):
     """Get price for additional devices."""
     subscription = await resolve_subscription(db, user, subscription_id)
+    ensure_subscription_has_tariff(subscription)
 
     if not subscription or subscription.status not in ['active', 'trial']:
         return {

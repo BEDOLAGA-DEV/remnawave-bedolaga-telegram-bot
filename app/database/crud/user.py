@@ -15,6 +15,7 @@ from app.database.constants import POSTGRES_INT4_MAX, POSTGRES_INT4_MIN
 from app.database.crud.discount_offer import get_latest_claimed_offer_for_user
 from app.database.crud.promo_group import get_default_promo_group
 from app.database.crud.promo_offer_log import log_promo_offer_action
+from app.database.crud.subscription_segments import segment_condition
 from app.database.models import (
     AdvertisingCampaign,
     AdvertisingCampaignRegistration,
@@ -997,6 +998,7 @@ def _users_list_conditions(
     purchase_count: int | None = None,
     traffic_used_percent_min: int | None = None,
     connected: 'ConnectedAccounts | None' = None,
+    in_grace: bool | None = None,
 ) -> list:
     """Условия WHERE списка пользователей админки — одни для списка и для счётчика.
 
@@ -1012,7 +1014,8 @@ def _users_list_conditions(
     if subscription_status or tariff_ids:
         sub_conditions = []
         if subscription_status:
-            sub_conditions.append(Subscription.status == subscription_status)
+            # Сегмент, а не сырой статус: триалы лежат со статусом active и is_trial.
+            sub_conditions.append(segment_condition(subscription_status, now))
         if tariff_ids:
             sub_conditions.append(Subscription.tariff_id.in_(tariff_ids))
         sub_query = (
@@ -1083,6 +1086,7 @@ def _users_list_conditions(
                 .where(
                     Subscription.user_id == User.id,
                     Subscription.status == SubscriptionStatus.ACTIVE.value,
+                    Subscription.is_trial.is_not(True),  # «истекают» — про платных; триал — свой сегмент
                     Subscription.end_date >= now,
                     Subscription.end_date <= now + timedelta(days=expires_within_days),
                     ~and_(Tariff.is_daily.is_(True), Subscription.is_daily_paused.is_(False)),
@@ -1101,6 +1105,17 @@ def _users_list_conditions(
     if has_subscription is not None:
         any_subscription = exists(select(Subscription.id).where(Subscription.user_id == User.id).correlate(User))
         conditions.append(any_subscription if has_subscription else ~any_subscription)
+
+    if in_grace is not None:
+        # «В грейсе» — открытый временный доступ: тот же признак, по которому строка
+        # получает «временно до …». Закрытый грейс держит старую дату оверлея, но
+        # доступа у человека уже нет — он не в сегменте.
+        on_grace = exists(
+            select(Subscription.id)
+            .where(Subscription.user_id == User.id, Subscription.grace_session_open.is_(True))
+            .correlate(User)
+        )
+        conditions.append(on_grace if in_grace else ~on_grace)
 
     if purchase_count == 0:
         # Покупка — ровно то, что считает статистика трат: завершённая оплата подписки.
@@ -1181,13 +1196,23 @@ async def get_users_list(
     purchase_count: int | None = None,
     traffic_used_percent_min: int | None = None,
     connected: 'ConnectedAccounts | None' = None,
+    in_grace: bool | None = None,
     order_by_balance: bool = False,
     order_by_traffic: bool = False,
     order_by_last_activity: bool = False,
     order_by_total_spent: bool = False,
     order_by_purchase_count: bool = False,
     order_by_subscription_end: bool = False,
+    order_by_grace: bool = False,
+    sort_descending: bool | None = None,
 ) -> list[User]:
+    """Страница списка пользователей админки.
+
+    ``sort_descending`` — направление выбранной сортировки; ``None`` оставляет
+    привычное: окончание подписки и грейса — сначала скорые, остальное — сначала
+    больше/новее. Люди без значения ключа (нет активности, нет подходящей подписки,
+    нет открытого грейса) внизу в обе стороны, при равных ключах — сначала новые.
+    """
     query = select(User).options(
         selectinload(User.subscriptions).selectinload(Subscription.tariff),
         selectinload(User.promo_group),
@@ -1211,6 +1236,7 @@ async def get_users_list(
             purchase_count=purchase_count,
             traffic_used_percent_min=traffic_used_percent_min,
             connected=connected,
+            in_grace=in_grace,
         )
     )
 
@@ -1221,10 +1247,11 @@ async def get_users_list(
         order_by_total_spent,
         order_by_purchase_count,
         order_by_subscription_end,
+        order_by_grace,
     ]
     if sum(int(flag) for flag in sort_flags) > 1:
         logger.debug(
-            'Выбрано несколько сортировок пользователей — применяется приоритет: трафик > траты > покупки > баланс > активность > окончание подписки'
+            'Выбрано несколько сортировок пользователей — применяется приоритет: трафик > траты > покупки > баланс > активность > окончание подписки > грейс'
         )
 
     transactions_stats = None
@@ -1251,17 +1278,15 @@ async def get_users_list(
             .correlate(User)
             .scalar_subquery()
         )
-        query = query.order_by(func.coalesce(most_traffic, 0.0).desc(), User.created_at.desc())
+        sort_key, natural_descending = func.coalesce(most_traffic, 0.0), True
     elif order_by_total_spent:
-        order_column = func.coalesce(transactions_stats.c.total_spent, 0)
-        query = query.order_by(order_column.desc(), User.created_at.desc())
+        sort_key, natural_descending = func.coalesce(transactions_stats.c.total_spent, 0), True
     elif order_by_purchase_count:
-        order_column = func.coalesce(transactions_stats.c.purchase_count, 0)
-        query = query.order_by(order_column.desc(), User.created_at.desc())
+        sort_key, natural_descending = func.coalesce(transactions_stats.c.purchase_count, 0), True
     elif order_by_balance:
-        query = query.order_by(User.balance_kopeks.desc(), User.created_at.desc())
+        sort_key, natural_descending = User.balance_kopeks, True
     elif order_by_last_activity:
-        query = query.order_by(nullslast(User.last_activity.desc()), User.created_at.desc())
+        sort_key, natural_descending = User.last_activity, True
     elif order_by_subscription_end:
         # MIN(end_date) среди подписок пользователя; без outerjoin — иначе дубли
         # строк при нескольких подписках (мультитариф).
@@ -1269,11 +1294,16 @@ async def get_users_list(
         # Статус берём тот же, по которому фильтруется список: иначе связка
         # «покажи истёкших, отсортируй по дате окончания» давала бы у ВСЕХ строк
         # пустой ключ и молча схлопывалась в сортировку по дате регистрации.
+        # Без выборки ключ — ближайшее окончание среди живых по статусу строк
+        # (и триал, и платные: строка списка показывает ту же подписку). С выборкой —
+        # ровно тот сегмент, по которому человек в неё попал.
         _sort_status = subscription_status or SubscriptionStatus.ACTIVE.value
-        soonest_end_conditions = [
-            Subscription.user_id == User.id,
-            Subscription.status == _sort_status,
-        ]
+        sort_condition = (
+            segment_condition(subscription_status, datetime.now(UTC))
+            if subscription_status
+            else Subscription.status.in_(LIVE_SUBSCRIPTION_STATUSES)
+        )
+        soonest_end_conditions = [Subscription.user_id == User.id, sort_condition]
         if _sort_status == SubscriptionStatus.ACTIVE.value:
             # Суточные тарифы исключаем ровно как `get_expiring_subscriptions`:
             # у активной суточной подписки end_date всегда +24ч, поэтому иначе
@@ -1293,9 +1323,25 @@ async def get_users_list(
             .correlate(User)
             .scalar_subquery()
         )
-        query = query.order_by(nullslast(soonest_end.asc()), User.created_at.desc())
+        sort_key, natural_descending = soonest_end, False
+    elif order_by_grace:
+        # MIN(grace_overlay_expire_at) среди подписок с ОТКРЫТЫМ грейсом — та же дата,
+        # что кабинет показывает строкой «временно до …» (``_grace_until`` в admin_users).
+        # У закрытого грейса дата оверлея остаётся в строке, но грейса у человека
+        # нет — ключ пустой, и такие люди внизу в обе стороны.
+        soonest_grace = (
+            select(func.min(Subscription.grace_overlay_expire_at))
+            .where(Subscription.user_id == User.id, Subscription.grace_session_open.is_(True))
+            .correlate(User)
+            .scalar_subquery()
+        )
+        sort_key, natural_descending = soonest_grace, False
     else:
-        query = query.order_by(User.created_at.desc())
+        sort_key, natural_descending = User.created_at, True
+
+    descending = natural_descending if sort_descending is None else sort_descending
+    ordered_key = nullslast(sort_key.desc() if descending else sort_key.asc())
+    query = query.order_by(ordered_key, User.created_at.desc(), User.id.desc())
 
     query = query.offset(offset).limit(limit)
 
@@ -1328,6 +1374,7 @@ async def get_users_count(
     purchase_count: int | None = None,
     traffic_used_percent_min: int | None = None,
     connected: 'ConnectedAccounts | None' = None,
+    in_grace: bool | None = None,
 ) -> int:
     query = select(func.count(User.id)).where(
         *_users_list_conditions(
@@ -1346,6 +1393,7 @@ async def get_users_count(
             purchase_count=purchase_count,
             traffic_used_percent_min=traffic_used_percent_min,
             connected=connected,
+            in_grace=in_grace,
         )
     )
 

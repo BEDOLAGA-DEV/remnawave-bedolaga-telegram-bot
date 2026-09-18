@@ -21,6 +21,7 @@ from app.database.crud.referral_reward_level import (
 from app.database.models import User
 from app.localization.texts import get_texts
 from app.utils.decorators import error_handler
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -45,7 +46,7 @@ def _subscription_label(subscription, tariff_names: dict[int, str], texts) -> st
     name = tariff_names.get(subscription.tariff_id) or texts.t('REFERRAL_DAYS_TARGET_AUTO', 'Подписка')
     if subscription.end_date:
         until = texts.t('REFERRAL_SUBSCRIPTION_UNTIL', 'до {date}').format(
-            date=subscription.end_date.strftime('%d.%m.%Y')
+            date=format_local_datetime(subscription.end_date, '%d.%m.%Y')
         )
         return f'{name} — {until}'
     return name

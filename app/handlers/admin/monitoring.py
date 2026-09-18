@@ -22,6 +22,7 @@ from app.services.traffic_monitoring_service import (
 from app.states import AdminStates
 from app.utils.decorators import admin_required
 from app.utils.pagination import paginate_list
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -173,7 +174,7 @@ async def _build_notification_preview_message(language: str, notification_type: 
             ),
         )
         message = template.format(
-            end_date=(now - timedelta(days=1)).strftime('%d.%m.%Y %H:%M'),
+            end_date=format_local_datetime(now - timedelta(days=1), '%d.%m.%Y %H:%M'),
             price=price_30_days,
             tariff_label='',
         )
@@ -212,7 +213,7 @@ async def _build_notification_preview_message(language: str, notification_type: 
         )
         message = template.format(
             percent=percent,
-            expires_at=(now + timedelta(hours=valid_hours)).strftime('%d.%m.%Y %H:%M'),
+            expires_at=format_local_datetime(now + timedelta(hours=valid_hours), '%d.%m.%Y %H:%M'),
             trigger_days=3,
             tariff_label='',
         )
@@ -259,7 +260,7 @@ async def _build_notification_preview_message(language: str, notification_type: 
         message = template.format(
             percent=percent,
             trigger_days=trigger_days,
-            expires_at=(now + timedelta(hours=valid_hours)).strftime('%d.%m.%Y %H:%M'),
+            expires_at=format_local_datetime(now + timedelta(hours=valid_hours), '%d.%m.%Y %H:%M'),
             tariff_label='',
         )
         keyboard = InlineKeyboardMarkup(
@@ -361,7 +362,9 @@ async def admin_monitoring_menu(callback: CallbackQuery):
             status = await monitoring_service.get_monitoring_status(db)
 
             running_status = '🟢 Работает' if status['is_running'] else '🔴 Остановлен'
-            last_update = status['last_update'].strftime('%H:%M:%S') if status['last_update'] else 'Никогда'
+            last_update = (
+                format_local_datetime(status['last_update'], '%H:%M:%S') if status['last_update'] else 'Никогда'
+            )
 
             text = f"""
 🔍 <b>Система мониторинга</b>
@@ -701,7 +704,7 @@ async def force_check_callback(callback: CallbackQuery):
 • Истекающих подписок: {results['expiring']}
 • Готовых к автооплате: {results['autopay_ready']}
 
-🕐 <b>Время проверки:</b> {datetime.now(UTC).strftime('%H:%M:%S')}
+🕐 <b>Время проверки:</b> {format_local_datetime(datetime.now(UTC), '%H:%M:%S')}
 
 Нажмите "Назад" для возврата в меню мониторинга.
 """
@@ -755,7 +758,7 @@ async def traffic_check_callback(callback: CallbackQuery):
 • Порог дельты: {threshold_gb} ГБ
 • Возраст snapshot: {snapshot_age:.1f} мин
 
-🕐 <b>Время проверки:</b> {datetime.now(UTC).strftime('%H:%M:%S')}
+🕐 <b>Время проверки:</b> {format_local_datetime(datetime.now(UTC), '%H:%M:%S')}
 """
 
         if violations:
@@ -812,7 +815,7 @@ async def monitoring_logs_callback(callback: CallbackQuery):
 
             for log in paginated_logs.items:
                 icon = '✅' if log['is_success'] else '❌'
-                time_str = log['created_at'].strftime('%m-%d %H:%M')
+                time_str = format_local_datetime(log['created_at'], '%m-%d %H:%M')
                 event_type = log['event_type'].replace('_', ' ').title()
 
                 message = log['message']
@@ -872,7 +875,7 @@ async def test_notifications_callback(callback: CallbackQuery):
 📊 <b>Статус системы:</b>
 • Мониторинг: {'🟢 Работает' if monitoring_service.is_running else '🔴 Остановлен'}
 • Уведомления: {'🟢 Включены' if settings.ENABLE_NOTIFICATIONS else '🔴 Отключены'}
-• Время теста: {datetime.now(UTC).strftime('%H:%M:%S %d.%m.%Y')}
+• Время теста: {format_local_datetime(datetime.now(UTC), '%H:%M:%S %d.%m.%Y')}
 
 ✅ Если вы получили это сообщение, система уведомлений работает корректно!
 """

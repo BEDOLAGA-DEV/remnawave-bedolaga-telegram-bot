@@ -104,6 +104,7 @@ from app.utils.pricing_utils import (
     format_period_description,
 )
 from app.utils.promo_offer import get_user_active_promo_discount_percent
+from app.utils.subscription_time import days_left_rounded_up
 from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
 from app.utils.telegram_webapp import (
     TelegramWebAppAuthError,
@@ -3546,8 +3547,7 @@ async def get_subscription_details(
         purchases = purchases_result.scalars().all()
 
         for purchase in purchases:
-            time_remaining = purchase.expires_at - now
-            days_remaining = max(0, int(time_remaining.total_seconds() / 86400))
+            days_remaining = days_left_rounded_up(purchase.expires_at, now)
             total_duration_seconds = (purchase.expires_at - purchase.created_at).total_seconds()
             elapsed_seconds = (now - purchase.created_at).total_seconds()
             progress_percent = min(

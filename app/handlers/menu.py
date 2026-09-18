@@ -44,6 +44,7 @@ from app.utils.promo_offer import (
     get_user_active_promo_discount_percent,
 )
 from app.utils.rich_menu import try_edit_rich_main_menu
+from app.utils.subscription_time import local_days_until
 from app.utils.telegram_html import (
     html_to_telegram,
     info_page_faq_to_telegram,
@@ -1299,10 +1300,9 @@ def _get_subscription_status(user: User, texts, is_daily_tariff: bool = False) -
     actual_status = (subscription.actual_status or '').lower()
     end_date = getattr(subscription, 'end_date', None)
     end_date_text = format_local_datetime(end_date, '%d.%m.%Y') if end_date else None
-    days_left = 0
-
-    if subscription.end_date > current_time:
-        days_left = (subscription.end_date - current_time).days
+    # Календарные дни в зоне оператора: «завтра» = дата окончания завтра,
+    # а не «осталось меньше двух суток» (целая часть суток давала «завтра» при 1 д 23 ч).
+    days_left = local_days_until(subscription.end_date, current_time)
 
     if actual_status == 'pending':
         return texts.t('SUBSCRIPTION_NONE', '❌ Нет активной подписки')
@@ -1421,7 +1421,7 @@ async def _get_multi_tariff_status(user, texts, db: AsyncSession) -> tuple[str, 
         elif actual == 'limited':
             status_suffix = ' — лимит трафика'
         elif sub.end_date and sub.end_date > current_time:
-            days_left = (sub.end_date - current_time).days
+            days_left = local_days_until(sub.end_date, current_time)
             end_str = format_local_datetime(sub.end_date, '%d.%m.%Y')
             status_suffix = f' — до {end_str} ({days_left} дн.)'
         else:

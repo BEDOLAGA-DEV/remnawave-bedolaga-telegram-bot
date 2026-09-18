@@ -333,6 +333,18 @@ async def panel_id_is_free_for(db, subscription, panel_id: int | None) -> bool:
     return other is None
 
 
+async def user_panel_id_is_free_for(db, user, panel_id: int | None) -> bool:
+    """Не записан ли этот панельный id уже ДРУГОМУ человеку (``users.remnawave_id`` уникальна)."""
+    if panel_id is None:
+        return False
+    other = (
+        await db.execute(
+            select(User.id).where(User.remnawave_id == int(panel_id), User.id != getattr(user, 'id', None)).limit(1)
+        )
+    ).scalar_one_or_none()
+    return other is None
+
+
 async def link_subscription_panel_identity(db, subscription, panel_id: int | None) -> bool:
     """Проставить строке id панельного аккаунта, который только что обновили.
 
@@ -349,4 +361,39 @@ async def link_subscription_panel_identity(db, subscription, panel_id: int | Non
     if not await panel_id_is_free_for(db, subscription, panel_id):
         return False
     subscription.remnawave_id = int(panel_id)
+    return True
+
+
+async def should_create_panel_account(db, subscription, user) -> bool:
+    """Перед синхронизацией после покупки/перевода: заводить аккаунт панели или обновлять свой.
+
+    Одиночный режим: аккаунт у человека (``users.remnawave_id``) — создаём, только
+    если его нет. Мультитариф: аккаунт у подписки. Если у строки id нет, а у
+    человека есть и его не держит другая подписка (старая подписка из одиночного
+    режима; миграция 0124 привязывала только при одной строке) — привязываем и
+    ОБНОВЛЯЕМ: у человека остаётся его ссылка. Иначе каждая точка «create или
+    update» заводила бы второй аккаунт. True — нужен новый аккаунт.
+    """
+    from app.config import settings
+
+    user_panel_id = getattr(user, 'remnawave_id', None)
+    if not settings.is_multi_tariff_enabled():
+        if user_panel_id:
+            return False
+        # Аккаунт создан в мультитарифе (записан у подписки), оператор вернулся в
+        # одиночный режим: обновляем этот аккаунт и записываем его человеку.
+        subscription_panel_id = getattr(subscription, 'remnawave_id', None)
+        if subscription_panel_id and await user_panel_id_is_free_for(db, user, subscription_panel_id):
+            user.remnawave_id = int(subscription_panel_id)
+            await db.commit()
+            return False
+        return True
+    if getattr(subscription, 'remnawave_id', None):
+        return False
+    if await link_subscription_panel_identity(db, subscription, user_panel_id):
+        # Подписка уже сохранена (create/extend коммитят до синхронизации), а
+        # точки синхронизации после себя не коммитят — привязку сохраняем здесь,
+        # иначе она живёт только в памяти сессии.
+        await db.commit()
+        return False
     return True

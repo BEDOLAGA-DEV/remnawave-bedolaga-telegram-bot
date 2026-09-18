@@ -62,7 +62,7 @@ async def show_ticket_priority_selection(
         else:
             await callback.answer(
                 texts.t('USER_BLOCKED_UNTIL', 'Вы заблокированы до {time}').format(
-                    time=blocked_until.strftime('%d.%m.%Y %H:%M')
+                    time=format_local_datetime(blocked_until, '%d.%m.%Y %H:%M')
                 ),
                 show_alert=True,
             )
@@ -135,7 +135,7 @@ async def handle_ticket_title_input(message: types.Message, state: FSMContext, d
         else:
             await message.answer(
                 texts.t('USER_BLOCKED_UNTIL', 'Вы заблокированы до {time}').format(
-                    time=blocked_until.strftime('%d.%m.%Y %H:%M')
+                    time=format_local_datetime(blocked_until, '%d.%m.%Y %H:%M')
                 )
             )
         await state.clear()
@@ -215,7 +215,7 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
             texts.t('USER_BLOCKED_FOREVER', 'Вы заблокированы для обращений в поддержку.')
             if blocked_until.year > 9999 - 1
             else texts.t('USER_BLOCKED_UNTIL', 'Вы заблокированы до {time}').format(
-                time=blocked_until.strftime('%d.%m.%Y %H:%M')
+                time=format_local_datetime(blocked_until, '%d.%m.%Y %H:%M')
             )
         )
         if prompt_chat_id and prompt_message_id:

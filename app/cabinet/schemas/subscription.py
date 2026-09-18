@@ -81,6 +81,9 @@ class SubscriptionData(BaseModel):
     traffic_reset_mode: str | None = None
     # Пусто у тарифов без премиум-сквадов — блок в мини-аппе не рендерится.
     premium_traffic: list[PremiumTrafficInfo] = []
+    # Старая подписка (платная, без тарифа при включённых тарифах): продления
+    # и автоплатежа нет, единственный путь — выбрать тариф, он надевается на неё же.
+    requires_tariff_selection: bool = False
 
     class Config:
         from_attributes = True

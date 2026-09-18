@@ -36,6 +36,15 @@ class SortByEnum(StrEnum):
     TOTAL_SPENT = 'total_spent'
     PURCHASE_COUNT = 'purchase_count'
     SUBSCRIPTION_END_DATE = 'subscription_end_date'
+    #: Конец временного доступа (грейса) — та дата, что в строке «временно до …».
+    GRACE_UNTIL = 'grace_until'
+
+
+class SortOrderEnum(StrEnum):
+    """Direction of the users list sort; omitted — the field's usual direction."""
+
+    ASC = 'asc'
+    DESC = 'desc'
 
 
 # === User Subscription Info ===

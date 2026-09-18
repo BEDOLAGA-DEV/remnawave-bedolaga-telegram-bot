@@ -39,6 +39,7 @@ from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
 )
+from app.services.panel_sync import should_create_panel_account
 from app.services.pricing_engine import PricingEngine, pricing_engine
 from app.services.subscription_purchase_service import (
     MiniAppSubscriptionPurchaseService,
@@ -48,6 +49,7 @@ from app.services.subscription_purchase_service import (
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
 from app.utils.pricing_utils import calculate_price_per_month, format_period_description
+from app.utils.timezone import format_local_datetime
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
@@ -110,6 +112,22 @@ async def _persist_failed_refund(user_id: int, amount_kopeks: int, reason: str, 
 # ============ Full Purchase Flow (like MiniApp) ============
 
 purchase_service = MiniAppSubscriptionPurchaseService()
+
+
+async def _ensure_tariff_not_already_active(db: AsyncSession, user_id: int, tariff_id: int) -> None:
+    """Отказ, если у человека уже есть живая подписка этого тарифа.
+
+    Нужен там, где покупка переводит на тариф другую строку (старую подписку без
+    тарифа): частичный уникальный индекс «одна живая подписка на тариф» иначе
+    сработал бы уже после списания денег.
+    """
+    from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+    if await get_subscription_by_user_and_tariff(db, user_id, tariff_id) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='You already have an active subscription for this tariff',
+        )
 
 
 async def _build_tariff_response(
@@ -534,7 +552,7 @@ async def submit_purchase(
                     if is_new_subscription
                     else NotificationType.SUBSCRIPTION_RENEWED
                 )
-                end_date_str = subscription.end_date.strftime('%d.%m.%Y') if subscription.end_date else ''
+                end_date_str = format_local_datetime(subscription.end_date, '%d.%m.%Y') if subscription.end_date else ''
                 await notification_delivery_service.send_notification(
                     user=user,
                     notification_type=notification_type,
@@ -752,11 +770,18 @@ async def purchase_tariff(
         if settings.is_multi_tariff_enabled():
             if request.subscription_id is not None:
                 existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
+                if existing_subscription is not None and existing_subscription.tariff_id is None:
+                    # Старая подписка (куплена в классике, тариф не задан): тариф
+                    # надевается на неё же — та же строка и тот же аккаунт панели,
+                    # у человека остаётся прежняя ссылка. Живая подписка этого
+                    # тарифа уже есть → отказ до списания, а не падение на
+                    # частичном уникальном индексе после.
+                    await _ensure_tariff_not_already_active(db, user.id, tariff.id)
                 # If the pinned sub points to a different tariff than
                 # the request carries (admin swap, stale client state),
                 # ignore it and fall back to tariff-level lookup so the
                 # purchase doesn't extend a sub of the wrong tariff.
-                if existing_subscription and existing_subscription.tariff_id != tariff.id:
+                elif existing_subscription and existing_subscription.tariff_id != tariff.id:
                     logger.warning(
                         'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
                         request_subscription_id=request.subscription_id,
@@ -1130,10 +1155,7 @@ async def purchase_tariff(
         try:
             # Mirror the bot handler logic: in single-tariff mode, check user.remnawave_id
             # (webhook clears it on panel deletion), not subscription.remnawave_id
-            if settings.is_multi_tariff_enabled():
-                _should_create = not subscription.remnawave_id
-            else:
-                _should_create = not getattr(user, 'remnawave_id', None)
+            _should_create = await should_create_panel_account(db, subscription, user)
 
             # Time-bounded (see REMNAWAVE_SYNC_TIMEOUT): the subscription is already
             # committed, so a slow panel must not keep the cabinet pay button spinning;
@@ -1242,7 +1264,7 @@ async def purchase_tariff(
                     if was_new_subscription
                     else NotificationType.SUBSCRIPTION_RENEWED
                 )
-                end_date_str = subscription.end_date.strftime('%d.%m.%Y') if subscription.end_date else ''
+                end_date_str = format_local_datetime(subscription.end_date, '%d.%m.%Y') if subscription.end_date else ''
                 await notification_delivery_service.send_notification(
                     user=user,
                     notification_type=notification_type,

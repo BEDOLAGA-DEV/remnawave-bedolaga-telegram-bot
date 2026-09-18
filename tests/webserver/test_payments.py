@@ -202,6 +202,87 @@ async def test_yookassa_forbidden_ip_ignores_spoofed_forwarded_chain(monkeypatch
 
 
 @pytest.mark.anyio
+async def test_yookassa_forbidden_ip_ignores_cf_connecting_ip_behind_local_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """За локальным прокси (Caddy/nginx) заголовок Cf-Connecting-Ip приходит от клиента
+    как есть; прокси от себя дописывает адрес в X-Forwarded-For — он и есть отправитель."""
+    monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', True, raising=False)
+
+    service = SimpleNamespace(process_yookassa_webhook=AsyncMock())
+    router = create_payment_router(DummyBot(), service)
+    assert router is not None
+
+    route = _get_route(router, settings.YOOKASSA_WEBHOOK_PATH)
+    request = _build_request(
+        settings.YOOKASSA_WEBHOOK_PATH,
+        body=json.dumps({'event': 'payment.succeeded'}).encode('utf-8'),
+        headers={'X-Forwarded-For': '8.8.8.8', 'Cf-Connecting-Ip': '185.71.76.1'},
+        client_ip='172.18.0.5',
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 403
+    assert json.loads(response.body.decode('utf-8'))['reason'] == 'forbidden_ip'
+    service.process_yookassa_webhook.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_yookassa_forbidden_ip_ignores_x_real_ip_when_forwarded_for_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """X-Real-IP тоже проходит через прокси как есть; при наличии X-Forwarded-For верим только ему."""
+    monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', True, raising=False)
+
+    service = SimpleNamespace(process_yookassa_webhook=AsyncMock())
+    router = create_payment_router(DummyBot(), service)
+    assert router is not None
+
+    route = _get_route(router, settings.YOOKASSA_WEBHOOK_PATH)
+    request = _build_request(
+        settings.YOOKASSA_WEBHOOK_PATH,
+        body=json.dumps({'event': 'payment.succeeded'}).encode('utf-8'),
+        headers={'X-Forwarded-For': '8.8.8.8', 'X-Real-IP': '185.71.76.1'},
+        client_ip='10.0.0.5',
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 403
+    assert json.loads(response.body.decode('utf-8'))['reason'] == 'forbidden_ip'
+    service.process_yookassa_webhook.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_yookassa_cf_connecting_ip_trusted_only_from_cloudflare_peer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Когда бот стоит прямо за Cloudflare, Cf-Connecting-Ip ставит сам Cloudflare — ему верим."""
+    monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', True, raising=False)
+
+    async def fake_get_db():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr('app.webserver.payments.get_db', fake_get_db)
+    process_mock = AsyncMock(return_value=True)
+    service = SimpleNamespace(process_yookassa_webhook=process_mock)
+    router = create_payment_router(DummyBot(), service)
+    assert router is not None
+
+    route = _get_route(router, settings.YOOKASSA_WEBHOOK_PATH)
+    request = _build_request(
+        settings.YOOKASSA_WEBHOOK_PATH,
+        body=json.dumps({'event': 'payment.succeeded', 'object': {'id': 'yk_1'}}).encode('utf-8'),
+        headers={'X-Forwarded-For': '185.71.76.10', 'Cf-Connecting-Ip': '185.71.76.10'},
+        client_ip='104.16.1.1',
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code == 200
+    process_mock.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_yookassa_skip_ip_check_bypasses_ip_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', True, raising=False)
     monkeypatch.setattr(settings, 'YOOKASSA_SKIP_IP_CHECK', True, raising=False)

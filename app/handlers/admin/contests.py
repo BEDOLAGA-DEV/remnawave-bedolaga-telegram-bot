@@ -34,6 +34,7 @@ from app.keyboards.admin import (
 from app.localization.texts import get_texts
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -830,7 +831,7 @@ async def sync_contest(
         '✅ <b>Синхронизация завершена!</b>',
         '',
         f'📊 <b>Конкурс:</b> {html.escape(contest.title)}',
-        f'📅 <b>Период:</b> {contest.start_at.strftime("%d.%m.%Y")} - {contest.end_at.strftime("%d.%m.%Y")}',
+        f'📅 <b>Период:</b> {format_local_datetime(contest.start_at, "%d.%m.%Y")} - {format_local_datetime(contest.end_at, "%d.%m.%Y")}',
         '🔍 <b>Фильтр транзакций:</b>',
         f'   <code>{start_str}</code>',
         f'   <code>{end_str}</code>',
@@ -872,7 +873,7 @@ async def sync_contest(
     detailed_stats = await referral_contest_service.get_detailed_contest_stats(db, contest_id)
     general_lines = [
         f'🏆 <b>{html.escape(contest.title)}</b>',
-        f'📅 Период: {contest.start_at.strftime("%d.%m.%Y")} - {contest.end_at.strftime("%d.%m.%Y")}',
+        f'📅 Период: {format_local_datetime(contest.start_at, "%d.%m.%Y")} - {format_local_datetime(contest.end_at, "%d.%m.%Y")}',
         '',
         f'👥 Участников (рефереров): <b>{detailed_stats["total_participants"]}</b>',
         f'📨 Приглашено рефералов: <b>{detailed_stats["total_invited"]}</b>',

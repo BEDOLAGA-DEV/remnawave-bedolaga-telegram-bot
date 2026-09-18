@@ -18,6 +18,7 @@ from app.database.crud.promo_offer_template import get_promo_offer_template_by_i
 from app.database.crud.transaction import get_user_total_spent_kopeks
 from app.database.models import DiscountOffer, User
 from app.services.promo_offer_service import promo_offer_service
+from app.utils.timezone import format_local_datetime
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user
 
@@ -340,7 +341,7 @@ async def claim_promo_offer(
 
         return ClaimOfferResponse(
             success=True,
-            message=f'Test access activated until {expires_at.strftime("%Y-%m-%d %H:%M") if expires_at else "unlimited"}',
+            message=f'Test access activated until {format_local_datetime(expires_at, "%Y-%m-%d %H:%M") if expires_at else "unlimited"}',
             expires_at=expires_at,
         )
 
@@ -394,7 +395,7 @@ async def claim_promo_offer(
 
     expires_text = ''
     if discount_expires_at:
-        expires_text = f' Valid until {discount_expires_at.strftime("%Y-%m-%d %H:%M")}'
+        expires_text = f' Valid until {format_local_datetime(discount_expires_at, "%Y-%m-%d %H:%M")}'
 
     return ClaimOfferResponse(
         success=True,

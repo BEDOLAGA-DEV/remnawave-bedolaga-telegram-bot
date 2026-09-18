@@ -18,7 +18,8 @@ Fix in ``app/services/yookassa_service.py``:
 
 Defence-in-depth fix in ``app/services/payment/yookassa.py``:
   3. ``asyncio.wait_for(get_payment_info(...), timeout=8)`` around the
-     webhook cross-check call, with payload-fallback on timeout.
+     webhook confirmation call; on timeout the webhook is refused
+     (fail-closed, YooKassa retries) — never a payload fallback.
 
 These tests pin the contract:
   * Patch is applied at module-import time.
@@ -30,6 +31,7 @@ These tests pin the contract:
   * All 4 ``run_in_executor`` call sites in ``yookassa_service.py``
     use the dedicated executor, not the default ``None``.
   * Webhook handler uses ``asyncio.wait_for`` with a tight budget.
+  * A timeout is caught (no 500-by-exception) and refuses the webhook.
 """
 
 from __future__ import annotations
@@ -234,16 +236,15 @@ def test_all_run_in_executor_callsites_use_dedicated_pool() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Webhook handler tight timeout + payload fallback.
+# Webhook handler tight timeout + fail-closed refusal.
 # ---------------------------------------------------------------------------
 
 
 def test_webhook_uses_wait_for_with_tight_budget() -> None:
-    """``process_yookassa_webhook`` cross-check of payment status must
-    be wrapped in ``asyncio.wait_for(timeout<=10)``. The webhook
-    payload is already trusted (signature-verified upstream), so the
-    API cross-check is defence-in-depth — it cannot be allowed to
-    block webhook processing indefinitely.
+    """``process_yookassa_webhook`` confirmation of payment status must
+    be wrapped in ``asyncio.wait_for(timeout<=10)``. YooKassa does not
+    sign webhooks, so the API confirmation is mandatory — but it still
+    cannot be allowed to block webhook processing indefinitely.
 
     Pre-fix: no wait_for, the inner ``asyncio.timeout(30)`` was the
     only bound, and a single slow YK API call could pile up webhooks.
@@ -281,37 +282,35 @@ def test_webhook_uses_wait_for_with_tight_budget() -> None:
     )
 
 
-def test_webhook_handles_timeout_with_payload_fallback() -> None:
-    """When the API cross-check times out, the handler must NOT raise.
-    It must fall back to the webhook payload (which is already
-    signature-verified). The bug report calls this out as "при таймауте
-    использовать данные из payload webhook'а".
+def test_webhook_timeout_is_caught_and_refuses_without_confirmation() -> None:
+    """When the API confirmation times out, the handler must NOT raise
+    (an exception would become a 500 from the route with a traceback
+    in the log). It must catch ``TimeoutError`` and then refuse the
+    webhook: no confirmation → ``return False`` → non-200 → YooKassa
+    retries the genuine notification later.
     """
     source = YOOKASSA_PAYMENT_PATH.read_text(encoding='utf-8')
 
-    # Find the asyncio.wait_for block and confirm its except branch
-    # catches TimeoutError without re-raising.
     assert 'TimeoutError' in source or 'asyncio.TimeoutError' in source, (
-        'Webhook handler must catch TimeoutError from wait_for and fall back '
-        'to the payload, otherwise YK API slowness propagates as 500s'
+        'Webhook handler must catch TimeoutError from wait_for instead of propagating it as a 500'
     )
 
-    # Negative-control: must NOT have ``raise`` inside the wait_for's
-    # TimeoutError handler — that would defeat the fallback.
     wait_for_idx = source.find('asyncio.wait_for(')
     assert wait_for_idx >= 0
-    snippet = source[wait_for_idx : wait_for_idx + 1500]
-    # The TimeoutError block must contain a logger.warning (use of
-    # payload) and not contain "raise" before the next exception
-    # handler.
+    snippet = source[wait_for_idx : wait_for_idx + 2500]
     timeout_block_start = snippet.find('TimeoutError')
     assert timeout_block_start >= 0
     timeout_block = snippet[timeout_block_start : timeout_block_start + 500]
-    # Splitting on 'except' would catch ALL except handlers; we want
-    # only the TimeoutError block until the next 'except'.
     next_except = timeout_block.find('except', 10)
     if next_except > 0:
         timeout_block = timeout_block[:next_except]
-    assert 'raise' not in timeout_block, (
-        'TimeoutError handler must not re-raise — the payload fallback is the whole point'
+    assert 'raise' not in timeout_block, 'TimeoutError handler must not re-raise — the webhook is refused, not crashed'
+
+    # Fail-closed: the refusal follows the wait_for block unconditionally,
+    # not only under YOOKASSA_SKIP_IP_CHECK.
+    refusal = snippet.find('if remote_data is None:')
+    assert refusal >= 0, 'confirmation must be mandatory: `if remote_data is None:` must follow the API call'
+    assert 'return False' in snippet[refusal : refusal + 600]
+    assert 'YOOKASSA_SKIP_IP_CHECK and remote_data is None' not in source, (
+        'refusal must not be gated on YOOKASSA_SKIP_IP_CHECK — confirmation is mandatory in every mode'
     )

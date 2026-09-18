@@ -46,6 +46,7 @@ from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime, format_duration
 from app.utils.miniapp_buttons import build_miniapp_or_callback_button
 from app.utils.subscription_utils import get_display_subscription_link
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -303,7 +304,7 @@ def _format_promo_offer_log_entry(
     index: int,
     texts,
 ) -> str:
-    timestamp = entry.created_at.strftime('%d.%m.%Y %H:%M') if entry.created_at else '-'
+    timestamp = format_local_datetime(entry.created_at, '%d.%m.%Y %H:%M') if entry.created_at else '-'
     action_key = ACTION_LABEL_KEYS.get(entry.action, '')
     action_label = texts.get(action_key, entry.action.title())
     lines = [f'{index}. <b>{timestamp}</b> — {action_label}']

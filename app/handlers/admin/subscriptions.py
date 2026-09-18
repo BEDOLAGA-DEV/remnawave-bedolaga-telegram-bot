@@ -20,6 +20,7 @@ from app.database.models import (
 from app.localization.texts import Texts
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime
+from app.utils.subscription_time import local_days_until
 
 
 logger = structlog.get_logger(__name__)
@@ -387,7 +388,8 @@ async def send_expiry_reminders(callback: types.CallbackQuery, db_user: User, db
                 if not settings.is_notifications_enabled() or not is_subscription_expiry_enabled(user):
                     continue
 
-                days_left = max(1, subscription.days_left)
+                days_left = local_days_until(subscription.end_date)
+                expires_when = 'сегодня' if days_left == 0 else f'через {days_left} день(а)'
 
                 tariff_label = ''
                 if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
@@ -395,7 +397,7 @@ async def send_expiry_reminders(callback: types.CallbackQuery, db_user: User, db
                 reminder_text = f"""
 ⚠️ <b>Подписка{tariff_label} истекает!</b>
 
-Ваша подписка истекает через {days_left} день(а).
+Ваша подписка истекает {expires_when}.
 
 Не забудьте продлить подписку, чтобы не потерять доступ к серверам.
 

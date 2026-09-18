@@ -64,14 +64,15 @@ class PanelPayload:
         # отсутствие внешнего сквада — это отсутствие поля, а не null.
         if self.external_squad_uuid is not None:
             kwargs['external_squad_uuid'] = self.external_squad_uuid
-        if self.tag is not None:
-            kwargs['tag'] = self.tag
         return kwargs
 
     def create_kwargs(self, *, now: datetime | None = None) -> dict:
         kwargs = self._common()
         kwargs['username'] = self.username
         kwargs['status'] = self.status
+        # У нового аккаунта снимать нечего — без тега поле в POST не идёт.
+        if self.tag:
+            kwargs['tag'] = self.tag
         # У нового аккаунта снимать нечего, поэтому пустой список безопасен, а
         # поле в POST обязательно.
         kwargs['active_internal_squads'] = list(self.active_internal_squads)
@@ -116,6 +117,10 @@ class PanelPayload:
         )
         if expire_at is not None:
             kwargs['expire_at'] = expire_at
+        # Тег — поле аккаунта, которым владеет бот, как описание: уходит всегда,
+        # и ``None`` здесь значит «снять». Иначе триальный тег оставался в панели
+        # после покупки, а тег прежнего тарифа — после смены тарифа.
+        kwargs['tag'] = self.tag
         if only_fields is not None:
             kwargs = {key: value for key, value in kwargs.items() if key in only_fields}
         kwargs['user_id'] = user_id

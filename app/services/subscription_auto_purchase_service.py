@@ -94,7 +94,7 @@ async def _notify_email_user_auto_purchase(
         )
 
         end_date = getattr(subscription, 'end_date', None)
-        end_date_str = end_date.strftime('%d.%m.%Y') if end_date else ''
+        end_date_str = format_local_datetime(end_date, '%d.%m.%Y') if end_date else ''
         await notification_delivery_service.send_notification(
             user=user,
             notification_type=(

@@ -1,6 +1,7 @@
 """Branding routes for cabinet - logo, project name, and theme colors management."""
 
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ from app.database.models import SystemSetting, User
 from app.services.gift_purchase_service import GIFT_ENABLED_KEY, is_gift_enabled
 
 from ..dependencies import get_cabinet_db, get_current_cabinet_user, require_permission
-from ..utils import brand_monogram, favicon_tile
+from ..utils import app_icon, brand_monogram, favicon_tile
 from ..utils.brand_monogram import monogram_letter, monogram_svg
 
 
@@ -513,6 +514,161 @@ async def get_favicon(
         logger.warning('Не удалось отрисовать PNG-монограмму фавикона, отдаём SVG', name=name, exc_info=True)
         return Response(content=monogram_svg(name), media_type='image/svg+xml', headers=headers)
     return Response(content=png, media_type='image/png', headers=headers)
+
+
+# ============ Web app manifest ============
+#
+# Кабинет строит манифест у себя на canvas и отдаёт его ссылкой data:, вместе с
+# иконками. iOS и десктоп так приложение ставят, а Chrome на Android собирает
+# WebAPK на серверах Google: те скачивают манифест и иконки по адресам, data:
+# им недоступен — и вместо приложения ставится ярлык во вкладке браузера.
+# Поэтому манифест и его иконки отдаются здесь, по обычным URL.
+
+_MANIFEST_MAX_AGE_SECONDS = 300
+_MANIFEST_BASE_MAX_LENGTH = 200
+
+
+def _manifest_base_path(base: str | None) -> str:
+    """Путь, от которого открывается кабинет: только путь на том же сайте, иначе «/».
+
+    Кабинет передаёт свой BASE_URL; чужой адрес (``https://…``, ``//host``) в
+    ``start_url`` уводил бы установленное приложение на другой сайт.
+    """
+    if (
+        not base
+        or len(base) > _MANIFEST_BASE_MAX_LENGTH
+        or not base.startswith('/')
+        or base.startswith('//')
+        or '\\' in base
+        or any(ch.isspace() or ord(ch) < 0x20 for ch in base)
+    ):
+        return '/'
+    return base if base.endswith('/') else f'{base}/'
+
+
+async def _resolve_manifest_colors(db: AsyncSession) -> tuple[str, str]:
+    """(фон, акцент) для манифеста и иконок из цветов темы кабинета.
+
+    Фон — тёмной темы, если она включена (как по умолчанию у кабинета), иначе светлой.
+    """
+    colors = dict(DEFAULT_THEME_COLORS)
+    colors_json = await get_setting_value(db, THEME_COLORS_KEY)
+    if colors_json:
+        try:
+            stored = json.loads(colors_json)
+        except (json.JSONDecodeError, TypeError):
+            stored = None
+        if isinstance(stored, dict):
+            colors.update({key: value for key, value in stored.items() if app_icon.is_hex_color(value)})
+
+    dark_enabled = DEFAULT_ENABLED_THEMES['dark']
+    themes_json = await get_setting_value(db, ENABLED_THEMES_KEY)
+    if themes_json:
+        try:
+            themes = json.loads(themes_json)
+        except (json.JSONDecodeError, TypeError):
+            themes = None
+        if isinstance(themes, dict) and isinstance(themes.get('dark'), bool):
+            dark_enabled = themes['dark']
+
+    background = colors['darkBackground'] if dark_enabled else colors['lightBackground']
+    return background, colors['accent']
+
+
+def _existing_logo_path() -> Path | None:
+    logo_path = get_logo_path()
+    return logo_path if logo_path is not None and logo_path.exists() else None
+
+
+@router.get('/manifest.webmanifest')
+async def get_web_manifest(
+    base: str = '/',
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Web app manifest кабинета: имя, цвета темы и иконки из брендинга.
+
+    Адреса иконок относительные — разрешаются от адреса самого манифеста, поэтому
+    работают при любом префиксе API у инсталляции. ``?v=`` меняется вместе с
+    логотипом, именем и цветами: Chrome увидит новый адрес и обновит иконку уже
+    установленного приложения.
+    """
+    name = (await _resolve_branding_name(db)).strip() or os.getenv('VITE_APP_NAME') or 'Cabinet'
+    background, accent = await _resolve_manifest_colors(db)
+    logo_path = await asyncio.to_thread(_existing_logo_path)
+    letter = monogram_letter(name)
+    fingerprint = await asyncio.to_thread(app_icon.logo_fingerprint, logo_path)
+    version = hashlib.sha256(f'{fingerprint}|{letter}|{background}|{accent}'.encode()).hexdigest()[:12]
+
+    icons = [
+        {
+            'src': f'app-icon/{variant}{size}.png?v={version}',
+            'sizes': f'{size}x{size}',
+            'type': 'image/png',
+            'purpose': purpose,
+        }
+        for size in app_icon.APP_ICON_SIZES
+        for variant, purpose in (('', 'any'), ('maskable/', 'maskable'))
+    ]
+    start = _manifest_base_path(base)
+    manifest = {
+        'name': name,
+        'short_name': name,
+        'start_url': start,
+        'scope': start,
+        'display': 'standalone',
+        'background_color': background,
+        'theme_color': background,
+        'icons': icons,
+    }
+    return Response(
+        content=json.dumps(manifest, ensure_ascii=False),
+        media_type='application/manifest+json',
+        headers={
+            'Cache-Control': f'public, max-age={_MANIFEST_MAX_AGE_SECONDS}',
+            'Vary': 'Origin',
+            'X-Content-Type-Options': 'nosniff',
+        },
+    )
+
+
+async def _app_icon_response(size: int, *, maskable: bool, db: AsyncSession) -> Response:
+    if size not in app_icon.APP_ICON_SIZES:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Unsupported icon size')
+
+    name = await _resolve_branding_name(db)
+    background, accent = await _resolve_manifest_colors(db)
+    logo_path = await asyncio.to_thread(_existing_logo_path)
+    render = {'letter': name, 'size': size, 'maskable': maskable, 'background': background, 'accent': accent}
+    try:
+        png = await asyncio.to_thread(app_icon.render_app_icon, logo_path=logo_path, **render)
+    except Exception:
+        if logo_path is None:
+            raise
+        logger.warning(
+            'Не удалось отрисовать иконку приложения из логотипа, отдаём монограмму',
+            path=str(logo_path),
+            exc_info=True,
+        )
+        png = await asyncio.to_thread(app_icon.render_app_icon, logo_path=None, **render)
+    return Response(content=png, media_type='image/png', headers=_image_headers(_FAVICON_MAX_AGE_SECONDS))
+
+
+@router.get('/app-icon/{size}.png')
+async def get_app_icon(
+    size: int,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Иконка приложения для манифеста: непрозрачный квадрат ``size``×``size``."""
+    return await _app_icon_response(size, maskable=False, db=db)
+
+
+@router.get('/app-icon/maskable/{size}.png')
+async def get_maskable_app_icon(
+    size: int,
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Maskable-иконка для Android: содержимое в безопасной зоне, края под маску системы."""
+    return await _app_icon_response(size, maskable=True, db=db)
 
 
 @router.get('/bot-logo')

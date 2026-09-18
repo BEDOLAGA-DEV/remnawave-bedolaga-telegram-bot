@@ -188,12 +188,35 @@ def test_only_fields_filter_keeps_the_addressee():
     assert set(kwargs) == {'user_id', 'description'}
 
 
-def test_tag_is_sent_only_when_given():
+def _no_global_tags(monkeypatch):
+    from app.services.panel_sync import tags as tags_module
+
+    monkeypatch.setattr(
+        tags_module,
+        'settings',
+        SimpleNamespace(get_trial_user_tag=lambda: None, get_paid_subscription_user_tag=lambda: None),
+    )
+
+
+def test_update_always_carries_the_tag_so_a_stale_one_is_cleared(monkeypatch):
+    """Тег — поле аккаунта, которым владеет бот, как описание. Не вычислил тега —
+    в PATCH уходит ``None`` (null у панели): триальный тег после покупки и тег
+    прежнего тарифа после смены панель должна снять, а не хранить."""
+    _no_global_tags(monkeypatch)
     without = build_panel_payload(_user(), _sub(), multi_tariff=False, now=NOW)
     with_tag = build_panel_payload(_user(), _sub(), multi_tariff=False, user_tag='VIP', now=NOW)
 
-    assert 'tag' not in without.update_kwargs(user_id=7)
+    assert 'tag' in without.update_kwargs(user_id=7)
+    assert without.update_kwargs(user_id=7)['tag'] is None
     assert with_tag.update_kwargs(user_id=7)['tag'] == 'VIP'
+
+
+def test_create_omits_the_tag_when_there_is_none(monkeypatch):
+    """У нового аккаунта снимать нечего — поле в POST не идёт."""
+    _no_global_tags(monkeypatch)
+    without = build_panel_payload(_user(), _sub(), multi_tariff=False, now=NOW)
+
+    assert 'tag' not in without.create_kwargs()
 
 
 # ==================== статус: что панель решает сама ====================

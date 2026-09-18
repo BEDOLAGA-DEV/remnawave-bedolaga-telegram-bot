@@ -325,3 +325,37 @@ async def test_other_validation_errors_are_not_mistaken_for_clock_skew():
     with pytest.raises(RemnaWaveAPIError):
         await push_subscription(api, _user(), sub, multi_tariff=True, now=NOW)
     assert api.update_user.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_paid_subscription_without_a_tag_clears_the_trial_tag_left_in_the_panel(monkeypatch):
+    """Жалоба 17.09: общий триальный тег задан, платный — нет, у тарифа тега нет.
+    После покупки аккаунт в панели оставался с TRIAL, потому что поле не отправлялось."""
+    from app.services.panel_sync import tags as tags_module
+
+    monkeypatch.setattr(
+        tags_module,
+        'settings',
+        SimpleNamespace(get_trial_user_tag=lambda: 'TRIAL', get_paid_subscription_user_tag=lambda: None),
+    )
+    api = _api(get_user_by_id=_panel_user())
+
+    await push_subscription(api, _user(), _sub(remnawave_id=42, is_trial=False), multi_tariff=True, now=NOW)
+
+    kwargs = api.update_user.await_args.kwargs
+    assert 'tag' in kwargs
+    assert kwargs['tag'] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_panel_account_clears_the_tag_only_when_told_to():
+    """Карточка аккаунта: без ``tag`` в вызове поле не трогается, ``tag=None`` — снимает."""
+    from app.services.panel_sync.writer import patch_panel_account
+
+    api = _api()
+
+    await patch_panel_account(api, user_id=42, description='d')
+    assert 'tag' not in api.update_user.await_args.kwargs
+
+    await patch_panel_account(api, user_id=42, tag=None)
+    assert api.update_user.await_args.kwargs['tag'] is None

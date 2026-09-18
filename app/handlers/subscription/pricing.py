@@ -9,6 +9,7 @@ from app.database.models import User
 from app.utils.pricing_utils import (
     format_period_description,
 )
+from app.utils.subscription_time import local_days_until
 from app.utils.timezone import format_local_datetime
 
 from .common import logger
@@ -335,7 +336,7 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
         status=status_text,
         type=type_text,
         end_date=format_local_datetime(subscription.end_date, '%d.%m.%Y %H:%M'),
-        days_left=max(0, subscription.days_left),
+        days_left=local_days_until(subscription.end_date) if subscription.end_date else 0,
         traffic_used=texts.format_traffic(subscription.traffic_used_gb, is_limit=False),
         traffic_limit=traffic_text,
         countries_count=len(subscription.connected_squads or []),
@@ -383,7 +384,7 @@ async def get_subscription_info_text(subscription, texts, db_user, db: AsyncSess
                 bar = '▰' * filled + '▱' * (bar_length - filled)
 
                 # Форматируем дату истечения
-                expire_date = purchase.expires_at.strftime('%d.%m.%Y')
+                expire_date = format_local_datetime(purchase.expires_at, '%d.%m.%Y')
 
                 # Формируем текст о времени
                 if days_remaining == 0:

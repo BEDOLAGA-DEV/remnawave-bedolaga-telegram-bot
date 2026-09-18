@@ -13,6 +13,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -266,7 +267,7 @@ async def check_cryptobot_payment_status(callback: types.CallbackQuery, db: Asyn
             f'🆔 ID: {payment.invoice_id[:8]}...\n'
             f'💰 Сумма: {payment.amount} {payment.asset}\n'
             f'📊 Статус: {emoji} {status}\n'
-            f'📅 Создан: {payment.created_at.strftime("%d.%m.%Y %H:%M")}\n'
+            f'📅 Создан: {format_local_datetime(payment.created_at, "%d.%m.%Y %H:%M")}\n'
         )
 
         if payment.is_paid:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import ipaddress
 import json
 
 import structlog
@@ -73,29 +72,20 @@ def _create_cors_response() -> Response:
 
 
 def _resolve_proxied_client_ip(request: Request) -> str | None:
-    """Resolve the client IP without trusting attacker-settable forwarding headers.
+    """Адрес отправителя вебхука без доверия к клиентским заголовкам.
 
-    A direct connection from a public peer uses that peer address; client-supplied X-Real-IP /
-    X-Forwarded-For are honoured only when the immediate peer is a local/private reverse proxy
-    (the only party trusted to have set them). Otherwise an attacker could forge a whitelisted
-    source IP to pass a webhook IP-allowlist check.
+    Те же правила, что у ЮKassa (``resolve_webhook_client_ip``): публичный peer — он и
+    есть отправитель; за локальным/доверенным прокси читается только ``X-Forwarded-For``
+    справа налево, ``X-Real-IP`` — лишь когда ``X-Forwarded-For`` нет; ``Cf-Connecting-Ip``
+    — только от peer из сетей Cloudflare; неизвестный peer → ``None``.
     """
-    peer = request.client.host if request.client else None
-
-    def _is_local_proxy(ip: str | None) -> bool:
-        if not ip:
-            return False
-        try:
-            addr = ipaddress.ip_address(ip)
-        except ValueError:
-            return False
-        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
-
-    if peer and not _is_local_proxy(peer):
-        return peer
-
-    forwarded = request.headers.get('x-real-ip') or request.headers.get('x-forwarded-for', '').split(',')[0].strip()
-    return forwarded or peer
+    client_ip = yookassa_webhook_module.resolve_webhook_client_ip(
+        request.client.host if request.client else None,
+        forwarded_for=request.headers.get('x-forwarded-for'),
+        real_ip=request.headers.get('x-real-ip'),
+        cf_connecting_ip=request.headers.get('cf-connecting-ip'),
+    )
+    return str(client_ip) if client_ip is not None else None
 
 
 def _verify_mulenpay_signature(request: Request, raw_body: bytes) -> bool:
@@ -457,19 +447,16 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         @router.post(settings.YOOKASSA_WEBHOOK_PATH)
         async def yookassa_webhook(request: Request) -> JSONResponse:
-            # IP-гейт можно отключить (YOOKASSA_SKIP_IP_CHECK) для схем за Anti-DDoS/прокси,
-            # который не пробрасывает реальный IP отправителя. В этом режиме подлинность
-            # платежа гарантирует fail-closed API-проверка в process_yookassa_webhook.
+            # IP-гейт — первый барьер; его можно отключить (YOOKASSA_SKIP_IP_CHECK) за
+            # Anti-DDoS/прокси, который не пробрасывает адрес отправителя. Подлинность
+            # платежа в любом режиме подтверждает обязательный запрос в API ЮKassa
+            # внутри process_yookassa_webhook — без подтверждения начисления нет.
             if not settings.YOOKASSA_SKIP_IP_CHECK:
-                header_ip_candidates = yookassa_webhook_module.collect_yookassa_ip_candidates(
-                    request.headers.get('X-Forwarded-For'),
-                    request.headers.get('X-Real-IP'),
-                    request.headers.get('Cf-Connecting-Ip'),
-                )
-                remote_ip = request.client.host if request.client else None
-                client_ip = yookassa_webhook_module.resolve_yookassa_ip(
-                    header_ip_candidates,
-                    remote=remote_ip,
+                client_ip = yookassa_webhook_module.resolve_webhook_client_ip(
+                    request.client.host if request.client else None,
+                    forwarded_for=request.headers.get('X-Forwarded-For'),
+                    real_ip=request.headers.get('X-Real-IP'),
+                    cf_connecting_ip=request.headers.get('Cf-Connecting-Ip'),
                 )
 
                 if client_ip is None:

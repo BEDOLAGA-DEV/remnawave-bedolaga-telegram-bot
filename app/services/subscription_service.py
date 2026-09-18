@@ -281,9 +281,16 @@ class SubscriptionService:
                         subscription_id=subscription.id,
                         remnawave_id=updated_user.id,
                     )
-                # Legacy field — keep in sync for single-mode backward compat
+                # Одиночный режим адресует панель через человека — держим актуальным.
+                # Мультитариф: аккаунты у подписок, но первый записываем и человеку,
+                # иначе после возврата оператора в одиночный режим у него «нет аккаунта».
                 if not settings.is_multi_tariff_enabled():
                     user.remnawave_id = updated_user.id
+                elif not user.remnawave_id:
+                    from app.services.panel_sync import user_panel_id_is_free_for
+
+                    if await user_panel_id_is_free_for(db, user, updated_user.id):
+                        user.remnawave_id = updated_user.id
 
                 await db.commit()
 

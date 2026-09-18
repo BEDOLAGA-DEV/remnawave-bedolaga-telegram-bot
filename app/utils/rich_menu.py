@@ -50,6 +50,7 @@ from app.utils.formatters import format_username_link
 from app.utils.miniapp_buttons import build_miniapp_startapp_url
 from app.utils.promo_offer import build_promo_offer_hint, build_test_access_hint
 from app.utils.rich_buttons import render_keyboard_as_rich_html
+from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
 from app.utils.timezone import format_local_datetime
 from app.utils.validators import sanitize_html
@@ -403,7 +404,7 @@ def _build_subscriptions_table(subscriptions, texts) -> str:
         end_date = getattr(subscription, 'end_date', None)
         end_date_text = format_local_datetime(end_date, '%d.%m.%Y') if end_date else ''
         if end_date and end_date > current_time and actual_status in {'active', 'trial', 'limited'}:
-            days_left = (end_date - current_time).days
+            days_left = local_days_until(end_date, current_time)
             days_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', 'осталось {days} дн.').replace('{days}', str(days_left))
             until_cell = f'{_tg_time(end_date, "d", end_date_text)} ({_rich_text(days_text)})'
         elif end_date:
@@ -472,7 +473,7 @@ async def _build_single_subscription_block(user: User, texts, db: AsyncSession) 
         total_seconds = (end_date - start_date).total_seconds() if start_date else 0
         relative_template = texts.t('MAIN_MENU_RICH_EXPIRES_RELATIVE', '⏳ истекает {when}')
         days_left_text = texts.t('MAIN_MENU_RICH_DAYS_LEFT', 'осталось {days} дн.').replace(
-            '{days}', str(max((end_date - current_time).days, 0))
+            '{days}', str(local_days_until(end_date, current_time))
         )
         relative_line = _rich_text(relative_template).replace('{when}', _tg_time(end_date, 'r', days_left_text))
         lines.append(f'<code>{_progress_bar(seconds_left, total_seconds)}</code> {relative_line}')

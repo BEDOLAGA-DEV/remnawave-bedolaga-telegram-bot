@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import User
 from app.utils.decorators import admin_required, error_handler
+from app.utils.timezone import format_local_datetime
 
 
 logger = structlog.get_logger(__name__)
@@ -60,7 +61,7 @@ def _build_logs_message(log_path: Path) -> str:
         '🧾 <b>Системные логи</b>',
         '',
         f'📁 <b>Файл:</b> <code>{log_path}</code>',
-        f'🕒 <b>Обновлен:</b> {updated_at.strftime("%d.%m.%Y %H:%M:%S")}',
+        f'🕒 <b>Обновлен:</b> {format_local_datetime(updated_at, "%d.%m.%Y %H:%M:%S")}',
         f'🧮 <b>Размер:</b> {total_length} символов',
         (f'👇 Показаны последние {LOG_PREVIEW_LIMIT} символов.' if truncated else '📄 Показано все содержимое файла.'),
         '',
@@ -128,7 +129,7 @@ async def download_system_logs(
 
         document = FSInputFile(log_path)
         stats = log_path.stat()
-        updated_at = datetime.fromtimestamp(stats.st_mtime, tz=UTC).strftime('%d.%m.%Y %H:%M:%S')
+        updated_at = format_local_datetime(datetime.fromtimestamp(stats.st_mtime, tz=UTC), '%d.%m.%Y %H:%M:%S')
         caption = (
             f'🧾 Лог-файл <code>{log_path.name}</code>\n📁 Путь: <code>{log_path}</code>\n🕒 Обновлен: {updated_at}'
         )

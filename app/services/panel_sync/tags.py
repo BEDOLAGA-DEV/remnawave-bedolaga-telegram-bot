@@ -21,6 +21,10 @@ def resolve_panel_user_tag(subscription: Any) -> str | None:
 
     Тег тарифа побеждает всегда, в том числе у триала: он описывает тариф. Без него —
     прежнее правило: триалу общий триальный тег, остальным общий платный.
+
+    ``None`` — тоже ответ, а не «не знаю»: запись в панель отправляет его как null
+    и снимает прежний тег. Так триальный тег уходит с покупкой, даже если общий
+    платный тег не задан, а тег прежнего тарифа — со сменой тарифа.
     """
     tariff = getattr(subscription, 'tariff', None)
     tariff_tag = normalize_panel_tag(getattr(tariff, 'panel_tag', None)) if tariff is not None else None

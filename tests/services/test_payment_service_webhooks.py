@@ -676,6 +676,10 @@ async def test_process_yookassa_webhook_success(monkeypatch: pytest.MonkeyPatch)
         SimpleNamespace(AdminNotificationService=DummyAdminService),
     )
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
+    # Подтверждение API обязательно: без него тело вебхука не используется.
+    service.yookassa_service = SimpleNamespace(
+        get_payment_info=AsyncMock(return_value={'id': 'yk_123', 'status': 'succeeded', 'paid': True})
+    )
 
     payload = {
         'object': {
@@ -1006,6 +1010,19 @@ async def test_process_yookassa_webhook_restores_missing_payment(
         SimpleNamespace(AdminNotificationService=DummyAdminService),
     )
     service.build_topup_success_keyboard = AsyncMock(return_value=None)
+    # Локальной записи нет — восстановление только по данным, подтверждённым API ЮKassa.
+    service.yookassa_service = SimpleNamespace(
+        get_payment_info=AsyncMock(
+            return_value={
+                'id': 'yk_456',
+                'status': 'succeeded',
+                'paid': True,
+                'amount_value': 150.0,
+                'amount_currency': 'RUB',
+                'metadata': {'user_id': '21', 'payment_purpose': 'balance_topup'},
+            }
+        )
+    )
 
     payload = {
         'object': {
@@ -1050,6 +1067,9 @@ async def test_process_yookassa_webhook_missing_metadata(monkeypatch: pytest.Mon
     monkeypatch.setattr('app.services.payment_service.create_yookassa_payment', create_mock)
     monkeypatch.setattr('app.services.payment_service.update_yookassa_payment_status', update_mock)
 
+    service.yookassa_service = SimpleNamespace(
+        get_payment_info=AsyncMock(return_value={'id': 'yk_missing', 'status': 'succeeded', 'paid': True})
+    )
     payload = {'object': {'id': 'yk_missing', 'status': 'succeeded', 'paid': True}}
 
     result = await service.process_yookassa_webhook(db, payload)
@@ -1248,106 +1268,6 @@ async def test_process_yookassa_webhook_skip_ip_credits_when_confirmed(monkeypat
     assert user.balance_kopeks == 10000
     get_info_mock.assert_awaited_once_with('yk_ok')
     assert admin_calls
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_yookassa_webhook_default_mode_failopen_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Регрессия: при выключенном флаге (дефолт) отсутствие подтверждения от API
-    НЕ блокирует обработку — сохраняется исторический fail-open по данным вебхука,
-    ради которого откатывали #1786 (иначе деградация API вешала бы вебхуки)."""
-    monkeypatch.setattr(settings, 'YOOKASSA_SKIP_IP_CHECK', False, raising=False)
-    bot = DummyBot()
-    service = _make_service(bot)
-    fake_session = FakeSession()
-    payment = SimpleNamespace(
-        id=1,
-        yookassa_payment_id='yk_fo',
-        user_id=21,
-        amount_kopeks=10000,
-        transaction_id=None,
-        status='pending',
-        is_paid=False,
-    )
-
-    async def fake_get_payment(db, payment_id):
-        return payment
-
-    monkeypatch.setattr('app.services.payment_service.get_yookassa_payment_by_id', fake_get_payment)
-
-    transactions: list[dict[str, Any]] = []
-
-    async def fake_create_transaction(db, **kwargs):
-        transactions.append(kwargs)
-        return SimpleNamespace(id=999, **kwargs)
-
-    monkeypatch.setattr('app.services.payment_service.create_transaction', fake_create_transaction)
-    monkeypatch.setattr('app.database.crud.transaction.emit_transaction_side_effects', AsyncMock())
-
-    user = SimpleNamespace(
-        id=21,
-        telegram_id=2100,
-        balance_kopeks=0,
-        has_made_first_topup=False,
-        promo_group=None,
-        subscription=None,
-        referred_by_id=None,
-        referrer=None,
-    )
-    user.get_primary_promo_group = lambda: getattr(user, 'promo_group', None)
-
-    async def fake_get_user(db, user_id):
-        return user
-
-    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user)
-    monkeypatch.setattr(type(settings), 'format_price', lambda self, amount: f'{amount / 100:.2f}₽', raising=False)
-
-    async def fake_lock_user(db, locked_user):
-        return locked_user
-
-    monkeypatch.setattr('app.database.crud.user.lock_user_for_update', fake_lock_user)
-    fake_session.route_by_entity = {'YooKassaPayment': payment, 'User': user}
-
-    referral_mock = SimpleNamespace(
-        process_referral_topup=AsyncMock(),
-        process_referral_registration=AsyncMock(),
-    )
-    monkeypatch.setitem(sys.modules, 'app.services.referral_service', referral_mock)
-
-    admin_calls: list[Any] = []
-
-    class DummyAdminService:
-        def __init__(self, bot):
-            self.bot = bot
-
-        async def send_balance_topup_notification(self, *args, **kwargs):
-            admin_calls.append((args, kwargs))
-
-    monkeypatch.setitem(
-        sys.modules,
-        'app.services.admin_notification_service',
-        SimpleNamespace(AdminNotificationService=DummyAdminService),
-    )
-    service.build_topup_success_keyboard = AsyncMock(return_value=None)
-
-    # API не подтверждает (None), но флаг выключен → доверяем телу вебхука.
-    get_info_mock = AsyncMock(return_value=None)
-    service.yookassa_service = SimpleNamespace(get_payment_info=get_info_mock)
-
-    payload = {
-        'object': {
-            'id': 'yk_fo',
-            'status': 'succeeded',
-            'paid': True,
-            'payment_method': {'type': 'bank_card'},
-        }
-    }
-
-    result = await service.process_yookassa_webhook(fake_session, payload)
-
-    assert result is True
-    assert transactions and transactions[0]['amount_kopeks'] == 10000
-    assert user.balance_kopeks == 10000
-    get_info_mock.assert_awaited_once_with('yk_fo')
 
 
 @pytest.mark.anyio('asyncio')
@@ -1669,3 +1589,83 @@ async def test_process_pal24_callback_payment_not_found(monkeypatch: pytest.Monk
 
     result = await service.process_pal24_callback(db, payload)
     assert result is False
+
+
+@pytest.mark.anyio('asyncio')
+async def test_process_yookassa_webhook_rejects_unconfirmed_even_with_ip_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Подтверждение API обязательно в любом режиме IP-гейта: id не найден в ЮKassa →
+    отказ, восстановления записи из тела запроса нет."""
+    monkeypatch.setattr(settings, 'YOOKASSA_SKIP_IP_CHECK', False, raising=False)
+    service = _make_service(DummyBot())
+    db = FakeSession()
+
+    get_payment_mock = AsyncMock()
+    create_mock = AsyncMock()
+    monkeypatch.setattr('app.services.payment_service.get_yookassa_payment_by_id', get_payment_mock)
+    monkeypatch.setattr('app.services.payment_service.create_yookassa_payment', create_mock)
+
+    get_info_mock = AsyncMock(return_value=None)
+    service.yookassa_service = SimpleNamespace(get_payment_info=get_info_mock)
+
+    payload = {
+        'object': {
+            'id': 'test-1-12345',
+            'status': 'succeeded',
+            'paid': True,
+            'amount': {'value': '9999.00', 'currency': 'RUB'},
+            'metadata': {'user_id': '1'},
+        }
+    }
+
+    result = await service.process_yookassa_webhook(db, payload)
+
+    assert result is False
+    get_info_mock.assert_awaited_once_with('test-1-12345')
+    get_payment_mock.assert_not_awaited()
+    create_mock.assert_not_awaited()
+
+
+@pytest.mark.anyio('asyncio')
+async def test_process_yookassa_webhook_rejects_on_api_timeout_even_with_ip_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Таймаут API — не повод верить телу запроса: отказ, ЮKassa повторит уведомление сама."""
+    monkeypatch.setattr(settings, 'YOOKASSA_SKIP_IP_CHECK', False, raising=False)
+    service = _make_service(DummyBot())
+    db = FakeSession()
+
+    get_payment_mock = AsyncMock()
+    create_mock = AsyncMock()
+    monkeypatch.setattr('app.services.payment_service.get_yookassa_payment_by_id', get_payment_mock)
+    monkeypatch.setattr('app.services.payment_service.create_yookassa_payment', create_mock)
+
+    get_info_mock = AsyncMock(side_effect=TimeoutError())
+    service.yookassa_service = SimpleNamespace(get_payment_info=get_info_mock)
+
+    result = await service.process_yookassa_webhook(
+        db, {'object': {'id': 'yk_slow', 'status': 'succeeded', 'paid': True}}
+    )
+
+    assert result is False
+    get_payment_mock.assert_not_awaited()
+    create_mock.assert_not_awaited()
+
+
+@pytest.mark.anyio('asyncio')
+async def test_process_yookassa_webhook_rejects_without_api_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Нет клиента API ЮKassa — подтвердить платёж нечем, начисления по телу запроса не бывает."""
+    monkeypatch.setattr(settings, 'YOOKASSA_SKIP_IP_CHECK', False, raising=False)
+    service = _make_service(DummyBot())
+    service.yookassa_service = None
+    db = FakeSession()
+
+    get_payment_mock = AsyncMock()
+    create_mock = AsyncMock()
+    monkeypatch.setattr('app.services.payment_service.get_yookassa_payment_by_id', get_payment_mock)
+    monkeypatch.setattr('app.services.payment_service.create_yookassa_payment', create_mock)
+
+    result = await service.process_yookassa_webhook(db, {'object': {'id': 'yk_x', 'status': 'succeeded', 'paid': True}})
+
+    assert result is False
+    get_payment_mock.assert_not_awaited()
+    create_mock.assert_not_awaited()

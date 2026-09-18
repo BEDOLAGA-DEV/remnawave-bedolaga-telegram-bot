@@ -58,7 +58,7 @@ class TestGiftButtonFallbacks:
 
     def test_gift_subscription_button_fallback_in_multi_keyboard(self):
         """Test GIFT_SUBSCRIPTION_BUTTON fallback in _build_subscriptions_keyboard."""
-        subs = [SimpleNamespace(id=1, tariff=SimpleNamespace(name='Pro'))]
+        subs = [SimpleNamespace(id=1, tariff=SimpleNamespace(name='Pro'), tariff_id=1, is_trial=False)]
         kb = _build_subscriptions_keyboard(subs, language='ru', gift_enabled=True)
         gift_buttons = [b for row in kb.inline_keyboard for b in row if b.callback_data == 'subscription_gift']
         assert len(gift_buttons) == 1

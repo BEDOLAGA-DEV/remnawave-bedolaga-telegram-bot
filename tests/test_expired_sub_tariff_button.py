@@ -21,6 +21,7 @@ def _fake_sub(actual_status: str, status: str) -> SimpleNamespace:
         id=1,
         actual_status=actual_status,
         status=status,
+        tariff_id=7,  # подписка с тарифом; без tariff_id это была бы старая (классическая) подписка
         tariff=None,  # → non-daily path
         traffic_limit_gb=0,
         end_date=None,

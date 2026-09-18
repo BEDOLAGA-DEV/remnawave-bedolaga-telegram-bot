@@ -34,6 +34,7 @@ from app.database.models import (
     User,
     UserPromoGroup,
 )
+from app.utils.subscription_time import local_days_until
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.bulk_actions import (
@@ -782,8 +783,7 @@ def _build_subscription_info(subs: list[Subscription]) -> list[BulkSubscriptionI
     for sub in subs:
         days_remaining = 0
         if sub.end_date:
-            delta = sub.end_date - datetime.now(UTC)
-            days_remaining = max(0, delta.days)
+            days_remaining = local_days_until(sub.end_date)
 
         tariff_name = None
         if sub.tariff:

@@ -46,7 +46,7 @@ from app.services.pinned_message_service import (
 from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.miniapp_buttons import BUTTON_KEY_TO_CABINET_PATH, build_miniapp_or_callback_button
-from app.utils.timezone import local_day_start
+from app.utils.timezone import format_local_datetime, local_day_start
 
 
 logger = structlog.get_logger(__name__)
@@ -271,7 +271,7 @@ async def show_pinned_message_menu(
     if pinned_message:
         content_preview = html.escape(pinned_message.content or '')
         last_updated = pinned_message.updated_at or pinned_message.created_at
-        timestamp_text = last_updated.strftime('%d.%m.%Y %H:%M') if last_updated else '—'
+        timestamp_text = format_local_datetime(last_updated, '%d.%m.%Y %H:%M') if last_updated else '—'
         media_line = ''
         if pinned_message.media_type:
             media_label = 'Фото' if pinned_message.media_type == 'photo' else 'Видео'
@@ -651,7 +651,7 @@ async def show_messages_history(callback: types.CallbackQuery, db_user: User, db
             message_preview = html.escape(message_preview)
 
             text += f"""
-{status_emoji} <b>{broadcast.created_at.strftime('%d.%m.%Y %H:%M')}</b>
+{status_emoji} <b>{format_local_datetime(broadcast.created_at, '%d.%m.%Y %H:%M')}</b>
 📊 Отправлено: {broadcast.sent_count}/{broadcast.total_count} ({success_rate}%)
 🎯 Аудитория: {get_target_name(broadcast.target_type)}
 👤 Админ: {html.escape(broadcast.admin_name or '')}

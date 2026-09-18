@@ -23,6 +23,7 @@ from app.database.models import (
     User,
     UserStatus,
 )
+from app.utils.subscription_time import ends_within_days
 from app.utils.timezone import format_local_datetime, local_day_start
 
 
@@ -1907,9 +1908,9 @@ async def get_subscriptions_for_autopay(db: AsyncSession) -> list[Subscription]:
         if subscription.tariff and getattr(subscription.tariff, 'is_daily', False):
             continue
 
-        days_until_expiry = (subscription.end_date - current_time).days
-
-        if days_until_expiry <= subscription.autopay_days_before and subscription.end_date > current_time:
+        if subscription.end_date > current_time and ends_within_days(
+            subscription.end_date, subscription.autopay_days_before, current_time
+        ):
             ready_for_autopay.append(subscription)
 
     return ready_for_autopay

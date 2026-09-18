@@ -18,7 +18,7 @@ from app.external.remnawave_api import RemnaWaveUser, UserStatus
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.remnawave_service import RemnaWaveService
 from app.utils.cache import cache, cache_key
-from app.utils.timezone import next_local_wall_clock
+from app.utils.timezone import format_local_datetime, next_local_wall_clock
 
 
 logger = structlog.get_logger(__name__)
@@ -815,7 +815,7 @@ class TrafficMonitoringServiceV2:
                 elif violation.last_node_uuid:
                     message += f'\n🖥 Сервер: <code>{violation.last_node_uuid}</code>'
 
-                message += f'\n\n⏰ {datetime.now(UTC).strftime("%d.%m.%Y %H:%M:%S")} UTC'
+                message += f'\n\n⏰ {format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}'
 
                 await admin_service.send_suspicious_traffic_notification(message, bot, topic_id)
                 await self.record_notification(violation.user_id)
