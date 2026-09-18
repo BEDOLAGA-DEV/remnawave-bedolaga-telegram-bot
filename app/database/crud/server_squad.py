@@ -666,6 +666,20 @@ async def get_server_ids_by_uuids(db: AsyncSession, squad_uuids: list[str]) -> l
     return [row[0] for row in result.fetchall()]
 
 
+async def get_squad_display_names(db: AsyncSession, squad_uuids: list[str]) -> dict[str, str]:
+    """Названия серверов по UUID: {squad_uuid: display_name}.
+
+    Узкий запрос вместо `get_server_squads_by_uuids`: тот тянет связанные
+    промогруппы, а для подписи в интерфейсе нужно только имя.
+    """
+    if not squad_uuids:
+        return {}
+    result = await db.execute(
+        select(ServerSquad.squad_uuid, ServerSquad.display_name).where(ServerSquad.squad_uuid.in_(squad_uuids))
+    )
+    return {squad_uuid: display_name for squad_uuid, display_name in result.all()}
+
+
 async def get_server_squads_by_uuids(db: AsyncSession, squad_uuids: list[str]) -> list[ServerSquad]:
     """Получает список ServerSquad объектов по их UUID с загрузкой allowed_promo_groups."""
     if not squad_uuids:
