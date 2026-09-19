@@ -11,11 +11,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
-from scripts.generate_structure_reference import OUTPUT, build, tracked_paths
+from scripts.generate_structure_reference import OUTPUT, REPO_ROOT, build, render_entries, tracked_paths
 
 
 REBUILD_HINT = 'выполните `make docs-structure` и закоммитьте результат'
@@ -71,3 +71,14 @@ def test_payment_mixins_are_documented() -> None:
     mixins = sorted(Path('app/services/payment').glob('*.py'))
     missing = [m.name for m in mixins if m.name != '__init__.py' and f'`{m.as_posix()}`' not in document]
     assert not missing, f'платёжные миксины не попали в документ: {missing}'
+
+
+def test_order_does_not_depend_on_platform_case_folding() -> None:
+    """WindowsPath сравнивается без учёта регистра, PosixPath — байтово.
+
+    Без явного ключа сортировки пересборка на Windows ставила `.github/ISSUE_TEMPLATE`
+    после `dependabot.yml`, и `--check` в CI краснел. Порядок обязан быть один везде,
+    поэтому на вход идут именно Windows-пути.
+    """
+    lines = render_entries([PureWindowsPath('Zeta.md'), PureWindowsPath('alpha.md')], REPO_ROOT)
+    assert lines == ['- `Zeta.md` — файл', '- `alpha.md` — файл']
