@@ -466,6 +466,13 @@ class Settings(BaseSettings):
     REFERRAL_WITHDRAWAL_ONLY_REFERRAL_BALANCE: bool = True  # Только реф. баланс (False = реф + свой)
     REFERRAL_WITHDRAWAL_REQUISITES_TEXT: str = ''  # Текст-подсказка для реквизитов при выводе
     REFERRAL_WITHDRAWAL_NOTIFICATIONS_TOPIC_ID: int | None = None  # Топик для уведомлений
+    # Напоминания о заявках на вывод без решения — аналог SLA тикетов (SUPPORT_TICKET_SLA_*).
+    # Заявка в статусе pending старше REMINDER_MINUTES получает напоминание в админ-чат, повтор по
+    # той же заявке — не чаще REMINDER_COOLDOWN_MINUTES; любое решение по заявке их останавливает.
+    REFERRAL_WITHDRAWAL_REMINDER_ENABLED: bool = False
+    REFERRAL_WITHDRAWAL_REMINDER_MINUTES: int = 60  # Сколько минут заявка ждёт до первого напоминания
+    REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES: int = 30  # Минимальный интервал между повторами
+    REFERRAL_WITHDRAWAL_REMINDER_CHECK_INTERVAL_SECONDS: int = 300  # Период опроса заявок
     REFERRAL_PARTNER_SECTION_VISIBLE: bool = True  # Показывать раздел партнёрки в кабинете
 
     # Настройки анализа на подозрительность

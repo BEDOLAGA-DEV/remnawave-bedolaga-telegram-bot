@@ -3246,6 +3246,9 @@ class WithdrawalRequest(Base):
     processed_at = Column(AwareDateTime(), nullable=True)
     admin_comment = Column(Text, nullable=True)
 
+    # Последнее напоминание админам о заявке без решения (MonitoringService._check_withdrawal_reminders)
+    last_reminder_at = Column(AwareDateTime(), nullable=True)
+
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 

@@ -1398,7 +1398,7 @@
   Классы: нет
   Функции: `compute_auth_methods` — Вычисляет список методов авторизации пользователя., `get_merge_preview` — Возвращает превью данных обоих аккаунтов для подтверждения мержа., `flush_remnawave_deletions` — Удаляет (или деактивирует как fallback) пользователей RemnaWave., `execute_merge` — Выполняет атомарный мерж двух аккаунтов. Caller отвечает за commit/rollback.
 - `app/services/admin_notification_service.py` — Python-модуль
-  Классы: `NotificationCategory`, `AdminNotificationService` (49 методов)
+  Классы: `NotificationCategory`, `AdminNotificationService` (50 методов)
   Функции: нет
 - `app/services/antilopay_service.py` — Python-модуль
   Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
@@ -1538,7 +1538,7 @@
   Классы: нет
   Функции: нет
 - `app/services/monitoring_service.py` — Python-модуль
-  Классы: `AutopayFailState` (2 методов), `MonitoringService` (48 методов)
+  Классы: `AutopayFailState` (2 методов), `MonitoringService` (50 методов)
   Функции: `resolve_autopay_period_candidate` — Return ``candidate`` only if it is a valid renewal period for ``tariff``., `decide_autopay_fail_notification` — Decide whether/what to send on a failed-autopay tick., `apply_autopay_fail_notification` — Mutate state to record that a notification with `reason` was just sent.
 - `app/services/mulenpay_service.py` — Python-модуль
   Классы: `MulenPayService` (10 методов)
@@ -2906,6 +2906,9 @@
 - `migrations/alembic/versions/0125_user_panel_identity_backfill.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0126_withdrawal_request_last_reminder_at.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -3005,7 +3008,7 @@
   Функции: `test_show_main_menu_tries_rich_before_classic`, `test_back_to_menu_tries_rich_before_classic`, `test_start_menu_sites_guarded_by_rich_helpers`, `test_single_subscription_block_reuses_menu_status_builder`, `test_trial_deeplink_wired_in_start` — Диплинк /start trial: ветка сташит pending_trial, drain — рядом с купонным
 - `tests/test_sla_defaults_match_env_example.py` — Python-модуль
   Классы: нет
-  Функции: `test_code_default_matches_env_example`, `test_sla_is_off_by_default` — Явно: без .env напоминания молчат.
+  Функции: `test_code_default_matches_env_example`, `test_sla_is_off_by_default` — Явно: без .env напоминания молчат., `test_withdrawal_reminders_are_off_by_default`
 - `tests/test_start_menu_text_consistency.py` — Python-модуль
   Классы: нет
   Функции: `test_start_main_menu_text_delegates_to_menu_builder`, `test_start_no_longer_has_duplicate_status_formatter` — The duplicate formatter that caused the /start-vs-menu divergence is gone.
@@ -3097,7 +3100,7 @@
   Классы: нет
   Функции: `test_send_message_success`, `test_send_message_email_only_user_rejected` — Email-only юзер → 400 с кодом no_telegram_id, бот не создаётся., `test_send_message_forbidden_maps_to_400_and_closes_session` — Юзер заблокировал бота → 400 с кодом forbidden, сессия бота закрыта., `test_send_message_user_not_found`, `test_send_message_permission_registered` — users:send_message должен существовать в реестре RBAC — иначе
 - `tests/cabinet/test_admin_settings_forms_persist.py` — Python-модуль
-  Классы: `TestPartnerSettings` (3 методов), `TestTicketSettings` (1 методов)
+  Классы: `TestPartnerSettings` (4 методов), `TestTicketSettings` (1 методов)
   Функции: `isolated_settings`, `test_no_cabinet_route_rewrites_dotenv` — Сторож: .env — не хранилище настроек; в контейнере это не тот файл или его нет.
 - `tests/cabinet/test_admin_stats_today_local_day.py` — Python-модуль
   Классы: нет
@@ -4583,6 +4586,9 @@
 - `tests/services/test_webhook_user_modified_fields.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_panel_date_wins_for_a_live_subscription`, `test_disabled_subscription_does_not_get_its_days_back` — Обнуление админом: старая дата из панели вернула бы списанные дни., `test_panel_disabled_disables_the_subscription`, `test_webhook_never_declares_a_subscription_expired` — Истечение объявляет мониторинг: у него буфер и уведомления., `test_traffic_limit_and_nested_usage_are_synced` — Расширенная схема панели прячет расход в userTraffic, плоского поля там нет., `test_device_limit_is_never_taken_from_a_webhook` — Лимит устройств задаёт тариф в боте., `test_a_link_that_fails_validation_is_not_stored`, `test_a_valid_link_replaces_the_stored_one`, `test_every_event_stamps_the_subscription` — Метка защищает свежие данные от затирания медленным полным проходом., `test_open_grace_freezes_the_billing_fields`
+- `tests/services/test_withdrawal_reminders.py` — Python-модуль
+  Классы: нет
+  Функции: `reminder_settings`, `sent`, `test_stale_pending_request_gets_reminder`, `test_fresh_request_waits_out_the_limit`, `test_decided_request_is_silent` — Любой статус, кроме pending, — решение принято, напоминать не о чем., `test_cooldown_gates_repeats`, `test_disabled_flag_silences_everything`, `test_failed_send_keeps_request_for_next_round` — Не ушло — отметку не ставим, следующий круг попробует снова., `plain_sender` — Rich-рендер выключен: проверяем классический send_message с thread_id., `test_reminder_goes_to_withdrawal_topic_when_configured`, `test_reminder_falls_back_to_partners_topic`
 - `tests/services/test_yandex_purchase_hook.py` — Python-модуль
   Классы: нет
   Функции: `test_passes_cid_through_to_store_and_fires_purchase` — Frontend cached CID → backend stores it, then fires purchase event., `test_no_cid_still_fires_purchase_event` — If the separate /yandex-cid POST already completed, frontend may pass, `test_disabled_feature_skips_everything` — When offline conversions are off, neither store nor fire should run., `test_store_failure_does_not_block_purchase_event` — Even if persisting the CID throws, the purchase event must still fire —

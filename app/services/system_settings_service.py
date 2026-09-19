@@ -1116,6 +1116,38 @@ class BotConfigurationService:
             'warning': 'Слишком низкое значение может вызвать частые напоминания, слишком высокое — ухудшить SLA.',
             'dependencies': 'SUPPORT_TICKET_SLA_ENABLED, SUPPORT_TICKET_SLA_REMINDER_COOLDOWN_MINUTES',
         },
+        'REFERRAL_WITHDRAWAL_REMINDER_ENABLED': {
+            'description': (
+                'Повторно напоминать админам о заявках на вывод, которые ждут решения (аналог SLA тикетов).'
+            ),
+            'format': 'Булево значение.',
+            'example': 'true',
+            'warning': 'Напоминания уходят в топик заявок на вывод, а без него — в категорию «партнёрки».',
+            'dependencies': 'REFERRAL_WITHDRAWAL_REMINDER_MINUTES, REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES',
+        },
+        'REFERRAL_WITHDRAWAL_REMINDER_MINUTES': {
+            'description': 'Сколько минут заявка на вывод может ждать решения до первого напоминания.',
+            'format': 'Целое число от 1 до 10080.',
+            'example': '120',
+            'warning': 'Слишком низкое значение — частые напоминания по каждой заявке.',
+            'dependencies': 'REFERRAL_WITHDRAWAL_REMINDER_ENABLED, REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES',
+        },
+        'REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES': {
+            'description': 'Минимальный интервал между повторными напоминаниями по одной заявке на вывод.',
+            'format': 'Целое число от 1 до 10080 (минуты).',
+            'example': '180',
+            'warning': 'Фактический шаг округляется вверх до интервала проверки заявок.',
+            'dependencies': (
+                'REFERRAL_WITHDRAWAL_REMINDER_ENABLED, REFERRAL_WITHDRAWAL_REMINDER_CHECK_INTERVAL_SECONDS'
+            ),
+        },
+        'REFERRAL_WITHDRAWAL_REMINDER_CHECK_INTERVAL_SECONDS': {
+            'description': 'Как часто бот проверяет заявки на вывод без решения.',
+            'format': 'Целое число от 30 до 3600 (секунды).',
+            'example': '300',
+            'warning': 'Применяется на следующем круге проверки, перезапуск не нужен.',
+            'dependencies': 'REFERRAL_WITHDRAWAL_REMINDER_ENABLED',
+        },
         'MAINTENANCE_MODE': {
             'description': 'Переводит бота в режим технического обслуживания и скрывает действия для пользователей.',
             'format': 'Булево значение.',
