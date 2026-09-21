@@ -154,6 +154,22 @@ def _is_transient_remnawave_error(event_dict: dict[str, Any]) -> bool:
     return False
 
 
+def _is_transient_telegram_error(event_dict: dict[str, Any]) -> bool:
+    """True when the log's exception is a Telegram transport hiccup — a dropped
+    long-poll getUpdates. aiogram retries on its own and the user never notices,
+    so such events must NOT be forwarded to the admin chat. A real outage shows
+    up as the bot going silent, which the monitoring service surfaces instead.
+    """
+    exc = _event_exception(event_dict)
+    seen = 0
+    while exc is not None and seen < 6:
+        if type(exc).__name__ in ('TelegramNetworkError', 'ClientOSError'):
+            return True
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
+    return False
+
+
 class TelegramNotifierProcessor:
     """Structlog processor that sends ERROR/CRITICAL events to the admin Telegram chat.
 
@@ -245,7 +261,7 @@ class TelegramNotifierProcessor:
 
         # 4b. Skip transient RemnaWave panel failures (slow / briefly unreachable)
         # — forwarding them would spam the admin chat on every slow-panel request.
-        if _is_transient_remnawave_error(event_dict):
+        if _is_transient_remnawave_error(event_dict) or _is_transient_telegram_error(event_dict):
             _mark_error_event(event_uid, STATUS_SUPPRESSED)
             return event_dict
 
