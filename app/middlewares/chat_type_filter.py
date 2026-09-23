@@ -4,6 +4,11 @@ When the bot is added as admin to a group or supergroup (including forums
 with topics), it should silently drop all incoming messages and callback
 queries from those chats. Only private (DM) interactions are processed.
 
+Исключение — кнопки собственной карточки тикета в групповом админ-чате
+(«Закрыть», «Заблокировать», «Разблокировать», «Удалить»): их список —
+``app.keyboards.group_callbacks``. FSM-кнопки и меню админки в группе
+по-прежнему не обрабатываются.
+
 Not registered on chat_member — channel_member.py needs ChatMemberUpdated
 events from groups/channels to track required channel subscriptions.
 Not registered on pre_checkout_query — no chat context, always private.
@@ -16,6 +21,8 @@ import structlog
 from aiogram import BaseMiddleware
 from aiogram.enums import ChatType
 from aiogram.types import CallbackQuery, Message, TelegramObject
+
+from app.keyboards.group_callbacks import is_group_safe_callback
 
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +44,8 @@ class ChatTypeFilterMiddleware(BaseMiddleware):
             chat = event.message.chat
 
         if chat is not None and chat.type != ChatType.PRIVATE:
+            if isinstance(event, CallbackQuery) and is_group_safe_callback(event.data):
+                return await handler(event, data)
             logger.debug(
                 'Dropping non-private chat event',
                 chat_id=chat.id,

@@ -10,6 +10,7 @@ from app.database.crud.transaction import get_user_total_spent_kopeks
 from app.database.crud.user import lock_user_for_update
 from app.database.models import PromoGroup, User
 from app.services.admin_notification_service import AdminNotificationService
+from app.services.promo_group_notifications import notify_user_about_auto_assignment
 
 
 logger = structlog.get_logger(__name__)
@@ -87,7 +88,17 @@ async def _get_best_group_for_spending(
 async def maybe_assign_promo_group_by_total_spent(
     db: AsyncSession,
     user_id: int,
+    *,
+    notify_admins: bool = True,
+    notify_user: bool = True,
 ) -> PromoGroup | None:
+    """Выдаёт человеку промогруппу по сумме трат.
+
+    ``notify_admins=False`` — для массового пересчёта: там сводка одна на весь
+    проход, уведомление на каждого человека было бы потоком в админ-чат.
+    ``notify_user=False`` — там же: пересчёт задним числом прошёл бы по всей
+    базе рассылкой без ограничения скорости.
+    """
     from app.database.crud.user_promo_group import (
         add_user_to_promo_group,
         get_user_promo_groups,
@@ -182,7 +193,7 @@ async def maybe_assign_promo_group_by_total_spent(
         await db.commit()
         await db.refresh(user)
 
-        if newly_added:
+        if newly_added and notify_admins:
             await _notify_admins_about_auto_assignment(
                 db,
                 user,
@@ -190,6 +201,8 @@ async def maybe_assign_promo_group_by_total_spent(
                 target_group,
                 total_spent,
             )
+        if newly_added and notify_user:
+            await notify_user_about_auto_assignment(user, target_group, total_spent)
 
         return target_group
     except Exception as exc:

@@ -48,6 +48,7 @@ FIELD_KEYS: dict[str, str] = {
     'limited_squad_uuid': 'GRACE_ACCESS_LIMITED_SQUAD_UUID',
     'external_squad_uuid': 'GRACE_ACCESS_EXTERNAL_SQUAD_UUID',
     'traffic_gb': 'GRACE_ACCESS_TRAFFIC_GB',
+    'reset_traffic_on_start': 'GRACE_ACCESS_RESET_TRAFFIC_ON_START',
     'trial_enabled': 'GRACE_ACCESS_TRIAL_ENABLED',
     'daily_enabled': 'GRACE_ACCESS_DAILY_ENABLED',
     'free_enabled': 'GRACE_ACCESS_FREE_ENABLED',
@@ -105,6 +106,7 @@ class GraceAccessConfig(BaseModel):
     limited_squad_uuid: str
     external_squad_uuid: str
     traffic_gb: int
+    reset_traffic_on_start: bool
     trial_enabled: bool
     daily_enabled: bool
     free_enabled: bool
@@ -174,6 +176,7 @@ class GraceAccessUpdate(BaseModel):
     limited_squad_uuid: str | None = None
     external_squad_uuid: str | None = None
     traffic_gb: int | None = Field(default=None, ge=0, le=1024)
+    reset_traffic_on_start: bool | None = None
     trial_enabled: bool | None = None
     daily_enabled: bool | None = None
     free_enabled: bool | None = None

@@ -11,6 +11,7 @@ from aiogram.types import FSInputFile, InaccessibleMessage, InputMediaPhoto, Mes
 
 from app.config import settings
 from app.localization.texts import get_texts
+from app.utils.logo_fingerprint import logo_fingerprint
 
 
 logger = structlog.get_logger(__name__)
@@ -143,8 +144,22 @@ def caption_exceeds_telegram_limit(text: str | None) -> bool:
 _PRIVACY_RESTRICTED_CODE = 'BUTTON_USER_PRIVACY_RESTRICTED'
 
 # Кеш file_id логотипа: после первой загрузки Telegram возвращает file_id,
-# который можно переиспользовать без повторной загрузки файла (экономит 3-4 сек)
+# который можно переиспользовать без повторной загрузки файла (экономит 3-4 сек).
+# Привязан к отпечатку файла: оператор заменил логотип — кэш сбрасывается,
+# иначе старая картинка уходила по старому file_id до рестарта.
 _logo_file_id: str | None = None
+_logo_file_id_fingerprint: str | None = None
+
+
+def _drop_logo_cache_if_file_changed() -> None:
+    # Отпечаток не обнуляем: его читают только при непустом file_id, а новый
+    # записывается вместе с новым file_id в _cache_logo_file_id.
+    global _logo_file_id, _logo_send_path
+    current = logo_fingerprint(LOGO_PATH)
+    if _logo_file_id is not None and _logo_file_id_fingerprint != current:
+        logger.info('Файл логотипа заменён — file_id и уменьшенная копия забыты', logo_path=str(LOGO_PATH))
+        _logo_file_id = None
+        _logo_send_path = None
 
 
 def get_logo_media():
@@ -156,6 +171,7 @@ def get_logo_media():
     If the source file is too large or too high-resolution for Telegram, a
     cached resized copy is used instead (see Telegram bug #339184).
     """
+    _drop_logo_cache_if_file_changed()
     if _logo_file_id:
         return _logo_file_id
     if not _logo_path_valid:
@@ -168,11 +184,12 @@ def get_logo_media():
 
 def _cache_logo_file_id(result: Message | None) -> None:
     """Извлекает и кеширует file_id логотипа из ответа Telegram."""
-    global _logo_file_id
+    global _logo_file_id, _logo_file_id_fingerprint
     if _logo_file_id or result is None:
         return
     if hasattr(result, 'photo') and result.photo:
         _logo_file_id = result.photo[-1].file_id
+        _logo_file_id_fingerprint = logo_fingerprint(LOGO_PATH)
 
 
 _TOPIC_REQUIRED_ERRORS = (

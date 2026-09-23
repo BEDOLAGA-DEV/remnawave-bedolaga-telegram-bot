@@ -3797,6 +3797,10 @@ async def get_user_sync_status(
     panel_device_limit = 0
     panel_squads: list[str] = []
     differences = []
+    # Панель прочитана без ошибок. Отличать «прочитали и аккаунта нет» от «не
+    # смогли прочитать» обязательно: первое зовёт оператора заводить учётку,
+    # второе значит лишь обрыв связи, и заводить нечего.
+    panel_read_ok = False
 
     try:
         from app.services.remnawave_service import RemnaWaveService
@@ -3883,9 +3887,17 @@ async def get_user_sync_status(
                             squad_diff_parts.append(f'only in panel: {len(only_in_panel)}')
                         differences.append(f'Squads mismatch ({", ".join(squad_diff_parts)})')
 
+            panel_read_ok = True
+
     except Exception as e:
         logger.warning('Failed to get panel data for user', user_id=user_id, error=e)
         differences.append(f'Error fetching panel data: {e!s}')
+
+    # Подписка есть, а аккаунта в панели нет — это расхождение, и самое
+    # серьёзное: у человека нет доступа. Без этой строки карточка с пустой
+    # панельной стороной показывалась «синхронизированной» (issue #3277).
+    if active_sub is not None and panel_read_ok and not panel_found:
+        differences.append('В панели аккаунт не найден')
 
     # Resolve tariff name for context
     sub_tariff_name: str | None = None
@@ -4308,8 +4320,24 @@ async def sync_user_to_panel(
                 changes['created_in_panel'] = True
                 changes['short_uuid'] = getattr(result.panel_user, 'short_uuid', None)
 
-            user.last_remnawave_sync = datetime.now(UTC)
-            user.updated_at = datetime.now(UTC)
+            # Отметку времени ставим, только если связь действительно указывает
+            # на тот аккаунт, в который мы писали. Иначе карточка выглядела бы
+            # свежесинхронизированной поверх старой привязки (issue #3277).
+            linked = panel_user_id is None or getattr(push_sub, 'remnawave_id', None) == panel_user_id
+            if linked:
+                user.last_remnawave_sync = datetime.now(UTC)
+                user.updated_at = datetime.now(UTC)
+            else:
+                errors.append(
+                    f'Панельный аккаунт {panel_user_id} не записан подписке {push_sub.id}: адрес занят другой подпиской'
+                )
+                logger.warning(
+                    'Синхронизация в панель прошла, но связь не обновилась',
+                    user_id=user_id,
+                    subscription_id=push_sub.id,
+                    panel_user_id=panel_user_id,
+                    recorded_panel_user_id=getattr(push_sub, 'remnawave_id', None),
+                )
             await db.commit()
 
         logger.info('Admin synced user to panel. Action', admin_id=admin.id, user_id=user_id, action=action)

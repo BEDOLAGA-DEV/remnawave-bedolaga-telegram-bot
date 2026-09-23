@@ -21,11 +21,17 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from app.utils.logo_fingerprint import logo_fingerprint as _logo_fingerprint
+
 from .brand_monogram import bold_font, monogram_letter
 from .favicon_tile import is_raster_logo
 
 
 APP_ICON_SIZES = (192, 512)
+# Ревизия отрисовки: входит в ``?v=`` адресов иконок. Поднимать, когда при тех же
+# логотипе и цветах меняется сама картинка, — иначе уже установленные приложения
+# останутся со старой иконкой (Chrome перекачивает её только по новому адресу).
+RENDER_REVISION = 2
 # Безопасная зона maskable-иконок Android — как MASKABLE_SAFE_ZONE в кабинете.
 MASKABLE_SAFE_ZONE = 0.8
 # Кегль буквы монограммы относительно стороны — как в SVG кабинета (38 из 64).
@@ -36,6 +42,12 @@ _WHITE = (255, 255, 255)
 # Тёмный текст на светлом акценте — тот же, что readableTextOnHex в кабинете.
 _INK = (15, 23, 42)
 _WHITE_TEXT_MIN_CONTRAST = 4.5
+# Логотип «залит до краёв»: доля непрозрачных пикселей каймы, доля сошедшихся к
+# одному цвету и допуск на канал (сглаживание и JPEG-шум дают разброс в единицы).
+_EDGE_OPAQUE_ALPHA = 250
+_EDGE_MIN_OPAQUE_SHARE = 0.5
+_EDGE_MIN_UNIFORM_SHARE = 0.9
+_EDGE_COLOR_TOLERANCE = 12
 
 
 def is_hex_color(value: object) -> bool:
@@ -78,11 +90,55 @@ def _to_png(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def logo_edge_color(logo: Image.Image) -> tuple[int, int, int] | None:
+    """Цвет, которым логотип залит до краёв; ``None`` — единого цвета у краёв нет.
+
+    Логотип-плитка (сплошной квадрат, в том числе с запечённым скруглением) на фоне
+    темы превращается в квадрат в рамке: maskable-вариант ужимает содержимое до
+    80 %, и на рабочем столе Android у иконки видны «чёрные полоски по краям».
+    Такой логотип сам задаёт фон — продолжаем его цвет на всю плитку.
+
+    Смотрим внешнюю кайму в один пиксель. Прозрачные пиксели не считаются (углы
+    запечённого скругления), но непрозрачных должно быть большинство: у знака на
+    прозрачном фоне кайма пустая, и фоном остаётся тема. Непрозрачные обязаны
+    сходиться к одному цвету — у фото и градиентов его нет, угадывать нельзя.
+    """
+    rgba = logo.convert('RGBA')
+    width, height = rgba.size
+    if width < 2 or height < 2:
+        return None
+    pixels = rgba.load()
+    ring = [(x, y) for x in range(width) for y in (0, height - 1)]
+    ring += [(x, y) for y in range(1, height - 1) for x in (0, width - 1)]
+    opaque = [pixels[x, y][:3] for x, y in ring if pixels[x, y][3] >= _EDGE_OPAQUE_ALPHA]
+    if len(opaque) < len(ring) * _EDGE_MIN_OPAQUE_SHARE:
+        return None
+    median = tuple(sorted(color[channel] for color in opaque)[len(opaque) // 2] for channel in range(3))
+    matching = sum(
+        1
+        for color in opaque
+        if all(abs(color[channel] - median[channel]) <= _EDGE_COLOR_TOLERANCE for channel in range(3))
+    )
+    if matching < len(opaque) * _EDGE_MIN_UNIFORM_SHARE:
+        return None
+    return median
+
+
 def logo_app_icon(logo_path: Path, size: int, background: str, content_scale: float = 1.0) -> bytes:
-    """PNG ``size``×``size``: логотип вписан целиком по центру на непрозрачном фоне."""
-    canvas = Image.new('RGB', (size, size), background)
+    """PNG ``size``×``size``: логотип вписан целиком по центру на непрозрачном фоне.
+
+    Фон — цвет краёв логотипа, если он залит до краёв (см. ``logo_edge_color``),
+    иначе ``background``.
+    """
     with Image.open(logo_path) as source:
         logo = source.convert('RGBA')
+    fill = logo_edge_color(logo) or background
+    canvas = Image.new('RGB', (size, size), fill)
+    # Сводим с фоном ДО уменьшения: ресайз полупрозрачных пикселей подмешивает к ним
+    # цвет прозрачных (чёрный), и вокруг логотипа остаётся тёмный шов.
+    flattened = Image.new('RGBA', logo.size, fill)
+    flattened.alpha_composite(logo)
+    logo = flattened
     scale = min(size / logo.width, size / logo.height) * content_scale
     width, height = max(1, round(logo.width * scale)), max(1, round(logo.height * scale))
     logo = logo.resize((width, height), Image.Resampling.LANCZOS)
@@ -137,12 +193,5 @@ def render_app_icon(
     return _cached_monogram_icon(monogram_letter(letter), size, accent, content_scale)
 
 
-def logo_fingerprint(logo_path: Path | None) -> str:
-    """Отпечаток файла логотипа для версии URL иконок: меняется при каждой загрузке."""
-    if logo_path is None:
-        return 'none'
-    try:
-        stat = logo_path.stat()
-    except OSError:
-        return 'missing'
-    return f'{logo_path.suffix.lower()}:{stat.st_mtime_ns}:{stat.st_size}'
+# Отпечаток общий с логотипом бота (адрес rich-меню и кэш file_id) — одна реализация.
+logo_fingerprint = _logo_fingerprint

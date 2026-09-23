@@ -306,24 +306,33 @@ async def _exchange_and_link_oauth(
     # Check if provider_id is linked to ANOTHER account.
     existing_user = await get_user_by_oauth_provider(db, provider, user_info.provider_id)
     if existing_user and existing_user.id != user.id:
-        # A social login belongs to exactly ONE account. This used to silently
-        # offer an account MERGE (absorb the other account) — surprising and
-        # unsafe: linking a login should never move/merge accounts. Refuse it.
-        # To move the social login, the owner unlinks it from the other account
-        # first; to deliberately combine two accounts, use the email/Telegram
-        # merge flows. (You can only reach here by completing OAuth as this
-        # provider account, so this is not a takeover — but it must not be a
-        # silent merge either.)
+        # Соцсеть уже держит другой аккаунт — обычно пустой, заведённый входом
+        # «через Google» на сайте. Отказ 409 был тупиком (#3263): отвязать соцсеть
+        # от того аккаунта нельзя — она там единственный способ входа, а удалить
+        # его самому человеку нечем. Люди заводили дубли и платили повторно.
+        #
+        # Предлагаем слияние, как у Telegram: владение обоими аккаунтами доказано
+        # (сессия этого + только что пройденный вход через провайдера того), а
+        # само слияние не молчаливое — страница /merge показывает оба аккаунта,
+        # просит выбрать подписку и подтвердить; токен одноразовый и привязан к
+        # тому, кто начал. Соцсеть переносится при слиянии (execute_merge).
         logger.info(
-            'Account linking rejected: provider already linked to another account',
+            'Account linking conflict: provider already linked to another account, offering merge',
             context=log_context,
             provider=provider,
             current_user_id=user.id,
             existing_user_id=existing_user.id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=('This social account is already linked to a different account. Unlink it from that account first.'),
+        merge_token = await create_merge_token(
+            primary_user_id=user.id,
+            secondary_user_id=existing_user.id,
+            provider=provider,
+            provider_id=user_info.provider_id,
+        )
+        return LinkCallbackResponse(
+            success=False,
+            merge_required=True,
+            merge_token=merge_token,
         )
 
     # Backfill the account email from the provider when a Telegram-first (or any

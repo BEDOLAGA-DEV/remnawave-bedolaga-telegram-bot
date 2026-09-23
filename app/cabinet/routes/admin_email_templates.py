@@ -113,6 +113,29 @@ def _webhook_sample_contexts() -> dict[str, dict[str, Any]]:
 
 TEMPLATE_TYPES = [
     {
+        'type': 'promo_group_auto_assigned',
+        'label': {
+            'ru': 'Назначена промогруппа',
+            'en': 'Promo group assigned',
+            'zh': '已分配促销组',
+            'ua': 'Призначено промогрупу',
+        },
+        'description': {
+            'ru': 'Промогруппа назначена автоматически за сумму трат — какие скидки теперь действуют',
+            'en': 'A promo group was assigned automatically for total spending — which discounts now apply',
+            'zh': '根据消费总额自动分配了促销组——现在适用哪些折扣',
+            'ua': 'Промогрупу призначено автоматично за суму витрат — які знижки тепер діють',
+        },
+        'context_vars': [
+            'group_name',
+            'total_spent',
+            'period_discounts',
+            'server_discount',
+            'traffic_discount',
+            'device_discount',
+        ],
+    },
+    {
         'type': 'grace_access_granted',
         'label': {
             'ru': 'Grace-доступ выдан',
@@ -743,6 +766,14 @@ SAMPLE_LAYOUT_CONTENT = (
 )
 
 SAMPLE_CONTEXTS: dict[str, dict[str, Any]] = {
+    'promo_group_auto_assigned': {
+        'group_name': 'Продвинутый',
+        'total_spent': '5 000 ₽',
+        'period_discounts': '90 дней — 10%, 180 дней — 15%',
+        'server_discount': 10,
+        'traffic_discount': 5,
+        'device_discount': 0,
+    },
     'grace_access_granted': {
         'allowed': 'Telegram и личный кабинет',
         'hours': 72,

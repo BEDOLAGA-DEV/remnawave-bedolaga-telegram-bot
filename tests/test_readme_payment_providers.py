@@ -22,8 +22,11 @@ from app.database.models import PaymentMethod
 
 README_PATH = Path(__file__).resolve().parents[1] / 'README.md'
 
-# Не шлюзы: внутренний перевод с баланса и ручное начисление админом.
-NOT_A_GATEWAY = frozenset({'balance', 'manual'})
+# Не шлюзы: внутренний перевод с баланса и ручное начисление админом, а также
+# `platega_recurrent` — это не отдельный провайдер, а ключ отображения СБП-
+# автопродлений Platega в админке платежей. В базу он не пишется, подключать
+# его как шлюз нечего, и отдельной строки в таблице README у него быть не должно.
+NOT_A_GATEWAY = frozenset({'balance', 'manual', 'platega_recurrent'})
 
 # Как провайдер называется в таблице, если это не сам код метода.
 DISPLAY_NAMES = {

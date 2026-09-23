@@ -306,6 +306,31 @@ async def get_user_total_spent_kopeks(db: AsyncSession, user_id: int) -> int:
     return int(result.scalar_one())
 
 
+async def get_last_subscription_payment_at(db: AsyncSession, user_id: int) -> datetime | None:
+    """Когда человек последний раз платил за подписку (завершённая оплата подписки).
+
+    Нужна панельной сверке: пока с оплаты не прошло двух суток, более ранняя дата
+    из панели считается устаревшим снимком, а не правкой оператора.
+    """
+    result = await db.execute(
+        select(func.max(Transaction.created_at)).where(
+            and_(
+                Transaction.user_id == user_id,
+                Transaction.is_completed.is_(True),
+                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            )
+        )
+    )
+    value = result.scalar_one_or_none()
+    # Не дата (пустая выборка, чужой драйвер, подменённая сессия в тестах) —
+    # оплаты не было: сторож оплаченного срока молчит, панель — истина как раньше.
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value
+
+
 async def complete_transaction(db: AsyncSession, transaction: Transaction) -> Transaction:
     transaction.is_completed = True
     transaction.completed_at = datetime.now(UTC)

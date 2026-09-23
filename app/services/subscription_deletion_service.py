@@ -23,7 +23,7 @@
 from __future__ import annotations
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -104,6 +104,7 @@ async def delete_subscription_record(
     await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))
 
     panel_user_id, panel_deletable = await _resolve_panel_target(db, subscription)
+    panel_account_deleted = False
     if panel_user_id:
         try:
             from app.services.remnawave_webhook_service import RemnaWaveWebhookService
@@ -114,7 +115,7 @@ async def delete_subscription_record(
             # никогда, даже когда он принадлежит только этой подписке.
             if panel_deletable and settings.get_remnawave_user_delete_mode() == 'delete':
                 RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_user_ids=[panel_user_id])
-                await service.delete_remnawave_user(panel_user_id)
+                panel_account_deleted = await service.delete_remnawave_user(panel_user_id)
             else:
                 # Общий аккаунт однотарифного режима (или режим disable): доступ
                 # снимаем, но сам аккаунт оставляем — на него ещё смотрит
@@ -128,6 +129,15 @@ async def delete_subscription_record(
     subscription_id = subscription.id
     tariff_id = subscription.tariff_id
     user_id = subscription.user_id
+
+    if panel_account_deleted:
+        # Первый аккаунт мультитарифа записан и человеку (users.remnawave_id). Оставить
+        # там id удалённого аккаунта — значит отдать его следующей покупке: правило
+        # should_create_panel_account привяжет «свободный аккаунт человека» к новой
+        # строке, и каждый запрос в панель по ней ответит «User not found».
+        await db.execute(
+            update(User).where(User.id == user_id, User.remnawave_id == panel_user_id).values(remnawave_id=None)
+        )
 
     await db.delete(subscription)
     await db.commit()

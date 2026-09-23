@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_referral_keyboard
+from app.keyboards.withdrawal import get_withdrawal_request_keyboard
 from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
 from app.services.referral_reward_service import format_reward_total
@@ -985,25 +986,14 @@ async def confirm_withdrawal_request(callback: types.CallbackQuery, db_user: Use
 {referral_withdrawal_service.format_analysis_for_admin(analysis)}
 """
 
-    # Формируем клавиатуру - кнопка профиля только для Telegram-пользователей
-    keyboard_rows = [
-        [
-            types.InlineKeyboardButton(text='✅ Одобрить', callback_data=f'admin_withdrawal_approve_{request.id}'),
-            types.InlineKeyboardButton(text='❌ Отклонить', callback_data=f'admin_withdrawal_reject_{request.id}'),
-        ]
-    ]
-    if db_user.telegram_id:
-        keyboard_rows.append(
-            [
-                types.InlineKeyboardButton(
-                    text='👤 Профиль пользователя', callback_data=f'admin_user_{db_user.telegram_id}'
-                )
-            ]
-        )
-    admin_keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    # Кнопки — по роли получателя: в группе только действия, в личке админа ещё
+    # профиль (по id из базы: у callback admin_user_<telegram_id> обработчика нет).
+    notification_service = AdminNotificationService(callback.bot)
+    admin_keyboard = get_withdrawal_request_keyboard(
+        request.id, request.status, user_db_id=db_user.id, role=notification_service.resolve_recipient_role()
+    )
 
     try:
-        notification_service = AdminNotificationService(callback.bot)
         await notification_service.send_admin_notification(
             admin_text, reply_markup=admin_keyboard, category=NotificationCategory.PARTNERS
         )

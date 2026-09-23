@@ -46,6 +46,8 @@ from app.database.models import (
     User,
     UserPromoGroup,
     UserStatus,
+    WithdrawalRequest,
+    WithdrawalRequestStatus,
 )
 from app.external.remnawave_api import (
     RemnaWaveAPIError,
@@ -235,6 +237,8 @@ class MonitoringService:
         self._notified_users: set[str] = set()
         self._last_cleanup = datetime.now(UTC)
         self._sla_task = None
+        self._withdrawal_reminder_task = None
+        self._user_reminder_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
         self._autopay_fail_state: dict[tuple[int, int], dict] = {}
@@ -380,6 +384,18 @@ class MonitoringService:
                 self._sla_task = asyncio.create_task(self._sla_loop())
         except Exception as e:
             logger.error('Не удалось запустить SLA-мониторинг', error=e)
+        # Напоминания о заявках на вывод без решения — та же схема, что SLA тикетов
+        try:
+            if not self._withdrawal_reminder_task or self._withdrawal_reminder_task.done():
+                self._withdrawal_reminder_task = asyncio.create_task(self._withdrawal_reminder_loop())
+        except Exception as e:
+            logger.error('Не удалось запустить напоминания о заявках на вывод', error=e)
+        # Напоминания пользователям (раздел «Напоминания» в кабинете)
+        try:
+            if not self._user_reminder_task or self._user_reminder_task.done():
+                self._user_reminder_task = asyncio.create_task(self._user_reminder_loop())
+        except Exception as e:
+            logger.error('Не удалось запустить напоминания пользователям', error=e)
 
         while self.is_running:
             try:
@@ -398,6 +414,10 @@ class MonitoringService:
                 self._sla_task.cancel()
         except Exception:
             pass
+        if self._withdrawal_reminder_task and not self._withdrawal_reminder_task.done():
+            self._withdrawal_reminder_task.cancel()
+        if self._user_reminder_task and not self._user_reminder_task.done():
+            self._user_reminder_task.cancel()
 
     async def _monitoring_cycle(self):
         async with AsyncSessionLocal() as db:
@@ -716,7 +736,10 @@ class MonitoringService:
             # Хвост грейса (панель ещё несколько минут ACTIVE с погашенной датой) или
             # снимок оверлея, снятый до досрочного закрытия грейса, — не продление.
             return False
-        changed = project_onto_subscription(subscription, snapshot, now=now)
+        from app.database.crud.transaction import get_last_subscription_payment_at
+
+        paid_at = await get_last_subscription_payment_at(db, subscription.user_id)
+        changed = project_onto_subscription(subscription, snapshot, now=now, paid_at=paid_at)
         if changed:
             await db.commit()
         logger.info(
@@ -1906,7 +1929,7 @@ class MonitoringService:
                             processed_count += 1
                             self._notified_users.add(autopay_key)
                             logger.info(
-                                '💳 Автопродление подписки пользователя успешно (списано , скидка %)',
+                                '💳 Автопродление подписки прошло успешно',
                                 user_identifier=user_identifier,
                                 charge_amount=charge_amount,
                                 promo_discount_percent=promo_discount_percent,
@@ -3250,6 +3273,125 @@ class MonitoringService:
                 break
             except Exception as e:
                 logger.error('Ошибка в SLA-цикле', error=e)
+            await asyncio.sleep(interval_seconds)
+
+    async def _check_withdrawal_reminders(self, db: AsyncSession) -> int:
+        """Напоминает админам о заявках на вывод, которые ждут решения дольше лимита.
+
+        Механика повторяет SLA тикетов (_check_ticket_sla): заявка в статусе pending
+        старше REFERRAL_WITHDRAWAL_REMINDER_MINUTES получает напоминание, следующее —
+        не раньше чем через REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES. Решение по
+        заявке меняет статус, и напоминания прекращаются сами. Возвращает число
+        отправленных напоминаний.
+        """
+        try:
+            if not settings.REFERRAL_WITHDRAWAL_REMINDER_ENABLED:
+                return 0
+            if not self.bot:
+                return 0
+            if not settings.is_admin_notifications_enabled():
+                return 0
+
+            wait_minutes = max(1, int(settings.REFERRAL_WITHDRAWAL_REMINDER_MINUTES))
+            cooldown_minutes = max(1, int(settings.REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES))
+            now = datetime.now(UTC)
+            stale_before = now - timedelta(minutes=wait_minutes)
+            cooldown_before = now - timedelta(minutes=cooldown_minutes)
+
+            result = await db.execute(
+                select(WithdrawalRequest)
+                .options(selectinload(WithdrawalRequest.user))
+                .where(
+                    and_(
+                        WithdrawalRequest.status == WithdrawalRequestStatus.PENDING.value,
+                        WithdrawalRequest.created_at <= stale_before,
+                        or_(
+                            WithdrawalRequest.last_reminder_at.is_(None),
+                            WithdrawalRequest.last_reminder_at <= cooldown_before,
+                        ),
+                    )
+                )
+                .order_by(WithdrawalRequest.created_at.asc())
+            )
+            requests = result.scalars().all()
+            if not requests:
+                return 0
+
+            from app.services.admin_notification_service import AdminNotificationService
+
+            service = AdminNotificationService(self.bot)
+            reminders_sent = 0
+            for request in requests:
+                try:
+                    waited_minutes = max(0, int((now - request.created_at).total_seconds() // 60))
+                    sent = await service.send_withdrawal_pending_reminder(request, waited_minutes)
+                    if sent:
+                        request.last_reminder_at = now
+                        reminders_sent += 1
+                        # commit после каждой, чтобы при падении не задвоить напоминание
+                        await db.commit()
+                except Exception as notify_error:
+                    logger.error(
+                        'Ошибка отправки напоминания о заявке на вывод',
+                        request_id=request.id,
+                        notify_error=notify_error,
+                    )
+
+            if reminders_sent > 0:
+                await self._log_monitoring_event(
+                    db,
+                    'withdrawal_reminders_sent',
+                    f'Отправлено {reminders_sent} напоминаний о заявках на вывод',
+                    {'count': reminders_sent},
+                )
+            return reminders_sent
+        except Exception as e:
+            logger.error('Ошибка проверки заявок на вывод без решения', error=e)
+            return 0
+
+    async def _withdrawal_reminder_loop(self):
+        while self.is_running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    try:
+                        await self._check_withdrawal_reminders(db)
+                        await db.commit()
+                    except Exception as e:
+                        logger.error('Ошибка в проверке заявок на вывод', error=e)
+                        await db.rollback()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error('Ошибка в цикле напоминаний о заявках на вывод', error=e)
+            # Интервал читается на каждом круге: правка из кабинета применяется без перезапуска
+            try:
+                interval_seconds = max(10, int(settings.REFERRAL_WITHDRAWAL_REMINDER_CHECK_INTERVAL_SECONDS))
+            except Exception:
+                interval_seconds = 60
+            await asyncio.sleep(interval_seconds)
+
+    async def _user_reminder_loop(self):
+        from app.services.user_reminders.dispatcher import bot_delivery, run_reminder_pass
+
+        deliver = bot_delivery(notification_delivery_service)
+        while self.is_running:
+            try:
+                if self.bot:
+                    async with AsyncSessionLocal() as db:
+                        try:
+                            await run_reminder_pass(db, self.bot, deliver=deliver)
+                        except Exception as e:
+                            # warning, не error: сбой одного прохода не повод писать в админ-чат
+                            logger.warning('Сбой прохода напоминаний пользователям', error=str(e))
+                            await db.rollback()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning('Ошибка в цикле напоминаний пользователям', error=str(e))
+            try:
+                interval_seconds = max(1, int(settings.USER_REMINDERS_CHECK_INTERVAL_MINUTES)) * 60
+            except Exception:
+                interval_seconds = 900
             await asyncio.sleep(interval_seconds)
 
     async def _log_monitoring_event(

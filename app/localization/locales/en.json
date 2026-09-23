@@ -1327,6 +1327,8 @@
   "PROMO_GROUP_DISCOUNT_TRAFFIC": "📊 Traffic: {percent}%",
   "PROMO_GROUP_PERIOD_DISCOUNTS_HEADER": "⏳ Long-term period discounts:",
   "PROMO_GROUP_PERIOD_DISCOUNT_ITEM": "{period} — {percent}%",
+  "PROMO_GROUP_AUTO_ASSIGNED": "🏆 <b>New promo group: {group_name}</b>\n\nYou have spent {total_spent} with us — thank you! These discounts now apply to you permanently:\n\n{discounts}",
+  "PROMO_GROUP_AUTO_ASSIGNED_NO_DISCOUNTS": "🏆 <b>New promo group: {group_name}</b>\n\nYou have spent {total_spent} with us — thank you! You have been moved to a new promo group.",
   "PROMO_OFFER_CLOSE": "❌ Close",
   "PUBLIC_OFFER_EMPTY_ALERT": "Public offer content is not provided yet.",
   "PUBLIC_OFFER_HEADER": "📄 <b>Public Offer</b>",

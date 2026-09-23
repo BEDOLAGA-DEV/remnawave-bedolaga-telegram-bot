@@ -1454,6 +1454,8 @@
   "PROMO_GROUP_DISCOUNT_TRAFFIC": "📊 ترافیک: {percent}%",
   "PROMO_GROUP_PERIOD_DISCOUNTS_HEADER": "⏳ تخفیف دوره‌های طولانی:",
   "PROMO_GROUP_PERIOD_DISCOUNT_ITEM": "{period} — {percent}%",
+  "PROMO_GROUP_AUTO_ASSIGNED": "🏆 <b>گروه تبلیغاتی جدید: {group_name}</b>\n\nشما تاکنون {total_spent} نزد ما خرج کرده‌اید — سپاسگزاریم! این تخفیف‌ها از این پس همیشه برای شما فعال است:\n\n{discounts}",
+  "PROMO_GROUP_AUTO_ASSIGNED_NO_DISCOUNTS": "🏆 <b>گروه تبلیغاتی جدید: {group_name}</b>\n\nشما تاکنون {total_spent} نزد ما خرج کرده‌اید — سپاسگزاریم! به گروه تبلیغاتی جدید منتقل شدید.",
   "PROMO_OFFER_CLOSE": "❌ بستن",
   "PUBLIC_OFFER_EMPTY_ALERT": "شرایط استفاده هنوز تکمیل نشده.",
   "PUBLIC_OFFER_HEADER": "📄 <b>شرایط استفاده</b>",

@@ -72,6 +72,11 @@ class PartnerSettingsResponse(BaseModel):
     referral_program_enabled: bool
     first_payment_commission_percent: int | None = None
     recurring_commission_tiers: str = ''
+    # Напоминания о заявках на вывод без решения (аналог SLA тикетов)
+    withdrawal_reminder_enabled: bool
+    withdrawal_reminder_minutes: int
+    withdrawal_reminder_cooldown_minutes: int
+    withdrawal_reminder_check_interval_seconds: int
     # Поля, закреплённые в .env: из кабинета их не изменить, база их не перекрывает.
     env_locked: list[str] = []
 
@@ -85,6 +90,16 @@ class PartnerSettingsUpdateRequest(BaseModel):
     referral_program_enabled: bool | None = None
     first_payment_commission_percent: int | None = Field(None, ge=0, le=100)
     recurring_commission_tiers: str | None = Field(None, max_length=500)
+    withdrawal_reminder_enabled: bool | None = None
+    withdrawal_reminder_minutes: int | None = Field(
+        None, ge=1, le=10080, description='First reminder after (1-10080 minutes)'
+    )
+    withdrawal_reminder_cooldown_minutes: int | None = Field(
+        None, ge=1, le=10080, description='Reminder cooldown (1-10080 minutes)'
+    )
+    withdrawal_reminder_check_interval_seconds: int | None = Field(
+        None, ge=30, le=3600, description='Check interval (30-3600 seconds)'
+    )
 
 
 # Поле формы → ключ Settings. Хранение и применение — через system_settings (settings_form).
@@ -97,6 +112,10 @@ PARTNER_SETTING_KEYS: dict[str, str] = {
     'referral_program_enabled': 'REFERRAL_PROGRAM_ENABLED',
     'first_payment_commission_percent': 'REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT',
     'recurring_commission_tiers': 'REFERRAL_RECURRING_COMMISSION_TIERS',
+    'withdrawal_reminder_enabled': 'REFERRAL_WITHDRAWAL_REMINDER_ENABLED',
+    'withdrawal_reminder_minutes': 'REFERRAL_WITHDRAWAL_REMINDER_MINUTES',
+    'withdrawal_reminder_cooldown_minutes': 'REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES',
+    'withdrawal_reminder_check_interval_seconds': 'REFERRAL_WITHDRAWAL_REMINDER_CHECK_INTERVAL_SECONDS',
 }
 
 
@@ -110,6 +129,10 @@ def _build_partner_settings_response() -> PartnerSettingsResponse:
         referral_program_enabled=settings.REFERRAL_PROGRAM_ENABLED,
         first_payment_commission_percent=settings.REFERRAL_FIRST_PAYMENT_COMMISSION_PERCENT,
         recurring_commission_tiers=settings.REFERRAL_RECURRING_COMMISSION_TIERS,
+        withdrawal_reminder_enabled=settings.REFERRAL_WITHDRAWAL_REMINDER_ENABLED,
+        withdrawal_reminder_minutes=settings.REFERRAL_WITHDRAWAL_REMINDER_MINUTES,
+        withdrawal_reminder_cooldown_minutes=settings.REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES,
+        withdrawal_reminder_check_interval_seconds=settings.REFERRAL_WITHDRAWAL_REMINDER_CHECK_INTERVAL_SECONDS,
         env_locked=env_locked_fields(PARTNER_SETTING_KEYS),
     )
 

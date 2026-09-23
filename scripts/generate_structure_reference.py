@@ -16,7 +16,7 @@ import ast
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +34,17 @@ HEADER = """# База по структуре проекта
 """
 
 MAX_HEADING_LEVEL = 6
+
+
+def _sort_key(path: PurePath) -> tuple[str, ...]:
+    """Порядок как у PosixPath на любой платформе.
+
+    `sorted()` по Path-объектам сравнивает части пути, но WindowsPath приводит их
+    к нижнему регистру, а PosixPath — нет. Пересборка на Windows ставила
+    `.github/ISSUE_TEMPLATE` после `dependabot.yml`, и `--check` в CI (Linux)
+    краснел. Кортеж частей без нормализации регистра даёт один порядок везде.
+    """
+    return path.parts
 
 
 def tracked_paths() -> list[Path]:
@@ -59,7 +70,7 @@ def tracked_paths() -> list[Path]:
         check=True,
         text=True,
     )
-    return sorted({Path(name) for name in result.stdout.split('\0') if name})
+    return sorted({Path(name) for name in result.stdout.split('\0') if name}, key=_sort_key)
 
 
 def _first_docstring_line(node: ast.AST) -> str:
@@ -108,14 +119,14 @@ def _children(paths: list[Path], directory: Path) -> tuple[list[Path], list[Path
         elif len(parts) > depth + 1:
             subdirs.add(Path(*parts[: depth + 1]))
 
-    return sorted(files), sorted(subdirs)
+    return sorted(files, key=_sort_key), sorted(subdirs, key=_sort_key)
 
 
 def render_entries(paths: list[Path], directory: Path) -> list[str]:
     files, subdirs = _children(paths, directory)
     lines: list[str] = []
 
-    for entry in sorted(files + subdirs):
+    for entry in sorted(files + subdirs, key=_sort_key):
         if entry in subdirs:
             lines.append(f'- `{entry.as_posix()}/`')
             continue

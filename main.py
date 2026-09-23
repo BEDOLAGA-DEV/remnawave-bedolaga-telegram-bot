@@ -3,6 +3,7 @@ import logging
 import os
 import signal
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -52,12 +53,20 @@ from app.webapi.server import WebAPIServer
 from app.webserver.unified_app import create_unified_app
 
 
+# Уведомление об остановке не должно съесть время остального завершения.
+SHUTDOWN_NOTIFICATION_TIMEOUT_SECONDS = 5
+
+
 class GracefulExit:
     def __init__(self):
         self.exit = False
+        # Каким сигналом остановили — для уведомления об остановке.
+        self.signum: int | None = None
 
     def exit_gracefully(self, signum, frame):
         structlog.get_logger(__name__).info('Получен сигнал, корректное завершение работы', signum=signum)
+        if self.signum is None:
+            self.signum = signum
         self.exit = True
 
 
@@ -185,6 +194,11 @@ async def main():
     payment_webhooks_enabled = False
 
     summary_logged = False
+    # Для уведомления об остановке: когда бот поднялся и почему он останавливается.
+    # started_at остаётся None, если упал ещё на запуске — это покрывает краш-отчёт.
+    started_at: datetime | None = None
+    shutdown_error: BaseException | None = None
+    shutdown_source: str | None = None
 
     try:
         skip_migration = os.getenv('SKIP_MIGRATION', 'false').lower() == 'true'
@@ -458,8 +472,6 @@ async def main():
                     if status.send_to_telegram:
                         stage.log('Отправка в Telegram: включена')
                     if status.next_rotation:
-                        from datetime import datetime
-
                         next_dt = datetime.fromisoformat(status.next_rotation)
                         stage.log(f'Следующая ротация: {next_dt.strftime("%d.%m.%Y %H:%M")}')
                 except Exception as e:
@@ -839,6 +851,8 @@ async def main():
         except Exception as startup_notify_error:
             logger.warning('Не удалось отправить стартовое уведомление', startup_notify_error=startup_notify_error)
 
+        started_at = datetime.now(UTC)
+
         try:
             while not killer.exit:
                 await asyncio.sleep(1)
@@ -909,10 +923,12 @@ async def main():
                     exception = polling_task.exception()
                     if exception:
                         logger.error('Polling завершился с ошибкой', error=exception)
+                        shutdown_error, shutdown_source = exception, 'polling'
                         break
 
         except Exception as e:
             logger.error('Ошибка в основном цикле', error=e)
+            shutdown_error, shutdown_source = e, 'main_loop'
 
     except Exception as e:
         logger.error('❌ Критическая ошибка при запуске', error=e)
@@ -923,6 +939,20 @@ async def main():
             timeline.log_summary()
             summary_logged = True
         logger.info('🛑 Начинается корректное завершение работы...')
+
+        # Первым делом, пока сессия бота жива: остальное завершение может не уложиться
+        # в отведённые Docker'ом ~10 секунд, и сообщение не ушло бы вовсе.
+        if started_at is not None and 'bot' in locals():
+            try:
+                from app.services.startup_notification_service import ShutdownReason, send_shutdown_notification
+
+                reason = ShutdownReason(signum=killer.signum, error=shutdown_error, source=shutdown_source)
+                await asyncio.wait_for(
+                    send_shutdown_notification(bot, reason, started_at=started_at),
+                    timeout=SHUTDOWN_NOTIFICATION_TIMEOUT_SECONDS,
+                )
+            except Exception as shutdown_notify_error:
+                logger.warning('Не удалось отправить уведомление об остановке', error=shutdown_notify_error)
 
         logger.info('ℹ️ Остановка сервиса автопроверки пополнений...')
         try:

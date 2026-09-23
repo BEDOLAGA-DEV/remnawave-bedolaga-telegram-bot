@@ -241,7 +241,7 @@ class ContestRotationService:
         try:
             return ZoneInfo(tz_name)
         except Exception:
-            logger.warning('Не удалось загрузить TZ , используем UTC', tz_name=tz_name)
+            logger.warning('Не удалось загрузить часовой пояс — используем UTC', tz_name=tz_name)
             return ZoneInfo('UTC')
 
     def _build_payload_for_template(self, tpl: ContestTemplate) -> dict:

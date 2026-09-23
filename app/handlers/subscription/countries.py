@@ -324,7 +324,7 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
 
     if added_names:
         logger.info(
-            'Стоимость новых серверов: ₽/мес × дн./30 = ₽ (скидка ₽)',
+            'Стоимость новых серверов',
             cost_per_month=cost_per_month / 100,
             charged_days=charged_days,
             total_cost=total_cost / 100,

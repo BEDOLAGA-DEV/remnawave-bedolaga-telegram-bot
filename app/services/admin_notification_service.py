@@ -32,7 +32,10 @@ from app.database.models import (
     Subscription,
     Transaction,
     User,
+    WithdrawalRequest,
+    WithdrawalRequestStatus,
 )
+from app.keyboards.group_callbacks import strip_group_unsafe_buttons
 from app.utils.formatters import format_username_link
 from app.utils.message_patch import caption_exceeds_telegram_limit
 from app.utils.rich_admin import classic_admin_html_to_rich, try_send_rich_admin_message
@@ -58,6 +61,18 @@ _BOT_TOKEN_RE: re.Pattern[str] = re.compile(
 def _redact_telegram_secrets(text: str) -> str:
     """Replace Telegram bot tokens in an arbitrary string with a placeholder."""
     return _BOT_TOKEN_RE.sub('bot[REDACTED]', text)
+
+
+def _format_waiting(waited_minutes: int) -> str:
+    """Сколько заявка ждёт решения: «3 д 4 ч», «2 ч 5 мин», «15 мин»."""
+    total = max(0, int(waited_minutes))
+    days, rest = divmod(total, 24 * 60)
+    hours, minutes = divmod(rest, 60)
+    if days:
+        return f'{days} д {hours} ч' if hours else f'{days} д'
+    if hours:
+        return f'{hours} ч {minutes} мин' if minutes else f'{hours} ч'
+    return f'{minutes} мин'
 
 
 class NotificationCategory(StrEnum):
@@ -1500,6 +1515,7 @@ class AdminNotificationService:
         reply_markup: types.InlineKeyboardMarkup | None = None,
         *,
         category: NotificationCategory | None = None,
+        thread_id: int | None = None,
     ) -> bool:
         if not self._is_enabled():
             return False
@@ -1509,7 +1525,21 @@ class AdminNotificationService:
             logger.debug('Уведомление подавлено (категория отключена)', category=category.value)
             return False
 
-        thread_id = self._resolve_topic_id(category)
+        # Явный thread_id (например, топик заявок на вывод) важнее топика категории
+        if thread_id is None:
+            thread_id = self._resolve_topic_id(category)
+
+        # В групповом админ-чате работают только разрешённые callback-кнопки
+        # (фильтр чатов глушит остальные): такие выкидываем здесь, а не рисуем
+        # мёртвыми. URL-кнопки и разрешённые действия остаются.
+        if reply_markup is not None and self.resolve_recipient_role() == 'group':
+            reply_markup, dropped = strip_group_unsafe_buttons(reply_markup)
+            if dropped:
+                logger.warning(
+                    'Кнопки не работают в групповом админ-чате — убраны из уведомления',
+                    chat_id=self.chat_id,
+                    dropped=dropped,
+                )
 
         # Rich-вид (Bot API 10.1): заголовок, разделители, footer с tg-time.
         # При недоступности/ошибке молча продолжаем классическим путём ниже
@@ -2264,8 +2294,14 @@ class AdminNotificationService:
         user: User,
         amount_kopeks: int,
         payment_details: str | None = None,
+        *,
+        request_id: int | None = None,
     ) -> bool:
-        """Уведомление о запросе на вывод средств."""
+        """Уведомление о запросе на вывод средств.
+
+        С ``request_id`` к уведомлению прикладываются кнопки «Одобрить»/«Отклонить»
+        по роли получателя — как у заявки, поданной из бота.
+        """
         if not self._is_enabled():
             return False
 
@@ -2304,10 +2340,84 @@ class AdminNotificationService:
                 ]
             )
 
-            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.PARTNERS)
+            reply_markup = None
+            if request_id is not None:
+                from app.keyboards.withdrawal import get_withdrawal_request_keyboard
+
+                reply_markup = get_withdrawal_request_keyboard(
+                    request_id,
+                    WithdrawalRequestStatus.PENDING.value,
+                    user_db_id=getattr(user, 'id', None),
+                    role=self.resolve_recipient_role(),
+                )
+
+            return await self._send_message(
+                '\n'.join(message_lines), reply_markup=reply_markup, category=NotificationCategory.PARTNERS
+            )
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о запросе на вывод', error=e)
+            return False
+
+    async def send_withdrawal_pending_reminder(self, request: WithdrawalRequest, waited_minutes: int) -> bool:
+        """Напоминание о заявке на вывод, которая ждёт решения дольше лимита.
+
+        Аналог SLA-напоминания по тикетам. Уходит в топик заявок на вывод
+        (REFERRAL_WITHDRAWAL_NOTIFICATIONS_TOPIC_ID), а без него — по категории
+        PARTNERS, то есть туда же, куда пришло исходное уведомление о заявке.
+        Кнопки — та же клавиатура, что у исходного уведомления, по роли получателя:
+        решить заявку можно прямо отсюда.
+        """
+        if not self._is_enabled():
+            return False
+
+        try:
+            from app.keyboards.withdrawal import get_withdrawal_request_keyboard
+
+            user = getattr(request, 'user', None)
+            user_display = self._get_user_display(user) if user else 'Unknown'
+            user_id_display = self._get_user_identifier_display(user) if user else '—'
+            username = getattr(user, 'username', None) if user else None
+
+            message_lines = [
+                '⏰ <b>Заявка на вывод ждёт решения</b>',
+                '',
+                f'🆔 <b>Заявка:</b> #{request.id}',
+                f'👤 <b>Пользователь:</b> {user_display} ({user_id_display})',
+            ]
+            if username:
+                message_lines.append(f'📱 <b>Username:</b> {format_username_link(username)}')
+            message_lines.extend(
+                [
+                    f'💵 <b>Сумма:</b> {settings.format_price(request.amount_kopeks)}',
+                    f'⏱️ <b>Ожидает решения:</b> {_format_waiting(waited_minutes)}',
+                ]
+            )
+
+            # Та же клавиатура, что у исходного уведомления. Собранная вручную вела на
+            # admin_user_<telegram_id> — у такого callback обработчика нет, — рисовала
+            # профиль в групповом чате и давала модератору кнопки, которые ответят
+            # «нет доступа».
+            keyboard = get_withdrawal_request_keyboard(
+                request.id,
+                WithdrawalRequestStatus.PENDING.value,
+                user_db_id=getattr(request, 'user_id', None) or getattr(user, 'id', None),
+                role=self.resolve_recipient_role(),
+            )
+
+            topic_id = getattr(settings, 'REFERRAL_WITHDRAWAL_NOTIFICATIONS_TOPIC_ID', None) or None
+            return await self._send_message(
+                '\n'.join(message_lines),
+                reply_markup=keyboard,
+                category=NotificationCategory.PARTNERS,
+                thread_id=topic_id,
+            )
+        except Exception as e:
+            logger.error(
+                'Ошибка отправки напоминания о заявке на вывод',
+                request_id=getattr(request, 'id', None),
+                error=e,
+            )
             return False
 
     async def send_bulk_ban_notification(

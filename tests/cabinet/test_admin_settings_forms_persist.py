@@ -84,6 +84,29 @@ class TestPartnerSettings:
         response = await get_partner_settings(admin=ADMIN)
         assert response.env_locked == ['withdrawal_enabled']
 
+    @pytest.mark.asyncio
+    async def test_withdrawal_reminder_fields_land_in_db_and_apply(self, monkeypatch):
+        """Напоминания о заявках на вывод настраиваются той же формой, что и сам вывод."""
+        from app.cabinet.routes.admin_partners import PartnerSettingsUpdateRequest, update_partner_settings
+
+        monkeypatch.setattr(settings, 'REFERRAL_WITHDRAWAL_REMINDER_ENABLED', False)
+        monkeypatch.setattr(settings, 'REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES', 30)
+        async with memory_session(monkeypatch, TABLES) as db:
+            response = await update_partner_settings(
+                request=PartnerSettingsUpdateRequest(
+                    withdrawal_reminder_enabled=True, withdrawal_reminder_cooldown_minutes=45
+                ),
+                admin=ADMIN,
+                db=db,
+            )
+            assert await _stored(db, 'REFERRAL_WITHDRAWAL_REMINDER_ENABLED') == 'true'
+            assert await _stored(db, 'REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES') == '45'
+
+        assert settings.REFERRAL_WITHDRAWAL_REMINDER_ENABLED is True
+        assert settings.REFERRAL_WITHDRAWAL_REMINDER_COOLDOWN_MINUTES == 45
+        assert response.withdrawal_reminder_enabled is True
+        assert response.withdrawal_reminder_cooldown_minutes == 45
+
 
 class TestTicketSettings:
     @pytest.mark.asyncio

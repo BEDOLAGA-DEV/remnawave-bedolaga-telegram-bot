@@ -81,6 +81,7 @@ async def create_withdrawal(
                     user=user,
                     amount_kopeks=request.amount_kopeks,
                     payment_details=request.payment_details,
+                    request_id=withdrawal.id,
                 )
             finally:
                 await bot.session.close()

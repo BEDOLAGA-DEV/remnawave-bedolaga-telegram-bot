@@ -206,6 +206,8 @@ class EmailFiltersResponse(BaseModel):
 
     filters: list[EmailFilterItem]
     total_with_email: int
+    # Основная промогруппа человека (users.promo_group_id); ключ promo_group_{id}.
+    promo_group_filters: list[EmailFilterItem] = []
 
 
 # ============ Combined Broadcast ============

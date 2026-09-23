@@ -46,7 +46,7 @@ def _ensure_timezone(tz_name: str) -> ZoneInfo:
     try:
         return ZoneInfo(tz_name)
     except Exception:
-        logger.warning('Не удалось загрузить TZ , используем UTC', tz_name=tz_name)
+        logger.warning('Не удалось загрузить часовой пояс — используем UTC', tz_name=tz_name)
         return ZoneInfo('UTC')
 
 

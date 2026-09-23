@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.config import settings
+from app.database.constants import ALIVE_SUBSCRIPTION_STATUSES as _ALIVE_SUBSCRIPTION_STATUSES
 from app.database.crud.notification import clear_notifications
 from app.database.models import (
     Subscription,
@@ -29,15 +30,9 @@ from app.utils.timezone import format_local_datetime, local_day_start
 
 logger = structlog.get_logger(__name__)
 
-# Статусы, при которых подписка считается «живой» (индекс uq_subscriptions_user_tariff_active
-# защищает именно эти статусы). Используется в нескольких местах модуля.
-ALIVE_SUBSCRIPTION_STATUSES: frozenset[str] = frozenset(
-    {
-        SubscriptionStatus.ACTIVE.value,
-        SubscriptionStatus.TRIAL.value,
-        SubscriptionStatus.LIMITED.value,
-    }
-)
+# Статусы «живой» подписки — в app.database.constants; имя здесь оставлено для
+# существующих импортов.
+ALIVE_SUBSCRIPTION_STATUSES = _ALIVE_SUBSCRIPTION_STATUSES
 
 # Кортеж для SQLAlchemy .in_() — вычисляется один раз, не аллоцируется при каждом вызове.
 _ALIVE_SUBSCRIPTION_STATUSES_TUPLE: tuple[str, ...] = tuple(ALIVE_SUBSCRIPTION_STATUSES)
@@ -1146,6 +1141,7 @@ async def extend_subscription(
     device_limit: int | None = None,
     connected_squads: list[str] | None = None,
     convert_trial: bool = True,
+    reset_used_traffic: bool | None = None,
     commit: bool = True,
 ) -> Subscription:
     """Продлевает подписку на указанное количество дней.
@@ -1163,6 +1159,11 @@ async def extend_subscription(
             False для бесплатного релейбла/смены тарифа без оплаты, иначе триал
             превратится в фантомную платную подписку и попадёт в авто-продление
             (баг #629889).
+        reset_used_traffic: решение вызывающего, обнулять ли израсходованный
+            трафик при переданном ``traffic_limit_gb``. Вызывающий тем же решением
+            сбрасывает (или нет) счётчик в панели — иначе бот показывает расход 0,
+            а панель настоящий. ``None`` — прежнее правило: при смене тарифа по
+            ``RESET_TRAFFIC_ON_TARIFF_SWITCH``, при продлении всегда.
     """
     current_time = datetime.now(UTC)
 
@@ -1281,7 +1282,7 @@ async def extend_subscription(
         subscription.status = SubscriptionStatus.ACTIVE.value
         logger.info('🔄 Статус подписки изменён с trial на ACTIVE', subscription_id=subscription.id)
     elif days > 0 and subscription.status == SubscriptionStatus.PENDING.value:
-        logger.warning('⚠️ Попытка продлить PENDING подписку , дни', subscription_id=subscription.id, days=days)
+        logger.warning('⚠️ Попытка продлить PENDING подписку', subscription_id=subscription.id, days=days)
 
     # Обновляем параметры тарифа, если переданы
     if tariff_id is not None:
@@ -1303,8 +1304,12 @@ async def extend_subscription(
 
     if traffic_limit_gb is not None:
         old_traffic = subscription.traffic_limit_gb
-        # Сброс использованного трафика: при смене тарифа — по настройке, при продлении — всегда
-        if is_tariff_change:
+        # Сброс использованного трафика: при смене тарифа — по настройке, при продлении — всегда;
+        # вызывающий, который сам решает про панель, передаёт своё решение.
+        if reset_used_traffic is not None:
+            if reset_used_traffic:
+                subscription.traffic_used_gb = 0.0
+        elif is_tariff_change:
             if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
                 subscription.traffic_used_gb = 0.0
         else:
@@ -2398,7 +2403,7 @@ async def check_and_update_subscription_status(db: AsyncSession, subscription: S
     current_time = datetime.now(UTC)
 
     logger.info(
-        '🔍 Проверка статуса подписки , текущий статус дата окончания текущее время',
+        '🔍 Проверка статуса подписки',
         subscription_id=subscription.id,
         subscription_status=subscription.status,
         format_local_datetime=format_local_datetime(subscription.end_date),
@@ -2623,7 +2628,7 @@ async def create_pending_subscription(
         await db.refresh(existing_subscription)
 
         logger.info(
-            '♻️ Обновлена ожидающая подписка пользователя , ID метод оплаты',
+            '♻️ Обновлена ожидающая подписка',
             trial_label=trial_label,
             user_id=user_id,
             existing_subscription_id=existing_subscription.id,
@@ -2652,7 +2657,7 @@ async def create_pending_subscription(
     await db.refresh(subscription)
 
     logger.info(
-        '💳 Создана ожидающая подписка для пользователя , ID метод оплаты',
+        '💳 Создана ожидающая подписка',
         trial_label=trial_label,
         user_id=user_id,
         subscription_id=subscription.id,

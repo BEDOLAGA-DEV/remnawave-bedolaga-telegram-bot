@@ -301,6 +301,16 @@ async def _create_nalogo_receipt_for_purchase(
     if not settings.is_nalogo_enabled():
         return
 
+    # Чеки НПД формируются только для оплат через YooKassa — как и в основном потоке бота,
+    # где NaloGO вызывает исключительно адаптер YooKassa
+    if _resolve_base_payment_method(purchase.payment_method) != PaymentMethod.YOOKASSA.value:
+        logger.debug(
+            'Skipping NaloGO receipt: guest purchase paid not via YooKassa',
+            purchase_id=purchase.id,
+            payment_method=purchase.payment_method,
+        )
+        return
+
     # Без payment_id нет dedup-ключа в Redis — нельзя гарантировать идемпотентность
     if not purchase.payment_id:
         logger.warning(

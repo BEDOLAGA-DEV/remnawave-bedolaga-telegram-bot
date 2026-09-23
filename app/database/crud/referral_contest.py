@@ -850,7 +850,7 @@ async def sync_contest_events(
     await db.commit()
 
     logger.info(
-        'Синхронизация конкурса завершена: обновлено , пропущено , сумма коп.',
+        'Синхронизация конкурса завершена',
         contest_id=contest_id,
         stats=stats['updated'],
         stats_2=stats['skipped'],

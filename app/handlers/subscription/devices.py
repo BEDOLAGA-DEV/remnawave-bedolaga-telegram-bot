@@ -1585,7 +1585,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         period_label = f'{charged_days} дн.' if charged_days > 1 else '1 день'
 
     logger.info(
-        'Добавление устройств: ₽/мес × = ₽ (скидка ₽)',
+        'Добавление устройств',
         devices_count=devices_count,
         discounted_per_month=discounted_per_month / 100,
         period_label=period_label,

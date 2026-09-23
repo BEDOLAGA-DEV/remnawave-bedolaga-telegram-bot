@@ -126,7 +126,7 @@ async def update_yookassa_payment_status(
 
     if payment:
         logger.info(
-            'Обновлен статус платежа YooKassa , paid',
+            'Обновлён статус платежа YooKassa',
             yookassa_payment_id=yookassa_payment_id,
             status=status,
             is_paid=is_paid,

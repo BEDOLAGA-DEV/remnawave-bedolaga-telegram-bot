@@ -196,6 +196,7 @@ def _overlay_to_json(value: GracePanelOverlay) -> dict[str, Any]:
         'traffic_limit_bytes': value.traffic_limit_bytes,
         'squad_uuids': list(value.squad_uuids),
         'external_squad_uuid': value.external_squad_uuid,
+        'reset_used_traffic': value.reset_used_traffic,
     }
 
 
@@ -210,6 +211,8 @@ def _overlay_from_json(raw: Any) -> GracePanelOverlay:
         traffic_limit_bytes=_integer(data, 'traffic_limit_bytes'),
         squad_uuids=_string_tuple(data.get('squad_uuids')),
         external_squad_uuid=_optional_string(data.get('external_squad_uuid')),
+        # Сессии, записанные до появления настройки, счётчик не обнуляли.
+        reset_used_traffic=bool(data.get('reset_used_traffic', False)),
     )
 
 

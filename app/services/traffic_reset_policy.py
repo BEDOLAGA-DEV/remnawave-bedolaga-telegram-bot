@@ -31,6 +31,7 @@ from app.config import settings
 from app.database.crud.user import get_user_by_id
 from app.external.remnawave_api import TrafficLimitStrategy
 from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
+from app.services.tariff_switch_policy import should_reset_used_traffic
 
 
 if TYPE_CHECKING:
@@ -61,6 +62,30 @@ def should_reset_traffic_on_daily_charge(tariff: object | None) -> bool:
         return False
 
     return get_traffic_reset_strategy(tariff) is not TrafficLimitStrategy.DAY
+
+
+def should_reset_traffic_on_tariff_purchase(*, is_tariff_change: bool, was_trial: bool, paid_kopeks: int) -> bool:
+    """Обнулять ли израсходованный трафик при покупке тарифа из кабинета.
+
+    Через ``POST /cabinet/subscription/purchase-tariff`` идут три разных события,
+    и у каждого своё правило — то же, что у их отдельных путей:
+
+    * оплата после триала — платная квота новая всегда (в боте
+      ``RESET_TRAFFIC_ON_PAYMENT or was_trial``): иначе расход триала переехал бы
+      в оплаченную подписку;
+    * смена тарифа — общее правило переключений ``should_reset_used_traffic``:
+      выключатель смены тарифа и только если смена оплачена (бесплатный прыжок
+      между тарифами иначе выдавал бы новую квоту каждый раз);
+    * продление того же тарифа — ``RESET_TRAFFIC_ON_PAYMENT``, как ``/renew``,
+      продление в боте, автопокупка и рекурренты.
+
+    Раньше роут сбрасывал всегда, литералом (GitHub #3227).
+    """
+    if was_trial:
+        return True
+    if is_tariff_change:
+        return should_reset_used_traffic(paid_kopeks)
+    return settings.RESET_TRAFFIC_ON_PAYMENT
 
 
 async def lift_panel_traffic_limit(

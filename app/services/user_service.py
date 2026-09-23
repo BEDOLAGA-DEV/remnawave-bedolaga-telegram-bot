@@ -654,7 +654,7 @@ class UserService:
             await db.commit()
 
             logger.info(
-                'Админ обновил рефералов пользователя : добавлено , удалено , всего',
+                'Админ обновил рефералов пользователя',
                 admin_id=admin_id,
                 user_id=user_id,
                 to_add_count=len(to_add),

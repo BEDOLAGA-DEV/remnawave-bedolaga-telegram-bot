@@ -1,13 +1,13 @@
-"""Security: linking a social login (Google/Yandex/Discord/VK) must never
-silently move or merge accounts.
+"""Привязка соцсети (Google/Yandex/Discord/VK), которая уже держит другой аккаунт.
 
-Previously, completing OAuth for a provider identity that was already attached
-to another account returned ``merge_required`` and walked the user into an
-account MERGE — a surprising, too-easy way to absorb/relink accounts. It must
-instead be refused: a social identity belongs to exactly ONE account, and the
-owner has to unlink it from the other account first. Linking a *different*
-identity over an already-occupied slot must likewise be refused rather than
-silently overwriting (orphaning) the previous login.
+#3263: раньше это был отказ 409 «сначала отвяжите соцсеть от того аккаунта», а
+отвязать её там нельзя — она единственный способ входа («Cannot unlink last
+authentication method»). Тупик: люди заводили дубли и платили повторно.
+
+Теперь конфликт предлагает слияние, как у Telegram: токен ведёт на страницу
+/merge с явным подтверждением. Сама привязка при этом не происходит и ничего не
+коммитится. Привязка ДРУГОЙ личности поверх уже занятого слота по-прежнему
+отклоняется — слияние не перенесло бы её, и вход потерялся бы.
 """
 
 from __future__ import annotations
@@ -32,8 +32,15 @@ def _provider_returning(provider_id: str) -> MagicMock:
     return prov
 
 
-async def _run(user: SimpleNamespace, provider_id: str, existing_owner: SimpleNamespace | None):
+async def _run(
+    user: SimpleNamespace,
+    provider_id: str,
+    existing_owner: SimpleNamespace | None,
+    *,
+    expect_error: bool = True,
+):
     db = AsyncMock()
+    create_token = AsyncMock(return_value='m' * 40)
     with ExitStack() as s:
         s.enter_context(
             patch(
@@ -47,34 +54,47 @@ async def _run(user: SimpleNamespace, provider_id: str, existing_owner: SimpleNa
                 AsyncMock(return_value=existing_owner),
             )
         )
+        s.enter_context(patch('app.cabinet.routes.account_linking.create_merge_token', create_token))
         set_id = AsyncMock()
         s.enter_context(patch('app.cabinet.routes.account_linking.set_user_oauth_provider_id', set_id))
+        kwargs = {
+            'db': db,
+            'user': user,
+            'provider': 'google',
+            'code': 'code',
+            'state': 'state',
+            'state_data': {},
+            'device_id': None,
+            'log_context': 'test',
+        }
+        if not expect_error:
+            return await _exchange_and_link_oauth(**kwargs), set_id, db, create_token
         with pytest.raises(HTTPException) as exc:
-            await _exchange_and_link_oauth(
-                db=db,
-                user=user,
-                provider='google',
-                code='code',
-                state='state',
-                state_data={},
-                device_id=None,
-                log_context='test',
-            )
-        return exc.value, set_id, db
+            await _exchange_and_link_oauth(**kwargs)
+        return exc.value, set_id, db, create_token
 
 
 @pytest.mark.asyncio
-async def test_relink_to_another_account_is_refused_not_merged() -> None:
-    """Provider identity already on account #2 -> 409, no link, no merge token."""
+async def test_identity_on_another_account_offers_merge_instead_of_dead_end() -> None:
+    """Соцсеть на аккаунте #2 -> токен слияния #1 <- #2; сама привязка не делается."""
     user = SimpleNamespace(id=1, google_id=None)
     other_account = SimpleNamespace(id=2, google_id='G2')
 
-    err, set_id, db = await _run(user, provider_id='G2', existing_owner=other_account)
+    result, set_id, db, create_token = await _run(
+        user, provider_id='G2', existing_owner=other_account, expect_error=False
+    )
 
-    assert err.status_code == status.HTTP_409_CONFLICT
-    assert 'different account' in str(err.detail).lower()
-    set_id.assert_not_awaited()  # never linked
-    db.commit.assert_not_awaited()  # never merged / committed
+    assert result.success is False
+    assert result.merge_required is True
+    assert result.merge_token == 'm' * 40
+    create_token.assert_awaited_once_with(
+        primary_user_id=1,
+        secondary_user_id=2,
+        provider='google',
+        provider_id='G2',
+    )
+    set_id.assert_not_awaited()  # переносит только подтверждённое слияние
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -82,12 +102,13 @@ async def test_relinking_over_occupied_slot_is_refused_not_overwritten() -> None
     """User already has a *different* Google linked -> 409, old one preserved."""
     user = SimpleNamespace(id=1, google_id='G1')
 
-    err, set_id, db = await _run(user, provider_id='G2', existing_owner=None)
+    err, set_id, db, create_token = await _run(user, provider_id='G2', existing_owner=None)
 
     assert err.status_code == status.HTTP_409_CONFLICT
     assert 'already linked to your account' in str(err.detail).lower()
     set_id.assert_not_awaited()  # old G1 not overwritten
     db.commit.assert_not_awaited()
+    create_token.assert_not_awaited()
 
 
 @pytest.mark.asyncio

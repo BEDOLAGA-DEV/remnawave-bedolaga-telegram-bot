@@ -1454,6 +1454,8 @@
   "PROMO_GROUP_DISCOUNT_TRAFFIC": "📊 Трафик: {percent}%",
   "PROMO_GROUP_PERIOD_DISCOUNTS_HEADER": "⏳ Скидки за длительный период:",
   "PROMO_GROUP_PERIOD_DISCOUNT_ITEM": "{period} — {percent}%",
+  "PROMO_GROUP_AUTO_ASSIGNED": "🏆 <b>Новая промогруппа: {group_name}</b>\n\nВы потратили у нас {total_spent} — спасибо! Теперь для вас постоянно действуют скидки:\n\n{discounts}",
+  "PROMO_GROUP_AUTO_ASSIGNED_NO_DISCOUNTS": "🏆 <b>Новая промогруппа: {group_name}</b>\n\nВы потратили у нас {total_spent} — спасибо! Вас перевели в новую промогруппу.",
   "PROMO_OFFER_CLOSE": "❌ Закрыть",
   "PUBLIC_OFFER_EMPTY_ALERT": "Публичная оферта ещё не заполнена.",
   "PUBLIC_OFFER_HEADER": "📄 <b>Публичная оферта</b>",

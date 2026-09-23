@@ -958,19 +958,17 @@ async def close_ticket_notification(callback: types.CallbackQuery, db_user: User
     await callback.answer(texts.t('NOTIFICATION_CLOSED', 'Уведомление закрыто.'))
 
 
-def _build_ticket_notification_keyboard(service: AdminNotificationService, ticket: Ticket, user: User | None):
-    """Собирает клавиатуру действий для уведомления о тикете по роли получателя.
+def build_ticket_card_keyboard(ticket: Ticket, user: User | None, *, role: str):
+    """Клавиатура карточки тикета по роли получателя ('admin' / 'moderator' / 'group').
 
-    Возвращает None только для роли 'none' (посторонний в личке / строковый
-    chat_id). Для группового/супергруппа админ-чата ('group') показываем урезанный
-    набор без FSM-кнопок — «Ответить»/«Блок по времени» в общем чате не работают
-    из-за privacy mode бота, остаются надёжные URL/callback-кнопки.
+    Для группового/супергруппа админ-чата ('group') — урезанный набор без
+    FSM-кнопок: «Ответить»/«Блок по времени» в общем чате не работают из-за
+    privacy mode бота, остаются надёжные URL/callback-кнопки. Той же клавиатурой
+    карточка перерисовывается после действий в группе (закрыть, блок, разблок) —
+    иначе туда попадал экран личной админки с мёртвыми кнопками и «⬅️ Назад».
     """
     from app.config import settings
 
-    role = service.resolve_recipient_role()
-    if role == 'none':
-        return None
     # В cabinet-режиме добавляем кнопку «открыть тикет в кабинете»: web_app в личке,
     # t.me Mini App диплинк в группе (где web_app недоступен). None — если не
     # cabinet-режим / кабинет не настроен / в группе нет зарегистрированного Mini App.
@@ -991,6 +989,15 @@ def _build_ticket_notification_keyboard(service: AdminNotificationService, ticke
         cabinet_button=cabinet_button,
         language=settings.DEFAULT_LANGUAGE,
     )
+
+
+def _build_ticket_notification_keyboard(service: AdminNotificationService, ticket: Ticket, user: User | None):
+    """Клавиатура уведомления о тикете; None только для роли 'none'
+    (посторонний в личке / строковый chat_id)."""
+    role = service.resolve_recipient_role()
+    if role == 'none':
+        return None
+    return build_ticket_card_keyboard(ticket, user, role=role)
 
 
 async def notify_admins_about_new_ticket(ticket: Ticket, db: AsyncSession):

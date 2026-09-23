@@ -728,7 +728,7 @@ class PromoCodeService:
 
             initiator = 'администратором' if admin_initiated else 'пользователем'
             logger.info(
-                'Промокод (скидка %) деактивирован для пользователя',
+                'Промокод деактивирован',
                 deactivated_code=deactivated_code,
                 current_discount=current_discount,
                 initiator=initiator,

@@ -484,7 +484,7 @@ class ReferralContestService:
         try:
             return ZoneInfo(tz_name)
         except Exception:
-            logger.warning('Не удалось загрузить TZ , используем UTC', tz_name=tz_name)
+            logger.warning('Не удалось загрузить часовой пояс — используем UTC', tz_name=tz_name)
             return ZoneInfo('UTC')
 
     def _parse_times(self, times_str: str | None) -> list[time]:
@@ -549,7 +549,7 @@ class ReferralContestService:
 
                 if user_created_at < contest_start or user_created_at > contest_end:
                     logger.debug(
-                        'Реферал зарегистрирован вне периода конкурса (создан , период -)',
+                        'Реферал зарегистрирован вне периода конкурса',
                         user_id=user.id,
                         contest_id=contest.id,
                         user_created_at=user_created_at,
@@ -568,7 +568,7 @@ class ReferralContestService:
                 )
                 if event:
                     logger.info(
-                        'Записан зачёт конкурса : реферер , реферал',
+                        'Записан зачёт конкурса',
                         contest_id=contest.id,
                         referred_by_id=user.referred_by_id,
                         user_id=user.id,
@@ -609,7 +609,7 @@ class ReferralContestService:
 
                 if user_created_at < contest_start or user_created_at > contest_end:
                     logger.debug(
-                        'Реферал зарегистрирован вне периода конкурса (создан , период -)',
+                        'Реферал зарегистрирован вне периода конкурса',
                         user_id=user.id,
                         contest_id=contest.id,
                         user_created_at=user_created_at,
@@ -628,7 +628,7 @@ class ReferralContestService:
                 )
                 if event:
                     logger.info(
-                        'Записан зачёт конкурса регистрации : реферер , реферал',
+                        'Записан зачёт конкурса регистрации',
                         contest_id=contest.id,
                         referred_by_id=user.referred_by_id,
                         user_id=user.id,
@@ -652,7 +652,7 @@ class ReferralContestService:
             stats = await sync_contest_events(db, contest_id)
             if 'error' not in stats:
                 logger.info(
-                    'Синхронизация конкурса : создано , обновлено , пропущено',
+                    'Синхронизация конкурса завершена',
                     contest_id=contest_id,
                     stats=stats.get('created', 0),
                     stats_2=stats.get('updated', 0),

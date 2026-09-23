@@ -1263,6 +1263,8 @@
   "PROMO_GROUP_DISCOUNT_TRAFFIC": "📊流量：{percent}%",
   "PROMO_GROUP_PERIOD_DISCOUNTS_HEADER": "⏳长期折扣：",
   "PROMO_GROUP_PERIOD_DISCOUNT_ITEM": "{period}—{percent}%",
+  "PROMO_GROUP_AUTO_ASSIGNED": "🏆 <b>新的促销组：{group_name}</b>\n\n您在我们这里已消费 {total_spent}，感谢支持！以下折扣现在对您长期有效：\n\n{discounts}",
+  "PROMO_GROUP_AUTO_ASSIGNED_NO_DISCOUNTS": "🏆 <b>新的促销组：{group_name}</b>\n\n您在我们这里已消费 {total_spent}，感谢支持！您已被转入新的促销组。",
   "PROMO_OFFER_CLOSE": "❌关闭",
   "PUBLIC_OFFER_EMPTY_ALERT": "公开服务条款尚未填写。",
   "PUBLIC_OFFER_HEADER": "📄<b>公开服务条款</b>",

@@ -27,6 +27,21 @@ def _normalize_period_discounts(period_discounts: dict[int, int] | None) -> dict
 logger = structlog.get_logger(__name__)
 
 
+def _schedule_recalculation(reason: str) -> None:
+    """Смена состава или порогов групп — повод пересчитать людей по тратам.
+
+    Автоназначение иначе срабатывает только при оплате, и после правки групп
+    люди висят в базовой до следующего платежа. Импорт ленивый: сервис
+    пересчёта сам зависит от этого модуля.
+    """
+    from app.services.promo_group_recalculation import promo_group_recalculation
+
+    try:
+        promo_group_recalculation.schedule(reason)
+    except Exception as exc:
+        logger.error('Не удалось поставить пересчёт промогрупп', reason=reason, exc=exc)
+
+
 async def get_promo_groups_with_counts(
     db: AsyncSession,
     *,
@@ -137,6 +152,9 @@ async def create_promo_group(
         'on' if promo_group.apply_discounts_to_addons else 'off',
     )
 
+    if promo_group.auto_assign_total_spent_kopeks:
+        _schedule_recalculation(f'создана группа «{promo_group.name}» с порогом')
+
     return promo_group
 
 
@@ -154,6 +172,8 @@ async def update_promo_group(
     apply_discounts_to_addons: bool | None = None,
     is_default: bool | None = None,
 ) -> PromoGroup:
+    previous_threshold = group.auto_assign_total_spent_kopeks or None
+
     if name is not None:
         group.name = name.strip()
     if priority is not None:
@@ -195,6 +215,10 @@ async def update_promo_group(
     await db.refresh(group)
 
     logger.info('Обновлена промогруппа', group_name=group.name, group_id=group.id)
+
+    if (group.auto_assign_total_spent_kopeks or None) != previous_threshold:
+        _schedule_recalculation(f'изменён порог группы «{group.name}»')
+
     return group
 
 
@@ -238,15 +262,23 @@ async def delete_promo_group(db: AsyncSession, group: PromoGroup) -> bool:
                 )
             )
 
+    group_name = group.name
+    group_id = group.id
     await db.delete(group)
     await db.commit()
 
     logger.info(
         'Промогруппа удалена, пользователи переведены в дефолтную',
-        group_name=group.name,
-        group_id=group.id,
+        group_name=group_name,
+        group_id=group_id,
         default_group_name=default_group.name,
     )
+
+    # Люди из удалённой группы теперь в базовой; если пороги ещё есть,
+    # им положена группа по тратам — не ждать следующей оплаты.
+    if await has_auto_assign_promo_groups(db):
+        _schedule_recalculation(f'удалена группа «{group_name}»')
+
     return True
 
 

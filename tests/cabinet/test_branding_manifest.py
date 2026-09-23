@@ -35,6 +35,15 @@ def _write_logo(path: Path, size: tuple[int, int] = (40, 40), color: str = '#2ee
     Image.new('RGBA', size, color).save(path)
 
 
+def _write_glyph_logo(path: Path, size: tuple[int, int], color: str = '#2ee6a6') -> None:
+    """Знак на прозрачном фоне: по краям прозрачная кайма, цвет — только внутри."""
+    logo = Image.new('RGBA', size, (0, 0, 0, 0))
+    width, height = size
+    margin = max(1, min(width, height) // 20)
+    logo.paste(Image.new('RGBA', (width - 2 * margin, height - 2 * margin), color), (margin, margin))
+    logo.save(path)
+
+
 async def _manifest(values: dict[str, str | None], base: str = '/') -> dict:
     with patch('app.cabinet.routes.branding.get_setting_value', _settings(values)):
         response = await branding_routes.get_web_manifest(base=base, db=AsyncMock())
@@ -191,7 +200,7 @@ async def test_logo_icon_is_an_opaque_square_of_the_exact_size(
 ) -> None:
     # Прозрачные углы Android рисует белым — иконка непрозрачная, на фоне темы.
     logo = tmp_path / 'logo.png'
-    _write_logo(logo, size=(200, 100))
+    _write_glyph_logo(logo, size=(200, 100))
     monkeypatch.setattr(branding_routes, 'get_logo_path', lambda: logo)
     values = {branding_routes.THEME_COLORS_KEY: json.dumps({'darkBackground': '#102030'})}
 
@@ -202,11 +211,64 @@ async def test_logo_icon_is_an_opaque_square_of_the_exact_size(
     assert image.getpixel((size // 2, size // 2)) == (0x2E, 0xE6, 0xA6, 255), 'центр — логотип'
     # Широкий логотип вписан целиком (contain): у левого края по центру — логотип,
     # а у maskable он отступает к безопасной зоне и край остаётся фоном.
-    edge = image.getpixel((1, size // 2))
+    edge = image.getpixel((size // 10, size // 2))
     if maskable:
         assert edge == (0x10, 0x20, 0x30, 255)
     else:
         assert edge == (0x2E, 0xE6, 0xA6, 255)
+
+
+@pytest.mark.parametrize('size', app_icon.APP_ICON_SIZES)
+@pytest.mark.parametrize('maskable', [False, True])
+async def test_full_bleed_logo_fills_the_whole_tile_with_its_own_color(
+    tmp_path: Path, monkeypatch, size: int, maskable: bool
+) -> None:
+    """Логотип — сплошная плитка (красный квадрат). На фоне тёмной темы maskable-вариант
+    (содержимое в 80 %) выходил красным квадратом в чёрной рамке — на рабочем столе
+    Android у иконки «чёрные полоски по краям». Фон продолжает цвет краёв логотипа."""
+    logo = tmp_path / 'logo.png'
+    _write_logo(logo, size=(300, 300), color='#e53935')
+    monkeypatch.setattr(branding_routes, 'get_logo_path', lambda: logo)
+    values = {branding_routes.THEME_COLORS_KEY: json.dumps({'darkBackground': '#000000'})}
+
+    image = (await _icon(values, size, maskable=maskable)).convert('RGB')
+
+    red = (0xE5, 0x39, 0x35)
+    for point in ((0, 0), (size - 1, 0), (1, size // 2), (size // 2, 1), (size - 1, size - 1), (size // 2, size // 2)):
+        assert image.getpixel(point) == red, f'в точке {point} виден фон темы'
+
+
+async def test_full_bleed_logo_with_baked_rounded_corners_gets_its_color_in_the_corners(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Скругление, запечённое в PNG: углы прозрачные, остальной край — цвет логотипа."""
+    from PIL import ImageDraw
+
+    logo_image = Image.new('RGBA', (300, 300), (0, 0, 0, 0))
+    ImageDraw.Draw(logo_image).rounded_rectangle((0, 0, 299, 299), radius=60, fill='#e53935')
+    logo = tmp_path / 'logo.png'
+    logo_image.save(logo)
+    monkeypatch.setattr(branding_routes, 'get_logo_path', lambda: logo)
+    values = {branding_routes.THEME_COLORS_KEY: json.dumps({'darkBackground': '#000000'})}
+
+    image = (await _icon(values, 512, maskable=True)).convert('RGB')
+
+    assert image.getpixel((0, 0)) == (0xE5, 0x39, 0x35)
+    assert image.getpixel((60, 60)) == (0xE5, 0x39, 0x35), 'на месте запечённого скругления — фон темы'
+
+
+async def test_logo_with_a_varied_edge_keeps_the_theme_background(tmp_path: Path, monkeypatch) -> None:
+    """Фото или градиент до краёв: единого цвета нет — угадывать нельзя, остаётся фон темы."""
+    logo_image = Image.new('RGBA', (300, 300), '#e53935')
+    logo_image.paste(Image.new('RGBA', (150, 300), '#1e88e5'), (150, 0))
+    logo = tmp_path / 'logo.png'
+    logo_image.save(logo)
+    monkeypatch.setattr(branding_routes, 'get_logo_path', lambda: logo)
+    values = {branding_routes.THEME_COLORS_KEY: json.dumps({'darkBackground': '#102030'})}
+
+    image = (await _icon(values, 512, maskable=True)).convert('RGB')
+
+    assert image.getpixel((0, 0)) == (0x10, 0x20, 0x30)
 
 
 async def test_without_logo_icon_is_a_monogram_on_the_accent(monkeypatch) -> None:

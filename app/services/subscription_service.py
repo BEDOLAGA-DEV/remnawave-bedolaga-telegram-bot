@@ -744,6 +744,12 @@ class SubscriptionService:
         Только для действующих подписок: пересоздавать DISABLED-юзера ради
         истёкшей подписки не нужно — админ удалил его намеренно.
         """
+        # Сюда приходят после rollback: он экспирирует ORM-объекты, и первое же
+        # чтение поля упало бы с MissingGreenlet — пересоздание не начиналось вовсе.
+        await db.refresh(subscription)
+        if user is not None:
+            await db.refresh(user)
+
         is_actually_active = is_subscription_live(user, subscription)
         if not is_actually_active:
             logger.info(
@@ -758,6 +764,15 @@ class SubscriptionService:
             subscription_id=subscription.id,
             user_id=subscription.user_id,
         )
+        # Мультитариф: панель только что сказала, что аккаунта с этим id нет. Оставить
+        # его человеку — значит отдать мёртвый адрес следующей покупке
+        # (should_create_panel_account привязывает «свободный аккаунт человека»).
+        # В одиночном режиме users.remnawave_id перезапишет сам create-флоу.
+        dead_panel_id = subscription.remnawave_id
+        if settings.is_multi_tariff_enabled() and dead_panel_id:
+            subscription.remnawave_id = None
+            if user is not None and user.remnawave_id == dead_panel_id:
+                user.remnawave_id = None
         return await self.create_remnawave_user(
             db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
         )

@@ -7,8 +7,9 @@ points.
 
 The billing subscription always remains the source of truth.  Grace is a
 temporary overlay in Remnawave and is recorded as a separate session.  In
-particular, this service never resets used traffic and never extends the billing
-subscription itself.
+particular, this service never extends the billing subscription itself and by
+default never resets used traffic; the one opt-in exception is described in
+``should_reset_used_traffic``.
 """
 
 from __future__ import annotations
@@ -113,6 +114,7 @@ class GraceAccessPolicy:
     free_enabled: bool = False
     reconcile_batch_size: int = 200
     external_squad_uuid: str | None = None
+    reset_traffic_on_start: bool = False
 
     def __post_init__(self) -> None:
         if self.duration <= timedelta(0):
@@ -178,6 +180,8 @@ class GracePanelOverlay:
     traffic_limit_bytes: int
     squad_uuids: tuple[str, ...]
     external_squad_uuid: str | None = None
+    # Счётчик расхода обнуляется при выдаче, а лимит равен самой квоте grace.
+    reset_used_traffic: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,7 +354,13 @@ class GraceAccessService:
                 panel_snapshot,
                 used_traffic_bytes=billing.used_traffic_bytes,
             )
-        overlay = build_panel_overlay(panel_snapshot, reason, self._policy, now=now)
+        overlay = build_panel_overlay(
+            panel_snapshot,
+            reason,
+            self._policy,
+            now=now,
+            reset_used_traffic=should_reset_used_traffic(billing, panel_snapshot, reason, self._policy),
+        )
         pending_session = GraceAccessSession(
             id=str(uuid4()),
             subscription_id=billing.subscription_id,
@@ -574,6 +584,12 @@ class GraceAccessService:
             session.overlay,
             now=now,
         )
+        # Оверлей уже в панели, но обнуление счётчика после него не прошло:
+        # без повтора человек получил бы лимит в квоту при старом расходе, то
+        # есть ноль доступного трафика.
+        traffic_reset_is_pending = session.overlay.reset_used_traffic and (
+            current_panel.used_traffic_bytes >= session.overlay.traffic_limit_bytes
+        )
         if not overlay_is_already_applied and not panel_is_safe_pending_source(
             current_panel,
             session.panel_before,
@@ -604,7 +620,7 @@ class GraceAccessService:
                 last_error='Remnawave changed while grace was pending; overlay was not re-applied',
             )
 
-        if not overlay_is_already_applied:
+        if not overlay_is_already_applied or traffic_reset_is_pending:
             try:
                 await self._panel.apply_overlay(session.remnawave_id, session.overlay)
             except Exception as error:
@@ -977,22 +993,50 @@ def _resolve_grace_external_squad(configured: str | None, snapshot: GracePanelSn
     return value
 
 
+def should_reset_used_traffic(
+    billing: GraceBillingState,
+    snapshot: GracePanelSnapshot,
+    reason: GraceReason,
+    policy: GraceAccessPolicy,
+) -> bool:
+    """Обнулять ли счётчик расхода при выдаче grace (GRACE_ACCESS_RESET_TRAFFIC_ON_START).
+
+    Без обнуления лимит grace — «расход + квота», и панель с клиентом показывают
+    «64.76 из 65.76 GiB, 98%», хотя доступен ровно гигабайт. Обнуление делает
+    режим читаемым, но стирает расход, поэтому разрешено только там, где терять
+    нечего: истёкшая подписка с безлимитом и в биллинге, и в панели. По лимиту
+    трафика (LIMITED) обнулять нельзя никогда — обнулённый счётчик снова открыл бы
+    исчерпанную квоту тарифа, а сброс расхода там означает конец инцидента.
+    """
+    return (
+        policy.reset_traffic_on_start
+        and reason is GraceReason.EXPIRED
+        and billing.traffic_limit_bytes == 0
+        and snapshot.traffic_limit_bytes == 0
+    )
+
+
 def build_panel_overlay(
     snapshot: GracePanelSnapshot,
     reason: GraceReason,
     policy: GraceAccessPolicy,
     *,
     now: datetime,
+    reset_used_traffic: bool = False,
 ) -> GracePanelOverlay:
-    """Calculate temporary panel values without resetting consumed traffic."""
+    """Calculate temporary panel values; consumed traffic is reset only on request."""
     if not snapshot.traffic_is_known:
         raise ValueError(f'Remnawave did not return traffic usage for a {reason.value.upper()} user')
 
     # Remnawave compares its cumulative usage counter with trafficLimitBytes.
     # Keeping the counter and adding the configured grant therefore gives the
     # user exactly ``traffic_bytes`` of usable grace traffic, regardless of the
-    # old remaining limit or an old unlimited (zero) limit.
-    temporary_limit = snapshot.used_traffic_bytes + policy.traffic_bytes
+    # old remaining limit or an old unlimited (zero) limit. When the counter is
+    # reset on start (see should_reset_used_traffic) the grant itself is the limit.
+    if reset_used_traffic:
+        temporary_limit = policy.traffic_bytes
+    else:
+        temporary_limit = snapshot.used_traffic_bytes + policy.traffic_bytes
 
     # Внешний сквад даёт доступ независимо от внутреннего telegram-only сквада,
     # поэтому grace по умолчанию его отцепляет: иначе ограничение обходится мимо
@@ -1006,6 +1050,7 @@ def build_panel_overlay(
         traffic_limit_bytes=temporary_limit,
         squad_uuids=(policy.squad_for(reason),),
         external_squad_uuid=external_squad_uuid,
+        reset_used_traffic=reset_used_traffic,
     )
 
 
@@ -1144,6 +1189,40 @@ def billing_has_recovered(session: GraceAccessSession, current: GraceBillingStat
     if before.traffic_limit_bytes > 0 and current.traffic_limit_bytes > before.traffic_limit_bytes:
         return True
     return session.reason is GraceReason.LIMITED and current.used_traffic_bytes < before.used_traffic_bytes
+
+
+def traffic_reset_ended_limited_incident(
+    session: GraceAccessSession,
+    current: GraceBillingState,
+    *,
+    now: datetime,
+) -> bool:
+    """Трафик сбросился, пока шёл грейс по лимиту, — инцидент закончился сам.
+
+    Пока грейс открыт, статус из панели в бота не переносится (он принадлежит
+    грейсу), а ``user.enabled`` гасится как эхо оверлея. Расход при этом
+    синхронизируется. Итог: панель после периодического сброса снова ACTIVE, в
+    боте расход ноль, а статус так и остался LIMITED — ``billing_has_recovered``
+    требует active и не срабатывает никогда, человек сидит в сквад грейса с
+    оплаченной подпиской. Признак сброса — расход упал ниже зафиксированного при
+    выдаче и ниже лимита; сам по себе расход в панели только растёт.
+    """
+    if session.reason is not GraceReason.LIMITED:
+        return False
+    if _normalize_status(current.status) != 'limited':
+        return False
+    if _normalize_status(current.user_status) != 'active':
+        return False
+    if current.end_at is None or _as_utc(current.end_at) <= _as_utc(now):
+        return False
+    if billing_echoes_overlay(session, current):
+        return False
+    before = session.billing_before
+    if current.traffic_limit_bytes != before.traffic_limit_bytes:
+        return False
+    if current.used_traffic_bytes >= before.used_traffic_bytes:
+        return False
+    return current.traffic_limit_bytes == 0 or current.used_traffic_bytes < current.traffic_limit_bytes
 
 
 def panel_matches_overlay(

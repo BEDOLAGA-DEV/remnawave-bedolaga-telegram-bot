@@ -235,6 +235,51 @@ async def test_recreated_account_replaces_the_stale_link():
     assert user.remnawave_id == 99
 
 
+@pytest.mark.asyncio
+async def test_dead_id_is_relinked_to_the_account_that_already_exists():
+    """Прошлая попытка завела аккаунт, но связь не записала: имя занято, и создание
+    падало бы на каждом проходе. Аккаунт находится по shortUuid — пишем в него."""
+    calls = []
+
+    async def update_user(**kwargs):
+        calls.append(kwargs['user_id'])
+        if kwargs['user_id'] == 42:
+            raise RemnaWaveAPIError('User not found', 404, {'errorCode': 'A063'})
+        return _panel_user(user_id=99)
+
+    api = _api(get_user_by_short_uuid=_panel_user(user_id=99))
+    api.update_user.side_effect = update_user
+    subscription = _sub(remnawave_id=42)
+    user = _user(remnawave_id=42)
+
+    result = await push_subscription(
+        api, user, subscription, db=_db(), multi_tariff=True, verify_recorded_id=False, now=NOW
+    )
+
+    assert result.action == 'updated'
+    assert calls == [42, 99]
+    api.create_user.assert_not_awaited()
+    assert subscription.remnawave_id == 99
+    assert user.remnawave_id == 99, 'мёртвый id остался человеку и достанется следующей покупке'
+
+
+@pytest.mark.asyncio
+async def test_recreated_account_clears_the_dead_id_from_the_user_in_multi_tariff():
+    api = _api()
+    api.update_user.side_effect = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A063'})
+    api.create_user.return_value = _panel_user(user_id=99)
+    subscription = _sub(remnawave_id=42)
+    user = _user(remnawave_id=42)
+
+    result = await push_subscription(
+        api, user, subscription, db=_db(), multi_tariff=True, verify_recorded_id=False, now=NOW
+    )
+
+    assert result.action == 'created'
+    assert subscription.remnawave_id == 99
+    assert user.remnawave_id == 99
+
+
 # ---------------------------------------------------------------------------
 # Разъезд часов: панель сравнивает дату со своими часами
 # ---------------------------------------------------------------------------

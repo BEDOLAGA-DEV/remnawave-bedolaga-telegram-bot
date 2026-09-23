@@ -1,11 +1,11 @@
-"""Таблица премиум-трафика из миграции 0126 обязана совпадать с моделью.
+"""Таблица премиум-трафика из миграции 0128 обязана совпадать с моделью.
 
 Свежая установка получает таблицу по модели, обновлённая — миграцией.
 Расхождение типа или nullable между ними живёт тихо и всплывает только на одной
 из двух установок.
 
 Отдельно — повторный прогон. Номер этой миграции менялся при слияниях с dev
-(0116 → 0117 → 0119 → 0120 → 0121 → 0123 → 0124 → 0126), и база, где она прошла под прежним номером, после
+(0116 → 0117 → 0119 → 0120 → 0121 → 0123 → 0124 → 0126 → 0128), и база, где она прошла под прежним номером, после
 перенумерации запускает её ещё раз.
 """
 
@@ -20,12 +20,12 @@ from app.database.models import SubscriptionPremiumTraffic
 
 
 VERSIONS = pathlib.Path(__file__).resolve().parents[2] / 'migrations/alembic/versions'
-MIGRATION = '0126_create_subscription_premium_traffic.py'
+MIGRATION = '0128_create_subscription_premium_traffic.py'
 TABLE = 'subscription_premium_traffic'
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location('m0126', VERSIONS / MIGRATION)
+    spec = importlib.util.spec_from_file_location('m0128', VERSIONS / MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

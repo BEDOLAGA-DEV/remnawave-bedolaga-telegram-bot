@@ -16,9 +16,11 @@ from app.database.crud.referral import (
 )
 from app.database.crud.user import get_user_by_id, get_user_by_telegram_id
 from app.database.models import ReferralEarning, User, WithdrawalRequest, WithdrawalRequestStatus
+from app.keyboards.withdrawal import get_withdrawal_request_keyboard
 from app.localization.texts import get_texts
 from app.services.referral_withdrawal_service import referral_withdrawal_service
 from app.states import AdminStates
+from app.utils.chat_scope import callback_from_group
 from app.utils.decorators import admin_required, error_handler
 from app.utils.timezone import format_local_datetime, local_day_bounds, local_day_start
 
@@ -514,32 +516,14 @@ async def view_withdrawal_request(callback: types.CallbackQuery, db_user: User, 
 {referral_withdrawal_service.format_analysis_for_admin(analysis)}
 """
 
-    keyboard = []
+    # В группе (уведомление в админ-чате) — только действия: профиль и список
+    # открыли бы админку в общем чате. В личке — полная карточка.
+    role = 'group' if callback_from_group(callback) else 'admin'
+    keyboard = get_withdrawal_request_keyboard(
+        request.id, request.status, user_db_id=user.id if user else None, role=role, navigation=(role == 'admin')
+    )
 
-    if request.status == WithdrawalRequestStatus.PENDING.value:
-        keyboard.append(
-            [
-                types.InlineKeyboardButton(text='✅ Одобрить', callback_data=f'admin_withdrawal_approve_{request.id}'),
-                types.InlineKeyboardButton(text='❌ Отклонить', callback_data=f'admin_withdrawal_reject_{request.id}'),
-            ]
-        )
-
-    if request.status == WithdrawalRequestStatus.APPROVED.value:
-        keyboard.append(
-            [
-                types.InlineKeyboardButton(
-                    text='✅ Деньги переведены', callback_data=f'admin_withdrawal_complete_{request.id}'
-                )
-            ]
-        )
-
-    if user:
-        keyboard.append(
-            [types.InlineKeyboardButton(text='👤 Профиль пользователя', callback_data=f'admin_user_manage_{user.id}')]
-        )
-    keyboard.append([types.InlineKeyboardButton(text='⬅️ К списку', callback_data='admin_withdrawal_requests')])
-
-    await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
 

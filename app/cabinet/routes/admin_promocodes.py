@@ -30,6 +30,7 @@ from app.database.crud.promocode import (
 )
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.models import PromoCode, PromoCodeType, PromoCodeUse, PromoGroup, User
+from app.services.promo_group_recalculation import promo_group_recalculation
 
 from ..dependencies import get_cabinet_db, require_permission
 
@@ -161,6 +162,26 @@ class PromoGroupUpdateRequest(BaseModel):
     auto_assign_total_spent_kopeks: int | None = None
     apply_discounts_to_addons: bool | None = None
     is_default: bool | None = None
+
+
+class PromoGroupRecalculationLast(BaseModel):
+    """Итог последнего прохода пересчёта людей по тратам."""
+
+    reason: str
+    checked: int
+    changed: int
+    failed: int = 0
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+
+
+class PromoGroupRecalculationStatus(BaseModel):
+    running: bool
+    queued: bool = False
+    reason: str | None = None
+    started: bool = False
+    last: PromoGroupRecalculationLast | None = None
 
 
 # ============== Helpers ==============
@@ -631,6 +652,38 @@ async def list_promo_groups(
         limit=limit,
         offset=offset,
     )
+
+
+def _recalculation_status(*, started: bool = False) -> PromoGroupRecalculationStatus:
+    snapshot = promo_group_recalculation.snapshot()
+    return PromoGroupRecalculationStatus(
+        running=bool(snapshot['running']),
+        queued=bool(snapshot['queued']),
+        reason=snapshot['reason'],
+        started=started,
+        last=PromoGroupRecalculationLast(**snapshot['last']) if snapshot['last'] else None,
+    )
+
+
+# Объявлены ДО ``/{group_id}``: тот маршрут принимает любую строку,
+# и «recalculate» ушёл бы в него с ошибкой 422.
+@promo_groups_router.post(
+    '/recalculate', response_model=PromoGroupRecalculationStatus, status_code=status.HTTP_202_ACCEPTED
+)
+async def start_promo_group_recalculation(
+    admin: User = Depends(require_permission('promo_groups:edit')),
+) -> PromoGroupRecalculationStatus:
+    """Пересчитать промогруппы всех людей по их тратам (в фоне)."""
+    started = promo_group_recalculation.schedule('запущен из кабинета')
+    return _recalculation_status(started=started)
+
+
+@promo_groups_router.get('/recalculate', response_model=PromoGroupRecalculationStatus)
+async def get_promo_group_recalculation_status(
+    admin: User = Depends(require_permission('promo_groups:read')),
+) -> PromoGroupRecalculationStatus:
+    """Идёт ли пересчёт и чем кончился последний."""
+    return _recalculation_status()
 
 
 @promo_groups_router.get('/{group_id}', response_model=PromoGroupResponse)

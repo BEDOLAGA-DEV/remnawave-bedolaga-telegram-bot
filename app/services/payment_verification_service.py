@@ -138,6 +138,8 @@ def method_display_name(method: PaymentMethod) -> str:
         return 'WATA'
     if method == PaymentMethod.PLATEGA:
         return settings.get_platega_display_name()
+    if method == PaymentMethod.PLATEGA_RECURRENT:
+        return f'{settings.get_platega_display_name()} СБП'
     if method == PaymentMethod.CRYPTOBOT:
         return 'CryptoBot'
     if method == PaymentMethod.HELEKET:
@@ -1240,6 +1242,45 @@ async def _fetch_stars_transactions(db: AsyncSession, cutoff: datetime) -> list[
     return records
 
 
+async def _fetch_platega_recurring_charges(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    """Успешные СБП-автопродления Platega (issue #3279).
+
+    Рекуррентное списание не заводит строку в ``platega_payments``: коллбек
+    пишет только транзакцию SUBSCRIPTION_PAYMENT с методом ``platega``, и в
+    админке такие платежи не показывались вовсе. Фиктивных pending-записей
+    ради отображения здесь не создаётся — читаем транзакции напрямую, ровно
+    как это уже сделано для Telegram Stars.
+
+    Пара «тип + метод» однозначна: обычные пополнения через Platega имеют тип
+    DEPOSIT и свою строку у провайдера, а списания с баланса идут с методом
+    ``balance``.
+    """
+    stmt = (
+        select(Transaction)
+        .options(selectinload(Transaction.user))
+        .where(
+            Transaction.created_at >= cutoff,
+            Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            Transaction.payment_method == PaymentMethod.PLATEGA.value,
+        )
+        .order_by(desc(Transaction.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for transaction in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.PLATEGA_RECURRENT,
+            transaction,
+            identifier=transaction.external_id or str(transaction.id),
+            amount_kopeks=transaction.amount_kopeks,
+            status='paid' if transaction.is_completed else 'pending',
+            is_paid=bool(transaction.is_completed),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def list_recent_pending_payments(
     db: AsyncSession,
     *,
@@ -1274,6 +1315,7 @@ async def list_recent_pending_payments(
         await _fetch_tabpay_payments(db, cutoff),
         await _fetch_paritypay_payments(db, cutoff),
         await _fetch_stars_transactions(db, cutoff),
+        await _fetch_platega_recurring_charges(db, cutoff),
     )
 
     records: list[PendingPayment] = []
@@ -1642,6 +1684,27 @@ async def get_payment_record(
             return None
         await db.refresh(transaction, attribute_names=['user'])
         if transaction.payment_method != PaymentMethod.TELEGRAM_STARS.value:
+            return None
+        return _build_record(
+            method,
+            transaction,
+            identifier=transaction.external_id or str(transaction.id),
+            amount_kopeks=transaction.amount_kopeks,
+            status='paid' if transaction.is_completed else 'pending',
+            is_paid=bool(transaction.is_completed),
+        )
+
+    if method == PaymentMethod.PLATEGA_RECURRENT:
+        transaction = await db.get(Transaction, local_payment_id)
+        if not transaction:
+            return None
+        await db.refresh(transaction, attribute_names=['user'])
+        # Номер приходит из другой таблицы, поэтому сверяем, что это
+        # действительно списание по СБП-подписке, а не совпадение id.
+        if (
+            transaction.type != TransactionType.SUBSCRIPTION_PAYMENT.value
+            or transaction.payment_method != PaymentMethod.PLATEGA.value
+        ):
             return None
         return _build_record(
             method,

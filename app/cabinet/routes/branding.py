@@ -597,7 +597,9 @@ async def get_web_manifest(
     logo_path = await asyncio.to_thread(_existing_logo_path)
     letter = monogram_letter(name)
     fingerprint = await asyncio.to_thread(app_icon.logo_fingerprint, logo_path)
-    version = hashlib.sha256(f'{fingerprint}|{letter}|{background}|{accent}'.encode()).hexdigest()[:12]
+    version = hashlib.sha256(
+        f'{app_icon.RENDER_REVISION}|{fingerprint}|{letter}|{background}|{accent}'.encode()
+    ).hexdigest()[:12]
 
     icons = [
         {

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import settings
+from app.database.auth_methods import OAUTH_PROVIDER_COLUMNS
 from app.database.constants import POSTGRES_INT4_MAX, POSTGRES_INT4_MIN
 from app.database.crud.discount_offer import get_latest_claimed_offer_for_user
 from app.database.crud.promo_group import get_default_promo_group
@@ -1896,12 +1897,6 @@ async def clear_email_change_pending(db: AsyncSession, user: User) -> None:
 
 # Single source of truth: provider name → User model column name.
 # Imported by account_linking.py and account_merge_service.py.
-OAUTH_PROVIDER_COLUMNS: dict[str, str] = {
-    'google': 'google_id',
-    'yandex': 'yandex_id',
-    'discord': 'discord_id',
-    'vk': 'vk_id',
-}
 
 
 async def get_user_by_oauth_provider(db: AsyncSession, provider: str, provider_id: str) -> User | None:

@@ -86,6 +86,7 @@ class EmailNotificationTemplates:
             NotificationType.NALOGO_RECEIPT: self._nalogo_receipt_template,
             NotificationType.PROMO_OFFER: self._promo_offer_template,
             NotificationType.TICKET_REPLY: self._ticket_reply_template,
+            NotificationType.PROMO_GROUP_AUTO_ASSIGNED: self._promo_group_auto_assigned_template,
             NotificationType.EMAIL_VERIFICATION: self._email_verification_template,
             NotificationType.PASSWORD_RESET: self._password_reset_template,
             NotificationType.EMAIL_CHANGE_CODE: self._email_change_code_template,
@@ -1877,6 +1878,74 @@ class EmailNotificationTemplates:
         url = f'{self.cabinet_url.rstrip("/")}/support'
 
         return f'<p style="text-align: center;"><a href="{url}" class="button">{text}</a></p>'
+
+    def _promo_group_auto_assigned_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
+        """Промогруппа назначена автоматически за траты — какие скидки теперь действуют."""
+        group_name = html.escape(str(context.get('group_name') or ''))
+        total_spent = html.escape(str(context.get('total_spent') or ''))
+        period_discounts = html.escape(str(context.get('period_discounts') or ''))
+
+        def _percent(key: str) -> int:
+            try:
+                return max(0, int(context.get(key) or 0))
+            except (TypeError, ValueError):
+                return 0
+
+        labels = {
+            'ru': ('Серверы', 'Трафик', 'Доп. устройства', 'За длительный период'),
+            'en': ('Servers', 'Traffic', 'Extra devices', 'Long-term periods'),
+            'zh': ('服务器', '流量', '额外设备', '长期订阅'),
+            'ua': ('Сервери', 'Трафік', 'Дод. пристрої', 'За тривалий період'),
+        }
+        servers, traffic, devices, periods = labels.get(language, labels['ru'])
+        items = [
+            f'<li>{label}: <strong>{percent}%</strong></li>'
+            for label, percent in (
+                (servers, _percent('server_discount')),
+                (traffic, _percent('traffic_discount')),
+                (devices, _percent('device_discount')),
+            )
+            if percent
+        ]
+        if period_discounts:
+            items.append(f'<li>{periods}: {period_discounts}</li>')
+        discounts_html = f'<ul>{"".join(items)}</ul>' if items else ''
+
+        subjects = {
+            'ru': f'Новая промогруппа: {group_name}',
+            'en': f'New promo group: {group_name}',
+            'zh': f'新的促销组：{group_name}',
+            'ua': f'Нова промогрупа: {group_name}',
+        }
+        intros = {
+            'ru': (
+                f'Вы потратили у нас {total_spent} — спасибо! Теперь для вас постоянно действуют скидки:'
+                if items
+                else f'Вы потратили у нас {total_spent} — спасибо! Вас перевели в новую промогруппу.'
+            ),
+            'en': (
+                f'You have spent {total_spent} with us — thank you! These discounts now apply to you permanently:'
+                if items
+                else f'You have spent {total_spent} with us — thank you! You have been moved to a new promo group.'
+            ),
+            'zh': (
+                f'您在我们这里已消费 {total_spent}，感谢支持！以下折扣现在对您长期有效：'
+                if items
+                else f'您在我们这里已消费 {total_spent}，感谢支持！您已被转入新的促销组。'
+            ),
+            'ua': (
+                f'Ви витратили у нас {total_spent} — дякуємо! Тепер для вас постійно діють знижки:'
+                if items
+                else f'Ви витратили у нас {total_spent} — дякуємо! Вас переведено до нової промогрупи.'
+            ),
+        }
+        subject = subjects.get(language, subjects['ru'])
+        intro = intros.get(language, intros['ru'])
+        content = (
+            f'<h2>{subject}</h2><div class="highlight"><p>{intro}</p>{discounts_html}</div>'
+            f'{self._get_cabinet_button(language)}'
+        )
+        return {'subject': subject, 'body_html': self._get_base_template(content, language)}
 
     def _ticket_reply_template(self, language: str, context: dict[str, Any]) -> dict[str, str]:
         """Template for a support reply in a ticket."""

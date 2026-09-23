@@ -397,7 +397,7 @@ class WataPaymentMixin:
                     payment = await self._finalize_wata_payment(db, payment, transaction_payload)
             else:
                 logger.debug(
-                    'WATA транзакция в статусе , повторная обработка не требуется',
+                    'WATA транзакция в этом статусе повторной обработки не требует',
                     transaction_id=transaction_id or getattr(payment, 'payment_link_id', ''),
                     normalized_status=normalized_status or 'unknown',
                 )

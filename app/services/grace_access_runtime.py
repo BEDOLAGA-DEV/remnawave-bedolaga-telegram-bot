@@ -3,7 +3,8 @@
 The billing database remains canonical.  This module persists versioned
 snapshots, applies a temporary Remnawave overlay, discovers recent incidents,
 and reconciles open sessions.  It deliberately never changes a subscription's
-billing dates/status and never resets used traffic.
+billing dates/status and resets used traffic only when
+GRACE_ACCESS_RESET_TRAFFIC_ON_START allows it (see should_reset_used_traffic).
 """
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ from app.services.grace_access_service import (
     build_incident_key,
     panel_is_safe_pending_source,
     panel_matches_overlay,
+    traffic_reset_ended_limited_incident,
 )
 from app.services.panel_sync import is_subscription_live, panel_date_is_closing, panel_expire_at
 from app.services.panel_sync.payload import resolve_panel_status
@@ -422,12 +424,19 @@ class RemnawaveGracePanelGateway:
                 traffic_limit_bytes=overlay.traffic_limit_bytes,
                 active_internal_squads=list(overlay.squad_uuids),
             )
-        if updated is None or not panel_matches_overlay(
-            _panel_user_to_snapshot(updated),
-            overlay,
-            now=datetime.now(UTC),
-        ):
-            raise GracePanelError('Remnawave did not confirm the grace overlay')
+            if updated is None or not panel_matches_overlay(
+                _panel_user_to_snapshot(updated),
+                overlay,
+                now=datetime.now(UTC),
+            ):
+                raise GracePanelError('Remnawave did not confirm the grace overlay')
+            if overlay.reset_used_traffic:
+                # Строго после PATCH: к этому моменту остались только сквад grace
+                # и лимит в квоту. Сброс до него снял бы у LIMITED-пользователя
+                # статус при старых сквадах и открыл бы полный доступ.
+                reset = await api.reset_user_traffic(remnawave_id)
+                if reset is None or int(reset.used_traffic_bytes or 0) >= overlay.traffic_limit_bytes:
+                    raise GracePanelError('Remnawave did not reset used traffic for the grace overlay')
 
     async def restore_snapshot(
         self,
@@ -1125,6 +1134,7 @@ class GraceAccessRuntime:
         async with self._locks.hold(subscription_id):
             async with AsyncSessionLocal() as db:
                 await _acquire_database_lock(db, subscription_id)
+                await _reactivate_after_traffic_reset(db, subscription_id)
                 core = _build_core(db, subscription_id=subscription_id)
                 result = (
                     await core.drain(limit=1, force_restore=force_restore) if drain else await core.reconcile(limit=1)
@@ -1134,6 +1144,38 @@ class GraceAccessRuntime:
         # согласователь, ни объявлять состояние, которое не записалось.
         await self._announce_reconcile(subscription_id, result)
         return result
+
+
+async def _reactivate_after_traffic_reset(db: AsyncSession, subscription_id: int) -> bool:
+    """Вернуть подписку в ACTIVE, если трафик сбросился, пока шёл грейс по лимиту.
+
+    Ядро грейса биллинг не меняет, а статус из панели во время грейса в бота не
+    переносится — поэтому без этого шага подписка оставалась LIMITED, и грейс не
+    замечал, что инцидент закончился (см. ``traffic_reset_ended_limited_incident``).
+    После реактивации обычная сверка видит восстановившийся биллинг, возвращает
+    панели канонические настройки и закрывает сессию. Коммитит вызывающий.
+    """
+    session = await SQLAlchemyGraceSessionStore(db, subscription_id=subscription_id).get_open(subscription_id)
+    if session is None:
+        return False
+    billing = await SQLAlchemyGraceBillingGateway(db).get_subscription(subscription_id)
+    if billing is None or not traffic_reset_ended_limited_incident(session, billing, now=datetime.now(UTC)):
+        return False
+
+    subscription = await db.get(Subscription, subscription_id)
+    if subscription is None:
+        return False
+    subscription.status = SubscriptionStatus.ACTIVE.value
+    subscription.updated_at = datetime.now(UTC)
+    await db.flush((subscription,))
+    logger.info(
+        'Трафик сброшен во время грейса по лимиту — подписка снова активна, грейс закрывается',
+        subscription_id=subscription_id,
+        grace_session_id=session.id,
+        used_before=session.billing_before.used_traffic_bytes,
+        used_now=billing.used_traffic_bytes,
+    )
+    return True
 
 
 async def get_open_grace_subscription_ids(db: AsyncSession) -> set[int]:
@@ -1742,6 +1784,7 @@ def _build_policy() -> GraceAccessPolicy:
         free_enabled=settings.GRACE_ACCESS_FREE_ENABLED,
         reconcile_batch_size=settings.GRACE_ACCESS_RECONCILE_BATCH_SIZE,
         external_squad_uuid=settings.GRACE_ACCESS_EXTERNAL_SQUAD_UUID.strip() or None,
+        reset_traffic_on_start=settings.GRACE_ACCESS_RESET_TRAFFIC_ON_START,
     )
 
 

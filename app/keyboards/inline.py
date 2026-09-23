@@ -3035,7 +3035,7 @@ def get_manage_countries_keyboard(
             if days_left > 30:
                 price_text = f' ({discounted_per_month // 100}₽/мес × {days_left} дн. = {total_price // 100}₽)'
                 logger.info(
-                    '🔍 Сервер : ₽/мес × дн./30 = ₽ (скидка ₽)',
+                    '🔍 Стоимость сервера',
                     name=name,
                     discounted_per_month=discounted_per_month / 100,
                     days_left=days_left,

@@ -82,6 +82,10 @@ class PanelIdentity:
     foreign_owner: PanelOwner | None = None
     #: Id того чужого аккаунта — для сообщения оператору.
     foreign_panel_id: int | None = None
+    #: Записанные id, которые проверили запросом и не нашли в панели. Тот, кто
+    #: пишет связь, обязан их затереть: иначе колонка остаётся занятой мёртвым
+    #: адресом, следующий проход снова его не найдёт и заведёт ещё один дубль.
+    dead_recorded_ids: tuple[int, ...] = ()
 
     @property
     def user_id(self) -> int | None:
@@ -191,6 +195,7 @@ async def resolve_panel_identity(
     multi_tariff: bool,
     pinned: bool = False,
     verify_recorded_id: bool = True,
+    ignore_recorded_ids: bool = False,
     db=None,
 ) -> PanelIdentity:
     """Найти в панели аккаунт этой подписки.
@@ -202,6 +207,10 @@ async def resolve_panel_identity(
     массовый проход: на большой базе лишний GET к панели на каждую подписку
     удваивает нагрузку, а протухший id всё равно обнаружится по ответу на PATCH
     («такого пользователя нет») и приведёт к пересозданию.
+
+    ``ignore_recorded_ids=True`` — записанные id не смотреть вовсе: панель только
+    что ответила на PATCH «такого пользователя нет», и искать остаётся лишь по
+    ``shortUuid``, телеграму и почте.
 
     ``db`` — проверить хозяина найденного аккаунта (см. ``find_foreign_panel_owner``):
     чужие пропускаются, поиск идёт дальше; если нашлись только чужие, в ответе
@@ -231,9 +240,12 @@ async def resolve_panel_identity(
     # подписки свой аккаунт, и пользовательский id там не адрес, а мусор из
     # прошлого: подставив его, мы бы переписали чужую подписку.
     exact_ids: list[tuple[str, int | None]] = []
-    if not pinned and not multi_tariff:
-        exact_ids.append(('user', getattr(user, 'remnawave_id', None)))
-    exact_ids.append(('subscription', getattr(subscription, 'remnawave_id', None)))
+    if not ignore_recorded_ids:
+        if not pinned and not multi_tariff:
+            exact_ids.append(('user', getattr(user, 'remnawave_id', None)))
+        exact_ids.append(('subscription', getattr(subscription, 'remnawave_id', None)))
+
+    dead_recorded: list[int] = []
 
     for source, panel_user_id in exact_ids:
         if not panel_user_id:
@@ -255,6 +267,7 @@ async def resolve_panel_identity(
             panel_user_id=panel_user_id,
             source=source,
         )
+        dead_recorded.append(int(panel_user_id))
 
     short_uuid = (getattr(subscription, 'remnawave_short_uuid', None) or '').strip()
     adoption_error: Exception | None = None
@@ -276,7 +289,7 @@ async def resolve_panel_identity(
             )
         # shortUuid прилипает от любой прошлой записи — в том числе в чужой аккаунт.
         if panel_user is not None and not await is_foreign(getattr(panel_user, 'id', None)):
-            return PanelIdentity(panel_user=panel_user, source='short_uuid')
+            return PanelIdentity(panel_user=panel_user, source='short_uuid', dead_recorded_ids=tuple(dead_recorded))
 
     async def pick_own(candidates) -> RemnaWaveUser | None:
         # Хозяина проверяем у выбранного, а не у всего списка: в мультитарифе
@@ -293,21 +306,21 @@ async def resolve_panel_identity(
     if telegram_id:
         chosen = await pick_own(await api.find_users_by_telegram_id(telegram_id))
         if chosen is not None:
-            return PanelIdentity(panel_user=chosen, source='telegram')
+            return PanelIdentity(panel_user=chosen, source='telegram', dead_recorded_ids=tuple(dead_recorded))
 
     email = getattr(user, 'email', None)
     if email:
         chosen = await pick_own(await api.find_users_by_email(email))
         if chosen is not None:
-            return PanelIdentity(panel_user=chosen, source='email')
+            return PanelIdentity(panel_user=chosen, source='email', dead_recorded_ids=tuple(dead_recorded))
 
     if adoption_error is not None:
         raise adoption_error
 
     if foreign:
         panel_id, owner = foreign[0]
-        return PanelIdentity(foreign_owner=owner, foreign_panel_id=panel_id)
-    return PanelIdentity()
+        return PanelIdentity(foreign_owner=owner, foreign_panel_id=panel_id, dead_recorded_ids=tuple(dead_recorded))
+    return PanelIdentity(dead_recorded_ids=tuple(dead_recorded))
 
 
 async def panel_id_is_free_for(db, subscription, panel_id: int | None) -> bool:

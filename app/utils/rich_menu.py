@@ -47,6 +47,7 @@ from app.database.crud.user_message import get_random_active_message
 from app.database.models import User
 from app.localization.texts import Texts
 from app.utils.formatters import format_username_link
+from app.utils.logo_fingerprint import logo_version
 from app.utils.miniapp_buttons import build_miniapp_startapp_url
 from app.utils.promo_offer import build_promo_offer_hint, build_test_access_hint
 from app.utils.rich_buttons import render_keyboard_as_rich_html
@@ -140,7 +141,8 @@ def _resolve_rich_logo_url() -> str:
 
     Иначе, если задан WEBHOOK_URL (публичный origin нашего FastAPI) и файл
     LOGO_FILE существует, логотип отдаётся собственным эндпоинтом
-    /cabinet/branding/bot-logo.
+    /cabinet/branding/bot-logo?v=<отпечаток файла>. Telegram кэширует картинку
+    по адресу: без версии заменённый файл показывался старым до ручного ``?v=``.
     """
     if _logo_unavailable:
         return ''
@@ -160,7 +162,10 @@ def _resolve_rich_logo_url() -> str:
     parsed = urlparse(webhook_url)
     if not parsed.scheme or not parsed.netloc:
         return ''
-    return f'{parsed.scheme}://{parsed.netloc}/cabinet/branding/bot-logo'
+    version = logo_version(Path(settings.LOGO_FILE))
+    if version is None:
+        return ''
+    return f'{parsed.scheme}://{parsed.netloc}/cabinet/branding/bot-logo?v={version}'
 
 
 def _is_media_fetch_error(error: Exception) -> bool:

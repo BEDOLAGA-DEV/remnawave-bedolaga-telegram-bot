@@ -66,6 +66,42 @@ _PANEL_ID_MAP_MISSING = object()
 _ATTR_NOT_CAPTURED = object()
 
 
+def _relink_existing_subscription(
+    user_subscriptions,
+    panel_user: dict[str, Any],
+    panel_user_id: int,
+    *,
+    live_panel_ids: set[int],
+):
+    """Строка подписки, которой на самом деле принадлежит этот аккаунт панели.
+
+    Аккаунт опознаётся только точными ключами: ``shortUuid`` или суффикс имени
+    ``_{remnawave_short_id}``, которым бот помечает аккаунты мультитарифа. Строку,
+    чей записанный id панель отдала в этом же снимке, не трогаем — она привязана
+    к живому аккаунту, а совпадение ключей тогда означает дубль в панели.
+    """
+    short_uuid = (panel_user.get('shortUuid') or '').strip()
+    username = panel_user.get('username') or ''
+    for candidate in user_subscriptions:
+        recorded_id = _normalize_panel_user_id(candidate.remnawave_id)
+        if recorded_id is not None and recorded_id in live_panel_ids:
+            continue
+        short_id = (getattr(candidate, 'remnawave_short_id', None) or '').strip()
+        same_short_uuid = bool(short_uuid) and candidate.remnawave_short_uuid == short_uuid
+        same_username = bool(short_id) and username.endswith(f'_{short_id}')
+        if not (same_short_uuid or same_username):
+            continue
+        logger.warning(
+            '🔗 [multi-tariff] Аккаунт панели пересоздан — перепривязываем существующую подписку',
+            subscription_id=candidate.id,
+            dead_panel_user_id=recorded_id,
+            panel_user_id=panel_user_id,
+        )
+        candidate.remnawave_id = panel_user_id
+        return candidate
+    return None
+
+
 def _normalize_panel_user_id(value: Any) -> int | None:
     """Приводит идентификатор панельного пользователя к int или None.
 
@@ -2077,6 +2113,12 @@ class RemnaWaveService:
             # подтягиваем и не трогаем; считаем, чтобы пропуск был виден оператору.
             foreign_accounts_count = 0
 
+            # Id, которые панель отдала в этом снимке: строка, чей id среди них,
+            # привязана к живому аккаунту, и перепривязывать её нельзя.
+            live_panel_ids = {
+                _id for _id in (_normalize_panel_user_id(pu.get('id')) for pu in panel_users) if _id is not None
+            }
+
             # Match and update
             for panel_user in panel_users:
                 panel_user_id = _normalize_panel_user_id(panel_user.get('id'))
@@ -2143,8 +2185,25 @@ class RemnaWaveService:
                             )
                         continue
 
-                    # Check MAX_ACTIVE_SUBSCRIPTIONS
                     _user_subs = getattr(_bot_user, 'subscriptions', []) or []
+
+                    # Check if subscription with this panel id already exists for this user
+                    if any(_normalize_panel_user_id(s.remnawave_id) == panel_user_id for s in _user_subs):
+                        continue
+
+                    # Аккаунт мог быть пересоздан (удалили подписку → купили заново,
+                    # панель выдала новый id), а строка подписки уже есть и держит
+                    # мёртвый id. Вставка второй строки упёрлась бы в
+                    # uq_subscriptions_user_tariff_active — перепривязываем существующую.
+                    subscription = _relink_existing_subscription(
+                        _user_subs, panel_user, panel_user_id, live_panel_ids=live_panel_ids
+                    )
+                    if subscription is not None:
+                        subs_by_panel_id[panel_user_id] = subscription
+                        grace_open = subscription.id in open_grace_ids
+
+                if not subscription:
+                    # Check MAX_ACTIVE_SUBSCRIPTIONS
                     _active_count = sum(1 for s in _user_subs if s.status in ('active', 'trial'))
                     if _active_count >= settings.get_max_active_subscriptions():
                         logger.debug(
@@ -2152,10 +2211,6 @@ class RemnaWaveService:
                             user_id=_bot_user.id,
                             active_count=_active_count,
                         )
-                        continue
-
-                    # Check if subscription with this panel id already exists for this user
-                    if any(_normalize_panel_user_id(s.remnawave_id) == panel_user_id for s in _user_subs):
                         continue
 
                     try:
@@ -2214,7 +2269,11 @@ class RemnaWaveService:
                             subscription_crypto_link=panel_user.get('subscriptionCryptoLink', ''),
                             tariff_id=_matched_tariff_id,
                         )
-                        db.add(new_sub)
+                        # Savepoint: один человек с конфликтом уникальности не должен
+                        # откатывать синхронизацию всех остальных.
+                        async with db.begin_nested():
+                            db.add(new_sub)
+                            await db.flush((new_sub,))
                         subs_by_panel_id[panel_user_id] = new_sub
                         # Keep in-memory state consistent for subsequent iterations
                         if hasattr(_bot_user, 'subscriptions') and isinstance(_bot_user.subscriptions, list):
@@ -2225,6 +2284,14 @@ class RemnaWaveService:
                             panel_user_id=panel_user_id,
                             user_id=_bot_user.id,
                         )
+                    except IntegrityError as create_err:
+                        logger.warning(
+                            '⚠️ [multi-tariff] Подписка из панели конфликтует с существующей — пропускаем',
+                            panel_user_id=panel_user_id,
+                            user_id=_bot_user.id,
+                            error=str(create_err.orig)[:200],
+                        )
+                        stats['errors'] += 1
                     except Exception as create_err:
                         logger.error(
                             '❌ [multi-tariff] Ошибка создания подписки из панели',
@@ -2239,6 +2306,7 @@ class RemnaWaveService:
                     # минутами позже, поэтому снимку нельзя верить на слово:
                     # свежее webhook-обновление (оплата во время прохода) важнее.
                     from app.database.crud.subscription import is_recently_updated_by_webhook
+                    from app.database.crud.transaction import get_last_subscription_payment_at
 
                     project_onto_subscription(
                         subscription,
@@ -2248,6 +2316,7 @@ class RemnaWaveService:
                         policy=BULK_SNAPSHOT,
                         snapshot_taken_at=snapshot_taken_at,
                         trust_status=not is_recently_updated_by_webhook(subscription),
+                        paid_at=await get_last_subscription_payment_at(db, subscription.user_id),
                     )
 
                     stats['updated'] += 1
@@ -2418,6 +2487,8 @@ class RemnaWaveService:
             # Тот же полный проход, что и в мультитарифе: список панели выгружен
             # минутами раньше, поэтому снимку нельзя верить на слово, а всё, что
             # изменилось в боте после снимка, он не трогает.
+            from app.database.crud.transaction import get_last_subscription_payment_at
+
             changed = project_onto_subscription(
                 subscription,
                 read_panel_user(panel_user),
@@ -2425,6 +2496,7 @@ class RemnaWaveService:
                 grace_open=grace_open,
                 policy=BULK_SNAPSHOT,
                 snapshot_taken_at=snapshot_taken_at,
+                paid_at=await get_last_subscription_payment_at(db, user.id),
             )
             # Старый импорт оставлял строку без id панели — привязываем при первом проходе.
             await link_subscription_panel_identity(db, subscription, _normalize_panel_user_id(panel_user.get('id')))

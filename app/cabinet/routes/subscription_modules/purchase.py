@@ -47,6 +47,7 @@ from app.services.subscription_purchase_service import (
     PurchaseValidationError,
 )
 from app.services.subscription_service import SubscriptionService
+from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.services.user_cart_service import user_cart_service
 from app.utils.pricing_utils import calculate_price_per_month, format_period_description
 from app.utils.timezone import format_local_datetime
@@ -1016,6 +1017,11 @@ async def purchase_tariff(
         # нет). Пост-persist шаги (bonus_seconds, daily-маркер, синк с панелью)
         # остаются снаружи guard'а: их сбой не должен возвращать деньги за уже
         # выданную подписку.
+        # Новая подписка (и конверсия триала на месте) — квота новая, счётчик панели
+        # обнуляем; для продления/смены тарифа решение пересчитывается ниже по настройкам.
+        reset_used_traffic = True
+        # До чистки триалов: защитная ветка ниже и extend_subscription снимают флаг.
+        _purchase_converts_trial = bool(subscription and subscription.is_trial)
         try:
             # --- Trial cleanup: find and kill all trials BEFORE creating/extending ---
             from app.database.crud.subscription import deactivate_user_trial_subscriptions
@@ -1063,6 +1069,13 @@ async def purchase_tariff(
                 await db.flush()
 
             if subscription:
+                # Решаем ДО extend_subscription: он записывает в объект новый tariff_id и
+                # снимает триальный флаг — после вызова «тариф не менялся, триала не было».
+                reset_used_traffic = should_reset_traffic_on_tariff_purchase(
+                    is_tariff_change=subscription.tariff_id != tariff.id,
+                    was_trial=_purchase_converts_trial,
+                    paid_kopeks=price_kopeks,
+                )
                 # Extend/change tariff — сохраняем докупленные устройства при продлении того же тарифа
                 subscription = await extend_subscription(
                     db=db,
@@ -1072,6 +1085,7 @@ async def purchase_tariff(
                     traffic_limit_gb=traffic_limit_gb,
                     device_limit=effective_device_limit,
                     connected_squads=squads,
+                    reset_used_traffic=reset_used_traffic,
                 )
             else:
                 # Create new subscription (или конверсия исключённого выше триала)
@@ -1162,10 +1176,12 @@ async def purchase_tariff(
             # past the budget the sync is deferred to remnawave_retry_queue below.
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
                 if not _should_create:
+                    # Тем же решением, что и счётчик в базе (GitHub #3227: здесь стоял
+                    # литерал True — трафик в панели слетал при любой оплате).
                     await service.update_remnawave_user(
                         db,
                         subscription,
-                        reset_traffic=True,
+                        reset_traffic=reset_used_traffic,
                         reset_reason='покупка тарифа (cabinet)',
                         sync_squads=True,
                     )

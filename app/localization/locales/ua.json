@@ -1265,6 +1265,8 @@
   "PROMO_GROUP_DISCOUNT_TRAFFIC": "📊 Трафік: {percent}%",
   "PROMO_GROUP_PERIOD_DISCOUNTS_HEADER": "⏳ Знижки за тривалий період:",
   "PROMO_GROUP_PERIOD_DISCOUNT_ITEM": "{period} — {percent}%",
+  "PROMO_GROUP_AUTO_ASSIGNED": "🏆 <b>Нова промогрупа: {group_name}</b>\n\nВи витратили у нас {total_spent} — дякуємо! Тепер для вас постійно діють знижки:\n\n{discounts}",
+  "PROMO_GROUP_AUTO_ASSIGNED_NO_DISCOUNTS": "🏆 <b>Нова промогрупа: {group_name}</b>\n\nВи витратили у нас {total_spent} — дякуємо! Вас переведено до нової промогрупи.",
   "PROMO_OFFER_CLOSE": "❌ Закрити",
   "PUBLIC_OFFER_EMPTY_ALERT": "Публічна оферта ще не заповнена.",
   "PUBLIC_OFFER_HEADER": "📄 <b>Публічна оферта</b>",

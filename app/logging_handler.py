@@ -126,7 +126,14 @@ IGNORED_LOGGER_PREFIXES: Final[tuple[str, ...]] = (
 
 
 def _event_exception(event_dict: dict[str, Any]) -> BaseException | None:
-    """Исключение записи лога: из exc_info либо из kwargs error/exc/exception."""
+    """Исключение записи лога: из exc_info, из kwargs error/exc/exception или из
+    позиционных аргументов stdlib-записи.
+
+    Последнее — ради aiogram: обрыв getUpdates он пишет без exc_info, исключение
+    уходит аргументом ``%s`` (``"Failed to fetch updates - %s: %s"``). К моменту
+    процессора PositionalArgumentsFormatter уже вклеил его в текст, но сама запись
+    (``_record.args``) аргументы хранит.
+    """
     exc_info = event_dict.get('exc_info')
     if isinstance(exc_info, tuple) and len(exc_info) > 1 and isinstance(exc_info[1], BaseException):
         return exc_info[1]
@@ -134,7 +141,19 @@ def _event_exception(event_dict: dict[str, Any]) -> BaseException | None:
         candidate = event_dict.get(key)
         if isinstance(candidate, BaseException):
             return candidate
-    return None
+    record = event_dict.get('_record')
+    args = getattr(record, 'args', None) or event_dict.get('positional_args') or ()
+    # stdlib допускает и словарь аргументов (``%(name)s``).
+    candidates = args.values() if isinstance(args, dict) else args if isinstance(args, (tuple, list)) else ()
+    return next((candidate for candidate in candidates if isinstance(candidate, BaseException)), None)
+
+
+def _exception_chain(exc: BaseException | None):
+    seen = 0
+    while exc is not None and seen < 6:
+        yield exc
+        exc = exc.__cause__ or exc.__context__
+        seen += 1
 
 
 def _is_transient_remnawave_error(event_dict: dict[str, Any]) -> bool:
@@ -144,13 +163,28 @@ def _is_transient_remnawave_error(event_dict: dict[str, Any]) -> bool:
     failures must NOT be forwarded to the admin chat — a persistent panel outage
     is surfaced by the monitoring service instead.
     """
-    exc = _event_exception(event_dict)
-    seen = 0
-    while exc is not None and seen < 6:
-        if type(exc).__name__ == 'RemnaWaveTransientError':
+    return any(
+        type(exc).__name__ == 'RemnaWaveTransientError' for exc in _exception_chain(_event_exception(event_dict))
+    )
+
+
+def _is_transient_telegram_error(event_dict: dict[str, Any]) -> bool:
+    """True when the log's exception is a Telegram transport hiccup — a dropped
+    long-poll getUpdates. aiogram retries on its own and the user never notices,
+    so such events must NOT be forwarded to the admin chat (they are still
+    persisted, with status ``suppressed``). A real outage shows up as the bot
+    going silent, which the monitoring service surfaces instead.
+
+    ``TelegramNetworkError`` is aiogram's own wrapper and is transient wherever
+    it is raised. A bare aiohttp ``ClientOSError`` is the same drop without the
+    wrapper — but any aiohttp client raises it (payment providers, the panel),
+    so it only counts when logged by aiogram itself.
+    """
+    from_aiogram = str(event_dict.get('logger') or '').startswith('aiogram')
+    for exc in _exception_chain(_event_exception(event_dict)):
+        name = type(exc).__name__
+        if name == 'TelegramNetworkError' or (from_aiogram and name == 'ClientOSError'):
             return True
-        exc = exc.__cause__ or exc.__context__
-        seen += 1
     return False
 
 
@@ -245,7 +279,8 @@ class TelegramNotifierProcessor:
 
         # 4b. Skip transient RemnaWave panel failures (slow / briefly unreachable)
         # — forwarding them would spam the admin chat on every slow-panel request.
-        if _is_transient_remnawave_error(event_dict):
+        # Same for Telegram transport drops: aiogram re-polls by itself.
+        if _is_transient_remnawave_error(event_dict) or _is_transient_telegram_error(event_dict):
             _mark_error_event(event_uid, STATUS_SUPPRESSED)
             return event_dict
 

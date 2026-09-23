@@ -297,7 +297,7 @@ class HeleketPaymentMixin:
             return updated_payment
 
         if status_normalized not in {'paid', 'paid_over'}:
-            logger.info('Heleket платеж в статусе , зачисление не требуется', uuid=updated_payment.uuid, status=status)
+            logger.info('Heleket платёж в этом статусе зачисления не требует', uuid=updated_payment.uuid, status=status)
             return updated_payment
 
         amount_kopeks = updated_payment.amount_kopeks

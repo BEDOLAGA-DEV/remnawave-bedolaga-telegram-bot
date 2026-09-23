@@ -1107,6 +1107,48 @@ async def _search_stars(db: AsyncSession, params: SearchParams) -> list[PendingP
     return records
 
 
+async def _search_platega_recurring(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    """Успешные СБП-автопродления Platega (issue #3279).
+
+    Живут в транзакциях, а не в таблице провайдера: у списания нет счёта.
+    Пара «SUBSCRIPTION_PAYMENT + platega» однозначна — обычные пополнения
+    имеют тип DEPOSIT, списания с баланса идут с методом ``balance``.
+    """
+    stmt = (
+        select(Transaction)
+        .options(selectinload(Transaction.user))
+        .where(
+            Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            Transaction.payment_method == PaymentMethod.PLATEGA.value,
+        )
+        .order_by(desc(Transaction.created_at))
+    )
+    stmt = _apply_date_filter(stmt, Transaction.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            stmt = stmt.where(Transaction.external_id.ilike(f'%{_escape_like(params.search)}%'))
+        else:
+            stmt = _apply_user_join_filter(stmt, Transaction, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for transaction in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.PLATEGA_RECURRENT,
+            transaction,
+            identifier=transaction.external_id or str(transaction.id),
+            amount_kopeks=transaction.amount_kopeks,
+            status='paid' if transaction.is_completed else 'pending',
+            is_paid=bool(transaction.is_completed),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 # ---------------------------------------------------------------------------
 # Provider -> search function mapping
 # ---------------------------------------------------------------------------
@@ -1137,6 +1179,7 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.TABPAY: _search_tabpay,
     PaymentMethod.PARITYPAY: _search_paritypay,
     PaymentMethod.TELEGRAM_STARS: _search_stars,
+    PaymentMethod.PLATEGA_RECURRENT: _search_platega_recurring,
 }
 
 

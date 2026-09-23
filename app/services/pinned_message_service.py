@@ -175,7 +175,7 @@ async def broadcast_pinned_message(
                     break
                 except TelegramRetryAfter as retry_error:
                     delay = min(retry_error.retry_after + 1, 30)
-                    logger.warning('RetryAfter for user , waiting seconds', telegram_id=telegram_id, delay=delay)
+                    logger.warning('RetryAfter for user — waiting before retry', telegram_id=telegram_id, delay=delay)
                     await asyncio.sleep(delay)
                 except Exception as send_error:
                     logger.error(
@@ -356,7 +356,7 @@ async def _unpin_message_for_user(bot: Bot, chat_id: int, max_retries: int = 3) 
             if attempt < max_retries - 1:
                 delay = min(e.retry_after + 1, 30)
                 logger.warning(
-                    'RetryAfter при откреплении для , ожидание сек (попытка /)',
+                    'RetryAfter при откреплении — ждём перед повтором',
                     chat_id=chat_id,
                     delay=delay,
                     attempt=attempt + 1,

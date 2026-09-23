@@ -91,18 +91,35 @@ async def test_access_matrix(enabled, status, admin, evidence, allowed, reason):
 
 
 async def test_non_telegram_channel_cannot_create_or_revive_when_enabled():
-    service = RegistrationAccessService(
-        invite_validator=FakeValidator(RegistrationInviteEvidence(RegistrationInviteKind.REFERRAL)),
-        settings_reader=reader(True),
-    )
+    validator = FakeValidator(RegistrationInviteEvidence(RegistrationInviteKind.REFERRAL))
+    service = RegistrationAccessService(invite_validator=validator, settings_reader=reader(True))
 
     decision = await service.evaluate(
         object(),
-        context(None, channel=RegistrationChannel.CABINET_EMAIL),
+        context(None, channel=RegistrationChannel.CABINET_OAUTH),
     )
 
     assert decision.allowed is False
     assert decision.reason is RegistrationAccessReason.CHANNEL_NOT_ALLOWED
+
+    decision = await service.evaluate(
+        object(),
+        context(None, channel=RegistrationChannel.CABINET_EMAIL, payload='ref-code'),
+    )
+
+    assert decision.allowed is True
+    assert decision.reason is RegistrationAccessReason.INVITE_GRANTED
+    assert validator.calls[-1][1] == 'ref-code'
+
+    validator.evidence = None
+    decision = await service.evaluate(
+        object(),
+        context(None, channel=RegistrationChannel.CABINET_EMAIL, payload=None),
+    )
+
+    assert decision.allowed is False
+    assert decision.reason is RegistrationAccessReason.INVITE_REQUIRED
+    assert validator.calls[-1][1] is None
 
 
 async def test_web_gift_claim_is_admitted_by_the_gift_token_it_carries():
