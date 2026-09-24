@@ -63,6 +63,12 @@ class FakeAPI:
     async def list_monitors(self, *, limit=100, offset=0):
         return self._monitors
 
+    async def get_monitor(self, monitor_id):
+        self.calls.append(('get_monitor', monitor_id))
+        if monitor_id == 404:
+            raise DpiCheckerAPIError(code='not_found', message='Monitor not found', status=404)
+        return {**_fx('monitor_created'), 'id': monitor_id, 'is_active': False, 'resources': ['fi.example']}
+
     async def update_monitor(self, monitor_id, body):
         self.calls.append(('update_monitor', monitor_id, body))
         return {**_fx('monitor_created'), **body}
@@ -285,3 +291,54 @@ async def test_monitor_list_hides_keys(postgres_database):
         items = await _service(api).list_monitors(db)
     assert 'resources' not in items[0] and items[0]['resource_count'] == 1
     assert 'secret' not in str(items)
+
+
+# ---------------------------------------------------------------- мониторы, созданные не из кабинета
+
+
+async def test_foreign_monitor_is_adopted_and_then_managed_as_own(postgres_database):
+    """Монитор с сайта (или из API) кабинет берёт под управление: своя строка, имя цели, пауза и удаление."""
+    api = FakeAPI(monitors={'total': 1, 'items': [{**_fx('monitor_created'), 'id': 99}]})
+    async with postgres_session(postgres_database, TABLES) as db:
+        admin = await _admin(db)
+        service = _service(api)
+        action = await service.adopt_monitor(db, 99, admin_id=admin.id)
+        assert (action.kind, action.remote_id, action.status, action.source) == ('monitor', 99, 'paused', 'site')
+        assert action.admin_user_id == admin.id and action.label == 'fi.example'
+        assert (await service.list_monitors(db))[0]['action_id'] == action.id
+        await service.update_monitor(db, action.id, {'is_active': True})
+        assert api.calls[-1] == ('update_monitor', 99, {'is_active': True})
+
+
+async def test_adopting_twice_gives_the_same_row(postgres_database):
+    api = FakeAPI()
+    async with postgres_session(postgres_database, TABLES) as db:
+        admin = await _admin(db)
+        service = _service(api)
+        first = await service.adopt_monitor(db, 99, admin_id=admin.id)
+        second = await service.adopt_monitor(db, 99, admin_id=admin.id)
+        assert first.id == second.id
+        assert [call for call in api.calls if call[0] == 'get_monitor'] == [('get_monitor', 99)]
+
+
+async def test_adopting_unknown_monitor_is_not_found(postgres_database):
+    async with postgres_session(postgres_database, TABLES) as db:
+        admin = await _admin(db)
+        with pytest.raises(ActionNotFound):
+            await _service(FakeAPI()).adopt_monitor(db, 404, admin_id=admin.id)
+        assert await crud.list_monitors(db) == []
+
+
+async def test_monitor_deleted_at_service_is_marked_and_not_foreign(postgres_database):
+    """DELETE у сервиса не стирает монитор: он остаётся «на паузе, deleted_via_api». Кабинет помечает его
+    отключённым — и свой удалённый не всплывает «созданным на сайте»."""
+    gone = {**_fx('monitor_created'), 'is_active': False, 'paused_reason': 'deleted_via_api'}
+    api = FakeAPI(monitors={'total': 2, 'items': [gone, {**_fx('monitor_created'), 'id': 99}]})
+    async with postgres_session(postgres_database, TABLES) as db:
+        admin = await _admin(db)
+        service = _service(api)
+        action = await service.create_monitor(db, admin_id=admin.id, **MONITOR)
+        await service.delete_monitor(db, action.id)
+        by_id = {item['id']: item for item in await service.list_monitors(db)}
+        assert by_id[77]['deleted'] is True and by_id[77]['label'] == 'Finland'
+        assert by_id[99]['deleted'] is False

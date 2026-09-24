@@ -322,23 +322,20 @@ async def test_subscription_without_user_and_default_is_explained(monkeypatch):
     assert 'по умолчанию' in str(info.value)
 
 
-async def test_status_tells_default_subscription_and_its_keys(monkeypatch):
-    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', 'ref-1')
-    service = _panel_service(monkeypatch, ['vless://u@fi.example:443#Finland'])
-    assert (await service.status())['reference'] == {'short_uuid': 'ref-1', 'configs': 1, 'error': None}
+async def test_status_names_default_subscription_without_network(monkeypatch):
+    """Статус открывает каждую вкладку и не ждёт сервис: разворот подписки шёл до 10 с и держал раздел пустым.
+    Ключи и ошибка подписки видны, когда форма их загружает."""
+    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', ' https://sub.example/Ab12Cd34Ef56Gh78/ ')
+    service = _panel_service(monkeypatch, [])
+    status = await service.status()
+    assert status['reference'] == {'short_uuid': 'Ab12Cd34Ef56Gh78', 'configs': None, 'error': None}
+    assert status['balance'] is not None
 
 
 async def test_status_without_default_subscription_says_so(monkeypatch):
     monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', None)
     reference = (await _panel_service(monkeypatch, []).status())['reference']
-    assert reference['short_uuid'] is None and reference['configs'] == 0 and reference['error']
-
-
-async def test_status_survives_broken_default_subscription(monkeypatch):
-    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', 'gone')
-    status = await _panel_service(monkeypatch, []).status()
-    assert status['balance'] is not None
-    assert status['reference']['short_uuid'] == 'gone' and status['reference']['error']
+    assert reference['short_uuid'] is None and reference['error']
 
 
 async def test_default_subscription_may_be_a_link_expanded_by_the_service(monkeypatch):
@@ -365,8 +362,3 @@ async def test_default_subscription_may_be_a_link_expanded_by_the_service(monkey
         ('hy', 'hysteria2'),
     ]
     assert {key.ref for key in keys} == {'Ab12Cd34Ef56Gh78'}
-    assert (await service.status())['reference'] == {
-        'short_uuid': 'Ab12Cd34Ef56Gh78',
-        'configs': len(keys),
-        'error': None,
-    }

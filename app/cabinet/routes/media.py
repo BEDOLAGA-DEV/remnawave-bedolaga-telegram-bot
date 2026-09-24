@@ -111,9 +111,9 @@ def _media_signature(file_id: str, exp: int) -> str:
     return hmac.new(secret, f'{file_id}.{exp}'.encode(), hashlib.sha256).hexdigest()
 
 
-def make_media_token(file_id: str) -> str:
-    """Signed, expiring token authorizing download of `file_id`."""
-    exp = int(time.time()) + _MEDIA_TOKEN_TTL_SECONDS
+def make_media_token(file_id: str, *, ttl_seconds: int = _MEDIA_TOKEN_TTL_SECONDS) -> str:
+    """Signed, expiring token authorizing download of `file_id` (any opaque subject string)."""
+    exp = int(time.time()) + ttl_seconds
     return f'{exp}.{_media_signature(file_id, exp)}'
 
 

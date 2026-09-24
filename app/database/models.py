@@ -5256,7 +5256,7 @@ class DpiCheckerAction(Base):
     resource_count = Column(Integer, nullable=False, default=0)
     source = Column(
         String(24), nullable=False, default='paste'
-    )  # paste | panel_subscription | panel_hosts | panel_nodes
+    )  # paste | panel_subscription | panel_hosts | panel_nodes | site (монитор взят с сайта)
     source_ref = Column(String(128), nullable=True)
     label = Column(String(255), nullable=False, default='')
     targets = Column(JSON, nullable=False, default=list)  # [{"value": ..., "name": ...}]

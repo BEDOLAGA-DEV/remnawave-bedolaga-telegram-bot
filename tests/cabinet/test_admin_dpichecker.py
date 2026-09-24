@@ -258,3 +258,75 @@ async def test_resubmit_route_audits(service):
     out = await admin_dpichecker.resubmit(1, admin=ADMIN, db=AsyncMock())
     assert out.status == 'pending'
     assert admin_dpichecker.PermissionService.log_action.await_args.kwargs['action'] == 'dpichecker_resubmit'
+
+
+# ---------------------------------------------------------------- CSV в Mini App: подписанная ссылка
+
+
+def _request(url: str = 'https://bot.example/cabinet/dpichecker/files/report/1'):
+    return SimpleNamespace(url_for=lambda name, **params: url)
+
+
+async def test_download_link_is_signed_short_and_bound_to_file(service):
+    """Telegram скачивает файл сам, без Authorization, — поэтому короткая подписанная ссылка, как у медиа тикетов."""
+    from app.cabinet.routes.media import _verify_media_token
+
+    service._action = AsyncMock(return_value=_action())
+    out = await admin_dpichecker.download_link('report', 1, _request(), admin=ADMIN, db=AsyncMock())
+    assert out.file_name == 'dpichecker_1.csv'
+    base, _, token = out.url.partition('?token=')
+    assert base == 'https://bot.example/cabinet/dpichecker/files/report/1'
+    assert _verify_media_token('dpichecker:report:1', token)
+    assert not _verify_media_token('dpichecker:report:2', token)
+    assert not _verify_media_token('dpichecker:noisy:1', token)
+    assert int(token.split('.')[0]) - __import__('time').time() <= admin_dpichecker.DOWNLOAD_TTL_SECONDS
+
+
+async def test_download_link_only_for_existing_action(service):
+    service._action = AsyncMock(side_effect=ActionNotFound())
+    with pytest.raises(HTTPException) as info:
+        await admin_dpichecker.download_link('report', 9, _request(), admin=ADMIN, db=AsyncMock())
+    assert info.value.status_code == 404
+
+
+async def test_signed_download_gives_attachment_readable_by_telegram_web(service):
+    from app.cabinet.routes.media import make_media_token
+
+    service.report_csv = AsyncMock(return_value=(b'a,b\n', 'text/csv; charset=utf-8'))
+    token = make_media_token('dpichecker:report:1', ttl_seconds=60)
+    response = await admin_dpichecker.signed_download('report', 1, token=token, db=AsyncMock())
+    assert response.body == b'a,b\n'
+    assert response.headers['content-disposition'] == 'attachment; filename="dpichecker_1.csv"'
+    assert response.headers['access-control-allow-origin'] == 'https://web.telegram.org'
+
+
+@pytest.mark.parametrize('subject', ['dpichecker:report:2', 'dpichecker:noisy:1', 'x'])
+async def test_signed_download_refuses_foreign_or_bad_token(service, subject):
+    from app.cabinet.routes.media import make_media_token
+
+    service.report_csv = AsyncMock()
+    for token in (make_media_token(subject, ttl_seconds=60), '', 'garbage', make_media_token(subject, ttl_seconds=-5)):
+        with pytest.raises(HTTPException) as info:
+            await admin_dpichecker.signed_download('report', 1, token=token, db=AsyncMock())
+        assert info.value.status_code == 404
+    service.report_csv.assert_not_awaited()
+
+
+async def test_signed_download_of_noisy_scan(service):
+    from app.cabinet.routes.media import make_media_token
+
+    service.noisy_csv = AsyncMock(return_value=(b'ip\n', 'text/csv'))
+    token = make_media_token('dpichecker:noisy:4', ttl_seconds=60)
+    response = await admin_dpichecker.signed_download('noisy', 4, token=token, db=AsyncMock())
+    assert response.headers['content-disposition'] == 'attachment; filename="dpichecker_noisy_4.csv"'
+
+
+async def test_adopt_route_needs_run_and_audits(service):
+    import inspect
+
+    assert "require_permission('dpichecker:run')" in inspect.getsource(admin_dpichecker.adopt_monitor)
+    service.adopt_monitor = AsyncMock(return_value=_action(kind='monitor', remote_id=99, status='paused'))
+    out = await admin_dpichecker.adopt_monitor(99, admin=ADMIN, db=AsyncMock())
+    assert out.remote_id == 99
+    assert service.adopt_monitor.await_args.kwargs['admin_id'] == 7
+    assert admin_dpichecker.PermissionService.log_action.await_args.kwargs['action'] == 'dpichecker_monitor_adopt'

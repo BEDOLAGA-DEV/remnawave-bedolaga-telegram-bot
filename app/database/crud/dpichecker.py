@@ -104,6 +104,18 @@ async def list_monitors(db: AsyncSession) -> list[DpiCheckerAction]:
     return list(rows.scalars())
 
 
+async def monitors_by_remote(db: AsyncSession, remote_ids: list[int]) -> dict[int, DpiCheckerAction]:
+    """Свои строки мониторов по номерам у сервиса — в любом статусе (имя есть и у отключённого)."""
+    if not remote_ids:
+        return {}
+    rows = await db.execute(
+        select(DpiCheckerAction).where(
+            DpiCheckerAction.kind == KIND_MONITOR, DpiCheckerAction.remote_id.in_(sorted(set(remote_ids)))
+        )
+    )
+    return {int(action.remote_id): action for action in rows.scalars()}
+
+
 async def claim_delivery(db: AsyncSession, action: DpiCheckerAction, delivery_id: int) -> bool:
     """True, если доставку вебхука видим впервые (и запоминаем её)."""
     seen = [int(item) for item in action.delivery_ids or []]

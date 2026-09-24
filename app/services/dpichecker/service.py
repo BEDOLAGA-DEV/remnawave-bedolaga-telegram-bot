@@ -47,6 +47,8 @@ STATUS_MAX = 16
 SECRET_REFRESH_MIN_SEC = 60.0
 RESUBMITTABLE = frozenset({'submitting', 'unknown'})
 USD = Decimal('0.0001')
+SOURCE_SITE = 'site'  # монитор создан не из кабинета и взят под управление
+DELETED_REASON = 'deleted_via_api'
 FINISHED = frozenset({'completed', 'failed', 'cancelled'})
 CHEREMSHA_MAX = 20
 MONITOR_PATCH_FIELDS = frozenset({'is_active', 'interval_hours', 'notify_on_success', 'alert_after_fails'})
@@ -150,7 +152,7 @@ class DpiCheckerService:
         noisy = quota.get('noisy') or {}
         return {
             **state,
-            'reference': await self._reference_status(),
+            'reference': self._reference_status(),
             'balance': profile.get('balance'),
             'total_spent': profile.get('total_spent'),
             'noisy': {key: noisy.get(key) for key in ('limit', 'used', 'remaining', 'unlimited', 'resets_at')},
@@ -183,18 +185,13 @@ class DpiCheckerService:
             raise PanelTargetError('В подписке по умолчанию нет ключей для проверки')
         return keys
 
-    async def _reference_status(self) -> dict[str, Any]:
-        """Подписка по умолчанию и сколько в ней ключей; поломка не роняет статус — уходит в error."""
+    def _reference_status(self) -> dict[str, Any]:
+        """Какая подписка задана — без сети: статус открывает каждую вкладку, а разворот подписки у сервиса
+        шёл до 10 с и держал раздел пустым. Ключи и ошибка подписки видны, когда форма их загружает."""
         reference = self._reference()
         if not reference:
-            return {'short_uuid': None, 'configs': 0, 'error': 'Подписка по умолчанию не задана'}
-        label = reference.rstrip('/').rsplit('/', 1)[-1]
-        try:
-            keys = await self._reference_keys()
-        except Exception as exc:
-            logger.warning('DPI//CHECKER: подписка по умолчанию не прочитана', reference=label, error=str(exc))
-            return {'short_uuid': label, 'configs': 0, 'error': str(exc)[:200]}
-        return {'short_uuid': label, 'configs': len(keys), 'error': None}
+            return {'short_uuid': None, 'configs': None, 'error': 'Подписка по умолчанию не задана'}
+        return {'short_uuid': reference.rstrip('/').rsplit('/', 1)[-1], 'configs': None, 'error': None}
 
     async def pops(self, location: str) -> dict[str, Any]:
         data = await self._call('pops', location)
@@ -630,9 +627,10 @@ class DpiCheckerService:
     async def list_monitors(self, db: AsyncSession) -> list[dict[str, Any]]:
         """Мониторы сервиса; у созданных из кабинета — номер своей строки и имя."""
         data = await self._call('list_monitors', limit=100)
-        own = {action.remote_id: action for action in await crud.list_monitors(db)}
+        monitors = list(data.get('items') or [])
+        own = await crud.monitors_by_remote(db, [int(m['id']) for m in monitors if m.get('id') is not None])
         items = []
-        for monitor in data.get('items') or []:
+        for monitor in monitors:
             action = own.get(monitor.get('id'))
             # Ресурсы монитора — это ключи VPN и ссылки прокси: наружу только их число.
             public = {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
@@ -642,9 +640,50 @@ class DpiCheckerService:
                     'resource_count': len(monitor.get('resources') or []),
                     'action_id': action.id if action else None,
                     'label': action.label if action else None,
+                    # DELETE у сервиса не стирает монитор — он висит на паузе с этой причиной.
+                    'deleted': monitor.get('paused_reason') == DELETED_REASON
+                    or (action is not None and action.status == 'deleted'),
                 }
             )
         return items
+
+    async def adopt_monitor(self, db: AsyncSession, remote_id: int, *, admin_id: int | None) -> DpiCheckerAction:
+        """Монитор, созданный не из кабинета (на сайте, в их боте, через API), — под управление кабинета:
+        своя строка, как у созданного здесь, — пауза, отключение, история прогонов и итоги в админ-чат.
+        Повтор возвращает ту же строку."""
+        existing = await crud.get_by_remote(db, crud.KIND_MONITOR, remote_id)
+        if existing is not None and existing.status != 'deleted':
+            return existing
+        try:
+            monitor = await self._call('get_monitor', remote_id)
+        except DpiCheckerAPIError as exc:
+            if exc.status == 404:
+                raise ActionNotFound from exc
+            raise
+        check_type = str(monitor.get('check_type') or 'ip')
+        rows = _row_targets(check_type, [{'value': value} for value in monitor.get('resources') or []])
+        if existing is not None:
+            # Удалённый из кабинета, но живой у сервиса (восстановлен на сайте) — та же строка снова в деле.
+            action = existing
+        else:
+            action = await crud.create_action(
+                db,
+                kind=crud.KIND_MONITOR,
+                admin_user_id=admin_id,
+                check_type=check_type,
+                location=monitor.get('location'),
+                pop_count=len(monitor.get('pop_ids') or []),
+                resource_count=len(rows),
+                source=SOURCE_SITE,
+                source_ref=None,
+                label=_label('', rows),
+                targets=rows,
+                request={},
+            )
+            action.remote_id = remote_id
+        action.status = 'active' if monitor.get('is_active', True) else 'paused'
+        await db.commit()
+        return action
 
     async def _monitor(self, db: AsyncSession, action_id: int) -> DpiCheckerAction:
         action = await self._action(db, action_id, crud.KIND_MONITOR)

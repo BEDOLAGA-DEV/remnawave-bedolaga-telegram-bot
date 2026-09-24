@@ -172,3 +172,8 @@ class OptimalResponse(BaseModel):
 
 class MonitorListResponse(BaseModel):
     items: list[dict[str, Any]]
+
+
+class DownloadLinkOut(BaseModel):
+    url: str
+    file_name: str

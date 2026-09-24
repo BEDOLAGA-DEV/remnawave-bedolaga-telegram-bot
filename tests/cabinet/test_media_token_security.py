@@ -51,3 +51,10 @@ async def test_download_rejects_missing_token() -> None:
     with pytest.raises(HTTPException) as exc:
         await download_media(file_id=FID, token='')
     assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_token_lifetime_can_be_shortened() -> None:
+    tok = make_media_token(FID, ttl_seconds=300)
+    assert int(tok.split('.')[0]) - time.time() <= 300
+    assert _verify_media_token(FID, tok) is True
+    assert _verify_media_token(FID, make_media_token(FID, ttl_seconds=-1)) is False

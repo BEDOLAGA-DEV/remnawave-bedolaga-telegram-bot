@@ -10,7 +10,7 @@ import ipaddress
 from typing import Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
@@ -26,6 +26,7 @@ from ..schemas.dpichecker import (
     ActionOut,
     CheckCreate,
     CheckResponse,
+    DownloadLinkOut,
     EstimateRequest,
     Location,
     MonitorCreate,
@@ -41,10 +42,17 @@ from ..schemas.dpichecker import (
     ScanResponse,
     StatusResponse,
 )
+from .media import _verify_media_token, make_media_token
 
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/admin/dpichecker', tags=['Cabinet Admin DPI//CHECKER'])
+# Скачивание по подписанной ссылке — без Authorization: Telegram.WebApp.downloadFile качает URL сам.
+download_router = APIRouter(prefix='/dpichecker', tags=['Cabinet Admin DPI//CHECKER'])
+
+DownloadKind = Literal['report', 'noisy']
+DOWNLOAD_TTL_SECONDS = 5 * 60
+TELEGRAM_WEB_ORIGIN = 'https://web.telegram.org'
 
 GATEWAY_DETAIL = (
     'DPI//CHECKER не ответил. Если это был запуск — откройте его в истории и нажмите «Спросить ещё раз»: '
@@ -93,10 +101,16 @@ async def _audit(db: AsyncSession, admin: User, action: str, resource_id: int, d
     await db.commit()
 
 
-def _file(data: bytes, content_type: str, filename: str) -> Response:
+def _file(data: bytes, content_type: str, filename: str, *, headers: dict[str, str] | None = None) -> Response:
     return Response(
-        content=data, media_type=content_type, headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+        content=data,
+        media_type=content_type,
+        headers={'Content-Disposition': f'attachment; filename="{filename}"', **(headers or {})},
     )
+
+
+def _download_name(kind: str, action_id: int) -> str:
+    return f'dpichecker_{action_id}.csv' if kind == 'report' else f'dpichecker_noisy_{action_id}.csv'
 
 
 # ============ Статус и справочники ============
@@ -277,7 +291,7 @@ async def report_csv(
         data, content_type = await _service().report_csv(db, action_id)
     except Exception as exc:
         raise _http(exc) from exc
-    return _file(data, content_type, f'dpichecker_{action_id}.csv')
+    return _file(data, content_type, _download_name('report', action_id))
 
 
 @router.get('/checks/{action_id}/map.png')
@@ -346,7 +360,52 @@ async def noisy_csv(
         data, content_type = await _service().noisy_csv(db, action_id)
     except Exception as exc:
         raise _http(exc) from exc
-    return _file(data, content_type, f'dpichecker_noisy_{action_id}.csv')
+    return _file(data, content_type, _download_name('noisy', action_id))
+
+
+# ============ Скачивание CSV в Mini App ============
+
+
+@router.post('/files/{kind}/{action_id}/link', response_model=DownloadLinkOut)
+async def download_link(
+    kind: DownloadKind,
+    action_id: int,
+    request: Request,
+    admin: User = Depends(require_permission('dpichecker:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> DownloadLinkOut:
+    """Короткая подписанная ссылка на CSV: в Mini App `<a download>` выкидывает из приложения,
+    а штатный downloadFile качает URL без заголовка авторизации."""
+    try:
+        await _service()._action(db, action_id, 'check' if kind == 'report' else 'noisy')
+    except Exception as exc:
+        raise _http(exc) from exc
+    token = make_media_token(f'dpichecker:{kind}:{action_id}', ttl_seconds=DOWNLOAD_TTL_SECONDS)
+    url = str(request.url_for('dpichecker_signed_download', kind=kind, action_id=action_id))
+    return DownloadLinkOut(url=f'{url}?token={token}', file_name=_download_name(kind, action_id))
+
+
+@download_router.get('/files/{kind}/{action_id}', name='dpichecker_signed_download')
+async def signed_download(
+    kind: DownloadKind,
+    action_id: int,
+    token: str = Query(''),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> Response:
+    if not _verify_media_token(f'dpichecker:{kind}:{action_id}', token):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Файл не найден')
+    try:
+        method = _service().report_csv if kind == 'report' else _service().noisy_csv
+        data, content_type = await method(db, action_id)
+    except Exception as exc:
+        raise _http(exc) from exc
+    # Веб-клиент Telegram качает файл fetch-ом со своего origin — без этого заголовка скачивание молча падает.
+    return _file(
+        data,
+        content_type,
+        _download_name(kind, action_id),
+        headers={'Access-Control-Allow-Origin': TELEGRAM_WEB_ORIGIN},
+    )
 
 
 # ============ Бесплатные справки ============
@@ -415,6 +474,21 @@ async def create_monitor(
         raise _http(exc) from exc
     details = {'check_type': body.check_type, 'interval_hours': body.interval_hours, 'pops': len(body.pop_ids)}
     await _audit(db, admin, 'dpichecker_monitor_create', action.id, details)
+    return ActionOut.from_action(action)
+
+
+@router.post('/monitors/remote/{remote_id}/adopt', response_model=ActionOut)
+async def adopt_monitor(
+    remote_id: int,
+    admin: User = Depends(require_permission('dpichecker:run')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> ActionOut:
+    """Монитор с сайта DPI//CHECKER — под управление кабинета (дальше им правят как своим)."""
+    try:
+        action = await _service().adopt_monitor(db, remote_id, admin_id=admin.id)
+    except Exception as exc:
+        raise _http(exc) from exc
+    await _audit(db, admin, 'dpichecker_monitor_adopt', action.id, {'remote_id': remote_id})
     return ActionOut.from_action(action)
 
 
