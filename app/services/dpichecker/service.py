@@ -22,6 +22,7 @@ from app.database.crud import dpichecker as crud
 from app.database.models import DpiCheckerAction
 from app.external.dpichecker_api import DpiCheckerAPI, DpiCheckerAPIError, DpiCheckerGatewayError
 from app.services.dpichecker.errors import ActionNotFound, DpiCheckerDisabled, LaunchRefused, human_error
+from app.services.dpichecker.monitor_watch import MonitorWatch
 from app.services.dpichecker.presenter import present_check
 from app.services.dpichecker.regions import group_pops
 from app.services.dpichecker.targets import PanelTarget, host_addresses, node_addresses, subscription_keys
@@ -67,6 +68,8 @@ class DpiCheckerService:
         self._panel_client = panel_client or _default_panel_client
         self._sleep = sleep
         self._secret: tuple[str, str] | None = None  # (отпечаток ключа API, секрет подписи)
+        self._watch: MonitorWatch | None = None
+        self._background: asyncio.Task | None = None
 
     # ------------------------------------------------------------ доступ
 
@@ -529,6 +532,78 @@ class DpiCheckerService:
         secret = await self._call('webhook_secret')
         self._secret = (fingerprint, secret)
         return secret
+
+    # ------------------------------------------------------------ вебхук: события
+
+    async def handle_webhook(self, *, event: str, delivery_id: int, payload: dict[str, Any]) -> None:
+        from app.database.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            await self.handle_webhook_in(db, event=event, delivery_id=delivery_id, payload=payload)
+
+    async def handle_webhook_in(
+        self, db: AsyncSession, *, event: str, delivery_id: int, payload: dict[str, Any]
+    ) -> None:
+        """Обновить свою строку по событию; уведомлений отсюда нет (итоги мониторов — у обходчика)."""
+        if event == 'monitor.run':
+            monitor_id = (payload.get('run') or {}).get('monitor_id')
+            self.poke_monitor(int(monitor_id) if monitor_id else None)
+            return
+        kinds = {
+            'check.completed': crud.KIND_CHECK,
+            'check.cancelled': crud.KIND_CHECK,
+            'noisy.done': crud.KIND_NOISY,
+            'probe.done': crud.KIND_PROBE,
+        }
+        kind = kinds.get(event)
+        if kind is None:
+            logger.info('DPI//CHECKER webhook: событие без обработчика', webhook_event=event)
+            return
+        body = payload.get('check') if kind == crud.KIND_CHECK else payload.get('scan')
+        remote_id = (body or {}).get('id')
+        action = await crud.get_by_remote(db, kind, int(remote_id)) if remote_id else None
+        if action is None:
+            logger.info('DPI//CHECKER webhook: не наш номер', webhook_event=event, remote_id=remote_id)
+            return
+        if delivery_id and not await crud.claim_delivery(db, action, delivery_id):
+            return
+        self._apply_status(action, body.get('status'))
+        if kind == crud.KIND_PROBE:
+            fixed, traffic = usd(body.get('fixed_cost')), usd(body.get('traffic_cost'))
+            if fixed is not None:
+                action.cost_usd = fixed + (traffic or Decimal(0))
+        await db.commit()
+
+    # ------------------------------------------------------------ фон: обходчик мониторов
+
+    def poke_monitor(self, monitor_id: int | None) -> None:
+        if self._watch is not None:
+            self._watch.poke(monitor_id)
+
+    def start_background(self, notify: Callable[[str], Awaitable[Any]]) -> None:
+        """Идемпотентно: живой обходчик не трогает, упавший — перезапускает с записью причины."""
+        task = self._background
+        if task is not None and not task.done():
+            return
+        if task is not None and not task.cancelled() and task.exception() is not None:
+            logger.error('Обходчик мониторов DPI//CHECKER упал, перезапуск', error=str(task.exception()))
+        from app.database.database import AsyncSessionLocal
+
+        self._watch = MonitorWatch(
+            api_factory=self._api,
+            session_factory=AsyncSessionLocal,
+            notify=notify,
+            cabinet_url=lambda: settings.CABINET_URL,
+        )
+        self._background = asyncio.create_task(self._watch.loop())
+
+    async def stop_background(self) -> None:
+        if self._watch is not None:
+            self._watch.stop()
+        task, self._background = self._background, None
+        if task is not None:
+            task.cancel()
+            await asyncio.wait([task])
 
 
 dpichecker_service = DpiCheckerService()

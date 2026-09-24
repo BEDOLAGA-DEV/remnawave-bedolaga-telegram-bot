@@ -23,6 +23,7 @@ from app.services.ban_notification_service import ban_notification_service
 from app.services.broadcast_service import broadcast_service
 from app.services.contest_rotation_service import contest_rotation_service
 from app.services.daily_subscription_service import daily_subscription_service
+from app.services.dpichecker.service import dpichecker_service
 from app.services.grace_access_runtime import grace_access_runtime
 from app.services.log_rotation_service import log_rotation_service
 from app.services.maintenance_service import maintenance_service
@@ -67,6 +68,18 @@ class GracefulExit:
         if self.signum is None:
             self.signum = signum
         self.exit = True
+
+
+def _dpichecker_notifier(bot):
+    """Итог прогона монитора DPI//CHECKER → админ-чат, категория «Инфраструктура»."""
+    from app.services.admin_notification_service import AdminNotificationService, NotificationCategory
+
+    async def notify(text: str) -> bool:
+        return await AdminNotificationService(bot).send_admin_notification(
+            text, category=NotificationCategory.INFRASTRUCTURE
+        )
+
+    return notify
 
 
 async def main():
@@ -696,6 +709,18 @@ async def main():
                 stage.skip('Интеграция bschekbot выключена или без ключа')
 
         async with timeline.stage(
+            'DPI//CHECKER',
+            '🧱',
+            success_message='Обходчик мониторов запущен',
+        ) as stage:
+            dpichecker_enabled = settings.is_dpichecker_enabled() and settings.is_dpichecker_configured()
+            if dpichecker_enabled:
+                dpichecker_service.start_background(_dpichecker_notifier(bot))
+                stage.log('Итоги мониторов из кабинета будут приходить в админ-чат')
+            else:
+                stage.skip('DPI//CHECKER выключен или без ключа')
+
+        async with timeline.stage(
             'Служба техработ',
             '🛡️',
             success_message='Служба техработ запущена',
@@ -859,6 +884,9 @@ async def main():
                     # Идемпотентно: перезапускает только упавший обходчик, живой не трогает.
                     reachability_service.start_background()
 
+                if dpichecker_enabled:
+                    dpichecker_service.start_background(_dpichecker_notifier(bot))
+
                 if version_check_task and version_check_task.done():
                     exception = version_check_task.exception()
                     if exception:
@@ -951,6 +979,12 @@ async def main():
             monitoring_service.stop_monitoring()
             monitoring_task.cancel()
             await asyncio.wait([monitoring_task])
+
+        logger.info('ℹ️ Остановка обходчика мониторов DPI//CHECKER...')
+        try:
+            await dpichecker_service.stop_background()
+        except Exception as error:
+            logger.warning('Не удалось остановить обходчик мониторов DPI//CHECKER', error=error)
 
         logger.info('ℹ️ Остановка обходчика задач проверки доступности...')
         try:
