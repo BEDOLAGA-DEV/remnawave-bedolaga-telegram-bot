@@ -263,8 +263,10 @@ async def test_resubmit_route_audits(service):
 # ---------------------------------------------------------------- CSV в Mini App: подписанная ссылка
 
 
-def _request(url: str = 'https://bot.example/cabinet/dpichecker/files/report/1'):
-    return SimpleNamespace(url_for=lambda name, **params: url)
+def _request(url: str = 'https://bot.example/cabinet/dpichecker/files/report/1', headers: dict | None = None):
+    from starlette.datastructures import URL, Headers
+
+    return SimpleNamespace(url_for=lambda name, **params: URL(url), url=URL(url), headers=Headers(headers or {}))
 
 
 async def test_download_link_is_signed_short_and_bound_to_file(service):
@@ -330,3 +332,14 @@ async def test_adopt_route_needs_run_and_audits(service):
     assert out.remote_id == 99
     assert service.adopt_monitor.await_args.kwargs['admin_id'] == 7
     assert admin_dpichecker.PermissionService.log_action.await_args.kwargs['action'] == 'dpichecker_monitor_adopt'
+
+
+async def test_download_link_is_https_behind_proxy(service):
+    """За прокси (Caddy в соседнем контейнере) url_for отдаёт http://внутренний-адрес — Telegram такое не скачает."""
+    service._action = AsyncMock(return_value=_action())
+    request = _request(
+        'http://remnawave_bot:8080/cabinet/dpichecker/files/report/1',
+        {'x-forwarded-proto': 'https', 'x-forwarded-host': 'api.example.com'},
+    )
+    out = await admin_dpichecker.download_link('report', 1, request, admin=ADMIN, db=AsyncMock())
+    assert out.url.startswith('https://api.example.com/cabinet/dpichecker/files/report/1?token=')

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.bot_factory import create_bot
 from app.config import settings
 from app.database.models import User
+from app.utils.public_url import public_url
 
 from ..dependencies import get_current_cabinet_user
 from ..schemas.media import TELEGRAM_FILE_ID_PATTERN
@@ -157,7 +158,7 @@ def _resolve_target_chat_id() -> int:
 
 def _build_media_url(request: Request, file_id: str) -> str:
     """Build a signed, expiring URL for downloading media."""
-    base = str(request.url_for('cabinet_download_media', file_id=file_id))
+    base = public_url(request, request.url_for('cabinet_download_media', file_id=file_id))
     sep = '&' if '?' in base else '?'
     return f'{base}{sep}token={make_media_token(file_id)}'
 

@@ -19,6 +19,7 @@ from app.services.dpichecker.errors import ActionNotFound, DpiCheckerDisabled, L
 from app.services.dpichecker.service import DpiCheckerService, dpichecker_service
 from app.services.dpichecker.targets import PanelTargetError
 from app.services.permission_service import PermissionService
+from app.utils.public_url import public_url
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.dpichecker import (
@@ -381,7 +382,7 @@ async def download_link(
     except Exception as exc:
         raise _http(exc) from exc
     token = make_media_token(f'dpichecker:{kind}:{action_id}', ttl_seconds=DOWNLOAD_TTL_SECONDS)
-    url = str(request.url_for('dpichecker_signed_download', kind=kind, action_id=action_id))
+    url = public_url(request, request.url_for('dpichecker_signed_download', kind=kind, action_id=action_id))
     return DownloadLinkOut(url=f'{url}?token={token}', file_name=_download_name(kind, action_id))
 
 

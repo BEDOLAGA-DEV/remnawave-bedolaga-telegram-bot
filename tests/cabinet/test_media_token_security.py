@@ -58,3 +58,19 @@ def test_token_lifetime_can_be_shortened() -> None:
     assert int(tok.split('.')[0]) - time.time() <= 300
     assert _verify_media_token(FID, tok) is True
     assert _verify_media_token(FID, make_media_token(FID, ttl_seconds=-1)) is False
+
+
+def test_signed_media_url_is_https_behind_proxy() -> None:
+    from types import SimpleNamespace
+
+    from starlette.datastructures import URL, Headers
+
+    from app.cabinet.routes.media import _build_media_url
+
+    internal = URL(f'http://remnawave_bot:8080/cabinet/media/{FID}')
+    request = SimpleNamespace(
+        url_for=lambda name, **params: internal,
+        url=internal,
+        headers=Headers({'x-forwarded-proto': 'https', 'host': 'api.example.com'}),
+    )
+    assert _build_media_url(request, FID).startswith(f'https://api.example.com/cabinet/media/{FID}?token=')

@@ -2265,6 +2265,9 @@
 - `app/utils/proxy.py` — Python-модуль
   Классы: нет
   Функции: `mask_proxy_url` — Mask credentials in a proxy URL for safe logging., `sanitize_proxy_error` — Strip proxy credentials from exception messages.
+- `app/utils/public_url.py` — Python-модуль
+  Классы: нет
+  Функции: `public_url` — ``url`` (обычно из ``request.url_for``) со схемой и хостом, которые видит клиент за прокси.
 - `app/utils/redis_client.py` — Python-модуль
   Классы: нет
   Функции: `create_redis` — Клиент с пулом соединений к ``url`` (по умолчанию ``settings.REDIS_URL``).
@@ -3176,7 +3179,7 @@
   Функции: `test_route_registered` — Метод и путь закреплены: иначе маршрут можно переименовать с зелёным CI., `test_force_defaults_to_off` — Без явного force активную платную подписку снести нельзя., `test_deletes_expired_trial` — Базовый случай из отчёта: отработавший триал убирается из карточки., `test_foreign_subscription_not_found` — Подписка чужого пользователя не удаляется по одному лишь sub_id., `test_active_paid_needs_force` — Оплаченный активный доступ не сносится одним промахом., `test_open_grace_blocks_deletion` — Пока открыт временный доступ, подписку из-под него не вырывают.
 - `tests/cabinet/test_admin_dpichecker.py` — Python-модуль
   Классы: нет
-  Функции: `service`, `test_routes_registered_with_expected_paths_and_permissions`, `test_money_routes_need_run_permission`, `test_action_out_hides_keys_and_request`, `test_check_create_limits`, `test_monitor_patch_bounds`, `test_scan_and_panel_requests_validate`, `test_launch_audits_and_returns_action`, `test_list_checks_mine_filters_by_admin`, `test_history_names_admins_and_counts_per_filter` — История как на сайте: у фильтров — сколько запусков, у строки — имя админа, а не «админ #7»., `test_panel_targets_returns_values`, `test_domain_errors_to_http`, `test_unexpected_error_is_500_without_details`, `test_report_csv_returns_service_bytes`, `test_key_problems_are_503_in_words`, `test_ip_lookup_rejects_non_ip`, `test_subscription_without_user_goes_to_default_from_settings` — Как у BSCHEKER: без выбранного пользователя — подписка по умолчанию из настроек, не своя., `test_resubmit_route_audits`, `test_download_link_is_signed_short_and_bound_to_file` — Telegram скачивает файл сам, без Authorization, — поэтому короткая подписанная ссылка, как у медиа тикетов., `test_download_link_only_for_existing_action`, `test_signed_download_gives_attachment_readable_by_telegram_web`, `test_signed_download_refuses_foreign_or_bad_token`, `test_signed_download_of_noisy_scan`, `test_adopt_route_needs_run_and_audits`
+  Функции: `service`, `test_routes_registered_with_expected_paths_and_permissions`, `test_money_routes_need_run_permission`, `test_action_out_hides_keys_and_request`, `test_check_create_limits`, `test_monitor_patch_bounds`, `test_scan_and_panel_requests_validate`, `test_launch_audits_and_returns_action`, `test_list_checks_mine_filters_by_admin`, `test_history_names_admins_and_counts_per_filter` — История как на сайте: у фильтров — сколько запусков, у строки — имя админа, а не «админ #7»., `test_panel_targets_returns_values`, `test_domain_errors_to_http`, `test_unexpected_error_is_500_without_details`, `test_report_csv_returns_service_bytes`, `test_key_problems_are_503_in_words`, `test_ip_lookup_rejects_non_ip`, `test_subscription_without_user_goes_to_default_from_settings` — Как у BSCHEKER: без выбранного пользователя — подписка по умолчанию из настроек, не своя., `test_resubmit_route_audits`, `test_download_link_is_signed_short_and_bound_to_file` — Telegram скачивает файл сам, без Authorization, — поэтому короткая подписанная ссылка, как у медиа тикетов., `test_download_link_only_for_existing_action`, `test_signed_download_gives_attachment_readable_by_telegram_web`, `test_signed_download_refuses_foreign_or_bad_token`, `test_signed_download_of_noisy_scan`, `test_adopt_route_needs_run_and_audits`, `test_download_link_is_https_behind_proxy` — За прокси (Caddy в соседнем контейнере) url_for отдаёт http://внутренний-адрес — Telegram такое не скачает.
 - `tests/cabinet/test_admin_email_queue.py` — Python-модуль
   Классы: нет
   Функции: `test_summary_counts_each_status`, `test_items_are_newest_first_and_carry_no_letter_body` — Тело письма — это код или ссылка входа: наружу его не отдаём., `test_clear_removes_the_queue_and_reports_the_count`, `test_clear_pending_only_leaves_history` — «Отменить ожидающие» не должно стирать историю доставленных и потерянных., `test_clear_defaults_to_wiping_everything` — Запрос без параметров чистит очередь целиком — дефолт проверяем по сигнатуре., `test_empty_queue_is_not_an_error`, `test_routes_are_registered`
@@ -3386,7 +3389,7 @@
   Функции: `test_google_row_names_the_email_that_unlinking_forgets`, `test_nothing_is_forgotten_once_a_password_exists`, `test_email_verified_elsewhere_is_not_tied_to_the_provider`
 - `tests/cabinet/test_media_token_security.py` — Python-модуль
   Классы: нет
-  Функции: `test_token_roundtrip`, `test_token_is_bound_to_file_id`, `test_token_rejects_tampered_and_garbage`, `test_token_rejects_expired`, `test_download_rejects_missing_token`, `test_token_lifetime_can_be_shortened`
+  Функции: `test_token_roundtrip`, `test_token_is_bound_to_file_id`, `test_token_rejects_tampered_and_garbage`, `test_token_rejects_expired`, `test_download_rejects_missing_token`, `test_token_lifetime_can_be_shortened`, `test_signed_media_url_is_https_behind_proxy`
 - `tests/cabinet/test_media_xss_hardening.py` — Python-модуль
   Классы: нет
   Функции: `test_raster_images_served_inline_with_their_type`, `test_non_raster_forced_to_download_as_octet_stream`, `test_html_is_never_text_html`, `test_svg_is_never_image_svg_xml`, `test_hardening_headers_always_present`, `test_filename_sanitized_against_header_injection`, `test_empty_filename_falls_back`, `test_blocked_upload_lists_cover_active_content`
@@ -5093,6 +5096,9 @@
 - `tests/utils/test_pricing_utils.py` — Python-модуль
   Классы: `TestCalculatePricePerMonth` (4 методов), `TestBuildDynamicValues` (2 методов)
   Функции: нет
+- `tests/utils/test_public_url.py` — Python-модуль
+  Классы: нет
+  Функции: `test_takes_scheme_and_host_from_proxy_headers`, `test_without_proxy_headers_link_is_unchanged`, `test_first_value_of_chained_headers_and_host_fallback`, `test_unknown_scheme_in_header_is_not_trusted`
 - `tests/utils/test_redis_client.py` — Python-модуль
   Классы: нет
   Функции: `from_url`, `test_factory_disables_maintenance_notifications`, `test_factory_defaults_to_settings_url_and_keeps_explicit_kwargs`, `test_factory_skips_config_on_old_redis_py` — redis-py без модуля maint_notifications: лишний kwarg уронил бы from_url., `test_every_redis_client_in_app_goes_through_factory` — Сторож: прямой ``from_url``/``Redis(`` в app/ вернул бы шум и обошёл общие настройки.
