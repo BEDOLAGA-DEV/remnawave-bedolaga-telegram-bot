@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Literal
 
 import structlog
@@ -47,7 +48,14 @@ from ..schemas.dpichecker import (
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix='/admin/dpichecker', tags=['Cabinet Admin DPI//CHECKER'])
 
-GATEWAY_DETAIL = 'DPI//CHECKER не ответил. Если это был запуск — через минуту он появится в истории'
+GATEWAY_DETAIL = (
+    'DPI//CHECKER не ответил. Если это был запуск — откройте его в истории и нажмите «Спросить ещё раз»: '
+    'повтор идёт с тем же ключом и второй раз денег не спишет'
+)
+# Проблема с ключом — раздел неработоспособен, а не «нет прав» у админа кабинета.
+KEY_PROBLEM_CODES = frozenset(
+    {'invalid_api_key', 'missing_api_key', 'ip_not_allowed', 'api_not_unlocked', 'account_banned'}
+)
 CHEREMSHA_MAX = 20
 REFUSAL_STATUSES = frozenset({400, 402, 403, 404, 409, 429})
 
@@ -64,6 +72,9 @@ def _http(exc: Exception) -> HTTPException:
         return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, exc.reason)
     if isinstance(exc, ActionNotFound):
         return HTTPException(status.HTTP_404_NOT_FOUND, 'Не найдено')
+    if isinstance(exc, LaunchRefused | DpiCheckerAPIError) and exc.code in KEY_PROBLEM_CODES:
+        text = exc.message if isinstance(exc, LaunchRefused) else human_error(exc)
+        return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, text)
     if isinstance(exc, LaunchRefused):
         code = exc.status if exc.status in REFUSAL_STATUSES else status.HTTP_400_BAD_REQUEST
         return HTTPException(code, exc.message)
@@ -144,7 +155,9 @@ async def panel_targets(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PanelTargetsResponse:
     try:
-        found = await _service().panel_targets(db, kind=body.kind, user_id=body.user_id, uuids=body.uuids)
+        # Подписка по умолчанию — самого админа: его ключи под рукой всегда.
+        user_id = body.user_id if body.user_id is not None else admin.id
+        found = await _service().panel_targets(db, kind=body.kind, user_id=user_id, uuids=body.uuids)
     except Exception as exc:
         raise _http(exc) from exc
     return PanelTargetsResponse(targets=[PanelTargetOut(value=t.value, name=t.name, ref=t.ref) for t in found])
@@ -234,6 +247,21 @@ async def cancel_check(
     except Exception as exc:
         raise _http(exc) from exc
     await _audit(db, admin, 'dpichecker_check_cancel', action.id, {'refunded_usd': str(action.refunded_usd)})
+    return ActionOut.from_action(action)
+
+
+@router.post('/checks/{action_id}/resubmit', response_model=ActionOut)
+async def resubmit(
+    action_id: int,
+    admin: User = Depends(require_permission('dpichecker:run')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> ActionOut:
+    """Сервис не ответил на запуск — спросить ещё раз тем же ключом (второго списания не будет)."""
+    try:
+        action = await _service().resubmit(db, action_id)
+    except Exception as exc:
+        raise _http(exc) from exc
+    await _audit(db, admin, 'dpichecker_resubmit', action.id, {'kind': action.kind})
     return ActionOut.from_action(action)
 
 
@@ -339,7 +367,11 @@ async def ip_lookup(
     ip: str, bgp: bool = Query(default=False), admin: User = Depends(require_permission('dpichecker:read'))
 ) -> dict:
     try:
-        return await _service().ip_lookup(ip, bgp=bgp)
+        address = str(ipaddress.ip_address(ip.strip()))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Нужен IP-адрес') from exc
+    try:
+        return await _service().ip_lookup(address, bgp=bgp)
     except Exception as exc:
         raise _http(exc) from exc
 

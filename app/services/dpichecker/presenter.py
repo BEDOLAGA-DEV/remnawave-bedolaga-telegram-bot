@@ -21,8 +21,10 @@ def _resource_id(check_type: str, row: dict[str, Any]) -> str:
 
 
 def _name(check_type: str, raw: str, row: dict[str, Any], names: dict[str, str]) -> str:
-    if raw in names:
-        return names[raw]
+    given = names.get(raw)
+    # Сам ключ или ссылка прокси именем не бывают — это секрет пользователя.
+    if given and (check_type == 'ip' or (given != raw and '://' not in given)):
+        return given
     if check_type == 'vpn':
         return str(row.get('host') or VPN_NAME)
     if check_type == 'ip':

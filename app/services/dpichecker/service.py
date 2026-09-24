@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import time
 from collections.abc import Awaitable, Callable
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -25,19 +27,30 @@ from app.services.dpichecker.errors import ActionNotFound, DpiCheckerDisabled, L
 from app.services.dpichecker.monitor_watch import MonitorWatch
 from app.services.dpichecker.presenter import present_check
 from app.services.dpichecker.regions import group_pops
-from app.services.dpichecker.targets import PanelTarget, host_addresses, node_addresses, subscription_keys
+from app.services.dpichecker.targets import (
+    PanelTarget,
+    host_addresses,
+    is_vpn_key,
+    node_addresses,
+    safe_name,
+    subscription_keys,
+)
 
 
 logger = structlog.get_logger(__name__)
 
 GATEWAY_RETRIES = 2
 GATEWAY_PAUSE_SEC = 2.0
+IN_FLIGHT_CODE = 'idempotency_in_flight'
+STATUS_MAX = 16
+SECRET_REFRESH_MIN_SEC = 60.0
+RESUBMITTABLE = frozenset({'submitting', 'unknown'})
 USD = Decimal('0.0001')
 FINISHED = frozenset({'completed', 'failed', 'cancelled'})
 CHEREMSHA_MAX = 20
 MONITOR_PATCH_FIELDS = frozenset({'is_active', 'interval_hours', 'notify_on_success', 'alert_after_fails'})
 # Адрес вебхука и код привязки группы их бота — служебное, в кабинет не нужно.
-HIDDEN_MONITOR_FIELDS = frozenset({'callback_url', 'link_code', 'link_instructions'})
+HIDDEN_MONITOR_FIELDS = frozenset({'callback_url', 'link_code', 'link_instructions', 'resources'})
 
 
 def usd(value: Any) -> Decimal | None:
@@ -48,6 +61,20 @@ def usd(value: Any) -> Decimal | None:
         return Decimal(str(value)).quantize(USD)
     except (InvalidOperation, ValueError):
         return None
+
+
+def _status(value: Any, fallback: str) -> str:
+    """Статус сервиса в колонку String(16): незнакомое длинное значение не роняет запись."""
+    return str(value or fallback)[:STATUS_MAX]
+
+
+def _row_targets(check_type: str | None, targets: list[dict[str, str]]) -> list[dict[str, str]]:
+    kind = check_type or 'ip'
+    return [{'value': str(t['value']), 'name': safe_name(kind, str(t['value']), t.get('name'))} for t in targets]
+
+
+def _label(label: str, targets: list[dict[str, str]]) -> str:
+    return (label or ', '.join(t['name'] for t in targets))[:255]
 
 
 def _default_panel_client() -> Any:
@@ -69,6 +96,8 @@ class DpiCheckerService:
         self._sleep = sleep
         self._secret: tuple[str, str] | None = None  # (отпечаток ключа API, секрет подписи)
         self._watch: MonitorWatch | None = None
+        self._secret_lock = asyncio.Lock()
+        self._secret_refreshed_at = 0.0
         self._background: asyncio.Task | None = None
 
     # ------------------------------------------------------------ доступ
@@ -164,33 +193,73 @@ class DpiCheckerService:
 
     # ------------------------------------------------------------ запуск
 
-    async def _submit(self, db: AsyncSession, action: DpiCheckerAction, call: Callable[[Any], Awaitable[dict]]) -> dict:
-        """Платный POST тем же ключом до ответа; отказ — строка rejected, молчание — unknown."""
-        gateway_failures = 0
+    async def _mark_unknown(self, db: AsyncSession, action: DpiCheckerAction, code: str) -> None:
+        action.status, action.error_code = 'unknown', code[:64]
+        with contextlib.suppress(Exception):
+            await db.commit()
+        logger.warning('DPI//CHECKER: исход запуска неизвестен', action_id=action.id, code=code)
+
+    async def _submit(
+        self,
+        db: AsyncSession,
+        action: DpiCheckerAction,
+        call: Callable[[Any], Awaitable[dict]],
+        apply: Callable[[dict], None],
+        *,
+        retry: bool = True,
+    ) -> DpiCheckerAction:
+        """Платный POST тем же ключом до ответа и запись итога в строку.
+
+        Отказ сервиса — ``rejected`` с кодом; молчание, «ещё обрабатывается» сверх терпения, обрыв
+        запроса или непонятный ответ — ``unknown`` (деньги могли списаться; такой запуск можно
+        переспросить тем же ключом через :meth:`resubmit`). ``retry=False`` — для POST без ключа
+        идемпотентности (мониторы): повтор создал бы второй платный монитор.
+        """
+        failures = 0
         waited_rate_limit = False
-        async with self._api() as api:
-            while True:
-                try:
-                    return await call(api)
-                except DpiCheckerGatewayError as exc:
-                    gateway_failures += 1
-                    if gateway_failures > GATEWAY_RETRIES:
-                        action.status, action.error_code = 'unknown', exc.code
+        try:
+            async with self._api() as api:
+                while True:
+                    try:
+                        response = await call(api)
+                        break
+                    except DpiCheckerAPIError as exc:
+                        waiting = isinstance(exc, DpiCheckerGatewayError) or exc.code == IN_FLIGHT_CODE
+                        if waiting:
+                            failures += 1
+                            if not retry or failures > GATEWAY_RETRIES:
+                                await self._mark_unknown(db, action, exc.code)
+                                if isinstance(exc, DpiCheckerGatewayError):
+                                    raise
+                                raise DpiCheckerGatewayError(code=exc.code, message=exc.message) from exc
+                            await self._sleep(GATEWAY_PAUSE_SEC)
+                            continue
+                        if exc.code == 'rate_limited' and not waited_rate_limit:
+                            waited_rate_limit = True
+                            await self._sleep(exc.retry_after or 1.0)
+                            continue
+                        action.status, action.error_code = 'rejected', exc.code[:64]
                         await db.commit()
-                        logger.warning('DPI//CHECKER молчит на запуске', action_id=action.id, code=exc.code)
-                        raise
-                    await self._sleep(GATEWAY_PAUSE_SEC)
-                except DpiCheckerAPIError as exc:
-                    if exc.code == 'rate_limited' and not waited_rate_limit:
-                        waited_rate_limit = True
-                        await self._sleep(exc.retry_after or 1.0)
-                        continue
-                    action.status, action.error_code = 'rejected', exc.code
-                    await db.commit()
-                    logger.info('DPI//CHECKER отказал в запуске', action_id=action.id, code=exc.code)
-                    raise LaunchRefused(
-                        code=exc.code, message=human_error(exc), status=exc.status or 400, rejected=exc.rejected
-                    ) from exc
+                        logger.info('DPI//CHECKER отказал в запуске', action_id=action.id, code=exc.code)
+                        raise LaunchRefused(
+                            code=exc.code, message=human_error(exc), status=exc.status or 400, rejected=exc.rejected
+                        ) from exc
+            try:
+                apply(response)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise DpiCheckerAPIError(code='bad_response', message=f'Непонятный ответ сервиса: {exc}') from exc
+            await db.commit()
+            return action
+        except (DpiCheckerGatewayError, LaunchRefused):
+            raise
+        except BaseException as exc:
+            if action.status == 'submitting' or (action.remote_id is None and action.status != 'rejected'):
+                await self._mark_unknown(db, action, getattr(exc, 'code', type(exc).__name__))
+            raise
+
+    def _callback(self) -> dict[str, str]:
+        url = settings.get_dpichecker_webhook_url()
+        return {'callback_url': url} if url else {}
 
     async def launch_check(
         self,
@@ -207,14 +276,22 @@ class DpiCheckerService:
         probe_mode: str = 'auto',
     ) -> DpiCheckerAction:
         self._guard()
-        values = [str(target['value']) for target in targets]
+        values = [str(target['value']).strip() for target in targets]
+        if check_type == 'vpn':
+            not_keys = [value for value in values if not is_vpn_key(value)]
+            if not_keys:
+                raise ValueError(
+                    'Для VPN нужны ключи, а не ссылка на подписку — разверните подписку кнопкой «Продолжить»'
+                )
         body: dict[str, Any] = {
             'location': location,
             'pop_ids': list(pop_ids),
             **self._resources_field(check_type, values),
+            **self._callback(),
         }
         if check_type == 'ip':
             body['probe_mode'] = probe_mode
+        rows = _row_targets(check_type, [{**t, 'value': v} for t, v in zip(targets, values, strict=True)])
         action = await crud.create_action(
             db,
             kind=crud.KIND_CHECK,
@@ -225,19 +302,56 @@ class DpiCheckerService:
             resource_count=len(values),
             source=source,
             source_ref=source_ref,
-            label=label or ', '.join(target.get('name') or '' for target in targets)[:255],
-            targets=[{'value': str(t['value']), 'name': str(t.get('name') or t['value'])} for t in targets],
+            label=_label(label, rows),
+            targets=rows,
             request=body,
         )
         await db.commit()
-        response = await self._submit(
-            db, action, lambda api: api.start_check(check_type, body, idempotency_key=action.idempotency_key)
+        return await self._submit(
+            db,
+            action,
+            lambda api: api.start_check(check_type, body, idempotency_key=action.idempotency_key),
+            lambda response: self._apply_check_start(action, response),
         )
+
+    @staticmethod
+    def _apply_check_start(action: DpiCheckerAction, response: dict) -> None:
         action.remote_id = int(response['check_id'])
-        action.status = str(response.get('status') or 'pending')
+        action.status = _status(response.get('status'), 'pending')
         action.cost_usd = usd(response.get('estimated_cost'))
+
+    async def resubmit(self, db: AsyncSession, action_id: int) -> DpiCheckerAction:
+        """Незаконченный запуск (сервис не ответил) — переспросить тем же ключом и телом.
+
+        Сервис помнит ключ 24 ч: если запуск прошёл, вернёт исходный ответ без второго списания,
+        если нет — выполнит его сейчас.
+        """
+        self._guard()
+        action = await crud.get_action(db, action_id)
+        if action is None:
+            raise ActionNotFound
+        if action.kind == crud.KIND_MONITOR or action.status not in RESUBMITTABLE or action.remote_id is not None:
+            raise LaunchRefused(
+                code='not_resubmittable', message='Этот запуск уже завершён — повторять нечего', status=409, rejected=[]
+            )
+        body = dict(action.request or {})
+        key = action.idempotency_key
+        action.status = 'submitting'
         await db.commit()
-        return action
+        if action.kind == crud.KIND_CHECK:
+            return await self._submit(
+                db,
+                action,
+                lambda api: api.start_check(action.check_type, body, idempotency_key=key),
+                lambda response: self._apply_check_start(action, response),
+            )
+        start = 'start_probe' if action.kind == crud.KIND_PROBE else 'start_noisy'
+        return await self._submit(
+            db,
+            action,
+            lambda api: getattr(api, start)(body['target'], idempotency_key=key, **self._callback()),
+            lambda response: self._apply_scan_start(action, response),
+        )
 
     # ------------------------------------------------------------ проверка
 
@@ -256,10 +370,12 @@ class DpiCheckerService:
         if action.remote_id is None:
             stub = {'id': None, 'status': action.status, 'check_type': action.check_type, 'location': action.location}
             return {'action': action, 'check': present_check({**stub, 'results': None}, {})}
-        if wait > 0 and action.status not in FINISHED:
-            check = await self._call('wait_check', action.remote_id, wait)
+        remote_id, status = action.remote_id, action.status
+        await db.commit()  # не держать соединение базы, пока ждём сервис (long-poll до минуты)
+        if wait > 0 and status not in FINISHED:
+            check = await self._call('wait_check', remote_id, wait)
         else:
-            check = await self._call('get_check', action.remote_id)
+            check = await self._call('get_check', remote_id)
         self._apply_status(action, check.get('status'))
         await db.commit()
         return {'action': action, 'check': present_check(check, self._names(action))}
@@ -267,7 +383,7 @@ class DpiCheckerService:
     @staticmethod
     def _apply_status(action: DpiCheckerAction, status: Any) -> None:
         if status:
-            action.status = str(status)
+            action.status = _status(status, action.status)
         if action.status == 'cancelled' and action.refunded_usd is None:
             action.refunded_usd = action.cost_usd
 
@@ -285,7 +401,7 @@ class DpiCheckerService:
             raise LaunchRefused(
                 code=exc.code, message=human_error(exc), status=exc.status or 409, rejected=exc.rejected
             ) from exc
-        action.status = str(response.get('status') or 'cancelled')
+        action.status = _status(response.get('status'), 'cancelled')
         action.refunded_usd = usd(response.get('refunded'))
         await db.commit()
         return action
@@ -333,14 +449,20 @@ class DpiCheckerService:
         )
         await db.commit()
         start = 'start_probe' if kind == crud.KIND_PROBE else 'start_noisy'
-        response = await self._submit(
-            db, action, lambda api: getattr(api, start)(target, idempotency_key=action.idempotency_key)
+        return await self._submit(
+            db,
+            action,
+            lambda api: getattr(api, start)(target, idempotency_key=action.idempotency_key, **self._callback()),
+            lambda response: self._apply_scan_start(action, response),
         )
+
+    @staticmethod
+    def _apply_scan_start(action: DpiCheckerAction, response: dict) -> None:
         action.remote_id = int(response['scan_id'])
-        action.status = str(response.get('status') or 'pending')
-        action.cost_usd = usd(response.get('fixed_cost')) if kind == crud.KIND_PROBE else Decimal(0).quantize(USD)
-        await db.commit()
-        return action
+        action.status = _status(response.get('status'), 'pending')
+        action.cost_usd = (
+            usd(response.get('fixed_cost')) if action.kind == crud.KIND_PROBE else Decimal(0).quantize(USD)
+        )
 
     async def launch_probe(
         self, db: AsyncSession, *, admin_id: int | None, target: str, source: str, source_ref: str | None, label: str
@@ -438,9 +560,8 @@ class DpiCheckerService:
         }
         if check_type == 'ip':
             body['probe_mode'] = probe_mode
-        callback = settings.get_dpichecker_webhook_url()
-        if callback:
-            body['callback_url'] = callback
+        body.update(self._callback())
+        rows = _row_targets(check_type, targets)
         action = await crud.create_action(
             db,
             kind=crud.KIND_MONITOR,
@@ -451,16 +572,18 @@ class DpiCheckerService:
             resource_count=len(targets),
             source=source,
             source_ref=source_ref,
-            label=label or ', '.join(target.get('name') or '' for target in targets)[:255],
-            targets=[{'value': str(t['value']), 'name': str(t.get('name') or t['value'])} for t in targets],
+            label=_label(label, rows),
+            targets=rows,
             request=body,
         )
         await db.commit()
-        response = await self._submit(db, action, lambda api: api.create_monitor(body))
-        action.remote_id = int(response['id'])
-        action.status = 'active' if response.get('is_active', True) else 'paused'
-        await db.commit()
-        return action
+
+        def apply(response: dict) -> None:
+            action.remote_id = int(response['id'])
+            action.status = 'active' if response.get('is_active', True) else 'paused'
+
+        # У POST /monitors нет ключа идемпотентности — повтор создал бы второй платный монитор.
+        return await self._submit(db, action, lambda api: api.create_monitor(body), apply, retry=False)
 
     async def list_monitors(self, db: AsyncSession) -> list[dict[str, Any]]:
         """Мониторы сервиса; у созданных из кабинета — номер своей строки и имя."""
@@ -469,9 +592,15 @@ class DpiCheckerService:
         items = []
         for monitor in data.get('items') or []:
             action = own.get(monitor.get('id'))
+            # Ресурсы монитора — это ключи VPN и ссылки прокси: наружу только их число.
             public = {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
             items.append(
-                {**public, 'action_id': action.id if action else None, 'label': action.label if action else None}
+                {
+                    **public,
+                    'resource_count': len(monitor.get('resources') or []),
+                    'action_id': action.id if action else None,
+                    'label': action.label if action else None,
+                }
             )
         return items
 
@@ -488,7 +617,8 @@ class DpiCheckerService:
         if 'is_active' in monitor:
             action.status = 'active' if monitor['is_active'] else 'paused'
         await db.commit()
-        return {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
+        public = {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
+        return {**public, 'resource_count': len(monitor.get('resources') or [])}
 
     async def delete_monitor(self, db: AsyncSession, action_id: int) -> dict[str, Any]:
         action = await self._monitor(db, action_id)
@@ -525,13 +655,24 @@ class DpiCheckerService:
     # ------------------------------------------------------------ вебхук: секрет подписи
 
     async def webhook_secret(self, *, refresh: bool = False) -> str:
-        """Секрет подписи — у сервиса; держим в памяти, ключ кэша — отпечаток ключа API."""
+        """Секрет подписи — у сервиса; держим в памяти, ключ кэша — отпечаток ключа API.
+
+        Перечитывание по неверной подписи — не чаще раза в минуту и в один поток: вебхук открыт всем,
+        и мусорные запросы иначе выедали бы лимит ключа (120 запросов в минуту) и глушили запуски.
+        """
         fingerprint = hashlib.sha256((settings.DPICHECKER_API_KEY or '').encode()).hexdigest()
-        if not refresh and self._secret is not None and self._secret[0] == fingerprint:
-            return self._secret[1]
-        secret = await self._call('webhook_secret')
-        self._secret = (fingerprint, secret)
-        return secret
+        cached = self._secret if self._secret is not None and self._secret[0] == fingerprint else None
+        if cached is not None and not refresh:
+            return cached[1]
+        async with self._secret_lock:
+            cached = self._secret if self._secret is not None and self._secret[0] == fingerprint else None
+            recent = time.monotonic() - self._secret_refreshed_at < SECRET_REFRESH_MIN_SEC
+            if cached is not None and (not refresh or recent):
+                return cached[1]
+            secret = await self._call('webhook_secret')
+            self._secret = (fingerprint, secret)
+            self._secret_refreshed_at = time.monotonic()
+            return secret
 
     # ------------------------------------------------------------ вебхук: события
 
@@ -579,6 +720,23 @@ class DpiCheckerService:
     def poke_monitor(self, monitor_id: int | None) -> None:
         if self._watch is not None:
             self._watch.poke(monitor_id)
+
+    @property
+    def background_running(self) -> bool:
+        return self._background is not None and not self._background.done()
+
+    def sync_background(self, notify: Callable[[str], Awaitable[Any]]) -> None:
+        """По живым настройкам: включён и с ключом — обходчик идёт (упавший перезапускается), иначе стоит.
+
+        Модуль включают из кабинета без перезапуска бота — поэтому решение каждый раз заново.
+        """
+        if settings.is_dpichecker_enabled() and settings.is_dpichecker_configured():
+            self.start_background(notify)
+        elif self.background_running:
+            if self._watch is not None:
+                self._watch.stop()
+            if self._background is not None:
+                self._background.cancel()
 
     def start_background(self, notify: Callable[[str], Awaitable[Any]]) -> None:
         """Идемпотентно: живой обходчик не трогает, упавший — перезапускает с записью причины."""

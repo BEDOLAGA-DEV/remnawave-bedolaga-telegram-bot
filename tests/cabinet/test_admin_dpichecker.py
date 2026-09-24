@@ -182,7 +182,7 @@ async def test_panel_targets_returns_values(service):
         (LaunchRefused(code='insufficient_balance', message='Не хватает денег', status=402, rejected=[]), 402),
         (PanelTargetError('У пользователя #5 нет подписки в панели'), 400),
         (DpiCheckerGatewayError(code='timeout', message='t'), 504),
-        (DpiCheckerAPIError(code='invalid_api_key', message='bad', status=401), 502),
+        (DpiCheckerAPIError(code='internal', message='bad', status=500), 502),
         (ValueError('Не выбран пользователь'), 400),
     ],
 )
@@ -201,3 +201,35 @@ async def test_report_csv_returns_service_bytes(service):
     service.report_csv = AsyncMock(return_value=(b'a,b\n', 'text/csv; charset=utf-8'))
     response = await admin_dpichecker.report_csv(1, admin=ADMIN, db=AsyncMock())
     assert response.body == b'a,b\n' and response.media_type.startswith('text/csv')
+
+
+# ---------------------------------------------------------------- находки ревью
+
+
+@pytest.mark.parametrize('code', ['invalid_api_key', 'ip_not_allowed', 'api_not_unlocked', 'missing_api_key'])
+def test_key_problems_are_503_in_words(code):
+    http = admin_dpichecker._http(DpiCheckerAPIError(code=code, message='x', status=401))
+    assert http.status_code == 503
+    refused = admin_dpichecker._http(LaunchRefused(code=code, message='Ключ неверный', status=403, rejected=[]))
+    assert refused.status_code == 503
+
+
+async def test_ip_lookup_rejects_non_ip(service):
+    service.ip_lookup = AsyncMock()
+    with pytest.raises(HTTPException) as info:
+        await admin_dpichecker.ip_lookup('8.8.8.8/../profile', bgp=False, admin=ADMIN)
+    assert info.value.status_code == 400
+    service.ip_lookup.assert_not_awaited()
+
+
+async def test_subscription_defaults_to_admin_himself(service):
+    service.panel_targets = AsyncMock(return_value=[])
+    await admin_dpichecker.panel_targets(PanelTargetsRequest(kind='subscription'), admin=ADMIN, db=AsyncMock())
+    assert service.panel_targets.await_args.kwargs['user_id'] == 7
+
+
+async def test_resubmit_route_audits(service):
+    service.resubmit = AsyncMock(return_value=_action(status='pending'))
+    out = await admin_dpichecker.resubmit(1, admin=ADMIN, db=AsyncMock())
+    assert out.status == 'pending'
+    assert admin_dpichecker.PermissionService.log_action.await_args.kwargs['action'] == 'dpichecker_resubmit'

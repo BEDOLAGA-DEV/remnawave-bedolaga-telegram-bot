@@ -13,6 +13,7 @@ from typing import Any
 
 import structlog
 
+from app.config import settings
 from app.database.crud import dpichecker as crud
 from app.external.dpichecker_api import DpiCheckerAPIError
 from app.services.dpichecker.notify import monitor_run_text
@@ -62,6 +63,8 @@ class MonitorWatch:
         self._wake.set()
 
     async def sweep(self) -> int:
+        if not (settings.is_dpichecker_enabled() and settings.is_dpichecker_configured()):
+            return 0  # выключили на ходу — сервис не трогаем
         sent = 0
         async with self._session_factory() as db:
             # Номера — заранее: после отката по сбою одного монитора объекты сессии истекают.

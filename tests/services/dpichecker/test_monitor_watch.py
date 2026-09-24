@@ -20,6 +20,14 @@ TABLES = list(Base.metadata.sorted_tables)
 pg = pytest.mark.postgres
 
 
+@pytest.fixture(autouse=True)
+def enabled(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, 'DPICHECKER_ENABLED', True)
+    monkeypatch.setattr(settings, 'DPICHECKER_API_KEY', 'k')
+
+
 def _fx(name: str):
     return load_dpichecker_fixture(name)['body']
 

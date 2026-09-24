@@ -713,9 +713,10 @@ async def main():
             '🧱',
             success_message='Обходчик мониторов запущен',
         ) as stage:
-            dpichecker_enabled = settings.is_dpichecker_enabled() and settings.is_dpichecker_configured()
-            if dpichecker_enabled:
-                dpichecker_service.start_background(_dpichecker_notifier(bot))
+            dpichecker_notify = _dpichecker_notifier(bot)
+            # Модуль могут включить из кабинета на ходу — цикл здоровья ниже сверяется с настройками.
+            dpichecker_service.sync_background(dpichecker_notify)
+            if dpichecker_service.background_running:
                 stage.log('Итоги мониторов из кабинета будут приходить в админ-чат')
             else:
                 stage.skip('DPI//CHECKER выключен или без ключа')
@@ -884,8 +885,8 @@ async def main():
                     # Идемпотентно: перезапускает только упавший обходчик, живой не трогает.
                     reachability_service.start_background()
 
-                if dpichecker_enabled:
-                    dpichecker_service.start_background(_dpichecker_notifier(bot))
+                # Идемпотентно и по живым настройкам: включили — запустит, выключили — остановит.
+                dpichecker_service.sync_background(dpichecker_notify)
 
                 if version_check_task and version_check_task.done():
                     exception = version_check_task.exception()

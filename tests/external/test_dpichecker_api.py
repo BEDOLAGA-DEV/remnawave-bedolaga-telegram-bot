@@ -149,3 +149,17 @@ async def test_cheremsha_joins_resources() -> None:
     session = _FakeSession()
     await _api_with(session).cheremsha(['a.ru', 'b.ru'])
     assert session.calls[0]['params'] == {'resource': 'a.ru,b.ru'}
+
+
+async def test_long_poll_gets_its_own_longer_timeout() -> None:
+    session = _FakeSession()
+    await _api_with(session).wait_check(5, timeout=60)
+    assert session.calls[0]['timeout'].total == 60 + 15
+    await _api_with(session).get_check(5)
+    assert 'timeout' not in session.calls[1]  # обычные запросы — общий короткий таймаут сессии
+
+
+def test_default_session_timeout_is_short() -> None:
+    from app.external.dpichecker_api import DEFAULT_TIMEOUT
+
+    assert DEFAULT_TIMEOUT <= 30

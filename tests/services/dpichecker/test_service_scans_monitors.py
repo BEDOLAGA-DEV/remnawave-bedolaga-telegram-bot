@@ -275,3 +275,12 @@ async def test_history_filters_own_rows(postgres_database):
         await service.launch_noisy(db, admin_id=admin.id, **SCAN)
         items, total = await service.history(db, kind='noisy', check_type=None, admin_user_id=admin.id)
         assert total == 1 and items[0].kind == 'noisy'
+
+
+async def test_monitor_list_hides_keys(postgres_database):
+    own = {**_fx('monitor_created'), 'check_type': 'vpn', 'resources': ['vless://secret@x.example:443']}
+    api = FakeAPI(monitors={'total': 1, 'items': [own]})
+    async with postgres_session(postgres_database, TABLES) as db:
+        items = await _service(api).list_monitors(db)
+    assert 'resources' not in items[0] and items[0]['resource_count'] == 1
+    assert 'secret' not in str(items)

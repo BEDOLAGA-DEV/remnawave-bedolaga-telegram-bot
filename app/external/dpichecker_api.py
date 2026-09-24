@@ -22,7 +22,8 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 DEFAULT_BASE_URL = 'https://dpichecker.st/api/v1'
-DEFAULT_TIMEOUT = 150.0
+DEFAULT_TIMEOUT = 30.0
+WAIT_EXTRA_SEC = 15
 CHECK_TYPES = ('vpn', 'ip', 'mtproto')
 LOCATIONS = ('russia', 'china', 'iran', 'turkmenistan')
 WAIT_MAX_SEC = 120
@@ -115,10 +116,15 @@ class DpiCheckerAPI:
         params: dict[str, str] | None = None,
         json_body: dict | None = None,
         idempotency_key: str | None = None,
+        timeout: aiohttp.ClientTimeout | None = None,
     ) -> dict:
         headers = {'Idempotency-Key': idempotency_key} if idempotency_key else None
+        # timeout=None у aiohttp значит «без таймаута вообще» — передаём только заданный явно.
+        extra: dict[str, Any] = {'timeout': timeout} if timeout is not None else {}
         try:
-            async with self._open(method, path, params=params or None, json=json_body, headers=headers) as response:
+            async with self._open(
+                method, path, params=params or None, json=json_body, headers=headers, **extra
+            ) as response:
                 return self.parse_response(response.status, await response.text())
         except TimeoutError as exc:
             raise DpiCheckerGatewayError(code='timeout', message='Таймаут запроса к DPI//CHECKER') from exc
@@ -185,7 +191,13 @@ class DpiCheckerAPI:
 
     async def wait_check(self, check_id: int, timeout: int = 60) -> dict:
         seconds = max(1, min(int(timeout), WAIT_MAX_SEC))
-        return await self._request('GET', f'/checks/{check_id}/wait', params={'timeout': str(seconds)})
+        # Long-poll держит ответ до `seconds` — своему запросу нужен таймаут длиннее общего короткого.
+        return await self._request(
+            'GET',
+            f'/checks/{check_id}/wait',
+            params={'timeout': str(seconds)},
+            timeout=aiohttp.ClientTimeout(total=seconds + WAIT_EXTRA_SEC),
+        )
 
     async def cancel_check(self, check_id: int) -> dict:
         return await self._request('DELETE', f'/checks/{check_id}')

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +42,29 @@ def _key_name(link: str) -> str:
 
 def _is_key(link: str) -> bool:
     return '://' in link and link.split('://', 1)[0].lower() in KEY_SCHEMES
+
+
+def is_vpn_key(value: str) -> bool:
+    """Ссылка ключа VPN (не подписка): только её сервис проверяет как ключ."""
+    return _is_key(value.strip())
+
+
+def _mtproto_name(link: str) -> str:
+    parts = urlsplit(link)
+    query = parse_qs(parts.query)
+    server = (query.get('server') or [''])[0]
+    port = (query.get('port') or [''])[0]
+    return f'{server}:{port}' if server and port else server or 'MTProto'
+
+
+def safe_name(check_type: str, value: str, given: str | None) -> str:
+    """Имя цели для людей: данное админом, иначе из ссылки — но никогда сам ключ или секрет прокси."""
+    name = (given or '').strip()
+    if check_type == 'ip':
+        return name or value
+    if name and name != value and '://' not in name:
+        return name
+    return _key_name(value) if check_type == 'vpn' else _mtproto_name(value)
 
 
 async def subscription_keys(

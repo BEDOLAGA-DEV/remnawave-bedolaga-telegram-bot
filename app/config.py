@@ -1590,7 +1590,7 @@ class Settings(BaseSettings):
     DPICHECKER_API_KEY: str | None = (
         None  # X-API-Key; выпускается в боте DPI//CHECKER (Главное меню → API) или на сайте
     )
-    DPICHECKER_REQUEST_TIMEOUT: int = 150  # long-poll /checks/{id}/wait держит до 120 с
+    DPICHECKER_REQUEST_TIMEOUT: int = 30  # обычный запрос; long-poll ожидания результата — свой, длиннее
 
     # SOCKS5 proxy for routing bot traffic to Telegram API
     # Format: socks5://user:password@host:port or socks5://host:port
