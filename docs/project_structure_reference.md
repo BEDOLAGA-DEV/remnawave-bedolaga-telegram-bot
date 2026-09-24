@@ -4079,6 +4079,9 @@
 - `tests/middlewares/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/middlewares/test_admin_report_stdlib_logger.py` — Python-модуль
+  Классы: нет
+  Функции: `stdlib_logger` — Stdlib-логгер с консольным formatter'ом бота и подключённым процессором., `test_stdlib_error_report_keeps_type_message_logger_and_traceback`
 - `tests/middlewares/test_admin_report_unreachable_user.py` — Python-модуль
   Классы: нет
   Функции: `test_unreachable_user_report_has_reason_and_user_instead_of_traceback`, `test_real_errors_still_carry_the_traceback`
