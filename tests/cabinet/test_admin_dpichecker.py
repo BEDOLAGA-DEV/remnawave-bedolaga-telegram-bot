@@ -343,3 +343,79 @@ async def test_download_link_is_https_behind_proxy(service):
     )
     out = await admin_dpichecker.download_link('report', 1, request, admin=ADMIN, db=AsyncMock())
     assert out.url.startswith('https://api.example.com/cabinet/dpichecker/files/report/1?token=')
+
+
+# ------------------------------------------------------------------ весь аккаунт
+
+
+def test_account_routes_registered_read_only():
+    import inspect
+
+    routes = {
+        (f'/cabinet{route.path}', tuple(sorted(route.methods)))
+        for route in admin_dpichecker.router.routes
+        if hasattr(route, 'methods')
+    }
+    for path, method in [
+        (f'{BASE}/account/{{kind}}', 'GET'),
+        (f'{BASE}/account/{{kind}}/{{remote_id}}/open', 'POST'),
+        (f'{BASE}/checks/{{action_id}}/report', 'GET'),
+        (f'{BASE}/webhooks/deliveries', 'GET'),
+    ]:
+        assert (path, (method,)) in routes, (path, method)
+    # Смотреть чужие запуски и журнал — не трата денег: хватает права чтения.
+    for name in ('account_checks', 'open_remote', 'report_table', 'webhook_deliveries'):
+        assert "require_permission('dpichecker:read')" in inspect.getsource(getattr(admin_dpichecker, name)), name
+
+
+async def test_account_checks_passes_filters(service):
+    service.account_checks = AsyncMock(return_value={'items': [{'id': 5, 'action_id': None}], 'total': 1})
+    page = await admin_dpichecker.account_checks(
+        kind='check', check_type='vpn', limit=10, offset=20, admin=ADMIN, db=SimpleNamespace()
+    )
+    assert page.total == 1 and page.items[0]['id'] == 5
+    assert service.account_checks.await_args.kwargs == {'kind': 'check', 'check_type': 'vpn', 'limit': 10, 'offset': 20}
+
+
+async def test_open_remote_returns_row_without_keys_and_audits(service):
+    service.adopt_remote = AsyncMock(return_value=_action(source='site', source_ref='web'))
+    out = await admin_dpichecker.open_remote(kind='check', remote_id=5309, admin=ADMIN, db=AsyncMock())
+    assert out.id == 1 and out.source == 'site'
+    assert 'vless://' not in out.model_dump_json()
+    assert admin_dpichecker.PermissionService.log_action.await_args.kwargs['action'] == 'dpichecker_open_remote'
+
+
+async def test_open_remote_unknown_is_404(service):
+    service.adopt_remote = AsyncMock(side_effect=ActionNotFound)
+    with pytest.raises(HTTPException) as info:
+        await admin_dpichecker.open_remote(kind='probe', remote_id=1, admin=ADMIN, db=AsyncMock())
+    assert info.value.status_code == 404
+
+
+async def test_report_table_gateway_is_504(service):
+    service.report_table = AsyncMock(side_effect=DpiCheckerGatewayError(code='timeout', message='x'))
+    with pytest.raises(HTTPException) as info:
+        await admin_dpichecker.report_table(action_id=1, admin=ADMIN, db=SimpleNamespace())
+    assert info.value.status_code == 504
+
+
+async def test_deliveries_page(service):
+    service.webhook_deliveries = AsyncMock(return_value={'items': [], 'total': 0})
+    assert await admin_dpichecker.webhook_deliveries(limit=5, offset=0, admin=ADMIN) == {'items': [], 'total': 0}
+    assert service.webhook_deliveries.await_args.kwargs == {'limit': 5, 'offset': 0}
+
+
+def test_monitor_notify_only_dm_or_group():
+    from app.cabinet.schemas.dpichecker import MonitorCreate
+
+    base = {
+        'check_type': 'ip',
+        'location': 'russia',
+        'pop_ids': [1],
+        'targets': [{'value': 'fi.example'}],
+        'interval_hours': 6,
+    }
+    assert MonitorCreate(**base).notify == 'dm'
+    assert MonitorCreate(**base, notify='group').notify == 'group'
+    with pytest.raises(ValidationError):
+        MonitorCreate(**base, notify='email')

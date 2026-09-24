@@ -173,6 +173,10 @@ class DpiCheckerAPI:
     async def webhook_secret(self) -> str:
         return str((await self._request('GET', '/webhooks/secret')).get('secret') or '')
 
+    async def webhook_deliveries(self, *, limit: int = 25, offset: int = 0) -> dict:
+        params = {'limit': str(limit), 'offset': str(offset)}
+        return await self._request('GET', '/webhooks/deliveries', params=params)
+
     # --------------------------------------------------------------- проверки
 
     async def parse(self, check_type: str, text: str) -> dict:
@@ -185,6 +189,13 @@ class DpiCheckerAPI:
         if check_type not in CHECK_TYPES:
             raise ValueError(f'Неизвестный вид проверки: {check_type}')
         return await self._request('POST', f'/checks/{check_type}', json_body=body, idempotency_key=idempotency_key)
+
+    async def list_checks(
+        self, *, kind: str = 'check', check_type: str | None = None, limit: int = 25, offset: int = 0
+    ) -> dict:
+        """Все запуски аккаунта: с сайта, из их бота, через API, прогоны мониторов (``kind`` — check|probe|noisy)."""
+        params = {'kind': kind, **({'check_type': check_type} if check_type else {})}
+        return await self._request('GET', '/checks', params={**params, 'limit': str(limit), 'offset': str(offset)})
 
     async def get_check(self, check_id: int) -> dict:
         return await self._request('GET', f'/checks/{check_id}')
@@ -204,6 +215,10 @@ class DpiCheckerAPI:
 
     async def report_csv(self, check_id: int) -> tuple[bytes, str]:
         return await self._bytes(f'/checks/{check_id}/report', {'format': 'csv'})
+
+    async def report_json(self, check_id: int) -> dict:
+        """Построчный отчёт ``{id, check_type, columns, rows}`` — все поля строки ресурс × точка."""
+        return await self._request('GET', f'/checks/{check_id}/report', params={'format': 'json'})
 
     async def check_map(self, check_id: int) -> tuple[bytes, str]:
         return await self._bytes(f'/checks/{check_id}/map.png')

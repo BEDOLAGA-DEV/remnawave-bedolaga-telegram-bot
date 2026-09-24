@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -33,8 +34,12 @@ async def create_action(
     label: str,
     targets: list[dict[str, Any]],
     request: dict[str, Any],
+    created_at: datetime | None = None,
 ) -> DpiCheckerAction:
-    """Строка до обращения к сервису: ключ идемпотентности рождается здесь и живёт с ней."""
+    """Строка до обращения к сервису: ключ идемпотентности рождается здесь и живёт с ней.
+
+    ``created_at`` задаётся у запуска, взятого с сайта: в истории он стоит на своём месте, а не сверху.
+    """
     action = DpiCheckerAction(
         kind=kind,
         admin_user_id=admin_user_id,
@@ -50,6 +55,7 @@ async def create_action(
         idempotency_key=uuid4().hex,
         status='submitting',
         delivery_ids=[],
+        **({'created_at': created_at} if created_at is not None else {}),
     )
     db.add(action)
     await db.flush()
@@ -104,13 +110,13 @@ async def list_monitors(db: AsyncSession) -> list[DpiCheckerAction]:
     return list(rows.scalars())
 
 
-async def monitors_by_remote(db: AsyncSession, remote_ids: list[int]) -> dict[int, DpiCheckerAction]:
-    """Свои строки мониторов по номерам у сервиса — в любом статусе (имя есть и у отключённого)."""
+async def by_remote(db: AsyncSession, kind: str, remote_ids: list[int]) -> dict[int, DpiCheckerAction]:
+    """Свои строки по номерам у сервиса — в любом статусе (имя есть и у отключённого монитора)."""
     if not remote_ids:
         return {}
     rows = await db.execute(
         select(DpiCheckerAction).where(
-            DpiCheckerAction.kind == KIND_MONITOR, DpiCheckerAction.remote_id.in_(sorted(set(remote_ids)))
+            DpiCheckerAction.kind == kind, DpiCheckerAction.remote_id.in_(sorted(set(remote_ids)))
         )
     )
     return {int(action.remote_id): action for action in rows.scalars()}

@@ -23,6 +23,8 @@ from app.utils.public_url import public_url
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.dpichecker import (
+    AccountKind,
+    AccountPage,
     ActionListResponse,
     ActionOut,
     CheckCreate,
@@ -295,6 +297,19 @@ async def report_csv(
     return _file(data, content_type, _download_name('report', action_id))
 
 
+@router.get('/checks/{action_id}/report')
+async def report_table(
+    action_id: int,
+    admin: User = Depends(require_permission('dpichecker:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict:
+    """Построчный отчёт: все поля строки ресурс × точка (ключи VPN и ссылки MTProto — именами)."""
+    try:
+        return await _service().report_table(db, action_id)
+    except Exception as exc:
+        raise _http(exc) from exc
+
+
 @router.get('/checks/{action_id}/map.png')
 async def check_map(
     action_id: int,
@@ -306,6 +321,41 @@ async def check_map(
     except Exception as exc:
         raise _http(exc) from exc
     return Response(content=data, media_type=content_type)
+
+
+# ============ Весь аккаунт: запуски с сайта, из их бота, через API, прогоны мониторов ============
+
+
+@router.get('/account/{kind}', response_model=AccountPage)
+async def account_checks(
+    kind: AccountKind,
+    check_type: Literal['vpn', 'ip', 'mtproto'] | None = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    admin: User = Depends(require_permission('dpichecker:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> AccountPage:
+    try:
+        page = await _service().account_checks(db, kind=kind, check_type=check_type, limit=limit, offset=offset)
+    except Exception as exc:
+        raise _http(exc) from exc
+    return AccountPage(**page)
+
+
+@router.post('/account/{kind}/{remote_id}/open', response_model=ActionOut)
+async def open_remote(
+    kind: AccountKind,
+    remote_id: int,
+    admin: User = Depends(require_permission('dpichecker:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> ActionOut:
+    """Запуск не из кабинета — в историю кабинета; дальше он открывается как свой (результат, CSV, карта)."""
+    try:
+        action = await _service().adopt_remote(db, kind, remote_id, admin_id=admin.id)
+    except Exception as exc:
+        raise _http(exc) from exc
+    await _audit(db, admin, 'dpichecker_open_remote', action.id, {'kind': kind, 'remote_id': remote_id})
+    return ActionOut.from_action(action)
 
 
 # ============ Зонд, Соседи ============
@@ -448,6 +498,19 @@ async def blacklist(
         raise _http(exc) from exc
 
 
+@router.get('/webhooks/deliveries')
+async def webhook_deliveries(
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    admin: User = Depends(require_permission('dpichecker:read')),
+) -> dict:
+    """Журнал доставки уведомлений сервиса боту: дошло ли, что ответил бот, ошибка."""
+    try:
+        return await _service().webhook_deliveries(limit=limit, offset=offset)
+    except Exception as exc:
+        raise _http(exc) from exc
+
+
 # ============ Мониторы ============
 
 
@@ -473,7 +536,12 @@ async def create_monitor(
         action = await _service().create_monitor(db, admin_id=admin.id, **fields)
     except Exception as exc:
         raise _http(exc) from exc
-    details = {'check_type': body.check_type, 'interval_hours': body.interval_hours, 'pops': len(body.pop_ids)}
+    details = {
+        'check_type': body.check_type,
+        'interval_hours': body.interval_hours,
+        'pops': len(body.pop_ids),
+        'notify': body.notify,
+    }
     await _audit(db, admin, 'dpichecker_monitor_create', action.id, details)
     return ActionOut.from_action(action)
 

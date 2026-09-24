@@ -130,6 +130,9 @@ async def test_unknown_check_type_refused_before_network() -> None:
         (lambda api: api.update_monitor(3, {'is_active': False}), 'PATCH', '/monitors/3'),
         (lambda api: api.monitor_runs(3, limit=5), 'GET', '/monitors/3/runs'),
         (lambda api: api.cheremsha(['a.ru', 'b.ru']), 'GET', '/cheremsha'),
+        (lambda api: api.list_checks(kind='probe', limit=5), 'GET', '/checks'),
+        (lambda api: api.report_json(5), 'GET', '/checks/5/report'),
+        (lambda api: api.webhook_deliveries(limit=5), 'GET', '/webhooks/deliveries'),
     ],
 )
 async def test_methods_hit_expected_paths(call, method: str, path: str) -> None:
@@ -163,3 +166,21 @@ def test_default_session_timeout_is_short() -> None:
     from app.external.dpichecker_api import DEFAULT_TIMEOUT
 
     assert DEFAULT_TIMEOUT <= 30
+
+
+async def test_account_list_passes_only_given_filters() -> None:
+    session = _FakeSession()
+    await _api_with(session).list_checks(kind='check', check_type='vpn', limit=10, offset=20)
+    assert session.calls[0]['params'] == {'kind': 'check', 'check_type': 'vpn', 'limit': '10', 'offset': '20'}
+
+
+async def test_report_json_asks_json_format() -> None:
+    session = _FakeSession()
+    await _api_with(session).report_json(5)
+    assert session.calls[0]['params'] == {'format': 'json'}
+
+
+async def test_deliveries_paged() -> None:
+    session = _FakeSession()
+    await _api_with(session).webhook_deliveries(limit=5, offset=10)
+    assert session.calls[0]['params'] == {'limit': '5', 'offset': '10'}

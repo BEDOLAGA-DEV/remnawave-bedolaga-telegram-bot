@@ -13,7 +13,7 @@ import contextlib
 import hashlib
 import time
 from collections.abc import Awaitable, Callable
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 import structlog
@@ -23,9 +23,11 @@ from app.config import settings
 from app.database.crud import dpichecker as crud
 from app.database.models import DpiCheckerAction
 from app.external.dpichecker_api import DpiCheckerAPI, DpiCheckerAPIError, DpiCheckerGatewayError
+from app.services.dpichecker.account import AccountMixin, insert_adopted
+from app.services.dpichecker.common import USD, _label, _row_targets, _status, usd
 from app.services.dpichecker.errors import ActionNotFound, DpiCheckerDisabled, LaunchRefused, human_error
 from app.services.dpichecker.monitor_watch import MonitorWatch
-from app.services.dpichecker.presenter import present_check
+from app.services.dpichecker.presenter import normalize_location, present_check
 from app.services.dpichecker.regions import group_pops
 from app.services.dpichecker.targets import (
     PanelTarget,
@@ -43,41 +45,27 @@ logger = structlog.get_logger(__name__)
 GATEWAY_RETRIES = 2
 GATEWAY_PAUSE_SEC = 2.0
 IN_FLIGHT_CODE = 'idempotency_in_flight'
-STATUS_MAX = 16
 SECRET_REFRESH_MIN_SEC = 60.0
 RESUBMITTABLE = frozenset({'submitting', 'unknown'})
-USD = Decimal('0.0001')
-SOURCE_SITE = 'site'  # монитор создан не из кабинета и взят под управление
 DELETED_REASON = 'deleted_via_api'
 FINISHED = frozenset({'completed', 'failed', 'cancelled'})
 CHEREMSHA_MAX = 20
 MONITOR_PATCH_FIELDS = frozenset({'is_active', 'interval_hours', 'notify_on_success', 'alert_after_fails'})
-# Адрес вебхука и код привязки группы их бота — служебное, в кабинет не нужно.
+# Адрес вебхука и ресурсы (ключи VPN, ссылки прокси) — служебное, в кабинет не нужно.
 HIDDEN_MONITOR_FIELDS = frozenset({'callback_url', 'link_code', 'link_instructions', 'resources'})
+NOTIFY_GROUP = 'group'
 
 
-def usd(value: Any) -> Decimal | None:
-    """Сумма сервиса (число у проверок, строка у Зонда) → Decimal с 4 знаками."""
-    if value is None or value == '':
-        return None
-    try:
-        return Decimal(str(value)).quantize(USD)
-    except (InvalidOperation, ValueError):
-        return None
-
-
-def _status(value: Any, fallback: str) -> str:
-    """Статус сервиса в колонку String(16): незнакомое длинное значение не роняет запись."""
-    return str(value or fallback)[:STATUS_MAX]
-
-
-def _row_targets(check_type: str | None, targets: list[dict[str, str]]) -> list[dict[str, str]]:
-    kind = check_type or 'ip'
-    return [{'value': str(t['value']), 'name': safe_name(kind, str(t['value']), t.get('name'))} for t in targets]
-
-
-def _label(label: str, targets: list[dict[str, str]]) -> str:
-    return (label or ', '.join(t['name'] for t in targets))[:255]
+def _public_monitor(monitor: dict[str, Any]) -> dict[str, Any]:
+    """Монитор для кабинета: без служебного; код привязки группы — только пока группа не привязана
+    (его отправляют их боту в группе командой ``/link <код>``)."""
+    public = {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
+    waiting_group = monitor.get('notify') == NOTIFY_GROUP and not monitor.get('group_linked')
+    return {
+        **public,
+        'resource_count': len(monitor.get('resources') or []),
+        'link_code': monitor.get('link_code') if waiting_group else None,
+    }
 
 
 def _default_panel_client() -> Any:
@@ -86,7 +74,7 @@ def _default_panel_client() -> Any:
     return RemnaWaveService().get_api_client()
 
 
-class DpiCheckerService:
+class DpiCheckerService(AccountMixin):
     def __init__(
         self,
         *,
@@ -585,8 +573,12 @@ class DpiCheckerService:
         alert_after_fails: int,
         notify_on_success: bool,
         probe_mode: str = 'auto',
+        notify: str = 'dm',
     ) -> DpiCheckerAction:
-        """Монитор бесплатен, каждый прогон стоит как проверка. VPN-ключи — в ``resources`` (так шлёт сайт)."""
+        """Монитор бесплатен, каждый прогон стоит как проверка. VPN-ключи — в ``resources`` (так шлёт сайт).
+
+        ``notify`` — куда тревоги шлёт их бот: ``dm`` владельцу ключа или ``group`` (код привязки — в списке).
+        Итоги в админ-чат бота присылает обходчик — независимо от этого."""
         self._guard()
         body: dict[str, Any] = {
             'check_type': check_type,
@@ -596,6 +588,7 @@ class DpiCheckerService:
             'interval_hours': interval_hours,
             'alert_after_fails': alert_after_fails,
             'notify_on_success': notify_on_success,
+            'notify': notify,
         }
         if check_type == 'ip':
             body['probe_mode'] = probe_mode
@@ -628,16 +621,13 @@ class DpiCheckerService:
         """Мониторы сервиса; у созданных из кабинета — номер своей строки и имя."""
         data = await self._call('list_monitors', limit=100)
         monitors = list(data.get('items') or [])
-        own = await crud.monitors_by_remote(db, [int(m['id']) for m in monitors if m.get('id') is not None])
+        own = await crud.by_remote(db, crud.KIND_MONITOR, [int(m['id']) for m in monitors if m.get('id') is not None])
         items = []
         for monitor in monitors:
             action = own.get(monitor.get('id'))
-            # Ресурсы монитора — это ключи VPN и ссылки прокси: наружу только их число.
-            public = {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
             items.append(
                 {
-                    **public,
-                    'resource_count': len(monitor.get('resources') or []),
+                    **_public_monitor(monitor),
                     'action_id': action.id if action else None,
                     'label': action.label if action else None,
                     # DELETE у сервиса не стирает монитор — он висит на паузе с этой причиной.
@@ -662,28 +652,42 @@ class DpiCheckerService:
             raise
         check_type = str(monitor.get('check_type') or 'ip')
         rows = _row_targets(check_type, [{'value': value} for value in monitor.get('resources') or []])
+        status = 'active' if monitor.get('is_active', True) else 'paused'
         if existing is not None:
             # Удалённый из кабинета, но живой у сервиса (восстановлен на сайте) — та же строка снова в деле.
             action = existing
+            action.status = status
+            await db.commit()
         else:
-            action = await crud.create_action(
+            action = await insert_adopted(
                 db,
                 kind=crud.KIND_MONITOR,
+                remote_id=remote_id,
+                status=status,
+                cost_usd=None,
                 admin_user_id=admin_id,
                 check_type=check_type,
-                location=monitor.get('location'),
+                location=normalize_location(monitor.get('location')),
                 pop_count=len(monitor.get('pop_ids') or []),
                 resource_count=len(rows),
-                source=SOURCE_SITE,
                 source_ref=None,
                 label=_label('', rows),
                 targets=rows,
                 request={},
             )
-            action.remote_id = remote_id
-        action.status = 'active' if monitor.get('is_active', True) else 'paused'
-        await db.commit()
+        await self._attach_webhook(monitor, remote_id)
         return action
+
+    async def _attach_webhook(self, monitor: dict[str, Any], remote_id: int) -> None:
+        """Монитору с сайта — адрес вебхука бота: без него начало прогона (``monitor.run``) не приходит,
+        и итог ждёт обхода раз в 5 минут. Сбой здесь не отменяет взятие — обходчик всё равно увидит итог."""
+        url = self._callback().get('callback_url')
+        if not url or monitor.get('callback_url') == url or monitor.get('paused_reason') == DELETED_REASON:
+            return
+        try:
+            await self._call('update_monitor', remote_id, {'callback_url': url})
+        except DpiCheckerAPIError as exc:
+            logger.warning('DPI//CHECKER: адрес вебхука монитору не выставлен', remote_id=remote_id, code=exc.code)
 
     async def _monitor(self, db: AsyncSession, action_id: int) -> DpiCheckerAction:
         action = await self._action(db, action_id, crud.KIND_MONITOR)
@@ -698,8 +702,7 @@ class DpiCheckerService:
         if 'is_active' in monitor:
             action.status = 'active' if monitor['is_active'] else 'paused'
         await db.commit()
-        public = {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
-        return {**public, 'resource_count': len(monitor.get('resources') or [])}
+        return _public_monitor(monitor)
 
     async def delete_monitor(self, db: AsyncSession, action_id: int) -> dict[str, Any]:
         action = await self._monitor(db, action_id)

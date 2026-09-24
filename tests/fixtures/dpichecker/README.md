@@ -23,3 +23,6 @@
 | `monitor_created`, `monitors_empty`, `monitor_runs`, `monitor_after_run`, `monitor_deleted`, `check_watcher_run` | монитор, его прогон (`source: watcher`) |
 | `webhook_*` | тела вебхуков: `check.completed`, `check.cancelled`, `noisy.done`, `probe.done`, `monitor.run` (приходит в НАЧАЛЕ прогона) |
 | `wh_secret` | ответ `/webhooks/secret` |
+| `checks_probe` | история аккаунта `kind=probe` (суммы строками) |
+| `report_vpn`, `report_ip` | построчный отчёт `/checks/{id}/report?format=json`: `columns` + строки (у VPN ключ — в `uri`) |
+| `webhook_deliveries` | журнал доставки вебхуков `/webhooks/deliveries` |

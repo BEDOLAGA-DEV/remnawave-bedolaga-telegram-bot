@@ -111,3 +111,54 @@ def present_check(check: dict[str, Any], names: dict[str, str]) -> dict[str, Any
         'summary': summarize(resources),
         'resources': resources,
     }
+
+
+# Колонка отчёта с самим ресурсом: у VPN это ключ, у MTProto — ссылка прокси (секреты), у IP — адрес.
+REPORT_KEY_COLUMN = {'vpn': 'uri', 'ip': 'resource', 'mtproto': 'resource'}
+REPORT_ROW_FLAG = 'is_direct'
+LOCATION_NAMES = {'россия': 'russia', 'китай': 'china', 'иран': 'iran', 'туркменистан': 'turkmenistan'}
+
+
+def normalize_location(value: Any) -> str | None:
+    """Страна сервиса бывает кодом («russia») и словом («Россия») — в кабинет только кодом."""
+    if not value:
+        return None
+    text = str(value).strip()
+    return LOCATION_NAMES.get(text.casefold(), text)
+
+
+def _cell(value: Any) -> Any:
+    """Ячейка таблицы — число, строка, да/нет; вложенное — одной строкой. Контрольная проверка точки
+    (``{target, accessible}``) — просто «есть ли у точки интернет»."""
+    if isinstance(value, dict) and 'accessible' in value:
+        return bool(value['accessible'])
+    if isinstance(value, dict):
+        return ', '.join(f'{key}: {_cell(item)}' for key, item in value.items())
+    if isinstance(value, list):
+        return ', '.join(str(_cell(item)) for item in value)
+    return value
+
+
+def present_report(report: dict[str, Any], names: dict[str, str]) -> dict[str, Any]:
+    """Построчный отчёт сервиса (все поля строки ресурс × точка) → таблица для кабинета.
+
+    Первая колонка — имя ресурса, как в результате; ключ VPN и ссылка MTProto наружу не уходят,
+    адрес IP остаётся своей колонкой. ``is_direct`` — признак строки «из-за границы», не колонка.
+    """
+    check_type = str(report.get('check_type') or 'ip')
+    if check_type not in OK_FIELD:
+        check_type = 'ip'
+    key_column = REPORT_KEY_COLUMN[check_type]
+    secret = check_type != 'ip'
+    hidden = {REPORT_ROW_FLAG, *((key_column,) if secret else ())}
+    columns = [str(column) for column in report.get('columns') or [] if column not in hidden]
+    rows = []
+    for row in report.get('rows') or []:
+        raw = str(row.get(key_column) or '')
+        name = _name(check_type, raw, row, names)
+        cells = {column: _cell(row.get(column)) for column in columns}
+        if secret and raw:
+            # Текст ошибки сервиса может процитировать ключ — он заменяется именем.
+            cells = {key: value.replace(raw, name) if isinstance(value, str) else value for key, value in cells.items()}
+        rows.append({'name': name, **cells, REPORT_ROW_FLAG: bool(row.get(REPORT_ROW_FLAG))})
+    return {'id': report.get('id'), 'check_type': check_type, 'columns': ['name', *columns], 'rows': rows}

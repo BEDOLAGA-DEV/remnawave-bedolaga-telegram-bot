@@ -17,6 +17,9 @@ CheckType = Literal['vpn', 'ip', 'mtproto']
 Location = Literal['russia', 'china', 'iran', 'turkmenistan']
 ProbeMode = Literal['auto', 'server', 'noserver']
 Source = Literal['paste', 'panel_subscription', 'panel_hosts', 'panel_nodes']
+AccountKind = Literal['check', 'probe', 'noisy']
+# Куда тревоги монитора шлёт их бот: владельцу ключа в личку или в группу (привязка кодом /link).
+Notify = Literal['dm', 'group']
 MAX_RESOURCES = 50
 MAX_POPS = 500
 
@@ -45,6 +48,7 @@ class MonitorCreate(CheckCreate):
     interval_hours: int = Field(ge=1, le=168)
     alert_after_fails: int = Field(default=2, ge=1, le=20)
     notify_on_success: bool = False
+    notify: Notify = 'dm'
 
 
 class MonitorPatch(BaseModel):
@@ -172,6 +176,13 @@ class OptimalResponse(BaseModel):
 
 class MonitorListResponse(BaseModel):
     items: list[dict[str, Any]]
+
+
+class AccountPage(BaseModel):
+    """Запуски аккаунта у сервиса (не только из кабинета); ``action_id`` — своя строка, если уже открыт."""
+
+    items: list[dict[str, Any]]
+    total: int
 
 
 class DownloadLinkOut(BaseModel):
