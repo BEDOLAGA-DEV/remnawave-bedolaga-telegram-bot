@@ -4039,6 +4039,9 @@
 - `tests/handlers/test_balance_quick_topup.py` — Python-модуль
   Классы: нет
   Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
+- `tests/handlers/test_balance_topup_retry_hint.py` — Python-модуль
+  Классы: нет
+  Функции: `payment_environment`, `state`, `user`, `test_rejected_purchase_topup_keeps_input_open_until_user_retries`, `test_minimum_hint_only_suggests_an_accepted_whole_ruble_amount`
 - `tests/handlers/test_broadcast_custom_buttons.py` — Python-модуль
   Классы: нет
   Функции: `test_keyboard_passes_icon_custom_emoji_id`, `test_schema_roundtrips_icon_custom_emoji_id`, `test_schema_defaults_to_none_and_rejects_garbage`

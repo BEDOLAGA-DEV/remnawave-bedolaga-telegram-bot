@@ -121,14 +121,16 @@ async def process_mulenpay_payment_amount(
 
     if amount_kopeks < settings.MULENPAY_MIN_AMOUNT_KOPEKS:
         await message.answer(
-            f'Минимальная сумма пополнения: {settings.format_price(settings.MULENPAY_MIN_AMOUNT_KOPEKS)}',
+            f'Минимальная сумма пополнения: {settings.format_price(settings.MULENPAY_MIN_AMOUNT_KOPEKS)}\n\n'
+            'Отправьте новую сумму пополнения числом в сообщении.',
             reply_markup=get_back_keyboard(db_user.language),
         )
         return
 
     if amount_kopeks > settings.MULENPAY_MAX_AMOUNT_KOPEKS:
         await message.answer(
-            f'Максимальная сумма пополнения: {settings.format_price(settings.MULENPAY_MAX_AMOUNT_KOPEKS)}',
+            f'Максимальная сумма пополнения: {settings.format_price(settings.MULENPAY_MAX_AMOUNT_KOPEKS)}\n\n'
+            'Отправьте новую сумму пополнения числом в сообщении.',
             reply_markup=get_back_keyboard(db_user.language),
         )
         return
