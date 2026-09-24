@@ -87,7 +87,7 @@
   Функции: `create_bot` — Create a Bot instance with SOCKS5 proxy and/or custom Telegram API server.
 - `app/cabinet/`
 - `app/config.py` — Python-модуль
-  Классы: `Settings` (397 методов)
+  Классы: `Settings` (400 методов)
   Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
 - `app/database/`
 - `app/external/`
@@ -205,6 +205,9 @@
 - `app/cabinet/routes/admin_coupons.py` — Python-модуль
   Классы: нет
   Функции: `list_coupon_batches` — List coupon batches with redemption stats., `create_coupon_batch_endpoint` — Create a batch of one-time coupons and return the generated links., `get_coupon_batch` — Batch card with redemption stats., `export_coupon_batch_links` — Still-active coupon links of the batch (for handing to the partner)., `revoke_coupon_batch` — Revoke all still-active coupons of the batch (e.g. the partner did not pay)., `delete_batch` — Полностью удаляет партию вместе с её купонами.
+- `app/cabinet/routes/admin_dpichecker.py` — Python-модуль
+  Классы: нет
+  Функции: `get_status`, `get_pops`, `get_optimal`, `get_tariffs`, `parse`, `panel_targets`, `estimate`, `launch_check`, `list_checks`, `get_check`, `cancel_check`, `report_csv`, `check_map`, `launch_probe`, `launch_noisy`, `get_scan`, `noisy_csv`, `cheremsha`, `ip_lookup`, `blacklist`, `list_monitors`, `create_monitor`, `patch_monitor`, `delete_monitor`, `monitor_runs`, `spend`
 - `app/cabinet/routes/admin_email_queue.py` — Python-модуль
   Классы: нет
   Функции: `get_email_queue` — Сводка по очереди писем и последние письма в ней., `clear_email_queue` — Убрать письма из очереди. По умолчанию — целиком, вместе с историей.
@@ -482,6 +485,9 @@
 - `app/cabinet/schemas/coupons.py` — Python-модуль
   Классы: `CouponBatchResponse`, `CouponBatchListResponse`, `CouponBatchCreateRequest`, `CouponBatchCreatedResponse`, `CouponBatchLinksResponse`, `CouponBatchRevokeResponse`, `CouponRedeemRequest`, `CouponRedeemResponse`, `CouponStatusResponse`, `CouponBatchDeleteResponse`
   Функции: нет
+- `app/cabinet/schemas/dpichecker.py` — Python-модуль
+  Классы: `TargetIn`, `CheckCreate`, `MonitorCreate`, `MonitorPatch`, `ScanCreate`, `ParseRequest`, `EstimateRequest`, `PanelTargetsRequest`, `PanelTargetOut`, `PanelTargetsResponse`, `ActionOut` (1 методов), `ActionListResponse`, `CheckResponse`, `ScanResponse`, `StatusResponse`, `PopsResponse`, `OptimalResponse`, `MonitorListResponse`, `SpendItem`, `SpendResponse`
+  Функции: нет
 - `app/cabinet/schemas/gift.py` — Python-модуль
   Классы: `GiftConfigSubOption`, `GiftConfigTariffPeriod`, `GiftConfigTariff`, `GiftConfigPaymentMethod`, `GiftConfigResponse`, `GiftPurchaseRequest` (1 методов), `GiftPurchaseResponse`, `GiftPurchaseStatusResponse`, `PendingGiftResponse`, `SentGiftResponse`, `ReceivedGiftResponse`, `ActivateGiftRequest`, `ActivateGiftResponse`
   Функции: нет
@@ -622,7 +628,7 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `UserReminder` (1 методов), `UserReminderState`
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
   Функции: нет
 
 #### app/database/crud
@@ -660,6 +666,9 @@
 - `app/database/crud/donut.py` — Python-модуль
   Классы: нет
   Функции: `create_donut_payment` — Создаёт запись о платеже Donut., `get_donut_payment_by_order_id` — Получает платеж по order_id (internal)., `get_donut_payment_by_invoice_id` — Получает платёж по transaction_id, выданному Donut., `get_donut_payment_by_id` — Получает платеж по локальному ID., `get_donut_payment_by_id_for_update` — Получает платёж с блокировкой FOR UPDATE., `update_donut_payment_status` — Обновляет статус платежа., `get_pending_donut_payments` — Возвращает незавершённые платежи пользователя., `get_expired_pending_donut_payments` — Возвращает просроченные платежи в статусе pending., `link_donut_payment_to_transaction` — Связывает платёж с транзакцией.
+- `app/database/crud/dpichecker.py` — Python-модуль
+  Классы: нет
+  Функции: `create_action` — Строка до обращения к сервису: ключ идемпотентности рождается здесь и живёт с ней., `get_action`, `get_by_remote`, `list_actions`, `list_monitors` — Мониторы из кабинета, которые ещё живы у сервиса (для обходчика)., `claim_delivery` — True, если доставку вебхука видим впервые (и запоминаем её)., `spend_by_admin` — Потрачено по админам: списания минус возвраты; запуски без цены не считаются.
 - `app/database/crud/etoplatezhi.py` — Python-модуль
   Классы: нет
   Функции: `create_etoplatezhi_payment` — Создает запись о платеже Etoplatezhi., `get_etoplatezhi_payment_by_order_id` — Получает платеж по order_id (internal)., `get_etoplatezhi_payment_by_invoice_id` — Получает платеж по ID от Etoplatezhi., `get_etoplatezhi_payment_by_id` — Получает платеж по ID., `get_etoplatezhi_payment_by_id_for_update` — Получает платеж по ID с блокировкой FOR UPDATE., `update_etoplatezhi_payment_status` — Обновляет статус платежа., `get_pending_etoplatezhi_payments` — Получает незавершенные платежи пользователя., `get_expired_pending_etoplatezhi_payments` — Получает просроченные платежи в статусе pending., `link_etoplatezhi_payment_to_transaction` — Связывает платеж с транзакцией.
@@ -875,6 +884,9 @@
   Функции: `build_operators_params` — Query для GET /operators. aiohttp сам percent-encode'ит кириллицу.
 - `app/external/cryptobot.py` — Python-модуль
   Классы: `CryptoBotService` (9 методов)
+  Функции: нет
+- `app/external/dpichecker_api.py` — Python-модуль
+  Классы: `DpiCheckerAPIError` (1 методов), `DpiCheckerGatewayError`, `DpiCheckerAPI` (37 методов)
   Функции: нет
 - `app/external/heleket.py` — Python-модуль
   Классы: `HeleketService` (9 методов)
@@ -1482,6 +1494,7 @@
 - `app/services/donut_service.py` — Python-модуль
   Классы: `DonutAPIError` (1 методов), `DonutService` (18 методов)
   Функции: нет
+- `app/services/dpichecker/`
 - `app/services/email_retry_service.py` — Python-модуль
   Классы: `EmailRetryService` (13 методов)
   Функции: нет
@@ -1857,6 +1870,33 @@
   Классы: `GameRenderResult`, `AnswerCheckResult`, `BaseGameStrategy` (5 методов), `QuestButtonsStrategy` (3 методов), `LockHackStrategy` (3 методов), `ServerLotteryStrategy` (3 методов), `BlitzReactionStrategy` (3 методов), `LetterCipherStrategy` (3 методов), `EmojiGuessStrategy` (3 методов), `AnagramStrategy` (3 методов)
   Функции: `get_game_strategy` — Get game strategy by type., `get_all_game_types` — Get list of all supported game types.
 
+#### app/services/dpichecker
+
+- `app/services/dpichecker/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `app/services/dpichecker/errors.py` — Python-модуль
+  Классы: `DpiCheckerDisabled` (1 методов), `ActionNotFound`, `LaunchRefused` (1 методов)
+  Функции: `human_error` — Слова для человека — по стабильному коду; неизвестный код — текст сервиса.
+- `app/services/dpichecker/monitor_watch.py` — Python-модуль
+  Классы: `MonitorWatch` (6 методов)
+  Функции: `should_notify` — Каждый прогон — если «сообщать и об успехе»; иначе тревога (неудач подряд ≥ порога) и восстановление.
+- `app/services/dpichecker/notify.py` — Python-модуль
+  Классы: нет
+  Функции: `monitor_run_text`
+- `app/services/dpichecker/presenter.py` — Python-модуль
+  Классы: нет
+  Функции: `summarize` — Как сводка сайта: ресурс доступен со всех точек / с части / ни с одной; средняя задержка удачных., `present_check`
+- `app/services/dpichecker/regions.py` — Python-модуль
+  Классы: нет
+  Функции: `group_pops` — Номера точек по округам и «Республикам»; точка с регионом вне карты остаётся только в общем списке.
+- `app/services/dpichecker/service.py` — Python-модуль
+  Классы: `DpiCheckerService` (43 методов)
+  Функции: `usd` — Сумма сервиса (число у проверок, строка у Зонда) → Decimal с 4 знаками.
+- `app/services/dpichecker/targets.py` — Python-модуль
+  Классы: `PanelTargetError`, `PanelTarget`
+  Функции: `subscription_keys`, `host_addresses`, `node_addresses`
+
 #### app/services/menu_layout
 
 - `app/services/menu_layout/__init__.py` — Python-модуль
@@ -2053,7 +2093,7 @@
   Функции: `parse_userinfo` — ``upload=0; download=1; total=2; expire=1700000000`` → числа; мусор — ``None``., `format_gb`, `expired_text`, `exhausted_text`, `note_for_userinfo` — Что не так с подпиской по её заголовку; ``None`` — всё в порядке., `note_for_panel_user` — Что не так с пользователем своей панели по его статусу; ``None`` — активен или неизвестен., `stub_remarks` — Тексты заглушек из ремарок ссылок (после ``#``), без повторов, в порядке появления., `explain_missing_configs` — Почему в ответе нет ни одного сервера — словами для админа.
 - `app/services/reachability/panel_links.py` — Python-модуль
   Классы: нет
-  Функции: `decode_subscription_body` — Тело публичной подписки: ссылки построчно, base64 от них или xray-json; страница — пусто., `hwid_required`, `fetch_panel_links` — Первый непустой список ссылок из трёх источников; ошибки источника — в лог, не наружу.
+  Функции: `decode_subscription_body` — Тело публичной подписки: ссылки построчно, base64 от них или xray-json; страница — пусто., `hwid_required`, `fetch_panel_links` — Первый непустой список ссылок из трёх источников; ошибки источника — в лог, не наружу., `short_uuid_for_user` — shortUuid последней подписки пользователя в панели (общий для BSCHEKER и DPI//CHECKER).
 - `app/services/reachability/preview.py` — Python-модуль
   Классы: `PreviewResult`
   Функции: нет
@@ -2067,7 +2107,7 @@
   Классы: `TargetResolutionError`, `HostView`, `NodeView`, `SubscriptionConfigs`, `TargetResolver` (16 методов)
   Функции: `target_from_host`, `target_from_node`, `target_from_link`, `target_from_cidr`
 - `app/services/reachability/service.py` — Python-модуль
-  Классы: `ReachabilityDisabled` (1 методов), `ReachabilityUnhealthy` (1 методов), `ReachabilityBusy` (1 методов), `PanelUnavailable` (1 методов), `JobNotFound`, `Health` (1 методов), `Quote`, `ParsedConfig`, `ParsedInput`, `ReachabilityService` (57 методов)
+  Классы: `ReachabilityDisabled` (1 методов), `ReachabilityUnhealthy` (1 методов), `ReachabilityBusy` (1 методов), `PanelUnavailable` (1 методов), `JobNotFound`, `Health` (1 методов), `Quote`, `ParsedConfig`, `ParsedInput`, `ReachabilityService` (56 методов)
   Функции: нет
 - `app/services/reachability/status.py` — Python-модуль
   Классы: `StatusSource` (8 методов), `AccountCache` (3 методов)
@@ -2528,6 +2568,9 @@
 - `app/webserver/apple_iap.py` — Python-модуль
   Классы: нет
   Функции: `create_apple_iap_router`
+- `app/webserver/dpichecker_webhook.py` — Python-модуль
+  Классы: нет
+  Функции: `create_dpichecker_webhook_router`
 - `app/webserver/payments.py` — Python-модуль
   Классы: нет
   Функции: `drain_webhook_bg_tasks` — Дождаться фоновых обработчиков вебхуков перед остановкой процесса., `create_payment_router` — Роутер вебхуков платёжных провайдеров.
@@ -2964,6 +3007,9 @@
 - `migrations/alembic/versions/0127_user_reminders.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0128_dpichecker_actions.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -3128,6 +3174,9 @@
 - `tests/cabinet/test_admin_delete_user_subscription.py` — Python-модуль
   Классы: нет
   Функции: `test_route_registered` — Метод и путь закреплены: иначе маршрут можно переименовать с зелёным CI., `test_force_defaults_to_off` — Без явного force активную платную подписку снести нельзя., `test_deletes_expired_trial` — Базовый случай из отчёта: отработавший триал убирается из карточки., `test_foreign_subscription_not_found` — Подписка чужого пользователя не удаляется по одному лишь sub_id., `test_active_paid_needs_force` — Оплаченный активный доступ не сносится одним промахом., `test_open_grace_blocks_deletion` — Пока открыт временный доступ, подписку из-под него не вырывают.
+- `tests/cabinet/test_admin_dpichecker.py` — Python-модуль
+  Классы: нет
+  Функции: `service`, `test_routes_registered_with_expected_paths_and_permissions`, `test_money_routes_need_run_permission`, `test_action_out_hides_keys_and_request`, `test_check_create_limits`, `test_monitor_patch_bounds`, `test_scan_and_panel_requests_validate`, `test_launch_audits_and_returns_action`, `test_list_checks_mine_filters_by_admin`, `test_panel_targets_returns_values`, `test_domain_errors_to_http`, `test_unexpected_error_is_500_without_details`, `test_report_csv_returns_service_bytes`
 - `tests/cabinet/test_admin_email_queue.py` — Python-модуль
   Классы: нет
   Функции: `test_summary_counts_each_status`, `test_items_are_newest_first_and_carry_no_letter_body` — Тело письма — это код или ссылка входа: наружу его не отдаём., `test_clear_removes_the_queue_and_reports_the_count`, `test_clear_pending_only_leaves_history` — «Отменить ожидающие» не должно стирать историю доставленных и потерянных., `test_clear_defaults_to_wiping_everything` — Запрос без параметров чистит очередь целиком — дефолт проверяем по сигнатуре., `test_empty_queue_is_not_an_error`, `test_routes_are_registered`
@@ -3609,6 +3658,9 @@
 - `tests/database/test_central_purchase_hook.py` — Python-модуль
   Классы: нет
   Функции: `yandex_spy` — Patch the Yandex service hooks plus the other lazy side-effects., `test_completed_subscription_payment_fires_once` — Completed SUBSCRIPTION_PAYMENT → fire_purchase_bg(user_id, abs(amount)) once., `test_deposit_does_not_fire` — DEPOSIT is a balance top-up, not a purchase → no purchase event., `test_gift_payment_does_not_fire` — GIFT_PAYMENT is not a self-purchase → no purchase event., `test_refund_does_not_fire` — REFUND must never count as a purchase conversion., `test_not_completed_subscription_payment_does_not_fire_inline` — A pending (is_completed=False) SUBSCRIPTION_PAYMENT must not fire inline., `test_commit_false_does_not_fire_inline` — commit=False defers all side-effects → nothing fires from create_transaction., `test_negative_stored_amount_fires_positive_abs` — SUBSCRIPTION_PAYMENT is stored as a negative debit; the conversion event, `test_deferred_subscription_payment_fires_once` — emit_transaction_side_effects on a completed SUBSCRIPTION_PAYMENT → fires once., `test_deferred_deposit_does_not_fire` — Deferred DEPOSIT side-effects must not fire a purchase event., `test_deferred_not_completed_does_not_fire` — Deferred SUBSCRIPTION_PAYMENT that isn't completed must not fire., `test_deferred_negative_amount_fires_positive_abs` — Deferred path must also pass the positive abs() amount., `test_single_transaction_does_not_double_fire` — One purchase = one fire. The inline (commit=True) path and the deferred
+- `tests/database/test_dpichecker_actions_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_new_action_gets_unique_key_and_submitting`, `test_found_by_kind_and_remote_id`, `test_delivery_is_claimed_once`, `test_spend_by_admin_subtracts_refunds`, `test_list_filters_by_kind_type_and_admin`, `test_same_remote_id_allowed_across_kinds_but_not_within`
 - `tests/database/test_guest_purchase_gift_idempotency.py` — Python-модуль
   Классы: нет
   Функции: `test_guest_purchase_model_has_idempotency_key_column` — GuestPurchase model must have idempotency_key column and ux_guest_purchases_idempotency_key index., `test_multiple_null_idempotency_keys_are_allowed` — Multiple legacy guest purchases with NULL idempotency_key must be allowed., `test_duplicate_non_null_idempotency_key_is_rejected` — Duplicate non-null idempotency_key must trigger uniqueness violation., `test_migration_0107_upgrade_downgrade_upgrade_lifecycle` — Verify revision 0107 upgrade, downgrade, and upgrade on a SQLite database with legacy null rows.
@@ -3723,6 +3775,9 @@
 - `tests/external/test_cryptobot_service.py` — Python-модуль
   Классы: нет
   Функции: `anyio_backend`, `test_create_invoice_uses_make_request`, `test_make_request_returns_none_without_token`, `test_verify_webhook_signature`, `test_verify_webhook_signature_without_token`
+- `tests/external/test_dpichecker_api.py` — Python-модуль
+  Классы: нет
+  Функции: `test_error_codes_come_from_body`, `test_rejected_inputs_are_kept`, `test_429_carries_retry_after`, `test_5xx_without_json_is_gateway`, `test_success_body_returned_as_is`, `test_idempotency_key_only_on_paid_post`, `test_key_sent_in_x_api_key_header`, `test_unknown_check_type_refused_before_network`, `test_methods_hit_expected_paths`, `test_wait_timeout_clamped_to_service_limit`, `test_cheremsha_joins_resources`
 - `tests/external/test_remnawave_3_0_0.py` — Python-модуль
   Классы: нет
   Функции: `test_coerce_panel_user_id_accepts_ints_and_digit_strings`, `test_coerce_panel_user_id_rejects_everything_else` — Мусорный идентификатор обязан падать на границе клиента, а не уходить в панель:, `test_invalid_user_id_error_is_a_remnawave_api_error` — Вызывающий код ловит RemnaWaveAPIError — новый тип не должен пролетать мимо., `test_is_user_not_found_error_recognises_only_real_absence`, `test_is_user_not_found_error_never_true_for_invalid_local_id` — Битая ссылка в БД бота — это баг данных, а не «в панели нет пользователя»., `test_parsed_user_has_numeric_id_and_no_uuid_field` — 3.0.0 удалил ``uuid`` из UsersSchema — датакласс не должен его воскрешать., `test_get_user_by_id_uses_numeric_path`, `test_get_user_by_id_rejects_uuid_before_any_request`, `test_update_user_body_is_keyed_on_id_not_uuid` — UpdateUserCommand.RequestBodySchema в 3.0.0 не имеет поля ``uuid``: zod срежет, `test_update_user_coerces_digit_string_id_to_number`, `test_update_user_rejects_uuid_before_any_request`, `test_user_actions_are_addressed_by_numeric_id`, `test_resolve_user_sends_exactly_one_identifier`, `test_resolve_user_rejects_zero_or_multiple_identifiers` — Панель требует ровно одно поле — отсекаем локально, не тратя запрос на 400., `test_resolve_user_returns_none_when_panel_has_no_such_user`, `test_resolve_user_propagates_non_not_found_errors` — 400 — это отказ панели обработать запрос, а не «пользователя нет»:, `test_resolve_user_returns_none_on_empty_response_envelope`, `test_extend_user_expiration_sends_days_body`, `test_extend_user_expiration_requires_at_least_one_day` — days < 1 панель отвергнет валидацией — запрос не отправляем вовсе., `test_extend_user_expiration_rejects_uuid_before_any_request`, `test_remove_device_body_uses_numeric_user_id_not_user_uuid` — 2.8.0 переименовал ``userUuid`` -> ``userId`` в HWID-командах, 3.0.0 сделал его, `test_remove_device_coerces_digit_string_user_id`, `test_remove_device_with_uuid_fails_without_touching_panel` — Протухший uuid в БД бота: сообщаем о неудаче, но не шлём заведомо битый запрос., `test_reset_user_devices_uses_single_delete_all_call` — Раньше это был цикл из N удалений с эвристикой «успех, если упало меньше, `test_reset_user_devices_with_uuid_fails_without_touching_panel`, `test_get_user_devices_is_addressed_by_numeric_id`, `test_delete_user_returns_true_on_empty_body` — 3.0.0: DELETE отвечает 204 (синхронно) либо 202 (в очередь) — тела нет,, `test_empty_body_actions_return_true_without_reading_response` — Bulk-операции сквадов, удаление сквада и рестарт ноды выполняются в фоне:, `test_add_many_users_sends_numeric_ids`, `test_add_many_users_rejects_invalid_ids_before_request`, `test_bulk_squad_actions_skip_request_for_empty_id_list`, `test_restart_node_sends_force_restart_body_default_false`, `test_restart_node_forwards_force_restart_true`, `test_restart_all_nodes_sends_force_restart_body`, `test_users_page_stream_omits_cursor_on_first_page`, `test_users_page_stream_passes_cursor_when_given`, `test_users_page_stream_keeps_cursor_as_string` — Запрос коерсит курсор в число (z.coerce.number), а ответ отдаёт его строкой —, `test_users_page_stream_clamps_size_to_panel_contract` — Контракт панели (zod): size строго 1..1000, иначе 400 «Validation failed», `test_users_stream_follows_cursor_until_exhausted`, `test_users_stream_stops_when_next_cursor_is_null_even_if_has_more_true` — Defensive: a null nextCursor terminates the scan regardless of hasMore., `test_find_users_by_telegram_id_filters_in_query_string` — ``GET /api/users/by-telegram-id/{id}`` удалён — поиск живёт в query-фильтре, `test_find_users_by_email_filters_in_query_string` — ``GET /api/users/by-email/{email}`` удалён — тот же query-фильтр стрима., `test_find_users_passes_all_supported_filters`, `test_find_users_sends_no_filters_when_none_given`, `test_find_users_follows_cursor_and_honours_max_results`, `test_find_users_stops_early_once_max_results_reached`, `test_happ_encrypt_404_disables_panel_endpoint_and_falls_back` — 2.8.0 removed POST /api/system/tools/happ/encrypt → 404 must disable further, `test_happ_encrypt_non_404_error_keeps_endpoint_enabled` — A transient 5xx must NOT permanently disable happ-encrypt (only a 404 = removed)., `test_happ_api_fallback_caches_by_subscription_url` — The client is recreated per request — the crypt5 cache must live on the class, `test_happ_api_fallback_cooldown_after_failure` — A Happ API outage must not stall hot paths — one failure pauses further calls., `test_happ_api_fallback_rejects_unexpected_payload_per_url` — A non-happ:// body is a per-URL problem: never cached as a link, never retried,, `test_happ_api_fallback_4xx_does_not_poison_global_cooldown` — A 4xx rejection of one URL must not disable the fallback for everyone., `test_happ_api_fallback_429_arms_cooldown_not_per_url_ban` — 429 is service throttling: pause globally, but the URL must stay retryable., `test_enrich_uses_external_fallback_only_in_cryptolink_mode` — enrich runs on every get_user_by_*: subscription URLs must not go to the, `test_happ_api_fallback_disabled_by_setting` — HAPP_CRYPTOLINK_API_FALLBACK_ENABLED=false must skip the external service., `test_happ_local_encryption_roundtrip` — Локальное шифрование должно давать happ://crypt4/<base64>, расшифровываемый, `test_happ_local_encryption_real_key_single_rsa4096_block` — Со вшитым ключом Happ v4 (RSA-4096) шифртекст — один блок в 512 байт,, `test_happ_local_encryption_rejects_oversized_payload` — PKCS#1 v1.5 вмещает size_in_bytes()-11: слишком длинная ссылка -> None,, `test_happ_local_encryption_disabled_by_setting` — HAPP_CRYPTOLINK_LOCAL_ENCRYPTION_ENABLED=false должен пропустить локальный, `test_happ_local_encryption_stable_for_same_url` — Паддинг PKCS#1 v1.5 случайный, поэтому без кэша каждый вызов давал бы новую, `test_enrich_uses_local_encryption_without_network` — С локальным шифрованием enrich заполняет crypt-ссылку в любом режиме бота,, `test_delete_all_devices_reports_failure_when_devices_remain` — Панель может ответить 200, оставив устройства — это не успех., `test_delete_all_devices_reports_success_when_panel_is_empty`, `test_update_user_sends_null_tag_to_clear_it` — В контракте панели ``tag`` в PATCH — optional + nullable: не прислать = не, `test_update_user_leaves_tag_alone_when_not_given`
@@ -3766,6 +3821,10 @@
 - `tests/fixtures/bschek_fixtures.py` — Python-модуль
   Классы: нет
   Функции: `load_bschek_fixture` — Возвращает фикстуру целиком: status, headers, request, idempotency_key, body., `iter_bschek_fixtures`
+- `tests/fixtures/dpichecker/`
+- `tests/fixtures/dpichecker_fixtures.py` — Python-модуль
+  Классы: нет
+  Функции: `load_dpichecker_fixture` — {'status': int, 'body': ...} — ответ живого API после очистки.
 - `tests/fixtures/local_day.py` — Python-модуль
   Классы: нет
   Функции: `use_timezone` — Переключить settings.TIMEZONE на ``name`` и вернуть саму зону., `zone_where_local_date_differs_from_utc` — Зона, в которой прямо сейчас другая календарная дата, чем в UTC., `reset_local_timezone_cache` — Сбросить кэш зоны после теста, чтобы подмена не утекла в соседей.
@@ -3896,6 +3955,54 @@
 - `tests/fixtures/bschek/v_suburl.json` — файл
 - `tests/fixtures/bschek/v_too_large.json` — файл
 - `tests/fixtures/bschek/v_too_many.json` — файл
+
+#### tests/fixtures/dpichecker
+
+- `tests/fixtures/dpichecker/README.md` — файл
+- `tests/fixtures/dpichecker/blacklist.json` — файл
+- `tests/fixtures/dpichecker/cancel_ok.json` — файл
+- `tests/fixtures/dpichecker/check_404.json` — файл
+- `tests/fixtures/dpichecker/check_cancelled.json` — файл
+- `tests/fixtures/dpichecker/check_ip_noserver.json` — файл
+- `tests/fixtures/dpichecker/check_ip_server.json` — файл
+- `tests/fixtures/dpichecker/check_mtproto.json` — файл
+- `tests/fixtures/dpichecker/check_vpn.json` — файл
+- `tests/fixtures/dpichecker/check_watcher_run.json` — файл
+- `tests/fixtures/dpichecker/checks_list.json` — файл
+- `tests/fixtures/dpichecker/checks_noisy.json` — файл
+- `tests/fixtures/dpichecker/cheremsha.json` — файл
+- `tests/fixtures/dpichecker/estimate_bad_loc.json` — файл
+- `tests/fixtures/dpichecker/estimate_bad_pop.json` — файл
+- `tests/fixtures/dpichecker/estimate_vpn_ok.json` — файл
+- `tests/fixtures/dpichecker/idempotency_conflict.json` — файл
+- `tests/fixtures/dpichecker/ip_bad_pops.json` — файл
+- `tests/fixtures/dpichecker/ip_lookup.json` — файл
+- `tests/fixtures/dpichecker/monitor_after_run.json` — файл
+- `tests/fixtures/dpichecker/monitor_created.json` — файл
+- `tests/fixtures/dpichecker/monitor_deleted.json` — файл
+- `tests/fixtures/dpichecker/monitor_runs.json` — файл
+- `tests/fixtures/dpichecker/monitors_empty.json` — файл
+- `tests/fixtures/dpichecker/noisy_done.json` — файл
+- `tests/fixtures/dpichecker/noisy_private.json` — файл
+- `tests/fixtures/dpichecker/noisy_run.json` — файл
+- `tests/fixtures/dpichecker/optimal_ru.json` — файл
+- `tests/fixtures/dpichecker/parse_ip.json` — файл
+- `tests/fixtures/dpichecker/parse_mtproto.json` — файл
+- `tests/fixtures/dpichecker/parse_vpn.json` — файл
+- `tests/fixtures/dpichecker/pops.json` — файл
+- `tests/fixtures/dpichecker/probe_done.json` — файл
+- `tests/fixtures/dpichecker/probe_run.json` — файл
+- `tests/fixtures/dpichecker/probe_running.json` — файл
+- `tests/fixtures/dpichecker/profile.json` — файл
+- `tests/fixtures/dpichecker/quota.json` — файл
+- `tests/fixtures/dpichecker/tariffs.json` — файл
+- `tests/fixtures/dpichecker/too_many_resources.json` — файл
+- `tests/fixtures/dpichecker/webhook_check_cancelled.json` — файл
+- `tests/fixtures/dpichecker/webhook_check_completed.json` — файл
+- `tests/fixtures/dpichecker/webhook_monitor_run.json` — файл
+- `tests/fixtures/dpichecker/webhook_noisy_done.json` — файл
+- `tests/fixtures/dpichecker/webhook_probe_done.json` — файл
+- `tests/fixtures/dpichecker/wh_secret.json` — файл
 
 ### tests/handlers
 
@@ -4115,12 +4222,16 @@
 - `tests/migrations/test_0127_user_reminders.py` — Python-модуль
   Классы: нет
   Функции: `test_revision_chain`, `test_builtin_is_shipped_disabled_with_all_languages`, `test_models_roundtrip`
+- `tests/migrations/test_0128_dpichecker_actions.py` — Python-модуль
+  Классы: нет
+  Функции: `test_revision_chain`, `test_upgrade_matches_model_and_downgrade_drops`
 
 ### tests/services
 
 - `tests/services/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/services/dpichecker/`
 - `tests/services/panel_sync/`
 - `tests/services/reachability/`
 - `tests/services/test_account_merge_service.py` — Python-модуль
@@ -4243,6 +4354,9 @@
 - `tests/services/test_disposable_email_service.py` — Python-модуль
   Классы: нет
   Функции: `test_parse_extra_domains_tolerates_separators_case_and_at_sign`, `test_operator_extra_domains_block_even_without_fetched_list`, `test_parent_domain_matches_for_both_lists`, `test_disabled_flag_and_malformed_email`
+- `tests/services/test_dpichecker_settings.py` — Python-модуль
+  Классы: нет
+  Функции: `test_permission_section_has_read_and_run`, `test_roles_with_bscheker_get_dpichecker_too`, `test_settings_live_in_own_category`, `test_api_key_is_masked_secret`, `test_disabled_by_default_and_needs_key`, `test_webhook_url_follows_public_bot_url`
 - `tests/services/test_email_retry_service.py` — Python-модуль
   Классы: нет
   Функции: `test_backoff_outlives_short_lived_codes` — Фиксируем сам факт расхождения: без срока бэкофф шлёт письма после смерти кода., `test_expired_item_is_killed_without_sending`, `test_live_item_is_still_sent`, `test_item_without_expiry_is_unrestricted`, `test_auth_emails_declare_a_deadline` — Три письма с секретом внутри обязаны передавать срок годности в очередь., `test_body_is_purged_after_successful_delivery`, `test_body_is_purged_when_attempts_run_out`, `test_body_survives_between_attempts` — Пока попытки не исчерпаны, тело нужно — иначе повторять будет нечего., `test_stop_is_safe_without_start`, `test_pending_letters_are_closed_when_smtp_is_absent`, `test_absent_smtp_is_reported_once_not_per_letter` — Одно сообщение на всё время, и не ошибкой: это настройка, а не сбой доставки., `test_queue_resumes_after_smtp_appears`
@@ -4740,6 +4854,36 @@
   Функции: `test_apiclient_patch_helper_exists_and_runs_at_import` — Source-level pin: ``_patch_yookassa_timeout`` must be DEFINED, `test_patched_execute_passes_timeout_to_session_request` — Negative-control against upstream regression: the patched, `test_patch_idempotency_guard_exists` — The patch helper must check ``ApiClient._timeout_patched`` to, `test_patch_respects_settings_overrides` — An operator who sets YOOKASSA_HTTP_CONNECT_TIMEOUT or, `test_dedicated_executor_exists_with_bounded_max_workers` — The bug-report's "обязательное" fix #2: dedicated executor with, `test_max_workers_resolver_respects_setting` — REGRESSION: ``YOOKASSA_MAX_CONCURRENT_REQUESTS`` env var must flow, `test_max_workers_resolver_floors_at_one` — A misconfigured ``YOOKASSA_MAX_CONCURRENT_REQUESTS=0`` must NOT, `test_dedicated_executor_thread_name_prefix` — Threads in the YK executor must be identifiable in py-spy /, `test_all_run_in_executor_callsites_use_dedicated_pool` — Source-level pin: every ``run_in_executor`` in, `test_webhook_uses_wait_for_with_tight_budget` — ``process_yookassa_webhook`` confirmation of payment status must, `test_webhook_timeout_is_caught_and_refuses_without_confirmation` — When the API confirmation times out, the handler must NOT raise
 - `tests/services/user_reminders/`
 
+#### tests/services/dpichecker
+
+- `tests/services/dpichecker/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `tests/services/dpichecker/test_monitor_watch.py` — Python-модуль
+  Классы: `FakeAPI` (6 методов)
+  Функции: `test_running_run_is_not_reported`, `test_success_reported_only_when_asked`, `test_alert_after_threshold_and_recovery`, `test_completed_run_reported_once`, `test_quiet_run_is_remembered_without_message`, `test_run_in_progress_waits`, `test_monitor_gone_at_service_is_marked_deleted`, `test_one_broken_monitor_does_not_stop_sweep`
+- `tests/services/dpichecker/test_notify.py` — Python-модуль
+  Классы: нет
+  Функции: `test_text_has_name_country_and_counts`, `test_alert_mentions_fails_in_a_row`, `test_no_secrets_in_text`
+- `tests/services/dpichecker/test_presenter.py` — Python-модуль
+  Классы: нет
+  Функции: `test_vpn_check_grouped_per_key_with_abroad_row_and_names`, `test_vpn_key_without_panel_name_uses_host_label`, `test_failed_vpn_row_says_whether_point_had_internet`, `test_rows_sorted_by_region_and_counts_match`, `test_ip_check_shows_address_and_verdict`, `test_ip_abroad_row_keeps_error_code`, `test_mtproto_row_reason_is_status_and_link_hidden`, `test_pending_check_without_results_is_empty`
+- `tests/services/dpichecker/test_regions.py` — Python-модуль
+  Классы: нет
+  Функции: `test_russia_pops_grouped_by_district_and_republics`, `test_region_outside_map_is_not_lost_but_not_grouped`, `test_every_region_belongs_to_one_district`, `test_other_countries_have_no_groups`
+- `tests/services/dpichecker/test_service_checks.py` — Python-модуль
+  Классы: `FakeAPI` (10 методов)
+  Функции: `enabled`, `test_launch_writes_row_and_remote_id`, `test_launch_retries_same_key_after_gateway_error`, `test_gateway_silence_leaves_row_unknown_not_submitting`, `test_rate_limit_waits_once_and_repeats`, `test_refusal_marks_row_rejected`, `test_vpn_launch_sends_keys_not_resources`, `test_estimate_counts_vpn_keys`, `test_estimate_ip_uses_resources`, `test_disabled_module_refuses_before_any_call`, `test_missing_key_refuses_with_words`, `test_status_disabled_does_not_call_service`, `test_status_reads_balance_and_quota`, `test_status_explains_bad_key_in_words`, `test_get_check_presents_and_names_by_targets`, `test_get_check_without_remote_id_shows_row_status`, `test_unknown_action_is_not_found`, `test_cancel_records_refund`, `test_human_error_by_code_not_text`
+- `tests/services/dpichecker/test_service_scans_monitors.py` — Python-модуль
+  Классы: `FakeAPI` (13 методов)
+  Функции: `enabled`, `test_noisy_is_free_and_remembers_scan_id`, `test_noisy_quota_refusal_is_words`, `test_probe_cost_is_fixed_then_traffic_added_when_done`, `test_get_scan_of_noisy_reads_noisy`, `test_get_scan_refuses_check_rows`, `test_monitor_gets_bot_webhook_url`, `test_monitor_without_public_url_has_no_callback`, `test_vpn_monitor_sends_keys_as_resources`, `test_monitor_list_joins_own_labels`, `test_monitor_patch_only_known_fields`, `test_monitor_delete_marks_row`, `test_monitor_runs_passes_paging`, `test_cheremsha_limits_to_twenty`, `test_history_filters_own_rows`
+- `tests/services/dpichecker/test_service_webhook.py` — Python-модуль
+  Классы: нет
+  Функции: `test_manual_check_completion_updates_row`, `test_cancelled_event_sets_refund`, `test_repeated_delivery_is_ignored`, `test_unknown_remote_check_is_quiet`, `test_monitor_run_pokes_watch`, `test_probe_done_adds_traffic_cost`, `test_unknown_event_is_quiet`
+- `tests/services/dpichecker/test_targets.py` — Python-модуль
+  Классы: нет
+  Функции: `test_subscription_keys_named_by_remark`, `test_user_without_subscription_is_explained`, `test_empty_subscription_is_explained`, `test_host_addresses_deduplicated_and_only_chosen`, `test_node_addresses_named_by_node`, `test_unknown_uuids_only_is_an_error`
+
 #### tests/services/panel_sync
 
 - `tests/services/panel_sync/test_blocked_user_stays_disabled.py` — Python-модуль
@@ -5018,6 +5162,9 @@
 - `tests/webserver/test_apple_iap_webhook.py` — Python-модуль
   Классы: нет
   Функции: `test_apple_iap_webhook_rejects_unsupported_media_type`, `test_apple_iap_webhook_rejects_body_larger_than_256kb`, `test_apple_iap_webhook_maps_invalid_signature_to_403`, `test_apple_iap_webhook_maps_configuration_error_to_503`, `test_apple_iap_webhook_returns_ok_for_processed_notification`
+- `tests/webserver/test_dpichecker_webhook.py` — Python-модуль
+  Классы: `FakeService` (3 методов)
+  Функции: `test_good_signature_dispatches_event`, `test_bad_signature_rejected_after_one_secret_refresh`, `test_rotated_secret_accepted_after_refresh`, `test_missing_signature_401`, `test_empty_body_400`, `test_oversized_body_413`
 - `tests/webserver/test_health_public.py` — Python-модуль
   Классы: нет
   Функции: `test_health_is_public`, `test_detailed_health_stays_gated`
