@@ -63,6 +63,20 @@ def _has_subscription(*conditions: ColumnElement[bool]) -> ColumnElement[bool]:
     return select(Subscription.id).where(Subscription.user_id == User.id, *conditions).correlate(User).exists()
 
 
+def _expiring_subscription(active: ColumnElement[bool], now: datetime) -> ColumnElement[bool]:
+    daily_tariff = (
+        select(Tariff.id)
+        .where(Tariff.id == Subscription.tariff_id, Tariff.is_daily.is_(True))
+        .correlate(Subscription)
+        .exists()
+    )
+    return _has_subscription(
+        active,
+        Subscription.end_date <= now + timedelta(days=3),
+        ~and_(daily_tariff, Subscription.is_daily_paused.is_(False)),
+    )
+
+
 def _date_start(raw: str) -> datetime:
     return datetime.combine(date.fromisoformat(raw), time.min, tzinfo=get_local_timezone()).astimezone(UTC)
 
@@ -94,9 +108,8 @@ def _condition_predicate(condition, now: datetime) -> ColumnElement[bool]:
         return _date_predicate(condition)
     if field in NUMBER_FIELDS:
         amount = float(value)
-        comparison = (
-            Subscription.traffic_used_gb > amount if field == 'traffic_gt' else Subscription.traffic_used_gb < amount
-        )
+        traffic_used = func.coalesce(Subscription.traffic_used_gb, 0.0)
+        comparison = traffic_used > amount if field == 'traffic_gt' else traffic_used < amount
         return _has_subscription(comparison)
     if field == 'traffic_zero':
         return _has_subscription(or_(Subscription.traffic_used_gb.is_(None), Subscription.traffic_used_gb <= 0))
@@ -121,6 +134,8 @@ def _condition_predicate(condition, now: datetime) -> ColumnElement[bool]:
         return User.has_had_paid_subscription.is_(value == 'yes')
     if field == 'tariff':
         return _has_subscription(live, Subscription.tariff_id == int(value.removeprefix('tariff_')))
+    if field == 'subscription_end_preset':
+        return _expiring_subscription(live, now)
     return _target_predicate(value, now)
 
 
@@ -137,17 +152,7 @@ def _target_predicate(value: str, now: datetime) -> ColumnElement[bool]:
     if value == 'no':
         return ~_has_subscription(active)
     if value == 'expiring':
-        daily_tariff = (
-            select(Tariff.id)
-            .where(Tariff.id == Subscription.tariff_id, Tariff.is_daily.is_(True))
-            .correlate(Subscription)
-            .exists()
-        )
-        return _has_subscription(
-            active,
-            Subscription.end_date <= now + timedelta(days=3),
-            ~and_(daily_tariff, Subscription.is_daily_paused.is_(False)),
-        )
+        return _expiring_subscription(active, now)
     if value == 'expired':
         expired = _has_subscription(
             or_(

@@ -436,6 +436,75 @@ async def test_expired_status_excludes_any_live_subscription_including_trial(mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('channel', ['telegram', 'email'])
+async def test_atomic_expiring_includes_live_trials_and_preserves_daily_exclusions(monkeypatch, channel) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        db.add_all([Tariff(id=1, name='Monthly'), Tariff(id=2, name='Daily', is_daily=True)])
+        users = [_user(i, email=f'{i}@example.com', email_verified=True) for i in range(1451, 1460)]
+        db.add_all(users)
+        await db.flush()
+        cases = [
+            (SubscriptionStatus.TRIAL, 1, 1, False),
+            (SubscriptionStatus.ACTIVE, 1, 1, False),
+            (SubscriptionStatus.TRIAL, 4, 1, False),
+            (SubscriptionStatus.TRIAL, -1, 1, False),
+            (SubscriptionStatus.DISABLED, 1, 1, False),
+            (SubscriptionStatus.ACTIVE, 1, 2, False),
+            (SubscriptionStatus.ACTIVE, 1, 2, True),
+            (SubscriptionStatus.PENDING, 1, 1, False),
+        ]
+        for user, (status, days, tariff_id, paused) in zip(users, cases, strict=False):
+            subscription = _sub(user, tariff_id=tariff_id, trial=status == SubscriptionStatus.TRIAL)
+            subscription.status = status.value
+            subscription.end_date = datetime.now(UTC) + timedelta(days=days)
+            subscription.is_daily_paused = paused
+            db.add(subscription)
+        await db.commit()
+
+        audience = BroadcastAudience(conditions=[rule('subscription_end_preset', 'expiring')])
+        validate_audience(audience, channel, {1, 2})
+        selected = await select_audience_users(db, audience, channel, 'system')
+        count, preview = await preview_audience_users(db, audience, channel, 'system', 0, 50)
+        assert [user.telegram_id for user in selected] == [1451, 1452, 1457]
+        assert [user.id for user in preview] == [user.id for user in selected]
+        assert count == 3
+
+        if channel == 'telegram':
+            legacy = BroadcastAudience(conditions=[rule('subscription', 'expiring')])
+            legacy_selected = await select_audience_users(db, legacy, channel, 'system')
+            assert [user.telegram_id for user in legacy_selected] == [1452, 1457]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('channel', ['telegram', 'email'])
+async def test_traffic_thresholds_treat_null_as_zero_for_preview_and_delivery(monkeypatch, channel) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        users = [_user(i, email=f'{i}@example.com', email_verified=True) for i in range(1461, 1467)]
+        db.add_all(users)
+        await db.flush()
+        for user, traffic in zip(users, [0, 0, 0.5, 1, 2], strict=False):
+            db.add(_sub(user, traffic=traffic))
+        await db.flush()
+        # Set NULL explicitly so SQLAlchemy's insert default cannot replace it with 0.
+        await db.execute(update(Subscription).where(Subscription.user_id == users[0].id).values(traffic_used_gb=None))
+        await db.commit()
+
+        for field, value, expected in [
+            ('traffic_zero', 'zero', [1461, 1462]),
+            ('traffic_lt', '1', [1461, 1462, 1463]),
+            ('traffic_lt', '0', []),
+            ('traffic_gt', '0', [1463, 1464, 1465]),
+            ('traffic_gt', '1', [1465]),
+        ]:
+            audience = BroadcastAudience(conditions=[rule(field, value)])
+            selected = await select_audience_users(db, audience, channel, 'system')
+            count, preview = await preview_audience_users(db, audience, channel, 'system', 0, 50)
+            assert [user.telegram_id for user in selected] == expected, (field, value)
+            assert [user.telegram_id for user in preview] == expected, (field, value)
+            assert count == len(expected)
+
+
+@pytest.mark.asyncio
 async def test_traffic_thresholds_dates_and_zero_are_independent(monkeypatch) -> None:
     async with memory_session(monkeypatch, TABLES) as db:
         user = _user(1421, created_at=datetime(2026, 9, 20, tzinfo=UTC))
