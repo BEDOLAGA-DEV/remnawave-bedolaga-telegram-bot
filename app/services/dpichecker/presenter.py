@@ -53,6 +53,7 @@ def _row(check_type: str, row: dict[str, Any]) -> dict[str, Any]:
         'port_story': row.get('port_story'),
         'mode': row.get('mode'),
         'internet_ok': control.get('accessible') if isinstance(control, dict) else None,
+        'proxy_dead': bool(row.get('proxy_dead')),
     }
 
 

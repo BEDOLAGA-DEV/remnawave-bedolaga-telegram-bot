@@ -29,6 +29,7 @@ from app.services.dpichecker.presenter import present_check
 from app.services.dpichecker.regions import group_pops
 from app.services.dpichecker.targets import (
     PanelTarget,
+    PanelTargetError,
     host_addresses,
     is_vpn_key,
     node_addresses,
@@ -134,6 +135,7 @@ class DpiCheckerService:
             'noisy': None,
             'monitors': None,
             'webhook_ready': settings.get_dpichecker_webhook_url() is not None,
+            'reference': None,
             'error': None,
         }
         if not (state['enabled'] and state['configured']):
@@ -148,11 +150,51 @@ class DpiCheckerService:
         noisy = quota.get('noisy') or {}
         return {
             **state,
+            'reference': await self._reference_status(),
             'balance': profile.get('balance'),
             'total_spent': profile.get('total_spent'),
             'noisy': {key: noisy.get(key) for key in ('limit', 'used', 'remaining', 'unlimited', 'resets_at')},
             'monitors': quota.get('monitors'),
         }
+
+    @staticmethod
+    def _reference() -> str:
+        """Подписка по умолчанию из настроек: ссылка подписки или shortUuid панели (как у BSCHEKER)."""
+        return (settings.DPICHECKER_REFERENCE_SUBSCRIPTION or '').strip()
+
+    async def _reference_keys(self) -> list[PanelTarget]:
+        """Ключи подписки по умолчанию. Ссылку разворачивает сам DPI//CHECKER — панель не нужна
+        (подходит и чужая подписка); shortUuid читается из своей панели теми же помощниками, что у BSCHEKER."""
+        reference = self._reference()
+        if not reference:
+            raise PanelTargetError(
+                'Подписка по умолчанию не задана (DPICHECKER_REFERENCE_SUBSCRIPTION) — выберите пользователя'
+            )
+        if not reference.startswith(('http://', 'https://')):
+            return await subscription_keys(None, short_uuid=reference, panel_client=self._panel_client)
+        ref = reference.rstrip('/').rsplit('/', 1)[-1]
+        parsed = await self.parse('vpn', reference)
+        keys = [
+            PanelTarget(value=str(key['uri']), name=safe_name('vpn', str(key['uri']), key.get('name')), ref=ref)
+            for key in parsed.get('keys') or []
+            if key.get('uri')
+        ]
+        if not keys:
+            raise PanelTargetError('В подписке по умолчанию нет ключей для проверки')
+        return keys
+
+    async def _reference_status(self) -> dict[str, Any]:
+        """Подписка по умолчанию и сколько в ней ключей; поломка не роняет статус — уходит в error."""
+        reference = self._reference()
+        if not reference:
+            return {'short_uuid': None, 'configs': 0, 'error': 'Подписка по умолчанию не задана'}
+        label = reference.rstrip('/').rsplit('/', 1)[-1]
+        try:
+            keys = await self._reference_keys()
+        except Exception as exc:
+            logger.warning('DPI//CHECKER: подписка по умолчанию не прочитана', reference=label, error=str(exc))
+            return {'short_uuid': label, 'configs': 0, 'error': str(exc)[:200]}
+        return {'short_uuid': label, 'configs': len(keys), 'error': None}
 
     async def pops(self, location: str) -> dict[str, Any]:
         data = await self._call('pops', location)
@@ -173,7 +215,7 @@ class DpiCheckerService:
     ) -> list[PanelTarget]:
         if kind == 'subscription':
             if user_id is None:
-                raise ValueError('Не выбран пользователь')
+                return await self._reference_keys()
             return await subscription_keys(db, user_id=user_id, panel_client=self._panel_client)
         if kind == 'hosts':
             return await host_addresses(panel_client=self._panel_client, host_uuids=list(uuids))
@@ -633,7 +675,7 @@ class DpiCheckerService:
         action = await self._monitor(db, action_id)
         return await self._call('monitor_runs', action.remote_id, limit=limit, offset=offset)
 
-    # ------------------------------------------------------------ история и траты
+    # ------------------------------------------------------------ история
 
     async def history(
         self,
@@ -644,13 +686,17 @@ class DpiCheckerService:
         admin_user_id: int | None,
         limit: int = 25,
         offset: int = 0,
-    ) -> tuple[list[DpiCheckerAction], int]:
-        return await crud.list_actions(
+    ) -> dict[str, Any]:
+        """Страница истории, счётчики фильтров (с учётом «только мои») и имена админов строк."""
+        items, total = await crud.list_actions(
             db, kind=kind, check_type=check_type, admin_user_id=admin_user_id, limit=limit, offset=offset
         )
-
-    async def spend(self, db: AsyncSession) -> list[tuple[int | None, Decimal]]:
-        return await crud.spend_by_admin(db)
+        return {
+            'items': items,
+            'total': total,
+            'counts': await crud.count_by_filter(db, admin_user_id=admin_user_id),
+            'admin_names': await crud.admin_names(db, [item.admin_user_id for item in items if item.admin_user_id]),
+        }
 
     # ------------------------------------------------------------ вебхук: секрет подписи
 

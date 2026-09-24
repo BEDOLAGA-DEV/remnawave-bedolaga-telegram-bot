@@ -39,8 +39,6 @@ from ..schemas.dpichecker import (
     PopsResponse,
     ScanCreate,
     ScanResponse,
-    SpendItem,
-    SpendResponse,
     StatusResponse,
 )
 
@@ -155,9 +153,8 @@ async def panel_targets(
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> PanelTargetsResponse:
     try:
-        # Подписка по умолчанию — самого админа: его ключи под рукой всегда.
-        user_id = body.user_id if body.user_id is not None else admin.id
-        found = await _service().panel_targets(db, kind=body.kind, user_id=user_id, uuids=body.uuids)
+        # Без выбранного пользователя — подписка по умолчанию из настроек (как у BSCHEKER).
+        found = await _service().panel_targets(db, kind=body.kind, user_id=body.user_id, uuids=body.uuids)
     except Exception as exc:
         raise _http(exc) from exc
     return PanelTargetsResponse(targets=[PanelTargetOut(value=t.value, name=t.name, ref=t.ref) for t in found])
@@ -216,10 +213,15 @@ async def list_checks(
     admin: User = Depends(require_permission('dpichecker:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> ActionListResponse:
-    items, total = await _service().history(
+    page = await _service().history(
         db, kind=kind, check_type=check_type, admin_user_id=admin.id if mine else None, limit=limit, offset=offset
     )
-    return ActionListResponse(items=[ActionOut.from_action(item) for item in items], total=total)
+    names = page['admin_names']
+    return ActionListResponse(
+        items=[ActionOut.from_action(item, names.get(item.admin_user_id)) for item in page['items']],
+        total=page['total'],
+        counts=page['counts'],
+    )
 
 
 @router.get('/checks/{action_id}', response_model=CheckResponse)
@@ -458,14 +460,3 @@ async def monitor_runs(
         return await _service().monitor_runs(db, action_id, limit=limit, offset=offset)
     except Exception as exc:
         raise _http(exc) from exc
-
-
-# ============ Траты ============
-
-
-@router.get('/spend', response_model=SpendResponse)
-async def spend(
-    admin: User = Depends(require_permission('dpichecker:read')), db: AsyncSession = Depends(get_cabinet_db)
-) -> SpendResponse:
-    rows = await _service().spend(db)
-    return SpendResponse(items=[SpendItem(admin_user_id=admin_id, spent_usd=float(value)) for admin_id, value in rows])

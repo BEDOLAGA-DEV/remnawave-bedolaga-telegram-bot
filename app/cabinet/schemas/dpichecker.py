@@ -96,6 +96,7 @@ class ActionOut(BaseModel):
     remote_id: int | None
     status: str
     admin_user_id: int | None
+    admin_name: str | None = None
     location: str | None
     pop_count: int
     resource_count: int
@@ -109,7 +110,7 @@ class ActionOut(BaseModel):
     created_at: datetime | None
 
     @classmethod
-    def from_action(cls, action: Any) -> ActionOut:
+    def from_action(cls, action: Any, admin_name: str | None = None) -> ActionOut:
         return cls(
             id=action.id,
             kind=action.kind,
@@ -117,6 +118,7 @@ class ActionOut(BaseModel):
             remote_id=action.remote_id,
             status=action.status,
             admin_user_id=action.admin_user_id,
+            admin_name=admin_name,
             location=action.location,
             pop_count=action.pop_count or 0,
             resource_count=action.resource_count or 0,
@@ -134,6 +136,7 @@ class ActionOut(BaseModel):
 class ActionListResponse(BaseModel):
     items: list[ActionOut]
     total: int
+    counts: dict[str, int] = {}
 
 
 class CheckResponse(BaseModel):
@@ -154,6 +157,7 @@ class StatusResponse(BaseModel):
     noisy: dict[str, Any] | None = None
     monitors: dict[str, Any] | None = None
     webhook_ready: bool = False
+    reference: dict[str, Any] | None = None
     error: str | None = None
 
 
@@ -168,12 +172,3 @@ class OptimalResponse(BaseModel):
 
 class MonitorListResponse(BaseModel):
     items: list[dict[str, Any]]
-
-
-class SpendItem(BaseModel):
-    admin_user_id: int | None
-    spent_usd: float
-
-
-class SpendResponse(BaseModel):
-    items: list[SpendItem]

@@ -73,3 +73,13 @@ def test_pending_check_without_results_is_empty():
     view = present_check({'id': 1, 'status': 'pending', 'check_type': 'ip', 'results': None, 'progress': {}}, {})
     assert view['resources'] == []
     assert view['summary'] == {'available': 0, 'partial': 0, 'unavailable': 0, 'avg_latency_ms': None}
+
+
+def test_row_says_when_point_proxy_was_dead():
+    """Карта различает «недоступно» и «прокси точки не поднялся» — как подсказка региона на сайте."""
+    check = _fx('check_vpn')
+    dead = {**check['results'][0], 'connected': False, 'proxy_dead': True}
+    view = present_check({**check, 'results': [dead, *check['results'][1:]]}, {})
+    rows = view['resources'][0]['rows']
+    assert any(row['proxy_dead'] and not row['ok'] for row in rows)
+    assert all(row['proxy_dead'] is False for row in view['resources'][1]['rows'])

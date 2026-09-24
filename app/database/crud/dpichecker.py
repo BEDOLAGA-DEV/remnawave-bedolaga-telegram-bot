@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import DpiCheckerAction
+from app.database.models import DpiCheckerAction, User
 
 
 KIND_CHECK = 'check'
@@ -18,7 +17,6 @@ KIND_NOISY = 'noisy'
 KIND_MONITOR = 'monitor'
 LABEL_MAX = 255
 DELIVERY_MEMORY = 50
-USD_CENTS = Decimal('0.0001')
 
 
 async def create_action(
@@ -116,15 +114,31 @@ async def claim_delivery(db: AsyncSession, action: DpiCheckerAction, delivery_id
     return True
 
 
-async def spend_by_admin(db: AsyncSession) -> list[tuple[int | None, Decimal]]:
-    """Потрачено по админам: списания минус возвраты; запуски без цены не считаются."""
-    spent = func.coalesce(func.sum(DpiCheckerAction.cost_usd), 0) - func.coalesce(
-        func.sum(DpiCheckerAction.refunded_usd), 0
+FILTERS_BY_TYPE = ('vpn', 'ip', 'mtproto')
+FILTERS_BY_KIND = (KIND_NOISY, KIND_PROBE)
+
+
+async def count_by_filter(db: AsyncSession, *, admin_user_id: int | None = None) -> dict[str, int]:
+    """Сколько запусков у каждого фильтра истории: все, проверки по типу, Соседи, Зонд."""
+    query = select(DpiCheckerAction.kind, DpiCheckerAction.check_type, func.count()).group_by(
+        DpiCheckerAction.kind, DpiCheckerAction.check_type
     )
-    rows = await db.execute(
-        select(DpiCheckerAction.admin_user_id, spent)
-        .where(DpiCheckerAction.cost_usd.is_not(None))
-        .group_by(DpiCheckerAction.admin_user_id)
-        .order_by(DpiCheckerAction.admin_user_id)
-    )
-    return [(admin_id, Decimal(value).quantize(USD_CENTS)) for admin_id, value in rows.all()]
+    if admin_user_id is not None:
+        query = query.where(DpiCheckerAction.admin_user_id == admin_user_id)
+    counts = dict.fromkeys(('all', *FILTERS_BY_TYPE, *FILTERS_BY_KIND), 0)
+    for kind, check_type, count in (await db.execute(query)).all():
+        counts['all'] += count
+        if kind == KIND_CHECK and check_type in FILTERS_BY_TYPE:
+            counts[check_type] += count
+        elif kind in FILTERS_BY_KIND:
+            counts[kind] += count
+    return counts
+
+
+async def admin_names(db: AsyncSession, user_ids: list[int]) -> dict[int, str]:
+    """Имена админов для строк истории — как их видно в кабинете, а не «админ #id»."""
+    wanted = sorted(set(user_ids))
+    if not wanted:
+        return {}
+    rows = await db.execute(select(User).where(User.id.in_(wanted)))
+    return {user.id: user.full_name for user in rows.scalars()}

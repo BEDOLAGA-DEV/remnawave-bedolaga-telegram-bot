@@ -42,3 +42,8 @@ def test_webhook_url_follows_public_bot_url(monkeypatch):
     assert settings.get_dpichecker_webhook_url() == 'https://bot.example/dpichecker/webhook'
     monkeypatch.setattr(settings, 'WEBHOOK_URL', None)
     assert settings.get_dpichecker_webhook_url() is None
+
+
+def test_default_subscription_setting_lives_in_dpichecker_category():
+    assert type(settings).model_fields['DPICHECKER_REFERENCE_SUBSCRIPTION'].default is None
+    assert BotConfigurationService._resolve_category_key('DPICHECKER_REFERENCE_SUBSCRIPTION') == 'DPICHECKER'

@@ -273,8 +273,9 @@ async def test_history_filters_own_rows(postgres_database):
         admin = await _admin(db)
         service = _service(api)
         await service.launch_noisy(db, admin_id=admin.id, **SCAN)
-        items, total = await service.history(db, kind='noisy', check_type=None, admin_user_id=admin.id)
-        assert total == 1 and items[0].kind == 'noisy'
+        page = await service.history(db, kind='noisy', check_type=None, admin_user_id=admin.id)
+        assert page['total'] == 1 and page['items'][0].kind == 'noisy'
+        assert page['counts']['noisy'] == 1 and page['admin_names'] == {admin.id: admin.full_name}
 
 
 async def test_monitor_list_hides_keys(postgres_database):

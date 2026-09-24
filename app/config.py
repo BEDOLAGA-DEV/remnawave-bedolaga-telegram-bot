@@ -1591,6 +1591,7 @@ class Settings(BaseSettings):
         None  # X-API-Key; выпускается в боте DPI//CHECKER (Главное меню → API) или на сайте
     )
     DPICHECKER_REQUEST_TIMEOUT: int = 30  # обычный запрос; long-poll ожидания результата — свой, длиннее
+    DPICHECKER_REFERENCE_SUBSCRIPTION: str | None = None  # VPN «из панели»: ссылка подписки или shortUuid панели
 
     # SOCKS5 proxy for routing bot traffic to Telegram API
     # Format: socks5://user:password@host:port or socks5://host:port

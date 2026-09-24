@@ -282,3 +282,91 @@ def test_human_error_by_code_not_text():
     assert 'IP' in human_error(exc)
     unknown = DpiCheckerAPIError(code='brand_new_code', message='Что-то новое', status=400)
     assert 'Что-то новое' in human_error(unknown)
+
+
+# ---------------------------------------------------------------- подписка по умолчанию (как у BSCHEKER)
+
+
+def _panel_service(monkeypatch, links: list[str]) -> DpiCheckerService:
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from app.services.dpichecker import targets
+
+    async def fetch(api, short_uuid, prefer_public=False):
+        return list(links) if short_uuid == 'ref-1' else []
+
+    monkeypatch.setattr(targets, 'fetch_panel_links', fetch)
+
+    @asynccontextmanager
+    async def panel():
+        yield SimpleNamespace()
+
+    return DpiCheckerService(api_factory=lambda: FakeAPI(), panel_client=panel, sleep=_nosleep)
+
+
+async def test_subscription_without_user_takes_default_from_settings(monkeypatch):
+    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', 'ref-1')
+    service = _panel_service(monkeypatch, ['vless://u@fi.example:443#Finland', 'trojan://p@de.example:8443#DE'])
+    keys = await service.panel_targets(None, kind='subscription', user_id=None)
+    assert [(k.name, k.ref) for k in keys] == [('Finland', 'ref-1'), ('DE', 'ref-1')]
+
+
+async def test_subscription_without_user_and_default_is_explained(monkeypatch):
+    from app.services.dpichecker.targets import PanelTargetError
+
+    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', None)
+    service = _panel_service(monkeypatch, [])
+    with pytest.raises(PanelTargetError) as info:
+        await service.panel_targets(None, kind='subscription', user_id=None)
+    assert 'по умолчанию' in str(info.value)
+
+
+async def test_status_tells_default_subscription_and_its_keys(monkeypatch):
+    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', 'ref-1')
+    service = _panel_service(monkeypatch, ['vless://u@fi.example:443#Finland'])
+    assert (await service.status())['reference'] == {'short_uuid': 'ref-1', 'configs': 1, 'error': None}
+
+
+async def test_status_without_default_subscription_says_so(monkeypatch):
+    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', None)
+    reference = (await _panel_service(monkeypatch, []).status())['reference']
+    assert reference['short_uuid'] is None and reference['configs'] == 0 and reference['error']
+
+
+async def test_status_survives_broken_default_subscription(monkeypatch):
+    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', 'gone')
+    status = await _panel_service(monkeypatch, []).status()
+    assert status['balance'] is not None
+    assert status['reference']['short_uuid'] == 'gone' and status['reference']['error']
+
+
+async def test_default_subscription_may_be_a_link_expanded_by_the_service(monkeypatch):
+    """Владелец вставляет ссылку подписки — её разворачивает сам DPI//CHECKER, панель не нужна."""
+    link = 'https://sub.example/Ab12Cd34Ef56Gh78'
+    monkeypatch.setattr(settings, 'DPICHECKER_REFERENCE_SUBSCRIPTION', f'  {link}  ')
+
+    class ParseAPI(FakeAPI):
+        async def parse(self, check_type, text):
+            self.calls.append(('parse', check_type, text))
+            return load_dpichecker_fixture('parse_vpn')['body']
+
+    api = ParseAPI()
+
+    def panel():
+        raise AssertionError('ссылку не надо искать в панели')
+
+    service = DpiCheckerService(api_factory=lambda: api, panel_client=panel, sleep=_nosleep)
+    keys = await service.panel_targets(None, kind='subscription', user_id=None)
+    assert ('parse', 'vpn', link) in api.calls
+    assert [(key.name, key.value.split('://')[0]) for key in keys] == [
+        ('test', 'vless'),
+        ('ss1', 'ss'),
+        ('hy', 'hysteria2'),
+    ]
+    assert {key.ref for key in keys} == {'Ab12Cd34Ef56Gh78'}
+    assert (await service.status())['reference'] == {
+        'short_uuid': 'Ab12Cd34Ef56Gh78',
+        'configs': len(keys),
+        'error': None,
+    }

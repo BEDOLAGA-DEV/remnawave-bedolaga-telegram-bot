@@ -83,10 +83,11 @@ def test_routes_registered_with_expected_paths_and_permissions():
         (f'{BASE}/monitors', 'POST'),
         (f'{BASE}/monitors/{{action_id}}', 'PATCH'),
         (f'{BASE}/monitors/{{action_id}}', 'DELETE'),
-        (f'{BASE}/spend', 'GET'),
     ]
     for path, method in expected:
         assert (path, (method,)) in routes, (path, method)
+    # «Потрачено по админам» убрано владельцем 24.09 — ручки нет.
+    assert not any(path.endswith('/spend') for path, _ in routes)
 
 
 def test_money_routes_need_run_permission():
@@ -158,12 +159,31 @@ async def test_launch_audits_and_returns_action(service):
 
 
 async def test_list_checks_mine_filters_by_admin(service):
-    service.history = AsyncMock(return_value=([_action()], 1))
+    service.history = AsyncMock(
+        return_value={'items': [_action()], 'total': 1, 'counts': {'vpn': 1}, 'admin_names': {7: 'Егор'}}
+    )
     out = await admin_dpichecker.list_checks(
         kind='check', check_type=None, mine=True, limit=25, offset=0, admin=ADMIN, db=AsyncMock()
     )
     assert out.total == 1
     assert service.history.await_args.kwargs['admin_user_id'] == 7
+
+
+async def test_history_names_admins_and_counts_per_filter(service):
+    """История как на сайте: у фильтров — сколько запусков, у строки — имя админа, а не «админ #7»."""
+    service.history = AsyncMock(
+        return_value={
+            'items': [_action(), _action(id=2, admin_user_id=None)],
+            'total': 2,
+            'counts': {'all': 2, 'vpn': 2},
+            'admin_names': {7: 'Егор'},
+        }
+    )
+    out = await admin_dpichecker.list_checks(
+        kind=None, check_type=None, mine=False, limit=25, offset=0, admin=ADMIN, db=AsyncMock()
+    )
+    assert [item.admin_name for item in out.items] == ['Егор', None]
+    assert out.counts == {'all': 2, 'vpn': 2}
 
 
 async def test_panel_targets_returns_values(service):
@@ -222,10 +242,15 @@ async def test_ip_lookup_rejects_non_ip(service):
     service.ip_lookup.assert_not_awaited()
 
 
-async def test_subscription_defaults_to_admin_himself(service):
+async def test_subscription_without_user_goes_to_default_from_settings(service):
+    """Как у BSCHEKER: без выбранного пользователя — подписка по умолчанию из настроек, не своя."""
     service.panel_targets = AsyncMock(return_value=[])
     await admin_dpichecker.panel_targets(PanelTargetsRequest(kind='subscription'), admin=ADMIN, db=AsyncMock())
-    assert service.panel_targets.await_args.kwargs['user_id'] == 7
+    assert service.panel_targets.await_args.kwargs['user_id'] is None
+    await admin_dpichecker.panel_targets(
+        PanelTargetsRequest(kind='subscription', user_id=5), admin=ADMIN, db=AsyncMock()
+    )
+    assert service.panel_targets.await_args.kwargs['user_id'] == 5
 
 
 async def test_resubmit_route_audits(service):

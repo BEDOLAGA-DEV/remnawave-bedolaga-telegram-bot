@@ -113,3 +113,19 @@ async def test_empty_choice_lists_all_nodes():
 
     found = await targets.node_addresses(panel_client=_client(get_all_nodes=get_all_nodes), node_uuids=[])
     assert [t.name for t in found] == ['NL-1']
+
+
+async def test_subscription_keys_by_short_uuid_without_user(monkeypatch):
+    """Подписка по умолчанию из настроек — сразу shortUuid, пользователь не нужен."""
+
+    async def short_uuid(db, user_id):
+        raise AssertionError('пользователь не выбирался')
+
+    async def links(api, short_uuid, prefer_public=False):
+        assert short_uuid == 'ref-1'
+        return ['vless://u@fi.example:443#Finland']
+
+    monkeypatch.setattr(targets, 'short_uuid_for_user', short_uuid)
+    monkeypatch.setattr(targets, 'fetch_panel_links', links)
+    keys = await targets.subscription_keys(None, short_uuid='ref-1', panel_client=_client())
+    assert [(k.name, k.ref) for k in keys] == [('Finland', 'ref-1')]

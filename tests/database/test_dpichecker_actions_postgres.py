@@ -1,9 +1,7 @@
 """Своя запись DPI//CHECKER на PostgreSQL: уникальный ключ идемпотентности, поиск по (вид, номер у сервиса),
-дедуп доставок вебхука, траты по админам с учётом возвратов, фильтры истории."""
+дедуп доставок вебхука, фильтры истории, их счётчики и имена админов."""
 
 from __future__ import annotations
-
-from decimal import Decimal
 
 import pytest
 
@@ -71,16 +69,30 @@ async def test_delivery_is_claimed_once(postgres_database):
         assert action.delivery_ids == [3, 4]
 
 
-async def test_spend_by_admin_subtracts_refunds(postgres_database):
+async def test_counts_per_filter_follow_mine(postgres_database):
+    """Счётчики у фильтров истории — по видам и типам проверок, с учётом «только мои»."""
     async with postgres_session(postgres_database, TABLES) as db:
         admin = await _admin(db)
-        paid = await _action(db, admin)
-        paid.cost_usd = Decimal('0.0400')
-        refunded = await _action(db, admin)
-        refunded.cost_usd, refunded.refunded_usd = Decimal('0.0400'), Decimal('0.0400')
-        await _action(db, admin)  # запуск не дошёл до сервиса — цены нет, в траты не входит
+        other = await _admin(db, telegram_id=778)
+        await _action(db, admin)
+        await _action(db, admin, check_type='vpn')
+        await _action(db, other, check_type='vpn')
+        await _action(db, admin, kind=crud.KIND_NOISY, check_type=None)
+        await _action(db, admin, kind=crud.KIND_MONITOR)
+        assert await crud.count_by_filter(db) == {'all': 5, 'vpn': 2, 'ip': 1, 'mtproto': 0, 'noisy': 1, 'probe': 0}
+        mine = await crud.count_by_filter(db, admin_user_id=admin.id)
+        assert mine == {'all': 4, 'vpn': 1, 'ip': 1, 'mtproto': 0, 'noisy': 1, 'probe': 0}
+
+
+async def test_admin_names_for_history(postgres_database):
+    async with postgres_session(postgres_database, TABLES) as db:
+        admin = await _admin(db)
+        admin.first_name, admin.last_name = 'Егор', None
+        nameless = await _admin(db, telegram_id=779)
+        nameless.first_name, nameless.username = None, 'boss'
         await db.flush()
-        assert await crud.spend_by_admin(db) == [(admin.id, Decimal('0.0400'))]
+        names = await crud.admin_names(db, [admin.id, nameless.id, admin.id, 999999])
+        assert names == {admin.id: 'Егор', nameless.id: 'boss'}
 
 
 async def test_list_filters_by_kind_type_and_admin(postgres_database):

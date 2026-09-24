@@ -1,7 +1,7 @@
 """Цели DPI//CHECKER из панели Remnawave.
 
 Хост панели — это адрес, порт и SNI, а не ключ: ключ VPN всегда чей-то. Поэтому VPN «из панели» —
-ключи подписки выбранного пользователя (по умолчанию — самого админа), взятые теми же помощниками,
+ключи подписки выбранного пользователя или подписки по умолчанию из настроек, взятые теми же помощниками,
 что у BSCHEKER; имя ключа — его remark. IP, Зонд и Соседи «из панели» — адреса хостов и нод.
 """
 
@@ -68,16 +68,25 @@ def safe_name(check_type: str, value: str, given: str | None) -> str:
 
 
 async def subscription_keys(
-    db: AsyncSession | None, *, user_id: int, panel_client: Callable[[], Any]
+    db: AsyncSession | None,
+    *,
+    panel_client: Callable[[], Any],
+    user_id: int | None = None,
+    short_uuid: str | None = None,
 ) -> list[PanelTarget]:
-    short_uuid = await short_uuid_for_user(db, user_id)
+    """Ключи подписки: пользователя (по его shortUuid) или сразу заданной — подписки по умолчанию."""
+    owner = f'пользователя #{user_id}' if user_id is not None else 'по умолчанию'
+    if user_id is not None:
+        short_uuid = await short_uuid_for_user(db, user_id)
+        if not short_uuid:
+            raise PanelTargetError(f'У пользователя #{user_id} нет подписки в панели')
     if not short_uuid:
-        raise PanelTargetError(f'У пользователя #{user_id} нет подписки в панели')
+        raise PanelTargetError('Не выбрана подписка')
     async with panel_client() as api:
         links = await fetch_panel_links(api, short_uuid)
     keys = [PanelTarget(value=link, name=_key_name(link), ref=short_uuid) for link in links if _is_key(link)]
     if not keys:
-        raise PanelTargetError(f'В подписке пользователя #{user_id} нет ключей для проверки')
+        raise PanelTargetError(f'В подписке {owner} нет ключей для проверки')
     return keys
 
 
