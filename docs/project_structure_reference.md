@@ -189,7 +189,7 @@
   Функции: `get_ban_system_status` — Get Ban System integration status., `get_stats_raw` — Get raw stats from Ban System API for debugging., `get_stats` — Get overall Ban System statistics., `get_users` — Get list of users from Ban System., `get_users_over_limit` — Get users who exceeded their device limit., `search_users` — Search for users., `get_user_detail` — Get detailed user information., `get_punishments` — Get list of active punishments (bans)., `unban_user` — Unban (enable) a user., `ban_user` — Manually ban a user., `get_punishment_history` — Get punishment history for a user., `get_nodes` — Get list of connected nodes., `get_agents` — Get list of monitoring agents., `get_agents_summary` — Get agents summary statistics., `get_traffic_violations` — Get list of traffic limit violations., `get_traffic` — Get full traffic statistics including top users., `get_traffic_top` — Get top users by traffic., `get_settings` — Get all Ban System settings., `get_setting` — Get a specific setting., `set_setting` — Set a setting value., `toggle_setting` — Toggle a boolean setting., `whitelist_add` — Add user to whitelist., `whitelist_remove` — Remove user from whitelist., `get_report` — Get period report., `get_health` — Get Ban System health status., `get_health_detailed` — Get detailed health information., `get_agent_history` — Get agent statistics history., `get_user_punishment_history` — Get punishment history for a specific user.
 - `app/cabinet/routes/admin_broadcasts.py` — Python-модуль
   Классы: нет
-  Функции: `get_filters` — Get all available filters with user counts., `get_tariffs` — Get tariffs for broadcast filtering., `get_buttons` — Get available buttons for broadcasts., `preview_broadcast` — Preview broadcast recipients count., `create_broadcast` — Create and start a broadcast., `list_broadcasts` — Get list of broadcasts with pagination., `get_email_filters` — Get all available email filters with user counts., `preview_email_broadcast` — Preview email broadcast recipients count., `render_email_broadcast` — Письмо рассылки так, как его получит адресат., `create_combined_broadcast` — Create and start a combined broadcast (telegram/email/both)., `get_broadcast` — Get broadcast details., `stop_broadcast` — Stop a running broadcast (telegram or email).
+  Функции: `get_filters` — Get all available filters with user counts., `get_tariffs` — Get tariffs for broadcast filtering., `get_buttons` — Get available buttons for broadcasts., `preview_broadcast` — Preview broadcast recipients count., `preview_audience` — Count and page through the recipients selected at this moment., `search_audience_users` — Find a person by any part of Telegram ID, username, or email., `create_broadcast` — Create and start a broadcast., `list_broadcasts` — Get list of broadcasts with pagination., `get_email_filters` — Get all available email filters with user counts., `preview_email_broadcast` — Preview email broadcast recipients count., `render_email_broadcast` — Письмо рассылки так, как его получит адресат., `create_combined_broadcast` — Create and start a combined broadcast (telegram/email/both)., `get_broadcast` — Get broadcast details., `stop_broadcast` — Stop a running broadcast (telegram or email).
 - `app/cabinet/routes/admin_bulk_actions.py` — Python-модуль
   Классы: нет
   Функции: `bulk_execute` — Execute a bulk action on multiple users or subscriptions.
@@ -471,7 +471,7 @@
   Классы: `BanSystemStatusResponse`, `BanSystemStatsResponse`, `BanUserIPInfo`, `BanUserRequestLog`, `BanUserListItem`, `BanUsersListResponse`, `BanUserDetailResponse`, `BanPunishmentItem`, `BanPunishmentsListResponse`, `BanHistoryResponse`, `BanUserRequest`, `UnbanResponse`, `BanNodeItem`, `BanNodesListResponse`, `BanAgentItem`, `BanAgentsSummary`, `BanAgentsListResponse`, `BanTrafficStats`, `BanTrafficUserItem`, `BanTrafficViolationItem`, `BanTrafficViolationsResponse`, `BanTrafficTopItem`, `BanTrafficResponse`, `BanSettingDefinition`, `BanSettingsResponse`, `BanSettingUpdateRequest`, `BanWhitelistRequest`, `BanReportTopViolator`, `BanReportResponse`, `BanHealthComponent`, `BanHealthResponse`, `BanHealthDetailedResponse`, `BanAgentHistoryItem`, `BanAgentHistoryResponse`
   Функции: нет
 - `app/cabinet/schemas/broadcasts.py` — Python-модуль
-  Классы: `BroadcastFilter`, `TariffFilter`, `BroadcastFiltersResponse`, `TariffForBroadcast`, `BroadcastTariffsResponse`, `BroadcastButton`, `BroadcastButtonsResponse`, `CustomBroadcastButton` (1 методов), `BroadcastMediaRequest`, `BroadcastCreateRequest`, `BroadcastResponse`, `BroadcastListResponse`, `BroadcastPreviewRequest`, `BroadcastPreviewResponse`, `EmailFilterItem`, `EmailFiltersResponse`, `CombinedBroadcastCreateRequest`, `EmailPreviewRequest`, `EmailPreviewResponse`, `EmailRenderRequest`, `EmailRenderResponse`
+  Классы: `BroadcastFilter`, `TariffFilter`, `BroadcastFiltersResponse`, `BroadcastAudienceCondition`, `BroadcastAudience` (1 методов), `TariffForBroadcast`, `BroadcastTariffsResponse`, `BroadcastButton`, `BroadcastButtonsResponse`, `CustomBroadcastButton` (1 методов), `BroadcastMediaRequest`, `BroadcastCreateRequest`, `BroadcastResponse`, `BroadcastListResponse`, `BroadcastPreviewRequest`, `BroadcastPreviewResponse`, `BroadcastAudiencePreviewRequest`, `BroadcastAudiencePreviewUser`, `BroadcastAudiencePreviewResponse`, `BroadcastAudienceUserSearchResponse`, `EmailFilterItem`, `EmailFiltersResponse`, `CombinedBroadcastCreateRequest`, `EmailPreviewRequest`, `EmailPreviewResponse`, `EmailRenderRequest`, `EmailRenderResponse`
   Функции: нет
 - `app/cabinet/schemas/bulk_actions.py` — Python-модуль
   Классы: `BulkActionType`, `BulkActionParams`, `BulkSubscriptionInfo`, `BulkExecuteRequest` (1 методов), `BulkUserResult`, `BulkExecuteResponse`
@@ -1457,6 +1457,9 @@
 - `app/services/blocked_users_service.py` — Python-модуль
   Классы: `BlockCheckStatus`, `BlockedUserAction`, `BlockCheckResult`, `BlockedUsersScanResult` (1 методов), `CleanupResult`, `BlockedUsersService` (8 методов)
   Функции: нет
+- `app/services/broadcast_audience.py` — Python-модуль
+  Классы: нет
+  Функции: `validate_audience` — Reject forged field/value combinations and unknown tariff or promo group IDs., `audience_predicate` — Combine rows strictly from top to bottom, including mixed AND/OR rows., `audience_user_query` — One user row per recipient, independent of subscription count., `select_audience_users` — Return the same ordered, unique people for preview and delivery., `preview_audience_users` — Count exactly while keeping only one page of users in memory.
 - `app/services/broadcast_service.py` — Python-модуль
   Классы: `BroadcastMediaConfig`, `BroadcastConfig`, `EmailBroadcastConfig`, `BroadcastService` (15 методов), `EmailBroadcastService` (15 методов)
   Функции: `parse_email_scoped_target` — Email-таргет с идентификатором: ``promo_group_{id}`` или ``user_{id}``., `cleanup_blocked_broadcast_users` — Фоновая очистка пользователей, заблокировавших бота (обнаруженных при рассылке).
@@ -2602,6 +2605,7 @@
 
 - `docs/apple-iap-consumable-topups.md` — файл
 - `docs/apple-iap-ios-requirements.md` — файл
+- `docs/broadcast_audiences.md` — файл
 - `docs/contests-api.md` — файл
 - `docs/grace-access.md` — файл
 - `docs/handoffs/`
@@ -3019,6 +3023,9 @@
 - `migrations/alembic/versions/0128_dpichecker_actions.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0129_broadcast_audience.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -3273,6 +3280,9 @@
 - `tests/cabinet/test_branding_manifest.py` — Python-модуль
   Классы: нет
   Функции: `test_manifest_uses_branding_name_and_theme_colors`, `test_manifest_icons_are_fetchable_urls_not_data_uris`, `test_light_background_when_dark_theme_is_disabled`, `test_broken_stored_colors_fall_back_to_defaults`, `test_empty_name_uses_build_default`, `test_start_url_accepts_only_a_same_site_path`, `test_icon_version_changes_with_logo_name_and_colors`, `test_logo_icon_is_an_opaque_square_of_the_exact_size`, `test_full_bleed_logo_fills_the_whole_tile_with_its_own_color` — Логотип — сплошная плитка (красный квадрат). На фоне тёмной темы maskable-вариант, `test_full_bleed_logo_with_baked_rounded_corners_gets_its_color_in_the_corners` — Скругление, запечённое в PNG: углы прозрачные, остальной край — цвет логотипа., `test_logo_with_a_varied_edge_keeps_the_theme_background` — Фото или градиент до краёв: единого цвета нет — угадывать нельзя, остаётся фон темы., `test_without_logo_icon_is_a_monogram_on_the_accent`, `test_svg_logo_falls_back_to_monogram`, `test_unreadable_logo_falls_back_to_monogram_with_a_warning`, `test_unsupported_icon_size_is_404`, `test_readable_text_matches_the_cabinet_choice`
+- `tests/cabinet/test_broadcast_audience.py` — Python-модуль
+  Классы: нет
+  Функции: `test_every_existing_dropdown_option_is_available_as_a_condition`, `rule`, `test_rows_are_evaluated_strictly_from_top_to_bottom`, `test_long_mixed_audience_keeps_top_down_results_and_compiles`, `test_not_equal_activity_includes_users_without_activity`, `test_not_equal_tariff_excludes_every_user_with_any_matching_subscription`, `test_email_promo_group_rule_preserves_existing_group_filter`, `test_expiring_preserves_daily_tariff_exclusion`, `test_preview_matches_telegram_and_email_delivery_after_preferences`, `test_send_stores_rules_and_passes_them_to_delivery`, `test_email_send_uses_its_own_audience`, `test_direct_email_user_rule_rejects_unverified_recipient`, `test_preview_rejects_mismatched_field_and_value`, `test_atomic_subscription_conditions_can_match_different_subscriptions`, `test_expired_status_excludes_any_live_subscription_including_trial`, `test_atomic_expiring_includes_live_trials_and_preserves_daily_exclusions`, `test_traffic_thresholds_treat_null_as_zero_for_preview_and_delivery`, `test_traffic_thresholds_dates_and_zero_are_independent`, `test_user_autocomplete_matches_any_part_and_uses_stable_id`, `test_atomic_audience_rejects_invalid_values_and_cross_channel_fields`
 - `tests/cabinet/test_broadcast_media_validation.py` — Python-модуль
   Классы: нет
   Функции: `test_send_rejects_media_caption_over_1024`, `test_send_checks_the_caption_that_is_actually_sent` — Если у медиа своя подпись, ограничение относится к ней, а не к message_text., `test_media_file_id_must_look_like_a_telegram_file_id`
