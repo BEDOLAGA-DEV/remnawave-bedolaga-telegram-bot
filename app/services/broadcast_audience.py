@@ -30,12 +30,7 @@ EMAIL_FIELDS: dict[str, set[str]] = {
 
 
 def _has_subscription(*conditions: ColumnElement[bool]) -> ColumnElement[bool]:
-    return (
-        select(Subscription.id)
-        .where(Subscription.user_id == User.id, *conditions)
-        .correlate(User)
-        .exists()
-    )
+    return select(Subscription.id).where(Subscription.user_id == User.id, *conditions).correlate(User).exists()
 
 
 def _target_predicate(value: str, now: datetime) -> ColumnElement[bool]:
@@ -131,7 +126,9 @@ def audience_predicate(audience: BroadcastAudience, now: datetime | None = None)
     for condition in audience.conditions:
         predicate = _target_predicate(condition.value, current_time)
         if condition.operator == 'ne':
-            predicate = ~predicate
+            # SQL NOT NULL is still NULL; an unset activity date must also
+            # satisfy the opposite of an activity condition.
+            predicate = predicate.is_not(true())
         if expression is None:
             expression = predicate
         elif condition.join == 'or':

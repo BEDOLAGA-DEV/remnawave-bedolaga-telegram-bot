@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.routes.admin_broadcasts import (
@@ -82,6 +83,38 @@ async def test_rows_are_evaluated_strictly_from_top_to_bottom(monkeypatch) -> No
         users = await select_audience_users(db, audience, 'telegram', 'system')
 
     assert [user.telegram_id for user in users] == [1002, 1003]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('value', 'expected_equal', 'expected_not_equal'),
+    [
+        ('custom_active_today', [1052], [1051, 1053]),
+        ('custom_inactive_week', [1053], [1051, 1052]),
+    ],
+)
+async def test_not_equal_activity_includes_users_without_activity(
+    monkeypatch, value: str, expected_equal: list[int], expected_not_equal: list[int]
+) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        now = datetime.now(UTC)
+        missing = _user(1051)
+        recent = _user(1052, last_activity=now)
+        old = _user(1053, last_activity=now - timedelta(days=30))
+        db.add_all([missing, recent, old])
+        await db.flush()
+        # Explicit UPDATE is required: the model's INSERT default fills a
+        # missing last_activity with the current time.
+        await db.execute(update(User).where(User.id == missing.id).values(last_activity=None))
+        await db.commit()
+
+        equal = BroadcastAudience(conditions=[rule('activity', value)])
+        not_equal = BroadcastAudience(conditions=[rule('activity', value, operator='ne')])
+        equal_users = await select_audience_users(db, equal, 'telegram', 'system')
+        not_equal_users = await select_audience_users(db, not_equal, 'telegram', 'system')
+
+    assert [user.telegram_id for user in equal_users] == expected_equal
+    assert [user.telegram_id for user in not_equal_users] == expected_not_equal
 
 
 @pytest.mark.asyncio
@@ -170,9 +203,7 @@ async def test_preview_matches_telegram_and_email_delivery_after_preferences(mon
             admin=allowed,
             db=db,
         )
-        tg_delivery = await broadcast_service.broadcast_service._fetch_recipients(
-            'audience', 'news', telegram_audience
-        )
+        tg_delivery = await broadcast_service.broadcast_service._fetch_recipients('audience', 'news', telegram_audience)
 
         email_audience = BroadcastAudience(conditions=[rule('basic', 'all_email')])
         email_preview = await preview_audience(
@@ -198,9 +229,11 @@ async def test_preview_matches_telegram_and_email_delivery_after_preferences(mon
     assert system_page.count == 3
     assert [user.telegram_id for user in system_page.users] == [1202]
     assert email_preview.count == len(email_delivery) == 1
-    assert [user.email for user in email_preview.users] == [recipient.email for recipient in email_delivery] == [
-        'allowed@example.com'
-    ]
+    assert (
+        [user.email for user in email_preview.users]
+        == [recipient.email for recipient in email_delivery]
+        == ['allowed@example.com']
+    )
     assert delivery_after_change == [1203]
 
 
