@@ -467,24 +467,34 @@ async def test_user_autocomplete_matches_any_part_and_uses_stable_id(monkeypatch
                 _user(12347890, username='one', email='alpha478@example.com', email_verified=True),
                 _user(478123, username='second', email='other@example.com', email_verified=True),
                 _user(9999, username='not478here', email='third@example.com', email_verified=True),
+                User(
+                    telegram_id=800478,
+                    username='blocked',
+                    email='blocked478@example.com',
+                    email_verified=False,
+                    status=UserStatus.BLOCKED.value,
+                ),
             ]
         )
         await db.commit()
         ids = await search_audience_users('telegram_id', '478', 0, 20, admin=_user(1), db=db)
         names = await search_audience_users('telegram_username', '478', 0, 20, admin=_user(1), db=db)
         emails = await search_audience_users('email_user', '478', 0, 20, admin=_user(1), db=db)
-        assert [user.telegram_id for user in ids.users] == [12347890, 478123]
+        assert [user.telegram_id for user in ids.users] == [12347890, 478123, 800478]
         assert [user.telegram_id for user in names.users] == [9999]
-        assert [user.email for user in emails.users] == ['alpha478@example.com']
+        assert [user.email for user in emails.users] == ['alpha478@example.com', 'blocked478@example.com']
         audience = BroadcastAudience(conditions=[rule('email_user', str(emails.users[0].id))])
         validate_audience(audience, 'email', set())
         selected = await select_audience_users(db, audience, 'email', 'system')
+        blocked_audience = BroadcastAudience(conditions=[rule('email_user', str(emails.users[1].id))])
+        blocked_selected = await select_audience_users(db, blocked_audience, 'email', 'system')
         selected_before_change = [user.email for user in selected]
         await db.execute(update(User).where(User.id == emails.users[0].id).values(email='new@example.com'))
         await db.commit()
         selected_after_change = await select_audience_users(db, audience, 'email', 'system')
 
     assert selected_before_change == ['alpha478@example.com']
+    assert blocked_selected == []
     assert [user.email for user in selected_after_change] == ['new@example.com']
 
 

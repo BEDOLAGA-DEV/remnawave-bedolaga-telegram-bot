@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import String, cast, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import BroadcastHistory, PromoGroup, Subscription, SubscriptionStatus, Tariff, User, UserStatus
+from app.database.models import BroadcastHistory, PromoGroup, Subscription, SubscriptionStatus, Tariff, User
 from app.handlers.admin.messages import get_target_users_count
 from app.keyboards.admin import BROADCAST_BUTTONS, DEFAULT_BROADCAST_BUTTONS
 from app.services.broadcast_audience import preview_audience_users, validate_audience
@@ -498,11 +498,7 @@ async def search_audience_users(
         'email_user': User.email,
     }[field]
     match = column.ilike(pattern, escape='\\')
-    conditions = [User.status == UserStatus.ACTIVE.value, column.is_not(None), match]
-    if field == 'email_user':
-        conditions.append(User.email_verified.is_(True))
-    else:
-        conditions.append(User.telegram_id.is_not(None))
+    conditions = [column.is_not(None), match]
     query = select(User).where(*conditions).order_by(User.id)
     count = await db.scalar(select(func.count()).select_from(User).where(*conditions)) or 0
     users = (await db.scalars(query.offset(offset).limit(limit))).all()
