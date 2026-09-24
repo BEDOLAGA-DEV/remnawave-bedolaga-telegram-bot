@@ -3725,6 +3725,7 @@ class BroadcastHistory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     target_type = Column(String(100), nullable=False)
+    audience = Column(JSON, nullable=True)  # Conditions used by cabinet broadcasts.
     message_text = Column(Text, nullable=True)  # Nullable for email-only broadcasts
     has_media = Column(Boolean, default=False)
     media_type = Column(String(20), nullable=True)
