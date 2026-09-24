@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.routes.admin_broadcasts import (
@@ -23,7 +24,14 @@ from app.cabinet.schemas.broadcasts import (
 )
 from app.database.models import BroadcastHistory, Subscription, SubscriptionStatus, Tariff, User, UserStatus
 from app.services import broadcast_service
-from app.services.broadcast_audience import EMAIL_FIELDS, TELEGRAM_FIELDS, select_audience_users, validate_audience
+from app.services.broadcast_audience import (
+    EMAIL_FIELDS,
+    TELEGRAM_FIELDS,
+    audience_user_query,
+    preview_audience_users,
+    select_audience_users,
+    validate_audience,
+)
 from tests.fixtures.sqlite_memory import memory_session
 
 
@@ -83,6 +91,71 @@ async def test_rows_are_evaluated_strictly_from_top_to_bottom(monkeypatch) -> No
         users = await select_audience_users(db, audience, 'telegram', 'system')
 
     assert [user.telegram_id for user in users] == [1002, 1003]
+
+
+@pytest.mark.asyncio
+async def test_long_mixed_audience_keeps_top_down_results_and_compiles(monkeypatch) -> None:
+    fields = (
+        ('registration', 'custom_today'),
+        ('source', 'custom_referrals'),
+        ('activity', 'custom_active_today'),
+        ('activity', 'custom_inactive_week'),
+    )
+    conditions = [
+        rule(
+            *fields[index % len(fields)],
+            operator='ne' if index % 5 == 0 else 'eq',
+            join=None if index == 0 else 'or' if index % 2 else 'and',
+        )
+        for index in range(250)
+    ]
+    audience = BroadcastAudience(conditions=conditions)
+
+    # The production dialect must compile the whole audience without relying
+    # on Python's recursion limit, including alternating AND/OR joins.
+    audience_user_query(audience, 'telegram').compile(dialect=postgresql.dialect())
+
+    facts = {
+        1061: (True, False, True, False),
+        1062: (False, True, False, True),
+        1063: (True, True, False, False),
+        1064: (False, False, True, False),
+    }
+
+    def expected_for(user_id: int) -> bool:
+        flags = facts[user_id]
+        selected = False
+        for index, condition in enumerate(conditions):
+            matches = flags[index % len(flags)]
+            if condition.operator == 'ne':
+                matches = not matches
+            if index == 0:
+                selected = matches
+            elif condition.join == 'or':
+                selected = selected or matches
+            else:
+                selected = selected and matches
+        return selected
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        now = datetime.now(UTC)
+        users = [
+            _user(1061, created_at=now, last_activity=now),
+            _user(1062, created_at=now - timedelta(days=30), last_activity=now - timedelta(days=30), referred_by_id=99),
+            _user(1063, created_at=now, referred_by_id=99),
+            _user(1064, created_at=now - timedelta(days=30), last_activity=now),
+        ]
+        db.add_all(users)
+        await db.flush()
+        await db.execute(update(User).where(User.telegram_id == 1063).values(last_activity=None))
+        await db.commit()
+        selected_users = await select_audience_users(db, audience, 'telegram', 'system')
+        preview_count, preview_page = await preview_audience_users(db, audience, 'telegram', 'system', 1, 2)
+
+    expected_ids = [user_id for user_id in facts if expected_for(user_id)]
+    assert [user.telegram_id for user in selected_users] == expected_ids
+    assert preview_count == len(expected_ids)
+    assert [user.telegram_id for user in preview_page] == expected_ids[1:3]
 
 
 @pytest.mark.asyncio

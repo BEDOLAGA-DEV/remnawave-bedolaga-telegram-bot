@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, false, func, or_, select, true
+from sqlalchemy import and_, case, false, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 from sqlalchemy.sql.elements import ColumnElement
@@ -122,21 +122,31 @@ def validate_audience(audience: BroadcastAudience, channel: str, tariff_ids: set
 def audience_predicate(audience: BroadcastAudience, now: datetime | None = None) -> ColumnElement[bool]:
     """Combine rows strictly from top to bottom, including mixed AND/OR rows."""
     current_time = now or datetime.now(UTC)
-    expression: ColumnElement[bool] | None = None
-    for condition in audience.conditions:
+
+    def matches(condition) -> ColumnElement[bool]:
         predicate = _target_predicate(condition.value, current_time)
         if condition.operator == 'ne':
             # SQL NOT NULL is still NULL; an unset activity date must also
             # satisfy the opposite of an activity condition.
-            predicate = predicate.is_not(true())
-        if expression is None:
-            expression = predicate
-        elif condition.join == 'or':
-            expression = or_(expression, predicate)
+            return predicate.is_not(true())
+        return predicate.is_(true())
+
+    first, *rest = audience.conditions
+    if not rest:
+        return matches(first)
+
+    # In a left-to-right fold, a true OR row sets the result to true, and a
+    # false AND row sets it to false. The last such row wins. Checking these
+    # rows in reverse order yields a flat CASE instead of a deeply nested SQL
+    # expression, while retaining the same result for every row sequence.
+    branches: list[tuple[ColumnElement[bool], ColumnElement[bool]]] = []
+    for condition in reversed(rest):
+        predicate = matches(condition)
+        if condition.join == 'or':
+            branches.append((predicate, true()))
         else:
-            expression = and_(expression, predicate)
-    assert expression is not None  # BroadcastAudience requires at least one row.
-    return expression
+            branches.append((predicate.is_not(true()), false()))
+    return case(*branches, else_=matches(first))
 
 
 def audience_user_query(audience: BroadcastAudience, channel: str):
