@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Table,
     Text,
@@ -5228,6 +5229,45 @@ class ReachabilityTargetPref(Base):
     excluded = Column(Boolean, nullable=False, default=False)
     note = Column(Text, nullable=True)
     updated_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+
+class DpiCheckerAction(Base):
+    """Действие админа в DPI//CHECKER из кабинета: проверка, Зонд, Соседи или монитор.
+
+    Результаты не копируются — они у сервиса по ``remote_id``. Здесь только то, чего у сервиса нет:
+    кто запустил, что проверяли (источник в панели и имена ключей), сколько списано и вернули.
+    """
+
+    __tablename__ = 'dpichecker_actions'
+    __table_args__ = (
+        UniqueConstraint('kind', 'remote_id', name='uq_dpichecker_actions_kind_remote'),
+        Index('ix_dpichecker_actions_kind_created', 'kind', 'created_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(16), nullable=False)  # check | probe | noisy | monitor
+    check_type = Column(String(16), nullable=True)  # vpn | ip | mtproto
+    remote_id = Column(Integer, nullable=True)
+    status = Column(String(16), nullable=False, default='submitting')
+    admin_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    location = Column(String(16), nullable=True)
+    pop_count = Column(Integer, nullable=False, default=0)
+    resource_count = Column(Integer, nullable=False, default=0)
+    source = Column(
+        String(24), nullable=False, default='paste'
+    )  # paste | panel_subscription | panel_hosts | panel_nodes
+    source_ref = Column(String(128), nullable=True)
+    label = Column(String(255), nullable=False, default='')
+    targets = Column(JSON, nullable=False, default=list)  # [{"value": ..., "name": ...}]
+    request = Column(JSON, nullable=False, default=dict)
+    idempotency_key = Column(String(64), nullable=False, unique=True)
+    cost_usd = Column(Numeric(12, 4), nullable=True)
+    refunded_usd = Column(Numeric(12, 4), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    delivery_ids = Column(JSON, nullable=False, default=list)  # последние обработанные X-DPIChecker-Delivery
+    last_run_id = Column(Integer, nullable=True)  # монитор: последний прогон, о котором уже решено, сообщать ли
+    created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 
 
