@@ -90,3 +90,26 @@ async def test_unknown_uuids_only_is_an_error():
 
     with pytest.raises(targets.PanelTargetError):
         await targets.host_addresses(panel_client=_client(get_all_hosts=get_all_hosts), host_uuids=['zzz'])
+
+
+async def test_empty_choice_lists_all_live_hosts_for_the_picker():
+    hosts = [
+        SimpleNamespace(uuid='h1', remark='Finland', address='fi.example', is_disabled=False),
+        SimpleNamespace(uuid='h2', remark='Off', address='off.example', is_disabled=True),
+    ]
+
+    async def get_all_hosts():
+        return hosts
+
+    found = await targets.host_addresses(panel_client=_client(get_all_hosts=get_all_hosts), host_uuids=[])
+    assert [(t.value, t.ref) for t in found] == [('fi.example', 'h1')]
+
+
+async def test_empty_choice_lists_all_nodes():
+    nodes = [SimpleNamespace(uuid='n1', name='NL-1', address='nl.example')]
+
+    async def get_all_nodes():
+        return nodes
+
+    found = await targets.node_addresses(panel_client=_client(get_all_nodes=get_all_nodes), node_uuids=[])
+    assert [t.name for t in found] == ['NL-1']

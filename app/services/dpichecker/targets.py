@@ -92,9 +92,12 @@ def _unique_by_address(items: list[PanelTarget]) -> list[PanelTarget]:
 
 
 async def host_addresses(*, panel_client: Callable[[], Any], host_uuids: list[str]) -> list[PanelTarget]:
-    wanted = list(dict.fromkeys(host_uuids))
+    """Адреса выбранных хостов; пустой выбор — все включённые (список для выбора в кабинете)."""
     async with panel_client() as api:
         hosts = {host.uuid: host for host in await api.get_all_hosts()}
+    wanted = list(dict.fromkeys(host_uuids)) or [
+        uuid for uuid, host in hosts.items() if not getattr(host, 'is_disabled', False)
+    ]
     found = [
         PanelTarget(value=hosts[uuid].address.lower(), name=hosts[uuid].remark or hosts[uuid].address, ref=uuid)
         for uuid in wanted
@@ -106,9 +109,10 @@ async def host_addresses(*, panel_client: Callable[[], Any], host_uuids: list[st
 
 
 async def node_addresses(*, panel_client: Callable[[], Any], node_uuids: list[str]) -> list[PanelTarget]:
-    wanted = list(dict.fromkeys(node_uuids))
+    """Адреса выбранных нод; пустой выбор — все ноды (список для выбора в кабинете)."""
     async with panel_client() as api:
         nodes = {node.uuid: node for node in await api.get_all_nodes()}
+    wanted = list(dict.fromkeys(node_uuids)) or list(nodes)
     found = [
         PanelTarget(value=nodes[uuid].address.lower(), name=nodes[uuid].name or nodes[uuid].address, ref=uuid)
         for uuid in wanted
