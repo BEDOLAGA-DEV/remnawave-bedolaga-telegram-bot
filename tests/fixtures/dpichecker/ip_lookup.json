@@ -1,0 +1,10 @@
+{
+ "status": 200,
+ "body": {
+  "ip": "8.8.8.8",
+  "asn": "15169",
+  "org": "GOOGLE - Google LLC, US",
+  "country": "US",
+  "bgp": null
+ }
+}

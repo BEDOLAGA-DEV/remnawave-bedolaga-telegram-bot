@@ -1,0 +1,18 @@
+{
+ "status": 200,
+ "body": {
+  "check": {
+   "id": 5308,
+   "status": "cancelled",
+   "results": null,
+   "location": "russia",
+   "usd_cost": 0.04,
+   "check_type": "ip",
+   "created_at": "2026-09-24T08:27:04.427Z",
+   "completed_at": "2026-09-24T08:27:14.502Z"
+  },
+  "event": "check.cancelled",
+  "delivery_id": 2,
+  "created_at": "2026-09-24T08:27:27.290Z"
+ }
+}

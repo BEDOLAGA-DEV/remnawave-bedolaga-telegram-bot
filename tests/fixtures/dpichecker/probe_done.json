@@ -1,0 +1,783 @@
+{
+ "status": 200,
+ "body": {
+  "id": 88,
+  "status": "done",
+  "stage": "report",
+  "cidr": "198.51.100.0/24",
+  "raw_target": "198.51.100.0/24",
+  "verdict": "clean",
+  "blocked_ips": 0,
+  "tested_ips": 3,
+  "domains_tested": 3,
+  "pops_used": 10,
+  "traffic_bytes": "22066173",
+  "fixed_cost": "1.0000",
+  "traffic_cost": "0.0331",
+  "results": {
+   "cidr": "198.51.100.0/24",
+   "kept": 12,
+   "pops": [
+    {
+     "id": 39,
+     "name": "Москва Rostelecom"
+    },
+    {
+     "id": 35,
+     "name": "Москва"
+    },
+    {
+     "id": 98,
+     "name": "Санкт-Петербург"
+    },
+    {
+     "id": 49,
+     "name": "Новосибирская обл."
+    },
+    {
+     "id": 101,
+     "name": "Свердловская обл."
+    },
+    {
+     "id": 26,
+     "name": "Краснодарский край"
+    },
+    {
+     "id": 87,
+     "name": "Республика Татарстан"
+    },
+    {
+     "id": 47,
+     "name": "Нижегородская обл."
+    },
+    {
+     "id": 97,
+     "name": "Самарская обл."
+    },
+    {
+     "id": 65,
+     "name": "Республика Башкортостан"
+    }
+   ],
+   "drops": [
+    {
+     "ip": "198.51.100.13",
+     "detail": null,
+     "domain": "max.ru",
+     "reason": "bad_sni"
+    },
+    {
+     "ip": "198.51.100.101",
+     "detail": null,
+     "domain": "zapravki.edadeal.ru",
+     "reason": "bad_sni"
+    },
+    {
+     "ip": "198.51.100.54",
+     "detail": null,
+     "domain": "glaveda.net",
+     "reason": "moved_away"
+    },
+    {
+     "ip": "198.51.100.43",
+     "detail": null,
+     "domain": "harknmav.fun",
+     "reason": "moved_away"
+    },
+    {
+     "ip": "198.51.100.11",
+     "detail": null,
+     "domain": "cloudflare-dns.com",
+     "reason": "moved_away"
+    },
+    {
+     "ip": "198.51.100.76",
+     "detail": null,
+     "domain": "data-1.1984vpn.ru",
+     "reason": "dns_failed"
+    },
+    {
+     "ip": "198.51.100.89",
+     "detail": null,
+     "domain": "ascl.dev",
+     "reason": "dns_failed"
+    },
+    {
+     "ip": "198.51.100.4",
+     "detail": {
+      "ok": true,
+      "bytes": 21171,
+      "reason": "",
+      "http_code": 200,
+      "probe_url": "https://moymotor06.site/",
+      "payload_ok": false,
+      "probe_bytes": 21171,
+      "payload_from": "page"
+     },
+     "domain": "moymotor06.site",
+     "reason": "payload_too_small"
+    },
+    {
+     "ip": "198.51.100.41",
+     "detail": {
+      "ok": false,
+      "bytes": 0,
+      "reason": "no_clean_https",
+      "http_code": null,
+      "probe_url": "https://time.failspace.top/",
+      "payload_ok": false,
+      "probe_bytes": 0,
+      "payload_from": "page"
+     },
+     "domain": "time.failspace.top",
+     "reason": "foreign_failed"
+    },
+    {
+     "ip": "198.51.100.42",
+     "detail": {
+      "ok": false,
+      "bytes": 0,
+      "reason": "no_clean_https",
+      "http_code": null,
+      "probe_url": "https://time-corp.failspace.top/",
+      "payload_ok": false,
+      "probe_bytes": 0,
+      "payload_from": "page"
+     },
+     "domain": "time-corp.failspace.top",
+     "reason": "foreign_failed"
+    },
+    {
+     "ip": "198.51.100.46",
+     "detail": {
+      "ok": true,
+      "bytes": 45548,
+      "reason": "",
+      "http_code": 200,
+      "probe_url": "https://kikasite.ru/",
+      "payload_ok": false,
+      "probe_bytes": 45548,
+      "payload_from": "page"
+     },
+     "domain": "kikasite.ru",
+     "reason": "payload_too_small"
+    }
+   ],
+   "combos": [
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 87,
+     "status": "green",
+     "pop_name": "Республика Татарстан",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 101,
+     "status": "green",
+     "pop_name": "Свердловская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 49,
+     "status": "green",
+     "pop_name": "Новосибирская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 47,
+     "status": "green",
+     "pop_name": "Нижегородская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 97,
+     "status": "green",
+     "pop_name": "Самарская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 87,
+     "status": "green",
+     "pop_name": "Республика Татарстан",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 101,
+     "status": "green",
+     "pop_name": "Свердловская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 98,
+     "status": "green",
+     "pop_name": "Санкт-Петербург",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 49,
+     "status": "green",
+     "pop_name": "Новосибирская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 47,
+     "status": "green",
+     "pop_name": "Нижегородская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 97,
+     "status": "green",
+     "pop_name": "Самарская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 87,
+     "status": "green",
+     "pop_name": "Республика Татарстан",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 35,
+     "status": "green",
+     "pop_name": "Москва",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 101,
+     "status": "green",
+     "pop_name": "Свердловская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 47,
+     "status": "green",
+     "pop_name": "Нижегородская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 49,
+     "status": "green",
+     "pop_name": "Новосибирская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 97,
+     "status": "green",
+     "pop_name": "Самарская обл.",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 35,
+     "status": "green",
+     "pop_name": "Москва",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 98,
+     "status": "green",
+     "pop_name": "Санкт-Петербург",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 39,
+     "status": "green",
+     "pop_name": "Москва Rostelecom",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 35,
+     "status": "green",
+     "pop_name": "Москва",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 39,
+     "status": "green",
+     "pop_name": "Москва Rostelecom",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 65,
+     "status": "green",
+     "pop_name": "Республика Башкортостан",
+     "samples_ok": 4,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 1
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 98,
+     "status": "green",
+     "pop_name": "Санкт-Петербург",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 39,
+     "status": "green",
+     "pop_name": "Москва Rostelecom",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.82",
+     "domain": "cache.ozonvideo.com",
+     "pop_id": 26,
+     "status": "green",
+     "pop_name": "Краснодарский край",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 26,
+     "status": "green",
+     "pop_name": "Краснодарский край",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 26,
+     "status": "green",
+     "pop_name": "Краснодарский край",
+     "samples_ok": 5,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 0
+    },
+    {
+     "ip": "198.51.100.83",
+     "domain": "preview.ozonvideo.com",
+     "pop_id": 65,
+     "status": "green",
+     "pop_name": "Республика Башкортостан",
+     "samples_ok": 4,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 176443,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 1
+    },
+    {
+     "ip": "198.51.100.111",
+     "domain": "msk.nurvps.de",
+     "pop_id": 65,
+     "status": "green",
+     "pop_name": "Республика Башкортостан",
+     "samples_ok": 4,
+     "stall_bytes": null,
+     "status_code": 200,
+     "payload_bytes": 95579,
+     "samples_short": 0,
+     "samples_stall": 0,
+     "samples_total": 5,
+     "samples_blocked": 1
+    }
+   ],
+   "tested": 3,
+   "scanned": 17,
+   "targets": [
+    {
+     "ip": "198.51.100.82",
+     "url": "https://cache.ozonvideo.com/assets/script.js?v=e5d01a",
+     "domain": "cache.ozonvideo.com",
+     "payload_bytes": 176443
+    },
+    {
+     "ip": "198.51.100.83",
+     "url": "https://preview.ozonvideo.com/assets/script.js?v=e5d01a",
+     "domain": "preview.ozonvideo.com",
+     "payload_bytes": 176443
+    },
+    {
+     "ip": "198.51.100.111",
+     "url": "https://msk.nurvps.de/css/all.css?v=9423",
+     "domain": "msk.nurvps.de",
+     "payload_bytes": 95579
+    }
+   ],
+   "dead_pops": [],
+   "in_subnet": 7,
+   "assessment": {
+    "ratio": 0,
+    "per_ip": [
+     {
+      "ip": "198.51.100.82",
+      "state": "open",
+      "domain": "cache.ozonvideo.com",
+      "pops_red": 0,
+      "pops_green": 10,
+      "pops_total": 10,
+      "stall_pops": 0,
+      "pops_yellow": 0,
+      "stall_bytes": null,
+      "payload_bytes": 176443
+     },
+     {
+      "ip": "198.51.100.83",
+      "state": "open",
+      "domain": "preview.ozonvideo.com",
+      "pops_red": 0,
+      "pops_green": 10,
+      "pops_total": 10,
+      "stall_pops": 0,
+      "pops_yellow": 0,
+      "stall_bytes": null,
+      "payload_bytes": 176443
+     },
+     {
+      "ip": "198.51.100.111",
+      "state": "open",
+      "domain": "msk.nurvps.de",
+      "pops_red": 0,
+      "pops_green": 10,
+      "pops_total": 10,
+      "stall_pops": 0,
+      "pops_yellow": 0,
+      "stall_bytes": null,
+      "payload_bytes": 95579
+     }
+    ],
+    "per_pop": [
+     {
+      "name": "Краснодарский край",
+      "ratio": 0,
+      "pop_id": 26,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Москва",
+      "ratio": 0,
+      "pop_id": 35,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Москва Rostelecom",
+      "ratio": 0,
+      "pop_id": 39,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Нижегородская обл.",
+      "ratio": 0,
+      "pop_id": 47,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Новосибирская обл.",
+      "ratio": 0,
+      "pop_id": 49,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Республика Башкортостан",
+      "ratio": 0,
+      "pop_id": 65,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Республика Татарстан",
+      "ratio": 0,
+      "pop_id": 87,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Самарская обл.",
+      "ratio": 0,
+      "pop_id": 97,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Санкт-Петербург",
+      "ratio": 0,
+      "pop_id": 98,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     },
+     {
+      "name": "Свердловская обл.",
+      "ratio": 0,
+      "pop_id": 101,
+      "tested": 3,
+      "blocked": 0,
+      "stalled": 0
+     }
+    ],
+    "verdict": "clean",
+    "mixed_ips": 0,
+    "stall_ips": 0,
+    "pops_clean": 10,
+    "tested_ips": 3,
+    "blocked_ips": 0,
+    "stall_bytes": null,
+    "pops_partial": 0,
+    "low_confidence": false,
+    "pops_enforcing": 0
+   },
+   "foreign_ok": 3,
+   "total_bytes": 22066173
+  },
+  "error": null,
+  "source": "api",
+  "created_at": "2026-09-24T09:03:48.640Z",
+  "completed_at": "2026-09-24T09:05:44.982Z"
+ }
+}

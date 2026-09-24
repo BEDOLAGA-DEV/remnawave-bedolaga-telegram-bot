@@ -1,0 +1,7 @@
+{
+ "status": 400,
+ "body": {
+  "error": "Local/private addresses (10.x, 192.168.x, 127.x, CGNAT, etc.), and domains that only resolve to such addresses, are not reachable from the Internet and cannot be checked.",
+  "code": "private_target"
+ }
+}

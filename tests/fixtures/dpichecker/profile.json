@@ -1,0 +1,15 @@
+{
+ "status": 200,
+ "body": {
+  "user_id": "100",
+  "balance": 54.7283,
+  "total_spent": 48.2717,
+  "total_checks": 28,
+  "api_key": {
+   "allowed_ips": [],
+   "created_at": "2026-09-10T16:54:38.696Z",
+   "last_used_at": "2026-09-24T08:23:05.386Z"
+  },
+  "noisy_neighbors_unlimited": false
+ }
+}

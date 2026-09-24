@@ -1,0 +1,9 @@
+{
+ "status": 200,
+ "body": {
+  "scan_id": 88,
+  "status": "pending",
+  "fixed_cost": 1,
+  "balance": 53.5383
+ }
+}

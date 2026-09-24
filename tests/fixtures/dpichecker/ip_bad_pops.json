@@ -1,0 +1,7 @@
+{
+ "status": 400,
+ "body": {
+  "error": "pop_ids must be a non-empty array of integers.",
+  "code": "invalid_pops"
+ }
+}

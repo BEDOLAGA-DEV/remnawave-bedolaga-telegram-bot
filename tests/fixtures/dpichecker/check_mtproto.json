@@ -1,0 +1,47 @@
+{
+ "status": 200,
+ "body": {
+  "id": 5313,
+  "status": "completed",
+  "check_type": "mtproto",
+  "location": "russia",
+  "usd_cost": 0.11,
+  "source": "api",
+  "selected_pop_ids": [
+   39
+  ],
+  "resource_count": 1,
+  "progress": {
+   "done": 1,
+   "total": 1,
+   "percent": 100
+  },
+  "estimated_max_minutes": 10,
+  "callback_url": "https://bot.example/dpichecker/webhook",
+  "results": [
+   {
+    "pop_id": 39,
+    "status": "tls_handshake_failed",
+    "exit_ip": "",
+    "reached": false,
+    "pop_name": "Москва Ростелеком",
+    "resource": "tg://proxy?server=proxy.example&port=443&secret=masked",
+    "latency_ms": null,
+    "proxy_dead": false,
+    "secret_kind": null
+   },
+   {
+    "status": "error",
+    "reached": false,
+    "resource": "tg://proxy?server=proxy.example&port=443&secret=masked",
+    "is_direct": true,
+    "latency_ms": null,
+    "proxy_dead": false,
+    "secret_kind": null
+   }
+  ],
+  "created_at": "2026-09-24T08:39:23.218Z",
+  "started_at": "2026-09-24T08:39:32.959Z",
+  "completed_at": "2026-09-24T08:39:41.470Z"
+ }
+}

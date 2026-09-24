@@ -1,0 +1,580 @@
+{
+ "status": 200,
+ "body": {
+  "id": 5286,
+  "status": "completed",
+  "check_type": "vpn",
+  "location": "Россия",
+  "usd_cost": 0.06,
+  "source": "bot",
+  "selected_pop_ids": [
+   27,
+   1,
+   2,
+   6,
+   297
+  ],
+  "resource_count": 2,
+  "progress": {
+   "done": 10,
+   "total": 10,
+   "percent": 100
+  },
+  "estimated_max_minutes": 30,
+  "callback_url": null,
+  "results": [
+   {
+    "uri": "vless://masked-295788",
+    "host": "🇪🇪 Estonia",
+    "error": "",
+    "pop_id": 1,
+    "pop_name": "Алтайский край",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 0,
+     "pop_id": 1,
+     "time_s": 6.07,
+     "pop_name": "Алтайский край",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 1.73,
+     "proxy_exit_ip": "203.0.113.1"
+    },
+    "server_ip": "203.0.113.2",
+    "latency_ms": 2792,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 0,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 2.69,
+       "http_code": 200,
+       "size_bytes": 418674,
+       "speed_mbps": 0.16
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 1.05,
+       "http_code": 200,
+       "size_bytes": 19919,
+       "speed_mbps": 0.02
+      }
+     ],
+     "pop_id": 1,
+     "pop_name": "Алтайский край",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438593,
+     "proxy_exit_ip": "203.0.113.3"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.4",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-164784",
+    "host": "🇩🇪 Germany",
+    "error": "",
+    "pop_id": 1,
+    "pop_name": "Алтайский край",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 1,
+     "pop_id": 1,
+     "time_s": 2.77,
+     "pop_name": "Алтайский край",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 3.78,
+     "proxy_exit_ip": "203.0.113.5"
+    },
+    "server_ip": "203.0.113.6",
+    "latency_ms": 5991,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 1,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 2.87,
+       "http_code": 200,
+       "size_bytes": 418831,
+       "speed_mbps": 0.15
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 1.26,
+       "http_code": 200,
+       "size_bytes": 19919,
+       "speed_mbps": 0.02
+      }
+     ],
+     "pop_id": 1,
+     "pop_name": "Алтайский край",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438750,
+     "proxy_exit_ip": "203.0.113.7"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.8",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-295788",
+    "host": "🇪🇪 Estonia",
+    "error": "",
+    "pop_id": 2,
+    "pop_name": "Амурская обл.",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 5,
+     "pop_id": 2,
+     "time_s": 11.3,
+     "pop_name": "Амурская обл.",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 0.93,
+     "proxy_exit_ip": "203.0.113.21"
+    },
+    "server_ip": "203.0.113.2",
+    "latency_ms": 3324,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 5,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 4.16,
+       "http_code": 200,
+       "size_bytes": 418826,
+       "speed_mbps": 0.1
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 1.44,
+       "http_code": 200,
+       "size_bytes": 19919,
+       "speed_mbps": 0.01
+      }
+     ],
+     "pop_id": 2,
+     "pop_name": "Амурская обл.",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438745,
+     "proxy_exit_ip": "203.0.113.22"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.23",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-164784",
+    "host": "🇩🇪 Germany",
+    "error": "",
+    "pop_id": 2,
+    "pop_name": "Амурская обл.",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 6,
+     "pop_id": 2,
+     "time_s": 20.62,
+     "pop_name": "Амурская обл.",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 0.51,
+     "proxy_exit_ip": "203.0.113.24"
+    },
+    "server_ip": "203.0.113.6",
+    "latency_ms": 3008,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇩🇪 Germany",
+     "error": "tunnel did not come up",
+     "index": 6,
+     "sites": [],
+     "pop_id": 2,
+     "pop_name": "Амурская обл.",
+     "connected": false,
+     "proxy_dead": false,
+     "total_bytes": 0,
+     "proxy_exit_ip": "203.0.113.25"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.26",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-295788",
+    "host": "🇪🇪 Estonia",
+    "error": "",
+    "pop_id": 6,
+    "pop_name": "Архангельская обл. Ростелеком",
+    "connected": true,
+    "file_test": {
+     "ok": false,
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 10,
+     "pop_id": 6,
+     "time_s": null,
+     "pop_name": "Архангельская обл. Ростелеком",
+     "connected": true,
+     "http_code": null,
+     "proxy_dead": false,
+     "size_bytes": 0,
+     "speed_mbps": null,
+     "proxy_exit_ip": "203.0.113.31"
+    },
+    "server_ip": "203.0.113.2",
+    "latency_ms": 1983,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 10,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 1.84,
+       "http_code": 200,
+       "size_bytes": 418674,
+       "speed_mbps": 0.23
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 0.81,
+       "http_code": 200,
+       "size_bytes": 19919,
+       "speed_mbps": 0.02
+      }
+     ],
+     "pop_id": 6,
+     "pop_name": "Архангельская обл. Ростелеком",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438593,
+     "proxy_exit_ip": "203.0.113.32"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.33",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-164784",
+    "host": "🇩🇪 Germany",
+    "error": "",
+    "pop_id": 6,
+    "pop_name": "Архангельская обл. Ростелеком",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 11,
+     "pop_id": 6,
+     "time_s": 13.16,
+     "pop_name": "Архангельская обл. Ростелеком",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 0.8,
+     "proxy_exit_ip": "203.0.113.34"
+    },
+    "server_ip": "203.0.113.6",
+    "latency_ms": 2107,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 11,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 2.44,
+       "http_code": 200,
+       "size_bytes": 418863,
+       "speed_mbps": 0.17
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 1.01,
+       "http_code": 200,
+       "size_bytes": 19919,
+       "speed_mbps": 0.02
+      }
+     ],
+     "pop_id": 6,
+     "pop_name": "Архангельская обл. Ростелеком",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438782,
+     "proxy_exit_ip": "203.0.113.35"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.36",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-295788",
+    "host": "🇪🇪 Estonia",
+    "error": "",
+    "pop_id": 297,
+    "pop_name": "Архангельская обл.",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 15,
+     "pop_id": 297,
+     "time_s": 2.38,
+     "pop_name": "Архангельская обл.",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 4.41,
+     "proxy_exit_ip": "203.0.113.46"
+    },
+    "server_ip": "203.0.113.2",
+    "latency_ms": 1842,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇪🇪 Estonia",
+     "error": "",
+     "index": 15,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 1.84,
+       "http_code": 200,
+       "size_bytes": 418691,
+       "speed_mbps": 0.23
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 0.85,
+       "http_code": 200,
+       "size_bytes": 19918,
+       "speed_mbps": 0.02
+      }
+     ],
+     "pop_id": 297,
+     "pop_name": "Архангельская обл.",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438609,
+     "proxy_exit_ip": "203.0.113.47"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.47",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-164784",
+    "host": "🇩🇪 Germany",
+    "error": "",
+    "pop_id": 297,
+    "pop_name": "Архангельская обл.",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 16,
+     "pop_id": 297,
+     "time_s": 1.88,
+     "pop_name": "Архангельская обл.",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 5.56,
+     "proxy_exit_ip": "203.0.113.48"
+    },
+    "server_ip": "203.0.113.6",
+    "latency_ms": 7198,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 16,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 1.86,
+       "http_code": 200,
+       "size_bytes": 418861,
+       "speed_mbps": 0.22
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 3.65,
+       "http_code": 200,
+       "size_bytes": 19919,
+       "speed_mbps": 0.01
+      }
+     ],
+     "pop_id": 297,
+     "pop_name": "Архангельская обл.",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438780,
+     "proxy_exit_ip": "203.0.113.49"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.50",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-295788",
+    "host": "🇪🇪 Estonia",
+    "error": "curl exit 28 (соединение не установлено)",
+    "pop_id": 27,
+    "pop_name": "Красноярский край",
+    "connected": false,
+    "server_ip": "",
+    "latency_ms": 0,
+    "proxy_dead": false,
+    "untestable": false,
+    "control_check": {
+     "target": "google.com",
+     "accessible": true
+    },
+    "proxy_exit_ip": "203.0.113.308",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-164784",
+    "host": "🇩🇪 Germany",
+    "error": "",
+    "pop_id": 27,
+    "pop_name": "Красноярский край",
+    "connected": true,
+    "file_test": {
+     "ok": true,
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 111,
+     "pop_id": 27,
+     "time_s": 5.48,
+     "pop_name": "Красноярский край",
+     "connected": true,
+     "http_code": 200,
+     "proxy_dead": false,
+     "size_bytes": 10485760,
+     "speed_mbps": 1.91,
+     "proxy_exit_ip": "203.0.113.309"
+    },
+    "server_ip": "203.0.113.6",
+    "latency_ms": 1598,
+    "proxy_dead": false,
+    "speed_test": {
+     "host": "🇩🇪 Germany",
+     "error": "",
+     "index": 111,
+     "sites": [
+      {
+       "ok": true,
+       "host": "instagram.com",
+       "time_s": 2.74,
+       "http_code": 200,
+       "size_bytes": 418859,
+       "speed_mbps": 0.15
+      },
+      {
+       "ok": true,
+       "host": "telegram.org",
+       "time_s": 1.02,
+       "http_code": 200,
+       "size_bytes": 19919,
+       "speed_mbps": 0.02
+      }
+     ],
+     "pop_id": 27,
+     "pop_name": "Красноярский край",
+     "connected": true,
+     "proxy_dead": false,
+     "total_bytes": 438778,
+     "proxy_exit_ip": "203.0.113.310"
+    },
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.311",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-295788",
+    "host": "🇪🇪 Estonia",
+    "error": "",
+    "connected": true,
+    "is_direct": true,
+    "server_ip": "203.0.113.2",
+    "latency_ms": 824,
+    "proxy_dead": false,
+    "untestable": false,
+    "proxy_exit_ip": "",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-164784",
+    "host": "🇩🇪 Germany",
+    "error": "",
+    "connected": true,
+    "is_direct": true,
+    "server_ip": "203.0.113.6",
+    "latency_ms": 749,
+    "proxy_dead": false,
+    "untestable": false,
+    "proxy_exit_ip": "",
+    "untestable_reason": ""
+   }
+  ],
+  "created_at": "2026-09-24T06:25:52.162Z",
+  "started_at": "2026-09-24T06:25:52.319Z",
+  "completed_at": "2026-09-24T06:28:16.504Z"
+ }
+}

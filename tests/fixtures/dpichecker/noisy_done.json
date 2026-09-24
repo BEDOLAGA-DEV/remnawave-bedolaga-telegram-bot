@@ -1,0 +1,44 @@
+{
+ "status": 200,
+ "body": {
+  "id": 2628,
+  "status": "done",
+  "cidr": "198.51.100.0/24",
+  "raw_target": "198.51.100.0/24",
+  "result_count": 17,
+  "analysis": {
+   "bad_ru": [
+    {
+     "ip": "198.51.100.101",
+     "domain": "zapravki.edadeal.ru",
+     "pattern": "edadeal.ru"
+    }
+   ],
+   "grouped": [
+    {
+     "count": 1,
+     "label": "edadeal.ru"
+    }
+   ],
+   "vpn_like": [
+    {
+     "ip": "198.51.100.80",
+     "domain": "data-1.1984vpn.ru"
+    },
+    {
+     "ip": "198.51.100.81",
+     "domain": "data-1.1984vpn.ru"
+    },
+    {
+     "ip": "198.51.100.76",
+     "domain": "data-1.1984vpn.ru"
+    }
+   ],
+   "own_ip_bad": null,
+   "bad_foreign": []
+  },
+  "source": "api",
+  "created_at": "2026-09-24T08:39:22.396Z",
+  "csv_url": "/api/v1/checks/noisy/2628.csv"
+ }
+}

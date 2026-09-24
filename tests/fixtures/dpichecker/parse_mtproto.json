@@ -1,0 +1,12 @@
+{
+ "status": 200,
+ "body": {
+  "valid": [
+   "tg://proxy?server=proxy.example&port=443&secret=masked",
+   "https://t.me/proxy?server=example.com&port=8443&secret=dd00112233445566778899aabbccddeeff"
+  ],
+  "invalid_count": 1,
+  "duplicate_count": 0,
+  "blacklisted": []
+ }
+}

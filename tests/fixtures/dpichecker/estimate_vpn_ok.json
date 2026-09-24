@@ -1,0 +1,16 @@
+{
+ "status": 200,
+ "body": {
+  "check_type": "vpn",
+  "location": "russia",
+  "pops": 10,
+  "resources": 2,
+  "hysteria2_keys": 1,
+  "pop_price": 0.008,
+  "resource_price": 0.002,
+  "estimated_cost": 0.104,
+  "estimated_max_minutes": 12,
+  "balance": 54.7283,
+  "affordable": true
+ }
+}

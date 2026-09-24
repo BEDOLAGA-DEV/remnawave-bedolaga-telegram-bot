@@ -1,0 +1,19 @@
+{
+ "status": 200,
+ "body": {
+  "valid": [
+   "google.com",
+   "8.8.8.8",
+   "rutracker.org",
+   "1.1.1.0"
+  ],
+  "invalid_count": 1,
+  "private_count": 1,
+  "private": [
+   "10.0.0.1"
+  ],
+  "duplicate_count": 0,
+  "overflow_count": 0,
+  "blacklisted": []
+ }
+}

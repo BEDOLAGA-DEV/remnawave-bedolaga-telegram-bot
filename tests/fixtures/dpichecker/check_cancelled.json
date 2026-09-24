@@ -1,0 +1,35 @@
+{
+ "status": 200,
+ "body": {
+  "id": 5308,
+  "status": "cancelled",
+  "check_type": "ip",
+  "location": "russia",
+  "usd_cost": 0.04,
+  "source": "api",
+  "selected_pop_ids": [
+   39,
+   35,
+   98,
+   49,
+   101,
+   26,
+   87,
+   47,
+   97,
+   65
+  ],
+  "resource_count": 1,
+  "progress": {
+   "done": 0,
+   "total": 10,
+   "percent": 0
+  },
+  "estimated_max_minutes": 7,
+  "callback_url": "https://bot.example/dpichecker/webhook",
+  "results": null,
+  "created_at": "2026-09-24T08:27:04.427Z",
+  "started_at": null,
+  "completed_at": "2026-09-24T08:27:14.502Z"
+ }
+}
