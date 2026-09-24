@@ -557,14 +557,14 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
 
         if amount_rubles < 1:
             await message.answer(
-                'Минимальная сумма пополнения: 1 ₽',
+                'Минимальная сумма пополнения: 1 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
                 reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
 
         if amount_rubles > 50000:
             await message.answer(
-                'Максимальная сумма пополнения: 50,000 ₽',
+                'Максимальная сумма пополнения: 50,000 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
                 reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
@@ -575,17 +575,22 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
 
         if payment_method in ['yookassa', 'yookassa_sbp']:
             if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-                min_rubles = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
+                min_rubles = f'{settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
+                example_rubles = max(1, (settings.YOOKASSA_MIN_AMOUNT_KOPEKS + 99) // 100)
+                retry_hint = f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {min_rubles} ₽.'
+                if example_rubles <= 50000 and example_rubles * 100 <= settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
+                    retry_hint += f'\n\nНапример, отправьте: {example_rubles}'
                 await message.answer(
-                    f'❌ Минимальная сумма для оплаты через YooKassa: {min_rubles:.0f} ₽',
+                    f'❌ Минимальная сумма пополнения через YooKassa — {min_rubles} ₽.\n\n{retry_hint}',
                     reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
                 )
                 return
 
             if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-                max_rubles = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
+                max_rubles = f'{settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
                 await message.answer(
-                    f'❌ Максимальная сумма для оплаты через YooKassa: {max_rubles:,.0f} ₽'.replace(',', ' '),
+                    f'❌ Максимальная сумма пополнения через YooKassa — {max_rubles} ₽.\n\n'
+                    f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не больше {max_rubles} ₽.',
                     reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
                 )
                 return
