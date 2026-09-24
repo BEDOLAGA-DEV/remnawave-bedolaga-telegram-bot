@@ -23,7 +23,7 @@ from app.cabinet.schemas.broadcasts import (
     BroadcastAudiencePreviewRequest,
     CombinedBroadcastCreateRequest,
 )
-from app.database.models import BroadcastHistory, Subscription, SubscriptionStatus, Tariff, User, UserStatus
+from app.database.models import BroadcastHistory, PromoGroup, Subscription, SubscriptionStatus, Tariff, User, UserStatus
 from app.services import broadcast_service
 from app.services.broadcast_audience import (
     EMAIL_FIELDS,
@@ -36,7 +36,7 @@ from app.services.broadcast_audience import (
 from tests.fixtures.sqlite_memory import memory_session
 
 
-TABLES = (User.__table__, Tariff.__table__, Subscription.__table__)
+TABLES = (PromoGroup.__table__, User.__table__, Tariff.__table__, Subscription.__table__)
 
 
 def test_every_existing_dropdown_option_is_available_as_a_condition() -> None:
@@ -215,6 +215,29 @@ async def test_not_equal_tariff_excludes_every_user_with_any_matching_subscripti
 
 
 @pytest.mark.asyncio
+async def test_email_promo_group_rule_preserves_existing_group_filter(monkeypatch) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        db.add_all([PromoGroup(id=7, name='Selected'), PromoGroup(id=8, name='Other')])
+        selected = _user(1111, email='selected@example.com', email_verified=True, promo_group_id=7)
+        other = _user(1112, email='other@example.com', email_verified=True, promo_group_id=8)
+        no_group = _user(1113, email='none@example.com', email_verified=True)
+        db.add_all([selected, other, no_group])
+        await db.commit()
+
+        audience = BroadcastAudience(conditions=[rule('promo_group', 'promo_group_7')])
+        validate_audience(audience, 'email', set(), {7, 8})
+        matching = await select_audience_users(db, audience, 'email', 'system')
+
+        negated = BroadcastAudience(conditions=[rule('promo_group', 'promo_group_7', operator='ne')])
+        others = await select_audience_users(db, negated, 'email', 'system')
+
+    assert [user.id for user in matching] == [selected.id]
+    assert [user.id for user in others] == [other.id, no_group.id]
+    with pytest.raises(ValueError, match='promo group'):
+        validate_audience(BroadcastAudience(conditions=[rule('promo_group', 'promo_group_99')]), 'email', set(), {7, 8})
+
+
+@pytest.mark.asyncio
 async def test_expiring_preserves_daily_tariff_exclusion(monkeypatch) -> None:
     async with memory_session(monkeypatch, TABLES) as db:
         db.add_all([Tariff(id=1, name='Daily', is_daily=True), Tariff(id=2, name='Regular', is_daily=False)])
@@ -370,6 +393,30 @@ async def test_email_send_uses_its_own_audience(monkeypatch) -> None:
     assert result.channel == 'email'
     assert result.audience == audience
     assert captured[0].audience == audience
+
+
+@pytest.mark.asyncio
+async def test_direct_email_user_rule_rejects_unverified_recipient(monkeypatch) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        admin = _user(1271, username='admin')
+        recipient = _user(1272, email='pending@example.com', email_verified=False)
+        db.add_all([admin, recipient])
+        await db.commit()
+
+        audience = BroadcastAudience(conditions=[rule('email_user', str(recipient.id))])
+        with pytest.raises(HTTPException) as error:
+            await create_combined_broadcast(
+                CombinedBroadcastCreateRequest(
+                    channel='email',
+                    audience=audience,
+                    email_subject='Subject',
+                    email_html_content='<p>Body</p>',
+                ),
+                admin=admin,
+                db=db,
+            )
+
+    assert error.value.status_code == 400
 
 
 @pytest.mark.asyncio

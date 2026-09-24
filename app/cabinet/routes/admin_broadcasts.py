@@ -445,8 +445,9 @@ async def preview_audience(
 ) -> BroadcastAudiencePreviewResponse:
     """Count and page through the recipients selected at this moment."""
     tariff_ids = set((await db.scalars(select(Tariff.id))).all())
+    promo_group_ids = set((await db.scalars(select(PromoGroup.id))).all())
     try:
-        validate_audience(request.audience, request.channel, tariff_ids)
+        validate_audience(request.audience, request.channel, tariff_ids, promo_group_ids)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     count, page = await preview_audience_users(
@@ -755,9 +756,16 @@ async def create_combined_broadcast(
                 detail='Use separate audiences for each channel',
             )
         try:
-            validate_audience(request.audience, request.channel, tariff_ids)
+            promo_group_ids = set((await db.scalars(select(PromoGroup.id))).all())
+            validate_audience(request.audience, request.channel, tariff_ids, promo_group_ids)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        # Preserve the existing profile-to-email flow: a direct message to one
+        # user must fail clearly when their address is no longer deliverable.
+        if request.channel == 'email' and len(request.audience.conditions) == 1:
+            condition = request.audience.conditions[0]
+            if condition.field == 'email_user' and condition.operator == 'eq':
+                await _ensure_email_scoped_target_exists(db, f'user_{condition.value}')
     elif not request.target:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Target or audience is required')
 

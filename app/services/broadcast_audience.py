@@ -53,6 +53,7 @@ TELEGRAM_FIELDS.update(COMMON_ATOMIC_FIELDS)
 TELEGRAM_FIELDS.update({'telegram_id': set(), 'telegram_username': set()})
 EMAIL_FIELDS.update(COMMON_ATOMIC_FIELDS)
 EMAIL_FIELDS['email_user'] = set()
+EMAIL_FIELDS['promo_group'] = set()
 
 DATE_FIELDS = {'subscription_end_date', 'registration_date', 'activity_date'}
 NUMBER_FIELDS = {'traffic_gt', 'traffic_lt'}
@@ -115,6 +116,8 @@ def _condition_predicate(condition, now: datetime) -> ColumnElement[bool]:
         return _has_subscription(or_(Subscription.traffic_used_gb.is_(None), Subscription.traffic_used_gb <= 0))
     if field in USER_FIELDS:
         return User.id == int(value)
+    if field == 'promo_group':
+        return User.promo_group_id == int(value.removeprefix('promo_group_'))
     if field == 'subscription_status':
         if value == 'active':
             return _has_subscription(live)
@@ -201,8 +204,13 @@ def _target_predicate(value: str, now: datetime) -> ColumnElement[bool]:
     return false()  # Unreachable after validate_audience.
 
 
-def validate_audience(audience: BroadcastAudience, channel: str, tariff_ids: set[int]) -> None:
-    """Reject forged field/value combinations and unknown tariffs."""
+def validate_audience(
+    audience: BroadcastAudience,
+    channel: str,
+    tariff_ids: set[int],
+    promo_group_ids: set[int] | None = None,
+) -> None:
+    """Reject forged field/value combinations and unknown tariff or promo group IDs."""
     fields = TELEGRAM_FIELDS if channel == 'telegram' else EMAIL_FIELDS
     for condition in audience.conditions:
         if condition.field not in fields:
@@ -253,6 +261,12 @@ def validate_audience(audience: BroadcastAudience, channel: str, tariff_ids: set
             raw_id = condition.value.removeprefix('tariff_')
             if not raw_id.isdigit() or int(raw_id) not in tariff_ids:
                 raise ValueError('Invalid tariff filter')
+        elif condition.field == 'promo_group':
+            if not condition.value.startswith('promo_group_'):
+                raise ValueError('Invalid promo group filter')
+            raw_id = condition.value.removeprefix('promo_group_')
+            if not raw_id.isascii() or not raw_id.isdigit() or int(raw_id) not in (promo_group_ids or set()):
+                raise ValueError('Invalid promo group filter')
         elif condition.value not in fields[condition.field]:
             raise ValueError('Invalid audience filter')
 
