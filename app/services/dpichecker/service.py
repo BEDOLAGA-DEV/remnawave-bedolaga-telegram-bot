@@ -33,6 +33,10 @@ GATEWAY_RETRIES = 2
 GATEWAY_PAUSE_SEC = 2.0
 USD = Decimal('0.0001')
 FINISHED = frozenset({'completed', 'failed', 'cancelled'})
+CHEREMSHA_MAX = 20
+MONITOR_PATCH_FIELDS = frozenset({'is_active', 'interval_hours', 'notify_on_success', 'alert_after_fails'})
+# Адрес вебхука и код привязки группы их бота — служебное, в кабинет не нужно.
+HIDDEN_MONITOR_FIELDS = frozenset({'callback_url', 'link_code', 'link_instructions'})
 
 
 def usd(value: Any) -> Decimal | None:
@@ -294,6 +298,226 @@ class DpiCheckerService:
         if action.remote_id is None:
             raise ActionNotFound
         return await self._call('check_map', action.remote_id)
+
+    # ------------------------------------------------------------ Зонд и Шумные соседи
+
+    async def _launch_scan(
+        self,
+        db: AsyncSession,
+        *,
+        kind: str,
+        admin_id: int | None,
+        target: str,
+        source: str,
+        source_ref: str | None,
+        label: str,
+    ) -> DpiCheckerAction:
+        self._guard()
+        target = target.strip()
+        action = await crud.create_action(
+            db,
+            kind=kind,
+            admin_user_id=admin_id,
+            check_type=None,
+            location='russia',
+            pop_count=0,
+            resource_count=1,
+            source=source,
+            source_ref=source_ref,
+            label=label or target,
+            targets=[{'value': target, 'name': label or target}],
+            request={'target': target},
+        )
+        await db.commit()
+        start = 'start_probe' if kind == crud.KIND_PROBE else 'start_noisy'
+        response = await self._submit(
+            db, action, lambda api: getattr(api, start)(target, idempotency_key=action.idempotency_key)
+        )
+        action.remote_id = int(response['scan_id'])
+        action.status = str(response.get('status') or 'pending')
+        action.cost_usd = usd(response.get('fixed_cost')) if kind == crud.KIND_PROBE else Decimal(0).quantize(USD)
+        await db.commit()
+        return action
+
+    async def launch_probe(
+        self, db: AsyncSession, *, admin_id: int | None, target: str, source: str, source_ref: str | None, label: str
+    ) -> DpiCheckerAction:
+        """Зонд: фикс списывается сразу, трафик — по итогу (дописывается в get_scan)."""
+        return await self._launch_scan(
+            db,
+            kind=crud.KIND_PROBE,
+            admin_id=admin_id,
+            target=target,
+            source=source,
+            source_ref=source_ref,
+            label=label,
+        )
+
+    async def launch_noisy(
+        self, db: AsyncSession, *, admin_id: int | None, target: str, source: str, source_ref: str | None, label: str
+    ) -> DpiCheckerAction:
+        """Шумные соседи: бесплатно, до 10 в сутки (квота — у сервиса, отказ — 429 quota_exceeded)."""
+        return await self._launch_scan(
+            db,
+            kind=crud.KIND_NOISY,
+            admin_id=admin_id,
+            target=target,
+            source=source,
+            source_ref=source_ref,
+            label=label,
+        )
+
+    async def get_scan(self, db: AsyncSession, action_id: int) -> dict[str, Any]:
+        action = await crud.get_action(db, action_id)
+        if action is None or action.kind not in (crud.KIND_PROBE, crud.KIND_NOISY) or action.remote_id is None:
+            raise ActionNotFound
+        getter = 'get_probe' if action.kind == crud.KIND_PROBE else 'get_noisy'
+        scan = dict(await self._call(getter, action.remote_id))
+        if scan.get('status'):
+            action.status = str(scan['status'])
+        if action.kind == crud.KIND_PROBE:
+            fixed, traffic = usd(scan.get('fixed_cost')), usd(scan.get('traffic_cost'))
+            if action.status == 'done' and fixed is not None:
+                action.cost_usd = fixed + (traffic or Decimal(0))
+            # Суммы Зонда сервис отдаёт строками — наружу числами, как у проверок.
+            scan['fixed_cost'] = float(fixed) if fixed is not None else None
+            scan['traffic_cost'] = float(traffic) if traffic is not None else None
+        await db.commit()
+        return {'action': action, 'scan': scan}
+
+    async def noisy_csv(self, db: AsyncSession, action_id: int) -> tuple[bytes, str]:
+        action = await crud.get_action(db, action_id)
+        if action is None or action.kind != crud.KIND_NOISY or action.remote_id is None:
+            raise ActionNotFound
+        return await self._call('noisy_csv', action.remote_id)
+
+    # ------------------------------------------------------------ бесплатные справки
+
+    async def cheremsha(self, resources: list[str]) -> dict[str, Any]:
+        cleaned = [item.strip() for item in resources if item.strip()][:CHEREMSHA_MAX]
+        return await self._call('cheremsha', cleaned)
+
+    async def ip_lookup(self, ip: str, *, bgp: bool = False) -> dict[str, Any]:
+        return await self._call('ip_lookup', ip, bgp=bgp)
+
+    async def blacklist(self, resource: str) -> dict[str, Any]:
+        return await self._call('blacklist_check', resource)
+
+    # ------------------------------------------------------------ мониторы
+
+    async def create_monitor(
+        self,
+        db: AsyncSession,
+        *,
+        admin_id: int | None,
+        check_type: str,
+        location: str,
+        pop_ids: list[int],
+        targets: list[dict[str, str]],
+        source: str,
+        source_ref: str | None,
+        label: str,
+        interval_hours: int,
+        alert_after_fails: int,
+        notify_on_success: bool,
+        probe_mode: str = 'auto',
+    ) -> DpiCheckerAction:
+        """Монитор бесплатен, каждый прогон стоит как проверка. VPN-ключи — в ``resources`` (так шлёт сайт)."""
+        self._guard()
+        body: dict[str, Any] = {
+            'check_type': check_type,
+            'location': location,
+            'pop_ids': list(pop_ids),
+            'resources': [str(target['value']) for target in targets],
+            'interval_hours': interval_hours,
+            'alert_after_fails': alert_after_fails,
+            'notify_on_success': notify_on_success,
+        }
+        if check_type == 'ip':
+            body['probe_mode'] = probe_mode
+        callback = settings.get_dpichecker_webhook_url()
+        if callback:
+            body['callback_url'] = callback
+        action = await crud.create_action(
+            db,
+            kind=crud.KIND_MONITOR,
+            admin_user_id=admin_id,
+            check_type=check_type,
+            location=location,
+            pop_count=len(pop_ids),
+            resource_count=len(targets),
+            source=source,
+            source_ref=source_ref,
+            label=label or ', '.join(target.get('name') or '' for target in targets)[:255],
+            targets=[{'value': str(t['value']), 'name': str(t.get('name') or t['value'])} for t in targets],
+            request=body,
+        )
+        await db.commit()
+        response = await self._submit(db, action, lambda api: api.create_monitor(body))
+        action.remote_id = int(response['id'])
+        action.status = 'active' if response.get('is_active', True) else 'paused'
+        await db.commit()
+        return action
+
+    async def list_monitors(self, db: AsyncSession) -> list[dict[str, Any]]:
+        """Мониторы сервиса; у созданных из кабинета — номер своей строки и имя."""
+        data = await self._call('list_monitors', limit=100)
+        own = {action.remote_id: action for action in await crud.list_monitors(db)}
+        items = []
+        for monitor in data.get('items') or []:
+            action = own.get(monitor.get('id'))
+            public = {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
+            items.append(
+                {**public, 'action_id': action.id if action else None, 'label': action.label if action else None}
+            )
+        return items
+
+    async def _monitor(self, db: AsyncSession, action_id: int) -> DpiCheckerAction:
+        action = await self._action(db, action_id, crud.KIND_MONITOR)
+        if action.remote_id is None:
+            raise ActionNotFound
+        return action
+
+    async def update_monitor(self, db: AsyncSession, action_id: int, patch: dict[str, Any]) -> dict[str, Any]:
+        action = await self._monitor(db, action_id)
+        body = {key: value for key, value in patch.items() if key in MONITOR_PATCH_FIELDS and value is not None}
+        monitor = await self._call('update_monitor', action.remote_id, body)
+        if 'is_active' in monitor:
+            action.status = 'active' if monitor['is_active'] else 'paused'
+        await db.commit()
+        return {key: value for key, value in monitor.items() if key not in HIDDEN_MONITOR_FIELDS}
+
+    async def delete_monitor(self, db: AsyncSession, action_id: int) -> dict[str, Any]:
+        action = await self._monitor(db, action_id)
+        result = await self._call('delete_monitor', action.remote_id)
+        action.status = 'deleted'
+        await db.commit()
+        return result
+
+    async def monitor_runs(
+        self, db: AsyncSession, action_id: int, *, limit: int = 25, offset: int = 0
+    ) -> dict[str, Any]:
+        action = await self._monitor(db, action_id)
+        return await self._call('monitor_runs', action.remote_id, limit=limit, offset=offset)
+
+    # ------------------------------------------------------------ история и траты
+
+    async def history(
+        self,
+        db: AsyncSession,
+        *,
+        kind: str | None,
+        check_type: str | None,
+        admin_user_id: int | None,
+        limit: int = 25,
+        offset: int = 0,
+    ) -> tuple[list[DpiCheckerAction], int]:
+        return await crud.list_actions(
+            db, kind=kind, check_type=check_type, admin_user_id=admin_user_id, limit=limit, offset=offset
+        )
+
+    async def spend(self, db: AsyncSession) -> list[tuple[int | None, Decimal]]:
+        return await crud.spend_by_admin(db)
 
     # ------------------------------------------------------------ вебхук: секрет подписи
 
