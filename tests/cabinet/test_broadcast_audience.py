@@ -15,6 +15,7 @@ from app.cabinet.routes.admin_broadcasts import (
     FILTER_GROUPS,
     create_combined_broadcast,
     preview_audience,
+    search_audience_users,
 )
 from app.cabinet.schemas.broadcasts import (
     BroadcastAudience,
@@ -197,9 +198,13 @@ async def test_not_equal_tariff_excludes_every_user_with_any_matching_subscripti
         mixed = _user(1101)
         other = _user(1102)
         no_subscription = _user(1103)
-        db.add_all([mixed, other, no_subscription])
+        trial_tariff = _user(1104)
+        db.add_all([mixed, other, no_subscription, trial_tariff])
         await db.flush()
         db.add_all([_sub(mixed, tariff_id=1), _sub(mixed, tariff_id=2), _sub(other, tariff_id=2)])
+        trial = _sub(trial_tariff, tariff_id=1, trial=True)
+        trial.status = SubscriptionStatus.TRIAL.value
+        db.add(trial)
         await db.commit()
 
         audience = BroadcastAudience(conditions=[rule('tariff', 'tariff_1', operator='ne')])
@@ -376,3 +381,131 @@ async def test_preview_rejects_mismatched_field_and_value(monkeypatch) -> None:
                 BroadcastAudiencePreviewRequest(channel='telegram', audience=audience), admin=_user(1301), db=db
             )
     assert error.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_atomic_subscription_conditions_can_match_different_subscriptions(monkeypatch) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        db.add_all([Tariff(id=1, name='X'), Tariff(id=2, name='Y')])
+        selected = _user(1401, email='selected@example.com', email_verified=True)
+        only_trial = _user(1402, email='trial@example.com', email_verified=True)
+        db.add_all([selected, only_trial])
+        await db.flush()
+        db.add_all(
+            [
+                _sub(selected, tariff_id=1, trial=False),
+                _sub(selected, tariff_id=2, trial=True),
+                _sub(only_trial, tariff_id=2, trial=True),
+            ]
+        )
+        await db.commit()
+
+        audience = BroadcastAudience(
+            conditions=[
+                rule('subscription_status', 'active'),
+                rule('subscription_type', 'trial', join='and'),
+                rule('tariff', 'tariff_1', join='and'),
+            ]
+        )
+        validate_audience(audience, 'email', {1, 2})
+        selected_users = await select_audience_users(db, audience, 'email', 'system')
+
+    assert [user.email for user in selected_users] == ['selected@example.com']
+
+
+@pytest.mark.asyncio
+async def test_expired_status_excludes_any_live_subscription_including_trial(monkeypatch) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        expired_only = _user(1411)
+        mixed = _user(1412)
+        db.add_all([expired_only, mixed])
+        await db.flush()
+        for user in (expired_only, mixed):
+            subscription = _sub(user, tariff_id=1)
+            subscription.status = SubscriptionStatus.EXPIRED.value
+            subscription.end_date = datetime.now(UTC) - timedelta(days=1)
+            db.add(subscription)
+        trial = _sub(mixed, tariff_id=2, trial=True)
+        trial.status = SubscriptionStatus.TRIAL.value
+        db.add(trial)
+        await db.commit()
+        audience = BroadcastAudience(conditions=[rule('subscription_status', 'expired')])
+        selected = await select_audience_users(db, audience, 'telegram', 'system')
+
+    assert [user.telegram_id for user in selected] == [1411]
+
+
+@pytest.mark.asyncio
+async def test_traffic_thresholds_dates_and_zero_are_independent(monkeypatch) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        user = _user(1421, created_at=datetime(2026, 9, 20, tzinfo=UTC))
+        db.add(user)
+        await db.flush()
+        db.add_all([_sub(user, tariff_id=1, traffic=0), _sub(user, tariff_id=2, traffic=15)])
+        await db.commit()
+        audience = BroadcastAudience(
+            conditions=[
+                rule('traffic_zero', 'zero'),
+                rule('traffic_gt', '10', join='and'),
+                rule('traffic_lt', '1', join='and'),
+                BroadcastAudienceCondition(
+                    field='registration_date', operator='between', value='2026-09-20', value_to='2026-09-21', join='and'
+                ),
+            ]
+        )
+        validate_audience(audience, 'telegram', set())
+        selected = await select_audience_users(db, audience, 'telegram', 'system')
+
+    assert [person.telegram_id for person in selected] == [1421]
+
+
+@pytest.mark.asyncio
+async def test_user_autocomplete_matches_any_part_and_uses_stable_id(monkeypatch) -> None:
+    async with memory_session(monkeypatch, TABLES) as db:
+        db.add_all(
+            [
+                _user(12347890, username='one', email='alpha478@example.com', email_verified=True),
+                _user(478123, username='second', email='other@example.com', email_verified=True),
+                _user(9999, username='not478here', email='third@example.com', email_verified=True),
+            ]
+        )
+        await db.commit()
+        ids = await search_audience_users('telegram_id', '478', 0, 20, admin=_user(1), db=db)
+        names = await search_audience_users('telegram_username', '478', 0, 20, admin=_user(1), db=db)
+        emails = await search_audience_users('email_user', '478', 0, 20, admin=_user(1), db=db)
+        assert [user.telegram_id for user in ids.users] == [12347890, 478123]
+        assert [user.telegram_id for user in names.users] == [9999]
+        assert [user.email for user in emails.users] == ['alpha478@example.com']
+        audience = BroadcastAudience(conditions=[rule('email_user', str(emails.users[0].id))])
+        validate_audience(audience, 'email', set())
+        selected = await select_audience_users(db, audience, 'email', 'system')
+        selected_before_change = [user.email for user in selected]
+        await db.execute(update(User).where(User.id == emails.users[0].id).values(email='new@example.com'))
+        await db.commit()
+        selected_after_change = await select_audience_users(db, audience, 'email', 'system')
+
+    assert selected_before_change == ['alpha478@example.com']
+    assert [user.email for user in selected_after_change] == ['new@example.com']
+
+
+@pytest.mark.parametrize(
+    ('condition', 'channel'),
+    [
+        (
+            BroadcastAudienceCondition(
+                field='registration_date', operator='between', value='2026-09-25', value_to='2026-09-24'
+            ),
+            'telegram',
+        ),
+        (BroadcastAudienceCondition(field='activity_date', operator='before', value='2026-02-30'), 'telegram'),
+        (rule('traffic_gt', 'NaN'), 'telegram'),
+        (rule('telegram_id', '2147483648'), 'telegram'),
+        (rule('telegram_id', '1'), 'email'),
+        (rule('email_user', '1'), 'telegram'),
+    ],
+)
+def test_atomic_audience_rejects_invalid_values_and_cross_channel_fields(
+    condition: BroadcastAudienceCondition, channel: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_audience(BroadcastAudience(conditions=[condition]), channel, set())

@@ -1,13 +1,14 @@
 """Admin routes for broadcasts in cabinet."""
 
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import distinct, func, select
+from sqlalchemy import String, cast, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import BroadcastHistory, PromoGroup, Subscription, SubscriptionStatus, Tariff, User
+from app.database.models import BroadcastHistory, PromoGroup, Subscription, SubscriptionStatus, Tariff, User, UserStatus
 from app.handlers.admin.messages import get_target_users_count
 from app.keyboards.admin import BROADCAST_BUTTONS, DEFAULT_BROADCAST_BUTTONS
 from app.services.broadcast_audience import preview_audience_users, validate_audience
@@ -27,6 +28,7 @@ from ..schemas.broadcasts import (
     BroadcastAudiencePreviewRequest,
     BroadcastAudiencePreviewResponse,
     BroadcastAudiencePreviewUser,
+    BroadcastAudienceUserSearchResponse,
     BroadcastButton,
     BroadcastButtonsResponse,
     BroadcastCreateRequest,
@@ -464,6 +466,60 @@ async def preview_audience(
                 email=user.email if request.channel == 'email' else None,
             )
             for user in page
+        ],
+    )
+
+
+@router.get('/audience/users', response_model=BroadcastAudienceUserSearchResponse)
+async def search_audience_users(
+    field: Literal['telegram_id', 'telegram_username', 'email_user'],
+    q: str = Query(..., min_length=1, max_length=100),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    admin: User = Depends(require_permission('broadcasts:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BroadcastAudienceUserSearchResponse:
+    """Find a person by any part of Telegram ID, username, or email."""
+    term = q.strip()
+    if field == 'telegram_username':
+        term = term.lstrip('@')
+    if not term:
+        return BroadcastAudienceUserSearchResponse(count=0, offset=offset, limit=limit, users=[])
+    if field == 'telegram_id' and not term.isascii():
+        return BroadcastAudienceUserSearchResponse(count=0, offset=offset, limit=limit, users=[])
+    if field == 'telegram_id' and not term.isdigit():
+        return BroadcastAudienceUserSearchResponse(count=0, offset=offset, limit=limit, users=[])
+
+    escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    pattern = f'%{escaped}%'
+    column = {
+        'telegram_id': cast(User.telegram_id, String),
+        'telegram_username': User.username,
+        'email_user': User.email,
+    }[field]
+    match = column.ilike(pattern, escape='\\')
+    conditions = [User.status == UserStatus.ACTIVE.value, column.is_not(None), match]
+    if field == 'email_user':
+        conditions.append(User.email_verified.is_(True))
+    else:
+        conditions.append(User.telegram_id.is_not(None))
+    query = select(User).where(*conditions).order_by(User.id)
+    count = await db.scalar(select(func.count()).select_from(User).where(*conditions)) or 0
+    users = (await db.scalars(query.offset(offset).limit(limit))).all()
+    return BroadcastAudienceUserSearchResponse(
+        count=count,
+        offset=offset,
+        limit=limit,
+        users=[
+            BroadcastAudiencePreviewUser(
+                id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                telegram_id=user.telegram_id,
+                email=user.email,
+            )
+            for user in users
         ],
     )
 

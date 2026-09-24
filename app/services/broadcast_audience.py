@@ -1,6 +1,7 @@
 """Selection shared by broadcast preview and delivery."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from math import isfinite
 
 from sqlalchemy import and_, case, false, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,9 +9,10 @@ from sqlalchemy.orm import load_only
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.cabinet.schemas.broadcasts import BroadcastAudience
+from app.database.constants import POSTGRES_INT4_MAX
 from app.database.models import Subscription, SubscriptionStatus, Tariff, User, UserStatus
 from app.utils.notification_prefs import filter_users_by_broadcast_category
-from app.utils.timezone import local_day_start
+from app.utils.timezone import get_local_timezone, local_day_start
 
 
 TELEGRAM_FIELDS: dict[str, set[str]] = {
@@ -28,9 +30,98 @@ EMAIL_FIELDS: dict[str, set[str]] = {
     'subscription': {'active_email', 'expired_email'},
 }
 
+# New rows are intentionally separate predicates. With several subscriptions,
+# "active AND trial AND tariff X" may be satisfied by different subscriptions.
+COMMON_ATOMIC_FIELDS: dict[str, set[str]] = {
+    'subscription_status': {'active', 'expired'},
+    'subscription_type': {'trial', 'paid'},
+    'traffic_zero': {'zero'},
+    'traffic_gt': set(),  # Numeric value in GB.
+    'traffic_lt': set(),
+    'subscription_end_date': set(),
+    'registration_date': set(),
+    'activity_date': set(),
+    'paid_history': {'yes', 'no'},
+    'source': {'custom_referrals', 'custom_direct'},
+    'registration': {'custom_today', 'custom_week', 'custom_month'},
+    'activity': {'custom_active_today', 'custom_inactive_week', 'custom_inactive_month'},
+    'subscription_end_preset': {'expiring'},
+    'tariff': set(),
+    'auth_type': {'email_only', 'telegram_with_email'},
+}
+TELEGRAM_FIELDS.update(COMMON_ATOMIC_FIELDS)
+TELEGRAM_FIELDS.update({'telegram_id': set(), 'telegram_username': set()})
+EMAIL_FIELDS.update(COMMON_ATOMIC_FIELDS)
+EMAIL_FIELDS['email_user'] = set()
+
+DATE_FIELDS = {'subscription_end_date', 'registration_date', 'activity_date'}
+NUMBER_FIELDS = {'traffic_gt', 'traffic_lt'}
+USER_FIELDS = {'telegram_id', 'telegram_username', 'email_user'}
+
 
 def _has_subscription(*conditions: ColumnElement[bool]) -> ColumnElement[bool]:
     return select(Subscription.id).where(Subscription.user_id == User.id, *conditions).correlate(User).exists()
+
+
+def _date_start(raw: str) -> datetime:
+    return datetime.combine(date.fromisoformat(raw), time.min, tzinfo=get_local_timezone()).astimezone(UTC)
+
+
+def _date_predicate(condition) -> ColumnElement[bool]:
+    column = {
+        'registration_date': User.created_at,
+        'activity_date': User.last_activity,
+        'subscription_end_date': Subscription.end_date,
+    }[condition.field]
+    start = _date_start(condition.value)
+    if condition.operator == 'before':
+        predicate = column < start
+    elif condition.operator == 'after':
+        predicate = column >= _date_start((date.fromisoformat(condition.value) + timedelta(days=1)).isoformat())
+    else:
+        end = _date_start((date.fromisoformat(condition.value_to) + timedelta(days=1)).isoformat())
+        predicate = and_(column >= start, column < end)
+    return _has_subscription(predicate) if condition.field == 'subscription_end_date' else predicate
+
+
+def _condition_predicate(condition, now: datetime) -> ColumnElement[bool]:
+    field, value = condition.field, condition.value
+    live = and_(
+        Subscription.status.in_((SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)),
+        Subscription.end_date > now,
+    )
+    if field in DATE_FIELDS:
+        return _date_predicate(condition)
+    if field in NUMBER_FIELDS:
+        amount = float(value)
+        comparison = (
+            Subscription.traffic_used_gb > amount if field == 'traffic_gt' else Subscription.traffic_used_gb < amount
+        )
+        return _has_subscription(comparison)
+    if field == 'traffic_zero':
+        return _has_subscription(or_(Subscription.traffic_used_gb.is_(None), Subscription.traffic_used_gb <= 0))
+    if field in USER_FIELDS:
+        return User.id == int(value)
+    if field == 'subscription_status':
+        if value == 'active':
+            return _has_subscription(live)
+        expired = _has_subscription(
+            or_(
+                Subscription.status.in_((SubscriptionStatus.EXPIRED.value, SubscriptionStatus.DISABLED.value)),
+                Subscription.end_date <= now,
+            )
+        )
+        return and_(
+            ~_has_subscription(live),
+            or_(expired, and_(~_has_subscription(), User.has_had_paid_subscription.is_(True))),
+        )
+    if field == 'subscription_type':
+        return _has_subscription(Subscription.is_trial.is_(value == 'trial'))
+    if field == 'paid_history':
+        return User.has_had_paid_subscription.is_(value == 'yes')
+    if field == 'tariff':
+        return _has_subscription(live, Subscription.tariff_id == int(value.removeprefix('tariff_')))
+    return _target_predicate(value, now)
 
 
 def _target_predicate(value: str, now: datetime) -> ColumnElement[bool]:
@@ -109,13 +200,55 @@ def validate_audience(audience: BroadcastAudience, channel: str, tariff_ids: set
     """Reject forged field/value combinations and unknown tariffs."""
     fields = TELEGRAM_FIELDS if channel == 'telegram' else EMAIL_FIELDS
     for condition in audience.conditions:
-        if condition.field == 'tariff' and channel == 'telegram':
+        if condition.field not in fields:
+            raise ValueError('Invalid audience filter')
+        if condition.field in DATE_FIELDS:
+            if condition.operator not in ('before', 'after', 'between'):
+                raise ValueError('Invalid date comparison')
+            try:
+                start = date.fromisoformat(condition.value)
+                if start.isoformat() != condition.value:
+                    raise ValueError
+                if condition.operator == 'between':
+                    end = date.fromisoformat(condition.value_to or '')
+                    if end.isoformat() != condition.value_to or end < start or end == date.max:
+                        raise ValueError
+                elif condition.value_to is not None:
+                    raise ValueError
+                if condition.operator == 'after' and start == date.max:
+                    raise ValueError
+            except ValueError as exc:
+                raise ValueError('Invalid audience date') from exc
+            continue
+        if condition.operator not in ('eq', 'ne') or condition.value_to is not None:
+            raise ValueError('Invalid audience comparison')
+        if condition.field in NUMBER_FIELDS:
+            if condition.operator != 'eq':
+                raise ValueError('Invalid traffic comparison')
+            try:
+                amount = float(condition.value)
+            except ValueError as exc:
+                raise ValueError('Invalid traffic amount') from exc
+            if not isfinite(amount) or amount < 0 or amount > 1_000_000:
+                raise ValueError('Invalid traffic amount')
+            continue
+        if condition.field == 'traffic_zero' and condition.operator != 'eq':
+            raise ValueError('Invalid traffic comparison')
+        if condition.field in USER_FIELDS:
+            if (
+                not condition.value.isascii()
+                or not condition.value.isdigit()
+                or not 0 < int(condition.value) <= POSTGRES_INT4_MAX
+            ):
+                raise ValueError('Invalid user filter')
+            continue
+        if condition.field == 'tariff':
             if not condition.value.startswith('tariff_'):
                 raise ValueError('Invalid tariff filter')
             raw_id = condition.value.removeprefix('tariff_')
             if not raw_id.isdigit() or int(raw_id) not in tariff_ids:
                 raise ValueError('Invalid tariff filter')
-        elif condition.field not in fields or condition.value not in fields[condition.field]:
+        elif condition.value not in fields[condition.field]:
             raise ValueError('Invalid audience filter')
 
 
@@ -124,7 +257,7 @@ def audience_predicate(audience: BroadcastAudience, now: datetime | None = None)
     current_time = now or datetime.now(UTC)
 
     def matches(condition) -> ColumnElement[bool]:
-        predicate = _target_predicate(condition.value, current_time)
+        predicate = _condition_predicate(condition, current_time)
         if condition.operator == 'ne':
             # SQL NOT NULL is still NULL; an unset activity date must also
             # satisfy the opposite of an activity condition.

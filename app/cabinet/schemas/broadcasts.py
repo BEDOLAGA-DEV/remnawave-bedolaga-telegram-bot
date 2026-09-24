@@ -43,9 +43,11 @@ class BroadcastFiltersResponse(BaseModel):
 
 
 class BroadcastAudienceCondition(BaseModel):
-    field: str
-    operator: Literal['eq', 'ne'] = 'eq'
-    value: str
+    field: str = Field(..., max_length=64)
+    operator: Literal['eq', 'ne', 'before', 'after', 'between'] = 'eq'
+    value: str = Field(..., max_length=128)
+    value_to: str | None = Field(default=None, max_length=10)
+    label: str | None = Field(default=None, max_length=512)  # Display only; value is the stable users.id.
     join: Literal['and', 'or'] | None = None  # Relation to the previous row.
 
 
@@ -227,6 +229,13 @@ class BroadcastAudiencePreviewUser(BaseModel):
 
 
 class BroadcastAudiencePreviewResponse(BaseModel):
+    count: int
+    offset: int
+    limit: int
+    users: list[BroadcastAudiencePreviewUser]
+
+
+class BroadcastAudienceUserSearchResponse(BaseModel):
     count: int
     offset: int
     limit: int
