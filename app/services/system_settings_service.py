@@ -206,6 +206,7 @@ class BotConfigurationService:
         'INFO_PAGES': '📄 Инфо-страницы',
         'GRACE_ACCESS': '🛟 Grace-доступ',
         'BSCHEK': '📶 BSCHEKER (bschekbot)',
+        'DPICHECKER': '🧱 DPI//CHECKER',
     }
 
     CATEGORY_DESCRIPTIONS: dict[str, str] = {
@@ -291,6 +292,10 @@ class BotConfigurationService:
         'BSCHEK': (
             'Проверка хостов и конфигов глазами мобильных операторов РФ через bschekbot API: '
             'ключ, эталонная подписка панели, потолок цены одной задачи.'
+        ),
+        'DPICHECKER': (
+            'Проверки VPN-ключей, адресов и MTProto из сетей России, Китая, Ирана и Туркменистана '
+            'через API DPI//CHECKER: включение и ключ API. Раздел — в админке кабинета.'
         ),
     }
 
@@ -534,6 +539,7 @@ class BotConfigurationService:
         'BAN_MSG_': 'BAN_NOTIFICATIONS',
         'GRACE_ACCESS_': 'GRACE_ACCESS',
         'BSCHEK_': 'BSCHEK',
+        'DPICHECKER_': 'DPICHECKER',
     }
 
     CHOICES: dict[str, list[ChoiceOption]] = {

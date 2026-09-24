@@ -1584,6 +1584,14 @@ class Settings(BaseSettings):
     BSCHEK_REFERENCE_SUBSCRIPTION: str | None = None  # shortUuid эталонной подписки панели
     BSCHEK_JOB_COST_LIMIT_KOPEKS: int = 0  # потолок цены одной задачи, 0 — без потолка
 
+    # DPI//CHECKER (dpichecker.st): проверки VPN/IP/MTProto из сетей РФ, Китая, Ирана, Туркменистана — только кабинет
+    DPICHECKER_ENABLED: bool = False
+    DPICHECKER_API_URL: str = 'https://dpichecker.st/api/v1'
+    DPICHECKER_API_KEY: str | None = (
+        None  # X-API-Key; выпускается в боте DPI//CHECKER (Главное меню → API) или на сайте
+    )
+    DPICHECKER_REQUEST_TIMEOUT: int = 150  # long-poll /checks/{id}/wait держит до 120 с
+
     # SOCKS5 proxy for routing bot traffic to Telegram API
     # Format: socks5://user:password@host:port or socks5://host:port
     PROXY_URL: str | None = None
@@ -4387,6 +4395,18 @@ class Settings(BaseSettings):
 
     def is_bschek_configured(self) -> bool:
         return bool(self.BSCHEK_API_KEY)
+
+    def is_dpichecker_enabled(self) -> bool:
+        return bool(self.DPICHECKER_ENABLED)
+
+    def is_dpichecker_configured(self) -> bool:
+        return bool(self.DPICHECKER_API_KEY)
+
+    def get_dpichecker_webhook_url(self) -> str | None:
+        """Куда DPI//CHECKER шлёт события; без внешнего адреса бота — никуда."""
+        if not self.WEBHOOK_URL:
+            return None
+        return f'{self.WEBHOOK_URL.rstrip("/")}/dpichecker/webhook'
 
     def get_bschek_api_url(self) -> str:
         return (self.BSCHEK_API_URL or 'https://bsbord.com/v1').rstrip('/')
