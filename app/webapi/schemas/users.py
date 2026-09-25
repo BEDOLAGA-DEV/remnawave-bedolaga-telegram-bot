@@ -56,6 +56,34 @@ class UserResponse(BaseModel):
     subscriptions: list[SubscriptionSummary] = Field(default_factory=list)
 
 
+class UserNotifyRequest(BaseModel):
+    """Сообщение пользователю от имени сервиса.
+
+    Текст готовит вызывающая сторона: ручка ничего не сочиняет и не решает,
+    что человеку сказать, — только доставляет по доступным каналам.
+    """
+
+    text: str = Field(..., min_length=1, max_length=4000, description='Text for Telegram / plain part of the email')
+    channels: list[str] | None = Field(
+        default=None,
+        description='Subset of "telegram", "email". Omit to use every channel the user has.',
+    )
+    email_subject: str | None = Field(default=None, max_length=200)
+    email_html: str | None = Field(default=None, description='HTML body; falls back to text')
+    parse_mode: str | None = Field(default='HTML', description='Telegram parse mode, null for plain text')
+
+
+class UserNotifyChannelResult(BaseModel):
+    sent: bool
+    reason: str | None = Field(default=None, description='Why it was skipped or failed')
+
+
+class UserNotifyResponse(BaseModel):
+    user_id: int
+    telegram: UserNotifyChannelResult
+    email: UserNotifyChannelResult
+
+
 class UserListResponse(BaseModel):
     items: list[UserResponse]
     total: int

@@ -172,6 +172,9 @@
 - `app/cabinet/routes/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/cabinet/routes/abuse.py` — Python-модуль
+  Классы: `AbuseNoticeResponse`, `AbuseStatusResponse`, `AbuseViolationResponse`, `AbuseOverviewResponse`
+  Функции: `my_abuse_status` — Предупреждение для самого клиента., `user_abuse_overview` — Вердикт и история нарушений клиента — для оператора.
 - `app/cabinet/routes/account_linking.py` — Python-модуль
   Классы: `OAuthStateData`, `LinkedProvider`, `LinkedProvidersResponse`, `LinkInitResponse`, `LinkCallbackRequest`, `LinkCallbackResponse`, `UnlinkResponse`, `LinkTelegramRequest` (1 методов), `MergePreviewSubscription`, `MergePreviewUser`, `MergePreviewResponse`, `MergeRequest`, `MergeResponse`, `ServerCompleteRequest`, `ServerCompleteResponse`
   Функции: `get_linked_providers` — Return all auth methods with their link status for the current user., `link_provider_init` — Start OAuth flow for linking a new provider to the current account., `link_provider_callback` — Handle OAuth callback for linking a provider to the current account., `unlink_provider` — Unlink an OAuth provider from the current account., `link_telegram` — Link Telegram account via WebApp initData, OIDC id_token, or Login Widget., `link_server_complete` — Complete OAuth account linking without JWT., `get_merge_preview_endpoint` — Preview the result of merging two accounts before confirming., `execute_merge_endpoint` — Execute account merge. Consumes the merge token (one-time use).
@@ -1427,6 +1430,9 @@
 - `app/services/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/services/abuse_api_service.py` — Python-модуль
+  Классы: нет
+  Функции: `is_configured`, `get_summary` — Вердикт по клиенту: уровень доверия и последнее предупреждение., `get_violations` — История нарушений клиента — для операторов., `is_limited` — Ограничен ли клиент по решению антифрода.
 - `app/services/account_merge_service.py` — Python-модуль
   Классы: нет
   Функции: `get_merge_preview` — Возвращает превью данных обоих аккаунтов для подтверждения мержа., `flush_remnawave_deletions` — Удаляет (или деактивирует как fallback) пользователей RemnaWave., `execute_merge` — Выполняет атомарный мерж двух аккаунтов. Caller отвечает за commit/rollback.
@@ -2462,7 +2468,7 @@
   Функции: `list_user_messages`, `create_user_message_endpoint`, `update_user_message_endpoint`, `toggle_user_message_endpoint`, `delete_user_message_endpoint`
 - `app/webapi/routes/users.py` — Python-модуль
   Классы: нет
-  Функции: `list_users`, `get_user`, `get_user_by_telegram_id_endpoint` — Get user by Telegram ID, `create_user_endpoint`, `update_user_endpoint`, `update_balance`, `deposit_balance` — Ручное пополнение баланса — как настоящий платёж, но инициированное поддержкой., `create_user_subscription` — Создать или заменить подписку для пользователя., `patch_user_subscription`, `delete_user_subscription` — Деактивировать подписку пользователя.
+  Функции: `list_users`, `get_user`, `get_user_by_telegram_id_endpoint` — Get user by Telegram ID, `create_user_endpoint`, `update_user_endpoint`, `notify_user` — Send a service message to the user over Telegram and email., `update_balance`, `deposit_balance` — Ручное пополнение баланса — как настоящий платёж, но инициированное поддержкой., `create_user_subscription` — Создать или заменить подписку для пользователя., `patch_user_subscription`, `delete_user_subscription` — Деактивировать подписку пользователя.
 - `app/webapi/routes/webhooks.py` — Python-модуль
   Классы: нет
   Функции: `list_webhooks_endpoint` — Список webhooks., `get_webhook_stats` — Статистика по webhooks., `get_webhook` — Получить webhook по ID., `create_webhook_endpoint` — Создать новый webhook., `update_webhook_endpoint` — Обновить webhook., `delete_webhook_endpoint` — Удалить webhook., `list_webhook_deliveries` — Список доставок webhook.
@@ -2560,7 +2566,7 @@
   Классы: `UserMessageResponse`, `UserMessageCreateRequest`, `UserMessageUpdateRequest` (1 методов), `UserMessageListResponse`
   Функции: нет
 - `app/webapi/schemas/users.py` — Python-модуль
-  Классы: `PromoGroupSummary`, `SubscriptionSummary`, `UserResponse`, `UserListResponse`, `UserCreateRequest`, `UserUpdateRequest`, `BalanceUpdateRequest`, `BalanceDepositRequest`, `BalanceDepositResponse`, `UserSubscriptionCreateRequest`
+  Классы: `PromoGroupSummary`, `SubscriptionSummary`, `UserResponse`, `UserNotifyRequest`, `UserNotifyChannelResult`, `UserNotifyResponse`, `UserListResponse`, `UserCreateRequest`, `UserUpdateRequest`, `BalanceUpdateRequest`, `BalanceDepositRequest`, `BalanceDepositResponse`, `UserSubscriptionCreateRequest`
   Функции: нет
 - `app/webapi/schemas/webhooks.py` — Python-модуль
   Классы: `WebhookCreateRequest`, `WebhookUpdateRequest`, `WebhookResponse`, `WebhookListResponse`, `WebhookDeliveryResponse`, `WebhookDeliveryListResponse`, `WebhookStatsResponse`
@@ -2600,6 +2606,7 @@
 
 ## docs
 
+- `docs/abuse-api.md` — файл
 - `docs/apple-iap-consumable-topups.md` — файл
 - `docs/apple-iap-ios-requirements.md` — файл
 - `docs/contests-api.md` — файл
@@ -3177,6 +3184,9 @@
 - `tests/cabinet/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/cabinet/test_abuse_api_service.py` — Python-модуль
+  Классы: нет
+  Функции: `test_disabled_service_is_not_configured`, `test_missing_key_is_not_configured`, `test_unconfigured_service_answers_nothing` — Не настроен — вопросов к клиенту нет, а не «неизвестно, подозрительный»., `test_unreachable_service_does_not_block_anyone` — Сеть легла — клиент остаётся чистым, экраны кабинета работают., `test_limited_level_is_recognised`, `test_warned_customer_is_not_limited` — «Замечен» — повод написать человеку, а не отказывать ему в триале., `test_client_response_cannot_carry_detection_details` — Схема клиентского ответа не содержит полей со скорингом и видами.
 - `tests/cabinet/test_admin_create_update_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `test_schema_pairs_are_discovered` — Пустой список сделал бы сторож ниже бессмысленно зелёным., `test_shared_fields_share_constraints`, `test_create_tariff_accepts_zero_as_no_highlight`, `test_create_tariff_keeps_marked_period`, `test_create_tariff_rejects_negative_highlight`, `test_pinned_message_can_be_media_only`, `test_news_update_enforces_same_lengths_as_create`, `test_update_tariff_zero_clears_highlight`, `test_update_tariff_moves_highlight_to_another_period`, `test_update_tariff_without_the_field_keeps_highlight`

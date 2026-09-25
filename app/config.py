@@ -219,6 +219,13 @@ class Settings(BaseSettings):
     # пополнение ради подарка / просто денег не должно молча тратиться на подписку.
     CART_AUTOPURCHASE_INTENT_TTL_SECONDS: int = 1800  # 30 минут (хватает на оплату, но не на «забытую» корзину)
 
+    # Внешний антифрод: бот не видит подключений и сам ничего не считает,
+    # только спрашивает и показывает. Не настроен — вопросов к клиенту нет.
+    ABUSE_API_ENABLED: bool = False
+    ABUSE_API_URL: str | None = None
+    ABUSE_API_KEY: str | None = None
+    ABUSE_API_TIMEOUT: int = 5
+
     REMNAWAVE_API_URL: str | None = None
     REMNAWAVE_API_KEY: str | None = None
     REMNAWAVE_SECRET_KEY: str | None = None
