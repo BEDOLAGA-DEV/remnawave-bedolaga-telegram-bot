@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Integer, and_, delete as sa_delete, func, literal, or_, select
+from sqlalchemy import Integer, delete as sa_delete, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -38,29 +38,19 @@ from app.database.crud.user_device_alias import (
 )
 from app.database.crud.user_promo_group import sync_user_primary_promo_group
 from app.database.models import (
-    ButtonClickLog,
-    CabinetRefreshToken,
-    Coupon,
     GuestPurchase,
     PaymentMethod,
-    PollResponse,
-    PromoCode,
-    PromoCodeUse,
     PromoGroup,
     ReferralEarning,
     Subscription,
-    SubscriptionEvent,
     SubscriptionServer,
     SubscriptionStatus,
-    Ticket,
     TrafficPurchase,
     Transaction,
     TransactionType,
     User,
     UserPromoGroup,
     UserStatus,
-    WheelSpin,
-    WithdrawalRequest,
 )
 from app.services.panel_sync import (
     ADMIN_PULL,
@@ -75,7 +65,7 @@ from app.services.panel_sync import (
 )
 from app.services.panel_sync.fields import narrow_push_fields
 from app.services.permission_service import PermissionService
-from app.services.user_action_log_service import CLICK_PREFIX, SCREEN_PREFIX
+from app.services.user_activity_service import UnknownActivityTypes, collect_user_activity
 from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import coerce_panel_device_limit
 from app.utils.timezone import local_day_start, panel_datetime_to_utc
@@ -128,7 +118,6 @@ from ..schemas.users import (
     UpdateSubscriptionResponse,
     UpdateUserStatusRequest,
     UpdateUserStatusResponse,
-    UserActivityItem,
     UserActivityResponse,
     UserAvailableTariffItem,
     UserAvailableTariffsResponse,
@@ -3397,279 +3386,6 @@ async def get_user_transactions(
     }
 
 
-def _activity_sources(user_id: int) -> dict[str, tuple]:
-    """Источники таймлайна активности: type -> (select, count_select, mapper).
-
-    Дедупликация пересечений:
-    - транзакции, на которые ссылается SubscriptionEvent.transaction_id или
-      ReferralEarning.referral_transaction_id, исключаются (событие/начисление
-      богаче: message/reason);
-    - события promocode_activation исключаются — PromoCodeUse полнее (события
-      пишутся только вместе с админ-уведомлениями).
-    """
-    event_referenced = select(SubscriptionEvent.transaction_id).where(
-        SubscriptionEvent.user_id == user_id,
-        SubscriptionEvent.transaction_id.is_not(None),
-    )
-    earning_referenced = select(ReferralEarning.referral_transaction_id).where(
-        ReferralEarning.user_id == user_id,
-        ReferralEarning.referral_transaction_id.is_not(None),
-    )
-    transactions_where = and_(
-        Transaction.user_id == user_id,
-        Transaction.id.not_in(event_referenced),
-        Transaction.id.not_in(earning_referenced),
-    )
-    events_where = and_(
-        SubscriptionEvent.user_id == user_id,
-        SubscriptionEvent.event_type != 'promocode_activation',
-    )
-
-    def _map_transaction(t: Transaction) -> UserActivityItem:
-        return UserActivityItem(
-            type='transaction',
-            subtype=t.type,
-            title=t.description,
-            amount_kopeks=t.amount_kopeks,
-            timestamp=t.created_at,
-            meta={'payment_method': t.payment_method, 'is_completed': t.is_completed},
-        )
-
-    def _map_event(e: SubscriptionEvent) -> UserActivityItem:
-        return UserActivityItem(
-            type='event',
-            subtype=e.event_type,
-            title=e.message,
-            amount_kopeks=e.amount_kopeks,
-            timestamp=e.occurred_at,
-            meta=e.extra if isinstance(e.extra, dict) else None,
-        )
-
-    def _map_promocode(row) -> UserActivityItem:
-        use, code = row
-        return UserActivityItem(type='promocode', source='bot', title=code, timestamp=use.used_at)
-
-    def _map_coupon(c: Coupon) -> UserActivityItem:
-        return UserActivityItem(type='coupon', subtype=c.status, title=c.token, timestamp=c.redeemed_at)
-
-    def _map_ticket(t: Ticket) -> UserActivityItem:
-        return UserActivityItem(
-            type='ticket',
-            subtype=t.status,
-            title=t.title,
-            timestamp=t.created_at,
-            meta={'ticket_id': t.id},
-        )
-
-    def _map_wheel(w: WheelSpin) -> UserActivityItem:
-        return UserActivityItem(
-            type='wheel_spin',
-            subtype=w.prize_type,
-            source='bot',
-            title=w.prize_display_name,
-            amount_kopeks=w.prize_value_kopeks,
-            timestamp=w.created_at,
-        )
-
-    def _map_poll(p: PollResponse) -> UserActivityItem:
-        return UserActivityItem(
-            type='poll',
-            source='bot',
-            amount_kopeks=p.reward_amount_kopeks if p.reward_given else None,
-            timestamp=p.completed_at,
-        )
-
-    def _map_gift_sent(g: GuestPurchase) -> UserActivityItem:
-        return UserActivityItem(
-            type='gift_sent',
-            subtype=g.status,
-            title=g.gift_recipient_value,
-            amount_kopeks=g.amount_kopeks,
-            timestamp=g.paid_at or g.created_at,
-        )
-
-    def _map_gift_received(g: GuestPurchase) -> UserActivityItem:
-        return UserActivityItem(
-            type='gift_received',
-            subtype=g.status,
-            amount_kopeks=g.amount_kopeks,
-            timestamp=g.delivered_at or g.created_at,
-        )
-
-    def _map_earning(e: ReferralEarning) -> UserActivityItem:
-        return UserActivityItem(
-            type='referral_earning',
-            subtype=e.reason,
-            amount_kopeks=e.amount_kopeks,
-            timestamp=e.created_at,
-        )
-
-    def _map_login(token: CabinetRefreshToken) -> UserActivityItem:
-        return UserActivityItem(
-            type='cabinet_login',
-            source='cabinet',
-            title=token.device_info,
-            timestamp=token.created_at,
-        )
-
-    def _map_withdrawal(w: WithdrawalRequest) -> UserActivityItem:
-        return UserActivityItem(
-            type='withdrawal',
-            subtype=w.status,
-            amount_kopeks=w.amount_kopeks,
-            timestamp=w.created_at,
-        )
-
-    def _map_button_click(c: ButtonClickLog) -> UserActivityItem:
-        return UserActivityItem(
-            type='button_click',
-            subtype=c.button_type if c.button_type in ('command', 'payment', 'message') else None,
-            source='bot',
-            title=c.button_text or c.callback_data or c.button_id,
-            timestamp=c.clicked_at,
-            meta={'callback_data': c.callback_data} if c.callback_data else None,
-        )
-
-    def _web_action(c: ButtonClickLog, *, type_: str, source: str) -> UserActivityItem:
-        # Открытие экрана хранится как 'SCREEN <путь>', нажатие — как
-        # 'CLICK <подпись>' — в таймлайне это отдельные подтипы, а не
-        # «действие» с техническим заголовком.
-        subtype = None
-        title = c.button_id
-        for prefix, name in ((SCREEN_PREFIX, 'screen'), (CLICK_PREFIX, 'click')):
-            if c.button_id.startswith(prefix):
-                subtype, title = name, c.button_id[len(prefix) :]
-                break
-        return UserActivityItem(
-            type=type_,
-            subtype=subtype,
-            source=source,
-            title=title,
-            timestamp=c.clicked_at,
-            meta={'path': c.callback_data} if c.callback_data else None,
-        )
-
-    def _map_cabinet_action(c: ButtonClickLog) -> UserActivityItem:
-        return _web_action(c, type_='cabinet_action', source='cabinet')
-
-    def _map_miniapp_action(c: ButtonClickLog) -> UserActivityItem:
-        return _web_action(c, type_='miniapp_action', source='miniapp')
-
-    # button_click_logs делится на три источника: нажатия кнопок бота (пишет
-    # ButtonStatsMiddleware), действия в кабинете (button_type='cabinet') и
-    # действия в Mini App (button_type='miniapp') — оба пишет
-    # user_action_log_service. Раньше третьего не было вовсе, и человек,
-    # живущий в Mini App, выглядел в таймлайне неактивным.
-    _WEB_SURFACES = ('cabinet', 'miniapp')
-    bot_clicks_where = and_(
-        ButtonClickLog.user_id == user_id,
-        or_(ButtonClickLog.button_type.is_(None), ButtonClickLog.button_type.not_in(_WEB_SURFACES)),
-    )
-    cabinet_actions_where = and_(ButtonClickLog.user_id == user_id, ButtonClickLog.button_type == 'cabinet')
-    miniapp_actions_where = and_(ButtonClickLog.user_id == user_id, ButtonClickLog.button_type == 'miniapp')
-
-    return {
-        'transaction': (
-            select(Transaction).where(transactions_where),
-            select(func.count(Transaction.id)).where(transactions_where),
-            Transaction.created_at,
-            _map_transaction,
-        ),
-        'event': (
-            select(SubscriptionEvent).where(events_where),
-            select(func.count(SubscriptionEvent.id)).where(events_where),
-            SubscriptionEvent.occurred_at,
-            _map_event,
-        ),
-        'promocode': (
-            select(PromoCodeUse, PromoCode.code)
-            .join(PromoCode, PromoCode.id == PromoCodeUse.promocode_id)
-            .where(PromoCodeUse.user_id == user_id),
-            select(func.count(PromoCodeUse.id)).where(PromoCodeUse.user_id == user_id),
-            PromoCodeUse.used_at,
-            _map_promocode,
-        ),
-        'coupon': (
-            select(Coupon).where(Coupon.redeemed_by == user_id, Coupon.redeemed_at.is_not(None)),
-            select(func.count(Coupon.id)).where(Coupon.redeemed_by == user_id, Coupon.redeemed_at.is_not(None)),
-            Coupon.redeemed_at,
-            _map_coupon,
-        ),
-        'ticket': (
-            select(Ticket).where(Ticket.user_id == user_id),
-            select(func.count(Ticket.id)).where(Ticket.user_id == user_id),
-            Ticket.created_at,
-            _map_ticket,
-        ),
-        'wheel_spin': (
-            select(WheelSpin).where(WheelSpin.user_id == user_id),
-            select(func.count(WheelSpin.id)).where(WheelSpin.user_id == user_id),
-            WheelSpin.created_at,
-            _map_wheel,
-        ),
-        'poll': (
-            select(PollResponse).where(PollResponse.user_id == user_id, PollResponse.completed_at.is_not(None)),
-            select(func.count(PollResponse.id)).where(
-                PollResponse.user_id == user_id, PollResponse.completed_at.is_not(None)
-            ),
-            PollResponse.completed_at,
-            _map_poll,
-        ),
-        'gift_sent': (
-            select(GuestPurchase).where(GuestPurchase.buyer_user_id == user_id, GuestPurchase.is_gift.is_(True)),
-            select(func.count(GuestPurchase.id)).where(
-                GuestPurchase.buyer_user_id == user_id, GuestPurchase.is_gift.is_(True)
-            ),
-            GuestPurchase.created_at,
-            _map_gift_sent,
-        ),
-        'gift_received': (
-            select(GuestPurchase).where(GuestPurchase.user_id == user_id, GuestPurchase.is_gift.is_(True)),
-            select(func.count(GuestPurchase.id)).where(
-                GuestPurchase.user_id == user_id, GuestPurchase.is_gift.is_(True)
-            ),
-            GuestPurchase.created_at,
-            _map_gift_received,
-        ),
-        'referral_earning': (
-            select(ReferralEarning).where(ReferralEarning.user_id == user_id),
-            select(func.count(ReferralEarning.id)).where(ReferralEarning.user_id == user_id),
-            ReferralEarning.created_at,
-            _map_earning,
-        ),
-        'cabinet_login': (
-            select(CabinetRefreshToken).where(CabinetRefreshToken.user_id == user_id),
-            select(func.count(CabinetRefreshToken.id)).where(CabinetRefreshToken.user_id == user_id),
-            CabinetRefreshToken.created_at,
-            _map_login,
-        ),
-        'withdrawal': (
-            select(WithdrawalRequest).where(WithdrawalRequest.user_id == user_id),
-            select(func.count(WithdrawalRequest.id)).where(WithdrawalRequest.user_id == user_id),
-            WithdrawalRequest.created_at,
-            _map_withdrawal,
-        ),
-        'button_click': (
-            select(ButtonClickLog).where(bot_clicks_where),
-            select(func.count(ButtonClickLog.id)).where(bot_clicks_where),
-            ButtonClickLog.clicked_at,
-            _map_button_click,
-        ),
-        'cabinet_action': (
-            select(ButtonClickLog).where(cabinet_actions_where),
-            select(func.count(ButtonClickLog.id)).where(cabinet_actions_where),
-            ButtonClickLog.clicked_at,
-            _map_cabinet_action,
-        ),
-        'miniapp_action': (
-            select(ButtonClickLog).where(miniapp_actions_where),
-            select(func.count(ButtonClickLog.id)).where(miniapp_actions_where),
-            ButtonClickLog.clicked_at,
-            _map_miniapp_action,
-        ),
-    }
-
-
 @router.get('/{user_id}/activity', response_model=UserActivityResponse)
 async def get_user_activity(
     user_id: int,
@@ -3692,37 +3408,13 @@ async def get_user_activity(
             detail='User not found',
         )
 
-    sources = _activity_sources(user.id)
-    if types:
-        requested = {t.strip() for t in types.split(',') if t.strip()}
-        unknown = requested - sources.keys()
-        if unknown:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Unknown activity types: {", ".join(sorted(unknown))}',
-            )
-        sources = {key: value for key, value in sources.items() if key in requested}
-
-    window = offset + limit
-    merged: list[UserActivityItem] = []
-    total = 0
-    for query, count_query, ts_column, mapper in sources.values():
-        total += (await db.execute(count_query)).scalar() or 0
-        rows = (await db.execute(query.order_by(ts_column.desc()).limit(window))).all()
-        for row in rows:
-            value = row[0] if len(row) == 1 else row
-            item = mapper(value)
-            if item.timestamp is not None:
-                merged.append(item)
-
-    merged.sort(key=lambda item: item.timestamp, reverse=True)
-
-    return UserActivityResponse(
-        items=merged[offset : offset + limit],
-        total=total,
-        offset=offset,
-        limit=limit,
-    )
+    try:
+        return await collect_user_activity(db, user.id, offset=offset, limit=limit, types=types)
+    except UnknownActivityTypes as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
 
 
 # === Panel Sync ===

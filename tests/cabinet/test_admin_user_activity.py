@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.cabinet.routes.admin_users import _activity_sources, get_user_activity
+from app.cabinet.routes.admin_users import get_user_activity
+from app.services.user_activity_service import activity_sources
 
 
 NOW = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
@@ -23,7 +24,7 @@ def test_activity_route_registered(registered_paths) -> None:
 
 
 def test_activity_sources_shape() -> None:
-    sources = _activity_sources(1)
+    sources = activity_sources(1)
 
     assert set(sources) == {
         'transaction',
@@ -50,7 +51,7 @@ def test_activity_sources_shape() -> None:
 def test_activity_dedup_filters_in_sql() -> None:
     """Транзакции, покрытые событиями/начислениями, исключаются на уровне SQL;
     события promocode_activation уступают PromoCodeUse."""
-    sources = _activity_sources(1)
+    sources = activity_sources(1)
 
     transactions_sql = str(sources['transaction'][0])
     assert 'NOT IN' in transactions_sql.upper()
@@ -169,7 +170,7 @@ async def test_activity_types_filter_limits_sources() -> None:
 
 def test_button_click_sources_split_by_type() -> None:
     """Клики бота и действия кабинета — раздельные источники одной таблицы."""
-    sources = _activity_sources(1)
+    sources = activity_sources(1)
 
     bot_sql = str(sources['button_click'][0])
     cabinet_sql = str(sources['cabinet_action'][0])

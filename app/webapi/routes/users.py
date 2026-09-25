@@ -30,6 +30,11 @@ from app.database.crud.user import (
 from app.database.models import PaymentMethod, PromoGroup, Subscription, User, UserStatus
 from app.services.manual_topup_service import ManualTopupKeyConflict, credit_manual_topup
 from app.services.subscription_service import SubscriptionService
+from app.services.user_activity_service import (
+    UnknownActivityTypes,
+    UserActivityResponse,
+    collect_user_activity,
+)
 from app.utils.text_search import contains_conditions
 
 from ..dependencies import get_db_session, require_api_token
@@ -700,3 +705,29 @@ async def delete_user_subscription(
     # Перезагружаем пользователя
     user = await get_user_by_id(db, user.id)
     return _serialize_user(user)
+
+
+@router.get('/{user_id}/activity', response_model=UserActivityResponse)
+async def get_user_activity(
+    user_id: int,
+    _: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    types: str | None = Query(None, description='CSV filter by record type, see UserActivityItem.type'),
+) -> UserActivityResponse:
+    """Таймлайн активности пользователя: бот, кабинет и мини-апп одной лентой.
+
+    Та же лента, что показывает админка кабинета: транзакции, события подписки,
+    промокоды, купоны, обращения, колесо, опросы, подарки, реферальные
+    начисления, выводы, входы в кабинет и клики по кнопкам. ``user_id``
+    принимает и telegram_id, и внутренний id — как остальные ручки раздела.
+    """
+    user = await get_user_by_telegram_id(db, user_id) or await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+
+    try:
+        return await collect_user_activity(db, user.id, offset=offset, limit=limit, types=types)
+    except UnknownActivityTypes as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
