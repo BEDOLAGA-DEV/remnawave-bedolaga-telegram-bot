@@ -5178,6 +5178,9 @@
 - `tests/webapi/test_subscription_sync_routes.py` — Python-модуль
   Классы: нет
   Функции: `test_users_subscription_trial_calls_remnawave_sync`, `test_users_subscription_paid_calls_remnawave_sync`, `test_users_search_filter_adds_internal_id_for_int32`, `test_users_search_filter_skips_internal_id_for_out_of_int32`, `test_subscriptions_extend_calls_remnawave_sync`, `test_subscriptions_extend_rolls_back_when_sync_fails`, `test_subscriptions_extend_returns_500_when_rollback_fails`, `test_users_patch_subscription_delegates_to_post` — PATCH /users/{id}/subscription is a documented alias for POST and must route, `test_users_patch_subscription_route_returns_201` — The PATCH-as-upsert alias is intentionally annotated 201 (not the REST-typical 200), `test_users_subscription_replace_existing_restores_on_sync_failure` — When replace_existing=True and Remnawave sync fails, the user's prior subscription
+- `tests/webapi/test_ticket_media_items.py` — Python-модуль
+  Классы: нет
+  Функции: `test_gallery_is_serialized`, `test_single_file_message_has_no_gallery`, `test_gallery_alone_still_counts_as_media` — У пачки может не быть основного file_id — сообщение всё равно с медиа., `test_broken_gallery_does_not_break_the_answer`
 
 ### tests/webserver
 
