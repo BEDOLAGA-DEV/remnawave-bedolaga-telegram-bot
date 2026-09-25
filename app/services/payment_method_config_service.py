@@ -218,8 +218,10 @@ def _get_method_defaults() -> dict:
             'default_min': settings.ETOPLATEZHI_MIN_AMOUNT_KOPEKS,
             'default_max': settings.ETOPLATEZHI_MAX_AMOUNT_KOPEKS,
             'available_sub_options': [
-                {'id': 'card', 'name': 'Карта'},
                 {'id': 'sbp', 'name': 'СБП'},
+                {'id': 'card', 'name': 'Карта'},
+                {'id': 'sberpay', 'name': 'SberPay'},
+                {'id': 'yoomoney', 'name': 'ЮMoney'},
             ],
         },
         'antilopay': {
