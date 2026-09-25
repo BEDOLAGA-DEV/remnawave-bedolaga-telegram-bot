@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: remnawave_bot_db
     restart: unless-stopped
     environment:
@@ -9,7 +9,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_123}
       POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # ВАЖНО: в образе postgres:18+ точка монтирования сменилась с
+      # /var/lib/postgresql/data на /var/lib/postgresql (PGDATA теперь
+      # /var/lib/postgresql/18/docker — под pg_upgrade между мажорами).
+      # Старый маунт оставил бы данные ВНЕ тома. Апгрейд с 15:
+      # см. docs/postgresql-18-upgrade.md
+      - postgres_data:/var/lib/postgresql
     networks:
       - bot_network
       - remnawave-network # Подключаем к сети панели
