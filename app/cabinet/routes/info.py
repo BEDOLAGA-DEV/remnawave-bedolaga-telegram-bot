@@ -47,6 +47,20 @@ def _get_available_language_codes() -> list[str]:
     return codes
 
 
+def _default_language_code() -> str:
+    return _normalize_language_code(settings.DEFAULT_LANGUAGE) or 'ru'
+
+
+def _has_content(document) -> bool:
+    """Есть ли у документа текст.
+
+    Редактор в админке сохраняет строку на каждый язык, в том числе пустую. Fallback
+    сервисов срабатывает только когда строки нет, поэтому пустую строку он пропускает
+    дальше — и пользователь видел встроенную заглушку вместо документа.
+    """
+    return bool(document and (document.content or '').strip())
+
+
 # ============ Schemas ============
 
 
@@ -200,6 +214,9 @@ async def get_rules(
             detail='Rules are not available',
         )
     requested_lang = language.split('-', maxsplit=1)[0].lower()
+    if not await get_rules_by_language(db, requested_lang):
+        # Правил на этом языке нет — отдаём правила языка по умолчанию, а не встроенную заглушку.
+        requested_lang = _default_language_code()
 
     # Use the same function as bot to ensure consistent content
     content = await get_current_rules_content(db, requested_lang)
@@ -226,6 +243,8 @@ async def get_privacy_policy(
         )
     requested_lang = PrivacyPolicyService.normalize_language(language)
     policy = await PrivacyPolicyService.get_policy(db, requested_lang, fallback=True)
+    if not _has_content(policy):
+        policy = await PrivacyPolicyService.get_policy(db, _default_language_code(), fallback=False) or policy
 
     if policy and policy.content:
         updated_at = policy.updated_at.isoformat() if policy.updated_at else None
@@ -254,6 +273,8 @@ async def get_public_offer(
         )
     requested_lang = PublicOfferService.normalize_language(language)
     offer = await PublicOfferService.get_offer(db, requested_lang, fallback=True)
+    if not _has_content(offer):
+        offer = await PublicOfferService.get_offer(db, _default_language_code(), fallback=False) or offer
 
     if offer and offer.content:
         updated_at = offer.updated_at.isoformat() if offer.updated_at else None
@@ -282,6 +303,8 @@ async def get_recurrent_payments(
         )
     requested_lang = RecurrentPaymentsService.normalize_language(language)
     document = await RecurrentPaymentsService.get_document(db, requested_lang, fallback=True)
+    if not _has_content(document):
+        document = await RecurrentPaymentsService.get_document(db, _default_language_code(), fallback=False) or document
 
     if document and document.content:
         updated_at = document.updated_at.isoformat() if document.updated_at else None
