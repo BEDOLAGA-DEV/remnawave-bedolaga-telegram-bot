@@ -28,6 +28,7 @@ dependencies = [
     'httpx[socks]>=0.27.0',
     'pycryptodome>=3.21.0',
     "app-store-server-library[async]>=3.1.1",
+    "greenlet>=3.2.4",
 ]
 
 [dependency-groups]
