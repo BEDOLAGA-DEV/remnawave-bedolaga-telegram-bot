@@ -1720,7 +1720,7 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         platega_name = settings.get_platega_display_name()
         if settings.PLATEGA_INLINE_METHODS:
             for method_code in settings.get_platega_active_methods():
-                title = settings.get_platega_method_display_title(method_code)
+                title = settings.get_platega_method_display_title(method_code, language)
                 keyboard.append(
                     [
                         InlineKeyboardButton(

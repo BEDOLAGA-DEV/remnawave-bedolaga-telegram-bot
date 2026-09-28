@@ -2540,23 +2540,32 @@ class Settings(BaseSettings):
         return methods
 
     @staticmethod
-    def get_platega_method_definitions() -> dict[int, dict[str, str]]:
+    def get_platega_method_definitions(language: str = 'ru') -> dict[int, dict[str, str]]:
+        if (language or 'ru').strip().lower() == 'en':
+            return {
+                2: {'name': 'SBP (QR)', 'title': 'SBP (QR)'},
+                11: {'name': 'Cards (RUB)', 'title': 'Cards (RUB)'},
+                12: {'name': 'International cards', 'title': 'International cards'},
+                13: {'name': 'Crypto', 'title': 'Crypto'},
+            }
         return {
-            2: {'name': 'СБП (QR)', 'title': '🏦 СБП (QR)'},
-            11: {'name': 'Карты (RUB)', 'title': '💳 Карты (RUB)'},
-            12: {'name': 'Международные карты', 'title': '🌍 Международные карты'},
-            13: {'name': 'Криптовалюта', 'title': '🪙 Криптовалюта'},
+            2: {'name': 'СБП (QR)', 'title': 'СБП (QR)'},
+            11: {'name': 'Карты (RUB)', 'title': 'Карты (RUB)'},
+            12: {'name': 'Международные карты', 'title': 'Международные карты'},
+            13: {'name': 'Криптовалюта', 'title': 'Криптовалюта'},
         }
 
-    def get_platega_method_display_name(self, method_code: int) -> str:
-        definitions = self.get_platega_method_definitions()
+    def get_platega_method_display_name(self, method_code: int, language: str = 'ru') -> str:
+        definitions = self.get_platega_method_definitions(language)
         info = definitions.get(method_code)
         if info and info.get('name'):
             return info['name']
+        if (language or 'ru').strip().lower() == 'en':
+            return f'Method {method_code}'
         return f'Метод {method_code}'
 
-    def get_platega_method_display_title(self, method_code: int) -> str:
-        definitions = self.get_platega_method_definitions()
+    def get_platega_method_display_title(self, method_code: int, language: str = 'ru') -> str:
+        definitions = self.get_platega_method_definitions(language)
         info = definitions.get(method_code)
         if not info:
             return f'Platega {method_code}'

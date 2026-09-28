@@ -31,7 +31,7 @@ async def _prompt_amount(
     method_code: int,
 ) -> None:
     texts = get_texts(db_user.language)
-    method_name = settings.get_platega_method_display_title(method_code)
+    method_name = settings.get_platega_method_display_title(method_code, db_user.language)
 
     # Всегда фиксируем выбранный метод для последующей обработки
     await state.update_data(payment_method='platega', platega_method=method_code)
@@ -148,7 +148,7 @@ async def start_platega_payment(
 
     method_buttons: list[list[types.InlineKeyboardButton]] = []
     for method_code in active_methods:
-        label = settings.get_platega_method_display_title(method_code)
+        label = settings.get_platega_method_display_title(method_code, db_user.language)
         method_buttons.append(
             [
                 types.InlineKeyboardButton(
@@ -339,7 +339,7 @@ async def process_platega_payment_amount(
     redirect_url = payment_result.get('redirect_url')
     local_payment_id = payment_result.get('local_payment_id')
     transaction_id = payment_result.get('transaction_id')
-    method_title = settings.get_platega_method_display_title(method_code)
+    method_title = settings.get_platega_method_display_title(method_code, db_user.language)
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
