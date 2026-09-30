@@ -30,6 +30,11 @@ from app.database.crud.user import (
 from app.database.models import PaymentMethod, PromoGroup, Subscription, User, UserStatus
 from app.services.manual_topup_service import ManualTopupKeyConflict, credit_manual_topup
 from app.services.subscription_service import SubscriptionService
+from app.services.user_activity_service import (
+    UnknownActivityTypes,
+    UserActivityResponse,
+    collect_user_activity,
+)
 from app.utils.text_search import contains_conditions
 
 from ..dependencies import get_db_session, require_api_token
@@ -41,6 +46,9 @@ from ..schemas.users import (
     SubscriptionSummary,
     UserCreateRequest,
     UserListResponse,
+    UserNotifyChannelResult,
+    UserNotifyRequest,
+    UserNotifyResponse,
     UserResponse,
     UserSubscriptionCreateRequest,
     UserUpdateRequest,
@@ -311,6 +319,118 @@ async def update_user_endpoint(
         found_user = await get_user_by_id(db, found_user.id)
 
     return _serialize_user(found_user)
+
+
+@router.post('/{user_id}/notify', response_model=UserNotifyResponse)
+async def notify_user(
+    user_id: int,
+    payload: UserNotifyRequest,
+    _: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Send a service message to the user over Telegram and email.
+
+    The bot already talks to the customer everywhere else, so integrations
+    should not have to hold a bot token and an SMTP account of their own —
+    they hand over the text and the bot delivers it from the same sender the
+    customer is used to. Parity with the cabinet action «Отправить сообщение»,
+    but for API clients: same checks, plus email.
+
+    Each channel reports separately: the call succeeds when at least one
+    delivery went through, so a customer who blocked the bot still gets the
+    email instead of the whole request failing.
+    """
+    import asyncio
+    import html
+
+    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+    from app.bot_factory import create_bot
+    from app.cabinet.services.email_service import email_service
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    requested = {c.strip().lower() for c in (payload.channels or ['telegram', 'email'])}
+    unknown = requested - {'telegram', 'email'}
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f'Unknown channels: {", ".join(sorted(unknown))}',
+        )
+
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail='Message text is empty')
+
+    telegram = UserNotifyChannelResult(sent=False, reason='not_requested')
+    email = UserNotifyChannelResult(sent=False, reason='not_requested')
+
+    if 'telegram' in requested:
+        if not user.telegram_id:
+            telegram = UserNotifyChannelResult(sent=False, reason='no_telegram_id')
+        elif not settings.BOT_TOKEN:
+            telegram = UserNotifyChannelResult(sent=False, reason='bot_not_configured')
+        else:
+            bot = create_bot()
+            try:
+                await bot.send_message(user.telegram_id, text, parse_mode=payload.parse_mode)
+                telegram = UserNotifyChannelResult(sent=True)
+            except TelegramForbiddenError:
+                telegram = UserNotifyChannelResult(sent=False, reason='blocked_by_user')
+            except TelegramBadRequest as error:
+                logger.warning(
+                    'Web API: Telegram rejected the notification',
+                    user_id=user_id,
+                    error=str(error),
+                )
+                telegram = UserNotifyChannelResult(sent=False, reason='rejected_by_telegram')
+            except Exception as error:  # доставка не должна ронять запрос
+                logger.error('Web API: notification to Telegram failed', user_id=user_id, error=str(error))
+                telegram = UserNotifyChannelResult(sent=False, reason='send_failed')
+            finally:
+                await bot.session.close()
+
+    if 'email' in requested:
+        if not user.email:
+            email = UserNotifyChannelResult(sent=False, reason='no_email')
+        elif not user.email_verified:
+            # Как и остальные уведомления бота: неподтверждённый адрес мог
+            # оказаться чужим, письмо о нарушении туда уходить не должно.
+            email = UserNotifyChannelResult(sent=False, reason='email_not_verified')
+        elif not email_service.is_configured():
+            email = UserNotifyChannelResult(sent=False, reason='smtp_not_configured')
+        else:
+            try:
+                sent = await asyncio.to_thread(
+                    email_service.send_email,
+                    to_email=user.email,
+                    subject=payload.email_subject or 'Уведомление',
+                    body_html=payload.email_html or f'<p>{text if payload.parse_mode else html.escape(text)}</p>',
+                    body_text=text,
+                )
+                email = UserNotifyChannelResult(sent=bool(sent), reason=None if sent else 'send_failed')
+            except Exception as error:
+                logger.error('Web API: notification by email failed', user_id=user_id, error=str(error))
+                email = UserNotifyChannelResult(sent=False, reason='send_failed')
+
+    if not telegram.sent and not email.sent:
+        logger.info(
+            'Web API: notification delivered to nobody',
+            user_id=user_id,
+            telegram_reason=telegram.reason,
+            email_reason=email.reason,
+        )
+    else:
+        logger.info(
+            'Web API: notification delivered',
+            user_id=user_id,
+            telegram=telegram.sent,
+            email=email.sent,
+        )
+
+    return UserNotifyResponse(user_id=user_id, telegram=telegram, email=email)
 
 
 @router.post('/{user_id}/balance', response_model=UserResponse)
@@ -683,12 +803,14 @@ async def delete_user_subscription(
 
     # Подписка деактивируется — СБП-автопродление Platega обязано быть отменено,
     # иначе следующий push-коллбек продлит и заново включит её, а банк продолжит списывать.
+    from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
     await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
     await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+    await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
     await deactivate_subscription(db, subscription)
 
     # Деактивируем пользователя в RemnaWave, если есть панельная идентичность
@@ -700,3 +822,29 @@ async def delete_user_subscription(
     # Перезагружаем пользователя
     user = await get_user_by_id(db, user.id)
     return _serialize_user(user)
+
+
+@router.get('/{user_id}/activity', response_model=UserActivityResponse)
+async def get_user_activity(
+    user_id: int,
+    _: Any = Security(require_api_token),
+    db: AsyncSession = Depends(get_db_session),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    types: str | None = Query(None, description='CSV filter by record type, see UserActivityItem.type'),
+) -> UserActivityResponse:
+    """Таймлайн активности пользователя: бот, кабинет и мини-апп одной лентой.
+
+    Та же лента, что показывает админка кабинета: транзакции, события подписки,
+    промокоды, купоны, обращения, колесо, опросы, подарки, реферальные
+    начисления, выводы, входы в кабинет и клики по кнопкам. ``user_id``
+    принимает и telegram_id, и внутренний id — как остальные ручки раздела.
+    """
+    user = await get_user_by_telegram_id(db, user_id) or await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
+
+    try:
+        return await collect_user_activity(db, user.id, offset=offset, limit=limit, types=types)
+    except UnknownActivityTypes as error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error

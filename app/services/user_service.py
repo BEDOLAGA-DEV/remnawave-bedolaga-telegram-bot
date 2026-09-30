@@ -848,6 +848,7 @@ class UserService:
             # this flow), and the guard is re-acquired immediately after —
             # closing that window before anything that can't be undone
             # happens.
+            from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
             from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
             from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
@@ -855,6 +856,7 @@ class UserService:
                 await cancel_platega_recurring_for_subscription_safe(db, sub.id)
 
                 await cancel_lava_recurring_for_subscription_safe(db, sub.id)
+                await cancel_cashera_recurring_for_subscription_safe(db, sub.id)
             try:
                 await ensure_no_open_grace_for_subscriptions(db, tuple(sub.id for sub in subs))
             except GraceAccessDeletionBlocked as error:
@@ -1228,6 +1230,7 @@ class UserService:
                 AntilopayPayment,
                 AppleTransaction,
                 AuraPayPayment,
+                CasheraPayment,
                 CisPayPayment,
                 DonutPayment,
                 EtoplatezhiPayment,
@@ -1257,6 +1260,7 @@ class UserService:
                 CisPayPayment,
                 TabPayPayment,
                 ParityPayPayment,
+                CasheraPayment,
             )
             for model in extra_payment_models:
                 try:

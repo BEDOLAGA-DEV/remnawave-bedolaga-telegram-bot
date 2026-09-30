@@ -144,17 +144,22 @@ async def process_yookassa_payment_amount(
         return
 
     if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-        min_rubles = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
+        min_rubles = f'{settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
+        example_rubles = max(1, (settings.YOOKASSA_MIN_AMOUNT_KOPEKS + 99) // 100)
+        retry_hint = f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {min_rubles} ₽.'
+        if example_rubles <= 50000 and example_rubles * 100 <= settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
+            retry_hint += f'\n\nНапример, отправьте: {example_rubles}'
         await message.answer(
-            f'❌ Минимальная сумма для оплаты картой: {min_rubles:.0f} ₽',
+            f'❌ Минимальная сумма пополнения картой — {min_rubles} ₽.\n\n{retry_hint}',
             reply_markup=get_back_keyboard(db_user.language),
         )
         return
 
     if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-        max_rubles = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
+        max_rubles = f'{settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
         await message.answer(
-            f'❌ Максимальная сумма для оплаты картой: {max_rubles:,.0f} ₽'.replace(',', ' '),
+            f'❌ Максимальная сумма пополнения картой — {max_rubles} ₽.\n\n'
+            f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не больше {max_rubles} ₽.',
             reply_markup=get_back_keyboard(db_user.language),
         )
         return
@@ -299,17 +304,22 @@ async def process_yookassa_sbp_payment_amount(
         return
 
     if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-        min_rubles = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
+        min_rubles = f'{settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
+        example_rubles = max(1, (settings.YOOKASSA_MIN_AMOUNT_KOPEKS + 99) // 100)
+        retry_hint = f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {min_rubles} ₽.'
+        if example_rubles <= 50000 and example_rubles * 100 <= settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
+            retry_hint += f'\n\nНапример, отправьте: {example_rubles}'
         await message.answer(
-            f'❌ Минимальная сумма для оплаты через СБП: {min_rubles:.0f} ₽',
+            f'❌ Минимальная сумма пополнения через СБП — {min_rubles} ₽.\n\n{retry_hint}',
             reply_markup=get_back_keyboard(db_user.language),
         )
         return
 
     if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-        max_rubles = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
+        max_rubles = f'{settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
         await message.answer(
-            f'❌ Максимальная сумма для оплаты через СБП: {max_rubles:,.0f} ₽'.replace(',', ' '),
+            f'❌ Максимальная сумма пополнения через СБП — {max_rubles} ₽.\n\n'
+            f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не больше {max_rubles} ₽.',
             reply_markup=get_back_keyboard(db_user.language),
         )
         return

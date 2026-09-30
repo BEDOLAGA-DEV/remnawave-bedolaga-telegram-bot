@@ -176,30 +176,8 @@ def _build_group_discount_lines(group: PromoGroup, texts, language: str) -> list
     return lines
 
 
-async def show_main_menu(
-    callback: types.CallbackQuery,
-    db_user: User,
-    db: AsyncSession,
-    *,
-    skip_callback_answer: bool = False,
-):
-    if db_user is None:
-        # Пользователь не найден, используем язык по умолчанию
-        texts = get_texts(settings.DEFAULT_LANGUAGE)
-        await callback.answer(
-            texts.t(
-                'USER_NOT_FOUND_ERROR',
-                'Ошибка: пользователь не найден.',
-            ),
-            show_alert=True,
-        )
-        return
-
-    texts = get_texts(db_user.language)
-
-    db_user.last_activity = datetime.now(UTC)
-    await db.commit()
-
+async def build_main_menu_keyboard(db_user: User, db: AsyncSession):
+    """Клавиатура главного меню: show_main_menu, handle_back_to_menu и живое меню (live_menu_service)."""
     # Multi-tariff aware: check if user has ANY active subscription
     # 'limited' (traffic exhausted) subscriptions are still active for UI purposes
     _subs = getattr(db_user, 'subscriptions', None) or []
@@ -243,6 +221,34 @@ async def show_main_menu(
         has_saved_cart=has_saved_cart,
         custom_buttons=custom_buttons,
     )
+    return keyboard
+
+
+async def show_main_menu(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    *,
+    skip_callback_answer: bool = False,
+):
+    if db_user is None:
+        # Пользователь не найден, используем язык по умолчанию
+        texts = get_texts(settings.DEFAULT_LANGUAGE)
+        await callback.answer(
+            texts.t(
+                'USER_NOT_FOUND_ERROR',
+                'Ошибка: пользователь не найден.',
+            ),
+            show_alert=True,
+        )
+        return
+
+    texts = get_texts(db_user.language)
+
+    db_user.last_activity = datetime.now(UTC)
+    await db.commit()
+
+    keyboard = await build_main_menu_keyboard(db_user, db)
 
     if not await try_edit_rich_main_menu(callback, db_user, texts, db, keyboard):
         menu_text = await get_main_menu_text(db_user, texts, db)
@@ -1236,49 +1242,7 @@ async def handle_back_to_menu(callback: types.CallbackQuery, state: FSMContext, 
 
     texts = get_texts(db_user.language)
 
-    # Multi-tariff aware: check if user has ANY active subscription
-    # 'limited' (traffic exhausted) subscriptions are still active for UI purposes
-    _subs = getattr(db_user, 'subscriptions', None) or []
-    has_active_subscription = any(sub.is_active or getattr(sub, 'actual_status', None) == 'limited' for sub in _subs)
-    subscription_is_active = has_active_subscription
-
-    draft_exists = await has_subscription_checkout_draft(db_user.id)
-    show_resume_checkout = should_offer_checkout_resume(db_user, draft_exists)
-
-    # Проверяем наличие сохраненной корзины в Redis
-    try:
-        has_saved_cart = await user_cart_service.has_user_cart(db_user.id)
-    except Exception as e:
-        logger.error('Ошибка проверки сохраненной корзины для пользователя', db_user_id=db_user.id, error=e)
-        has_saved_cart = False
-
-    is_admin = settings.is_admin(db_user.telegram_id)
-    is_moderator = (not is_admin) and SupportSettingsService.is_moderator(db_user.telegram_id)
-
-    custom_buttons = []
-    if not settings.is_text_main_menu_mode():
-        custom_buttons = await MainMenuButtonService.get_buttons_for_user(
-            db,
-            is_admin=is_admin,
-            has_active_subscription=has_active_subscription,
-            subscription_is_active=subscription_is_active,
-        )
-
-    keyboard = await get_main_menu_keyboard_async(
-        db=db,
-        user=db_user,
-        language=db_user.language,
-        is_admin=is_admin,
-        is_moderator=is_moderator,
-        has_had_paid_subscription=db_user.has_had_paid_subscription,
-        has_active_subscription=has_active_subscription,
-        subscription_is_active=subscription_is_active,
-        balance_kopeks=db_user.balance_kopeks,
-        subscription=db_user.subscription,  # Uses primary subscription (multi-tariff compatible via property)
-        show_resume_checkout=show_resume_checkout,
-        has_saved_cart=has_saved_cart,
-        custom_buttons=custom_buttons,
-    )
+    keyboard = await build_main_menu_keyboard(db_user, db)
 
     if not await try_edit_rich_main_menu(callback, db_user, texts, db, keyboard):
         menu_text = await get_main_menu_text(db_user, texts, db)

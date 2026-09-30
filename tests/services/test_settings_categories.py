@@ -22,6 +22,7 @@ from app.services.system_settings_service import bot_configuration_service as se
         ('CABINET_REQUIRE_LEGAL_CONSENT', 'CABINET'),
         ('CABINET_LEGAL_CONSENT_PRECHECKED', 'CABINET'),
         ('WEB_API_MANUAL_DEPOSIT_MAX_KOPEKS', 'WEB_API'),
+        ('MAIN_MENU_LIVE_ENABLED', 'INTERFACE'),
     ],
 )
 def test_setting_lands_in_expected_category(key: str, expected_category: str) -> None:

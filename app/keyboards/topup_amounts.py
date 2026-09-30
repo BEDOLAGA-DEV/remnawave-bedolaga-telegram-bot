@@ -47,6 +47,8 @@ METHOD_CONFIG_IDS = {
 def resolve_config_method_id(method: str) -> str:
     if method.startswith('platega_m'):
         return 'platega'
+    if method.startswith('cashera_m_'):
+        return 'cashera'
     return METHOD_CONFIG_IDS.get(method, method)
 
 

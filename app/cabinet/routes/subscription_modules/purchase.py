@@ -432,6 +432,7 @@ async def get_purchase_options(
                 # Автопродление Lava: фронт показывает переключатель на странице
                 # подписки, если фича включена.
                 'lava_recurrent_enabled': settings.is_lava_recurrent_enabled(),
+                'cashera_recurrent_enabled': settings.is_cashera_recurrent_enabled(),
             }
 
         # Classic mode - return periods
@@ -443,6 +444,7 @@ async def get_purchase_options(
         # отключённой фиче из ответа 403 — по красной строке в консоли на запрос.
         payload['platega_recurrent_enabled'] = settings.is_platega_recurrent_enabled()
         payload['lava_recurrent_enabled'] = settings.is_lava_recurrent_enabled()
+        payload['cashera_recurrent_enabled'] = settings.is_cashera_recurrent_enabled()
         return payload
 
     except PurchaseValidationError as e:

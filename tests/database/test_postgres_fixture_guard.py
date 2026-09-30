@@ -13,9 +13,11 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.fixtures.postgres_db import (
     REQUIRE_POSTGRES_ENV,
@@ -26,7 +28,9 @@ from tests.fixtures.postgres_db import (
 )
 
 
-WORKFLOW_PATH = Path(__file__).resolve().parents[2] / '.github' / 'workflows' / 'tests.yml'
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW_PATH = REPO_ROOT / '.github' / 'workflows' / 'tests.yml'
+COMPOSE_PATH = REPO_ROOT / 'docker-compose.yml'
 
 
 def test_missing_url_skips_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -76,7 +80,17 @@ def test_ci_workflow_runs_postgres_tests_for_real() -> None:
     assert WORKFLOW_PATH.exists(), 'нет workflow с тестами'
     workflow = WORKFLOW_PATH.read_text(encoding='utf-8')
 
-    assert 'postgres:15-alpine' in workflow, 'CI не поднимает PostgreSQL'
+    job = yaml.safe_load(workflow)['jobs']['pytest']
+    assert job['services']['postgres']['image'].startswith('postgres:'), 'CI не поднимает PostgreSQL'
+    # Весь набор обязан идти на той же версии, что у пользователей в docker-compose.yml;
+    # остальные версии матрицы — задел под переход.
+    compose_version = re.search(r'image:\s*postgres:(\d+)', COMPOSE_PATH.read_text(encoding='utf-8')).group(1)
+    full_suite_versions = {
+        str(entry['postgres']) for entry in job['strategy']['matrix']['include'] if entry.get('full_suite')
+    }
+    assert compose_version in full_suite_versions, (
+        f'CI гоняет весь набор не на PostgreSQL {compose_version} из docker-compose.yml'
+    )
     assert f'{TEST_DATABASE_URL_ENV}:' in workflow, 'CI не передаёт адрес тестовой базы'
     assert f"{REQUIRE_POSTGRES_ENV}: '1'" in workflow, 'CI не запрещает молчаливый пропуск тестов на PostgreSQL'
     assert 'pytest -m postgres' in workflow, 'CI не гоняет тесты на PostgreSQL отдельным шагом'

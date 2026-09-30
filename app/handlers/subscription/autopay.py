@@ -52,6 +52,43 @@ async def _resolve_subscription(callback, db_user, db, state=None):
     return await resolve_subscription_from_context(callback, db_user, db, state)
 
 
+async def _cashera_recurring_rows(db: AsyncSession, subscription, texts) -> list[list[types.InlineKeyboardButton]]:
+    """Строка автопродления Cashera: отключить (если привязка есть) или подключить.
+
+    Отключение показывается и при выключенной фиче: живые привязки у Cashera
+    продолжают списывать, и остановить их человек должен мочь из бота.
+    """
+    if not settings.is_cashera_configured():
+        return []
+
+    from app.services.cashera_recurring_cancel import get_cashera_recurring_status
+
+    try:
+        state = await get_cashera_recurring_status(db, subscription.id)
+    except Exception as error:  # необязательная строка не должна ломать меню автоплатежа
+        logger.warning('Не удалось получить состояние автопродления Cashera', error=str(error))
+        return []
+    if state:
+        return [
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('CASHERA_RECURRING_CANCEL_BUTTON', '🛑 Отключить автопродление Cashera'),
+                    callback_data='cashera_recurring_cancel',
+                )
+            ]
+        ]
+    if settings.is_cashera_recurrent_enabled() and not getattr(subscription, 'is_trial', False):
+        return [
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('CASHERA_RECURRING_MENU_BUTTON', '⚡ Автопродление через Cashera'),
+                    callback_data='cashera_recurring_enable',
+                )
+            ]
+        ]
+    return []
+
+
 async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
     texts = get_texts(db_user.language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
@@ -65,8 +102,8 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
     # Суточные подписки имеют свой механизм продления, глобальный autopay не применяется
     try:
         await db.refresh(subscription, ['tariff'])
-    except Exception:
-        pass
+    except Exception as refresh_error:
+        logger.warning('Не удалось подгрузить тариф подписки', subscription_id=subscription.id, error=refresh_error)
     if subscription.tariff and getattr(subscription.tariff, 'is_daily', False):
         # Баланс-автоплатёж для суточных тарифов недоступен, но СБП-автопродление
         # Platega суточный интервал поддерживает (`day`) — вход в него должен
@@ -81,6 +118,7 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
                     )
                 ]
             )
+        daily_keyboard_rows.extend(await _cashera_recurring_rows(db, subscription, texts))
         back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
         daily_keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
 
@@ -131,6 +169,9 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
                 )
             ],
         )
+
+    for row in await _cashera_recurring_rows(db, subscription, texts):
+        keyboard.inline_keyboard.insert(-1, row)
 
     await callback.message.edit_text(
         text,
@@ -197,12 +238,14 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
         # иначе оба движка продления начнут списывать параллельно (двойное
         # списание). Прямое взаимоисключение (СБП -> выключение
         # balance-autopay) уже реализовано в create_platega_sbp_subscription.
+        from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
         from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
         from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
         await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
         await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+        await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
     texts = get_texts(db_user.language)
     status = texts.t('AUTOPAY_STATUS_ENABLED', 'включен') if enable else texts.t('AUTOPAY_STATUS_DISABLED', 'выключен')
     await callback.answer(texts.t('AUTOPAY_TOGGLE_SUCCESS', '✅ Автоплатеж {status}!').format(status=status))
@@ -262,8 +305,8 @@ async def show_autopay_period(callback: types.CallbackQuery, db_user: User, db: 
 
     try:
         await db.refresh(subscription, ['tariff'])
-    except Exception:
-        pass
+    except Exception as refresh_error:
+        logger.warning('Не удалось подгрузить тариф подписки', subscription_id=subscription.id, error=refresh_error)
 
     periods = _get_subscription_renewal_periods(subscription)
     current = getattr(subscription, 'autopay_period_days', None)
@@ -780,3 +823,84 @@ async def _show_previous_configuration_step(
         parse_mode='HTML',
     )
     await state.set_state(SubscriptionStates.selecting_period)
+
+
+async def handle_cashera_recurring_enable(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """Подключить автопродление Cashera к текущей подписке (ссылка на подтверждение)."""
+    texts = get_texts(db_user.language)
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if not subscription:
+        await callback.answer(
+            texts.t('SUBSCRIPTION_ACTIVE_REQUIRED', '⚠️ У вас нет активной подписки!'), show_alert=True
+        )
+        return
+    try:
+        await db.refresh(subscription, ['tariff'])
+    except Exception as refresh_error:
+        logger.warning('Не удалось подгрузить тариф подписки', subscription_id=subscription.id, error=refresh_error)
+
+    from app.services.payment.cashera import enable_cashera_recurring
+
+    try:
+        result = await enable_cashera_recurring(
+            db, user_id=db_user.id, subscription=subscription, tariff=subscription.tariff
+        )
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        await callback.answer(
+            texts.t(
+                'CASHERA_RECURRING_ENABLE_ERROR', '❌ Не удалось подключить автопродление Cashera. Попробуйте позже.'
+            ),
+            show_alert=True,
+        )
+        return
+
+    buttons = []
+    if result.get('redirect_url'):
+        buttons.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('CASHERA_RECURRING_PAY_BUTTON', '💳 Подтвердить'), url=result['redirect_url']
+                )
+            ]
+        )
+    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_autopay')])
+    await callback.message.edit_text(
+        texts.t(
+            'CASHERA_RECURRING_ENABLE_SUCCESS',
+            '⚡ <b>Автопродление Cashera</b>\n\nПодтвердите автосписания по кнопке ниже.\n'
+            'После подтверждения и первого списания подписка продлится автоматически.',
+        ),
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_cashera_recurring_cancel(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """Отключить автопродление Cashera. НЕ гейтится флагом — отмена это безопасность.
+
+    Кнопка именно Cashera: привязки Platega/Lava она не трогает.
+    """
+    texts = get_texts(db_user.language)
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if not subscription:
+        await callback.answer(
+            texts.t('SUBSCRIPTION_ACTIVE_REQUIRED', '⚠️ У вас нет активной подписки!'), show_alert=True
+        )
+        return
+
+    from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
+
+    await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
+    await callback.answer(texts.t('CASHERA_RECURRING_CANCELLED', '✅ Автопродление Cashera отключено'))
+    try:
+        await handle_autopay_menu(callback, db_user, db, state)
+    except TelegramBadRequest:
+        pass  # «message is not modified»: экран уже актуален

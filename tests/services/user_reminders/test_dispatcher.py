@@ -253,3 +253,32 @@ async def test_broken_texts_reminder_is_skipped_not_fatal(monkeypatch):
         result = await _pass(db, deliver)
         assert deliver.calls == [(2, 1)]
         assert result.sent == 1
+
+
+@pytest.mark.asyncio
+async def test_sql_failure_of_one_reminder_does_not_stop_the_pass(monkeypatch):
+    """Запрос кандидатов одного напоминания упал (так падало условие по способу
+    входа из-за vk_id) — остальные напоминания в этом проходе всё равно уходят.
+    Ошибка настоящая: сессия после неё обязана остаться рабочей."""
+    from sqlalchemy import literal_column
+
+    real_query = dispatcher._candidates_query
+
+    def flaky_query(reminder, conditions, **kwargs):
+        if reminder.id == 1:
+            return select(User).where(literal_column('no_such_column') == 1)
+        return real_query(reminder, conditions, **kwargs)
+
+    monkeypatch.setattr(dispatcher, '_candidates_query', flaky_query)
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _seed(db, [_user(1)], [_reminder(1), _reminder(2)])
+        delivered: list[int] = []
+
+        async def deliver(user, reminder, bot):
+            delivered.append(reminder.id)
+            return True
+
+        result = await _pass(db, deliver)
+
+    assert delivered == [2]
+    assert result.sent == 1

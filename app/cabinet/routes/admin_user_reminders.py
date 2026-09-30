@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import structlog
 from aiogram.enums import ParseMode
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot_factory import create_bot
@@ -53,8 +54,15 @@ async def _audience(
 async def _response(db: AsyncSession, reminder: UserReminder, stats: dict | None = None) -> ReminderResponse:
     counters = (stats or {}).get(reminder.id, {})
     try:
-        audience = await _audience(db, parse_conditions(reminder.conditions), reminder.channels, reminder.category)
+        # Savepoint: упавший подсчёт (так падало условие по способу входа из-за
+        # vk_id) в PostgreSQL иначе оставляет транзакцию «aborted», и 500 отдаёт
+        # весь список — кабинет рисовал его пустым, «сохранил — ничего не произошло».
+        async with db.begin_nested():
+            audience = await _audience(db, parse_conditions(reminder.conditions), reminder.channels, reminder.category)
     except ValueError:
+        audience = AudienceResponse()
+    except SQLAlchemyError as error:
+        logger.warning('Не удалось посчитать аудиторию напоминания', reminder_id=reminder.id, error=str(error))
         audience = AudienceResponse()
     return ReminderResponse.model_validate(
         {

@@ -392,14 +392,14 @@ class TestCabinetAppleIAPRoutes:
 
         clients: list[FakeRedis] = []
 
-        def from_url(url: str, **_kwargs) -> FakeRedis:
-            assert url == settings.REDIS_URL
+        def fake_create_redis(url: str | None = None, **_kwargs) -> FakeRedis:
+            assert url is None  # адрес по умолчанию — settings.REDIS_URL внутри фабрики
             client = FakeRedis()
             clients.append(client)
             return client
 
         app = FastAPI()
-        monkeypatch.setattr(apple_iap_routes.redis, 'from_url', from_url)
+        monkeypatch.setattr(apple_iap_routes, 'create_redis', fake_create_redis)
 
         async with apple_iap_routes.apple_iap_lifespan(app):
             assert len(clients) == 1
@@ -421,7 +421,7 @@ class TestCabinetAppleIAPRoutes:
         client = FakeRedis()
         app = FastAPI()
         app.include_router(apple_iap_routes.router)
-        monkeypatch.setattr(apple_iap_routes.redis, 'from_url', lambda _url, **_kwargs: client)
+        monkeypatch.setattr(apple_iap_routes, 'create_redis', lambda *_args, **_kwargs: client)
 
         async with app.router.lifespan_context(app):
             assert getattr(app.state, apple_iap_routes.APPLE_IAP_REDIS_STATE_KEY) is client

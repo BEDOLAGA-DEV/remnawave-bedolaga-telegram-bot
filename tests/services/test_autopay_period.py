@@ -39,8 +39,8 @@ if str(ROOT_DIR) not in sys.path:
 from app.database.crud import subscription as subscription_crud
 from app.database.crud.subscription import _AUTOPAY_PERIOD_UNSET, update_subscription_autopay
 from app.handlers.subscription import autopay as autopay_handler
-from app.services import monitoring_service
-from app.services.monitoring_service import resolve_autopay_period_candidate
+from app.services import autopay_period, monitoring_service
+from app.services.autopay_period import resolve_autopay_period_candidate
 
 
 def _make_tariff(available: list[int] | None) -> SimpleNamespace:
@@ -86,7 +86,7 @@ def test_resolve_autopay_period_candidate_falls_back_to_global_when_tariff_has_n
     rather than fail-open. Closes the gap where an env-default value drifted past validation
     just because the tariff was misconfigured."""
     tariff = _make_tariff([])
-    monkeypatch.setattr(monitoring_service, 'settings', _StubSettings([30, 60, 90]))
+    monkeypatch.setattr(autopay_period, 'settings', _StubSettings([30, 60, 90]))
 
     assert resolve_autopay_period_candidate(30, tariff) == 30
     # 45 is in neither tariff (empty) nor global allowlist → reject.
@@ -97,7 +97,7 @@ def test_resolve_autopay_period_candidate_falls_back_to_global_when_no_tariff(mo
     """Classic-mode (no tariff) subscriptions still need bounded periods — the global
     renewal-periods allowlist gates them. Without this guard a malicious DB write or env
     typo could ship 999-day extensions."""
-    monkeypatch.setattr(monitoring_service, 'settings', _StubSettings([30, 60, 90]))
+    monkeypatch.setattr(autopay_period, 'settings', _StubSettings([30, 60, 90]))
 
     assert resolve_autopay_period_candidate(30, None) == 30
     assert resolve_autopay_period_candidate(999, None) is None
@@ -106,7 +106,7 @@ def test_resolve_autopay_period_candidate_falls_back_to_global_when_no_tariff(mo
 def test_resolve_autopay_period_candidate_rejects_when_both_allowlists_empty(monkeypatch):
     """Fail-closed: with no allowlist available anywhere, ANY candidate is rejected and the
     caller falls through to the next tier (tariff.get_shortest_period() / 30-day floor)."""
-    monkeypatch.setattr(monitoring_service, 'settings', _StubSettings([]))
+    monkeypatch.setattr(autopay_period, 'settings', _StubSettings([]))
 
     assert resolve_autopay_period_candidate(30, None) is None
     assert resolve_autopay_period_candidate(30, _make_tariff([])) is None

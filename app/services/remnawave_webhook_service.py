@@ -195,7 +195,7 @@ class RemnaWaveWebhookService:
         # `_node_event_pending_tasks` — strong-ref набор для GC-safety: задача
         # остаётся в нём до полного завершения коаллбэка через add_done_callback.
         # Asyncio docs предупреждают, что слабо-ссылочные задачи могут быть
-        # выгружены GC до завершения; на CPython 3.13 риск практически нулевой,
+        # выгружены GC до завершения; на CPython риск практически нулевой,
         # но паттерн с set — канонический.
         self._node_event_buffer: dict[str, list[dict]] = {}
         self._node_event_overflow: dict[str, int] = {}

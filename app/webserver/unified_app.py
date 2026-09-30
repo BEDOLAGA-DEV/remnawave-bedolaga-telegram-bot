@@ -208,6 +208,13 @@ def create_unified_app(
         # ПЕРВЫМ в shutdown_handlers — итерация без reverse.
         shutdown_handlers.append(remnawave_webhook_service.stop)
 
+    # DPI//CHECKER: события проверок и мониторов из кабинета (подпись — секретом сервиса).
+    # Подключён всегда: модуль включают из кабинета без перезапуска, выключенный отвечает 503.
+    from app.services.dpichecker.service import dpichecker_service
+    from app.webserver.dpichecker_webhook import create_dpichecker_webhook_router
+
+    app.include_router(create_dpichecker_webhook_router(dpichecker_service))
+
     payment_providers_state = {
         'tribute': settings.TRIBUTE_ENABLED,
         'mulenpay': settings.is_mulenpay_enabled(),

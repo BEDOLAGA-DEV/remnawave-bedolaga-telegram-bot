@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import ColumnElement, and_, case, exists, func, literal, not_, or_
+from sqlalchemy import ColumnElement, String, and_, case, exists, func, literal, not_, or_
 
 from app.database.auth_methods import OAUTH_PROVIDER_COLUMNS, compute_auth_methods
 from app.database.constants import ALIVE_SUBSCRIPTION_STATUSES
@@ -63,8 +63,15 @@ def parse_conditions(raw: dict | None) -> ReminderConditions:
 
 
 def _filled(column) -> ColumnElement[bool]:
-    """Как truthiness в compute_auth_methods: пустая строка — не способ входа."""
-    return and_(column.is_not(None), func.coalesce(column, '') != '')
+    """Как truthiness в compute_auth_methods: пустая строка (или 0) — не способ входа.
+
+    Сравнение с '' — только для строковых колонок: vk_id это BIGINT, и
+    COALESCE(vk_id, '') в PostgreSQL падает «COALESCE types bigint and character
+    varying cannot be matched» (SQLite типы не сверяет — в тестах не видно).
+    """
+    if isinstance(column.type, String):
+        return and_(column.is_not(None), func.coalesce(column, '') != '')
+    return and_(column.is_not(None), column != 0)
 
 
 def _auth_sql(auth: AuthCondition) -> ColumnElement[bool]:

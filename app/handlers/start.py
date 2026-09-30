@@ -37,7 +37,7 @@ from app.keyboards.inline import (
     get_rules_keyboard,
 )
 from app.localization.loader import DEFAULT_LANGUAGE
-from app.localization.texts import get_privacy_policy, get_rules, get_texts
+from app.localization.texts import get_default_rules, get_privacy_policy, get_rules, get_texts
 from app.middlewares.channel_checker import (
     delete_pending_payload_from_redis,
     get_pending_payload_from_redis,
@@ -86,6 +86,7 @@ from app.states import RegistrationStates
 from app.utils.gift_links import InvalidGiftTokenError, parse_gift_claim_input
 from app.utils.long_messages import answer_long_text, edit_long_text, send_long_text
 from app.utils.rich_menu import try_answer_rich_main_menu, try_send_rich_main_menu
+from app.utils.telegram_html import html_to_telegram
 from app.utils.user_utils import generate_unique_referral_code
 
 
@@ -1058,7 +1059,7 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
             language = data.get('language', DEFAULT_LANGUAGE)
             texts = get_texts(language)
 
-            rules_text = await get_rules(language)
+            rules_text = await _rules_for_telegram(language)
             await answer_long_text(message, rules_text, reply_markup=get_rules_keyboard(language))
             await state.set_state(RegistrationStates.waiting_for_rules_accept)
             logger.info('📋 Правила отправлены после ввода реферального кода')
@@ -1093,7 +1094,7 @@ async def handle_potential_referral_code(message: types.Message, state: FSMConte
             language = data.get('language', DEFAULT_LANGUAGE)
             texts = get_texts(language)
 
-            rules_text = await get_rules(language)
+            rules_text = await _rules_for_telegram(language)
             await answer_long_text(message, rules_text, reply_markup=get_rules_keyboard(language))
             await state.set_state(RegistrationStates.waiting_for_rules_accept)
             logger.info('📋 Правила отправлены после принятия промокода')
@@ -1181,7 +1182,7 @@ async def _continue_registration_after_language(
                 await _complete_registration_wrapper()
         return
 
-    rules_text = await get_rules(language)
+    rules_text = await _rules_for_telegram(language)
     try:
         await answer_long_text(target_message, rules_text, reply_markup=get_rules_keyboard(language))
     except TelegramForbiddenError:
@@ -1872,6 +1873,17 @@ async def process_language_selection(
     )
 
 
+async def _rules_for_telegram(language: str) -> str:
+    """Правила для регистрации — в разметке, которую принимает Telegram.
+
+    Текст правил редактируется в кабинете как HTML (заголовки, абзацы, списки),
+    а Telegram понимает восемь тегов: без преобразования регистрация падала на
+    шаге правил с «Unsupported start tag». Если после очистки текста не осталось,
+    показываются правила по умолчанию из локали — пустое сообщение Telegram не примет.
+    """
+    return html_to_telegram(await get_rules(language)) or html_to_telegram(get_default_rules(language))
+
+
 async def _show_privacy_policy_after_rules(
     callback: types.CallbackQuery,
     state: FSMContext,
@@ -1888,16 +1900,18 @@ async def _show_privacy_policy_after_rules(
         logger.info('⚠️ Политика конфиденциальности не включена, пропускаем её показ')
         return False
 
-    if not policy.content or not policy.content.strip():
-        privacy_policy_text = get_privacy_policy(language)
-        if not privacy_policy_text or not privacy_policy_text.strip():
+    # Политика редактируется в кабинете как HTML, а Telegram понимает восемь тегов —
+    # без преобразования <h1>/<p> из редактора роняли этот шаг регистрации.
+    privacy_policy_text = html_to_telegram(policy.content)
+    if not privacy_policy_text:
+        privacy_policy_text = html_to_telegram(get_privacy_policy(language))
+        if not privacy_policy_text:
             logger.info('⚠️ Политика конфиденциальности включена, но дефолтный текст пустой, пропускаем показ')
             return False
         logger.info(
             '🔒 Используется дефолтный текст политики конфиденциальности из локализации для языка', language=language
         )
     else:
-        privacy_policy_text = policy.content
         logger.info('🔒 Используется политика конфиденциальности из БД для языка', language=language)
 
     try:
@@ -3287,7 +3301,7 @@ async def required_sub_channel_check(
                 )
                 await state.set_state(RegistrationStates.waiting_for_referral_code)
             else:
-                rules_text = await get_rules(language)
+                rules_text = await _rules_for_telegram(language)
 
                 if settings.ENABLE_LOGO_MODE and not caption_exceeds_telegram_limit(rules_text):
                     _result = await bot.send_photo(

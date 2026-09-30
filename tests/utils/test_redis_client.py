@@ -30,13 +30,21 @@ class _Config:
 
 @pytest.fixture
 def from_url(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
+    """Вызовы ``BlockingConnectionPool.from_url`` — через него фабрика строит пул."""
     calls: list[tuple[str, dict]] = []
 
-    def fake(url: str, **kwargs):
-        calls.append((url, kwargs))
-        return object()
+    class _Pool:
+        @staticmethod
+        def from_url(url: str, **kwargs):
+            calls.append((url, kwargs))
+            return object()
 
-    monkeypatch.setattr(redis_client.redis, 'from_url', fake)
+    class _Client:
+        def __init__(self, connection_pool):
+            self.connection_pool = connection_pool
+
+    monkeypatch.setattr(redis_client.redis, 'BlockingConnectionPool', _Pool, raising=False)
+    monkeypatch.setattr(redis_client.redis, 'Redis', _Client, raising=False)
     monkeypatch.setattr(redis_client, 'MaintNotificationsConfig', _Config)
     return calls
 
@@ -67,6 +75,21 @@ def test_factory_skips_config_on_old_redis_py(from_url, monkeypatch) -> None:
 
     ((_url, kwargs),) = from_url
     assert 'maint_notifications_config' not in kwargs
+
+
+def test_factory_sizes_pool_from_settings_and_keeps_explicit_override(from_url, monkeypatch) -> None:
+    """«MaxConnectionsError: Too many connections»: у redis-py 8 пул по умолчанию на 100,
+    и всплеск апдейтов его выбирал. Размер и ожидание задаются из .env."""
+    monkeypatch.setattr(redis_client.settings, 'REDIS_MAX_CONNECTIONS', 350)
+    monkeypatch.setattr(redis_client.settings, 'REDIS_POOL_TIMEOUT', 7.5)
+
+    redis_client.create_redis('redis://h:1/0')
+    redis_client.create_redis('redis://h:1/0', max_connections=5)
+
+    (_url, first), (_url2, second) = from_url
+    assert first['max_connections'] == 350
+    assert first['timeout'] == 7.5
+    assert second['max_connections'] == 5
 
 
 def test_every_redis_client_in_app_goes_through_factory() -> None:

@@ -155,6 +155,7 @@ class BotConfigurationService:
         'ETOPLATEZHI': '💳 Etoplatezhi',
         'JUPITER': '🪐 Jupiter',
         'CISPAY': '💳 CisPay',
+        'CASHERA': '💳 Cashera',
         'TABPAY': '💳 TabPay',
         'PARITYPAY': '💳 ParityPay',
         'DONUT': '🍩 Donut',
@@ -206,6 +207,7 @@ class BotConfigurationService:
         'INFO_PAGES': '📄 Инфо-страницы',
         'GRACE_ACCESS': '🛟 Grace-доступ',
         'BSCHEK': '📶 BSCHEKER (bschekbot)',
+        'DPICHECKER': '🧱 DPI//CHECKER',
     }
 
     CATEGORY_DESCRIPTIONS: dict[str, str] = {
@@ -232,6 +234,7 @@ class BotConfigurationService:
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
         'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
+        'CASHERA': 'Cashera: api.cashera.cash, СБП, карты, крипта и CryptoBot; ключ pk_, секрет sk_, методы оплаты.',
         'TABPAY': 'TabPay: tabpay.org, СБП и карты с 3-D Secure; вебхуки подписаны HMAC-SHA256 (X-Signature-V2).',
         'PARITYPAY': 'ParityPay: api.paritypay.net v2, СБП и карты; уведомления подписаны HMAC-SHA256 (X-SIGNATURE).',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
@@ -291,6 +294,10 @@ class BotConfigurationService:
         'BSCHEK': (
             'Проверка хостов и конфигов глазами мобильных операторов РФ через bschekbot API: '
             'ключ, эталонная подписка панели, потолок цены одной задачи.'
+        ),
+        'DPICHECKER': (
+            'Проверки VPN-ключей, адресов и MTProto из сетей России, Китая, Ирана и Туркменистана '
+            'через API DPI//CHECKER: включение и ключ API. Раздел — в админке кабинета.'
         ),
     }
 
@@ -431,6 +438,7 @@ class BotConfigurationService:
         'MAIN_MENU_RICH_LOGO_URL': 'INTERFACE',
         'MAIN_MENU_RICH_SUBSCRIPTIONS_COLLAPSIBLE': 'INTERFACE',
         'MAIN_MENU_RICH_INLINE_BUTTONS': 'INTERFACE',
+        'MAIN_MENU_LIVE_ENABLED': 'INTERFACE',
         'USER_NOTIFICATIONS_RICH_ENABLED': 'INTERFACE',
         'USER_ACTION_LOG_ENABLED': 'MONITORING',
         'USER_ACTION_LOG_RETENTION_DAYS': 'MONITORING',
@@ -503,6 +511,7 @@ class BotConfigurationService:
         'ETOPLATEZHI_': 'ETOPLATEZHI',
         'JUPITER_': 'JUPITER',
         'CISPAY_': 'CISPAY',
+        'CASHERA_': 'CASHERA',
         'TABPAY_': 'TABPAY',
         'PARITYPAY_': 'PARITYPAY',
         'DONUT_': 'DONUT',
@@ -534,6 +543,7 @@ class BotConfigurationService:
         'BAN_MSG_': 'BAN_NOTIFICATIONS',
         'GRACE_ACCESS_': 'GRACE_ACCESS',
         'BSCHEK_': 'BSCHEK',
+        'DPICHECKER_': 'DPICHECKER',
     }
 
     CHOICES: dict[str, list[ChoiceOption]] = {
@@ -1007,6 +1017,19 @@ class BotConfigurationService:
                 'сообщения целиком остаётся под ним: половина кнопок внутри — это потерянные кнопки.'
             ),
             'dependencies': 'MAIN_MENU_RICH_ENABLED, ADMIN_NOTIFICATIONS_RICH_ENABLED',
+        },
+        'MAIN_MENU_LIVE_ENABLED': {
+            'description': (
+                'Живое главное меню: бот сам перерисовывает последнее rich-меню пользователя '
+                'при смене трафика, статуса, лимита устройств или баланса.'
+            ),
+            'format': 'Булево значение.',
+            'example': 'false',
+            'warning': (
+                'Раз в 15 минут; при нагрузке на бот, 429 панели или лимите Telegram реже, до 360 минут. '
+                'Нужны Redis и rich-меню. Переключается без рестарта.'
+            ),
+            'dependencies': 'MAIN_MENU_RICH_ENABLED',
         },
         'USER_NOTIFICATIONS_RICH_ENABLED': {
             'description': (

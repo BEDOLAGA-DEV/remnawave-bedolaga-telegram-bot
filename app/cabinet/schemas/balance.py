@@ -81,6 +81,9 @@ class TopUpResponse(BaseModel):
     amount_rubles: float
     status: str
     expires_at: datetime | None = None
+    # Свой экран оплаты (Cashera H2H): строка QR СБП или платёжная ссылка — кабинет
+    # рисует QR рядом с кнопкой оплаты. None — обычный переход по payment_url.
+    qr_payload: str | None = None
 
 
 class StarsInvoiceRequest(BaseModel):

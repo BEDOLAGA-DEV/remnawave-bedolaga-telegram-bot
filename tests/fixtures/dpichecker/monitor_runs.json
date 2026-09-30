@@ -1,0 +1,20 @@
+{
+ "status": 200,
+ "body": {
+  "total": 1,
+  "limit": 25,
+  "offset": 0,
+  "items": [
+   {
+    "id": 18890,
+    "check_id": 5318,
+    "status": "completed",
+    "cost": 0.04,
+    "scheduled_for": "2026-09-24T08:29:09.715Z",
+    "created_at": "2026-09-24T08:48:41.596Z",
+    "check_status": "completed",
+    "completed_at": "2026-09-24T08:49:05.359Z"
+   }
+  ]
+ }
+}

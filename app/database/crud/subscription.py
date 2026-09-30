@@ -1738,11 +1738,13 @@ async def update_subscription_autopay(
         # вызовы на отдельных поверхностях (бот/кабинет) пропускали новые точки
         # включения (миниапп, админ-тоглы) — и юзер платил дважды за цикл.
         try:
+            from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
             from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
             from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
             await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
             await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+            await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
         except Exception as platega_error:  # pragma: no cover - хелпер сам best-effort
             logger.warning(
                 'Не удалось отменить СБП-автопродление при включении автоплатежа',
@@ -2069,7 +2071,8 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     панели идут параллельно с ограничением (Semaphore) на ОДНОМ клиенте API (как массовый
     синк) — операция тяжёлая. Подписку, у которой удаление в панели не удалось (транзиент),
     в БД НЕ трогаем (иначе снова orphan + воскрешение) — её подхватит следующий запуск.
-    Чистит устаревшую single-tariff панельную идентичность на `User`. НЕ коммитит — это делает
+    Чистит ссылку на удалённый аккаунт у `User` (в мультитарифе — только совпадающий
+    id, аккаунт живой соседней подписки остаётся). НЕ коммитит — это делает
     вызывающий; исключение — когда НИ ОДНО панельное удаление не удалось: тогда в БД
     мутировать нечего и транзакция откатывается, чтобы снять grace-локи pre-delete
     guard'а (не вызывайте с несохранёнными изменениями в сессии). Возвращает число
@@ -2095,6 +2098,9 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     is_multi = settings.is_multi_tariff_enabled()
     delete_panel_user = settings.get_remnawave_user_delete_mode() == 'delete'
     service = SubscriptionService()
+    # subscription.id → id удалённого в панели аккаунта: в мультитарифе по нему
+    # стирается ссылка у человека (см. конец функции).
+    deleted_panel_ids: dict[int, int] = {}
 
     if service.is_configured:
         semaphore = asyncio.Semaphore(5)
@@ -2137,6 +2143,7 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
                     try:
                         if delete_panel_user:
                             await api.delete_user(panel_user_id)
+                            deleted_panel_ids[subscription.id] = panel_user_id
                         else:
                             await api.disable_user(panel_user_id)
                         return True
@@ -2154,6 +2161,8 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
                     except Exception as error:
                         msg = str(error).lower()
                         if 'not found' in msg or 'not exist' in msg or 'already disabled' in msg:
+                            if delete_panel_user:
+                                deleted_panel_ids[subscription.id] = panel_user_id
                             return True  # уже удалён/отключён — считаем успехом
                         logger.error(
                             'Не удалось снять панель-юзера при сбросе триала',
@@ -2189,6 +2198,7 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
             )
 
     subscription_ids = [subscription.id for subscription in to_reset]
+    subscription_users = {subscription.id: subscription.user_id for subscription in to_reset}
 
     try:
         await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id.in_(subscription_ids)))
@@ -2207,6 +2217,17 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     if not is_multi and delete_panel_user:
         user_ids = list({subscription.user_id for subscription in to_reset})
         await db.execute(update(User).where(User.id.in_(user_ids)).values(remnawave_id=None, remnawave_uuid=None))
+    elif is_multi:
+        # Мультитариф: первый аккаунт записан и человеку. Оставить там id удалённого
+        # аккаунта — отдать его следующей покупке (should_create_panel_account привяжет
+        # «свободный аккаунт человека» к новой строке → «User not found» каскадом).
+        # Стираем только совпадающий id: аккаунт живой соседней подписки не трогаем.
+        for subscription_id, user_id in subscription_users.items():
+            dead_panel_id = deleted_panel_ids.get(subscription_id)
+            if dead_panel_id:
+                await db.execute(
+                    update(User).where(User.id == user_id, User.remnawave_id == dead_panel_id).values(remnawave_id=None)
+                )
 
     return len(to_reset)
 

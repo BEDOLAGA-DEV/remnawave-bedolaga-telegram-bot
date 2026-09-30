@@ -15,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 WORKFLOWS_DIR = Path(__file__).resolve().parents[2] / '.github' / 'workflows'
@@ -28,9 +29,9 @@ SHA_PINNED = re.compile(r'^[0-9a-f]{40}$')
 
 PYTHON_VERSION_RE = re.compile(r'python-version:\s*(?P<quote>["\']?)(?P<version>[^"\'\s]+)(?P=quote)')
 
-# Версия PostgreSQL в CI обязана совпадать с боевой из docker-compose:
-# именно на ней проверяются блокировки строк и ограничения схемы.
-POSTGRES_IMAGE_RE = re.compile(r'image:\s*(postgres:[\w.-]+)')
+# Версия PostgreSQL из docker-compose обязана быть среди версий CI: именно
+# на ней проверяются блокировки строк и ограничения схемы.
+MATRIX_POSTGRES = '${{ matrix.postgres }}'
 
 
 def _workflow_files() -> list[Path]:
@@ -99,17 +100,39 @@ def test_python_version_matches_pyproject() -> None:
     assert ci_version in requires.group(1), f'CI гоняет Python {ci_version}, а pyproject требует {requires.group(1)}'
 
 
+def _ci_postgres_images() -> dict[str, set[str]]:
+    """Образы сервиса postgres во всех workflow; ``${{ matrix.postgres }}`` раскрывается по матрице."""
+    found: dict[str, set[str]] = defaultdict(set)
+    for path in _workflow_files():
+        workflow = yaml.safe_load(path.read_text(encoding='utf-8'))
+        for job in (workflow.get('jobs') or {}).values():
+            image = ((job.get('services') or {}).get('postgres') or {}).get('image')
+            if not image:
+                continue
+            if MATRIX_POSTGRES in image:
+                entries = job['strategy']['matrix']['include']
+                images = {image.replace(MATRIX_POSTGRES, str(entry['postgres'])) for entry in entries}
+            else:
+                images = {image}
+            for resolved in images:
+                assert '${{' not in resolved, f'{path.name}: не раскрыт шаблон в образе {resolved}'
+                found[resolved].add(path.name)
+    return found
+
+
 def test_postgres_image_matches_production_compose() -> None:
     """Тестовая база должна быть той же версии, что и боевая.
 
     Смысл тестов на PostgreSQL — проверить поведение конкретного движка.
-    Разъехавшиеся версии превращают их в проверку чего-то другого.
+    Разъехавшиеся версии превращают их в проверку чего-то другого. CI может
+    дополнительно гонять и другие версии (матрица), но боевая среди них обязана быть.
     """
-    ci_images = _collect(POSTGRES_IMAGE_RE, 1)
+    ci_images = _ci_postgres_images()
     if not ci_images:
         pytest.skip('в CI нет сервиса PostgreSQL')
 
     compose = (WORKFLOWS_DIR.parents[1] / 'docker-compose.yml').read_text(encoding='utf-8')
     compose_images = set(re.findall(r'image:\s*(postgres:[\w.-]+)', compose))
+    assert compose_images, 'в docker-compose.yml нет образа postgres'
 
-    assert set(ci_images) == compose_images, f'в CI {sorted(ci_images)}, в docker-compose {sorted(compose_images)}'
+    assert compose_images <= set(ci_images), f'в CI {sorted(ci_images)}, в docker-compose {sorted(compose_images)}'

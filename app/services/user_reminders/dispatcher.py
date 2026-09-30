@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 from pydantic import ValidationError
 from sqlalchemy import and_, exists, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -142,15 +143,25 @@ async def run_reminder_pass(
         # окна повтора та же голова очереди снова всё закрывала (ревью PR #3280).
         after_id: int | None = None
         while budget > 0:
-            users = list(
-                (
-                    await db.execute(
-                        _candidates_query(
-                            reminder, conditions, now=now, exclude=touched, limit=budget, after_id=after_id
-                        )
+            try:
+                # Savepoint: упавший запрос одного напоминания (так падало условие по
+                # способу входа из-за vk_id) иначе обрывал весь проход, а в PostgreSQL
+                # ещё и оставлял транзакцию «aborted» для всех следующих.
+                async with db.begin_nested():
+                    users = list(
+                        (
+                            await db.execute(
+                                _candidates_query(
+                                    reminder, conditions, now=now, exclude=touched, limit=budget, after_id=after_id
+                                )
+                            )
+                        ).scalars()
                     )
-                ).scalars()
-            )
+            except SQLAlchemyError as error:
+                logger.warning(
+                    'Напоминание пропущено: не выбрать получателей', reminder_id=reminder.id, error=str(error)
+                )
+                break
             if not users:
                 break
             after_id = users[-1].id

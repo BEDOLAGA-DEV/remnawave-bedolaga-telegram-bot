@@ -82,6 +82,7 @@ from app.services.maintenance_service import maintenance_service
 from app.utils.cache import cache
 from app.utils.message_patch import patch_message_methods
 from app.utils.redis_client import create_redis
+from app.utils.rich_menu import forget_live_menu_on_callback
 
 
 patch_message_methods()
@@ -141,6 +142,7 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
 
     dp.message.middleware(ContextVarsMiddleware())
     dp.callback_query.middleware(ContextVarsMiddleware())
+    dp.callback_query.middleware(forget_live_menu_on_callback)
     dp.pre_checkout_query.middleware(ContextVarsMiddleware())
     chat_type_filter = ChatTypeFilterMiddleware()
     dp.message.middleware(chat_type_filter)

@@ -19,6 +19,7 @@ from fastapi import (
 
 from app.bot_factory import create_bot
 from app.config import settings
+from app.utils.public_url import public_url
 
 from ..dependencies import require_api_token
 from ..schemas.media import MediaUploadResponse
@@ -48,7 +49,7 @@ def _resolve_target_chat_id() -> int:
 
 
 def _build_media_url(request: Request, file_id: str) -> str:
-    return str(request.url_for('download_media', file_id=file_id))
+    return public_url(request, request.url_for('download_media', file_id=file_id))
 
 
 @router.post('/upload', response_model=MediaUploadResponse, tags=['media'], status_code=status.HTTP_201_CREATED)

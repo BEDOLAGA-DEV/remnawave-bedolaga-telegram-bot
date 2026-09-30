@@ -227,6 +227,13 @@ async def route_payment_by_method(
             await process_tabpay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method == 'cashera':
+        from .cashera import process_cashera_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_cashera_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     if payment_method in ('cispay', 'cispay_card', 'cispay_sbp'):
         from .cispay import process_cispay_payment_amount
 
@@ -557,14 +564,14 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
 
         if amount_rubles < 1:
             await message.answer(
-                'Минимальная сумма пополнения: 1 ₽',
+                'Минимальная сумма пополнения: 1 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
                 reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
 
         if amount_rubles > 50000:
             await message.answer(
-                'Максимальная сумма пополнения: 50,000 ₽',
+                'Максимальная сумма пополнения: 50,000 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
                 reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
@@ -575,17 +582,22 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
 
         if payment_method in ['yookassa', 'yookassa_sbp']:
             if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-                min_rubles = settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100
+                min_rubles = f'{settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
+                example_rubles = max(1, (settings.YOOKASSA_MIN_AMOUNT_KOPEKS + 99) // 100)
+                retry_hint = f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {min_rubles} ₽.'
+                if example_rubles <= 50000 and example_rubles * 100 <= settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
+                    retry_hint += f'\n\nНапример, отправьте: {example_rubles}'
                 await message.answer(
-                    f'❌ Минимальная сумма для оплаты через YooKassa: {min_rubles:.0f} ₽',
+                    f'❌ Минимальная сумма пополнения через YooKassa — {min_rubles} ₽.\n\n{retry_hint}',
                     reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
                 )
                 return
 
             if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-                max_rubles = settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100
+                max_rubles = f'{settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
                 await message.answer(
-                    f'❌ Максимальная сумма для оплаты через YooKassa: {max_rubles:,.0f} ₽'.replace(',', ' '),
+                    f'❌ Максимальная сумма пополнения через YooKassa — {max_rubles} ₽.\n\n'
+                    f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не больше {max_rubles} ₽.',
                     reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
                 )
                 return
@@ -675,6 +687,15 @@ async def handle_topup_amount_callback(
             await start_platega_payment(callback, db_user, state)
             return
 
+    if method == 'cashera':
+        data = await state.get_data()
+        if not (data or {}).get('cashera_method'):
+            from .cashera import start_cashera_payment
+
+            await state.update_data(cashera_pending_amount=amount_kopeks)
+            await start_cashera_payment(callback, db_user, state)
+            return
+
     # Снимаем «часики» до похода к провайдеру: создание платежа может идти секунды, а Telegram
     # ждёт ответ на нажатие недолго. Поздний answer() падал с «query is too old», собственный
     # except считал это ошибкой пополнения и слал отчёт админам, хотя ссылка на оплату уже ушла.
@@ -690,6 +711,15 @@ async def handle_topup_amount_callback(
             await state.set_state(BalanceStates.waiting_for_amount)
             async with AsyncSessionLocal() as db:
                 await process_platega_payment_amount(callback.message, db_user, db, amount_kopeks, state)
+        elif method.startswith('cashera_m_'):
+            from app.database.database import AsyncSessionLocal
+
+            from .cashera import process_cashera_payment_amount
+
+            await state.update_data(payment_method='cashera', cashera_method=method.removeprefix('cashera_m_'))
+            await state.set_state(BalanceStates.waiting_for_amount)
+            async with AsyncSessionLocal() as db:
+                await process_cashera_payment_amount(callback.message, db_user, db, amount_kopeks, state)
         elif method == 'platega':
             # Код способа уже лежит в состоянии — проверено выше.
             from app.database.database import AsyncSessionLocal
@@ -894,6 +924,12 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_lava_card_topup, F.data == 'topup_lava_card')
     dp.callback_query.register(start_lava_sbp_topup, F.data == 'topup_lava_sbp')
 
+    from .cashera import handle_cashera_method_selection, start_cashera_direct_method, start_cashera_payment
+
+    dp.callback_query.register(start_cashera_payment, F.data == 'topup_cashera')
+    dp.callback_query.register(handle_cashera_method_selection, F.data.startswith('cashera_method_'))
+    dp.callback_query.register(start_cashera_direct_method, F.data.startswith('topup_cashera_m_'))
+
     from .cispay import start_cispay_card_topup, start_cispay_sbp_topup, start_cispay_topup
 
     dp.callback_query.register(start_cispay_topup, F.data == 'topup_cispay')
@@ -927,6 +963,10 @@ def register_balance_handlers(dp: Dispatcher):
     from .platega import check_platega_payment_status
 
     dp.callback_query.register(check_platega_payment_status, F.data.startswith('check_platega_'))
+
+    from .cashera import check_cashera_payment_status
+
+    dp.callback_query.register(check_cashera_payment_status, F.data.startswith('check_cashera_'))
 
     dp.callback_query.register(handle_payment_methods_unavailable, F.data == 'payment_methods_unavailable')
 

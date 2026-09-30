@@ -34,12 +34,16 @@ PG_TEST_CONTAINER ?= bedolaga_test_pg
 PG_TEST_PORT ?= 55433
 PG_TEST_URL ?= postgresql+asyncpg://test:test@localhost:$(PG_TEST_PORT)/test
 
+.PHONY: pg-upgrade
+pg-upgrade: ## Перенести базу с PostgreSQL 15 на 18 (бэкап, перенос, сверка, запуск)
+	bash scripts/pg-upgrade.sh $(ARGS)
+
 .PHONY: pg-test-up
 pg-test-up: ## Поднять PostgreSQL для тестов
 	@docker rm -f $(PG_TEST_CONTAINER) >/dev/null 2>&1 || true
 	docker run -d --name $(PG_TEST_CONTAINER) \
 		-e POSTGRES_USER=test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=test \
-		-p $(PG_TEST_PORT):5432 postgres:15-alpine >/dev/null
+		-p $(PG_TEST_PORT):5432 postgres:18-alpine >/dev/null
 	@echo "⏳ Ждём готовности PostgreSQL..."
 	@for i in $$(seq 1 30); do \
 		docker exec $(PG_TEST_CONTAINER) pg_isready -U test -d test >/dev/null 2>&1 && break; \

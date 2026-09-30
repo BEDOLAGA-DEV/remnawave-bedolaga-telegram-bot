@@ -187,7 +187,7 @@ class PlategaPaymentMixin:
         # Ленивый импорт: monitoring_service импортирует платёжный слой,
         # прямой импорт на уровне модуля создал бы циклическую зависимость.
         from app.database.crud import platega_subscription as sub_crud
-        from app.services.monitoring_service import resolve_autopay_period_candidate
+        from app.services.autopay_period import resolve_autopay_period_candidate
         from app.services.platega_recurrent import resolve_platega_interval
 
         existing = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription.id)
@@ -207,9 +207,11 @@ class PlategaPaymentMixin:
 
         # Взаимоисключение с рекуррентом Lava: оба движка push-модели, и две
         # живые привязки на одной подписке списывали бы дважды за цикл.
+        from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
         from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
         await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+        await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
 
         period_days = (
             resolve_autopay_period_candidate(getattr(subscription, 'autopay_period_days', None), tariff)

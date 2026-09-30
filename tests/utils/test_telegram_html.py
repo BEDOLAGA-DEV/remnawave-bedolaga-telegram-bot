@@ -140,3 +140,11 @@ def test_faq_content_rendered_as_question_blocks():
 def test_faq_content_invalid_json_returns_empty():
     assert info_page_faq_to_telegram('not json') == ''
     assert info_page_faq_to_telegram('') == ''
+
+
+def test_empty_heading_and_paragraphs_leave_no_empty_tags():
+    # Пустой заголовок из редактора давал «<b></b>»: не пустая строка, но и без текста —
+    # проверка «пусто → текст по умолчанию» её пропускала, а Telegram такое не принимает.
+    assert html_to_telegram('<p> </p><h1></h1>') == ''
+    assert html_to_telegram('<b><i></i></b>текст') == 'текст'
+    assert html_to_telegram('<h2>Заголовок</h2><p></p><p>Текст</p>') == '<b>Заголовок</b>\n\nТекст'

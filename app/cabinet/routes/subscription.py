@@ -15,6 +15,7 @@ from ..dependencies import get_cabinet_db, get_current_cabinet_user
 from ..schemas.subscription import SubscriptionStatusResponse
 from .subscription_modules import (
     autopay_router,
+    cashera_recurrent_router,
     daily_router,
     devices_router,
     lava_recurrent_router,
@@ -56,3 +57,4 @@ router.include_router(tariff_switch_router)
 router.include_router(revoke_router)
 router.include_router(platega_recurrent_router)
 router.include_router(lava_recurrent_router)
+router.include_router(cashera_recurrent_router)

@@ -257,3 +257,21 @@ def test_low_balance_threshold_is_the_broadcast_one():
 def test_invalid_conditions_are_rejected(raw):
     with pytest.raises(ValidationError):
         parse_conditions(raw)
+
+
+# «COALESCE types bigint and character varying cannot be matched» при создании
+# напоминания: условие «способ входа» сводило каждую OAuth-колонку с '' через
+# COALESCE, а vk_id — BIGINT. SQLite типы не сверяет, поэтому ловим на диалекте
+# PostgreSQL (живой прогон — tests/database/test_user_reminder_conditions_postgres.py).
+
+
+@pytest.mark.parametrize('auth', ['telegram_only', 'email_only', 'single_method'])
+def test_auth_condition_does_not_coalesce_numeric_columns_with_text(auth):
+    from sqlalchemy.dialects import postgresql
+
+    from app.services.user_reminders.conditions import ReminderConditions, condition_clauses
+
+    clauses = condition_clauses(ReminderConditions(auth=auth), now=datetime.now(UTC))
+    sql = str(select(User.id).where(*clauses).compile(dialect=postgresql.dialect())).lower()
+
+    assert 'coalesce(users.vk_id' not in sql

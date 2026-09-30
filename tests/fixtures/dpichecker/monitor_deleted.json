@@ -1,0 +1,7 @@
+{
+ "status": 200,
+ "body": {
+  "monitor_id": 77,
+  "is_active": false
+ }
+}

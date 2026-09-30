@@ -2248,6 +2248,30 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+    if settings.is_cashera_enabled():
+        cashera_name = settings.get_cashera_display_name()
+        if settings.CASHERA_INLINE_METHODS:
+            for method_code in settings.get_cashera_active_methods():
+                title = settings.get_cashera_method_display_title(method_code)
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            text=f'{title} ({cashera_name})',
+                            callback_data=_build_callback(f'cashera_m_{method_code}'),
+                        )
+                    ]
+                )
+        else:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('PAYMENT_CASHERA', f'💳 {cashera_name}'),
+                        callback_data=_build_callback('cashera'),
+                    )
+                ]
+            )
+        has_direct_payment_methods = True
+
     if settings.is_tabpay_card_enabled():
         tabpay_card_name = settings.get_tabpay_card_display_name()
         keyboard.append(

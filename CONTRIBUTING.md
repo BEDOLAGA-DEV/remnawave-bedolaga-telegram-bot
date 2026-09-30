@@ -92,7 +92,7 @@
 - Python 3.11+
 - Docker и Docker Compose
 - Git
-- PostgreSQL 15+ (опционально для локальной разработки)
+- PostgreSQL 18 (опционально для локальной разработки)
 - Redis (опционально для локальной разработки)
 
 ### Установка
@@ -331,7 +331,7 @@ uv run pytest tests/services/test_pricing_engine.py -q   # один файл
 проверяются на том же движке, что и в проде.
 
 ```bash
-make pg-test-up      # поднять PostgreSQL 15 на порту 55433
+make pg-test-up      # поднять PostgreSQL 18 на порту 55433
 make test-postgres   # только тесты с маркером postgres
 make test-all        # весь набор вместе с ними
 make pg-test-down    # убрать контейнер

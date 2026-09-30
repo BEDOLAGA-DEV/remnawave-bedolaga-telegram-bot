@@ -18,13 +18,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud import reachability as crud
 from app.database.database import AsyncSessionLocal
-from app.database.models import ReachabilityBatch, ReachabilityJob, ReachabilityTargetPref, Subscription
+from app.database.models import ReachabilityBatch, ReachabilityJob, ReachabilityTargetPref
 from app.external.bschek_api import BschekAPI, BschekAPIError
 from app.services.reachability import batches as batch_ops
 from app.services.reachability.gate import PaidCallGate
@@ -43,7 +42,7 @@ from app.services.reachability.jobs import JobNotCancellable, JobRunner
 from app.services.reachability.kinds import KIND_GEO, KIND_PROBE, KIND_SCAN, KIND_VLESS
 from app.services.reachability.links import RejectedLink, expand_raw_input, parse_links
 from app.services.reachability.notes import note_for_panel_user
-from app.services.reachability.panel_links import fetch_panel_links
+from app.services.reachability.panel_links import fetch_panel_links, short_uuid_for_user
 from app.services.reachability.preview import PreviewResult
 from app.services.reachability.pricing import credits_to_kopeks, enforce_cost_limit, estimate_vless_kopeks
 from app.services.reachability.requests import (
@@ -372,7 +371,7 @@ class ReachabilityService:
         self, db: AsyncSession, *, short_uuid: str | None = None, user_id: int | None = None
     ) -> SubscriptionConfigs:
         if not short_uuid and user_id is not None:
-            short_uuid = await self._short_uuid_for_user(db, user_id)
+            short_uuid = await short_uuid_for_user(db, user_id)
             if not short_uuid:
                 raise TargetResolutionError(f'У пользователя #{user_id} нет подписки панели Remnawave')
         short_uuid = short_uuid or self.reference_short_uuid()
@@ -446,16 +445,6 @@ class ReachabilityService:
             )
             for index, target in enumerate(configs.configs)
         ]
-
-    @staticmethod
-    async def _short_uuid_for_user(db: AsyncSession, user_id: int) -> str | None:
-        rows = await db.execute(
-            select(Subscription.remnawave_short_uuid)
-            .where(Subscription.user_id == user_id, Subscription.remnawave_short_uuid.is_not(None))
-            .order_by(Subscription.created_at.desc())
-            .limit(1)
-        )
-        return rows.scalar_one_or_none()
 
     # ------------------------------------------------------------ preview
 

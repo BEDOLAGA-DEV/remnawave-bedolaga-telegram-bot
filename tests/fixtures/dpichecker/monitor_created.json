@@ -1,0 +1,39 @@
+{
+ "status": 200,
+ "body": {
+  "id": 77,
+  "check_type": "ip",
+  "location": "russia",
+  "pop_ids": [
+   39,
+   35,
+   98,
+   49,
+   101,
+   26,
+   87,
+   47,
+   97,
+   65
+  ],
+  "resources": [
+   "google.com"
+  ],
+  "interval_hours": 1,
+  "is_active": true,
+  "paused_reason": null,
+  "notify": "dm",
+  "notify_on_success": true,
+  "group_linked": false,
+  "link_code": null,
+  "callback_url": "https://bot.example/dpichecker/webhook",
+  "alert_after_fails": 1,
+  "last_status": null,
+  "last_checked_at": null,
+  "last_latency_ms": null,
+  "consecutive_fails": 0,
+  "next_run_at": "2026-09-24T08:29:09.715Z",
+  "created_at": "2026-09-24T08:29:09.715Z",
+  "link_instructions": null
+ }
+}

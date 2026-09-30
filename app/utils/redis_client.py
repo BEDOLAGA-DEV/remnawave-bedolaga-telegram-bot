@@ -11,6 +11,12 @@ Enterprise не работает, поэтому механизм выключе
 параметры пула, а падает уже первое создание соединения, то есть Redis у бота
 не работает вообще.
 
+Пул — ожидающий (``BlockingConnectionPool``): у обычного пула redis-py 8 предел 100
+соединений, и при его исчерпании команда сразу падала с «MaxConnectionsError: Too
+many connections» — так терялись апдейты при всплеске (FSM aiogram читает состояние
+на каждый апдейт). Теперь размер задаёт ``REDIS_MAX_CONNECTIONS``, а при занятом пуле
+команда ждёт свободное соединение до ``REDIS_POOL_TIMEOUT`` секунд.
+
 Повторы подключения задаются здесь же: по умолчанию у redis-py их ноль
 (``Retry(NoBackoff(), 0)``), и разовая заминка на старте контейнера — гонка за
 резолвером имён, пока поднимается всё остальное — сразу становится ошибкой в
@@ -49,4 +55,11 @@ def create_redis(url: str | None = None, **kwargs: Any) -> redis.Redis:
     if MaintNotificationsConfig is not None:
         kwargs.setdefault('maint_notifications_config', MaintNotificationsConfig(enabled=False))
     kwargs.setdefault('retry', _CONNECT_RETRY)
-    return redis.from_url(url or settings.REDIS_URL, **kwargs)
+    kwargs.setdefault('max_connections', settings.REDIS_MAX_CONNECTIONS)
+    kwargs.setdefault('timeout', settings.REDIS_POOL_TIMEOUT)
+    # redis.from_url всегда строит обычный ConnectionPool — ожидающий собираем сами.
+    pool = redis.BlockingConnectionPool.from_url(url or settings.REDIS_URL, **kwargs)
+    client = redis.Redis(connection_pool=pool)
+    # Как у from_url: aclose() клиента закрывает и его собственный пул.
+    client.auto_close_connection_pool = True
+    return client

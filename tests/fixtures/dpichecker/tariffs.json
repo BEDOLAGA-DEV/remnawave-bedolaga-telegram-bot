@@ -1,0 +1,81 @@
+{
+ "status": 200,
+ "body": {
+  "currency": "USD",
+  "formula": "pops * pop_price + pops * resources * resource_price",
+  "locations": {
+   "china": {
+    "ip": {
+     "popPrice": 0.003,
+     "resourcePrice": 0.001
+    },
+    "vpn": {
+     "popPrice": 0.008,
+     "resourcePrice": 0.002
+    },
+    "mtproto": {
+     "popPrice": 0.1,
+     "resourcePrice": 0.01
+    }
+   },
+   "iran": {
+    "ip": {
+     "popPrice": 0.003,
+     "resourcePrice": 0.001
+    },
+    "vpn": {
+     "popPrice": 0.008,
+     "resourcePrice": 0.002
+    },
+    "mtproto": {
+     "popPrice": 0.1,
+     "resourcePrice": 0.01
+    }
+   },
+   "russia": {
+    "ip": {
+     "popPrice": 0.003,
+     "resourcePrice": 0.001
+    },
+    "vpn": {
+     "popPrice": 0.008,
+     "resourcePrice": 0.002
+    },
+    "mtproto": {
+     "popPrice": 0.1,
+     "resourcePrice": 0.01
+    }
+   },
+   "turkmenistan": {
+    "ip": {
+     "popPrice": 0.003,
+     "resourcePrice": 0.001
+    },
+    "vpn": {
+     "popPrice": 0.008,
+     "resourcePrice": 0.002
+    },
+    "mtproto": {
+     "popPrice": 0.1,
+     "resourcePrice": 0.01
+    }
+   }
+  },
+  "hysteria2": {
+   "vantages": 2,
+   "formula": "hysteria2_keys * vantages * resource_price"
+  },
+  "probe": {
+   "fixed_usd": 1,
+   "traffic_usd_per_gb": 1.5
+  },
+  "noisy": {
+   "price_usd": 0,
+   "daily_limit": 10
+  },
+  "monitors": {
+   "price_usd": 0,
+   "billed": "per run, at the matching check tariff"
+  }
+ }
+}

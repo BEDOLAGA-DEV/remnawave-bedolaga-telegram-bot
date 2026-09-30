@@ -2090,6 +2090,7 @@ def get_target_name(target_type: str) -> str:
         'custom_inactive_month': 'Неактивные 30+ дней',
         'custom_referrals': 'Через рефералов',
         'custom_direct': 'Прямая регистрация',
+        'audience': 'По условиям из кабинета',
     }
     # Обработка фильтра по тарифу
     if target_type.startswith('tariff_'):

@@ -589,6 +589,14 @@ async def test_delete_user_from_db_cancels_platega_for_each_subscription(monkeyp
     # Тот же teardown-путь гасит и рекуррент Lava — оба провайдера обязаны быть
     # отменены до удаления пользователя.
     monkeypatch.setattr(lava_module, 'cancel_lava_recurring_for_subscription_safe', fake_cancel_lava)
+    recorded_cashera: list[tuple[object, int]] = []
+
+    async def fake_cancel_cashera(db, subscription_id):
+        recorded_cashera.append((db, subscription_id))
+
+    monkeypatch.setattr(
+        'app.services.cashera_recurring_cancel.cancel_cashera_recurring_for_subscription_safe', fake_cancel_cashera
+    )
 
     subs = [SimpleNamespace(id=21, connected_squads=None), SimpleNamespace(id=22, connected_squads=None)]
     user = SimpleNamespace(id=9, telegram_id=999, email=None, subscriptions=subs)
@@ -608,5 +616,6 @@ async def test_delete_user_from_db_cancels_platega_for_each_subscription(monkeyp
     assert ok is True
     assert recorded == [(db, 21), (db, 22)]
     assert recorded_lava == [(db, 21), (db, 22)]
+    assert recorded_cashera == [(db, 21), (db, 22)]
     db.delete.assert_awaited_once_with(user)
     db.commit.assert_awaited_once()

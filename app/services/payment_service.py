@@ -32,6 +32,7 @@ from app.services.payment import (
 )
 from app.services.payment.antilopay import AntilopayPaymentMixin
 from app.services.payment.aurapay import AuraPayPaymentMixin
+from app.services.payment.cashera import CasheraPaymentMixin
 from app.services.payment.cispay import CisPayPaymentMixin
 from app.services.payment.cloudpayments import CloudPaymentsPaymentMixin
 from app.services.payment.donut import DonutPaymentMixin
@@ -701,6 +702,41 @@ async def link_cispay_payment_to_transaction(*args, **kwargs):
     return await cispay_crud.link_cispay_payment_to_transaction(*args, **kwargs)
 
 
+async def create_cashera_payment(*args, **kwargs):
+    cashera_crud = import_module('app.database.crud.cashera')
+    return await cashera_crud.create_cashera_payment(*args, **kwargs)
+
+
+async def get_cashera_payment_by_order_id(*args, **kwargs):
+    cashera_crud = import_module('app.database.crud.cashera')
+    return await cashera_crud.get_cashera_payment_by_order_id(*args, **kwargs)
+
+
+async def get_cashera_payment_by_invoice_id(*args, **kwargs):
+    cashera_crud = import_module('app.database.crud.cashera')
+    return await cashera_crud.get_cashera_payment_by_invoice_id(*args, **kwargs)
+
+
+async def get_cashera_payment_by_id(*args, **kwargs):
+    cashera_crud = import_module('app.database.crud.cashera')
+    return await cashera_crud.get_cashera_payment_by_id(*args, **kwargs)
+
+
+async def get_cashera_payment_by_id_for_update(*args, **kwargs):
+    cashera_crud = import_module('app.database.crud.cashera')
+    return await cashera_crud.get_cashera_payment_by_id_for_update(*args, **kwargs)
+
+
+async def update_cashera_payment_status(*args, **kwargs):
+    cashera_crud = import_module('app.database.crud.cashera')
+    return await cashera_crud.update_cashera_payment_status(*args, **kwargs)
+
+
+async def link_cashera_payment_to_transaction(*args, **kwargs):
+    cashera_crud = import_module('app.database.crud.cashera')
+    return await cashera_crud.link_cashera_payment_to_transaction(*args, **kwargs)
+
+
 async def create_tabpay_payment(*args, **kwargs):
     tabpay_crud = import_module('app.database.crud.tabpay')
     return await tabpay_crud.create_tabpay_payment(*args, **kwargs)
@@ -828,6 +864,7 @@ class PaymentService(
     CisPayPaymentMixin,
     TabPayPaymentMixin,
     ParityPayPaymentMixin,
+    CasheraPaymentMixin,
 ):
     """Основной интерфейс платежей, делегирующий работу специализированным mixin-ам."""
 
@@ -1482,6 +1519,31 @@ class PaymentService(
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),
                     'provider': 'cispay',
+                }
+            return None
+
+        # --- Cashera ----------------------------------------------------------
+        if _base == 'cashera':
+            if not settings.is_cashera_enabled():
+                logger.warning('Cashera is not enabled, cannot create guest payment')
+                return None
+
+            # Под-опция — код метода Cashera; без неё — общая форма, метод выбирает покупатель.
+            method_code = _option if _option in settings.get_cashera_active_methods() else None
+            result = await self.create_cashera_payment(
+                db=db,
+                user_id=None,
+                amount_kopeks=amount_kopeks,
+                description=description,
+                return_url=return_url,
+                payment_method_code=method_code,
+            )
+            if result:
+                await _patch_guest_metadata(result['local_payment_id'], 'cashera')
+                return {
+                    'payment_url': result.get('payment_url'),
+                    'payment_id': result.get('order_id'),
+                    'provider': 'cashera',
                 }
             return None
 

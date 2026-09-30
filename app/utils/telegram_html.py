@@ -20,6 +20,9 @@ _TAG_RE = re.compile(r'<(/?)(\w[\w-]*)(?:\s+[^>]*)?>')
 
 _INCOMPLETE_ENTITY_RE = re.compile(r'&[#\w]{0,9}$')
 
+# Пара тегов без видимого текста внутри; пробелы и переводы строк сохраняются.
+_EMPTY_PAIR_RE = re.compile(r'<(b|i|u|s|code|pre|blockquote|a)(?:\s[^>]*)?>(\s*)</\1>')
+
 _MAX_HREF_LENGTH = 1024
 
 _TELEGRAM_HARD_LIMIT = 4096
@@ -122,6 +125,13 @@ class _TelegramHtmlRenderer(HTMLParser):
         while self._open_tags:
             self._parts.append(f'</{self._open_tags.pop()}>')
         text = ''.join(self._parts)
+        # Пустой заголовок или абзац из редактора давал «<b></b>»: строка не пустая,
+        # но видимого текста нет — Telegram такое сообщение не примет, а проверки
+        # «текст пустой → взять текст по умолчанию» его пропускали.
+        previous = None
+        while previous != text:
+            previous = text
+            text = _EMPTY_PAIR_RE.sub(r'\2', text)
         text = re.sub(r'[ \t]+\n', '\n', text)
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()

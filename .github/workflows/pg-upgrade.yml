@@ -1,0 +1,174 @@
+name: PostgreSQL upgrade
+
+# Сквозная проверка перехода PostgreSQL 15 → 18 так, как его пройдёт пользователь:
+# настоящий docker-compose.yml прошлой версии, база с данными, обновление compose,
+# сторож, make pg-upgrade и сверка. Юнит-тесты этого не заменяют — здесь работают
+# настоящие Docker, тома и образы postgres.
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - docker-compose.yml
+      - docker-compose.local.yml
+      - scripts/pg-upgrade.sh
+      - docker/postgres/**
+      - .github/workflows/pg-upgrade.yml
+  pull_request:
+    branches: ['**']
+    paths:
+      - docker-compose.yml
+      - docker-compose.local.yml
+      - scripts/pg-upgrade.sh
+      - docker/postgres/**
+      - .github/workflows/pg-upgrade.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Последний docker-compose.yml с PostgreSQL 15 — так выглядят установки
+  # пользователей до перехода.
+  OLD_COMPOSE_REF: e90256d9
+  PG_USER: remnawave_user
+  PG_DB: remnawave_bot
+
+jobs:
+  upgrade:
+    name: перенос 15 → 18
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: .env как у пользователя
+        run: cp .env.example .env
+
+      - name: Установка на PostgreSQL 15 (старый compose)
+        run: |
+          git show "$OLD_COMPOSE_REF:docker-compose.yml" > "$RUNNER_TEMP/old-compose.yml"
+          grep -q 'image: postgres:15-alpine' "$RUNNER_TEMP/old-compose.yml"
+          docker compose -f "$RUNNER_TEMP/old-compose.yml" --project-directory . up -d --wait postgres
+          echo "PROJECT=$(docker compose config | sed -n 's/^name: *//p')" >> "$GITHUB_ENV"
+
+      - name: Данные в базе 15
+        run: |
+          docker compose -f "$RUNNER_TEMP/old-compose.yml" --project-directory . exec -T postgres \
+            psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 -q <<'SQL'
+          create table users_probe (
+            id bigserial primary key,
+            name text not null,
+            meta jsonb,
+            created_at timestamptz not null default now(),
+            balance numeric(12, 2)
+          );
+          insert into users_probe (name, meta, balance)
+          select 'пользователь ' || g || ' 🚀', jsonb_build_object('n', g, 'tags', jsonb_build_array('a', 'б')), g * 1.5
+            from generate_series(1, 25000) g;
+          create table payments_probe (
+            id serial primary key,
+            user_id bigint references users_probe (id) on delete cascade,
+            amount_kopeks bigint,
+            status text check (status in ('ok', 'fail'))
+          );
+          insert into payments_probe (user_id, amount_kopeks, status)
+          select (g % 25000) + 1, g * 100, case when g % 7 = 0 then 'fail' else 'ok' end
+            from generate_series(1, 40000) g;
+          create index on payments_probe (user_id, status);
+          create type mood as enum ('happy', 'sad');
+          create table enum_probe (id int primary key, m mood);
+          insert into enum_probe values (1, 'happy'), (2, 'sad');
+          create view paid_view as select user_id, sum(amount_kopeks) as total from payments_probe where status = 'ok' group by 1;
+          create function probe_fn() returns int language sql as 'select 42';
+          create sequence standalone_seq;
+          select setval('standalone_seq', 777);
+          create table alembic_version (version_num varchar(32) primary key);
+          insert into alembic_version values ('probe_head');
+          create schema extra;
+          create table extra.t (x int);
+          insert into extra.t select generate_series(1, 10);
+          create role reader login password 'reader-secret';
+          grant select on users_probe to reader;
+          create database second_db;
+          \c second_db
+          create table s (id int);
+          insert into s select generate_series(1, 5);
+          SQL
+
+      - name: Обновление compose без переноса — сторож не даёт стартовать на пустой базе
+        run: |
+          docker compose up -d postgres || true
+          sleep 20
+          docker compose logs postgres | tee "$RUNNER_TEMP/guard.log"
+          grep -q 'make pg-upgrade' "$RUNNER_TEMP/guard.log"
+          if docker compose exec -T postgres pg_isready -U "$PG_USER" -d "$PG_DB"; then
+            echo 'PostgreSQL 18 поднялся на пустом томе — сторож не сработал' >&2
+            exit 1
+          fi
+
+      - name: make pg-upgrade
+        run: |
+          set -o pipefail
+          make pg-upgrade ARGS='--yes --no-bot' | tee "$RUNNER_TEMP/upgrade.log"
+          # С --no-bot скрипт обязан прямо сказать, что бот не запущен.
+          grep -q 'Бот не запущен (--no-bot)' "$RUNNER_TEMP/upgrade.log"
+
+      - name: Данные на месте в PostgreSQL 18
+        run: |
+          q() { docker compose exec -T postgres psql -U "$PG_USER" -d "${2:-$PG_DB}" -X -Atqc "$1"; }
+          check() { actual="$(q "$1" "${3:-}")"; [ "$actual" = "$2" ] || { echo "«$1»: ожидалось «$2», получено «$actual»" >&2; exit 1; }; }
+          test "$(q 'show server_version_num')" -ge 180000
+          check 'select count(*) from users_probe' 25000
+          check 'select count(*) from payments_probe' 40000
+          check "select count(*) from payments_probe where status = 'fail'" 5714
+          check 'select name from users_probe where id = 1' 'пользователь 1 🚀'
+          check "select meta->'tags'->>1 from users_probe where id = 7" 'б'
+          check 'select balance from users_probe where id = 3' '4.50'
+          check "select string_agg(m::text, ',' order by id) from enum_probe" 'happy,sad'
+          check 'select count(*) from paid_view' 23571
+          check 'select probe_fn()' 42
+          check "select nextval('users_probe_id_seq')" 25001
+          check "select nextval('standalone_seq')" 778
+          check 'select version_num from alembic_version' probe_head
+          check 'select count(*) from extra.t' 10
+          check "select has_table_privilege('reader', 'users_probe', 'select')" t
+          check 'select count(*) from s' 5 second_db
+          docker compose exec -T -e PGPASSWORD=reader-secret postgres \
+            psql -h 127.0.0.1 -U reader -d "$PG_DB" -Atqc 'select count(*) from users_probe' | grep -qx 25000
+
+      - name: Старый том не тронут, резервная копия есть
+        run: |
+          test "$(docker run --rm -v "${PROJECT}_postgres_data:/old:ro" --entrypoint cat postgres:18-alpine /old/PG_VERSION)" = 15
+          ls backups/postgres-upgrade-*/remnawave_bot.dump backups/postgres-upgrade-*/second_db.dump backups/postgres-upgrade-*/globals.sql
+
+      - name: Повторный запуск ничего не меняет
+        run: make pg-upgrade ARGS='--yes --no-bot' | tee "$RUNNER_TEMP/rerun.log"; grep -q 'уже выполнен' "$RUNNER_TEMP/rerun.log"
+
+      - name: Логи при падении
+        if: failure()
+        run: docker compose logs postgres || true
+
+  fresh-install:
+    name: новая установка сразу на 18
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: .env как у пользователя
+        run: cp .env.example .env
+
+      - name: docker compose up поднимает PostgreSQL 18
+        run: |
+          docker compose up -d --wait postgres
+          test "$(docker compose exec -T postgres psql -U "$PG_USER" -d "$PG_DB" -Atqc 'show server_version_num')" -ge 180000
+
+      - name: make pg-upgrade на новой установке ничего не делает
+        run: make pg-upgrade ARGS='--yes --no-bot' | tee "$RUNNER_TEMP/fresh.log"; grep -q 'переносить нечего' "$RUNNER_TEMP/fresh.log"
+
+      - name: Логи при падении
+        if: failure()
+        run: docker compose logs postgres || true

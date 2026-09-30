@@ -25,7 +25,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.exc import MissingGreenlet, StatementError
 
 import app.cabinet.routes.admin_bulk_actions as bulk
 
@@ -159,3 +159,19 @@ async def test_delete_subscription_survives_unloaded_collection():
     assert result.success is True
     assert 'Пробный' in result.message
     db.commit.assert_awaited()
+
+
+class _LazyUserSqlalchemy21(_LazyUser):
+    """То же на SQLAlchemy 2.1: MissingGreenlet приходит завёрнутой в StatementError."""
+
+    @property
+    def subscriptions(self):
+        orig = MissingGreenlet('greenlet_spawn has not been called')
+        raise StatementError(str(orig), 'SELECT subscriptions', {}, orig)
+
+
+def test_known_subscriptions_falls_back_when_sqlalchemy_21_wraps_missing_greenlet() -> None:
+    user = _LazyUserSqlalchemy21()
+    target = _expired_trial_sub(user)
+
+    assert bulk._known_subscriptions(user, target) == [target]

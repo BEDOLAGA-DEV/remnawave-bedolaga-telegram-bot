@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .media import TELEGRAM_FILE_ID_PATTERN
 
@@ -40,6 +40,27 @@ class BroadcastFiltersResponse(BaseModel):
     filters: list[BroadcastFilter]  # basic filters
     tariff_filters: list[TariffFilter]  # tariff filters
     custom_filters: list[BroadcastFilter]  # custom filters
+
+
+class BroadcastAudienceCondition(BaseModel):
+    field: str = Field(..., max_length=64)
+    operator: Literal['eq', 'ne', 'before', 'after', 'between'] = 'eq'
+    value: str = Field(..., max_length=128)
+    value_to: str | None = Field(default=None, max_length=10)
+    label: str | None = Field(default=None, max_length=512)  # Display only; value is the stable users.id.
+    join: Literal['and', 'or'] | None = None  # Relation to the previous row.
+
+
+class BroadcastAudience(BaseModel):
+    conditions: list[BroadcastAudienceCondition] = Field(..., min_length=1)
+
+    @model_validator(mode='after')
+    def validate_joins(self) -> 'BroadcastAudience':
+        if self.conditions[0].join is not None:
+            raise ValueError('The first audience condition cannot have a join operator')
+        if any(condition.join is None for condition in self.conditions[1:]):
+            raise ValueError('Every subsequent audience condition needs a join operator')
+        return self
 
 
 # ============ Tariffs ============
@@ -159,6 +180,7 @@ class BroadcastResponse(BaseModel):
     channel: str = 'telegram'  # telegram|email|both
     email_subject: str | None = None
     email_html_content: str | None = None
+    audience: BroadcastAudience | None = None
 
     class Config:
         from_attributes = True
@@ -189,6 +211,37 @@ class BroadcastPreviewResponse(BaseModel):
     count: int
 
 
+class BroadcastAudiencePreviewRequest(BaseModel):
+    channel: Literal['telegram', 'email']
+    category: Literal['system', 'news', 'promo'] = 'system'
+    audience: BroadcastAudience
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class BroadcastAudiencePreviewUser(BaseModel):
+    id: int
+    username: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    telegram_id: int | None = None
+    email: str | None = None
+
+
+class BroadcastAudiencePreviewResponse(BaseModel):
+    count: int
+    offset: int
+    limit: int
+    users: list[BroadcastAudiencePreviewUser]
+
+
+class BroadcastAudienceUserSearchResponse(BaseModel):
+    count: int
+    offset: int
+    limit: int
+    users: list[BroadcastAudiencePreviewUser]
+
+
 # ============ Email Filters ============
 
 
@@ -217,7 +270,8 @@ class CombinedBroadcastCreateRequest(BaseModel):
     """Request to create a combined (telegram/email/both) broadcast."""
 
     channel: BroadcastChannel
-    target: str
+    target: str | None = None
+    audience: BroadcastAudience | None = None
 
     # Telegram-specific fields
     message_text: str | None = Field(default=None, max_length=4000)

@@ -18,6 +18,8 @@ cancel, обновления суммы нет), Lava вовсе не прини
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,11 +80,16 @@ async def sync_recurrent_bindings_after_price_change(db: AsyncSession, subscript
         if subscription is None:
             return
 
-        from app.database.crud import lava_subscription as lava_crud, platega_subscription as platega_crud
+        from app.database.crud import (
+            cashera_subscription as cashera_crud,
+            lava_subscription as lava_crud,
+            platega_subscription as platega_crud,
+        )
 
         providers = (
             ('platega', await platega_crud.get_active_platega_subscription_by_subscription(db, subscription_id)),
             ('lava', await lava_crud.get_active_lava_subscription_by_subscription(db, subscription_id)),
+            ('cashera', await cashera_crud.get_active_cashera_subscription_by_subscription(db, subscription_id)),
         )
 
         for provider, record in providers:
@@ -92,6 +99,11 @@ async def sync_recurrent_bindings_after_price_change(db: AsyncSession, subscript
             true_amount = await resolve_true_renewal_amount(db, subscription, record.charge_days)
             if true_amount is None or true_amount <= 0:
                 continue
+            if provider == 'cashera':
+                # Cashera принимает только целые рубли — привязка хранит сумму, округлённую вверх.
+                from app.services.cashera_recurrent import round_up_to_rubles
+
+                true_amount = round_up_to_rubles(true_amount)
             if abs(true_amount - record.amount_kopeks) <= AMOUNT_TOLERANCE_KOPEKS:
                 continue
 
@@ -112,17 +124,27 @@ async def sync_recurrent_bindings_after_price_change(db: AsyncSession, subscript
 
                 await cancel_platega_recurring_for_subscription_safe(db, subscription_id)
                 agent = _PlategaSbpAgent()
-            else:
+            elif provider == 'lava':
                 from app.services.payment.lava import _LavaRecurrentAgent, cancel_lava_recurring_for_subscription_safe
 
                 await cancel_lava_recurring_for_subscription_safe(db, subscription_id)
                 agent = _LavaRecurrentAgent()
+            else:
+                from app.services import cashera_recurring_cancel
+
+                await cashera_recurring_cancel.cancel_cashera_recurring_for_subscription_safe(db, subscription_id)
+                # Без бота уйдёт только WS-событие; payment.cashera отсюда не импортируем — кольцо.
+                agent = SimpleNamespace(_notify_cashera_recurring=cashera_recurring_cancel.notify_cashera_recurring)
 
             # Уведомление best-effort: у модульного агента нет бота, поэтому
             # доедет WS-событие в кабинет; бот-сообщение уйдёт там, где агент
             # несёт bot (полный PaymentService).
             try:
-                notify = agent._notify_sbp_recurring if provider == 'platega' else agent._notify_lava_recurring
+                notify = {
+                    'platega': getattr(agent, '_notify_sbp_recurring', None),
+                    'lava': getattr(agent, '_notify_lava_recurring', None),
+                    'cashera': getattr(agent, '_notify_cashera_recurring', None),
+                }[provider]
                 await notify(db, record, 'cancelled')
             except Exception as notify_error:  # pragma: no cover - best-effort
                 logger.warning(

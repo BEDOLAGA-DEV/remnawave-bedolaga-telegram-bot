@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Table,
     Text,
@@ -182,6 +183,7 @@ class PaymentMethod(Enum):
     PARITYPAY = 'paritypay'
     DONUT = 'donut'
     LAVA = 'lava'
+    CASHERA = 'cashera'
     MANUAL = 'manual'
     BALANCE = 'balance'
 
@@ -784,6 +786,62 @@ class LavaSubscription(Base):
         # IntegrityError и возвращает победителя (зеркало Platega).
         Index(
             'uq_lava_subscriptions_alive',
+            'subscription_id',
+            unique=True,
+            postgresql_where=text("status IN ('PENDING', 'ACTIVE', 'PAST_DUE')"),
+            sqlite_where=text("status IN ('PENDING', 'ACTIVE', 'PAST_DUE')"),
+        ),
+    )
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+
+class CasheraSubscription(Base):
+    """Подписка Cashera (sbp_recurring), привязанная к подписке бота.
+
+    Push-модель, как у :class:`PlategaSubscription`: клиент один раз подтверждает
+    подписку по ``redirect_url``, дальше Cashera списывает сама по интервалу, а
+    каждое списание приходит вебхуком ``transaction.status_updated`` с объектом
+    ``subscription``. Сумма и интервал задаются нами при оформлении.
+    """
+
+    __tablename__ = 'cashera_subscriptions'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
+    tariff_id = Column(Integer, ForeignKey('tariffs.id'), nullable=True)
+
+    cashera_subscription_uuid = Column(String(64), unique=True, nullable=True, index=True)
+    # Наш external_id подписки (ключ идемпотентности создания у Cashera)
+    external_id = Column(String(255), unique=True, nullable=False, index=True)
+    interval = Column(String(16), nullable=False)  # daily / weekly / monthly / yearly
+    charge_days = Column(Integer, nullable=False)  # шаг продления за одно списание
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+
+    status = Column(String(20), nullable=False, default='PENDING')  # PENDING/ACTIVE/PAST_DUE/CANCELLED/FAILED
+    remote_status = Column(String(32), nullable=True)  # последний статус подписки у Cashera
+    redirect_url = Column(Text, nullable=True)
+    next_charge_at = Column(AwareDateTime(), nullable=True)
+    last_charge_at = Column(AwareDateTime(), nullable=True)
+    last_charge_external_id = Column(String(255), nullable=True)  # uuid последнего списания
+    charges_success = Column(Integer, nullable=False, default=0)
+    charges_failed = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    user = relationship('User', backref='cashera_subscriptions')
+    subscription = relationship('Subscription', backref='cashera_subscriptions')
+
+    __table_args__ = (
+        Index('ix_cashera_subscriptions_user_active', 'user_id', 'status'),
+        # Одна живая привязка на подписку: проигравший гонку enable ловит IntegrityError.
+        Index(
+            'uq_cashera_subscriptions_alive',
             'subscription_id',
             unique=True,
             postgresql_where=text("status IN ('PENDING', 'ACTIVE', 'PAST_DUE')"),
@@ -1735,6 +1793,72 @@ class CisPayPayment(Base):
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return (
             f'<CisPayPayment(id={self.id}, order_id={self.order_id}, '
+            f'amount={self.amount_rubles}₽, status={self.status})>'
+        )
+
+
+class CasheraPayment(Base):
+    """Платежи через Cashera (api.cashera.cash): СБП, карты, крипта, CryptoBot."""
+
+    __tablename__ = 'cashera_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+
+    # Идентификаторы: наш external_id (ключ идемпотентности Cashera) и uuid транзакции Cashera
+    order_id = Column(String(64), unique=True, nullable=False, index=True)
+    cashera_uuid = Column(String(64), unique=True, nullable=True, index=True)
+
+    # Суммы — копейки (минорные единицы RUB)
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+    description = Column(Text, nullable=True)
+
+    # Статусы: наш внутренний и последний сырой статус Cashera (идемпотентность вебхуков)
+    status = Column(String(32), nullable=False, default='pending')
+    cashera_status = Column(String(32), nullable=True)
+    is_paid = Column(Boolean, default=False)
+
+    # Данные платежа
+    payment_url = Column(Text, nullable=True)
+    payment_method = Column(String(32), nullable=True)  # sbp / card / mastercard / crypto / cryptobot
+
+    # Метаданные
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+
+    # Временные метки
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+    # Связь с транзакцией
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+
+    # Relationships
+    user = relationship('User', backref='cashera_payments')
+    transaction = relationship('Transaction', backref='cashera_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == 'pending'
+
+    @property
+    def is_success(self) -> bool:
+        return self.status == 'success' and self.is_paid
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status in ['failed', 'expired', 'refunded', 'chargeback', 'amount_mismatch', 'error']
+
+    def __repr__(self) -> str:  # pragma: no cover - debug helper
+        return (
+            f'<CasheraPayment(id={self.id}, order_id={self.order_id}, '
             f'amount={self.amount_rubles}₽, status={self.status})>'
         )
 
@@ -3802,6 +3926,7 @@ class BroadcastHistory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     target_type = Column(String(100), nullable=False)
+    audience = Column(JSON, nullable=True)  # Conditions used by cabinet broadcasts.
     message_text = Column(Text, nullable=True)  # Nullable for email-only broadcasts
     has_media = Column(Boolean, default=False)
     media_type = Column(String(20), nullable=True)
@@ -5306,6 +5431,45 @@ class ReachabilityTargetPref(Base):
     excluded = Column(Boolean, nullable=False, default=False)
     note = Column(Text, nullable=True)
     updated_by_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+
+
+class DpiCheckerAction(Base):
+    """Действие админа в DPI//CHECKER из кабинета: проверка, Зонд, Соседи или монитор.
+
+    Результаты не копируются — они у сервиса по ``remote_id``. Здесь только то, чего у сервиса нет:
+    кто запустил, что проверяли (источник в панели и имена ключей), сколько списано и вернули.
+    """
+
+    __tablename__ = 'dpichecker_actions'
+    __table_args__ = (
+        UniqueConstraint('kind', 'remote_id', name='uq_dpichecker_actions_kind_remote'),
+        Index('ix_dpichecker_actions_kind_created', 'kind', 'created_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(16), nullable=False)  # check | probe | noisy | monitor
+    check_type = Column(String(16), nullable=True)  # vpn | ip | mtproto
+    remote_id = Column(Integer, nullable=True)
+    status = Column(String(16), nullable=False, default='submitting')
+    admin_user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    location = Column(String(16), nullable=True)
+    pop_count = Column(Integer, nullable=False, default=0)
+    resource_count = Column(Integer, nullable=False, default=0)
+    source = Column(
+        String(24), nullable=False, default='paste'
+    )  # paste | panel_subscription | panel_hosts | panel_nodes | site (монитор взят с сайта)
+    source_ref = Column(String(128), nullable=True)
+    label = Column(String(255), nullable=False, default='')
+    targets = Column(JSON, nullable=False, default=list)  # [{"value": ..., "name": ...}]
+    request = Column(JSON, nullable=False, default=dict)
+    idempotency_key = Column(String(64), nullable=False, unique=True)
+    cost_usd = Column(Numeric(12, 4), nullable=True)
+    refunded_usd = Column(Numeric(12, 4), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    delivery_ids = Column(JSON, nullable=False, default=list)  # последние обработанные X-DPIChecker-Delivery
+    last_run_id = Column(Integer, nullable=True)  # монитор: последний прогон, о котором уже решено, сообщать ли
+    created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 
 

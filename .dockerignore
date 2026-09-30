@@ -48,3 +48,6 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+
+# Дампы базы (scripts/pg-upgrade.sh) не должны попадать в образ
+backups/

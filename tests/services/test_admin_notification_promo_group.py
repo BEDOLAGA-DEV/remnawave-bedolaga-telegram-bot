@@ -15,8 +15,9 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.database.errors import is_missing_greenlet
 from app.database.models import (
     PromoGroup,
     ServerSquad,
@@ -78,8 +79,9 @@ async def test_promo_group_resolved_after_refresh_dropped_the_relationship(monke
         # Без этого many-to-one резолвится из identity map БЕЗ запроса и баг не
         # воспроизводится: в проде группы в карте сессии не было.
         db.expunge(group)
-        with pytest.raises(MissingGreenlet):
+        with pytest.raises(SQLAlchemyError) as lazy_load:
             getattr(user, 'promo_group', None)  # ← ровно то, на чём падало
+        assert is_missing_greenlet(lazy_load.value)
 
         service = AdminNotificationService(SimpleNamespace())
         resolved = await service._get_user_promo_group(db, user)

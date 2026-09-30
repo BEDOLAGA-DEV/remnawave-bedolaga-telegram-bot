@@ -1,0 +1,32 @@
+{
+ "status": 200,
+ "body": {
+  "status": "ok",
+  "keys": [
+   {
+    "uri": "vless://masked-572416",
+    "host": "8.8.8.8",
+    "name": "test",
+    "group": null,
+    "udp_only": false,
+    "hy2": false
+   },
+   {
+    "uri": "ss://masked-980419",
+    "host": "8.8.4.4",
+    "name": "ss1",
+    "group": null,
+    "udp_only": false,
+    "hy2": false
+   },
+   {
+    "uri": "hysteria2://masked-442585",
+    "host": "1.1.1.1",
+    "name": "hy",
+    "group": null,
+    "udp_only": false,
+    "hy2": true
+   }
+  ]
+ }
+}

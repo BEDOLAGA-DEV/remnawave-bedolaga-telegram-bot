@@ -1,15 +1,15 @@
 [project]
 name = 'remnawave-bedolaga-telegram-bot'
-version = "4.15.0"
+version = "4.16.0"
 description = 'Telegram bot for RemnaWave VPN service'
 readme = 'README.md'
 license = { text = 'MIT' }
-requires-python = '==3.13.*'
+requires-python = '==3.14.*'
 dependencies = [
     'aiogram==3.31.0',
-    'sqlalchemy==2.0.52',
-    'greenlet==3.5.5',
-    'alembic==1.19.2',
+    'sqlalchemy==2.1.1',
+    'greenlet==3.5.6',
+    'alembic==1.20.0',
     'asyncpg==0.31.0',
     'aiosqlite==0.22.1',
     'fastapi[standard]==0.141.1',
@@ -21,7 +21,7 @@ dependencies = [
     'qrcode[pil]==8.2',
     'packaging==26.3',
     'bcrypt==5.0.0',
-    'pyjwt==2.13.0',
+    'pyjwt==2.15.1',
     'pyzipper==0.4.0',
     'structlog==26.1.0',
     'rich==15.0.0',
@@ -33,15 +33,15 @@ dependencies = [
     'aiofiles==25.1.0',
     'pydantic==2.13.5',
     'pydantic-settings==2.15.0',
-    'uvicorn==0.52.4',
-    'starlette==1.6.0',
+    'uvicorn==0.54.0',
+    'starlette==1.7.0',
     'attrs==26.1.0',
     'pillow==12.3.0',
 ]
 
 [dependency-groups]
 dev = [
-    'ruff==0.16.6',
+    'ruff==0.16.9',
     'pytest==9.1.1',
     'pytest-asyncio==1.4.0',
     'pytest-cov==7.1.0',

@@ -1449,6 +1449,7 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
     может купить тариф с нуля. Возвращает ``{'panel_disabled': bool, 'panel_user_id': int|None}``.
     """
     from app.database.crud.subscription import reset_subscription
+    from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
     # Подписка обнуляется «как будто не оформляли» — СБП-автопродление Platega
@@ -1459,6 +1460,7 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
     await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
     await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+    await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
     # В мультитарифном режиме у каждой подписки свой панельный id — НЕ откатываемся
     # на user.remnawave_id (это легаси single-tariff id, иначе можно отключить
     # не того панельного пользователя). В single-tariff fallback на user корректен.

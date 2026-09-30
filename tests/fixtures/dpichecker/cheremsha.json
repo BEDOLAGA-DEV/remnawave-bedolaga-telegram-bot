@@ -1,0 +1,78 @@
+{
+ "status": 200,
+ "body": {
+  "loaded": true,
+  "last_refresh": "2026-09-24T06:35:36.144333+00:00",
+  "results": [
+   {
+    "resource": "rutracker.org",
+    "is_domain": true,
+    "resolved_ips": [
+     "203.0.113.1366",
+     "203.0.113.1367"
+    ],
+    "domain_hit": true,
+    "rkn_subnet_hit": null,
+    "cdn_hit": "203.0.113.1366 ∈ 203.0.113.1368/17",
+    "blocked": true,
+    "asn": "13335",
+    "asn_org": "CLOUDFLARENET - Cloudflare, Inc., US",
+    "country": "US",
+    "vote": {
+     "key": "7386aff2a5374b98",
+     "yes": 0,
+     "no": 0,
+     "mine": null
+    }
+   },
+   {
+    "resource": "google.com",
+    "is_domain": true,
+    "resolved_ips": [
+     "203.0.113.1369",
+     "203.0.113.1370",
+     "203.0.113.1371",
+     "203.0.113.1372",
+     "203.0.113.1373",
+     "203.0.113.1374"
+    ],
+    "domain_hit": false,
+    "rkn_subnet_hit": null,
+    "cdn_hit": null,
+    "blocked": false,
+    "asn": "15169",
+    "asn_org": "GOOGLE - Google LLC, US",
+    "country": "US",
+    "vote": {
+     "key": "d4c9d9027326271a",
+     "yes": 0,
+     "no": 0,
+     "mine": null
+    }
+   },
+   {
+    "resource": "1.1.1.1",
+    "is_domain": false,
+    "resolved_ips": [],
+    "domain_hit": false,
+    "rkn_subnet_hit": null,
+    "cdn_hit": "1.1.1.1 ∈ 1.1.1.0/24",
+    "blocked": false,
+    "asn": "13335",
+    "asn_org": "CLOUDFLARENET - Cloudflare, Inc., US",
+    "country": "AU",
+    "vote": {
+     "key": "f1412386aa8db257",
+     "yes": 1,
+     "no": 0,
+     "mine": null
+    }
+   }
+  ],
+  "invalid": [
+   "notadomain_x"
+  ],
+  "truncated": false,
+  "max": 20
+ }
+}

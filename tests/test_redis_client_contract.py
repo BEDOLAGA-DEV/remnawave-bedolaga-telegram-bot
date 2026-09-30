@@ -105,3 +105,53 @@ async def test_transient_connect_failure_is_retried(monkeypatch, redis_client_mo
 
 async def _noop() -> None:
     return None
+
+
+# ---------------------------------------------------------------------------
+# «MaxConnectionsError: Too many connections» из FSM aiogram: у обычного пула
+# redis-py 8 предел 100 и при его исчерпании команда падает сразу. Пул обязан
+# быть ожидающим и размером из настроек.
+# ---------------------------------------------------------------------------
+
+
+def test_pool_is_blocking_and_sized_from_settings(monkeypatch, redis_client_module):
+    import redis.asyncio as redis_asyncio
+
+    monkeypatch.setattr(redis_client_module.settings, 'REDIS_MAX_CONNECTIONS', 321)
+    monkeypatch.setattr(redis_client_module.settings, 'REDIS_POOL_TIMEOUT', 4.0)
+
+    client = redis_client_module.create_redis('redis://localhost:6379/2')
+    pool = client.connection_pool
+
+    assert isinstance(pool, redis_asyncio.BlockingConnectionPool)
+    assert pool.max_connections == 321
+    assert pool.timeout == 4.0
+    assert pool.connection_kwargs['db'] == 2  # параметры из URL по-прежнему разбираются
+    assert client.auto_close_connection_pool is True
+
+
+@pytest.mark.asyncio
+async def test_busy_pool_waits_for_a_free_connection_instead_of_failing(monkeypatch, redis_client_module):
+    import asyncio
+
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    monkeypatch.setattr(redis_client_module.settings, 'REDIS_MAX_CONNECTIONS', 1)
+    monkeypatch.setattr(redis_client_module.settings, 'REDIS_POOL_TIMEOUT', 0.2)
+    pool = redis_client_module.create_redis('redis://localhost:6379/0').connection_pool
+
+    async def no_server(connection):  # без живого Redis: проверяется только очередь пула
+        return None
+
+    monkeypatch.setattr(pool, 'ensure_connection', no_server)
+
+    first = await pool.get_connection()
+    waiter = asyncio.create_task(pool.get_connection())
+    await asyncio.sleep(0.05)
+    assert not waiter.done(), 'второй запрос не ждал, а завершился сразу'
+    await pool.release(first)
+    assert await asyncio.wait_for(waiter, 1) is first  # дождался освободившегося соединения
+
+    # Пул занят дольше таймаута — понятная ошибка, а не MaxConnectionsError мгновенно.
+    with pytest.raises(RedisConnectionError, match='No connection available'):
+        await pool.get_connection()

@@ -1,0 +1,9 @@
+{
+ "status": 200,
+ "body": {
+  "check_id": 5308,
+  "status": "cancelled",
+  "refunded": 0.04,
+  "balance": 54.7283
+ }
+}

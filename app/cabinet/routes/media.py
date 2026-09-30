@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.bot_factory import create_bot
 from app.config import settings
 from app.database.models import User
+from app.utils.public_url import public_url
 
 from ..dependencies import get_current_cabinet_user
 from ..schemas.media import TELEGRAM_FILE_ID_PATTERN
@@ -111,9 +112,9 @@ def _media_signature(file_id: str, exp: int) -> str:
     return hmac.new(secret, f'{file_id}.{exp}'.encode(), hashlib.sha256).hexdigest()
 
 
-def make_media_token(file_id: str) -> str:
-    """Signed, expiring token authorizing download of `file_id`."""
-    exp = int(time.time()) + _MEDIA_TOKEN_TTL_SECONDS
+def make_media_token(file_id: str, *, ttl_seconds: int = _MEDIA_TOKEN_TTL_SECONDS) -> str:
+    """Signed, expiring token authorizing download of `file_id` (any opaque subject string)."""
+    exp = int(time.time()) + ttl_seconds
     return f'{exp}.{_media_signature(file_id, exp)}'
 
 
@@ -157,7 +158,7 @@ def _resolve_target_chat_id() -> int:
 
 def _build_media_url(request: Request, file_id: str) -> str:
     """Build a signed, expiring URL for downloading media."""
-    base = str(request.url_for('cabinet_download_media', file_id=file_id))
+    base = public_url(request, request.url_for('cabinet_download_media', file_id=file_id))
     sep = '&' if '?' in base else '?'
     return f'{base}{sep}token={make_media_token(file_id)}'
 

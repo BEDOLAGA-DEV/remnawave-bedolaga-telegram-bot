@@ -1,0 +1,8 @@
+{
+ "status": 200,
+ "body": {
+  "resource": "google.com",
+  "blacklisted": false,
+  "entry": null
+ }
+}

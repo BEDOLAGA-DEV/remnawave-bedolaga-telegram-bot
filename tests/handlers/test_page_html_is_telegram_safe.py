@@ -189,3 +189,84 @@ async def test_admin_offer_preview_drops_unsupported_markup(monkeypatch):
 
     assert callback.sent
     assert _disallowed_tags(callback.sent[0]) == set()
+
+
+# ------------------------------------------------------------------ регистрация
+# При регистрации правила и политика показываются из start.py, мимо меню. Тот же
+# <h1> из редактора ронял шаг «политика после правил»: «Unsupported start tag "h1"».
+
+
+class _RegistrationCallback:
+    def __init__(self):
+        self.sent: list[str] = []
+        self.from_user = SimpleNamespace(id=1)
+        self.message = SimpleNamespace(edit_text=self._send, answer=self._send)
+
+    async def _send(self, text, **_kwargs):
+        self.sent.append(text)
+        return SimpleNamespace()
+
+
+@pytest.mark.asyncio
+async def test_registration_privacy_policy_drops_unsupported_markup(monkeypatch):
+    from app.handlers import start
+
+    policy = SimpleNamespace(is_enabled=True, content='<h1>Политика</h1>' + RICH_HTML)
+    monkeypatch.setattr(start.PrivacyPolicyService, 'get_policy', AsyncMock(return_value=policy))
+    callback = _RegistrationCallback()
+    state = AsyncMock()
+
+    shown = await start._show_privacy_policy_after_rules(callback, state, AsyncMock(), 'ru')
+
+    assert shown is True
+    assert callback.sent, 'политика не отправлена'
+    assert not _disallowed_tags(''.join(callback.sent)), callback.sent
+    assert '<b>Политика</b>' in callback.sent[0]
+    state.set_state.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_registration_privacy_policy_of_bare_tags_falls_back_to_default(monkeypatch):
+    from app.handlers import start
+
+    policy = SimpleNamespace(is_enabled=True, content='<p> </p><h1></h1>')
+    monkeypatch.setattr(start.PrivacyPolicyService, 'get_policy', AsyncMock(return_value=policy))
+    monkeypatch.setattr(start, 'get_privacy_policy', lambda _language: '<p>Политика <b>по умолчанию</b></p>')
+    callback = _RegistrationCallback()
+
+    shown = await start._show_privacy_policy_after_rules(callback, AsyncMock(), AsyncMock(), 'ru')
+
+    assert shown is True
+    assert callback.sent == ['Политика <b>по умолчанию</b>']
+
+
+@pytest.mark.asyncio
+async def test_registration_rules_drop_unsupported_markup(monkeypatch):
+    from app.handlers import start
+
+    monkeypatch.setattr(start, 'get_rules', AsyncMock(return_value='<h1>Правила</h1>' + RICH_HTML))
+
+    text = await start._rules_for_telegram('ru')
+
+    assert not _disallowed_tags(text), text
+    assert '<b>Правила</b>' in text
+
+
+@pytest.mark.asyncio
+async def test_registration_rules_of_bare_tags_fall_back_to_default(monkeypatch):
+    from app.handlers import start
+
+    monkeypatch.setattr(start, 'get_rules', AsyncMock(return_value='<p></p>'))
+    monkeypatch.setattr(start, 'get_default_rules', lambda _language: '<h2>Правила по умолчанию</h2>')
+
+    assert await start._rules_for_telegram('ru') == '<b>Правила по умолчанию</b>'
+
+
+def test_registration_sends_rules_only_through_the_converter():
+    """Любая новая отправка правил из start.py обязана идти через _rules_for_telegram."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / 'app' / 'handlers' / 'start.py').read_text(encoding='utf-8')
+    raw_calls = re.findall(r'await get_rules\(', source)
+
+    assert len(raw_calls) == 1, 'правила из get_rules() уходят в Telegram мимо _rules_for_telegram'

@@ -102,6 +102,36 @@ async def test_tribute_webhook_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.anyio
+async def test_tribute_webhook_processing_error_is_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """незачисленная оплата — не 2xx, иначе Tribute не повторит доставку."""
+    monkeypatch.setattr(settings, 'TRIBUTE_API_KEY', 'test-key', raising=False)
+
+    class FailingTributeService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def process_webhook(self, payload: str):  # type: ignore[override]
+            raise LookupError('user not found')
+
+    class StubTributeAPI:
+        @staticmethod
+        def verify_webhook_signature(payload: str, signature: str) -> bool:
+            return True
+
+    monkeypatch.setattr('app.webserver.payments.TributeService', FailingTributeService)
+    monkeypatch.setattr('app.webserver.payments.TributeAPI', StubTributeAPI)
+
+    route = _get_route(create_payment_router(DummyBot(), SimpleNamespace()), settings.TRIBUTE_WEBHOOK_PATH)
+    request = _build_request(
+        settings.TRIBUTE_WEBHOOK_PATH, body=b'{"name": "new_donation"}', headers={'trbt-signature': 'sig'}
+    )
+
+    response = await route.endpoint(request)
+
+    assert response.status_code >= 500
+
+
+@pytest.mark.anyio
 async def test_yookassa_unknown_ip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, 'YOOKASSA_ENABLED', True, raising=False)
 

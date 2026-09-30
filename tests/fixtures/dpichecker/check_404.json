@@ -1,0 +1,7 @@
+{
+ "status": 404,
+ "body": {
+  "error": "Check not found.",
+  "code": "not_found"
+ }
+}

@@ -1,0 +1,217 @@
+{
+ "status": 200,
+ "body": {
+  "pops": [
+   {
+    "id": 1,
+    "location": "russia",
+    "region": "Алтайский край",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 2,
+    "location": "russia",
+    "region": "Амурская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 3,
+    "location": "russia",
+    "region": "Архангельская обл.",
+    "operator": "Beeline",
+    "is_healthy": false
+   },
+   {
+    "id": 4,
+    "location": "russia",
+    "region": "Архангельская обл.",
+    "operator": "MTS",
+    "is_healthy": false
+   },
+   {
+    "id": 5,
+    "location": "russia",
+    "region": "Архангельская обл.",
+    "operator": "Megafon",
+    "is_healthy": false
+   },
+   {
+    "id": 6,
+    "location": "russia",
+    "region": "Архангельская обл.",
+    "operator": "Rostelecom",
+    "is_healthy": true
+   },
+   {
+    "id": 7,
+    "location": "russia",
+    "region": "Астраханская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 8,
+    "location": "russia",
+    "region": "Белгородская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 9,
+    "location": "russia",
+    "region": "Брянская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 10,
+    "location": "russia",
+    "region": "Владимирская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 11,
+    "location": "russia",
+    "region": "Волгоградская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 12,
+    "location": "russia",
+    "region": "Вологодская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 13,
+    "location": "russia",
+    "region": "Воронежская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 14,
+    "location": "russia",
+    "region": "Донецк",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 15,
+    "location": "russia",
+    "region": "Еврейская АО",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 16,
+    "location": "russia",
+    "region": "Ивановская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 17,
+    "location": "russia",
+    "region": "Иркутская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 18,
+    "location": "russia",
+    "region": "Калининградская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 19,
+    "location": "russia",
+    "region": "Калужская обл.",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 20,
+    "location": "russia",
+    "region": "Камчатский край",
+    "operator": "MTS",
+    "is_healthy": false
+   },
+   {
+    "id": 125,
+    "location": "china",
+    "region": "Аньхой",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 126,
+    "location": "china",
+    "region": "Аньхой",
+    "operator": "ChinaMobile",
+    "is_healthy": false
+   },
+   {
+    "id": 127,
+    "location": "china",
+    "region": "Аньхой",
+    "operator": "ChinaTelecom",
+    "is_healthy": true
+   },
+   {
+    "id": 128,
+    "location": "china",
+    "region": "Аньхой",
+    "operator": "ChinaUnicom",
+    "is_healthy": false
+   },
+   {
+    "id": 129,
+    "location": "china",
+    "region": "Внутренняя Монголия",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 130,
+    "location": "china",
+    "region": "Ганьсу",
+    "operator": null,
+    "is_healthy": true
+   },
+   {
+    "id": 131,
+    "location": "china",
+    "region": "Ганьсу",
+    "operator": "ChinaMobile",
+    "is_healthy": false
+   },
+   {
+    "id": 132,
+    "location": "china",
+    "region": "Ганьсу",
+    "operator": "ChinaTelecom",
+    "is_healthy": true
+   },
+   {
+    "id": 133,
+    "location": "china",
+    "region": "Ганьсу",
+    "operator": "ChinaUnicom",
+    "is_healthy": false
+   },
+   {
+    "id": 134,
+    "location": "china",
+    "region": "Гирин",
+    "operator": null,
+    "is_healthy": true
+   }
+  ]
+ }
+}

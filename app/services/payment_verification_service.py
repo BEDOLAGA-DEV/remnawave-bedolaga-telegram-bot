@@ -20,6 +20,7 @@ from app.database.database import AsyncSessionLocal
 from app.database.models import (
     AntilopayPayment,
     AuraPayPayment,
+    CasheraPayment,
     CisPayPayment,
     CloudPaymentsPayment,
     CryptoBotPayment,
@@ -94,6 +95,7 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.CISPAY,
         PaymentMethod.TABPAY,
         PaymentMethod.PARITYPAY,
+        PaymentMethod.CASHERA,
         # ETOPLATEZHI / ANTILOPAY / JUPITER / DONUT / LAVA — webhook-driven,
         # без API-метода синхронизации БД, manual check не реализован.
     }
@@ -123,6 +125,7 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.CISPAY,
         PaymentMethod.TABPAY,
         PaymentMethod.PARITYPAY,
+        PaymentMethod.CASHERA,
     }
 )
 
@@ -174,6 +177,8 @@ def method_display_name(method: PaymentMethod) -> str:
         return settings.get_lava_display_name()
     if method == PaymentMethod.CISPAY:
         return settings.get_cispay_display_name()
+    if method == PaymentMethod.CASHERA:
+        return settings.get_cashera_display_name()
     if method == PaymentMethod.TABPAY:
         return settings.get_tabpay_display_name()
     if method == PaymentMethod.PARITYPAY:
@@ -228,6 +233,8 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_lava_enabled()
     if method == PaymentMethod.CISPAY:
         return settings.is_cispay_enabled()
+    if method == PaymentMethod.CASHERA:
+        return settings.is_cashera_enabled()
     if method == PaymentMethod.TABPAY:
         return settings.is_tabpay_enabled()
     if method == PaymentMethod.PARITYPAY:
@@ -542,6 +549,12 @@ def _is_cispay_pending(payment: CisPayPayment) -> bool:
         return False
     status = (payment.status or '').lower()
     return status == 'pending'
+
+
+def _is_cashera_pending(payment: CasheraPayment) -> bool:
+    if payment.is_paid:
+        return False
+    return (payment.status or '').lower() == 'pending'
 
 
 def _is_paritypay_pending(payment: ParityPayPayment) -> bool:
@@ -1189,6 +1202,32 @@ async def _fetch_tabpay_payments(db: AsyncSession, cutoff: datetime) -> list[Pen
     return records
 
 
+async def _fetch_cashera_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(CasheraPayment)
+        .options(selectinload(CasheraPayment.user))
+        .where(CasheraPayment.created_at >= cutoff)
+        .order_by(desc(CasheraPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_cashera_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.CASHERA,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _fetch_cispay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(CisPayPayment)
@@ -1312,6 +1351,7 @@ async def list_recent_pending_payments(
         await _fetch_donut_payments(db, cutoff),
         await _fetch_lava_payments(db, cutoff),
         await _fetch_cispay_payments(db, cutoff),
+        await _fetch_cashera_payments(db, cutoff),
         await _fetch_tabpay_payments(db, cutoff),
         await _fetch_paritypay_payments(db, cutoff),
         await _fetch_stars_transactions(db, cutoff),
@@ -1663,6 +1703,21 @@ async def get_payment_record(
             expires_at=getattr(payment, 'expires_at', None),
         )
 
+    if method == PaymentMethod.CASHERA:
+        payment = await db.get(CasheraPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
     if method == PaymentMethod.CISPAY:
         payment = await db.get(CisPayPayment, local_payment_id)
         if not payment:
@@ -1789,6 +1844,13 @@ async def run_manual_check(
             aurapay_payment = await db.get(AuraPayPayment, local_payment_id)
             if aurapay_payment:
                 result = await payment_service.check_aurapay_payment_status(db, aurapay_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+        elif method == PaymentMethod.CASHERA:
+            cashera_payment = await db.get(CasheraPayment, local_payment_id)
+            if cashera_payment:
+                result = await payment_service.check_cashera_payment_status(db, cashera_payment.order_id)
                 payment = result.get('payment') if result else None
             else:
                 payment = None

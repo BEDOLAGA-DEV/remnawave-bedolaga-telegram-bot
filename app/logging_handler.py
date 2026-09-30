@@ -302,8 +302,11 @@ class TelegramNotifierProcessor:
                 return event_dict
             self._recent_hashes[msg_hash] = now
 
-        # 7. Schedule async send
-        self._schedule_send(bot, event_dict, event_uid)
+        # 7. Schedule async send — со снимком словаря. Для stdlib-записи
+        # ProcessorFormatter после нас рендерит этот же dict, и ConsoleRenderer
+        # вынимает из него event/level/exc_info раньше, чем стартует задача
+        # отправки: в чат уехал бы пустой «LogError (no traceback available)».
+        self._schedule_send(bot, dict(event_dict), event_uid)
 
         return event_dict
 

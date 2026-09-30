@@ -1,0 +1,106 @@
+{
+ "status": 200,
+ "body": {
+  "id": 5318,
+  "status": "completed",
+  "check_type": "ip",
+  "location": "russia",
+  "usd_cost": 0.04,
+  "source": "watcher",
+  "selected_pop_ids": [
+   39,
+   35,
+   98,
+   49,
+   101,
+   26,
+   87,
+   47,
+   97,
+   65
+  ],
+  "resource_count": 1,
+  "progress": {
+   "done": 10,
+   "total": 10,
+   "percent": 100
+  },
+  "estimated_max_minutes": null,
+  "callback_url": null,
+  "results": [
+   {
+    "pop_id": 39,
+    "pop_name": "Москва Ростелеком",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 35,
+    "pop_name": "Москва",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 98,
+    "pop_name": "Санкт-Петербург",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 49,
+    "pop_name": "Новосибирская обл.",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 101,
+    "pop_name": "Свердловская обл.",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 26,
+    "pop_name": "Краснодарский край",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 87,
+    "pop_name": "Республика Татарстан",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 47,
+    "pop_name": "Нижегородская обл.",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 97,
+    "pop_name": "Самарская обл.",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   },
+   {
+    "pop_id": 65,
+    "pop_name": "Республика Башкортостан",
+    "resource": "google.com",
+    "accessible": true,
+    "proxy_dead": false
+   }
+  ],
+  "created_at": "2026-09-24T08:48:42.456Z",
+  "started_at": "2026-09-24T08:48:42.468Z",
+  "completed_at": "2026-09-24T08:49:05.359Z"
+ }
+}

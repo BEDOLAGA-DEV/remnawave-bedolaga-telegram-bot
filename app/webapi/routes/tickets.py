@@ -13,6 +13,7 @@ from app.database.models import Ticket, TicketMessage, TicketStatus
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.tickets import (
+    TicketMediaItemResponse,
     TicketMediaResponse,
     TicketMessageResponse,
     TicketPriorityUpdateRequest,
@@ -28,16 +29,34 @@ router = APIRouter()
 logger = structlog.get_logger(__name__)
 
 
+def _serialize_media_items(message: TicketMessage) -> list[TicketMediaItemResponse] | None:
+    """Галерея сообщения: несколько файлов, отправленных одной пачкой.
+
+    Схема ответа поле объявляла, но сериализатор его не заполнял — внешние
+    интеграции видели только первый файл и не могли добраться до остальных.
+    """
+    raw_items = getattr(message, 'media_items', None) or None
+    if not raw_items:
+        return None
+    try:
+        return [TicketMediaItemResponse(**item) for item in raw_items]
+    except (TypeError, KeyError, ValueError) as error:
+        logger.warning('Failed to parse media_items', message_id=message.id, error=str(error))
+        return None
+
+
 def _serialize_message(message: TicketMessage) -> TicketMessageResponse:
+    items = _serialize_media_items(message)
     return TicketMessageResponse(
         id=message.id,
         user_id=message.user_id,
         message_text=message.message_text,
         is_from_admin=message.is_from_admin,
-        has_media=message.has_media,
+        has_media=bool(message.has_media) or bool(items),
         media_type=message.media_type,
         media_file_id=message.media_file_id,
         media_caption=message.media_caption,
+        media_items=items,
         created_at=message.created_at,
     )
 

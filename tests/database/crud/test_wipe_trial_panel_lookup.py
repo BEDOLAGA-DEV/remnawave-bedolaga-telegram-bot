@@ -210,3 +210,98 @@ async def test_disable_mode_treats_gone_or_already_disabled_as_success(monkeypat
     wiped = await wipe_trial_subscriptions(db, [_sub(42, panel_id=9001)])
 
     assert wiped == 1
+
+
+# ---------------------------------------------------------------------------
+# Мультитариф: первый аккаунт записан и человеку (users.remnawave_id). Сброс
+# триала удалял аккаунт в панели, но ссылку у человека стирал только в
+# однотарифном режиме — следующая покупка наследовала мёртвый id
+# (should_create_panel_account) и сыпала «User not found». Тот же класс, что
+# «удалил подписку → купил заново» (8e37e780), только через сброс триала.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_multi(db, *, user_panel_id: int, subs: list[tuple[int, bool]]):
+    """subs: (remnawave_id, is_trial). Возвращает (user, [subscriptions])."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.database.models import Subscription, SubscriptionStatus, User
+
+    user = User(telegram_id=700, username='multi', language='ru', remnawave_id=user_panel_id)
+    db.add(user)
+    await db.flush()
+    rows = []
+    for index, (panel_id, is_trial) in enumerate(subs):
+        row = Subscription(
+            user_id=user.id,
+            status=SubscriptionStatus.EXPIRED.value if is_trial else SubscriptionStatus.ACTIVE.value,
+            is_trial=is_trial,
+            end_date=datetime.now(UTC) + (timedelta(days=-1) if is_trial else timedelta(days=30)),
+            remnawave_id=panel_id,
+            remnawave_short_id=f'short{index}',
+        )
+        db.add(row)
+        rows.append(row)
+    await db.commit()
+    return user, rows
+
+
+async def _user_panel_id(db, user_id: int):
+    from sqlalchemy import select
+
+    from app.database.models import User
+
+    return (await db.execute(select(User.remnawave_id).where(User.id == user_id))).scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_multi_tariff_trial_reset_clears_dead_account_on_user(monkeypatch, patched_service):
+    from app.database.models import Base
+    from tests.fixtures.sqlite_memory import memory_session
+
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'delete')
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        user, (trial,) = await _seed_multi(db, user_panel_id=8812, subs=[(8812, True)])
+
+        assert await wipe_trial_subscriptions(db, [trial]) == 1
+        await db.commit()
+
+        patched_service.delete_user.assert_awaited_once_with(8812)
+        assert await _user_panel_id(db, user.id) is None
+
+
+@pytest.mark.asyncio
+async def test_multi_tariff_trial_reset_keeps_live_account_of_other_subscription(monkeypatch, patched_service):
+    """У человека записан аккаунт живой платной подписки — сброс триала его не трогает."""
+    from app.database.models import Base
+    from tests.fixtures.sqlite_memory import memory_session
+
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'delete')
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        user, (paid, trial) = await _seed_multi(db, user_panel_id=5000, subs=[(5000, False), (8812, True)])
+
+        assert await wipe_trial_subscriptions(db, [trial]) == 1
+        await db.commit()
+
+        patched_service.delete_user.assert_awaited_once_with(8812)
+        assert await _user_panel_id(db, user.id) == 5000
+
+
+@pytest.mark.asyncio
+async def test_multi_tariff_trial_reset_in_disable_mode_keeps_link(monkeypatch, patched_service):
+    """disable: аккаунт жив (отключён) — связь с ним стирать нельзя."""
+    from app.database.models import Base
+    from tests.fixtures.sqlite_memory import memory_session
+
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(settings, 'REMNAWAVE_USER_DELETE_MODE', 'disable')
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        user, (trial,) = await _seed_multi(db, user_panel_id=8812, subs=[(8812, True)])
+
+        assert await wipe_trial_subscriptions(db, [trial]) == 1
+        await db.commit()
+
+        patched_service.disable_user.assert_awaited_once_with(8812)
+        assert await _user_panel_id(db, user.id) == 8812

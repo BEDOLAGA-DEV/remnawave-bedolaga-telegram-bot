@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 from app.database.models import (
+    CasheraSubscription,
     LavaSubscription,
     PlategaSubscription,
     PromoGroup,
@@ -43,6 +44,7 @@ TABLES = (
     tariff_promo_groups,
     PlategaSubscription.__table__,
     LavaSubscription.__table__,
+    CasheraSubscription.__table__,
 )
 
 BASE_PRICE = 30000  # 300 ₽ за 30 дней

@@ -55,6 +55,7 @@ from app.external.remnawave_api import (
     is_user_not_found_error,
 )
 from app.localization.texts import get_texts
+from app.services.autopay_period import resolve_autopay_period_candidate
 from app.services.grace_access_runtime import update_panel_user_grace_safe
 from app.services.notification_delivery_service import (
     NotificationType,
@@ -83,44 +84,6 @@ from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.rich_notify import try_send_rich_notification
 from app.utils.subscription_time import ends_within_days
 from app.utils.timezone import format_local_datetime
-
-
-def resolve_autopay_period_candidate(candidate, tariff) -> int | None:
-    """Return ``candidate`` only if it is a valid renewal period for ``tariff``.
-
-    Validation is **fail-closed**: we never let an unvalidated period drive
-    autopay extension. Resolution order for the allowlist:
-
-    1. ``tariff.get_available_periods()`` if the tariff exists and has any
-       priced periods.
-    2. ``settings.get_available_renewal_periods()`` as the global allowlist
-       (for tariff-less / classic-mode subscriptions, or tariffs with empty
-       ``period_prices``).
-
-    Returns ``None`` for ``candidate`` that is falsy, non-positive, or not in
-    either allowlist — letting the caller fall through to the next tier
-    (typically ``tariff.get_shortest_period()`` and finally the hard 30-day
-    floor).
-    """
-    if not candidate or candidate <= 0:
-        return None
-
-    available_periods: list[int] = []
-    if tariff is not None:
-        try:
-            available_periods = list(tariff.get_available_periods() or [])
-        except Exception:
-            available_periods = []
-
-    if not available_periods:
-        try:
-            available_periods = list(settings.get_available_renewal_periods() or [])
-        except Exception:
-            available_periods = []
-
-    if not available_periods or candidate not in available_periods:
-        return None
-    return candidate
 
 
 @dataclass
@@ -239,6 +202,7 @@ class MonitoringService:
         self._sla_task = None
         self._withdrawal_reminder_task = None
         self._user_reminder_task = None
+        self._live_menu_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
         self._autopay_fail_state: dict[tuple[int, int], dict] = {}
@@ -396,6 +360,13 @@ class MonitoringService:
                 self._user_reminder_task = asyncio.create_task(self._user_reminder_loop())
         except Exception as e:
             logger.error('Не удалось запустить напоминания пользователям', error=e)
+        try:
+            if not self._live_menu_task or self._live_menu_task.done():
+                from app.services.live_menu_service import live_menu_loop
+
+                self._live_menu_task = asyncio.create_task(live_menu_loop(self))
+        except Exception as e:
+            logger.error('Не удалось запустить живое меню', error=e)
 
         while self.is_running:
             try:
@@ -418,6 +389,8 @@ class MonitoringService:
             self._withdrawal_reminder_task.cancel()
         if self._user_reminder_task and not self._user_reminder_task.done():
             self._user_reminder_task.cancel()
+        if self._live_menu_task and not self._live_menu_task.done():
+            self._live_menu_task.cancel()
 
     async def _monitoring_cycle(self):
         async with AsyncSessionLocal() as db:
@@ -464,6 +437,9 @@ class MonitoringService:
                 # Реконсилиация рекуррентных подписок Lava: та же страховка на
                 # случай потерянных вебхуков / недошедших отмен.
                 await self._reconcile_lava_subscriptions(db)
+
+                # Реконсилиация подписок Cashera + доначисление пропущенных списаний.
+                await self._reconcile_cashera_subscriptions(db)
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
@@ -3158,6 +3134,111 @@ class MonitoringService:
                     )
         except Exception as e:
             logger.warning('Ошибка реконсиляции Lava-подписок', error=e)
+
+    async def _reconcile_cashera_subscriptions(self, db: AsyncSession):
+        """Safety net для подписок Cashera — зеркало Platega/Lava-реконсиляции.
+
+        Сверяет локальный статус со статусом Cashera (потерянные вебхуки, зависший
+        PENDING), доначисляет оплаченные списания, чей вебхук не дошёл (у Cashera
+        есть история /charges — в отличие от Lava), и добивает недошедшие отмены.
+
+        НЕ гейтится CASHERA_RECURRENT_ENABLED намеренно: выключение фичи не
+        останавливает существующие привязки.
+        """
+        try:
+            if not settings.is_cashera_enabled():
+                return
+
+            from app.database.crud import cashera_subscription as sub_crud
+            from app.services.cashera_recurrent import cashera_reconcile_decision, normalize_remote_status
+            from app.services.cashera_service import CasheraAPIError, cashera_service
+            from app.services.payment.cashera import _CasheraRecurrentAgent
+
+            agent = _CasheraRecurrentAgent(self.bot)
+            records = await sub_crud.list_cashera_subscriptions_by_statuses(db, ['PENDING', 'ACTIVE', 'PAST_DUE'])
+
+            for record in records:
+                try:
+                    remote_missing = True
+                    remote_status = None
+                    if record.cashera_subscription_uuid:
+                        try:
+                            payload = await cashera_service.get_subscription(record.cashera_subscription_uuid)
+                            remote_status = normalize_remote_status(payload.get('status'))
+                            remote_missing = remote_status is None
+                        except CasheraAPIError as api_error:
+                            # 404 = провайдер достоверно не знает подписку; прочее — временно.
+                            remote_missing = api_error.status_code == 404
+                        except Exception:
+                            remote_missing = False
+
+                    if record.status in ('ACTIVE', 'PAST_DUE'):
+                        await agent.replay_missed_cashera_charges(db, record.id)
+                        await db.refresh(record)
+
+                    age_minutes = (
+                        (datetime.now(UTC) - record.created_at).total_seconds() / 60
+                        if record.created_at is not None
+                        else 0.0
+                    )
+                    new_status = cashera_reconcile_decision(
+                        record.status, remote_status, age_minutes, remote_missing=remote_missing
+                    )
+                    if new_status and new_status != record.status:
+                        previous_status = record.status
+                        await sub_crud.update_cashera_subscription(
+                            db, record, status=new_status, remote_status=remote_status
+                        )
+                        logger.info(
+                            'Подписка Cashera реконсилирована',
+                            local_id=record.id,
+                            cashera_uuid=record.cashera_subscription_uuid,
+                            old_status=previous_status,
+                            new_status=new_status,
+                            remote_status=remote_status,
+                        )
+                        if new_status == 'FAILED' and record.cashera_subscription_uuid:
+                            # Не дождались подтверждения — гасим и у провайдера, чтобы
+                            # поздно подтверждённая ссылка не начала списывать.
+                            try:
+                                await cashera_service.cancel_subscription(record.cashera_subscription_uuid)
+                            except Exception as cancel_error:
+                                logger.warning(
+                                    'Cashera: не удалось отменить неподтверждённую подписку у провайдера',
+                                    record_id=record.id,
+                                    error=cancel_error,
+                                )
+                except Exception as record_error:
+                    logger.warning(
+                        'Не удалось реконсилировать подписку Cashera',
+                        local_id=getattr(record, 'id', None),
+                        error=record_error,
+                    )
+
+            # Свип недавних отмен: локальный CANCELLED мог не дойти до Cashera.
+            cancelled_records = await sub_crud.list_recently_cancelled_cashera_subscriptions(
+                db, datetime.now(UTC) - timedelta(days=30)
+            )
+            for record in cancelled_records:
+                try:
+                    payload = await cashera_service.get_subscription(record.cashera_subscription_uuid)
+                    remote_status = normalize_remote_status(payload.get('status'))
+                    if remote_status in (None, 'cancelled', 'failed'):
+                        continue
+                    await cashera_service.cancel_subscription(record.cashera_subscription_uuid)
+                    logger.warning(
+                        'Подписка Cashera осталась активной после локальной отмены — повторил отмену',
+                        local_id=record.id,
+                        remote_status=remote_status,
+                    )
+                except Exception as record_error:
+                    logger.warning(
+                        'Не удалось досверить отменённую подписку Cashera',
+                        local_id=getattr(record, 'id', None),
+                        error=record_error,
+                    )
+        except Exception as e:
+            logger.warning('Ошибка реконсиляции подписок Cashera', error=e)
 
     async def _check_ticket_sla(self, db: AsyncSession):
         try:

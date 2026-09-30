@@ -7,7 +7,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete as sa_delete, select
-from sqlalchemy.exc import MissingGreenlet
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -22,6 +22,7 @@ from app.database.crud.subscription import (
 from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.crud.user_promo_group import sync_user_primary_promo_group
+from app.database.errors import is_missing_greenlet
 from app.database.models import (
     PaymentMethod,
     PromoGroup,
@@ -118,7 +119,9 @@ def _known_subscriptions(user: User, fallback: Subscription | None = None) -> li
     """
     try:
         subs = getattr(user, 'subscriptions', None)
-    except MissingGreenlet:
+    except SQLAlchemyError as exc:
+        if not is_missing_greenlet(exc):
+            raise
         subs = None
     if subs is None:
         # Коллекция недоступна — отдаём хотя бы целевую подписку.
@@ -580,12 +583,14 @@ async def _do_delete_subscription(
     # runs BEFORE any irreversible panel/DB step, and the guard is
     # re-acquired immediately below — closing that window before anything
     # that can't be undone happens.
+    from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
     await cancel_platega_recurring_for_subscription_safe(db, sub.id)
 
     await cancel_lava_recurring_for_subscription_safe(db, sub.id)
+    await cancel_cashera_recurring_for_subscription_safe(db, sub.id)
     try:
         await ensure_no_open_grace_for_subscriptions(db, (sub.id,))
     except GraceAccessDeletionBlocked:

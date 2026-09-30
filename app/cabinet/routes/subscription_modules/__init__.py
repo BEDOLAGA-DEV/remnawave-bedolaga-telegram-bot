@@ -5,6 +5,7 @@ The main subscription.py includes all sub-routers for backward compatibility.
 """
 
 from .autopay import router as autopay_router
+from .cashera_recurrent import router as cashera_recurrent_router
 from .daily import router as daily_router
 from .devices import router as devices_router
 from .lava_recurrent import router as lava_recurrent_router
@@ -21,6 +22,7 @@ from .traffic import router as traffic_router
 
 __all__ = [
     'autopay_router',
+    'cashera_recurrent_router',
     'daily_router',
     'devices_router',
     'lava_recurrent_router',

@@ -1,15 +1,18 @@
 """Admin routes for broadcasts in cabinet."""
 
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import distinct, func, select
+from pydantic import ValidationError
+from sqlalchemy import String, cast, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import BroadcastHistory, PromoGroup, Subscription, SubscriptionStatus, Tariff, User
 from app.handlers.admin.messages import get_target_users_count
 from app.keyboards.admin import BROADCAST_BUTTONS, DEFAULT_BROADCAST_BUTTONS
+from app.services.broadcast_audience import preview_audience_users, validate_audience
 from app.services.broadcast_service import (
     EMAIL_TARGET_PROMO_GROUP_PREFIX,
     BroadcastConfig,
@@ -19,9 +22,15 @@ from app.services.broadcast_service import (
     email_broadcast_service,
     parse_email_scoped_target,
 )
+from app.services.permission_service import PermissionService
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.broadcasts import (
+    BroadcastAudience,
+    BroadcastAudiencePreviewRequest,
+    BroadcastAudiencePreviewResponse,
+    BroadcastAudiencePreviewUser,
+    BroadcastAudienceUserSearchResponse,
     BroadcastButton,
     BroadcastButtonsResponse,
     BroadcastCreateRequest,
@@ -120,6 +129,18 @@ EMAIL_FILTER_GROUPS = {
 # ============ Helper Functions ============
 
 
+def _stored_audience(broadcast: BroadcastHistory) -> BroadcastAudience | None:
+    """Условия из истории; устаревшая под новую схему запись не роняет список рассылок."""
+    raw = getattr(broadcast, 'audience', None)
+    if not raw:
+        return None
+    try:
+        return BroadcastAudience.model_validate(raw)
+    except ValidationError:
+        logger.warning('Сохранённая аудитория рассылки не читается текущей схемой', broadcast_id=broadcast.id)
+        return None
+
+
 def _serialize_broadcast(broadcast: BroadcastHistory) -> BroadcastResponse:
     """Serialize broadcast to response model."""
     blocked = broadcast.blocked_count or 0
@@ -149,6 +170,7 @@ def _serialize_broadcast(broadcast: BroadcastHistory) -> BroadcastResponse:
         channel=getattr(broadcast, 'channel', 'telegram') or 'telegram',
         email_subject=getattr(broadcast, 'email_subject', None),
         email_html_content=getattr(broadcast, 'email_html_content', None),
+        audience=_stored_audience(broadcast),
     )
 
 
@@ -429,6 +451,98 @@ async def preview_broadcast(
     return BroadcastPreviewResponse(target=request.target, count=count)
 
 
+@router.post('/audience/preview', response_model=BroadcastAudiencePreviewResponse)
+async def preview_audience(
+    request: BroadcastAudiencePreviewRequest,
+    admin: User = Depends(require_permission('broadcasts:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BroadcastAudiencePreviewResponse:
+    """Count and page through the recipients selected at this moment."""
+    tariff_ids = set((await db.scalars(select(Tariff.id))).all())
+    promo_group_ids = set((await db.scalars(select(PromoGroup.id))).all())
+    try:
+        validate_audience(request.audience, request.channel, tariff_ids, promo_group_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    count, page = await preview_audience_users(
+        db, request.audience, request.channel, request.category, request.offset, request.limit
+    )
+    # Число получателей нужно любому, кто готовит рассылку, а список людей с их
+    # Telegram ID и почтой — только тем, кому открыты карточки пользователей
+    # (у роли Marketer есть broadcasts:*, но нет users:read).
+    can_see_users, _reason = await PermissionService.check_permission(db, admin, 'users:read')
+    if not can_see_users:
+        page = []
+    return BroadcastAudiencePreviewResponse(
+        count=count,
+        offset=request.offset,
+        limit=request.limit,
+        users=[
+            BroadcastAudiencePreviewUser(
+                id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                telegram_id=user.telegram_id if request.channel == 'telegram' else None,
+                email=user.email if request.channel == 'email' else None,
+            )
+            for user in page
+        ],
+    )
+
+
+@router.get('/audience/users', response_model=BroadcastAudienceUserSearchResponse)
+async def search_audience_users(
+    field: Literal['telegram_id', 'telegram_username', 'email_user'],
+    q: str = Query(..., min_length=1, max_length=100),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    # Поиск по части ника/почты/ID выгружает людей из базы — это право на
+    # карточки пользователей, а не только на рассылки.
+    admin: User = Depends(require_permission('broadcasts:read', 'users:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BroadcastAudienceUserSearchResponse:
+    """Find a person by any part of Telegram ID, username, or email."""
+    term = q.strip()
+    if field == 'telegram_username':
+        term = term.lstrip('@')
+    if not term:
+        return BroadcastAudienceUserSearchResponse(count=0, offset=offset, limit=limit, users=[])
+    if field == 'telegram_id' and not term.isascii():
+        return BroadcastAudienceUserSearchResponse(count=0, offset=offset, limit=limit, users=[])
+    if field == 'telegram_id' and not term.isdigit():
+        return BroadcastAudienceUserSearchResponse(count=0, offset=offset, limit=limit, users=[])
+
+    escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    pattern = f'%{escaped}%'
+    column = {
+        'telegram_id': cast(User.telegram_id, String),
+        'telegram_username': User.username,
+        'email_user': User.email,
+    }[field]
+    match = column.ilike(pattern, escape='\\')
+    conditions = [column.is_not(None), match]
+    query = select(User).where(*conditions).order_by(User.id)
+    count = await db.scalar(select(func.count()).select_from(User).where(*conditions)) or 0
+    users = (await db.scalars(query.offset(offset).limit(limit))).all()
+    return BroadcastAudienceUserSearchResponse(
+        count=count,
+        offset=offset,
+        limit=limit,
+        users=[
+            BroadcastAudiencePreviewUser(
+                id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                telegram_id=user.telegram_id,
+                email=user.email,
+            )
+            for user in users
+        ],
+    )
+
+
 @router.post('', response_model=BroadcastResponse, status_code=status.HTTP_201_CREATED)
 async def create_broadcast(
     request: BroadcastCreateRequest,
@@ -657,15 +771,37 @@ async def create_combined_broadcast(
     result = await db.execute(select(Tariff.id))
     tariff_ids = {row[0] for row in result.all()}
 
+    if request.audience is not None:
+        if request.channel == 'both':
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail='Use separate audiences for each channel',
+            )
+        try:
+            promo_group_ids = set((await db.scalars(select(PromoGroup.id))).all())
+            validate_audience(request.audience, request.channel, tariff_ids, promo_group_ids)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        # Preserve the existing profile-to-email flow: a direct message to one
+        # user must fail clearly when their address is no longer deliverable.
+        if request.channel == 'email' and len(request.audience.conditions) == 1:
+            condition = request.audience.conditions[0]
+            if condition.field == 'email_user' and condition.operator == 'eq':
+                await _ensure_email_scoped_target_exists(db, f'user_{condition.value}')
+    elif not request.target:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Target or audience is required')
+
+    target = request.target or 'audience'
+
     admin_name = admin.username or f'Admin #{admin.id}'
 
     # Validate based on channel
     if request.channel in ('telegram', 'both'):
         # Validate telegram target
-        if not _validate_target(request.target, tariff_ids):
+        if request.audience is None and not _validate_target(target, tariff_ids):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Invalid target: {request.target}',
+                detail=f'Invalid target: {target}',
             )
 
         # Validate telegram message
@@ -688,13 +824,13 @@ async def create_combined_broadcast(
 
     if request.channel in ('email', 'both'):
         # For email channel, target must be email filter or we use telegram target for 'both'
-        if request.channel == 'email' and not _validate_email_target(request.target):
+        if request.channel == 'email' and request.audience is None and not _validate_email_target(target):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f'Invalid email target: {request.target}',
+                detail=f'Invalid email target: {target}',
             )
-        if request.channel == 'email':
-            await _ensure_email_scoped_target_exists(db, request.target)
+        if request.channel == 'email' and request.audience is None:
+            await _ensure_email_scoped_target_exists(db, target)
 
         # Validate email fields
         if not request.email_subject or not request.email_subject.strip():
@@ -713,7 +849,8 @@ async def create_combined_broadcast(
 
     # Create broadcast record
     broadcast = BroadcastHistory(
-        target_type=request.target,
+        target_type=target,
+        audience=request.audience.model_dump(mode='json') if request.audience else None,
         message_text=request.message_text.strip() if request.message_text else None,
         has_media=media_payload is not None,
         media_type=media_payload.type if media_payload else None,
@@ -747,7 +884,8 @@ async def create_combined_broadcast(
 
         # Create telegram broadcast config
         telegram_config = BroadcastConfig(
-            target=request.target,
+            target=target,
+            audience=request.audience,
             message_text=request.message_text.strip(),
             selected_buttons=request.selected_buttons,
             media=media_config,
@@ -761,11 +899,12 @@ async def create_combined_broadcast(
     if request.channel in ('email', 'both'):
         # For 'both' channel, we use 'all_email' as default email target
         # since telegram target won't match email filters
-        email_target = request.target if request.channel == 'email' else 'all_email'
+        email_target = target if request.channel == 'email' else 'all_email'
 
         # Create email broadcast config
         email_config = EmailBroadcastConfig(
             target=email_target,
+            audience=request.audience,
             email_subject=request.email_subject.strip(),
             email_html_content=request.email_html_content.strip(),
             initiator_name=admin_name,
@@ -781,7 +920,7 @@ async def create_combined_broadcast(
         admin_id=admin.id,
         channel=request.channel,
         broadcast_id=broadcast.id,
-        target=request.target,
+        target=target,
     )
 
     return _serialize_broadcast(broadcast)

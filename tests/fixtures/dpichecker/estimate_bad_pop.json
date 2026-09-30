@@ -1,0 +1,10 @@
+{
+ "status": 400,
+ "body": {
+  "error": "Unknown, inactive or unhealthy pop_ids for this location (see GET /pops).",
+  "code": "invalid_pops",
+  "rejected": [
+   1
+  ]
+ }
+}

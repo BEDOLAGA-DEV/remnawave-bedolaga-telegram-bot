@@ -188,6 +188,7 @@ _PRESET_ROLES: list[dict] = [
             'channels:*',
             'ban_system:*',
             'reachability:*',
+            'dpichecker:*',
             'wheel:*',
             'apps:*',
             'email_templates:*',

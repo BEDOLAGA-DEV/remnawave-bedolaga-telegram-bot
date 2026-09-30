@@ -349,6 +349,31 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_cashera_enabled():
+        cashera_name = settings.get_cashera_display_name()
+        if settings.CASHERA_INLINE_METHODS:
+            for method_code in settings.get_cashera_active_methods():
+                info = settings.get_cashera_method_definitions().get(method_code, {})
+                methods.append(
+                    {
+                        'id': f'cashera_m_{method_code}',
+                        'name': info.get('name', method_code),
+                        'icon': info.get('title', '💳').split(' ', 1)[0] if info.get('title') else '💳',
+                        'description': f'через {cashera_name}',
+                        'callback': f'topup_cashera_m_{method_code}',
+                    }
+                )
+        else:
+            methods.append(
+                {
+                    'id': 'cashera',
+                    'name': cashera_name,
+                    'icon': '💳',
+                    'description': f'через {cashera_name}',
+                    'callback': 'topup_cashera',
+                }
+            )
+
     if settings.is_tabpay_sbp_enabled():
         sbp_name = settings.get_tabpay_sbp_display_name()
         methods.append(
@@ -667,6 +692,12 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_lava_card_enabled()
     if method_id == 'cispay':
         return settings.is_cispay_enabled()
+    if method_id == 'cashera':
+        return settings.is_cashera_enabled()
+    if method_id.startswith('cashera_m_'):
+        return settings.is_cashera_enabled() and method_id.removeprefix('cashera_m_') in (
+            settings.get_cashera_active_methods()
+        )
     if method_id == 'cispay_sbp':
         return settings.is_cispay_sbp_enabled()
     if method_id == 'cispay_card':

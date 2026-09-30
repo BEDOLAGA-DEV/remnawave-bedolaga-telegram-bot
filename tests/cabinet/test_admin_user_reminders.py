@@ -277,3 +277,46 @@ async def test_malformed_stored_conditions_do_not_break_reads(monkeypatch):
         fetched = await routes.get_reminder_route(listed[0].id, admin=ADMIN, db=db)
         assert fetched.name == 'broken'
         assert fetched.stats.audience_bot is None
+
+
+@pytest.mark.asyncio
+async def test_one_broken_audience_count_does_not_empty_the_whole_list(monkeypatch):
+    """Отчёт: «нажал Сохранить — ничего не произошло», список «Напоминаний пока нет».
+
+    Подсчёт аудитории встроенного напоминания падал на PostgreSQL (COALESCE по
+    vk_id), и из-за одной строки 500 отдавал весь список — кабинет рисовал его
+    пустым. Сбой подсчёта одной строки — пустая аудитория у неё, а не 500.
+    Ошибка здесь настоящая (SQL), чтобы проверить и то, что сессия после неё
+    остаётся рабочей для следующих строк.
+    """
+    from sqlalchemy import text
+
+    real_count = routes.count_audience
+
+    async def flaky_count(db, conditions, **kwargs):
+        if conditions.registered_days_min == 999:
+            await db.execute(text('SELECT no_such_column FROM users'))
+        return await real_count(db, conditions, **kwargs)
+
+    monkeypatch.setattr(routes, 'count_audience', flaky_count)
+    async with memory_session(monkeypatch, TABLES) as db:
+        for name, conditions in (('broken', {'registered_days_min': 999}), ('healthy', {})):
+            db.add(
+                UserReminder(
+                    name=name,
+                    channels='both',
+                    category='service',
+                    conditions=conditions,
+                    repeat_every_days=7,
+                    max_sends=1,
+                    texts={'ru': {'title': 't', 'body': 'b'}},
+                    button_kind='none',
+                )
+            )
+        await db.commit()
+
+        listed = {r.name: r for r in await routes.list_reminders_route(admin=ADMIN, db=db)}
+
+    assert set(listed) == {'broken', 'healthy'}
+    assert listed['broken'].stats.audience_bot is None
+    assert listed['healthy'].stats.audience_bot is not None

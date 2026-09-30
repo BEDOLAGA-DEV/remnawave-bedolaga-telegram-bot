@@ -1,0 +1,80 @@
+{
+ "status": 200,
+ "body": {
+  "id": 5413,
+  "check_type": "vpn",
+  "columns": [
+   "uri",
+   "host",
+   "error",
+   "pop_id",
+   "pop_name",
+   "connected",
+   "server_ip",
+   "latency_ms",
+   "proxy_dead",
+   "untestable",
+   "proxy_exit_ip",
+   "untestable_reason",
+   "control_check",
+   "is_direct"
+  ],
+  "rows": [
+   {
+    "uri": "vless://masked-1",
+    "host": "🇫🇮 Finland",
+    "error": "",
+    "pop_id": 1,
+    "pop_name": "Алтайский край",
+    "connected": true,
+    "server_ip": "203.0.113.1",
+    "latency_ms": 2630,
+    "proxy_dead": false,
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.2",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-1",
+    "host": "🇫🇮 Finland",
+    "error": "",
+    "pop_id": 2,
+    "pop_name": "Амурская обл.",
+    "connected": true,
+    "server_ip": "203.0.113.1",
+    "latency_ms": 3564,
+    "proxy_dead": false,
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.3",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-1",
+    "host": "🇫🇮 Finland",
+    "error": "",
+    "pop_id": 6,
+    "pop_name": "Архангельская обл. Ростелеком",
+    "connected": true,
+    "server_ip": "203.0.113.1",
+    "latency_ms": 3305,
+    "proxy_dead": false,
+    "untestable": false,
+    "proxy_exit_ip": "203.0.113.4",
+    "untestable_reason": ""
+   },
+   {
+    "uri": "vless://masked-1",
+    "host": "🇫🇮 Finland",
+    "error": "",
+    "connected": true,
+    "is_direct": true,
+    "server_ip": "203.0.113.1",
+    "latency_ms": 833,
+    "proxy_dead": false,
+    "untestable": false,
+    "proxy_exit_ip": "",
+    "untestable_reason": ""
+   }
+  ]
+ }
+}

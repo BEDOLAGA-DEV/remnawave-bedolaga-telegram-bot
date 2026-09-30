@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import inspect
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -67,7 +67,7 @@ class EventEmitter:
         if event_type in self._listeners:
             for callback in self._listeners[event_type]:
                 try:
-                    if asyncio.iscoroutinefunction(callback):
+                    if inspect.iscoroutinefunction(callback):
                         await callback(event_data)
                     else:
                         callback(event_data)

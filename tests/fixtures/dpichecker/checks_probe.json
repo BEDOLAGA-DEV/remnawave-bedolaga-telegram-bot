@@ -1,0 +1,25 @@
+{
+ "status": 200,
+ "body": {
+  "kind": "probe",
+  "total": 1,
+  "limit": 3,
+  "offset": 0,
+  "items": [
+   {
+    "id": 88,
+    "status": "done",
+    "cidr": "198.51.100.0/24",
+    "raw_target": "198.51.100.0/24",
+    "verdict": "clean",
+    "blocked_ips": 0,
+    "tested_ips": 3,
+    "fixed_cost": "1.0000",
+    "traffic_cost": "0.0331",
+    "source": "api",
+    "created_at": "2026-09-24T09:03:48.640Z",
+    "completed_at": "2026-09-24T09:05:44.982Z"
+   }
+  ]
+ }
+}

@@ -194,3 +194,17 @@ async def test_sweep_resumes_unfinished_batch(session_factory) -> None:
 
     async with session_factory() as db:
         assert (await crud.get_batch(db, batch_id)).status == 'done'
+
+
+def test_dispatch_does_not_respawn_pending_job_whose_task_is_still_running() -> None:
+    """Таск уже запущен, но ещё не успел записать running — второй запуск дал бы двойную платную пробу."""
+    runner = make_runner(None, FakeAPI({}), FakeClock())
+    spawned: list[int] = []
+    runner.is_active = lambda job_id: job_id == 1
+    runner.spawn = spawned.append
+    runner.spawn_resume = spawned.append
+    jobs = [SimpleNamespace(id=1, status='pending'), SimpleNamespace(id=2, status='pending')]
+
+    runner._dispatch_batch_jobs(jobs, cancelling=False)
+
+    assert spawned == [2]

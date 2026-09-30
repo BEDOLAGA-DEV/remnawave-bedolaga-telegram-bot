@@ -271,7 +271,11 @@ class JobRunner:
     def _dispatch_batch_jobs(self, jobs: list[ReachabilityJob], *, cancelling: bool) -> None:
         active = sum(1 for job in jobs if job.status == STATUS_RUNNING or self.is_active(job.id))
         for job in jobs:
-            if job.status == STATUS_RUNNING and not self.is_active(job.id):
+            # Свой таск у задачи уже может идти, а статус в базе — ещё pending:
+            # running он пишет не сразу. Второй запуск — вторая платная проба.
+            if self.is_active(job.id):
+                continue
+            if job.status == STATUS_RUNNING:
                 self.spawn_resume(job.id)
             elif job.status == STATUS_PENDING and not cancelling and active < self.cfg.batch_parallel:
                 self.spawn(job.id)
