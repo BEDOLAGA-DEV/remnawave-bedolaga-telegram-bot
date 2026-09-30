@@ -199,12 +199,20 @@ async def process_etoplatezhi_payment_amount(
     )
 
 
-ETOPLATEZHI_PAYMENT_METHODS = {'etoplatezhi', 'etoplatezhi_sbp', 'etoplatezhi_card'}
+ETOPLATEZHI_PAYMENT_METHODS = {
+    'etoplatezhi',
+    'etoplatezhi_sbp',
+    'etoplatezhi_card',
+    'etoplatezhi_sberpay',
+    'etoplatezhi_yoomoney',
+}
 
 ETOPLATEZHI_SERVICE_MAP: dict[str, str | None] = {
     'etoplatezhi': None,
     'etoplatezhi_sbp': 'sbp',
     'etoplatezhi_card': 'card',
+    'etoplatezhi_sberpay': 'sberpay',
+    'etoplatezhi_yoomoney': 'yoomoney',
 }
 
 
@@ -242,10 +250,38 @@ async def _start_etoplatezhi_topup_impl(
         display_name = settings.get_etoplatezhi_sbp_display_name()
     elif payment_method == 'etoplatezhi_card':
         display_name = settings.get_etoplatezhi_card_display_name()
+    elif payment_method == 'etoplatezhi_sberpay':
+        display_name = settings.get_etoplatezhi_sberpay_display_name()
+    elif payment_method == 'etoplatezhi_yoomoney':
+        display_name = settings.get_etoplatezhi_yoomoney_display_name()
     else:
         display_name = settings.get_etoplatezhi_display_name()
 
     keyboard = await get_topup_amount_keyboard(payment_method, db_user.language)
+
+    recurring_active = bool(settings.ETOPLATEZHI_RECURRENT_ENABLED and settings.ETOPLATEZHI_RECURRENT_REQUIRED)
+    consent_block = ''
+    if recurring_active:
+        # Payment registers a card-on-file (stored_card_type=3) — RU law and
+        # acquirer rules require an explicit recurring-charges disclosure with
+        # links to the legal documents. Links point to the cabinet's public
+        # legal pages (/privacy, /offer, /recurrent-payments) when CABINET_URL
+        # is configured.
+        cabinet_base = (getattr(settings, 'CABINET_URL', '') or '').rstrip('/')
+        if cabinet_base:
+            consent_links = (
+                f'<a href="{cabinet_base}/privacy">политика</a>, '
+                f'<a href="{cabinet_base}/offer">оферта</a>, '
+                f'<a href="{cabinet_base}/recurrent-payments">соглашение о рекуррентах</a>.'
+            )
+        else:
+            consent_links = 'политика конфиденциальности, оферта и соглашение о рекуррентных платежах.'
+        consent_block = texts.t(
+            'ETOPLATEZHI_RECURRING_CONSENT',
+            '\n\n⚠️ <b>Внимание:</b> при оплате будет подключено автоматическое '
+            'продление подписки (рекуррентные платежи). '
+            'Продолжая, вы соглашаетесь с условиями: {links}',
+        ).format(links=consent_links)
 
     await callback.message.edit_text(
         texts.t(
@@ -253,14 +289,16 @@ async def _start_etoplatezhi_topup_impl(
             '\U0001f4b3 <b>Пополнение через {name}</b>\n\n'
             'Введите сумму пополнения в рублях.\n\n'
             'Минимум: {min_amount}\u20bd\n'
-            'Максимум: {max_amount}\u20bd',
+            'Максимум: {max_amount}\u20bd{consent}',
         ).format(
             name=display_name,
+            consent=consent_block,
             min_amount=min_amount,
             max_amount=f'{max_amount:,}'.replace(',', ' '),
         ),
         parse_mode='HTML',
         reply_markup=keyboard,
+        disable_web_page_preview=True,
     )
 
 
@@ -292,3 +330,23 @@ async def start_etoplatezhi_card_topup(
     state: FSMContext,
 ):
     await _start_etoplatezhi_topup_impl(callback, db_user, state, 'etoplatezhi_card')
+
+
+@error_handler
+async def start_etoplatezhi_sberpay_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _start_etoplatezhi_topup_impl(callback, db_user, state, 'etoplatezhi_sberpay')
+
+
+@error_handler
+async def start_etoplatezhi_yoomoney_topup(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    await _start_etoplatezhi_topup_impl(callback, db_user, state, 'etoplatezhi_yoomoney')

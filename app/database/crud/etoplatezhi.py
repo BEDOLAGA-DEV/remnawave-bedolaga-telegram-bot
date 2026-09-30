@@ -1,9 +1,9 @@
 """CRUD операции для платежей Etoplatezhi."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import EtoplatezhiPayment
@@ -120,6 +120,67 @@ async def update_etoplatezhi_payment_status(
     return payment
 
 
+async def link_etoplatezhi_payment_to_user(
+    db: AsyncSession,
+    *,
+    order_id: str,
+    user_id: int,
+) -> int:
+    """Атомарно прописать user_id, если ещё пуст.
+
+    Guest payments создаются с ``user_id=NULL`` (юзер ещё не известен на
+    момент Payment Page checkout). После guest_purchase fulfillment мы
+    знаем кому принадлежит row — линкуем, чтобы admin /admin/payments
+    показал её (там фильтр skip'ает payments без linked user).
+
+    Returns: число обновлённых строк (0 если user_id уже был).
+    """
+    result = await db.execute(
+        update(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id == order_id,
+            EtoplatezhiPayment.user_id.is_(None),
+        )
+        .values(
+            user_id=user_id,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
+async def set_etoplatezhi_payment_id_if_missing(
+    db: AsyncSession,
+    *,
+    order_id: str,
+    etoplatezhi_payment_id: str,
+) -> int:
+    """Атомарно дописать etoplatezhi_payment_id, если ещё пуст.
+
+    Делает один UPDATE без чтения row, поэтому НЕ может клобберить status
+    или is_paid, поставленные параллельным webhook handler'ом (тот может
+    в этот момент уже выставить status='success', is_paid=True). Webhook
+    race в charge-loop ↔ webhook теперь невозможен — этот helper не
+    касается status/is_paid вообще.
+
+    Returns: число обновлённых строк (0 если payment_id уже был дописан).
+    """
+    result = await db.execute(
+        update(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id == order_id,
+            EtoplatezhiPayment.etoplatezhi_payment_id.is_(None),
+        )
+        .values(
+            etoplatezhi_payment_id=etoplatezhi_payment_id,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
 async def get_pending_etoplatezhi_payments(db: AsyncSession, user_id: int) -> list[EtoplatezhiPayment]:
     """Получает незавершенные платежи пользователя."""
     result = await db.execute(
@@ -145,6 +206,53 @@ async def get_expired_pending_etoplatezhi_payments(
         )
     )
     return list(result.scalars().all())
+
+
+async def get_recurrent_attempts(
+    db: AsyncSession,
+    order_ids: list[str],
+) -> list[EtoplatezhiPayment]:
+    """Строки уже сделанных попыток списания по перечисленным order_id.
+
+    Ключи попыток детерминированы и ограничены сверху, поэтому перечисляем их
+    явно — это дешевле и надёжнее LIKE, в котором пришлось бы экранировать `_`
+    внутри самого ключа.
+    """
+    if not order_ids:
+        return []
+    result = await db.execute(
+        select(EtoplatezhiPayment).where(EtoplatezhiPayment.order_id.in_(order_ids)).order_by(EtoplatezhiPayment.id)
+    )
+    return list(result.scalars().all())
+
+
+async def get_unresolved_recurrent_payment(
+    db: AsyncSession,
+    subscription_id: int,
+    *,
+    within_hours: int = 24,
+) -> EtoplatezhiPayment | None:
+    """Незавершённая (pending) попытка рекуррент-списания по подписке.
+
+    Ключ идемпотентности содержит календарную дату, поэтому после полуночи он
+    сменится и шлюз уже не схлопнет повтор по `payment_id`. Если предыдущая
+    попытка всё ещё висит в pending (вебхук задержался или потерялся), второй
+    charge стал бы дублем списания. Окно ограничено `within_hours`, чтобы
+    навсегда зависший pending не заблокировал продления.
+    """
+    since = datetime.now(UTC) - timedelta(hours=within_hours)
+    result = await db.execute(
+        select(EtoplatezhiPayment)
+        .where(
+            EtoplatezhiPayment.order_id.like(f'recurrent\\_{subscription_id}\\_%', escape='\\'),
+            EtoplatezhiPayment.status == 'pending',
+            EtoplatezhiPayment.is_paid == False,
+            EtoplatezhiPayment.created_at >= since,
+        )
+        .order_by(EtoplatezhiPayment.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def link_etoplatezhi_payment_to_transaction(
