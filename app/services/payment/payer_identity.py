@@ -43,9 +43,16 @@ class PayerIdentity:
     user_name: str
     #: Как с ним связаться (MulenPay ``client``).
     contact: str
+    #: Почта плательщика, если мы её собрали (Platega ``metadata.email``).
+    email: str | None = None
 
     def platega_metadata(self) -> dict[str, str]:
-        return {'userId': self.user_id, 'userName': self.user_name}
+        # Требование провайдера Platega: собранную почту плательщика передавать
+        # в metadata.email — тогда PayForm не запрашивает её повторно.
+        metadata = {'userId': self.user_id, 'userName': self.user_name}
+        if self.email:
+            metadata['email'] = self.email
+        return metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +116,7 @@ def payer_from_user(record: PayerRecord) -> PayerIdentity:
             user_id,
         ),
         contact=_first(email if record.email_verified else None, telegram_id, user_id),
+        email=email if record.email_verified and '@' in (email or '') else None,
     )
 
 
@@ -121,7 +129,10 @@ def payer_from_guest(purchase_token: str, *, contact_type: str | None, contact_v
     """Гость лендинга: аккаунта нет, есть контакт, который он оставил (почта или Telegram)."""
     user_id = guest_payer_id(purchase_token)
     contact = _clean(contact_value) if contact_type in ('email', 'telegram') else None
-    return PayerIdentity(user_id=user_id, user_name=_first(contact, user_id), contact=_first(contact, user_id))
+    email = contact if contact_type == 'email' and contact and '@' in contact else None
+    return PayerIdentity(
+        user_id=user_id, user_name=_first(contact, user_id), contact=_first(contact, user_id), email=email
+    )
 
 
 async def resolve_user_payer(db: AsyncSession, user_id: int) -> PayerIdentity:
