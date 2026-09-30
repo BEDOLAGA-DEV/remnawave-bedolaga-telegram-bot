@@ -1,5 +1,25 @@
 # Changelog
 
+## [5.0.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.16.0...v5.0.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **infra:** существующим установкам на PostgreSQL 15 после обновления нужно один раз выполнить make pg-upgrade, до этого база не запускается. Подробно: https://docs.bedolagam.ru/getting-started/postgresql-18-upgrade
+
+### New Features
+
+* **infra:** PostgreSQL 18 — перенос базы командой make pg-upgrade: резервная копия, перенос со сверкой всех таблиц и счётчиков, откат на старый том; сторож не даёт стартовать на пустой базе ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **infra:** Python 3.14 в образе бота ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+
+
+### Bug Fixes
+
+* **admin:** удаление подписки через массовые действия не падает на ленивой подгрузке подписок пользователя ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **deps:** pyjwt 2.15.1 закрывает уязвимости проверки ключей при входе через Telegram OIDC; обновлены starlette, uvicorn, alembic и SQLAlchemy 2.1 ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **reachability:** пачка проверок BSCHEK больше не запускает платную пробу дважды ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **start:** правила и политика конфиденциальности при регистрации больше не падают на HTML из редактора кабинета ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+
 ## [4.16.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.15.0...v4.16.0) (2026-09-29)
 
 
