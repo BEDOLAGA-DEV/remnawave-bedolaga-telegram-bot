@@ -92,6 +92,7 @@ async def sync_tariff_squads_in_background(tariff_id: int, admin_id: int) -> Non
                                 user_id=remnawave_id,
                                 squads=new_squads,
                                 external_squad_uuid=ext_squad_uuid,
+                                subscription_id=sub.id,
                                 update_call=lambda **kwargs: update_panel_user_grace_safe(api, sub.id, **kwargs),
                             )
                             sub.connected_squads = new_squads
