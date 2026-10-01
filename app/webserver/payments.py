@@ -2052,7 +2052,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 invoice = payload.get('data', {}).get('invoice', {}) if isinstance(payload.get('data'), dict) else {}
                 logger.error(
                     'Paydex webhook processing failed',
-                    event=event,
+                    paydex_event=event,
                     order_id=invoice.get('orderId'),
                     invoice_id=invoice.get('id'),
                 )
