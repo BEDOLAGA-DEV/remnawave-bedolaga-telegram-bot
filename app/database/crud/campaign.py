@@ -37,6 +37,9 @@ async def create_campaign(
     # Поля для типа "tariff"
     tariff_id: int | None = None,
     tariff_duration_days: int | None = None,
+    # Поля для типа "discount"
+    discount_percent: int | None = None,
+    discount_duration_hours: int | None = None,
     is_active: bool = True,
     partner_user_id: int | None = None,
 ) -> AdvertisingCampaign:
@@ -51,6 +54,8 @@ async def create_campaign(
         subscription_squads=subscription_squads or [],
         tariff_id=tariff_id,
         tariff_duration_days=tariff_duration_days,
+        discount_percent=discount_percent,
+        discount_duration_hours=discount_duration_hours,
         created_by=created_by,
         is_active=is_active,
         partner_user_id=partner_user_id,
@@ -146,6 +151,8 @@ async def update_campaign(
         'subscription_squads',
         'tariff_id',
         'tariff_duration_days',
+        'discount_percent',
+        'discount_duration_hours',
         'is_active',
         'partner_user_id',
     }
@@ -157,6 +164,8 @@ async def update_campaign(
         'subscription_traffic_gb',
         'subscription_device_limit',
         'tariff_duration_days',
+        'discount_percent',
+        'discount_duration_hours',
     }
 
     update_data = {}
@@ -210,6 +219,7 @@ async def record_campaign_registration(
     subscription_duration_days: int | None = None,
     tariff_id: int | None = None,
     tariff_duration_days: int | None = None,
+    discount_percent: int | None = None,
 ) -> tuple[AdvertisingCampaignRegistration, bool]:
     """Создаёт или возвращает запись регистрации в рекламной кампании.
 
@@ -248,6 +258,7 @@ async def record_campaign_registration(
             subscription_duration_days=subscription_duration_days,
             tariff_id=tariff_id,
             tariff_duration_days=tariff_duration_days,
+            discount_percent=discount_percent,
         )
         db.add(registration)
         try:
@@ -307,6 +318,18 @@ async def get_campaign_statistics(
         )
     )
     subscription_bonuses_issued = subscription_count_result.scalar() or 0
+
+    # Скидку пишут в регистрацию, только если её действительно выдали
+    discount_count_result = await db.execute(
+        select(func.count(AdvertisingCampaignRegistration.id)).where(
+            and_(
+                AdvertisingCampaignRegistration.campaign_id == campaign_id,
+                AdvertisingCampaignRegistration.bonus_type == 'discount',
+                AdvertisingCampaignRegistration.discount_percent.is_not(None),
+            )
+        )
+    )
+    discount_bonuses_issued = discount_count_result.scalar() or 0
 
     # Only count real deposits (exclude promo bonuses, wheel prizes, admin top-ups)
     deposits_result = await db.execute(
@@ -435,6 +458,7 @@ async def get_campaign_statistics(
         'registrations': count,
         'balance_issued': total_balance,
         'subscription_issued': subscription_bonuses_issued,
+        'discount_issued': discount_bonuses_issued,
         'last_registration': last_registration,
         'total_revenue_kopeks': total_revenue,
         'trial_users_count': trial_users_count,

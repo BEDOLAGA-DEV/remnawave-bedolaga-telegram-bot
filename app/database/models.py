@@ -4121,6 +4121,11 @@ class AdvertisingCampaign(Base):
     tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='SET NULL'), nullable=True)
     tariff_duration_days = Column(Integer, nullable=True)
 
+    # Поля для типа "discount" - персональная скидка на покупку, как у промопредложений.
+    # Срок в часах; пусто — скидка ждёт первой покупки без ограничения по времени.
+    discount_percent = Column(Integer, nullable=True)
+    discount_duration_hours = Column(Integer, nullable=True)
+
     is_active = Column(Boolean, default=True)
 
     # Привязка к партнёру
@@ -4152,6 +4157,11 @@ class AdvertisingCampaign(Base):
         """Выдача тарифа на определённое время."""
         return self.bonus_type == 'tariff'
 
+    @property
+    def is_discount_bonus(self) -> bool:
+        """Персональная скидка на покупку."""
+        return self.bonus_type == 'discount'
+
 
 class AdvertisingCampaignRegistration(Base):
     __tablename__ = 'advertising_campaign_registrations'
@@ -4171,6 +4181,9 @@ class AdvertisingCampaignRegistration(Base):
     # Поля для типа "tariff"
     tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='SET NULL'), nullable=True)
     tariff_duration_days = Column(Integer, nullable=True)
+
+    # Поле для типа "discount"
+    discount_percent = Column(Integer, nullable=True)
 
     created_at = Column(AwareDateTime(), default=func.now())
 

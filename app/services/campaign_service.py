@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -18,6 +19,7 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.user import add_user_balance
 from app.database.models import AdvertisingCampaign, User
 from app.services.subscription_service import SubscriptionService
+from app.utils.promo_offer import get_user_active_promo_discount_percent
 
 
 logger = structlog.get_logger(__name__)
@@ -45,6 +47,9 @@ class CampaignBonusResult:
     tariff_id: int | None = None
     tariff_name: str | None = None
     tariff_duration_days: int | None = None
+    # Поля для discount: None в проценте — скидку не выдали (у юзера уже есть не хуже)
+    discount_percent: int | None = None
+    discount_expires_at: datetime | None = None
     # Имя кампании, к которой привязали юзера. Заполняется attribute_campaign,
     # чтобы caller не ходил за кампанией второй раз ради текста уведомления.
     campaign_name: str | None = None
@@ -204,6 +209,9 @@ class AdvertisingCampaignService:
 
         if campaign.is_tariff_bonus:
             return await self._apply_tariff_bonus(db, user, campaign)
+
+        if campaign.is_discount_bonus:
+            return await self._apply_discount_bonus(db, user, campaign)
 
         logger.error('❌ Неизвестный тип бонуса кампании', bonus_type=campaign.bonus_type)
         return CampaignBonusResult(success=False)
@@ -378,6 +386,69 @@ class AdvertisingCampaignService:
             subscription_traffic_gb=traffic_limit or 0,
             subscription_device_limit=device_limit,
             subscription_squads=squads,
+            is_new_registration=created,
+        )
+
+    async def _apply_discount_bonus(
+        self,
+        db: AsyncSession,
+        user: User,
+        campaign: AdvertisingCampaign,
+    ) -> CampaignBonusResult:
+        """Персональная скидка на покупку — та же, что выдают промопредложения и промокоды.
+
+        Действующую скидку не меньше кампанийной не трогаем: человек с промопредложением
+        на 50 % не должен потерять его, перейдя по ссылке на 10 %.
+        """
+        percent = campaign.discount_percent or 0
+        if not 0 < percent <= 100:
+            logger.error('❌ У кампании не задан процент скидки', campaign_id=campaign.id, discount_percent=percent)
+            return CampaignBonusResult(success=False)
+
+        current = get_user_active_promo_discount_percent(user)
+        granted = percent if current < percent else None
+
+        # Регистрируем ДО выдачи скидки: повторный /start (created=False) не должен
+        # выдать её снова — например, после того как первую уже потратили.
+        _, created = await record_campaign_registration(
+            db,
+            campaign_id=campaign.id,
+            user_id=user.id,
+            bonus_type='discount',
+            discount_percent=granted,
+        )
+
+        if not created or granted is None:
+            logger.info(
+                'ℹ️ Скидка кампании не выдана: повторная регистрация или уже есть скидка не меньше',
+                format_user_log=_format_user_log(user),
+                campaign_id=campaign.id,
+                current_percent=current,
+                campaign_percent=percent,
+            )
+            return CampaignBonusResult(success=True, bonus_type='discount', is_new_registration=created)
+
+        hours = campaign.discount_duration_hours or 0
+        expires_at = datetime.now(UTC) + timedelta(hours=hours) if hours > 0 else None
+
+        user.promo_offer_discount_percent = granted
+        user.promo_offer_discount_source = f'campaign:{campaign.id}'
+        user.promo_offer_discount_expires_at = expires_at
+        await db.commit()
+
+        logger.info(
+            '🏷️ Пользователю выдана скидка по кампании',
+            format_user_log=_format_user_log(user),
+            campaign_id=campaign.id,
+            discount_percent=granted,
+            discount_hours=hours,
+        )
+
+        return CampaignBonusResult(
+            success=True,
+            bonus_type='discount',
+            discount_percent=granted,
+            discount_expires_at=expires_at,
             is_new_registration=created,
         )
 

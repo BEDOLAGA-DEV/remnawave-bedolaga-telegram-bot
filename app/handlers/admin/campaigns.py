@@ -65,6 +65,10 @@ def _format_campaign_summary(campaign, texts) -> str:
         bonus_info = f'🎁 Тариф: <b>{tariff_name}</b>\n📅 Длительность: <b>{campaign.tariff_duration_days or 0} д.</b>'
     elif campaign.is_none_bonus:
         bonus_info = '🔗 Только ссылка (без награды)'
+    elif campaign.is_discount_bonus:
+        hours = campaign.discount_duration_hours or 0
+        term = f'{hours} ч.' if hours > 0 else 'до первой покупки'
+        bonus_info = f'🏷️ Скидка: <b>{campaign.discount_percent or 0}%</b>\n⏳ Срок: <b>{term}</b>'
     else:
         bonus_info = '❓ Неизвестный тип бонуса'
 

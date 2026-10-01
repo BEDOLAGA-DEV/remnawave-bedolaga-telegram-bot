@@ -48,6 +48,7 @@ class PartnerCampaignInfo(BaseModel):
     balance_bonus_kopeks: int = 0
     subscription_duration_days: int | None = None
     subscription_traffic_gb: int | None = None
+    discount_percent: int | None = None
     deep_link: str | None = None
     web_link: str | None = None
     # Per-campaign statistics

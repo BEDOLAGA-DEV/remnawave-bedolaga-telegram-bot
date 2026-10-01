@@ -86,6 +86,7 @@ async def get_partner_status(
                     balance_bonus_kopeks=c.balance_bonus_kopeks or 0,
                     subscription_duration_days=c.subscription_duration_days,
                     subscription_traffic_gb=c.subscription_traffic_gb,
+                    discount_percent=c.discount_percent,
                     deep_link=get_campaign_deep_link(c.start_parameter),
                     web_link=get_campaign_web_link(c.start_parameter),
                     registrations_count=stats.get('registrations_count', 0),

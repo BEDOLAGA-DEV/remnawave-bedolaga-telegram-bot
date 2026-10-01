@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-CampaignBonusType = Literal['balance', 'subscription', 'none', 'tariff']
+CampaignBonusType = Literal['balance', 'subscription', 'none', 'tariff', 'discount']
 
 
 class TariffInfo(BaseModel):
@@ -61,6 +61,9 @@ class CampaignDetailResponse(BaseModel):
     tariff_id: int | None = None
     tariff_duration_days: int | None = None
     tariff: TariffInfo | None = None
+    # Discount bonus
+    discount_percent: int | None = None
+    discount_duration_hours: int | None = None
     # Partner
     partner_user_id: int | None = None
     partner_name: str | None = None
@@ -92,6 +95,9 @@ class CampaignCreateRequest(BaseModel):
     # Tariff bonus
     tariff_id: int | None = None
     tariff_duration_days: int | None = Field(None, ge=1)
+    # Discount bonus: срок в часах, 0 — до первой покупки
+    discount_percent: int | None = Field(None, ge=1, le=100)
+    discount_duration_hours: int | None = Field(None, ge=0)
     # Partner
     partner_user_id: int | None = None
 
@@ -113,6 +119,9 @@ class CampaignUpdateRequest(BaseModel):
     # Tariff bonus
     tariff_id: int | None = None
     tariff_duration_days: int | None = Field(None, ge=1)
+    # Discount bonus
+    discount_percent: int | None = Field(None, ge=1, le=100)
+    discount_duration_hours: int | None = Field(None, ge=0)
     # Partner
     partner_user_id: int | None = None
 
@@ -138,6 +147,7 @@ class CampaignStatisticsResponse(BaseModel):
     balance_issued_kopeks: int = 0
     balance_issued_rubles: float = 0.0
     subscription_issued: int = 0
+    discount_issued: int = 0
     last_registration: datetime | None = None
     # Revenue stats
     total_revenue_kopeks: int = 0
@@ -171,6 +181,7 @@ class CampaignRegistrationItem(BaseModel):
     subscription_duration_days: int | None = None
     tariff_id: int | None = None
     tariff_duration_days: int | None = None
+    discount_percent: int | None = None
     created_at: datetime
     # User stats
     user_balance_kopeks: int = 0
