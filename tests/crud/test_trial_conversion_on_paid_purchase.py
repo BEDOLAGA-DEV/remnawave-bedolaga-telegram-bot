@@ -15,6 +15,11 @@
 вместо создания нового. Под локом кандидат перечитывается: конкурентная
 покупка могла уже конвертировать его — тогда откат к обычной вставке, чтобы
 вторая покупка не затёрла тариф первой.
+
+Прод-репорт 2026-09: триал успел истечь до покупки (отдельный тариф «Пробный»,
+оплата назавтра) — снова новый панельный юзер рядом с висящим истёкшим
+триалом. Без живого триала кандидатом становится последний ИСТЁКШИЙ; DISABLED
+(отключён админом или панелью) не трогаем.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -119,10 +124,11 @@ async def test_create_paid_subscription_falls_to_insert_when_conversion_raced(mo
 
 
 async def test_create_paid_subscription_without_trial_falls_to_insert(monkeypatch):
-    """Нет живого триала — обычная вставка новой подписки, как раньше."""
+    """Нет ни живого, ни истёкшего триала — обычная вставка новой подписки, как раньше."""
     monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: True)
     monkeypatch.setattr(sub_crud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=None))
     monkeypatch.setattr(sub_crud, 'get_alive_trial_subscription', AsyncMock(return_value=None))
+    monkeypatch.setattr(sub_crud, '_get_latest_expired_trial_subscription', AsyncMock(return_value=None))
     convert = AsyncMock()
     monkeypatch.setattr(sub_crud, '_convert_trial_subscription_to_paid', convert)
     # short-circuit тяжёлый путь создания сразу после guard'а
@@ -135,6 +141,45 @@ async def test_create_paid_subscription_without_trial_falls_to_insert(monkeypatc
         assert str(e) == 'reached create'
 
     convert.assert_not_awaited()
+
+
+async def test_create_paid_subscription_converts_expired_trial(monkeypatch):
+    """Прод-репорт 2026-09: триал истёк, через день покупка — истёкший триал
+    конвертируется на месте, а не остаётся висеть рядом с новой подпиской."""
+    monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: True)
+    expired_trial = _sub(id=11, user_id=7, tariff_id=6, is_trial=True, status=SubscriptionStatus.EXPIRED.value)
+    monkeypatch.setattr(sub_crud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=None))
+    monkeypatch.setattr(sub_crud, 'get_alive_trial_subscription', AsyncMock(return_value=None))
+    monkeypatch.setattr(sub_crud, '_get_latest_expired_trial_subscription', AsyncMock(return_value=expired_trial))
+    convert = AsyncMock(return_value=expired_trial)
+    monkeypatch.setattr(sub_crud, '_convert_trial_subscription_to_paid', convert)
+    db = _db()
+
+    result = await sub_crud.create_paid_subscription(db, user_id=7, duration_days=30, traffic_limit_gb=100, tariff_id=1)
+
+    assert result is expired_trial
+    assert convert.await_args.args[1] is expired_trial
+    assert convert.await_args.kwargs.get('tariff_id') == 1
+    db.add.assert_not_called()
+
+
+async def test_alive_trial_beats_expired_one(monkeypatch):
+    """Живой триал приоритетнее истёкшего: по его ссылке человек сидит сейчас."""
+    monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: True)
+    alive_trial = _sub(id=12, user_id=7, tariff_id=6, is_trial=True, status=SubscriptionStatus.ACTIVE.value)
+    monkeypatch.setattr(sub_crud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=None))
+    monkeypatch.setattr(sub_crud, 'get_alive_trial_subscription', AsyncMock(return_value=alive_trial))
+    expired_lookup = AsyncMock()
+    monkeypatch.setattr(sub_crud, '_get_latest_expired_trial_subscription', expired_lookup)
+    convert = AsyncMock(return_value=alive_trial)
+    monkeypatch.setattr(sub_crud, '_convert_trial_subscription_to_paid', convert)
+    db = _db()
+
+    result = await sub_crud.create_paid_subscription(db, user_id=7, duration_days=30, traffic_limit_gb=100, tariff_id=1)
+
+    assert result is alive_trial
+    assert convert.await_args.args[1] is alive_trial
+    expired_lookup.assert_not_awaited()
 
 
 async def test_expired_same_tariff_revive_wins_over_conversion(monkeypatch):
@@ -222,7 +267,74 @@ async def test_convert_helper_delegates_to_extend(monkeypatch):
     assert kwargs['device_limit'] == 3
     assert kwargs['connected_squads'] == ['paid-squad']
     assert kwargs['commit'] is True
+    assert kwargs['reset_used_traffic'] is None  # живой триал: прежнее правило сброса трафика
     db.add.assert_not_called()
+
+
+async def test_convert_helper_converts_expired_trial_with_fresh_traffic(monkeypatch):
+    """Истёкший триал конвертируется так же, но период триала закончился —
+    израсходованный трафик обнуляем, новый тариф стартует с чистой квотой."""
+    expired_trial = _sub(
+        id=11,
+        user_id=7,
+        tariff_id=6,
+        is_trial=True,
+        status=SubscriptionStatus.EXPIRED.value,
+        connected_squads=['paid-squad'],
+        end_date=datetime.now(UTC) - timedelta(days=1),
+    )
+    monkeypatch.setattr(sub_crud, '_lock_subscription_row', AsyncMock())
+    extend = AsyncMock(return_value=expired_trial)
+    monkeypatch.setattr(sub_crud, 'extend_subscription', extend)
+    db = _db()
+
+    result = await sub_crud._convert_trial_subscription_to_paid(
+        db,
+        expired_trial,
+        tariff_id=1,
+        duration_days=30,
+        traffic_limit_gb=100,
+        device_limit=3,
+        connected_squads=['paid-squad'],
+        commit=True,
+    )
+
+    assert result is expired_trial
+    extend.assert_awaited_once()
+    kwargs = extend.await_args.kwargs
+    assert kwargs['tariff_id'] == 1
+    assert kwargs['days'] == 30
+    assert kwargs['reset_used_traffic'] is True
+
+
+async def test_convert_helper_skips_disabled_trial(monkeypatch):
+    """Отключённый (админом или панелью) триал покупкой другого тарифа не оживляем."""
+    disabled_trial = _sub(
+        id=11,
+        user_id=7,
+        tariff_id=6,
+        is_trial=True,
+        status=SubscriptionStatus.DISABLED.value,
+        connected_squads=['sq'],
+    )
+    monkeypatch.setattr(sub_crud, '_lock_subscription_row', AsyncMock())
+    extend = AsyncMock()
+    monkeypatch.setattr(sub_crud, 'extend_subscription', extend)
+    db = _db()
+
+    result = await sub_crud._convert_trial_subscription_to_paid(
+        db,
+        disabled_trial,
+        tariff_id=1,
+        duration_days=30,
+        traffic_limit_gb=100,
+        device_limit=3,
+        connected_squads=['sq'],
+        commit=True,
+    )
+
+    assert result is None
+    extend.assert_not_awaited()
 
 
 async def test_convert_helper_bails_out_when_candidate_no_longer_trial(monkeypatch):
@@ -295,6 +407,19 @@ async def test_resolver_falls_back_to_freshest_alive_trial(monkeypatch):
     result = await sub_crud.resolve_trial_conversion_candidate(_db(), 7, 1)
 
     assert result is other_trial
+
+
+async def test_resolver_falls_back_to_latest_expired_trial(monkeypatch):
+    """Живого триала нет — кабинет получает истёкший: тот же кандидат, что
+    выберет create_paid_subscription."""
+    expired_trial = _sub(id=13, user_id=7, tariff_id=6, is_trial=True, status=SubscriptionStatus.EXPIRED.value)
+    monkeypatch.setattr(sub_crud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=None))
+    monkeypatch.setattr(sub_crud, 'get_alive_trial_subscription', AsyncMock(return_value=None))
+    monkeypatch.setattr(sub_crud, '_get_latest_expired_trial_subscription', AsyncMock(return_value=expired_trial))
+
+    result = await sub_crud.resolve_trial_conversion_candidate(_db(), 7, 1)
+
+    assert result is expired_trial
 
 
 # --- Source-pin кабинетного пути ---

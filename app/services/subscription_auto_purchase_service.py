@@ -1012,7 +1012,8 @@ async def _auto_purchase_tariff(
                 connected_squads=squads,
                 tariff_id=tariff.id,
             )
-            was_trial_conversion = False
+            # Маркер ставит конверсия триала внутри create_paid_subscription.
+            was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
     except Exception as error:
         logger.error(
             '❌ Автопокупка тарифа: ошибка создания подписки для пользователя',
@@ -1381,7 +1382,8 @@ async def _auto_purchase_daily_tariff(
             subscription.last_daily_charge_at = datetime.now(UTC)
             subscription.is_daily_paused = False
             await db.commit()
-            was_trial_conversion = False
+            # Маркер ставит конверсия триала внутри create_paid_subscription.
+            was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
     except Exception as error:
         logger.error(
             '❌ Автопокупка суточного тарифа: ошибка создания подписки для пользователя',
