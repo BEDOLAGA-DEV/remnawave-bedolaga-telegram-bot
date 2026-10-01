@@ -8,6 +8,7 @@ import structlog
 from app.config import settings
 from app.localization.loader import (
     DEFAULT_LANGUAGE,
+    _normalize_key,
     clear_locale_cache,
     load_locale,
 )
@@ -185,11 +186,18 @@ class Texts:
         if item == 'RULES_TEXT':
             return _get_cached_rules_value(self.language)
 
-        if item in self._values:
-            return self._values[item]
+        # Загрузчик приводит ключи локалей к одному виду (_normalize_key), значит
+        # и поиск обязан идти по нормализованному ключу. Иначе обращение строчными
+        # — а так написана половина вызовов и так лежат ключи в самих локалях —
+        # не совпадает никогда: без запасного текста это KeyError, с запасным
+        # молча теряется перевод и всем языкам уходит значение из кода.
+        key = _normalize_key(item)
 
-        if item in self._fallback_values:
-            return self._fallback_values[item]
+        if key in self._values:
+            return self._values[key]
+
+        if key in self._fallback_values:
+            return self._fallback_values[key]
 
         # Предупреждаем только когда у вызова НЕТ запасного текста. t(key, default) и
         # get(key, default) передают warn=False: для них отсутствие ключа штатно —
