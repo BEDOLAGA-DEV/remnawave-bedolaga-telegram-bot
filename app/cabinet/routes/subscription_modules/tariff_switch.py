@@ -91,6 +91,18 @@ async def preview_tariff_switch(
             },
         )
 
+    # Тот же отказ, что и в самой смене: иначе превью показывало бы цену смены,
+    # которая после «Подтвердить» упрётся в 409.
+    if settings.is_multi_tariff_enabled() and request.tariff_id:
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing_target = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
+        if existing_target and existing_target.id != subscription.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='You already have an active subscription for the target tariff',
+            )
+
     current_tariff = await get_tariff_by_id(db, subscription.tariff_id)
     new_tariff = await get_tariff_by_id(db, request.tariff_id)
 

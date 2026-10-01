@@ -10,8 +10,30 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import app.database.crud.subscription as subcrud
+import app.database.crud.user as user_crud
+import app.handlers.subscription.tariff_purchase as tp
 from app.config import Settings
-from app.handlers.subscription.tariff_purchase import _resolve_switch_subscription
+from app.handlers.subscription.tariff_purchase import (
+    _clear_state_keeping_switch_subscription,
+    _resolve_switch_subscription,
+    _target_tariff_owned_elsewhere,
+)
+
+
+class _FakeState:
+    """FSM в памяти: ``clear()`` стирает всё, как настоящий."""
+
+    def __init__(self, data: dict):
+        self.data = dict(data)
+
+    async def get_data(self) -> dict:
+        return dict(self.data)
+
+    async def clear(self) -> None:
+        self.data = {}
+
+    async def update_data(self, **kwargs) -> None:
+        self.data.update(kwargs)
 
 
 def _patch_get_sub_by_id(monkeypatch):
@@ -89,3 +111,118 @@ async def test_switch_resolver_asks_to_choose_when_ambiguous(monkeypatch):
     assert sub is None
     assert sub_id is None
     callback.answer.assert_awaited()
+
+
+async def test_switch_entry_keeps_pinned_subscription_through_state_clear():
+    """Вход в смену чистит FSM, но выбранную в карточке подписку оставляет."""
+    state = _FakeState({'active_subscription_id': 22, 'stale_key': 'x'})
+
+    await _clear_state_keeping_switch_subscription(state)
+
+    assert state.data == {'active_subscription_id': 22}
+
+
+async def test_switch_entry_clears_state_without_pin():
+    state = _FakeState({'stale_key': 'x'})
+
+    await _clear_state_keeping_switch_subscription(state)
+
+    assert state.data == {}
+
+
+async def test_instant_switch_list_resolves_pinned_subscription_among_several(monkeypatch):
+    """Две живые подписки, в FSM — выбранная в карточке: список смены берёт её.
+
+    Раньше вход сначала чистил FSM и только потом искал подписку — при двух
+    подписках смена упиралась в «Выберите подписку»."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    _patch_get_sub_by_id(monkeypatch)
+    monkeypatch.setattr(
+        subcrud,
+        'get_active_subscriptions_by_user_id',
+        AsyncMock(return_value=[MagicMock(id=11), MagicMock(id=22)]),
+    )
+    # Дальше резолва не идём: «тариф не найден» — уже после выбора подписки.
+    tariff_lookup = AsyncMock(return_value=None)
+    monkeypatch.setattr(tp, 'get_tariff_by_id', tariff_lookup)
+
+    state = _FakeState({'active_subscription_id': 22})
+    callback = MagicMock()
+    callback.data = 'instant_switch'
+    callback.answer = AsyncMock()
+    db_user = MagicMock(id=1, language='ru')
+
+    await tp.show_instant_switch_list(callback, db_user, AsyncMock(), state)
+
+    tariff_lookup.assert_awaited_once()
+    assert all('Выберите подписку' not in str(call) for call in callback.answer.await_args_list)
+
+
+async def test_target_tariff_owned_by_another_subscription(monkeypatch):
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(subcrud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=MagicMock(id=2)))
+
+    assert await _target_tariff_owned_elsewhere(AsyncMock(), 1, 5, 1) is True
+    # Та же подписка уже на этом тарифе — это не «чужая», решает «Уже на этом тарифе».
+    assert await _target_tariff_owned_elsewhere(AsyncMock(), 1, 5, 2) is False
+
+
+async def test_target_tariff_not_owned(monkeypatch):
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(subcrud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=None))
+
+    assert await _target_tariff_owned_elsewhere(AsyncMock(), 1, 5, 1) is False
+
+
+async def test_target_tariff_guard_is_off_in_single_mode(monkeypatch):
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: False)
+    lookup = AsyncMock(return_value=MagicMock(id=2))
+    monkeypatch.setattr(subcrud, 'get_subscription_by_user_and_tariff', lookup)
+
+    assert await _target_tariff_owned_elsewhere(AsyncMock(), 1, 5, 1) is False
+    lookup.assert_not_awaited()
+
+
+def _confirm_callback(data: str) -> MagicMock:
+    callback = MagicMock()
+    callback.data = data
+    callback.answer = AsyncMock()
+    return callback
+
+
+async def test_instant_switch_confirm_refuses_owned_tariff_before_charging(monkeypatch):
+    """Кнопка из старого сообщения: целевой тариф уже куплен отдельной подпиской.
+
+    Подтверждение отказывает до списания, а не падает на уникальном индексе после."""
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(tp, 'get_tariff_by_id', AsyncMock(return_value=MagicMock(id=5, is_active=True)))
+    monkeypatch.setattr(tp, '_resolve_switch_subscription', AsyncMock(return_value=(MagicMock(id=1), 1)))
+    monkeypatch.setattr(subcrud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=MagicMock(id=2)))
+    charge = AsyncMock()
+    monkeypatch.setattr(tp, 'subtract_user_balance', charge)
+    callback = _confirm_callback('instant_sw_confirm:5')
+
+    await tp.confirm_instant_switch(callback, MagicMock(id=1, language='ru'), AsyncMock(), _FakeState({}))
+
+    charge.assert_not_awaited()
+    callback.answer.assert_awaited_once()
+    assert callback.answer.await_args.kwargs.get('show_alert') is True
+
+
+async def test_period_switch_confirm_refuses_owned_tariff_before_charging(monkeypatch):
+    monkeypatch.setattr(Settings, 'is_multi_tariff_enabled', lambda self: True)
+    tariff = MagicMock(id=5, is_active=True, period_prices={'30': 10000})
+    monkeypatch.setattr(tp, 'get_tariff_by_id', AsyncMock(return_value=tariff))
+    db_user = MagicMock(id=1, language='ru')
+    monkeypatch.setattr(user_crud, 'lock_user_for_pricing', AsyncMock(return_value=db_user))
+    monkeypatch.setattr(tp, '_resolve_switch_subscription', AsyncMock(return_value=(MagicMock(id=1), 1)))
+    monkeypatch.setattr(subcrud, 'get_subscription_by_user_and_tariff', AsyncMock(return_value=MagicMock(id=2)))
+    charge = AsyncMock()
+    monkeypatch.setattr(tp, 'subtract_user_balance', charge)
+    callback = _confirm_callback('tariff_sw_confirm:5:30')
+
+    await tp.confirm_tariff_switch(callback, db_user, AsyncMock(), _FakeState({}))
+
+    charge.assert_not_awaited()
+    callback.answer.assert_awaited_once()
+    assert callback.answer.await_args.kwargs.get('show_alert') is True

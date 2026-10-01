@@ -128,6 +128,37 @@ async def _resolve_switch_subscription(callback, db_user, db, state=None):
     return None, None
 
 
+async def _clear_state_keeping_switch_subscription(state: FSMContext) -> None:
+    """Сбрасывает FSM на входе в смену тарифа, оставляя выбранную подписку.
+
+    Подписку смены ``_resolve_switch_subscription`` берёт из FSM
+    (``active_subscription_id`` ставит карточка подписки в мультитарифе). Вход
+    чистил состояние до этого чтения, и при двух подписках и больше смена
+    упиралась в «Выберите подписку».
+    """
+    data = await state.get_data()
+    pinned_subscription_id = data.get('active_subscription_id')
+    await state.clear()
+    if pinned_subscription_id:
+        await state.update_data(active_subscription_id=pinned_subscription_id)
+
+
+async def _target_tariff_owned_elsewhere(db: AsyncSession, user_id: int, tariff_id: int, subscription_id: int) -> bool:
+    """Мультитариф: у человека уже есть живая подписка на целевой тариф.
+
+    Список смены такие тарифы прячет, но кнопка из старого сообщения или
+    параллельная покупка доводят до подтверждения, а там смена упрётся в
+    ``uq_subscriptions_user_tariff_active`` уже после списания. Кабинет на
+    такой случай отвечает 409 до списания, бот делает так же.
+    """
+    if not settings.is_multi_tariff_enabled():
+        return False
+    from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+    owned = await get_subscription_by_user_and_tariff(db, user_id, tariff_id)
+    return owned is not None and owned.id != subscription_id
+
+
 def _apply_promo_discount(price: int, group_pct: int, offer_pct: int = 0) -> int:
     """Применяет стекинг скидок к цене (sequential floor division, как PricingEngine)."""
     from app.services.pricing_engine import PricingEngine
@@ -3403,7 +3434,7 @@ async def show_tariff_switch_list(
 ):
     """Показывает список тарифов для переключения."""
     texts = get_texts(db_user.language)
-    await state.clear()
+    await _clear_state_keeping_switch_subscription(state)
 
     # Проверяем наличие активной подписки
     subscription, _sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
@@ -3837,6 +3868,13 @@ async def confirm_tariff_switch(
     subscription, _sw_confirm_sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
     if not subscription:
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
+        return
+
+    if await _target_tariff_owned_elsewhere(db, db_user.id, tariff_id, subscription.id):
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_ALREADY_ACTIVE_SUB', '❌ У вас уже есть активная подписка на этот тариф'),
+            show_alert=True,
+        )
         return
 
     # Проверяем разрешение на смену в данном направлении
@@ -4565,7 +4603,7 @@ async def show_instant_switch_list(
     """Показывает список тарифов для мгновенного переключения."""
 
     texts = get_texts(db_user.language)
-    await state.clear()
+    await _clear_state_keeping_switch_subscription(state)
 
     # Проверяем наличие активной подписки
     subscription, _sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
@@ -5049,6 +5087,13 @@ async def confirm_instant_switch(
     subscription, _isw_confirm_sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
     if not subscription:
         await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+        return
+
+    if await _target_tariff_owned_elsewhere(db, db_user.id, new_tariff.id, subscription.id):
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_ALREADY_ACTIVE_SUB', '❌ У вас уже есть активная подписка на этот тариф'),
+            show_alert=True,
+        )
         return
 
     from app.database.crud.user import lock_user_for_pricing
