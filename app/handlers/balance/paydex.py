@@ -48,6 +48,17 @@ def _check_topup_restriction(db_user: User, texts) -> InlineKeyboardMarkup | Non
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def _bot_return_url() -> str | None:
+    """Куда банк вернёт покупателя после оплаты.
+
+    Без этого адреса страница оплаты уводит на домен проекта в Paydex — для бота
+    это посторонний сайт. Возвращаем в сам бот; username берётся из get_me(),
+    так что подмена токена его не рассинхронизирует.
+    """
+    username = settings.get_bot_username()
+    return f'https://t.me/{username}' if username else None
+
+
 def _display_name_for_method(payment_method: str) -> str:
     if payment_method == 'paydex_sbp':
         return settings.get_paydex_sbp_display_name()
@@ -84,6 +95,7 @@ async def _create_paydex_payment_and_respond(
         email=getattr(db_user, 'email', None),
         language=db_user.language,
         payment_method_type=payment_method_type,
+        return_url=_bot_return_url(),
     )
 
     if not result:

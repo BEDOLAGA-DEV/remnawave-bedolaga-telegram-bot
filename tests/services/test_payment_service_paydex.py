@@ -453,3 +453,14 @@ def test_is_paydex_enabled_requires_both_secrets(monkeypatch: pytest.MonkeyPatch
     assert settings.is_paydex_enabled() is True
     # Инвариант проекта: enabled == флаг and configured
     assert settings.is_paydex_configured() is True
+
+
+def test_bot_handler_returns_payer_to_the_bot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Из банка покупатель должен попасть обратно в бот, а не на домен проекта в Paydex."""
+    from app.handlers.balance.paydex import _bot_return_url
+
+    monkeypatch.setattr(settings, 'BOT_USERNAME', 'MyShopBot', raising=False)
+    assert _bot_return_url() == 'https://t.me/MyShopBot'
+
+    monkeypatch.setattr(settings, 'BOT_USERNAME', None, raising=False)
+    assert _bot_return_url() is None
