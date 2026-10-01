@@ -3295,6 +3295,14 @@ class Settings(BaseSettings):
         """Есть ли учётные данные провайдера — без учёта флага включения."""
         return bool(self.CISPAY_SHOP_ID and self.CISPAY_API_KEY)
 
+    def is_paydex_configured(self) -> bool:
+        """Есть ли учётные данные провайдера — без учёта флага включения.
+
+        Маршрут вебхука регистрируется по этому признаку: если оператор выключил
+        способ, уже созданные счета всё равно должны доехать до зачисления.
+        """
+        return bool(self.PAYDEX_API_KEY and self.PAYDEX_WEBHOOK_SECRET)
+
     def is_paydex_enabled(self) -> bool:
         # Пустая строка так же непригодна, как None: без ключа запросы не пройдут,
         # а без секрета вебхука подпись подделывается тривиально.
