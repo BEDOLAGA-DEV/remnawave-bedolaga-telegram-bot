@@ -2248,6 +2248,59 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         )
         has_direct_payment_methods = True
 
+    if settings.is_paydex_sbp_enabled():
+        paydex_sbp_name = settings.get_paydex_sbp_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_PAYDEX_SBP', f'📱 {paydex_sbp_name}'),
+                    callback_data=_build_callback('paydex_sbp'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_paydex_card_enabled():
+        paydex_card_name = settings.get_paydex_card_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_PAYDEX_CARD', f'💳 {paydex_card_name}'),
+                    callback_data=_build_callback('paydex_card'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if settings.is_paydex_crypto_enabled():
+        paydex_crypto_name = settings.get_paydex_crypto_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_PAYDEX_CRYPTO', f'🪙 {paydex_crypto_name}'),
+                    callback_data=_build_callback('paydex_crypto'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
+    if (
+        settings.is_paydex_enabled()
+        and not settings.is_paydex_sbp_enabled()
+        and not settings.is_paydex_card_enabled()
+        and not settings.is_paydex_crypto_enabled()
+    ):
+        paydex_name = settings.get_paydex_display_name()
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('PAYMENT_PAYDEX', f'💳 {paydex_name}'),
+                    callback_data=_build_callback('paydex'),
+                )
+            ]
+        )
+        has_direct_payment_methods = True
+
     if settings.is_cashera_enabled():
         cashera_name = settings.get_cashera_display_name()
         if settings.CASHERA_INLINE_METHODS:

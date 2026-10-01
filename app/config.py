@@ -1114,6 +1114,28 @@ class Settings(BaseSettings):
     CISPAY_SBP_ENABLED: bool = False
     CISPAY_SBP_DISPLAY_NAME: str = 'СБП (CisPay)'
 
+    # Paydex (paydex.pro, merchant API v1: СБП, карты, USDT TRC20/BEP20)
+    PAYDEX_ENABLED: bool = False
+    PAYDEX_API_KEY: str | None = None  # секретный ключ проекта: sk_live_… (или sk_test_… для песочницы)
+    # Секрет вебхуков проекта — ОТДЕЛЬНЫЙ от API-ключа, им подписан X-Paydex-Signature
+    PAYDEX_WEBHOOK_SECRET: str | None = None
+    PAYDEX_BASE_URL: str = 'https://paydex.pro'
+    PAYDEX_DISPLAY_NAME: str = 'Paydex'
+    PAYDEX_CURRENCY: str = 'RUB'
+    PAYDEX_MIN_AMOUNT_KOPEKS: int = 1000  # 10₽ — минимум счёта в Paydex
+    PAYDEX_MAX_AMOUNT_KOPEKS: int = 30000000  # 300 000₽
+    PAYDEX_WEBHOOK_PATH: str = '/paydex-webhook'
+    # Срок жизни счёта; Paydex принимает 5…1440 минут, по умолчанию у проекта 60
+    PAYDEX_PAYMENT_LIFETIME_MINUTES: int = 60
+    # Sub-методы (поле `method` при создании счёта). Если не включён ни один,
+    # способ показывается одной кнопкой и покупатель выбирает на странице оплаты.
+    PAYDEX_SBP_ENABLED: bool = False
+    PAYDEX_SBP_DISPLAY_NAME: str = 'СБП (Paydex)'
+    PAYDEX_CARD_ENABLED: bool = False
+    PAYDEX_CARD_DISPLAY_NAME: str = 'Карта (Paydex)'
+    PAYDEX_CRYPTO_ENABLED: bool = False
+    PAYDEX_CRYPTO_DISPLAY_NAME: str = 'USDT (Paydex)'
+
     # Cashera (api.cashera.cash, server-to-server; расчёты мерчанту в USDT, приём — только RUB)
     CASHERA_ENABLED: bool = False
     CASHERA_API_KEY: str | None = None  # X-Api-Key — публичный ключ (pk_...)
@@ -3272,6 +3294,47 @@ class Settings(BaseSettings):
     def is_cispay_configured(self) -> bool:
         """Есть ли учётные данные провайдера — без учёта флага включения."""
         return bool(self.CISPAY_SHOP_ID and self.CISPAY_API_KEY)
+
+    def is_paydex_configured(self) -> bool:
+        """Есть ли учётные данные провайдера — без учёта флага включения.
+
+        Маршрут вебхука регистрируется по этому признаку: если оператор выключил
+        способ, уже созданные счета всё равно должны доехать до зачисления.
+        """
+        return bool(self.PAYDEX_API_KEY and self.PAYDEX_WEBHOOK_SECRET)
+
+    def is_paydex_enabled(self) -> bool:
+        # Пустая строка так же непригодна, как None: без ключа запросы не пройдут,
+        # а без секрета вебхука подпись подделывается тривиально.
+        return bool(self.PAYDEX_ENABLED and self.PAYDEX_API_KEY and self.PAYDEX_WEBHOOK_SECRET)
+
+    def get_paydex_display_name(self) -> str:
+        name = (self.PAYDEX_DISPLAY_NAME or '').strip()
+        return name or 'Paydex'
+
+    def get_paydex_display_name_html(self) -> str:
+        return html.escape(self.get_paydex_display_name())
+
+    def is_paydex_sbp_enabled(self) -> bool:
+        return self.PAYDEX_SBP_ENABLED and self.is_paydex_enabled()
+
+    def get_paydex_sbp_display_name(self) -> str:
+        name = (self.PAYDEX_SBP_DISPLAY_NAME or '').strip()
+        return name or 'СБП (Paydex)'
+
+    def is_paydex_card_enabled(self) -> bool:
+        return self.PAYDEX_CARD_ENABLED and self.is_paydex_enabled()
+
+    def get_paydex_card_display_name(self) -> str:
+        name = (self.PAYDEX_CARD_DISPLAY_NAME or '').strip()
+        return name or 'Карта (Paydex)'
+
+    def is_paydex_crypto_enabled(self) -> bool:
+        return self.PAYDEX_CRYPTO_ENABLED and self.is_paydex_enabled()
+
+    def get_paydex_crypto_display_name(self) -> str:
+        name = (self.PAYDEX_CRYPTO_DISPLAY_NAME or '').strip()
+        return name or 'USDT (Paydex)'
 
     def is_cispay_enabled(self) -> bool:
         # Пустая строка так же непригодна, как None: с пустым ключом HMAC вебхука
