@@ -34,6 +34,7 @@ from app.services.payment.antilopay import AntilopayPaymentMixin
 from app.services.payment.aurapay import AuraPayPaymentMixin
 from app.services.payment.cashera import CasheraPaymentMixin
 from app.services.payment.cispay import CisPayPaymentMixin
+from app.services.payment.paydex import PaydexPaymentMixin
 from app.services.payment.cloudpayments import CloudPaymentsPaymentMixin
 from app.services.payment.donut import DonutPaymentMixin
 from app.services.payment.etoplatezhi import EtoplatezhiPaymentMixin
@@ -862,6 +863,7 @@ class PaymentService(
     DonutPaymentMixin,
     LavaPaymentMixin,
     CisPayPaymentMixin,
+    PaydexPaymentMixin,
     TabPayPaymentMixin,
     ParityPayPaymentMixin,
     CasheraPaymentMixin,
