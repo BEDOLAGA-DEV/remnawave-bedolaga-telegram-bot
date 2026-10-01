@@ -58,9 +58,7 @@ async def get_paydex_payment_by_order_id(db: AsyncSession, order_id: str) -> Pay
 
 async def get_paydex_payment_by_invoice_id(db: AsyncSession, paydex_invoice_id: str) -> PaydexPayment | None:
     """Получает платёж по id счёта, выданному Paydex."""
-    result = await db.execute(
-        select(PaydexPayment).where(PaydexPayment.paydex_invoice_id == paydex_invoice_id)
-    )
+    result = await db.execute(select(PaydexPayment).where(PaydexPayment.paydex_invoice_id == paydex_invoice_id))
     return result.scalar_one_or_none()
 
 
@@ -133,7 +131,7 @@ async def get_pending_paydex_payments(db: AsyncSession, user_id: int) -> list[Pa
         select(PaydexPayment).where(
             PaydexPayment.user_id == user_id,
             PaydexPayment.status == 'pending',
-            PaydexPayment.is_paid == False,  # noqa: E712 — SQLAlchemy требует сравнение, не `is`
+            PaydexPayment.is_paid == False,
         )
     )
     return list(result.scalars().all())
@@ -145,7 +143,7 @@ async def get_expired_pending_paydex_payments(db: AsyncSession) -> list[PaydexPa
     result = await db.execute(
         select(PaydexPayment).where(
             PaydexPayment.status == 'pending',
-            PaydexPayment.is_paid == False,  # noqa: E712
+            PaydexPayment.is_paid == False,
             PaydexPayment.expires_at < now,
         )
     )

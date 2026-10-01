@@ -154,9 +154,7 @@ class PaydexPaymentMixin:
                 except ValueError:
                     expires_at = None
             if expires_at is None:
-                expires_at = datetime.now(UTC) + timedelta(
-                    minutes=settings.PAYDEX_PAYMENT_LIFETIME_MINUTES
-                )
+                expires_at = datetime.now(UTC) + timedelta(minutes=settings.PAYDEX_PAYMENT_LIFETIME_MINUTES)
 
             if api_result.get('isTest'):
                 # Тестовый ключ (sk_test_) создаёт счёт-пустышку: такую «оплату» нельзя
@@ -306,7 +304,7 @@ class PaydexPaymentMixin:
 
                 try:
                     received_kopeks = rubles_to_kopeks(received_amount)
-                except Exception:  # noqa: BLE001 — любой мусор в сумме = не зачисляем
+                except Exception:
                     received_kopeks = None
 
                 if received_kopeks is None or received_kopeks != payment.amount_kopeks:
@@ -330,14 +328,12 @@ class PaydexPaymentMixin:
                 payment.status = internal_status
                 payment.is_paid = True
                 payment.paid_at = datetime.now(UTC)
-                payment.paydex_invoice_id = (
-                    str(paydex_invoice_id) if paydex_invoice_id else payment.paydex_invoice_id
-                )
+                payment.paydex_invoice_id = str(paydex_invoice_id) if paydex_invoice_id else payment.paydex_invoice_id
                 payable_amount = invoice.get('payableAmount')
                 if payable_amount is not None:
                     try:
                         payment.charged_amount_kopeks = rubles_to_kopeks(payable_amount)
-                    except Exception:  # noqa: BLE001 — справочное поле, не критично
+                    except Exception:
                         pass
                 if invoice.get('method'):
                     payment.payment_method = str(invoice['method'])
@@ -448,9 +444,7 @@ class PaydexPaymentMixin:
             )
             created_transaction = True
 
-        await paydex_crud.link_paydex_payment_to_transaction(
-            db, payment=payment, transaction_id=transaction.id
-        )
+        await paydex_crud.link_paydex_payment_to_transaction(db, payment=payment, transaction_id=transaction.id)
 
         should_credit_balance = created_transaction or not balance_already_credited
 
@@ -540,9 +534,7 @@ class PaydexPaymentMixin:
         try:
             from app.services.payment.common import send_cart_notification_after_topup
 
-            await send_cart_notification_after_topup(
-                user, payment.amount_kopeks, db, getattr(self, 'bot', None)
-            )
+            await send_cart_notification_after_topup(user, payment.amount_kopeks, db, getattr(self, 'bot', None))
         except Exception as error:
             logger.error(
                 'Ошибка при работе с сохраненной корзиной для пользователя',
@@ -627,7 +619,7 @@ class PaydexPaymentMixin:
 
                         try:
                             received_kopeks = rubles_to_kopeks(api_amount)
-                        except Exception:  # noqa: BLE001
+                        except Exception:
                             received_kopeks = None
 
                         if received_kopeks is None or received_kopeks != payment.amount_kopeks:

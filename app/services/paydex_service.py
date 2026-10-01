@@ -33,16 +33,12 @@ def kopeks_to_rubles(amount_kopeks: int) -> str:
     Paydex принимает суммы строкой («100.00»), а бот считает в копейках.
     Через Decimal, чтобы 10_05 не превратились в «100.49999999999999».
     """
-    return str(
-        (Decimal(int(amount_kopeks)) / Decimal(100)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    )
+    return str((Decimal(int(amount_kopeks)) / Decimal(100)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
 def rubles_to_kopeks(amount: Any) -> int:
     """Строка рублей из ответа Paydex → копейки."""
-    return int(
-        (Decimal(str(amount or '0')) * Decimal(100)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-    )
+    return int((Decimal(str(amount or '0')) * Decimal(100)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 class PaydexService:
@@ -186,9 +182,7 @@ class PaydexService:
             method=method or 'any',
         )
 
-        data = await self._request(
-            'POST', '/invoices', json_payload=payload, idempotency_key=order_id
-        )
+        data = await self._request('POST', '/invoices', json_payload=payload, idempotency_key=order_id)
 
         if not data.get('id'):
             logger.error('Paydex create_invoice: в ответе нет id счёта', response_data=data)
@@ -262,9 +256,7 @@ class PaydexService:
                 logger.error('Paydex webhook: не задан секрет вебхуков, проверка невозможна')
                 return False
 
-            expected = hmac.new(
-                self.webhook_secret.encode('utf-8'), raw_body, hashlib.sha256
-            ).hexdigest()
+            expected = hmac.new(self.webhook_secret.encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
             # Принимаем и «sha256=<hex>», и просто «<hex>»: так подпись можно
             # проверить вручную, не разбираясь в префиксе.
             candidate = received.split('=', 1)[1] if received.lower().startswith('sha256=') else received
@@ -273,7 +265,7 @@ class PaydexService:
                 logger.warning('Paydex webhook: подпись не совпала')
                 return False
             return True
-        except Exception as error:  # noqa: BLE001 — подпись не должна ронять обработчик
+        except Exception as error:
             logger.exception('Paydex webhook: ошибка проверки подписи', error=error)
             return False
 

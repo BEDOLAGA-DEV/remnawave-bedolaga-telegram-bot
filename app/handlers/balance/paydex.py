@@ -163,9 +163,7 @@ async def process_paydex_payment_amount(
 
     restriction_kb = _check_topup_restriction(db_user, texts)
     if restriction_kb:
-        reason = html.escape(
-            getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        )
+        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
         await message.answer(
             f'\U0001f6ab <b>Пополнение ограничено</b>\n\n{reason}',
             parse_mode='HTML',
@@ -226,9 +224,7 @@ async def _start_paydex_topup_impl(
 
     restriction_kb = _check_topup_restriction(db_user, texts)
     if restriction_kb:
-        reason = html.escape(
-            getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором'
-        )
+        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
         await callback.message.edit_text(
             f'\U0001f6ab <b>Пополнение ограничено</b>\n\n{reason}',
             parse_mode='HTML',

@@ -34,7 +34,6 @@ from app.services.payment.antilopay import AntilopayPaymentMixin
 from app.services.payment.aurapay import AuraPayPaymentMixin
 from app.services.payment.cashera import CasheraPaymentMixin
 from app.services.payment.cispay import CisPayPaymentMixin
-from app.services.payment.paydex import PaydexPaymentMixin
 from app.services.payment.cloudpayments import CloudPaymentsPaymentMixin
 from app.services.payment.donut import DonutPaymentMixin
 from app.services.payment.etoplatezhi import EtoplatezhiPaymentMixin
@@ -44,6 +43,7 @@ from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.payment.lava import LavaPaymentMixin
 from app.services.payment.overpay import OverpayPaymentMixin
 from app.services.payment.paritypay import ParityPayPaymentMixin
+from app.services.payment.paydex import PaydexPaymentMixin
 from app.services.payment.payer_identity import resolve_guest_payer
 from app.services.payment.paypear import PayPearPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
