@@ -5,7 +5,7 @@ import base64
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -419,12 +419,6 @@ class SubscriptionRenewalService:
         subscription_before = locked_result.scalar_one()
         old_end_date = subscription_before.end_date
 
-        # Determine expired state BEFORE extend_subscription mutates the object
-        now = datetime.now(UTC)
-        was_expired = subscription_before.status in ('expired', 'disabled', 'limited') or (
-            subscription_before.end_date is not None and subscription_before.end_date <= now
-        )
-
         try:
             subscription_after = await extend_subscription(db, subscription_before, period_days)
         except Exception:
@@ -495,7 +489,7 @@ class SubscriptionRenewalService:
                     error=error,
                 )
 
-        reset_traffic = was_expired and settings.RESET_TRAFFIC_ON_PAYMENT
+        reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT
         reset_devices = settings.RESET_DEVICES_ON_RENEWAL
         subscription_service = SubscriptionService()
         try:
