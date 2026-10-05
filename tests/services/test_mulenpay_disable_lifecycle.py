@@ -81,6 +81,25 @@ async def test_create_mulenpay_payment_fails_closed_when_disabled(monkeypatch: p
     provider.create_payment.assert_not_awaited()
 
 
+@pytest.mark.anyio('asyncio')
+async def test_adapter_create_payment_fails_closed_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_mulenpay(monkeypatch, enabled=False)
+
+    service = MulenPayService()
+    request = AsyncMock()
+    monkeypatch.setattr(service, '_request', request)
+
+    result = await service.create_payment(
+        amount_kopeks=10000,
+        description='Пополнение',
+        uuid='mulen_test',
+        items=[],
+    )
+
+    assert result is None
+    request.assert_not_awaited()
+
+
 def test_auto_verification_keeps_configured_mulenpay_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     _configure_mulenpay(monkeypatch, enabled=False)
 
