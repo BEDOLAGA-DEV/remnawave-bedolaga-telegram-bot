@@ -376,7 +376,7 @@ async def test_process_cispay_callback_missing_fields(monkeypatch: pytest.Monkey
         if getattr(route, 'path', '') == '/cispay-webhook' and 'POST' in getattr(route, 'methods', set())
     )
 
-    async def request_for(payload: object, signature: str) -> Request:
+    def request_for(payload: object, signature: str) -> Request:
         body = json.dumps(payload).encode('utf-8')
         scope = {
             'type': 'http',
@@ -402,11 +402,11 @@ async def test_process_cispay_callback_missing_fields(monkeypatch: pytest.Monkey
     }
     sandbox_body = json.dumps(sandbox_payload).encode('utf-8')
     sandbox_signature = hmac.new(b'cis_sec_test', sandbox_body, hashlib.sha256).hexdigest()
-    sandbox_response = await route.endpoint(await request_for(sandbox_payload, sandbox_signature))
+    sandbox_response = await route.endpoint(request_for(sandbox_payload, sandbox_signature))
     assert sandbox_response.status_code == 200
     callback.assert_not_awaited()
 
-    invalid_response = await route.endpoint(await request_for(sandbox_payload, 'invalid'))
+    invalid_response = await route.endpoint(request_for(sandbox_payload, 'invalid'))
     assert invalid_response.status_code == 400
     callback.assert_not_awaited()
 
@@ -418,7 +418,7 @@ async def test_process_cispay_callback_missing_fields(monkeypatch: pytest.Monkey
     }
     production_body = json.dumps(production_payload).encode('utf-8')
     production_signature = hmac.new(b'cis_sec_test', production_body, hashlib.sha256).hexdigest()
-    production_response = await route.endpoint(await request_for(production_payload, production_signature))
+    production_response = await route.endpoint(request_for(production_payload, production_signature))
     assert production_response.status_code == 200
     callback.assert_awaited_once_with(payment_service, production_payload, 'process_cispay_callback')
 
