@@ -92,6 +92,7 @@ async def test_create_mulenpay_payment_success(monkeypatch: pytest.MonkeyPatch) 
         fake_create_mulenpay_payment,
         raising=False,
     )
+    monkeypatch.setattr(settings, 'MULENPAY_ENABLED', True, raising=False)
     monkeypatch.setattr(settings, 'MULENPAY_MIN_AMOUNT_KOPEKS', 1000, raising=False)
     monkeypatch.setattr(settings, 'MULENPAY_MAX_AMOUNT_KOPEKS', 1_000_000, raising=False)
     monkeypatch.setattr(settings, 'MULENPAY_VAT_CODE', 1, raising=False)
@@ -121,6 +122,7 @@ async def test_create_mulenpay_payment_success(monkeypatch: pytest.MonkeyPatch) 
 
 
 def _relax_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'MULENPAY_ENABLED', True, raising=False)
     monkeypatch.setattr(settings, 'MULENPAY_MIN_AMOUNT_KOPEKS', 1000, raising=False)
     monkeypatch.setattr(settings, 'MULENPAY_MAX_AMOUNT_KOPEKS', 1_000_000, raising=False)
     monkeypatch.setattr(settings, 'MULENPAY_VAT_CODE', 1, raising=False)
@@ -274,6 +276,7 @@ async def test_explicit_client_wins_over_lookup(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.anyio('asyncio')
 async def test_create_mulenpay_payment_respects_amount_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'MULENPAY_ENABLED', True, raising=False)
     stub = StubMulenPayService({'id': 1})
     service = _make_service(stub)
     db = DummySession()
@@ -300,7 +303,8 @@ async def test_create_mulenpay_payment_respects_amount_limits(monkeypatch: pytes
 
 
 @pytest.mark.anyio('asyncio')
-async def test_create_mulenpay_payment_returns_none_without_service() -> None:
+async def test_create_mulenpay_payment_returns_none_without_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, 'MULENPAY_ENABLED', True, raising=False)
     service = _make_service(None)
     db = DummySession()
 
