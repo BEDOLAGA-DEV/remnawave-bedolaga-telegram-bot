@@ -32,7 +32,8 @@ class MulenPayService:
 
     @property
     def is_configured(self) -> bool:
-        return bool(settings.is_mulenpay_enabled() and self.api_key and self.shop_id and self.secret_key)
+        """Проверяет наличие credentials независимо от флага новых продаж."""
+        return bool(self.api_key and self.shop_id and self.secret_key)
 
     async def _request(
         self,
