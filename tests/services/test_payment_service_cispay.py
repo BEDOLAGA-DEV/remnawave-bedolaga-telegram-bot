@@ -464,6 +464,7 @@ def test_verify_webhook_signature_tampered_body(monkeypatch: pytest.MonkeyPatch)
 
     assert service.verify_webhook_signature(tampered, signature) is False
 
+
 # ---------------------------------------------------------------------------
 # cisPay webhook route / sandbox
 # ---------------------------------------------------------------------------
@@ -492,7 +493,10 @@ def _build_cispay_webhook_request(payload: object, *, signature: str | None) -> 
 
 def _get_cispay_webhook_route(router):
     for route in router.routes:
-        if getattr(route, 'path', '') == '/cispay-webhook' and 'POST' in getattr(route, 'methods', set()):
+        if (
+            getattr(route, 'path', '') == '/cispay-webhook'
+            and 'POST' in getattr(route, 'methods', set())
+        ):
             return route
     raise AssertionError('cisPay webhook route not found')
 
