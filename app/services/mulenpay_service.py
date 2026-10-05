@@ -170,6 +170,9 @@ class MulenPayService:
         website_url: str | None = None,
         client: str | None = None,
     ) -> dict[str, Any] | None:
+        if not settings.is_mulenpay_enabled():
+            logger.warning('MulenPay payment creation is disabled')
+            return None
         if not self.is_configured:
             logger.error('MulenPay service is not configured')
             return None
