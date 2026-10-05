@@ -493,10 +493,7 @@ def _build_cispay_webhook_request(payload: object, *, signature: str | None) -> 
 
 def _get_cispay_webhook_route(router):
     for route in router.routes:
-        if (
-            getattr(route, 'path', '') == '/cispay-webhook'
-            and 'POST' in getattr(route, 'methods', set())
-        ):
+        if getattr(route, 'path', '') == '/cispay-webhook' and 'POST' in getattr(route, 'methods', set()):
             return route
     raise AssertionError('cisPay webhook route not found')
 
@@ -527,9 +524,7 @@ async def test_cispay_sandbox_webhook_returns_200_without_production_callback(
     }
     route = _get_cispay_webhook_route(create_payment_router(SimpleNamespace(), SimpleNamespace()))
 
-    response = await route.endpoint(
-        _build_cispay_webhook_request(payload, signature=_cispay_signature(payload))
-    )
+    response = await route.endpoint(_build_cispay_webhook_request(payload, signature=_cispay_signature(payload)))
 
     assert response.status_code == 200
     assert json.loads(response.body.decode('utf-8')) == {'status': 'ok'}
@@ -585,4 +580,3 @@ async def test_cispay_string_sandbox_flag_uses_production_callback(
 
     assert response.status_code == 200
     callback.assert_awaited_once_with(payment_service, payload, 'process_cispay_callback')
-
