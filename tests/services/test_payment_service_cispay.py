@@ -574,9 +574,7 @@ async def test_cispay_string_sandbox_flag_uses_production_callback(
     payment_service = SimpleNamespace()
     route = _get_cispay_webhook_route(create_payment_router(SimpleNamespace(), payment_service))
 
-    response = await route.endpoint(
-        _build_cispay_webhook_request(payload, signature=_cispay_signature(payload))
-    )
+    response = await route.endpoint(_build_cispay_webhook_request(payload, signature=_cispay_signature(payload)))
 
     assert response.status_code == 200
     callback.assert_awaited_once_with(payment_service, payload, 'process_cispay_callback')
