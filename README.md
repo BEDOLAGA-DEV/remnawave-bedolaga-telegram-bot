@@ -55,7 +55,7 @@ Bedolaga — полнофункциональная платформа для п
 
 ### 💳 Платежи
 
-- 🏦 **28 платёжных провайдеров** одновременно
+- 🏦 **29 платёжных провайдеров** одновременно
 - 💰 Единый баланс: пополнение любым способом → покупка с баланса
 - ⚡ Автопокупка подписки после пополнения
 - 💾 Рекуррентные платежи (сохранённые карты)
@@ -164,6 +164,7 @@ Bedolaga поддерживает полный кросс-канальный ж�
 | 💳 | **PayPalych (Pal24)** | Карты, СБП | RUB |
 | 🤝 | **[Platega](https://t.me/ArstanPlatega)** 🔸 | Карты, СБП, крипто | RUB |
 | 💳 | **WATA** | СБП, Карты | RUB |
+| 💳 | **[Paydex](https://paydex.pro)** | СБП, карты, USDT (TRC20/BEP20) | RUB |
 | 💳 | **MulenPay** | Карты | RUB |
 | 💳 | **RioPay** | Карты | RUB |
 | 💳 | **SeverPay** | СБП, карты | RUB |
@@ -334,7 +335,7 @@ docker compose up -d
 | | Раздел | Описание |
 |:---:|:---|:---|
 | 🚀 | [Быстрый старт](https://docs.bedolagam.ru/getting-started/quickstart) | Развёртывание за 5 минут |
-| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 28 провайдеров, webhook, фискализация, Apple IAP |
+| 💳 | [Настройка платежей](https://docs.bedolagam.ru/bot/payments) | 29 провайдеров, webhook, фискализация, Apple IAP |
 | 📦 | [Подписки и тарифы](https://docs.bedolagam.ru/bot/subscriptions) | Конфигурация планов и трафика |
 | 👥 | [Реферальная программа](https://docs.bedolagam.ru/bot/referral-program) | Партнёрка и вывод средств |
 | 🖥 | [Cabinet](https://docs.bedolagam.ru/cabinet/overview) | Настройка веб-кабинета |

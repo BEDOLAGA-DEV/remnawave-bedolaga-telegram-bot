@@ -349,6 +349,59 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_paydex_sbp_enabled():
+        sbp_name = settings.get_paydex_sbp_display_name()
+        methods.append(
+            {
+                'id': 'paydex_sbp',
+                'name': sbp_name,
+                'icon': '📱',
+                'description': f'через {sbp_name}',
+                'callback': 'topup_paydex_sbp',
+            }
+        )
+
+    if settings.is_paydex_card_enabled():
+        card_name = settings.get_paydex_card_display_name()
+        methods.append(
+            {
+                'id': 'paydex_card',
+                'name': card_name,
+                'icon': '💳',
+                'description': f'через {card_name}',
+                'callback': 'topup_paydex_card',
+            }
+        )
+
+    if settings.is_paydex_crypto_enabled():
+        crypto_name = settings.get_paydex_crypto_display_name()
+        methods.append(
+            {
+                'id': 'paydex_crypto',
+                'name': crypto_name,
+                'icon': '🪙',
+                'description': f'через {crypto_name}',
+                'callback': 'topup_paydex_crypto',
+            }
+        )
+
+    if (
+        settings.is_paydex_enabled()
+        and not settings.is_paydex_sbp_enabled()
+        and not settings.is_paydex_card_enabled()
+        and not settings.is_paydex_crypto_enabled()
+    ):
+        paydex_name = settings.get_paydex_display_name()
+        methods.append(
+            {
+                'id': 'paydex',
+                'name': paydex_name,
+                'icon': '💳',
+                'description': f'через {paydex_name}',
+                'callback': 'topup_paydex',
+            }
+        )
+
     if settings.is_cashera_enabled():
         cashera_name = settings.get_cashera_display_name()
         if settings.CASHERA_INLINE_METHODS:
@@ -692,6 +745,14 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_lava_card_enabled()
     if method_id == 'cispay':
         return settings.is_cispay_enabled()
+    if method_id == 'paydex':
+        return settings.is_paydex_enabled()
+    if method_id == 'paydex_sbp':
+        return settings.is_paydex_sbp_enabled()
+    if method_id == 'paydex_card':
+        return settings.is_paydex_card_enabled()
+    if method_id == 'paydex_crypto':
+        return settings.is_paydex_crypto_enabled()
     if method_id == 'cashera':
         return settings.is_cashera_enabled()
     if method_id.startswith('cashera_m_'):

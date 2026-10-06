@@ -234,6 +234,13 @@ async def route_payment_by_method(
             await process_cashera_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method in ('paydex', 'paydex_sbp', 'paydex_card', 'paydex_crypto'):
+        from .paydex import process_paydex_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_paydex_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     if payment_method in ('cispay', 'cispay_card', 'cispay_sbp'):
         from .cispay import process_cispay_payment_amount
 
@@ -929,6 +936,18 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_cashera_payment, F.data == 'topup_cashera')
     dp.callback_query.register(handle_cashera_method_selection, F.data.startswith('cashera_method_'))
     dp.callback_query.register(start_cashera_direct_method, F.data.startswith('topup_cashera_m_'))
+
+    from .paydex import (
+        start_paydex_card_topup,
+        start_paydex_crypto_topup,
+        start_paydex_sbp_topup,
+        start_paydex_topup,
+    )
+
+    dp.callback_query.register(start_paydex_topup, F.data == 'topup_paydex')
+    dp.callback_query.register(start_paydex_sbp_topup, F.data == 'topup_paydex_sbp')
+    dp.callback_query.register(start_paydex_card_topup, F.data == 'topup_paydex_card')
+    dp.callback_query.register(start_paydex_crypto_topup, F.data == 'topup_paydex_crypto')
 
     from .cispay import start_cispay_card_topup, start_cispay_sbp_topup, start_cispay_topup
 

@@ -2000,6 +2000,70 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    # Paydex webhook (paydex.pro)
+    if settings.is_paydex_configured():
+
+        @router.get(settings.PAYDEX_WEBHOOK_PATH)
+        async def paydex_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'paydex_webhook',
+                    'enabled': settings.is_paydex_enabled(),
+                }
+            )
+
+        @router.post(settings.PAYDEX_WEBHOOK_PATH)
+        async def paydex_webhook(request: Request) -> JSONResponse:
+            raw_body = await request.body()
+
+            from app.services.paydex_service import paydex_service
+
+            # X-Paydex-Signature = sha256=<HMAC-SHA256 от сырого тела>, ключ — секрет
+            # вебхуков проекта (PAYDEX_WEBHOOK_SECRET), он не равен API-ключу.
+            received_signature = request.headers.get('X-Paydex-Signature')
+            if not paydex_service.verify_webhook_signature(raw_body, received_signature):
+                logger.warning('Paydex webhook: invalid signature')
+                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('Paydex webhook: failed to parse JSON', parse_error=parse_error)
+                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Нас интересуют только события по счетам; остальные (выплаты, возвраты)
+            # подтверждаем, чтобы Paydex не повторял доставку в пустоту.
+            event = str(payload.get('event') or '')
+            if not event.startswith('invoice.'):
+                return JSONResponse({'status': 'ignored'}, status_code=status.HTTP_200_OK)
+
+            try:
+                success = await _process_payment_service_callback(
+                    payment_service,
+                    payload,
+                    'process_paydex_callback',
+                )
+            except Exception as e:
+                logger.exception('Paydex webhook processing error', error=e)
+                success = False
+
+            if not success:
+                invoice = payload.get('data', {}).get('invoice', {}) if isinstance(payload.get('data'), dict) else {}
+                logger.error(
+                    'Paydex webhook processing failed',
+                    paydex_event=event,
+                    order_id=invoice.get('orderId'),
+                    invoice_id=invoice.get('id'),
+                )
+                # Не-2xx заставит Paydex повторить доставку по расписанию
+                # (1 мин, 5, 30, 2 ч, 12 ч — всего 6 попыток)
+                return JSONResponse({'status': 'error'}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            return JSONResponse({'status': 'ok'}, status_code=status.HTTP_200_OK)
+
+        routes_registered = True
+
     # Cashera webhook (api.cashera.cash)
     if settings.is_cashera_configured():
 
