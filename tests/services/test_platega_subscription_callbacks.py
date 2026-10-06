@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database.crud import platega_subscription as sub_crud
 from app.database.models import (
+    AuraPaySubscription,
     Base,
     GraceAccessSessionModel,
     PlategaSubscription,
@@ -60,6 +61,7 @@ async def _memory_session(monkeypatch):
             lambda c: Base.metadata.create_all(
                 c,
                 tables=[
+                    AuraPaySubscription.__table__,
                     PlategaSubscription.__table__,
                     Subscription.__table__,
                     Transaction.__table__,

@@ -101,6 +101,9 @@ async def delete_subscription_record(
     await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
     await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
     await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
+    from app.services.aurapay_recurrent import cancel_for_subscription
+
+    await cancel_for_subscription(db, subscription.id)
 
     # Автоплатёжки закоммитили своё — advisory-lock отпущен, берём заново.
     await ensure_no_open_grace_for_subscriptions(db, (subscription.id,))

@@ -64,6 +64,43 @@ class AuraPayService:
             'X-ShopId': self.shop_id,
         }
 
+    async def create_subscription(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create a card subscription and its initial payment invoice."""
+        session = await self._get_session()
+        async with session.post(
+            f'{API_BASE_URL}/subscription/create',
+            json=payload,
+            headers=self._build_headers(),
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status != 200:
+                raise AuraPayAPIError(response.status, 'Subscription creation failed')
+            return data
+
+    async def get_subscription(self, subscription_id: str) -> dict[str, Any]:
+        session = await self._get_session()
+        async with session.get(
+            f'{API_BASE_URL}/subscription/status',
+            params={'subscription_id': subscription_id},
+            headers=self._build_headers(),
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status != 200:
+                raise AuraPayAPIError(response.status, 'Subscription lookup failed')
+            return data
+
+    async def cancel_subscription(self, subscription_id: str) -> dict[str, Any]:
+        session = await self._get_session()
+        async with session.post(
+            f'{API_BASE_URL}/subscription/cancel',
+            json={'subscription_id': subscription_id},
+            headers=self._build_headers(),
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status != 200:
+                raise AuraPayAPIError(response.status, 'Subscription cancellation failed')
+            return data
+
     async def create_invoice(
         self,
         *,

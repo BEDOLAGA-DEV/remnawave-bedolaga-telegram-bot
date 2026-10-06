@@ -1718,6 +1718,21 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 logger.warning('AuraPay webhook: invalid signature')
                 return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)
 
+            if payload.get('event'):
+                from app.database.database import AsyncSessionLocal
+                from app.services.aurapay_recurrent import process_event
+
+                async with AsyncSessionLocal() as db:
+                    processed = await process_event(db, payload)
+                return JSONResponse(
+                    {'status': processed},
+                    status_code=status.HTTP_200_OK if processed else status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            if payload.get('subscription_id'):
+                # Each subscription invoice also has a subscription event. The
+                # latter is the sole source of renewal and its idempotency key.
+                return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
+
             try:
                 success = await _process_payment_service_callback(
                     payment_service,

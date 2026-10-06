@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database.models import (
+    AuraPaySubscription,
     Subscription,
     SubscriptionStatus,
     User,
@@ -217,6 +218,12 @@ async def _find_subscriptions_needing_topup(db: AsyncSession) -> list:
                 ),
                 Subscription.autopay_enabled == True,
                 Subscription.is_trial == False,
+                ~select(AuraPaySubscription.id)
+                .where(
+                    AuraPaySubscription.subscription_id == Subscription.id,
+                    AuraPaySubscription.status.in_(('NEW', 'WAITING_PAYMENT', 'ACTIVE')),
+                )
+                .exists(),
             )
         )
     )

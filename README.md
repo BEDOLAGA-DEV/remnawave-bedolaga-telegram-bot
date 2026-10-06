@@ -179,6 +179,7 @@ Bedolaga поддерживает полный кросс-канальный ж�
 | 💳 | **Cashera** | СБП, карты, зарубежные карты, крипта, CryptoBot (api.cashera.cash) | RUB → USDT |
 | 💳 | **TabPay** | СБП, карты с 3-D Secure (tabpay.org) | RUB |
 | 💳 | **ParityPay** | СБП, карты (api.paritypay.net) | RUB |
+| 💳 | **PayPear** | СБП, карты | RUB |
 | 🍎 | **Apple In-App Purchase** | Покупки через iOS App Store | USD |
 | 📲 | **Tribute** | Telegram-платежи | RUB |
 

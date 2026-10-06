@@ -4,6 +4,7 @@ Each module contains a subset of endpoints from the original monolithic subscrip
 The main subscription.py includes all sub-routers for backward compatibility.
 """
 
+from .aurapay_recurrent import router as aurapay_recurrent_router
 from .autopay import router as autopay_router
 from .cashera_recurrent import router as cashera_recurrent_router
 from .daily import router as daily_router
@@ -21,6 +22,7 @@ from .traffic import router as traffic_router
 
 
 __all__ = [
+    'aurapay_recurrent_router',
     'autopay_router',
     'cashera_recurrent_router',
     'daily_router',

@@ -65,6 +65,15 @@ async def update_autopay(
                 detail='Autopay is not available for daily subscriptions',
             )
 
+    if request.enabled:
+        from app.services.aurapay_recurrent import get_active as get_active_aurapay
+
+        if await get_active_aurapay(db, subscription.id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='Cancel AuraPay auto-renewal before enabling balance autopay',
+            )
+
     subscription.autopay_enabled = request.enabled
 
     if request.days_before is not None:
