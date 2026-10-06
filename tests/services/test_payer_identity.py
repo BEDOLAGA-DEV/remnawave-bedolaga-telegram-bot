@@ -207,7 +207,10 @@ async def test_resolve_guest_payer_reads_the_purchase(monkeypatch) -> None:
 
         payer = await resolve_guest_payer(db, TOKEN)
 
-    assert payer == PayerIdentity(user_id=GUEST_ID, user_name='guest@example.com', contact='guest@example.com')
+    assert payer == PayerIdentity(
+        user_id=GUEST_ID, user_name='guest@example.com', contact='guest@example.com', email='guest@example.com'
+    )
+    assert payer.platega_metadata()['email'] == 'guest@example.com'
 
 
 @pytest.mark.asyncio
@@ -217,3 +220,15 @@ async def test_resolve_guest_payer_without_the_purchase_is_still_filled(monkeypa
 
     assert payer.user_id == GUEST_ID
     _assert_filled(payer)
+
+
+def test_platega_metadata_email_only_when_verified() -> None:
+    verified = payer_from_user(_record(username='neo', email='neo@example.com', email_verified=True))
+    unverified = payer_from_user(_record(username='neo', email='neo@example.com', email_verified=False))
+    assert verified.platega_metadata()['email'] == 'neo@example.com'
+    assert 'email' not in unverified.platega_metadata()
+
+
+def test_platega_metadata_no_email_for_telegram_guest() -> None:
+    payer = payer_from_guest('tok', contact_type='telegram', contact_value='@buyer')
+    assert 'email' not in payer.platega_metadata()
