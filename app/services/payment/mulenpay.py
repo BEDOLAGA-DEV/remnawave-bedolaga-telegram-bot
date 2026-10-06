@@ -36,6 +36,9 @@ class MulenPayPaymentMixin:
         """
         display_name = settings.get_mulenpay_display_name()
         settings.get_mulenpay_display_name_html()
+        if not settings.is_mulenpay_enabled():
+            logger.warning('создание платежа отключено', display_name=display_name)
+            return None
         if not getattr(self, 'mulenpay_service', None):
             logger.error('сервис не инициализирован', display_name=display_name)
             return None

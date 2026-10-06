@@ -871,12 +871,14 @@ class PaymentService(
     def __init__(self, bot: Bot | None = None) -> None:
         # Бот нужен для отправки уведомлений и создания звёздных инвойсов.
         self.bot = bot
-        # Ниже инициализируем службы-обёртки только если соответствующий провайдер включён.
+        # Провайдеры для новых платежей обычно инициализируются только когда включены.
+        # MulenPay — исключение: при сохранённых credentials API-клиент нужен и после
+        # отключения новых продаж, чтобы безопасно сверять уже созданные платежи.
         self.yookassa_service = YooKassaService() if settings.is_yookassa_enabled() else None
         self.stars_service = TelegramStarsService(bot) if bot else None
         self.cryptobot_service = CryptoBotService() if settings.is_cryptobot_enabled() else None
         self.heleket_service = HeleketService() if settings.is_heleket_enabled() else None
-        self.mulenpay_service = MulenPayService() if settings.is_mulenpay_enabled() else None
+        self.mulenpay_service = MulenPayService() if settings.is_mulenpay_configured() else None
         self.pal24_service = Pal24Service() if settings.is_pal24_enabled() else None
         self.platega_service = PlategaService() if settings.is_platega_enabled() else None
         self.wata_service = WataService() if settings.is_wata_enabled() else None

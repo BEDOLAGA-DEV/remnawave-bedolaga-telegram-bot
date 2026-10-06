@@ -192,7 +192,9 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
     if method == PaymentMethod.YOOKASSA:
         return settings.is_yookassa_enabled()
     if method == PaymentMethod.MULENPAY:
-        return settings.is_mulenpay_enabled()
+        # После отключения новых продаж продолжаем сверять недавние незавершённые
+        # платежи, пока credentials провайдера остаются настроены.
+        return settings.is_mulenpay_configured()
     if method == PaymentMethod.PAL24:
         return settings.is_pal24_enabled()
     if method == PaymentMethod.WATA:

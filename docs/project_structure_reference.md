@@ -4609,6 +4609,9 @@
 - `tests/services/test_monitoring_send_timeout.py` — Python-модуль
   Классы: нет
   Функции: `test_text_send_times_out_and_skips`, `test_photo_send_times_out_and_skips`
+- `tests/services/test_mulenpay_disable_lifecycle.py` — Python-модуль
+  Классы: нет
+  Функции: `test_adapter_stays_configured_when_new_payments_are_disabled`, `test_payment_service_keeps_mulenpay_client_for_existing_payments`, `test_create_mulenpay_payment_fails_closed_when_disabled`, `test_adapter_create_payment_fails_closed_when_disabled`, `test_auto_verification_keeps_configured_mulenpay_when_disabled`
 - `tests/services/test_mulenpay_guest_client.py` — Python-модуль
   Классы: нет
   Функции: `anyio_backend`, `test_guest_email_contact_is_forwarded`, `test_guest_telegram_contact_is_sent_as_client` — MulenPay 2026-09-15: client — почта, телефон или Telegram «и т.п.»; @username гостя — его контакт., `test_guest_contact_lookup_failure_does_not_block_payment`, `test_guest_missing_purchase_still_sends_client`
