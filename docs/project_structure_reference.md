@@ -2465,6 +2465,9 @@
 - `app/webapi/routes/partners.py` — Python-модуль
   Классы: нет
   Функции: `list_referrers`, `get_referrer_detail`, `update_referrer_commission`, `get_global_partner_stats` — Глобальная статистика партнёрской программы., `get_global_daily_stats` — Глобальная статистика по дням., `get_top_referrers` — Топ рефереров по заработку., `get_referrer_detailed_stats` — Детальная статистика реферера., `get_referrer_daily_stats` — Статистика реферера по дням., `get_referrer_top_referrals` — Топ рефералов реферера по принесённому доходу., `get_referrer_period_comparison` — Сравнение периодов для реферера.
+- `app/webapi/routes/payment_methods.py` — Python-модуль
+  Классы: нет
+  Функции: `list_payment_methods` — Return current payment method names without amounts, IDs or payment links.
 - `app/webapi/routes/pinned_messages.py` — Python-модуль
   Классы: нет
   Функции: `list_pinned_messages` — Получить список всех закреплённых сообщений., `get_active_message` — Получить текущее активное закреплённое сообщение., `get_pinned_message` — Получить закреплённое сообщение по ID., `create_pinned_message` — Создать новое закреплённое сообщение., `update_pinned_message` — Обновить закреплённое сообщение., `update_pinned_message_settings` — Обновить только настройки закреплённого сообщения., `activate_pinned_message` — Активировать закреплённое сообщение., `broadcast_message` — Разослать закреплённое сообщение всем активным пользователям., `deactivate_active_message` — Деактивировать текущее активное закреплённое сообщение., `unpin_active_message` — Открепить сообщение у всех пользователей и деактивировать., `delete_pinned_message` — Удалить закреплённое сообщение.
@@ -2668,6 +2671,7 @@
 - `docs/menu_stats_api_usage.md` — файл
 - `docs/miniapp-setup.md` — файл
 - `docs/mobile-support-websocket-v1.md` — файл
+- `docs/payment-methods-api.md` — файл
 - `docs/payments-payer-data.md` — файл
 - `docs/persistent_cart_system.md` — файл
 - `docs/postgresql-18-upgrade.md` — файл
@@ -5291,6 +5295,9 @@
 - `tests/webapi/test_miniapp_zero_price_traffic_package.py` — Python-модуль
   Классы: нет
   Функции: `tariffs_mode`, `test_zero_price_package_is_not_offered` — Список докупки в Mini App не показывает пакет без цены., `test_zero_price_package_cannot_be_bought` — Купить пакет без цены нельзя — иначе это бесплатный трафик.
+- `tests/webapi/test_payment_methods.py` — Python-модуль
+  Классы: нет
+  Функции: `provider_settings`, `payment_client`, `test_live_catalog_uses_database_names_order_and_enabled_suboptions`, `test_empty_catalog_and_missing_provider_credentials`, `test_api_key_is_required`, `test_user_type_and_completed_deposit_filters_match_cabinet`, `test_user_promo_group_filter_uses_legacy_and_m2m_membership`, `test_invalid_user_never_falls_back_to_global_catalog`
 - `tests/webapi/test_promocode_traffic_roundtrip.py` — Python-модуль
   Классы: нет
   Функции: `test_traffic_survives_create_and_read_back` — Созданный через API код хранит трафик и отдаёт его обратно., `test_traffic_is_updatable` — PATCH меняет трафик, а не молча отвечает 200 со старым значением., `test_traffic_only_set_is_not_created_empty` — Набор из одного трафика создаётся именно трафиком, а не пустышкой., `test_update_cannot_empty_a_live_bonus_set` — Правка не должна обнулять живой набор до кода, который ничего не даёт., `test_update_may_empty_days_when_traffic_remains` — Обнулить дни можно, если в наборе остаётся трафик — набор непустой., `test_negative_traffic_rejected` — Отрицательный трафик отклоняется и на создании, и на правке.
