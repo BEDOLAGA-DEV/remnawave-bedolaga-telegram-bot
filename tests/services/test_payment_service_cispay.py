@@ -7,13 +7,16 @@
 
 import hashlib
 import hmac
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from starlette.requests import Request
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -25,6 +28,8 @@ import app.services.payment.cispay as cispay_mixin_module
 from app.config import settings
 from app.services.cispay_service import CisPayService
 from app.services.payment_service import PaymentService
+from app.webserver import payments
+from app.webserver.payments import create_payment_router
 
 
 @pytest.fixture
@@ -352,6 +357,70 @@ async def test_process_cispay_callback_missing_fields(monkeypatch: pytest.Monkey
     service = _make_service()
     result = await service.process_cispay_callback(DummySession(), {'id': 'x'})
     assert result is False
+
+    # Route-level sandbox boundary: подпись и JSON проверяются до sandbox bypass,
+    # а только настоящий boolean true не доходит до production callback.
+    _enable_cispay(monkeypatch)
+    monkeypatch.setattr(settings, 'CISPAY_ENABLED', False, raising=False)
+    monkeypatch.setattr(settings, 'CISPAY_WEBHOOK_PATH', '/cispay-webhook', raising=False)
+
+    callback = AsyncMock(return_value=True)
+    monkeypatch.setattr(payments, '_process_payment_service_callback', callback)
+    payment_service = SimpleNamespace()
+
+    router = create_payment_router(SimpleNamespace(), payment_service)
+    assert router is not None
+    route = next(
+        route
+        for route in router.routes
+        if getattr(route, 'path', '') == '/cispay-webhook' and 'POST' in getattr(route, 'methods', set())
+    )
+
+    def request_for(payload: object, signature: str) -> Request:
+        body = json.dumps(payload).encode('utf-8')
+        scope = {
+            'type': 'http',
+            'asgi': {'version': '3.0'},
+            'method': 'POST',
+            'path': '/cispay-webhook',
+            'headers': [(b'x-signature', signature.encode('latin-1'))],
+            'client': ('127.0.0.1', 12345),
+        }
+
+        async def receive() -> dict:
+            return {'type': 'http.request', 'body': body, 'more_body': False}
+
+        return Request(scope, receive)
+
+    sandbox_payload = {
+        'id': 'sandbox-payment',
+        'order_id': 'sandbox-order',
+        'is_sandbox': True,
+        'status': 'PAID',
+        'amount': 10000,
+        'charged_amount': 10400,
+    }
+    sandbox_body = json.dumps(sandbox_payload).encode('utf-8')
+    sandbox_signature = hmac.new(b'cis_sec_test', sandbox_body, hashlib.sha256).hexdigest()
+    sandbox_response = await route.endpoint(request_for(sandbox_payload, sandbox_signature))
+    assert sandbox_response.status_code == 200
+    callback.assert_not_awaited()
+
+    invalid_response = await route.endpoint(request_for(sandbox_payload, 'invalid'))
+    assert invalid_response.status_code == 400
+    callback.assert_not_awaited()
+
+    production_payload = {
+        'id': 'payment',
+        'order_id': 'order',
+        'is_sandbox': 'true',
+        'status': 'PAID',
+    }
+    production_body = json.dumps(production_payload).encode('utf-8')
+    production_signature = hmac.new(b'cis_sec_test', production_body, hashlib.sha256).hexdigest()
+    production_response = await route.endpoint(request_for(production_payload, production_signature))
+    assert production_response.status_code == 200
+    callback.assert_awaited_once_with(payment_service, production_payload, 'process_cispay_callback')
 
 
 @pytest.mark.anyio('asyncio')

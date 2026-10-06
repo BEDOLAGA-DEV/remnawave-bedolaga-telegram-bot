@@ -1976,6 +1976,16 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                 logger.error('cisPay webhook: failed to parse JSON', parse_error=parse_error)
                 return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
 
+            # Sandbox uses the same signed public webhook. Acknowledge it after
+            # signature/JSON validation, but never pass it to production payment logic.
+            if isinstance(payload, dict) and payload.get('is_sandbox') is True:
+                logger.info(
+                    'cisPay sandbox webhook accepted without production side effects',
+                    order_id=payload.get('order_id'),
+                    payment_id=payload.get('id'),
+                )
+                return JSONResponse({'status': 'ok'}, status_code=status.HTTP_200_OK)
+
             try:
                 success = await _process_payment_service_callback(
                     payment_service,
