@@ -22,6 +22,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database.models import (
+    AuraPaySubscription,
     CasheraSubscription,
     DiscountOffer,
     LavaSubscription,
@@ -48,6 +49,7 @@ TABLES = (
     SubscriptionTemporaryAccess.__table__,
     TrafficPurchase.__table__,
     PlategaSubscription.__table__,
+    AuraPaySubscription.__table__,
     LavaSubscription.__table__,
     CasheraSubscription.__table__,
     SentNotification.__table__,

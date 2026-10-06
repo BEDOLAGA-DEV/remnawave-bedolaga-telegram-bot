@@ -375,6 +375,7 @@ async def test_toggle_autopay_enable_cancels_active_sbp_recurring(monkeypatch):
     monkeypatch.setattr(autopay_mod, '_resolve_subscription', AsyncMock(return_value=(subscription, 10)))
     monkeypatch.setattr(autopay_mod, 'update_subscription_autopay', AsyncMock(return_value=subscription))
     monkeypatch.setattr(autopay_mod, 'handle_autopay_menu', AsyncMock())
+    monkeypatch.setattr('app.services.aurapay_recurrent.get_active', AsyncMock(return_value=None))
     mock_cancel = AsyncMock()
     monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', mock_cancel)
 

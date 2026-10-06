@@ -207,6 +207,10 @@ class PlategaPaymentMixin:
 
         # Взаимоисключение с рекуррентом Lava: оба движка push-модели, и две
         # живые привязки на одной подписке списывали бы дважды за цикл.
+        from app.services.aurapay_recurrent import get_active as get_active_aurapay
+
+        if await get_active_aurapay(db, subscription.id):
+            raise ValueError('Cancel AuraPay auto-renewal before enabling Platega')
         from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
         from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
