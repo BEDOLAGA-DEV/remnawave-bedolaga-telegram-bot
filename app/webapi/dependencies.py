@@ -49,6 +49,18 @@ async def require_api_token(
     )
 
     if not token:
+        # Fallback: check if it's a valid cabinet admin JWT token
+        try:
+            from fastapi.security import HTTPAuthorizationCredentials
+            from app.cabinet.dependencies import get_current_admin_user, get_current_cabinet_user
+            creds = HTTPAuthorizationCredentials(scheme='Bearer', credentials=api_key)
+            user = await get_current_cabinet_user(request, credentials=creds, db=db)
+            admin_user = await get_current_admin_user(request, user=user, db=db)
+            if admin_user:
+                return admin_user
+        except Exception:
+            pass
+
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

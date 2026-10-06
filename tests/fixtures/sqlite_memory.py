@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 
-from app.database.models import Base
+from app.database.models import Base, AntilopayRecurrent, SavedPaymentMethod, User
 
 
 @compiles(JSONB, 'sqlite')
@@ -38,6 +38,9 @@ def ensure_real_aiosqlite(monkeypatch) -> None:
 @contextlib.asynccontextmanager
 async def memory_session(monkeypatch, tables: Sequence[Table]) -> AsyncIterator[AsyncSession]:
     """Сессия к :memory: БД, где созданы только переданные таблицы."""
+    tables = list(tables)
+    if User.__table__ in tables:
+        tables += [table for table in (AntilopayRecurrent.__table__, SavedPaymentMethod.__table__) if table not in tables]
     ensure_real_aiosqlite(monkeypatch)
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as conn:

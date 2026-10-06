@@ -52,6 +52,7 @@ async def show_users_statistics(callback: types.CallbackQuery, db_user: User, db
 - Активных: {stats['active_users']} ({active_rate})
 - Заблокированных: {stats['blocked_users']}
 - Удалённых: {stats['deleted_users']}
+- Привязали карту (рекурренты): {stats.get('recurrent_users', 0)}
 
 <b>Новые регистрации:</b>
 - Сегодня: {stats['new_today']}
@@ -280,6 +281,7 @@ async def show_summary_statistics(callback: types.CallbackQuery, db_user: User, 
 <b>Пользователи:</b>
 - Всего: {user_stats['total_users']}
 - Активных: {user_stats['active_users']}
+- Привязали карту (рекурренты): {user_stats.get('recurrent_users', 0)}
 - Новых за месяц: {user_stats['new_month']}
 
 <b>Подписки:</b>

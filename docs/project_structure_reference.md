@@ -22,6 +22,7 @@
 - `Makefile` — файл
 - `README.md` — файл
 - `SECURITY.md` — файл
+- `ai_support_bot/`
 - `alembic.ini` — файл
 - `app/`
 - `assets/`
@@ -29,6 +30,7 @@
 - `docker-compose.local.yml` — файл
 - `docker-compose.yml` — файл
 - `docs/`
+- `locales/`
 - `main.py` — Python-модуль
   Классы: `GracefulExit` (2 методов)
   Функции: `main`
@@ -79,6 +81,162 @@
 - `.github/workflows/security-audit.yml` — файл
 - `.github/workflows/tests.yml` — файл
 
+## ai_support_bot
+
+- `ai_support_bot/.dockerignore` — файл
+- `ai_support_bot/.env.example` — файл
+- `ai_support_bot/Dockerfile` — файл
+- `ai_support_bot/README.md` — файл
+- `ai_support_bot/app/`
+- `ai_support_bot/docker-compose.yml` — файл
+- `ai_support_bot/ingest.py` — Python-модуль
+  Классы: нет
+  Функции: `main`
+- `ai_support_bot/init-db/`
+- `ai_support_bot/main.py` — Python-модуль
+  Классы: нет
+  Функции: `main`
+- `ai_support_bot/requirements.txt` — файл
+- `ai_support_bot/tests/`
+
+### ai_support_bot/app
+
+- `ai_support_bot/app/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/app/bot/`
+- `ai_support_bot/app/core/`
+- `ai_support_bot/app/db/`
+- `ai_support_bot/app/navigation/`
+- `ai_support_bot/app/services/`
+
+#### ai_support_bot/app/bot
+
+- `ai_support_bot/app/bot/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/app/bot/bot.py` — Python-модуль
+  Классы: нет
+  Функции: `get_smalltalk_reply`, `typing_action`, `cmd_start`, `handle_message`, `build_dispatcher`, `build_bot`, `run_bot`
+
+#### ai_support_bot/app/core
+
+- `ai_support_bot/app/core/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/app/core/config.py` — Python-модуль
+  Классы: `Settings` (11 методов)
+  Функции: `get_settings`
+
+#### ai_support_bot/app/db
+
+- `ai_support_bot/app/db/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/app/db/crud.py` — Python-модуль
+  Классы: нет
+  Функции: `get_source_by_hash`, `list_sources`, `get_source`, `create_source`, `delete_source`, `set_source_active`, `get_existing_chunk_hashes`, `add_chunks`, `update_source_counts`, `get_active_chunks`, `count_chunks`, `get_or_create_conversation`, `add_message`, `get_conversation_context`, `count_conversation_messages`, `get_messages_after_id`, `bump_user_turn`, `save_summary`, `prune_messages`, `mark_escalated`, `list_recent_messages`, `count_messages`, `count_user_messages_today` — Count user-role messages for telegram_id since start of the current UTC day., `list_conversations_summary`, `count_conversations`
+- `ai_support_bot/app/db/database.py` — Python-модуль
+  Классы: нет
+  Функции: `is_postgres`, `init_db`, `ensure_ready` — Idempotent init for processes that only touch the AI support DB (web admin API)., `get_session`, `get_main_session`
+- `ai_support_bot/app/db/models.py` — Python-модуль
+  Классы: `Base`, `KnowledgeSource`, `KnowledgeChunk`, `Conversation`, `Message`, `RuntimeSetting`
+  Функции: нет
+
+#### ai_support_bot/app/navigation
+
+- `ai_support_bot/app/navigation/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/app/navigation/blueprint.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/app/navigation/builder.py` — Python-модуль
+  Классы: нет
+  Функции: `build_navigation_tree`
+- `ai_support_bot/app/navigation/locales.py` — Python-модуль
+  Классы: нет
+  Функции: `available_languages`, `load_locale`, `locales_available`
+- `ai_support_bot/app/navigation/registry.py` — Python-модуль
+  Классы: нет
+  Функции: `peek`, `is_ready`, `stats`, `refresh`, `get_tree`, `warmup`, `reset`
+- `ai_support_bot/app/navigation/renderer.py` — Python-модуль
+  Классы: нет
+  Функции: `render_node`, `render_matches`, `render_overview`, `node_to_dict`
+- `ai_support_bot/app/navigation/schema.py` — Python-модуль
+  Классы: `NavNode` (3 методов), `NavTree` (4 методов)
+  Функции: нет
+- `ai_support_bot/app/navigation/search.py` — Python-модуль
+  Классы: `NavMatch`
+  Функции: `tokenize`, `search`
+- `ai_support_bot/app/navigation/tool.py` — Python-модуль
+  Классы: нет
+  Функции: `lookup`, `build_prompt_block`
+
+#### ai_support_bot/app/services
+
+- `ai_support_bot/app/services/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/app/services/agent.py` — Python-модуль
+  Классы: `SupportAgent` (4 методов)
+  Функции: `convert_markdown_to_html`, `has_escalation_marker` — Marker counts only at the very end of the answer, so users can't trigger it mid-text., `strip_escalation_marker`, `build_retrieval_query` — Contextualize short follow-ups ("а для неё как?") before embedding the search query., `build_nav_query` — Short follow-ups ("а где это в кабинете?") need the previous turn to resolve the section., `looks_hedged` — True when the model answered a factual question with guess words and no knowledge backing.
+- `ai_support_bot/app/services/alerting.py` — Python-модуль
+  Классы: нет
+  Функции: `register_bot`, `alert_admins`
+- `ai_support_bot/app/services/knowledge_parser.py` — Python-модуль
+  Классы: нет
+  Функции: `parse_knowledge_file`, `build_chunks`, `compute_content_hash`
+- `ai_support_bot/app/services/openai_client.py` — Python-модуль
+  Классы: `OpenAIError`, `OpenAIClient` (6 методов)
+  Функции: нет
+- `ai_support_bot/app/services/rag_service.py` — Python-модуль
+  Классы: `RAGService` (8 методов)
+  Функции: нет
+- `ai_support_bot/app/services/remnawave.py` — Python-модуль
+  Классы: нет
+  Функции: `get_remnawave_stats`
+- `ai_support_bot/app/services/service_catalog.py` — Python-модуль
+  Классы: нет
+  Функции: `build_service_catalog`, `build_user_offers`, `invalidate_cache`
+- `ai_support_bot/app/services/settings_store.py` — Python-модуль
+  Классы: нет
+  Функции: `load`, `get`, `get_int`, `get_float`, `get_bool`, `set_value`, `all_settings`
+- `ai_support_bot/app/services/summary_service.py` — Python-модуль
+  Классы: `SummaryService` (2 методов)
+  Функции: нет
+- `ai_support_bot/app/services/user_data.py` — Python-модуль
+  Классы: нет
+  Функции: `resolve_user_language`, `build_user_context`
+
+### ai_support_bot/init-db
+
+- `ai_support_bot/init-db/create_ai_support_db.sh` — файл
+
+### ai_support_bot/tests
+
+- `ai_support_bot/tests/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `ai_support_bot/tests/test_agent_context_flow.py` — Python-модуль
+  Классы: нет
+  Функции: `flow`, `test_user_data_is_always_injected_into_prompt`, `test_topic_switch_keeps_focus_rule_and_contextualizes_retrieval`, `test_marker_at_end_triggers_escalation_and_is_stripped`, `test_marker_in_the_middle_does_not_trigger_escalation`, `test_hedged_factual_answer_is_replaced_with_escalation_notice`, `test_knowledge_backed_answer_is_not_escalated`, `test_empty_knowledge_adds_no_guessing_instruction`, `test_followup_answer_is_not_served_from_cache`
+- `ai_support_bot/tests/test_agent_summary.py` — Python-модуль
+  Классы: нет
+  Функции: `test_smalltalk_positive`, `test_smalltalk_negative`, `test_low_value_keeps_real_support`, `test_low_value_drops_partner_chatter`, `test_rolling_summary_triggers_every_n_turns`
+- `ai_support_bot/tests/test_ai_support_quality.py` — Python-модуль
+  Классы: нет
+  Функции: `test_prompt_declares_ai_assistant_not_human_operator`, `test_prompt_rules_are_not_duplicated`, `test_escalation_marker_at_the_end_counts`, `test_escalation_marker_inside_text_is_ignored`, `test_strip_escalation_marker_removes_all_occurrences`, `test_retrieval_query_includes_summary_and_recent_history`, `test_retrieval_query_without_history_is_just_the_question`, `test_retrieval_query_skips_empty_messages`, `test_retrieval_query_respects_recent_count_zero`, `test_hedged_factual_answer_without_knowledge_escalates`, `test_hedged_check_ignores_answers_backed_by_knowledge`, `test_hedged_check_ignores_non_factual_questions`, `test_confident_factual_answer_is_not_flagged`, `test_security_check_passes_when_admin_panel_not_configured`, `test_security_check_rejects_default_password`, `test_security_check_rejects_short_secret`, `test_security_check_accepts_strong_values`, `test_embedding_dim_resolution`
+- `ai_support_bot/tests/test_bot_escalation_delivery.py` — Python-модуль
+  Классы: `FakeBot` (3 методов), `FakeUser` (1 методов), `FakeChat` (1 методов), `FakeMessage` (2 методов)
+  Функции: `test_escalation_notice_goes_to_user_and_service_text_to_admins`, `test_admin_notification_is_never_sent_to_the_asking_user`, `test_non_escalated_answer_sends_nothing_to_admins`, `test_throttle_blocks_flood_and_warns_once`, `test_duplicate_update_is_processed_once`, `test_admin_recipients_excludes_requesting_user`
+- `ai_support_bot/tests/test_navigation_tree.py` — Python-модуль
+  Классы: нет
+  Функции: `tree`, `test_tree_is_built_with_localized_labels`, `test_every_node_is_reachable_from_roots`, `test_parent_links_are_consistent`, `test_search_finds_expected_section`, `test_search_returns_nothing_for_smalltalk`, `test_search_ranks_specific_node_above_parent`, `test_rendered_node_contains_both_surfaces`, `test_web_only_node_is_marked_as_unavailable_in_bot`, `test_overview_lists_top_level_sections`, `test_node_to_dict_is_serializable`, `test_lookup_returns_only_relevant_subtree`, `test_lookup_falls_back_to_overview_for_unknown_topic`, `test_prompt_block_is_truncated_to_limit`, `test_prompt_block_is_empty_for_smalltalk`, `test_registry_caches_tree_and_refreshes_on_demand`
+- `ai_support_bot/tests/test_rag_retrieval.py` — Python-модуль
+  Классы: нет
+  Функции: `test_in_memory_retrieval_ranks_by_cosine_similarity`, `test_min_score_filters_irrelevant_chunks`, `test_embedding_cache_avoids_repeated_api_calls`, `test_embedding_failure_returns_empty_result`, `test_pgvector_failure_falls_back_to_in_memory`, `test_vector_literal_format`, `test_large_knowledge_base_uses_vectorized_search`
+
 ## app
 
 - `app/bot.py` — Python-модуль
@@ -89,7 +247,7 @@
   Функции: `create_bot` — Create a Bot instance with SOCKS5 proxy and/or custom Telegram API server.
 - `app/cabinet/`
 - `app/config.py` — Python-модуль
-  Классы: `Settings` (414 методов)
+  Классы: `Settings` (415 методов)
   Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
 - `app/database/`
 - `app/external/`
@@ -317,7 +475,7 @@
   Функции: `list_reminders_route`, `audience`, `get_reminder_route`, `create_reminder`, `update_reminder`, `toggle_reminder`, `delete_reminder`, `send_test`
 - `app/cabinet/routes/admin_users.py` — Python-модуль
   Классы: нет
-  Функции: `list_users` — Get paginated list of users with filtering and sorting., `get_users_stats` — Get overall users statistics., `get_user_by_remnawave_identifier` — Resolve an exact Remnawave identifier through its owning subscription only., `get_user_detail` — Get detailed user information by ID., `get_user_by_telegram` — Get user by Telegram ID., `get_user_panel_info` — Get user panel info from Remnawave (config links, traffic, connection data)., `get_subscription_request_history` — Get subscription request history from RemnaWave panel., `get_user_node_usage` — Get user per-node traffic usage (always 30 days with daily breakdown)., `update_user_balance` — Update user balance., `update_user_subscription` — Update user subscription., `cancel_user_sbp_recurring` — Admin best-effort cancel of a user's active Platega SBP auto-renewal., `delete_user_subscription` — Удалить конкретную подписку пользователя из его карточки., `get_user_available_tariffs` — Get list of tariffs available for a specific user., `update_user_status` — Update user status (active, blocked, deleted)., `block_user` — Block a user — sets DB status AND disables panel user in RemnaWave., `unblock_user` — Unblock a user — sets DB status AND re-enables panel user in RemnaWave., `send_user_message` — Send a direct Telegram message to the user via the bot., `update_user_restrictions` — Update user restrictions (topup, subscription)., `update_user_promo_group` — Update user promo group., `update_user_referral_commission` — Update user's individual referral commission percentage., `assign_user_referrer` — Manually assign a referrer to a user (e.g. cabinet-registered users without telegram_id)., `remove_user_referrer` — Remove who referred this user (set referred_by_id to None)., `remove_user_referral` — Remove a specific referral from a user (unbind referral_user from this referrer)., `get_user_devices` — Get user devices from Remnawave panel., `delete_user_device` — Delete a single device for user., `rename_user_device` — Set/clear a local alias for a user's HWID device (admin override)., `reset_user_devices` — Reset all devices for user., `delete_user` — Delete a user., `full_delete_user` — Full user deletion - removes from bot database AND Remnawave panel., `reset_user_trial` — Reset user trial - allows user to activate trial again., `reset_user_subscription` — Reset user subscription - removes/deactivates subscription., `disable_user` — Disable user - deactivates subscription and blocks access., `get_user_referrals` — Get list of users referred by this user., `get_user_transactions` — Get user transactions., `get_user_activity` — Таймлайн активности пользователя в боте и кабинете., `get_user_sync_status` — Get sync status between bot and panel for a user., `sync_user_from_panel` — Sync user data FROM panel TO bot., `sync_user_to_panel` — Отправить данные пользователя из бота в панель., `get_user_gifts` — Get all gift subscriptions sent and received by user.
+  Функции: `list_users` — Get paginated list of users with filtering and sorting., `get_users_stats` — Get overall users statistics., `get_user_by_remnawave_identifier` — Resolve an exact Remnawave identifier through its owning subscription only., `get_user_detail` — Get detailed user information by ID., `get_user_by_telegram` — Get user by Telegram ID., `get_user_panel_info` — Get user panel info from Remnawave (config links, traffic, connection data)., `get_subscription_request_history` — Get subscription request history from RemnaWave panel., `get_user_node_usage` — Get user per-node traffic usage (always 30 days with daily breakdown)., `update_user_balance` — Update user balance., `update_user_subscription` — Update user subscription., `cancel_user_sbp_recurring` — Admin best-effort cancel of a user's active Platega SBP auto-renewal., `admin_cancel_all_user_recurring` — Admin endpoint to force-cancel all recurring subscriptions across payment APIs (Platega, Lava, Antilopay),, `delete_user_subscription` — Удалить конкретную подписку пользователя из его карточки., `get_user_available_tariffs` — Get list of tariffs available for a specific user., `update_user_status` — Update user status (active, blocked, deleted)., `block_user` — Block a user — sets DB status AND disables panel user in RemnaWave., `unblock_user` — Unblock a user — sets DB status AND re-enables panel user in RemnaWave., `send_user_message` — Send a direct Telegram message to the user via the bot., `update_user_restrictions` — Update user restrictions (topup, subscription)., `update_user_promo_group` — Update user promo group., `update_user_referral_commission` — Update user's individual referral commission percentage., `assign_user_referrer` — Manually assign a referrer to a user (e.g. cabinet-registered users without telegram_id)., `remove_user_referrer` — Remove who referred this user (set referred_by_id to None)., `remove_user_referral` — Remove a specific referral from a user (unbind referral_user from this referrer)., `get_user_devices` — Get user devices from Remnawave panel., `delete_user_device` — Delete a single device for user., `rename_user_device` — Set/clear a local alias for a user's HWID device (admin override)., `reset_user_devices` — Reset all devices for user., `delete_user` — Delete a user., `full_delete_user` — Full user deletion - removes from bot database AND Remnawave panel., `reset_user_trial` — Reset user trial - allows user to activate trial again., `reset_user_subscription` — Reset user subscription - removes/deactivates subscription., `disable_user` — Disable user - deactivates subscription and blocks access., `reset_user_password` — Generate a new random password for user, set it, and return plaintext., `generate_user_login_link` — Generate an auto-login link for user., `get_user_referrals` — Get list of users referred by this user., `get_user_transactions` — Get user transactions., `get_user_activity` — Таймлайн активности пользователя в боте и кабинете., `get_user_sync_status` — Get sync status between bot and panel for a user., `sync_user_from_panel` — Sync user data FROM panel TO bot., `sync_user_to_panel` — Отправить данные пользователя из бота в панель., `get_user_gifts` — Get all gift subscriptions sent and received by user.
 - `app/cabinet/routes/admin_wheel.py` — Python-модуль
   Классы: нет
   Функции: `get_admin_wheel_config` — Получить полную конфигурацию колеса., `update_admin_wheel_config` — Обновить конфигурацию колеса., `get_prizes` — Получить список призов., `create_prize` — Создать новый приз., `update_prize` — Обновить приз., `delete_prize_endpoint` — Удалить приз., `reorder_prizes` — Переупорядочить призы., `get_statistics` — Получить статистику колеса., `get_all_spins_endpoint` — Получить все спины с фильтрами.
@@ -408,7 +566,7 @@
   Функции: `verify_cabinet_ws_token` — Проверить JWT токен для WebSocket., `cabinet_websocket_endpoint` — WebSocket endpoint для real-time уведомлений кабинета., `notify_user_ticket_reply` — Уведомить пользователя об ответе в тикете., `notify_admins_new_ticket` — Уведомить админов о новом тикете., `notify_admins_ticket_reply` — Уведомить админов об ответе пользователя., `notify_user_balance_topup` — Уведомить пользователя о пополнении баланса., `notify_user_balance_change` — Уведомить пользователя об изменении баланса., `notify_user_subscription_activated` — Уведомить пользователя об активации подписки., `notify_user_subscription_expiring` — Уведомить пользователя о скором истечении подписки., `notify_user_subscription_expired` — Уведомить пользователя об истечении подписки., `notify_user_subscription_renewed` — Уведомить пользователя о продлении подписки., `notify_user_devices_purchased` — Уведомить пользователя о покупке устройств., `notify_user_traffic_purchased` — Уведомить пользователя о покупке трафика., `notify_user_autopay_success` — Уведомить пользователя об успешном автопродлении., `notify_user_autopay_failed` — Уведомить пользователя о неудачном автопродлении., `notify_user_autopay_insufficient_funds` — Уведомить о недостатке средств для автопродления., `notify_user_ban` — Уведомить пользователя о блокировке., `notify_user_unban` — Уведомить пользователя о разблокировке., `notify_user_warning` — Уведомить пользователя о предупреждении., `notify_user_referral_bonus` — Уведомить пользователя о реферальном бонусе., `notify_user_referral_registered` — Уведомить пользователя о регистрации нового реферала., `notify_user_daily_debit` — Уведомить о ежедневном списании., `notify_user_traffic_reset` — Уведомить о сбросе трафика., `notify_user_payment_received` — Уведомить о полученном платеже.
 - `app/cabinet/routes/wheel.py` — Python-модуль
   Классы: `StarsInvoiceResponse`
-  Функции: `get_wheel_config` — Получить конфигурацию колеса удачи., `check_spin_availability` — Проверить доступность спина., `spin_wheel` — Крутить колесо удачи., `get_spin_history` — Получить историю спинов пользователя., `create_stars_invoice` — Создать Telegram Stars invoice для оплаты спина колеса.
+  Функции: `get_wheel_config` — Получить конфигурацию колеса удачи., `check_spin_availability` — Проверить доступность спина., `spin_wheel` — Крутить колесо удачи., `get_spin_history` — Получить историю спинов пользователя., `create_stars_invoice` — Создать Telegram Stars invoice для оплаты спина колеса., `create_external_stars_order` — Создать заказ на покупку Telegram Stars через внешний сервис Steam Top Up.
 - `app/cabinet/routes/withdrawal.py` — Python-модуль
   Классы: нет
   Функции: `get_withdrawal_balance` — Get withdrawal balance stats for current user., `create_withdrawal` — Create a withdrawal request., `get_withdrawal_history` — Get user's withdrawal request history., `cancel_withdrawal` — Cancel a pending withdrawal request.
@@ -554,10 +712,10 @@
   Классы: `ReminderCardButton`, `ReminderCard`, `ReminderPayload` (2 методов), `ReminderStats`, `ReminderResponse`, `AudienceRequest`, `AudienceResponse`
   Функции: нет
 - `app/cabinet/schemas/users.py` — Python-модуль
-  Классы: `UserStatusEnum`, `SubscriptionStatusEnum`, `SortByEnum`, `SortOrderEnum`, `TrafficPurchaseItem`, `UserSubscriptionInfo`, `UserPromoGroupInfo`, `SubscriptionListItem`, `UserListItem`, `UsersListResponse`, `UserByRemnawaveResponse`, `UserTransactionItem`, `UserReferralInfo`, `UserDetailResponse`, `UserPanelInfoResponse`, `UserNodeUsageItem`, `UserNodeUsageResponse`, `UpdateBalanceRequest`, `UpdateBalanceResponse`, `UpdateSubscriptionRequest`, `UpdateSubscriptionResponse`, `UpdateUserStatusRequest`, `UpdateUserStatusResponse`, `SendUserMessageRequest`, `SendUserMessageResponse`, `UpdateRestrictionsRequest`, `UpdateRestrictionsResponse`, `UpdatePromoGroupRequest`, `UpdatePromoGroupResponse`, `UpdateReferralCommissionRequest`, `UpdateReferralCommissionResponse`, `AssignReferrerRequest`, `AssignReferrerResponse`, `RemoveReferrerResponse`, `RemoveReferralResponse`, `DeviceInfo`, `UserDevicesResponse`, `DeleteDeviceResponse`, `RenameDeviceRequest`, `RenameDeviceResponse`, `ResetDevicesResponse`, `DeleteUserRequest`, `DeleteUserResponse`, `UsersStatsResponse`, `UserSearchRequest`, `PeriodPriceInfo`, `UserAvailableTariffItem`, `UserAvailableTariffsResponse`, `PanelUserInfo`, `SyncFromPanelRequest`, `SyncFromPanelResponse`, `SyncToPanelRequest`, `SyncToPanelResponse`, `PanelSyncStatusResponse`, `FullDeleteUserRequest`, `FullDeleteUserResponse`, `ResetTrialRequest`, `ResetTrialResponse`, `ResetSubscriptionRequest`, `ResetSubscriptionResponse`, `DisableUserRequest`, `DisableUserResponse`, `AdminUserGiftItem`, `AdminUserGiftsResponse`
+  Классы: `UserStatusEnum`, `SubscriptionStatusEnum`, `SortByEnum`, `SortOrderEnum`, `TrafficPurchaseItem`, `UserSubscriptionInfo`, `UserPromoGroupInfo`, `SubscriptionListItem`, `UserListItem`, `UsersListResponse`, `UserByRemnawaveResponse`, `UserTransactionItem`, `UserReferralInfo`, `UserDetailResponse`, `UserPanelInfoResponse`, `UserNodeUsageItem`, `UserNodeUsageResponse`, `UpdateBalanceRequest`, `UpdateBalanceResponse`, `UpdateSubscriptionRequest`, `UpdateSubscriptionResponse`, `UpdateUserStatusRequest`, `UpdateUserStatusResponse`, `SendUserMessageRequest`, `SendUserMessageResponse`, `UpdateRestrictionsRequest`, `UpdateRestrictionsResponse`, `UpdatePromoGroupRequest`, `UpdatePromoGroupResponse`, `UpdateReferralCommissionRequest`, `UpdateReferralCommissionResponse`, `AssignReferrerRequest`, `AssignReferrerResponse`, `RemoveReferrerResponse`, `RemoveReferralResponse`, `DeviceInfo`, `UserDevicesResponse`, `DeleteDeviceResponse`, `RenameDeviceRequest`, `RenameDeviceResponse`, `ResetDevicesResponse`, `DeleteUserRequest`, `DeleteUserResponse`, `UsersStatsResponse`, `UserSearchRequest`, `PeriodPriceInfo`, `UserAvailableTariffItem`, `UserAvailableTariffsResponse`, `PanelUserInfo`, `SyncFromPanelRequest`, `SyncFromPanelResponse`, `SyncToPanelRequest`, `SyncToPanelResponse`, `PanelSyncStatusResponse`, `FullDeleteUserRequest`, `FullDeleteUserResponse`, `ResetTrialRequest`, `ResetTrialResponse`, `ResetSubscriptionRequest`, `ResetSubscriptionResponse`, `DisableUserRequest`, `DisableUserResponse`, `AdminUserGiftItem`, `AdminUserGiftsResponse`, `AdminResetPasswordResponse`, `AdminGenerateLoginLinkResponse`, `RecurringCancellationResultItem`, `RecurringCancellationSummary`, `CancelAllRecurringResponse`
   Функции: нет
 - `app/cabinet/schemas/wheel.py` — Python-модуль
-  Классы: `WheelPaymentType`, `WheelPrizeType`, `WheelPrizeDisplay`, `WheelConfigResponse`, `SpinAvailabilityResponse`, `SpinRequest`, `SpinResultResponse`, `SpinHistoryItem`, `SpinHistoryResponse`, `WheelPrizeAdminResponse`, `AdminWheelConfigResponse`, `UpdateWheelConfigRequest`, `CreatePrizeRequest`, `UpdatePrizeRequest`, `ReorderPrizesRequest`, `AdminSpinItem`, `AdminSpinsResponse`, `WheelStatisticsResponse`
+  Классы: `WheelPaymentType`, `WheelPrizeType`, `WheelPrizeDisplay`, `WheelConfigResponse`, `SpinAvailabilityResponse`, `SpinRequest`, `SpinResultResponse`, `SpinHistoryItem`, `SpinHistoryResponse`, `WheelPrizeAdminResponse`, `AdminWheelConfigResponse`, `UpdateWheelConfigRequest`, `CreatePrizeRequest`, `UpdatePrizeRequest`, `ReorderPrizesRequest`, `AdminSpinItem`, `AdminSpinsResponse`, `WheelStatisticsResponse`, `ExternalStarsBuyRequest`, `ExternalStarsBuyResponse`
   Функции: нет
 - `app/cabinet/schemas/withdrawals.py` — Python-модуль
   Классы: `WithdrawalBalanceResponse`, `WithdrawalCreateRequest`, `WithdrawalItemResponse`, `WithdrawalListResponse`, `WithdrawalCreateResponse`, `AdminWithdrawalItem`, `AdminWithdrawalListResponse`, `AdminWithdrawalDetailResponse`, `AdminApproveWithdrawalRequest`, `AdminRejectWithdrawalRequest`
@@ -642,14 +800,17 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `CasheraPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
-  Функции: нет
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `AntilopayRecurrent` (1 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `CasheraPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
+  Функции: `compile_jsonb_sqlite`
 
 #### app/database/crud
 
 - `app/database/crud/antilopay.py` — Python-модуль
   Классы: нет
   Функции: `create_antilopay_payment` — Создает запись о платеже Antilopay., `get_antilopay_payment_by_order_id` — Получает платеж по order_id (internal)., `get_antilopay_payment_by_invoice_id` — Получает платеж по ID от Antilopay., `get_antilopay_payment_by_id` — Получает платеж по ID., `get_antilopay_payment_by_id_for_update` — Получает платеж по ID с блокировкой FOR UPDATE., `update_antilopay_payment_status` — Обновляет статус платежа., `get_pending_antilopay_payments` — Получает незавершенные платежи пользователя., `get_expired_pending_antilopay_payments` — Получает просроченные платежи в статусе pending., `link_antilopay_payment_to_transaction` — Связывает платеж с транзакцией.
+- `app/database/crud/antilopay_recurrent.py` — Python-модуль
+  Классы: нет
+  Функции: `upsert_antilopay_recurrent` — Создаёт или обновляет запись рекуррента Antilopay., `get_active_antilopay_recurrents_by_user`, `get_antilopay_recurrent_by_id`, `deactivate_antilopay_recurrent`, `deactivate_all_antilopay_recurrents_for_user`
 - `app/database/crud/apple_iap.py` — Python-модуль
   Классы: нет
   Функции: `get_or_create_apple_iap_account` — Return a stable StoreKit appAccountToken UUID for a user., `get_apple_iap_account_by_token`, `create_apple_transaction`, `get_apple_transaction_by_transaction_id`, `get_apple_transaction_by_web_order_line_item_id`, `find_apple_transactions_for_support`, `get_recent_apple_transactions`, `get_unprocessed_apple_notifications`, `get_apple_transaction_by_transaction_id_for_update` — Get apple transaction with FOR UPDATE lock for safe concurrent access., `mark_apple_transaction_refunded` — Mark an Apple transaction as refunded. Returns the transaction or None if not found., `create_apple_notification`, `get_apple_notification_by_uuid`, `get_apple_notification_by_payload_hash`, `mark_apple_notification_processed`, `create_apple_abuse_event`
@@ -1138,7 +1299,7 @@
   Функции: `get_user_messages_keyboard`, `get_message_actions_keyboard`, `show_user_messages_panel`, `add_user_message_start`, `process_new_message_text`, `list_user_messages`, `view_user_message`, `toggle_message_status`, `delete_message_confirm` — Подтвердить удаление сообщения, `show_messages_stats`, `edit_user_message_start`, `process_edit_message_text`, `register_handlers`
 - `app/handlers/admin/users.py` — Python-модуль
   Классы: `UserFilterType`, `UserFilterConfig`
-  Функции: `show_users_menu`, `show_users_filters`, `show_users_list`, `show_users_list_by_balance` — Список пользователей, отсортированный по балансу (убывание)., `show_users_ready_to_renew` — Показывает пользователей с истекшей подпиской и балансом >= порога., `show_potential_customers` — Показывает пользователей без активной подписки с балансом >= месячной цены., `show_users_list_by_campaign` — Список пользователей по кампании регистрации., `handle_users_list_pagination_fixed`, `handle_users_balance_list_pagination`, `handle_users_ready_to_renew_pagination`, `handle_potential_customers_pagination`, `handle_users_campaign_list_pagination`, `start_user_search`, `show_users_statistics`, `show_user_subscription`, `admin_select_user_subscription` — Handle subscription picker selection in multi-tariff mode., `show_user_transactions`, `confirm_user_delete`, `delete_user_account`, `process_user_search`, `show_user_management`, `show_user_referrals`, `start_edit_referral_percent`, `set_referral_percent_button`, `process_referral_percent_input`, `start_edit_user_referrals`, `process_edit_user_referrals`, `show_user_promo_group`, `set_user_promo_group`, `start_balance_edit`, `start_send_user_message`, `process_send_user_message`, `process_balance_edit`, `confirm_user_block`, `block_user`, `show_user_restrictions` — Показать меню управления ограничениями пользователя., `toggle_user_restriction_topup` — Переключить ограничение на пополнение баланса., `toggle_user_restriction_subscription` — Переключить ограничение на продление/покупку подписки., `ask_restriction_reason` — Запросить ввод причины ограничения., `save_restriction_reason` — Сохранить причину ограничения., `clear_user_restrictions` — Снять все ограничения с пользователя., `show_inactive_users`, `confirm_user_unblock`, `unblock_user`, `show_user_statistics`, `get_detailed_referral_stats`, `extend_user_subscription`, `process_subscription_extension_days`, `process_subscription_extension_text`, `add_subscription_traffic`, `process_traffic_addition_button`, `process_traffic_addition_text`, `deactivate_user_subscription`, `confirm_subscription_deactivation`, `reset_user_subscription` — Подтверждение полного обнуления подписки (с сохранением пользователя и тикетов)., `confirm_subscription_reset`, `delete_user_subscription` — Show confirmation for deleting a subscription (multi-tariff only)., `confirm_subscription_deletion` — Delete a subscription permanently (multi-tariff only)., `activate_user_subscription`, `grant_trial_subscription`, `grant_paid_subscription`, `process_subscription_grant_days`, `process_subscription_grant_text`, `show_user_servers_management`, `show_server_selection`, `toggle_user_server`, `refresh_server_selection_screen`, `start_devices_edit`, `set_user_devices_button`, `process_devices_edit_text`, `start_traffic_edit`, `set_user_traffic_button`, `process_traffic_edit_text`, `confirm_reset_devices`, `reset_user_devices`, `cleanup_inactive_users`, `change_subscription_type`, `admin_buy_subscription`, `admin_buy_subscription_confirm`, `admin_buy_subscription_execute`, `admin_buy_tariff` — Показывает список тарифов для покупки админом., `admin_buy_tariff_period` — Показывает выбор периода для тарифа., `admin_buy_tariff_confirm` — Подтверждение покупки тарифа., `admin_buy_tariff_execute` — Выполняет покупку тарифа для пользователя., `change_subscription_type_confirm`, `show_admin_tariff_change` — Показывает список доступных тарифов для смены., `select_admin_tariff_change` — Подтверждение выбора тарифа., `confirm_admin_tariff_change` — Применяет смену тарифа., `show_admin_user_autopay` — Admin view of a subscription's autopay settings., `toggle_admin_user_autopay` — Admin: flip autopay_enabled on a subscription., `show_admin_user_autopay_days` — Admin: show days-before picker., `set_admin_user_autopay_days` — Admin: persist days-before choice., `show_admin_user_autopay_period` — Admin: show period picker., `set_admin_user_autopay_period` — Admin: persist period choice. Value `0` means clear (use default)., `register_handlers`
+  Функции: `show_users_menu`, `show_users_filters`, `show_users_list`, `show_users_list_by_balance` — Список пользователей, отсортированный по балансу (убывание)., `show_users_ready_to_renew` — Показывает пользователей с истекшей подпиской и балансом >= порога., `show_potential_customers` — Показывает пользователей без активной подписки с балансом >= месячной цены., `show_users_list_by_campaign` — Список пользователей по кампании регистрации., `handle_users_list_pagination_fixed`, `handle_users_balance_list_pagination`, `handle_users_ready_to_renew_pagination`, `handle_potential_customers_pagination`, `show_recurrent_users` — Показывает пользователей, которые привязали карту (рекуррентные платежи)., `handle_recurrent_users_pagination`, `handle_users_campaign_list_pagination`, `start_user_search`, `show_users_statistics`, `show_user_subscription`, `admin_select_user_subscription` — Handle subscription picker selection in multi-tariff mode., `show_user_transactions`, `confirm_user_delete`, `delete_user_account`, `process_user_search`, `show_user_management`, `show_user_referrals`, `start_edit_referral_percent`, `set_referral_percent_button`, `process_referral_percent_input`, `start_edit_user_referrals`, `process_edit_user_referrals`, `show_user_promo_group`, `set_user_promo_group`, `start_balance_edit`, `start_send_user_message`, `process_send_user_message`, `process_balance_edit`, `confirm_user_block`, `block_user`, `show_user_restrictions` — Показать меню управления ограничениями пользователя., `toggle_user_restriction_topup` — Переключить ограничение на пополнение баланса., `toggle_user_restriction_subscription` — Переключить ограничение на продление/покупку подписки., `ask_restriction_reason` — Запросить ввод причины ограничения., `save_restriction_reason` — Сохранить причину ограничения., `clear_user_restrictions` — Снять все ограничения с пользователя., `show_inactive_users`, `confirm_user_unblock`, `unblock_user`, `show_user_statistics`, `get_detailed_referral_stats`, `extend_user_subscription`, `process_subscription_extension_days`, `process_subscription_extension_text`, `add_subscription_traffic`, `process_traffic_addition_button`, `process_traffic_addition_text`, `deactivate_user_subscription`, `confirm_subscription_deactivation`, `reset_user_subscription` — Подтверждение полного обнуления подписки (с сохранением пользователя и тикетов)., `confirm_subscription_reset`, `delete_user_subscription` — Show confirmation for deleting a subscription (multi-tariff only)., `confirm_subscription_deletion` — Delete a subscription permanently (multi-tariff only)., `activate_user_subscription`, `grant_trial_subscription`, `grant_paid_subscription`, `process_subscription_grant_days`, `process_subscription_grant_text`, `show_user_servers_management`, `show_server_selection`, `toggle_user_server`, `refresh_server_selection_screen`, `start_devices_edit`, `set_user_devices_button`, `process_devices_edit_text`, `start_traffic_edit`, `set_user_traffic_button`, `process_traffic_edit_text`, `confirm_reset_devices`, `reset_user_devices`, `cleanup_inactive_users`, `change_subscription_type`, `admin_buy_subscription`, `admin_buy_subscription_confirm`, `admin_buy_subscription_execute`, `admin_buy_tariff` — Показывает список тарифов для покупки админом., `admin_buy_tariff_period` — Показывает выбор периода для тарифа., `admin_buy_tariff_confirm` — Подтверждение покупки тарифа., `admin_buy_tariff_execute` — Выполняет покупку тарифа для пользователя., `change_subscription_type_confirm`, `show_admin_tariff_change` — Показывает список доступных тарифов для смены., `select_admin_tariff_change` — Подтверждение выбора тарифа., `confirm_admin_tariff_change` — Применяет смену тарифа., `show_admin_user_autopay` — Admin view of a subscription's autopay settings., `toggle_admin_user_autopay` — Admin: flip autopay_enabled on a subscription., `show_admin_user_autopay_days` — Admin: show days-before picker., `set_admin_user_autopay_days` — Admin: persist days-before choice., `show_admin_user_autopay_period` — Admin: show period picker., `set_admin_user_autopay_period` — Admin: persist period choice. Value `0` means clear (use default)., `register_handlers`
 - `app/handlers/admin/welcome_text.py` — Python-модуль
   Классы: нет
   Функции: `validate_html_tags` — Проверяет HTML-теги в тексте на соответствие требованиям Telegram API., `get_telegram_formatting_info`, `show_welcome_text_panel`, `toggle_welcome_text`, `show_current_welcome_text`, `show_placeholders_help`, `show_formatting_help`, `start_edit_welcome_text`, `process_welcome_text_edit`, `reset_welcome_text`, `show_preview_welcome_text`, `register_welcome_text_handlers`
@@ -1243,7 +1404,7 @@
   Функции: `resume_addon_cart_from_button` — Довести докупку до конца по явному нажатию; при нехватке — снова к пополнению.
 - `app/handlers/subscription/autopay.py` — Python-модуль
   Классы: нет
-  Функции: `handle_autopay_menu`, `toggle_autopay`, `show_autopay_days`, `set_autopay_days`, `show_autopay_period` — Period picker UI for autopay., `set_autopay_period` — Handle period selection (autopay_period_<N> or autopay_period_default)., `handle_sbp_recurring_menu` — СБП-автопродление Platega: статус текущей подписки + Enable/Cancel., `handle_sbp_recurring_enable` — Подключить СБП-автопродление: создать рекуррентную Platega-подписку и, `handle_sbp_recurring_cancel` — Отменить активное СБП-автопродление и обновить статус-вью., `handle_saved_cards_list`, `handle_unlink_card`, `handle_confirm_unlink`, `handle_subscription_config_back`, `handle_subscription_cancel`, `handle_cashera_recurring_enable` — Подключить автопродление Cashera к текущей подписке (ссылка на подтверждение)., `handle_cashera_recurring_cancel` — Отключить автопродление Cashera. НЕ гейтится флагом — отмена это безопасность.
+  Функции: `handle_autopay_menu`, `toggle_autopay`, `show_autopay_days`, `set_autopay_days`, `show_autopay_period` — Period picker UI for autopay., `set_autopay_period` — Handle period selection (autopay_period_<N> or autopay_period_default)., `handle_sbp_recurring_menu` — СБП-автопродление Platega: статус текущей подписки + Enable/Cancel., `handle_sbp_recurring_enable` — Подключить СБП-автопродление: создать рекуррентную Platega-подписку и, `handle_sbp_recurring_cancel` — Отменить активное СБП-автопродление и обновить статус-вью., `handle_saved_cards_list`, `handle_unlink_apay_recurrent`, `handle_confirm_unlink_apay`, `handle_unlink_card`, `handle_confirm_unlink`, `handle_subscription_config_back`, `handle_subscription_cancel`, `handle_cashera_recurring_enable` — Подключить автопродление Cashera к текущей подписке (ссылка на подтверждение)., `handle_cashera_recurring_cancel` — Отключить автопродление Cashera. НЕ гейтится флагом — отмена это безопасность.
 - `app/handlers/subscription/common.py` — Python-модуль
   Классы: нет
   Функции: `resolve_subscription_from_context` — Resolve subscription for multi-tariff bot handlers., `update_traffic_prices`, `format_traffic_display`, `validate_traffic_price`, `get_localized_value`, `render_guide_blocks` — Render block-format guide steps to HTML text., `build_redirect_link`, `get_device_name`, `load_app_config_async` — Load app config from Remnawave API (if configured), with TTL cache., `invalidate_app_config_cache` — Clear the cached app config so next call re-fetches from Remnawave., `get_apps_for_platform_async` — Get apps for a device type from Remnawave config., `normalize_app` — Normalize Remnawave app dict to a unified format with blocks., `get_platforms_list` — Extract available platforms from config for keyboard generation., `resolve_button_url` — Resolve template variables in button URLs (port of cabinet's _resolve_button_url)., `create_deep_link`, `get_reset_devices_confirm_keyboard`, `get_traffic_switch_keyboard`, `get_confirm_switch_traffic_keyboard`
@@ -1300,7 +1461,7 @@
   Функции: `is_group_safe_callback` — Можно ли обрабатывать это нажатие вне лички., `strip_group_unsafe_buttons` — Оставляет для группы только URL-кнопки и разрешённые callback'и.
 - `app/keyboards/inline.py` — Python-модуль
   Классы: нет
-  Функции: `get_main_menu_keyboard_async` — Асинхронная версия get_main_menu_keyboard с поддержкой конструктора меню., `get_rules_keyboard`, `get_privacy_policy_keyboard`, `get_channel_sub_keyboard` — Subscription keyboard for required channels., `get_post_registration_keyboard`, `get_language_selection_keyboard`, `get_main_menu_keyboard`, `get_info_menu_keyboard`, `get_happ_download_button_row`, `get_happ_cryptolink_keyboard`, `get_happ_download_platform_keyboard`, `get_happ_download_link_keyboard`, `get_back_keyboard`, `get_server_status_keyboard`, `get_insufficient_balance_keyboard`, `get_subscription_keyboard`, `get_payment_methods_keyboard_with_cart`, `get_subscription_confirm_keyboard_with_cart`, `get_insufficient_balance_keyboard_with_cart`, `get_trial_keyboard`, `get_subscription_period_keyboard` — Generate subscription period selection keyboard with personalized pricing., `get_traffic_packages_keyboard`, `get_countries_keyboard`, `get_devices_keyboard`, `get_subscription_confirm_keyboard`, `get_balance_keyboard`, `get_payment_methods_keyboard`, `get_yookassa_payment_keyboard`, `get_autopay_notification_keyboard`, `get_referral_keyboard`, `get_support_keyboard`, `get_pagination_keyboard`, `get_confirmation_keyboard`, `get_autopay_keyboard`, `get_saved_cards_keyboard`, `get_confirm_unlink_keyboard`, `get_autopay_days_keyboard`, `get_autopay_period_keyboard` — Period picker for autopay. `current_period=None` means "use default"., `get_add_traffic_keyboard`, `get_add_traffic_keyboard_from_tariff` — Клавиатура для докупки трафика из настроек тарифа., `get_change_devices_keyboard`, `get_confirm_change_devices_keyboard`, `get_reset_traffic_confirm_keyboard`, `get_manage_countries_keyboard`, `get_device_selection_keyboard`, `get_connection_guide_keyboard`, `get_app_selection_keyboard`, `get_specific_app_keyboard`, `get_extend_subscription_keyboard_with_prices`, `get_cryptobot_payment_keyboard`, `get_devices_management_keyboard`, `get_updated_subscription_settings_keyboard`, `get_device_reset_confirm_keyboard`, `get_device_management_help_keyboard`, `get_ticket_cancel_keyboard`, `get_my_tickets_keyboard`, `get_ticket_view_keyboard`, `get_ticket_reply_cancel_keyboard`, `get_admin_tickets_keyboard`, `get_admin_ticket_view_keyboard`, `get_ticket_notification_keyboard` — Клавиатура для уведомления о тикете (личный или групповой админ-чат)., `get_admin_ticket_reply_cancel_keyboard`
+  Функции: `get_main_menu_keyboard_async` — Асинхронная версия get_main_menu_keyboard с поддержкой конструктора меню., `get_rules_keyboard`, `get_privacy_policy_keyboard`, `get_channel_sub_keyboard` — Subscription keyboard for required channels., `get_post_registration_keyboard`, `get_language_selection_keyboard`, `get_main_menu_keyboard`, `get_info_menu_keyboard`, `get_happ_download_button_row`, `get_connect_keyboard` — Создает клавиатуру подключения к подписке (после успешной оплаты или активации триала)., `get_happ_cryptolink_keyboard`, `get_happ_download_platform_keyboard`, `get_happ_download_link_keyboard`, `build_back_button` — Кнопка «Назад» с опциональным premium emoji (BACK_BUTTON_CUSTOM_EMOJI_ID)., `get_back_keyboard`, `get_server_status_keyboard`, `get_insufficient_balance_keyboard`, `get_subscription_keyboard`, `get_payment_methods_keyboard_with_cart`, `get_subscription_confirm_keyboard_with_cart`, `get_insufficient_balance_keyboard_with_cart`, `get_trial_keyboard`, `get_subscription_period_keyboard` — Generate subscription period selection keyboard with personalized pricing., `get_traffic_packages_keyboard`, `get_countries_keyboard`, `get_devices_keyboard`, `get_subscription_confirm_keyboard`, `get_balance_keyboard`, `get_payment_methods_keyboard`, `get_yookassa_payment_keyboard`, `get_autopay_notification_keyboard`, `get_referral_keyboard`, `get_support_keyboard`, `get_pagination_keyboard`, `get_confirmation_keyboard`, `get_autopay_keyboard`, `get_saved_cards_keyboard`, `get_confirm_unlink_keyboard`, `get_autopay_days_keyboard`, `get_autopay_period_keyboard` — Period picker for autopay. `current_period=None` means "use default"., `get_add_traffic_keyboard`, `get_add_traffic_keyboard_from_tariff` — Клавиатура для докупки трафика из настроек тарифа., `get_change_devices_keyboard`, `get_confirm_change_devices_keyboard`, `get_reset_traffic_confirm_keyboard`, `get_manage_countries_keyboard`, `get_device_selection_keyboard`, `get_connection_guide_keyboard`, `get_app_selection_keyboard`, `get_specific_app_keyboard`, `get_extend_subscription_keyboard_with_prices`, `get_cryptobot_payment_keyboard`, `get_devices_management_keyboard`, `get_updated_subscription_settings_keyboard`, `get_device_reset_confirm_keyboard`, `get_device_management_help_keyboard`, `get_ticket_cancel_keyboard`, `get_my_tickets_keyboard`, `get_ticket_view_keyboard`, `get_ticket_reply_cancel_keyboard`, `get_admin_tickets_keyboard`, `get_admin_ticket_view_keyboard`, `get_ticket_notification_keyboard` — Клавиатура для уведомления о тикете (личный или групповой админ-чат)., `get_admin_ticket_reply_cancel_keyboard`
 - `app/keyboards/reply.py` — Python-модуль
   Классы: нет
   Функции: `get_main_reply_keyboard`, `get_admin_reply_keyboard`, `get_cancel_keyboard`, `get_confirmation_reply_keyboard`, `get_skip_keyboard`, `remove_keyboard`, `get_contact_keyboard`, `get_location_keyboard`
@@ -1384,7 +1545,7 @@
   Функции: `ensure_locale_templates`, `load_locale`, `clear_locale_cache`
 - `app/localization/locales/`
 - `app/localization/texts.py` — Python-модуль
-  Классы: `Texts` (9 методов)
+  Классы: `PaymentPromptTemplate` (2 методов), `Texts` (9 методов)
   Функции: `get_texts`, `get_rules_from_db`, `get_privacy_policy`, `get_default_rules` — Правила из локали — когда в базе их нет или они пустые., `get_rules_sync`, `get_rules`, `refresh_rules_cache`, `clear_rules_cache`, `reload_locales`
 
 #### app/localization/default_locales
@@ -1459,8 +1620,14 @@
 - `app/services/admin_notification_service.py` — Python-модуль
   Классы: `NotificationCategory`, `AdminNotificationService` (50 методов)
   Функции: нет
+- `app/services/admin_recurring_cancellation_service.py` — Python-модуль
+  Классы: нет
+  Функции: `cancel_all_user_recurring_subscriptions` — Принудительно отключает все рекуррентные подписки для пользователя
+- `app/services/antilopay_recurring_cancel.py` — Python-модуль
+  Классы: нет
+  Функции: `cancel_user_antilopay_recurrents`
 - `app/services/antilopay_service.py` — Python-модуль
-  Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
+  Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (16 методов)
   Функции: нет
 - `app/services/apple_iap.py` — Python-модуль
   Классы: `AppleFulfillmentResult`, `AppleIAPFulfillmentService` (6 методов), `AppleIAPNotificationService` (9 методов)
@@ -1591,7 +1758,7 @@
   Классы: нет
   Функции: `build_recurrent_order_id` — orderId подписки: префикс + id локальной подписки + случайный хвост., `is_recurrent_order_id`, `resolve_product_charge_days` — Шаг продления по данным продукта Lava., `normalize_remote_status` — Приводит статус подписки из ``subscription/status`` к нормализованному виду., `lava_reconcile_decision` — Новый локальный статус по данным Lava, либо None — не трогать.
 - `app/services/lava_service.py` — Python-модуль
-  Классы: `LavaAPIError` (1 методов), `LavaService` (20 методов)
+  Классы: `LavaAPIError` (1 методов), `LavaService` (21 методов)
   Функции: нет
 - `app/services/legal_consent_service.py` — Python-модуль
   Классы: `LegalConsentRequirement`
@@ -1690,7 +1857,7 @@
   Классы: `CallbackFields`
   Функции: `resolve_platega_interval` — Возвращает (interval, charge_days) для подписки Platega., `platega_reconcile_decision` — New local status given the Platega-reported status, or None for no change., `is_subscription_callback` — Относится ли коллбек к рекуррентной СБП-подписке., `read_callback_fields` — Поля подписочного коллбека, независимо от регистра ключей.
 - `app/services/platega_service.py` — Python-модуль
-  Классы: `PlategaApiError` (1 методов), `PlategaService` (17 методов)
+  Классы: `PlategaApiError` (1 методов), `PlategaService` (21 методов)
   Функции: нет
 - `app/services/poll_service.py` — Python-модуль
   Классы: нет
@@ -1801,6 +1968,9 @@
 - `app/services/startup_notification_service.py` — Python-модуль
   Классы: `StartupNotificationService` (7 методов), `ShutdownReason` (1 методов)
   Функции: `render_startup_message` — Классический вид (HTML): разделы деревом, внимание — отдельным блоком., `render_startup_rich` — Rich-вид (Bot API 10.1): те же разделы таблицами., `send_bot_startup_notification` — Удобная функция для отправки стартового уведомления., `format_uptime` — «3 д 4 ч 12 мин»; нули в начале опускаются, меньше минуты — словами., `render_shutdown_message` — Классический HTML: причина, аптайм, что делать дальше., `send_shutdown_notification` — Сообщить в админ-чат, что бот останавливается и почему., `send_crash_notification` — Отправляет уведомление о падении бота с лог-файлом.
+- `app/services/steam_top_up_client.py` — Python-модуль
+  Классы: `SteamTopUpError`, `SteamTopUpClient` (4 методов)
+  Функции: нет
 - `app/services/subscription_auto_purchase_service.py` — Python-модуль
   Классы: `AutoPurchaseContext`, `AutoExtendContext`
   Функции: `try_auto_extend_expired_after_topup` — Try to auto-extend an expired subscription after balance top-up., `try_resume_disabled_daily_after_topup` — Resume a DISABLED daily subscription immediately after balance top-up., `resume_addon_cart` — Докупка трафика/устройств из сохранённой корзины по явному нажатию., `auto_purchase_saved_cart_after_topup` — Attempts to automatically purchase subscriptions from saved carts.
@@ -1820,7 +1990,7 @@
   Классы: `SubscriptionRenewalError`, `SubscriptionRenewalChargeError`, `SubscriptionRenewalPricing` (2 методов), `SubscriptionRenewalResult`, `RenewalPaymentDescriptor` (1 методов), `SubscriptionRenewalService` (1 методов)
   Функции: `build_renewal_period_id`, `build_payment_descriptor`, `encode_payment_payload`, `decode_payment_payload`, `build_payment_metadata`, `parse_payment_metadata`, `with_admin_notification_service`, `calculate_missing_amount`
 - `app/services/subscription_service.py` — Python-модуль
-  Классы: `PropagateSquadsResult`, `SubscriptionService` (32 методов)
+  Классы: `PropagateSquadsResult`, `RemnaWaveUpdateContext`, `RemnaWaveCreateContext`, `SubscriptionService` (32 методов)
   Функции: `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
 - `app/services/support_settings_service.py` — Python-модуль
   Классы: `SupportSettingsService` (25 методов)
@@ -1875,7 +2045,7 @@
   Классы: `NotDeletedError`
   Функции: `revive_deleted_user` — Flip ``user.status`` from DELETED back to ACTIVE.
 - `app/services/user_service.py` — Python-модуль
-  Классы: `DeleteUserResult`, `UserService` (19 методов)
+  Классы: `DeleteUserResult`, `UserService` (20 методов)
   Функции: нет
 - `app/services/version_service.py` — Python-модуль
   Классы: `VersionInfo` (6 методов), `VersionService` (11 методов)
@@ -1965,7 +2135,7 @@
   Классы: `MenuLayoutHistoryService` (5 методов)
   Функции: нет
 - `app/services/menu_layout/service.py` — Python-модуль
-  Классы: `MenuLayoutService` (48 методов)
+  Классы: `MenuLayoutService` (50 методов)
   Функции: нет
 - `app/services/menu_layout/stats_service.py` — Python-модуль
   Классы: `MenuLayoutStatsService` (14 методов)
@@ -2016,7 +2186,7 @@
   Классы: нет
   Функции: нет
 - `app/services/payment/antilopay.py` — Python-модуль
-  Классы: `AntilopayPaymentMixin` (4 методов)
+  Классы: `AntilopayPaymentMixin` (7 методов)
   Функции: нет
 - `app/services/payment/aurapay.py` — Python-модуль
   Классы: `AuraPayPaymentMixin` (4 методов)
@@ -2423,6 +2593,9 @@
 - `app/webapi/routes/_subscription_state.py` — Python-модуль
   Классы: нет
   Функции: `snapshot_subscription_state`, `restore_subscription_state`
+- `app/webapi/routes/ai_support.py` — Python-модуль
+  Классы: `SettingsUpdateRequest`, `KnowledgeSourceResponse`, `KnowledgeSummaryResponse`, `MessageItemResponse`, `HistoryResponse`, `ConversationSummaryItem`, `ConversationsResponse`
+  Функции: `get_ai_support_settings` — Получить текущие настройки ИИ-бота поддержки., `update_ai_support_settings` — Обновить настройки ИИ-бота поддержки., `reset_ai_support_settings` — Сбросить настройки ИИ-бота поддержки к значениям по умолчанию., `get_knowledge_summary` — Получить информацию о базе знаний RAG и списке источников., `upload_knowledge_file` — Загрузить JSON файл в базу знаний ИИ-бота., `toggle_knowledge_source` — Переключить статус активности источника базы знаний., `delete_knowledge_source` — Удалить источник из базы знаний., `get_ai_conversations` — Получить пагинированный список диалогов (чатов) пользователей., `get_ai_history` — Получить пагинированную историю сообщений ИИ-бота (опционально по telegram_id).
 - `app/webapi/routes/backups.py` — Python-модуль
   Классы: нет
   Функции: `create_backup_endpoint`, `list_backups`, `get_backup_status`, `list_backup_tasks`, `download_backup`, `restore_backup`, `upload_and_restore_backup`, `delete_backup`
@@ -2673,6 +2846,7 @@
 - `docs/postgresql-18-upgrade.md` — файл
 - `docs/project_structure_reference.md` — файл
 - `docs/referral_program_setting.md` — файл
+- `docs/slig-update-2026-10.md` — файл
 - `docs/web-admin-integration-guide.md` — файл
 - `docs/web-admin-integration.md` — файл
 - `docs/websocket-and-webhooks.md` — файл
@@ -2681,6 +2855,14 @@
 
 - `docs/handoffs/handoff-2026-08-31-1659.md` — файл
 - `docs/handoffs/handoff-2026-08-31-1944.md` — файл
+
+## locales
+
+- `locales/en.json` — файл
+- `locales/fa.json` — файл
+- `locales/ru.json` — файл
+- `locales/ua.json` — файл
+- `locales/zh.json` — файл
 
 ## migrations
 
@@ -3008,13 +3190,25 @@
 - `migrations/alembic/versions/0104_remnawave_numeric_id.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0105_add_antilopay_recurrents.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0105_promocode_traffic_gb.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0106_ensure_columns_exist.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0106_guest_purchase_campaign.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0107_add_landing_referrer_id.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0107_guest_purchase_idempotency.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0108_ensure_coupon_tables.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0108_referral_reward_levels.py` — Python-модуль
@@ -3056,6 +3250,9 @@
 - `migrations/alembic/versions/0120_subscription_grace_tail_expire_at.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0121_add_subscription_fk_indexes.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0121_subscription_grace_session_open.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
@@ -3087,6 +3284,9 @@
   Классы: нет
   Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0131_add_cashera_subscriptions.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/5651d7089c66_make_platega_subscriptions_user_id_.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 
@@ -3257,6 +3457,9 @@
 - `tests/cabinet/test_abuse_api_service.py` — Python-модуль
   Классы: нет
   Функции: `test_disabled_service_is_not_configured`, `test_missing_key_is_not_configured`, `test_unconfigured_service_answers_nothing` — Не настроен — вопросов к клиенту нет, а не «неизвестно, подозрительный»., `test_unreachable_service_does_not_block_anyone` — Сеть легла — клиент остаётся чистым, экраны кабинета работают., `test_limited_level_is_recognised`, `test_warned_customer_is_not_limited` — «Замечен» — повод написать человеку, а не отказывать ему в триале., `test_client_response_cannot_carry_detection_details` — Схема клиентского ответа не содержит полей со скорингом и видами., `test_malformed_notice_does_not_break_dashboard` — Поле не того типа от чужого сервиса — молчание, а не 500 на главной., `test_malformed_violations_do_not_break_admin_card`
+- `tests/cabinet/test_admin_cancel_all_recurring.py` — Python-модуль
+  Классы: нет
+  Функции: `test_cancel_all_recurring_user_not_found`, `test_cancel_all_recurring_no_recurring_records`, `test_cancel_all_recurring_platega_calls_api_and_updates_db`, `test_cancel_all_recurring_platega_handles_api_failure`, `test_cancel_all_recurring_lava_calls_api_and_updates_db`, `test_cancel_all_recurring_antilopay_calls_api`, `test_cancel_all_recurring_yookassa_and_bot_autopay`, `test_admin_cancel_all_recurring_route_success`, `test_admin_cancel_all_recurring_route_user_404`
 - `tests/cabinet/test_admin_create_update_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `test_schema_pairs_are_discovered` — Пустой список сделал бы сторож ниже бессмысленно зелёным., `test_shared_fields_share_constraints`, `test_create_tariff_accepts_zero_as_no_highlight`, `test_create_tariff_keeps_marked_period`, `test_create_tariff_rejects_negative_highlight`, `test_pinned_message_can_be_media_only`, `test_news_update_enforces_same_lengths_as_create`, `test_update_tariff_zero_clears_highlight`, `test_update_tariff_moves_highlight_to_another_period`, `test_update_tariff_without_the_field_keeps_highlight`
@@ -3281,6 +3484,12 @@
 - `tests/cabinet/test_admin_grace_access_sessions.py` — Python-модуль
   Классы: `TestStatusSnapshot` (4 методов), `TestSessionsList` (4 методов)
   Функции: нет
+- `tests/cabinet/test_admin_landing_referrer_backfill.py` — Python-модуль
+  Классы: нет
+  Функции: `test_backfill_landing_referrals_none_referrer`, `test_backfill_landing_referrals_with_referrer`
+- `tests/cabinet/test_admin_landing_stats_renewals.py` — Python-модуль
+  Классы: нет
+  Функции: `test_get_landing_stats_renewals_and_revenue`, `test_get_landing_stats_query_filters`
 - `tests/cabinet/test_admin_legal_pages_routes.py` — Python-модуль
   Классы: нет
   Функции: `test_admin_legal_pages_routes_registered`, `test_legal_responses_expose_env_lock_flag`, `test_set_display_mode_commits`, `test_set_display_mode_env_locked_conflict`, `test_set_display_mode_env_locked_same_value_allowed`, `test_require_language_rejects_unknown`
@@ -3337,7 +3546,7 @@
   Функции: `test_resolver_route_is_registered_before_user_id_route`, `test_resolver_requires_users_read_permission`, `test_resolver_returns_the_exact_matching_subscription` — Would fail if the resolver returned a user-level or primary subscription ID., `test_resolver_accepts_a_short_uuid_for_subscriptions_without_a_panel_id` — Would fail if the resolver only understood numeric panel ids., `test_resolver_rejects_unusable_identifiers_without_any_lookup` — Would fail if garbage input were guessed from user data or hit the database., `test_resolver_rejects_an_identifier_present_only_on_the_legacy_user_field` — Would fail if the route reused legacy user-level resolution., `test_resolver_treats_a_physically_absent_deleted_subscription_as_not_found` — Would fail if absent/deleted records were accidentally resolved., `test_resolver_rejects_duplicate_subscription_mappings_as_a_conflict` — Would fail if corrupted mappings silently selected one subscription.
 - `tests/cabinet/test_admin_users_list_filters.py` — Python-модуль
   Классы: нет
-  Функции: `test_expires_within_days`, `test_active_within_minutes`, `test_has_restrictions`, `test_has_subscription`, `test_no_purchases`, `test_search_matches_email` — Одно поле поиска: адрес целиком и его кусок находят человека через `search`., `test_traffic_used_percent_min` — «Трафик на исходе»: израсходовано от N % лимита, исчерпанные тоже; безлимит и истёкшие — нет., `test_connected_now_matches_any_panel_key` — «Онлайн» = подключён к VPN: id панели у пользователя, у подписки или Telegram ID аккаунта., `test_route_marks_connected_rows_and_filters_online`, `test_route_passes_sort_direction` — Направление сортировки доходит до выборки; без него — привычный порядок ключа., `test_route_maps_grace_sort_to_the_selection` — «Грейс кончается» — свой ключ выборки, а не подмена окончания подписки., `test_route_passes_grace_filter_to_list_and_count` — «В грейсе» доходит и до списка, и до счётчика — иначе «показано N из M» врёт., `test_route_refuses_online_filter_without_panel` — Панель молчит — «онлайн» не угадываем и не отдаём всех: честная ошибка, а строки без отметки., `test_filters_combine`, `test_route_declares_new_filters`
+  Функции: `test_expires_within_days`, `test_active_within_minutes`, `test_has_restrictions`, `test_has_subscription`, `test_no_purchases`, `test_search_matches_email` — Одно поле поиска: адрес целиком и его кусок находят человека через `search`., `test_traffic_used_percent_min` — «Трафик на исходе»: израсходовано от N % лимита, исчерпанные тоже; безлимит и истёкшие — нет., `test_connected_now_matches_any_panel_key` — «Онлайн» = подключён к VPN: id панели у пользователя, у подписки или Telegram ID аккаунта., `test_route_marks_connected_rows_and_filters_online`, `test_route_passes_sort_direction` — Направление сортировки доходит до выборки; без него — привычный порядок ключа., `test_route_maps_grace_sort_to_the_selection` — «Грейс кончается» — свой ключ выборки, а не подмена окончания подписки., `test_route_passes_grace_filter_to_list_and_count` — «В грейсе» доходит и до списка, и до счётчика — иначе «показано N из M» врёт., `test_route_refuses_online_filter_without_panel` — Панель молчит — «онлайн» не угадываем и не отдаём всех: честная ошибка, а строки без отметки., `test_filters_combine`, `test_route_declares_new_filters`, `test_recurrent_filter_matches_list_and_count`
 - `tests/cabinet/test_admin_users_multi_tariff_and_grace.py` — Python-модуль
   Классы: нет
   Функции: `test_expired_skips_anyone_who_still_has_a_live_tariff` — «Истекшие» — это кто остался без доступа, а не у кого нашлась старая истёкшая строка., `test_active_still_finds_anyone_with_a_live_tariff`, `test_limited_and_disabled_follow_the_same_rule` — Исчерпанный трафик и отключение — тоже «доступа нет», и тоже только без живых тарифов., `test_expired_tariff_of_a_live_person_still_found_by_tariff_filter` — Отбор по тарифу — про тариф, а не про доступ: истёкшая строка живого человека остаётся видна., `test_row_shows_the_tariff_that_got_the_person_into_the_view` — «Трафик на исходе»: в строке должен быть забитый тариф, а не пустой соседний., `test_row_shows_the_expired_tariff_in_the_expired_view`, `test_row_says_the_person_is_on_temporary_access` — Грейс: подписка истекла, но доступ ещё открыт — по списку это обязано быть видно., `test_closed_grace_leaves_no_mark` — Дата оверлея остаётся в подписке и после закрытия грейса — это не «временный доступ».
@@ -3473,6 +3682,9 @@
 - `tests/cabinet/test_landing_activate_endpoint.py` — Python-модуль
   Классы: нет
   Функции: `open_gate` — Пропускаем рейт-лимит и определение IP — проверяется не они., `test_activation_reaches_the_service`, `test_service_error_becomes_its_own_http_status` — Отказ сервиса должен доезжать до клиента своим кодом, а не пятисоткой.
+- `tests/cabinet/test_landing_platega_recurrent.py` — Python-модуль
+  Классы: нет
+  Функции: `test_guest_purchase_platega_recurrent_flow` — Test full flow: guest purchase -> Platega recurrent payment creation -> callback -> account binding., `test_guest_purchase_all_tariffs_platega_recurrent` — Verify that any tariff period (e.g. 7, 30, 90 days) with default 'platega' method creates a recurrent subscription.
 - `tests/cabinet/test_landing_purchase_campaign.py` — Python-модуль
   Классы: нет
   Функции: `test_body_slug_wins_over_cookie`, `test_cookie_is_used_when_body_has_no_slug`, `test_returns_none_without_any_source`, `test_invalid_cookie_is_ignored`, `test_invalid_body_slug_does_not_fall_back_to_cookie` — Мусор в теле — ошибка вызывающей стороны, а не повод молча подставить, `test_blank_body_slug_still_lets_the_cookie_work` — Пустое поле — «не прислали», а не «прислали мусор»., `test_trailing_newline_in_body_is_rejected` — re-шный «$» пропускает \n в конце, pydantic-паттерн кабинета — нет.
@@ -3736,7 +3948,7 @@
   Функции: `test_create_paid_subscription_converts_alive_trial_of_other_tariff` — Живой триал ДРУГОГО тарифа при платной покупке конвертируется на месте., `test_create_paid_subscription_prefers_same_tariff_alive_trial` — Живой триал ТОГО ЖЕ тарифа берётся из lookup'а напрямую — без второго, `test_create_paid_subscription_uses_passed_conversion_trial` — Кабинет передаёт пре-резолвленного кандидата — повторный lookup не нужен., `test_create_paid_subscription_falls_to_insert_when_conversion_raced` — Конкурентная покупка успела конвертировать кандидата (конверсия вернула, `test_create_paid_subscription_without_trial_falls_to_insert` — Нет живого триала — обычная вставка новой подписки, как раньше., `test_expired_same_tariff_revive_wins_over_conversion` — Истёкшая запись ПОКУПАЕМОГО тарифа реанимируется (#3004) — конверсия, `test_trial_creation_never_triggers_conversion` — Создание САМОГО триала (is_trial=True) не трогает ветку конверсии., `test_convert_helper_delegates_to_extend` — Обёртка конверсии ревалидирует кандидата под локом и делегирует, `test_convert_helper_bails_out_when_candidate_no_longer_trial` — Гонка: под локом кандидат уже не живой триал (конкурентная покупка, `test_resolver_returns_none_when_revive_will_preempt` — EXPIRED подписка покупаемого тарифа → create уйдёт в revive (#3004),, `test_resolver_prefers_same_tariff_alive_trial`, `test_resolver_falls_back_to_freshest_alive_trial`, `test_cabinet_purchase_excludes_conversion_candidate_from_trial_kill` — Source-pin (в духе test_purchase_tariff_expired_trial_reuse): кабинетный
 - `tests/crud/test_trial_subscription_idempotency.py` — Python-модуль
   Классы: нет
-  Функции: `test_returns_existing_active_subscription_without_insert` — Если у пользователя уже есть живая (active) подписка на тариф — возвращаем, `test_expired_subscription_does_not_block_new_trial_single_tariff` — В single-tariff режиме EXPIRED-подписка не блокирует создание нового триала, `test_returns_existing_trial_subscription_without_insert` — Статус trial тоже считается живым — возвращаем без INSERT., `test_returns_existing_limited_subscription_without_insert` — Статус limited тоже живой (трафик кончился, время ещё есть) — возвращаем без INSERT., `test_pending_trial_is_activated_not_duplicated` — Существующая PENDING-триальная подписка должна быть переведена в active,, `test_integrity_error_on_commit_returns_concurrent_subscription_multitariff` — Если commit падает с IntegrityError (гонка), делаем rollback, expunge объекта, `test_integrity_error_on_commit_reraises_if_no_concurrent_sub` — Если commit падает с IntegrityError, но найти конкурентную подписку не удалось, `test_integrity_error_from_unrelated_constraint_is_reraised_immediately` — IntegrityError по постороннему constraint (не uq_subscriptions_user_tariff_active), `test_integrity_error_on_commit_returns_concurrent_subscription_single_tariff` — Та же защита от гонки в режиме без multi-tariff: используем, `test_creates_new_subscription_when_no_existing` — Когда у пользователя нет подписки — создаётся новая, db.add и db.commit вызываются., `test_different_tariff_subscription_does_not_block_trial_creation` — Живая подписка на тариф 2 не мешает создать триал на тариф 1.
+  Функции: `test_returns_existing_active_subscription_without_insert` — Если у пользователя уже есть живая (active) подписка на тариф — возвращаем, `test_expired_subscription_does_not_block_new_trial_single_tariff` — В single-tariff режиме EXPIRED-подписка не блокирует создание нового триала, `test_returns_existing_trial_subscription_without_insert` — Статус trial тоже считается живым — возвращаем без INSERT., `test_returns_existing_limited_subscription_without_insert` — Статус limited тоже живой (трафик кончился, время ещё есть) — возвращаем без INSERT., `test_pending_trial_is_activated_not_duplicated` — Существующая PENDING-триальная подписка должна быть переведена в active,, `test_integrity_error_on_commit_returns_concurrent_subscription_multitariff` — Если commit падает с IntegrityError (гонка), делаем rollback, expunge объекта, `test_integrity_error_on_commit_reraises_if_no_concurrent_sub` — Если commit падает с IntegrityError, но найти конкурентную подписку не удалось, `test_integrity_error_from_unrelated_constraint_is_reraised_immediately` — IntegrityError по постороннему constraint (не uq_subscriptions_user_tariff_active), `test_integrity_error_on_commit_returns_concurrent_subscription_single_tariff` — Та же защита от гонки в режиме без multi-tariff: используем, `test_creates_new_subscription_when_no_existing` — Когда у пользователя нет подписки — создаётся новая, db.add и db.commit вызываются., `test_different_tariff_subscription_does_not_block_trial_creation` — Живая подписка на тариф 2 не мешает создать триал на тариф 1., `test_create_trial_subscription_recovers_if_server_counter_times_out` — Если обновление счетчиков серверов упало по таймауту/блокировке,, `test_rollback_trial_subscription_activation_resilient_to_broken_session` — rollback_trial_subscription_activation очищает невалидную транзакцию перед удалением.
 - `tests/crud/test_user_search_conditions.py` — Python-модуль
   Классы: нет
   Функции: `test_in_range_number_matches_telegram_id`, `test_bigint_max_boundary_still_matches_telegram_id`, `test_number_over_bigint_max_falls_back_to_text_only`, `test_very_long_number_falls_back_to_text_only`, `test_text_search_matches_email_column` — Одно поле поиска в кабинете: email ищется тем же `search`, отдельного поля нет., `test_text_search_never_touches_telegram_id`
@@ -3782,7 +3994,7 @@
   Функции: `test_sales_stats_route_groups_by_local_day`, `test_sales_stats_custom_period_groups_by_local_day`, `test_partner_and_menu_stats_group_by_local_day`, `test_landing_stats_group_by_local_day`
 - `tests/database/test_migration_chain.py` — Python-модуль
   Классы: нет
-  Функции: `test_single_head`, `test_revision_ids_are_unique`, `test_every_revision_reaches_base` — Разрыв в down_revision оставил бы часть миграций неприменёнными.
+  Функции: `test_single_head`, `test_revision_ids_are_unique`, `test_every_revision_reaches_base` — Разрыв в down_revision оставил бы часть миграций неприменёнными., `test_existing_slig_head_runs_new_grace_migration` — A deployed SLIG database stamped 0121 must still receive upstream grace fields.
 - `tests/database/test_mode_switch_keeps_panel_account_postgres.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `test_account_created_in_single_mode_survives_switch_to_multi`, `test_account_created_in_multi_mode_survives_switch_to_single`, `test_old_multi_rows_without_user_account_still_resolve_in_single_mode` — Строки, созданные ДО правки: аккаунт только у подписки. Одиночный режим всё равно находит его.
@@ -4141,6 +4353,9 @@
 - `tests/handlers/test_admin_tariff_server_limits.py` — Python-модуль
   Классы: нет
   Функции: `test_card_summarizes_limits_and_has_entry`, `test_screen_lists_allowed_squads_with_limits`, `test_screen_lists_all_squads_when_tariff_allows_all`, `test_input_sets_limit_without_mutating_stored_dict`, `test_zero_removes_limit`, `test_invalid_input_keeps_state`
+- `tests/handlers/test_balance_keyboard.py` — Python-модуль
+  Классы: нет
+  Функции: `test_get_balance_keyboard_no_saved_cards`, `test_get_balance_keyboard_with_saved_cards`, `test_payment_methods_keyboard_sorting`
 - `tests/handlers/test_balance_quick_topup.py` — Python-модуль
   Классы: нет
   Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
@@ -4561,6 +4776,9 @@
 - `tests/services/test_guest_purchase_receipt_provider_gate.py` — Python-модуль
   Классы: нет
   Функции: `nalogo`, `test_non_yookassa_purchase_gets_no_receipt`, `test_yookassa_purchase_gets_receipt`
+- `tests/services/test_guest_purchase_recurrent.py` — Python-модуль
+  Классы: `MockResult` (3 методов)
+  Функции: `configure_recurrent_settings`, `test_yookassa_guest_purchase_recurrent_registration`, `test_antilopay_guest_purchase_recurrent_registration`, `test_antilopay_recurrent_suffix_callback_creates_payment`
 - `tests/services/test_guest_purchase_referral_code.py` — Python-модуль
   Классы: нет
   Функции: `test_new_email_user_is_created_with_referral_code` — A landing-page email purchase must persist `referral_code` on the new, `test_new_telegram_user_is_created_with_referral_code` — Same guarantee for the telegram-username guest-purchase branch., `test_existing_email_user_without_referral_code_is_backfilled` — Legacy users created before the fix (with referral_code=NULL) must be, `test_existing_email_user_with_referral_code_is_not_overwritten` — Idempotency: if the user already has a referral_code, do not regenerate
@@ -4740,7 +4958,7 @@
   Функции: `test_sanitize_description_limits_utf8_bytes`, `test_sanitize_description_returns_clean_value`, `test_create_payment_defaults_to_v1_endpoint`, `test_create_payment_uses_v2_endpoint_when_configured`, `test_base_url_version_suffix_forces_version_and_is_stripped` — Обход из #2934 (PLATEGA_BASE_URL=…/v2) не должен собирать /v2/v2/… и не, `test_get_transaction_stays_unversioned`, `test_unknown_api_version_falls_back_to_v1`, `test_parse_redirect_url_accepts_v1_field`, `test_parse_redirect_url_accepts_v2_field`, `test_parse_redirect_url_missing_or_empty`, `test_base_url_version_suffix_is_case_insensitive` — A manually appended suffix may be uppercase ('/V2'); it must still be stripped, `test_v2_url_field_reaches_returned_redirect_url` — END-TO-END regression for #2934: a v2 create response carrying the link in, `test_create_payment_sends_payer_metadata`, `test_create_payment_requires_the_payer` — Забыть плательщика нельзя: без него магазин отключат.
 - `tests/services/test_platega_subscription_callbacks.py` — Python-модуль
   Классы: нет
-  Функции: `test_create_sbp_subscription_persists_and_disables_autopay` — create_platega_sbp_subscription: сохраняет запись, выключает autopay_enabled,, `test_create_sbp_subscription_is_idempotent_on_repeat_call` — Повторный вызов (двойной тап / ретрай клиента) не должен плодить вторую, `test_confirmed_charge_extends_subscription_and_is_idempotent` — CONFIRMED: продлевает Subscription.end_date на charge_days, пишет аудитную, `test_confirmed_charge_syncs_remnawave_panel_after_extension` — CONFIRMED: после коммита продления должен best-effort синкнуться в панель, `test_confirmed_charge_panel_sync_failure_is_best_effort` — Сбой синка панели (Remnawave недоступна) — best-effort: не должен, `test_confirmed_charge_with_empty_id_does_not_extend` — CONFIRMED без Id (или с пустым Id) — недоверенный коллбек: без id, `test_confirmed_charge_missing_subscription_does_not_report_false_success` — CONFIRMED, но привязанная Subscription отсутствует (гонка/рассинхрон,, `test_canceled_charge_marks_past_due_and_counts_failure`, `test_subscription_past_due_status_transition`, `test_subscription_cancelled_status_transition`, `test_subscription_failed_status_transition`, `test_subscription_activated_status_transition`, `test_confirmed_charge_emits_ws_event_to_cabinet` — CONFIRMED-коллбек должен отправить WS-событие sbp_recurring.confirmed, `test_ws_emission_failure_does_not_break_callback` — Сбой отправки WS-события (соединения нет / менеджер упал) — best-effort,, `test_ws_emission_fires_without_bot_attribute` — Эмиссия WS-события должна происходить ДО early-return по, `test_callback_noops_on_missing_or_unknown_subscription_id` — Отсутствующий/неизвестный SubscriptionId и нераспознанный статус — не, `test_confirmed_charge_on_cancelled_record_extends_but_stays_cancelled` — Списание по локально ОТМЕНЁННОЙ записи (удалённая отмена не прошла):, `test_confirmed_late_redelivery_of_older_charge_is_skipped` — last_charge_external_id хранит только ПОСЛЕДНИЙ charge Id: поздний, `test_failed_and_expired_charge_statuses_mark_past_due` — Словарь провального списания не ограничен CANCELED: разовые платежи, `test_create_sbp_subscription_rejects_zero_price` — Нулевая цена отклоняется наравне с отсутствующей: подписка Platega на, `test_create_sbp_short_circuit_reenforces_autopay_off` — Идемпотентный повтор create при живой записи: если между вызовами юзер, `test_sbp_purchase_creates_expired_stub_for_new_tariff` — Нет подписки этого тарифа → создаётся EXPIRED-заготовка (без доступа),, `test_sbp_purchase_binds_to_existing_expired_subscription` — Есть истёкшая подписка тарифа → привязка на неё, заготовка не создаётся., `test_sbp_purchase_refuses_trial_disabled_and_foreign_tariff` — Отказы: триал (конверсию делает только balance-покупка), disabled/pending, `test_sbp_purchase_gate_off_raises`, `test_concurrent_enable_race_returns_winner_and_cancels_orphan` — Гонка конкурентного enable: оба прошли идемпотентную проверку, второй, `test_replay_missed_charges_extends_and_advances_counters` — Remote chargesSuccess > локального = потерянные коллбеки: подписка, `test_replay_waits_out_fresh_charge_window` — lastChargeAt свежее 2 часов — настоящий коллбек ещё может доехать, `test_replay_noop_without_metrics_or_deficit`, `test_camel_case_charge_extends_subscription` — Списание в camelCase (реальная форма Platega) продлевает подписку., `test_camel_case_charge_replay_is_idempotent` — Ретрай доставки того же списания не продлевает подписку дважды., `test_lowercase_confirmed_status_extends_subscription` — Регистр статуса тоже не должен решать судьбу продления., `test_confirmed_charge_returns_a_zeroed_tariff_subscription_to_the_tariff_limit` — Продление Platega идёт мимо extend_subscription — условия тарифа обязаны примениться и здесь.
+  Функции: `test_create_sbp_subscription_persists_and_disables_autopay` — create_platega_sbp_subscription: сохраняет запись, выключает autopay_enabled,, `test_create_sbp_subscription_is_idempotent_on_repeat_call` — Повторный вызов (двойной тап / ретрай клиента) не должен плодить вторую, `test_confirmed_charge_extends_subscription_and_is_idempotent` — CONFIRMED: продлевает Subscription.end_date на charge_days, пишет аудитную, `test_confirmed_charge_syncs_remnawave_panel_after_extension` — CONFIRMED: после коммита продления должен best-effort синкнуться в панель, `test_confirmed_charge_panel_sync_failure_is_best_effort` — Сбой синка панели (Remnawave недоступна) — best-effort: не должен, `test_confirmed_charge_with_empty_id_does_not_extend` — CONFIRMED без Id (или с пустым Id) — недоверенный коллбек: без id, `test_confirmed_charge_missing_subscription_does_not_report_false_success` — CONFIRMED, но привязанная Subscription отсутствует (гонка/рассинхрон,, `test_canceled_charge_marks_past_due_and_counts_failure`, `test_subscription_past_due_status_transition`, `test_subscription_cancelled_status_transition`, `test_subscription_failed_status_transition`, `test_subscription_activated_status_transition`, `test_confirmed_charge_emits_ws_event_to_cabinet` — CONFIRMED-коллбек должен отправить WS-событие sbp_recurring.confirmed, `test_ws_emission_failure_does_not_break_callback` — Сбой отправки WS-события (соединения нет / менеджер упал) — best-effort,, `test_ws_emission_fires_without_bot_attribute` — Эмиссия WS-события должна происходить ДО early-return по, `test_callback_noops_on_missing_or_unknown_subscription_id` — Отсутствующий/неизвестный SubscriptionId и нераспознанный статус — не, `test_confirmed_charge_on_cancelled_record_extends_but_stays_cancelled` — Списание по локально ОТМЕНЁННОЙ записи (удалённая отмена не прошла):, `test_confirmed_late_redelivery_of_older_charge_is_skipped` — last_charge_external_id хранит только ПОСЛЕДНИЙ charge Id: поздний, `test_failed_and_expired_charge_statuses_mark_past_due` — Словарь провального списания не ограничен CANCELED: разовые платежи, `test_create_sbp_subscription_rejects_zero_price` — Нулевая цена отклоняется наравне с отсутствующей: подписка Platega на, `test_create_sbp_short_circuit_reenforces_autopay_off` — Идемпотентный повтор create при живой записи: если между вызовами юзер, `test_sbp_purchase_creates_expired_stub_for_new_tariff` — Нет подписки этого тарифа → создаётся EXPIRED-заготовка (без доступа),, `test_sbp_purchase_binds_to_existing_expired_subscription` — Есть истёкшая подписка тарифа → привязка на неё, заготовка не создаётся., `test_sbp_purchase_refuses_trial_disabled_and_foreign_tariff` — Отказы: триал (конверсию делает только balance-покупка), disabled/pending, `test_sbp_purchase_gate_off_raises`, `test_concurrent_enable_race_returns_winner_and_cancels_orphan` — Гонка конкурентного enable: оба прошли идемпотентную проверку, второй, `test_replay_missed_charges_extends_and_advances_counters` — Remote chargesSuccess > локального = потерянные коллбеки: подписка, `test_replay_waits_out_fresh_charge_window` — lastChargeAt свежее 2 часов — настоящий коллбек ещё может доехать, `test_replay_noop_without_metrics_or_deficit`, `test_process_callback_deactivates_old_alive_subscription` — При привязке гостевой покупки к существующей подписке пользователя,, `test_process_callback_balance_topup_recurrent` — Рекуррентная подписка Platega для пополнения баланса (subscription_id is None, user_id set):, `test_camel_case_charge_extends_subscription` — Списание в camelCase (реальная форма Platega) продлевает подписку., `test_camel_case_charge_replay_is_idempotent` — Ретрай доставки того же списания не продлевает подписку дважды., `test_lowercase_confirmed_status_extends_subscription` — Регистр статуса тоже не должен решать судьбу продления., `test_confirmed_charge_returns_a_zeroed_tariff_subscription_to_the_tariff_limit` — Продление Platega идёт мимо extend_subscription — условия тарифа обязаны примениться и здесь.
 - `tests/services/test_platega_subscription_crud.py` — Python-модуль
   Классы: нет
   Функции: `test_model_table_and_columns`, `test_create_and_fetch_round_trip` — create → get_by_platega_id / get_active_by_subscription → update → CANCELLED больше не активна.

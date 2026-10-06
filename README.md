@@ -163,6 +163,7 @@ Bedolaga поддерживает полный кросс-канальный ж�
 | 💳 | **Kassa AI** | СБП, карты, SberPay | RUB |
 | 💳 | **PayPalych (Pal24)** | Карты, СБП | RUB |
 | 🤝 | **[Platega](https://t.me/ArstanPlatega)** 🔸 | Карты, СБП, крипто | RUB |
+| 💳 | **PayPёar (PayPear)** | Карты, СБП | RUB |
 | 💳 | **WATA** | СБП, Карты | RUB |
 | 💳 | **MulenPay** | Карты | RUB |
 | 💳 | **RioPay** | Карты | RUB |

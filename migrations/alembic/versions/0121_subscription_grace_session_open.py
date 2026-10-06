@@ -1,7 +1,7 @@
 """признак открытой грейс-сессии на подписке
 
-Revision ID: 0121
-Revises: 0120
+Revision ID: slig_0121_grace
+Revises: 0121
 Create Date: 2026-09-15
 
 Пока грейс открыт, в панели стоит его оверлей: ACTIVE до конца грейса, сквад
@@ -23,8 +23,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = '0121'
-down_revision: Union[str, None] = '0120'
+revision: str = 'slig_0121_grace'
+down_revision: Union[str, None] = '0121'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

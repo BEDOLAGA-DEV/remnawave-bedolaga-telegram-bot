@@ -18,6 +18,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if 'legal_consents' in inspector.get_table_names():
+        return
     op.create_table(
         'legal_consents',
         sa.Column('id', sa.Integer(), nullable=False),
@@ -36,6 +40,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if 'legal_consents' not in inspector.get_table_names():
+        return
     op.drop_index('ix_legal_consents_user_document', table_name='legal_consents')
     op.drop_index('ix_legal_consents_id', table_name='legal_consents')
     op.drop_table('legal_consents')

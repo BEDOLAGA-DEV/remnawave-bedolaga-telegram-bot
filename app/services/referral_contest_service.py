@@ -85,101 +85,120 @@ class ReferralContestService:
 
         async with AsyncSessionLocal() as db:
             contests = await get_contests_for_summaries(db)
-            now_utc = datetime.now(UTC)
+            contest_ids = [contest.id for contest in contests]
 
-            for contest in contests:
-                try:
-                    await self._maybe_send_daily_summary(db, contest, now_utc)
-                    await self._maybe_send_final_summary(db, contest, now_utc)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    logger.error('Ошибка обработки конкурса', contest_id=contest.id, title=contest.title, exc=exc)
+        now_utc = datetime.now(UTC)
+        for contest_id in contest_ids:
+            try:
+                await self._maybe_send_daily_summary(contest_id, now_utc)
+                await self._maybe_send_final_summary(contest_id, now_utc)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error('Ошибка обработки конкурса', contest_id=contest_id, exc=exc)
 
     async def _maybe_send_daily_summary(
         self,
-        db: AsyncSession,
-        contest: ReferralContest,
+        contest_id: int,
         now_utc: datetime,
     ) -> None:
-        tz = self._get_timezone(contest)
-        now_local = now_utc.replace(tzinfo=UTC).astimezone(tz)
-        start_local = self._to_local(contest.start_at, tz)
-        end_local = self._to_local(contest.end_at, tz)
+        summaries_to_send: list[tuple[date, datetime]] = []
 
-        if now_local.date() < start_local.date() or now_local.date() > end_local.date():
-            return
+        async with AsyncSessionLocal() as db:
+            contest = await db.get(ReferralContest, contest_id)
+            if contest is None:
+                return
 
-        summary_times = self._get_summary_times(contest)
-        for summary_time in summary_times:
-            summary_dt = datetime.combine(now_local.date(), summary_time, tzinfo=tz)
-            summary_dt_utc = summary_dt.astimezone(UTC)
+            tz = self._get_timezone(contest)
+            now_local = now_utc.replace(tzinfo=UTC).astimezone(tz)
+            start_local = self._to_local(contest.start_at, tz)
+            end_local = self._to_local(contest.end_at, tz)
 
-            if now_utc < summary_dt_utc:
-                continue
-            last_sent = contest.last_daily_summary_at
-            if last_sent and last_sent >= summary_dt_utc:
-                continue
+            if now_local.date() < start_local.date() or now_local.date() > end_local.date():
+                return
 
+            summary_times = self._get_summary_times(contest)
+            for summary_time in summary_times:
+                summary_dt = datetime.combine(now_local.date(), summary_time, tzinfo=tz)
+                summary_dt_utc = summary_dt.astimezone(UTC)
+
+                if now_utc < summary_dt_utc:
+                    continue
+                last_sent = contest.last_daily_summary_at
+                if last_sent and last_sent >= summary_dt_utc:
+                    continue
+
+                summaries_to_send.append((now_local.date(), summary_dt_utc))
+
+        for target_date, summary_dt_utc in summaries_to_send:
             await self._send_summary(
-                db,
-                contest,
+                contest_id,
                 now_utc,
-                now_local.date(),
+                target_date,
                 is_final=False,
                 summary_dt_utc=summary_dt_utc,
             )
 
     async def _maybe_send_final_summary(
         self,
-        db: AsyncSession,
-        contest: ReferralContest,
+        contest_id: int,
         now_utc: datetime,
     ) -> None:
-        if contest.final_summary_sent:
-            return
+        target_date: date | None = None
 
-        tz = self._get_timezone(contest)
-        end_local = self._to_local(contest.end_at, tz)
-        summary_times = self._get_summary_times(contest)
-        summary_time = summary_times[-1] if summary_times else time(hour=12, minute=0)
-        summary_dt = datetime.combine(end_local.date(), summary_time, tzinfo=tz)
-        summary_dt_utc = summary_dt.astimezone(UTC)
+        async with AsyncSessionLocal() as db:
+            contest = await db.get(ReferralContest, contest_id)
+            if contest is None or contest.final_summary_sent:
+                return
 
-        if now_utc < contest.end_at:
-            return
+            tz = self._get_timezone(contest)
+            end_local = self._to_local(contest.end_at, tz)
+            summary_times = self._get_summary_times(contest)
+            summary_time = summary_times[-1] if summary_times else time(hour=12, minute=0)
+            summary_dt = datetime.combine(end_local.date(), summary_time, tzinfo=tz)
+            summary_dt_utc = summary_dt.astimezone(UTC)
 
-        if now_utc < summary_dt_utc:
-            return
+            if now_utc < contest.end_at:
+                return
 
-        await self._send_summary(db, contest, now_utc, end_local.date(), is_final=True)
+            if now_utc < summary_dt_utc:
+                return
+
+            target_date = end_local.date()
+
+        if target_date is not None:
+            await self._send_summary(contest_id, now_utc, target_date, is_final=True)
 
     async def _send_summary(
         self,
-        db: AsyncSession,
-        contest: ReferralContest,
+        contest_id: int,
         now_utc: datetime,
         target_date: date,
         *,
         is_final: bool,
         summary_dt_utc: datetime | None = None,
     ) -> None:
-        tz = self._get_timezone(contest)
-        day_start_local = datetime.combine(target_date, time.min, tzinfo=tz)
-        day_end_local = day_start_local + timedelta(days=1)
-        day_start_utc = day_start_local.astimezone(UTC)
-        day_end_utc = day_end_local.astimezone(UTC)
+        async with AsyncSessionLocal() as db:
+            contest = await db.get(ReferralContest, contest_id)
+            if contest is None:
+                return
 
-        leaderboard = await get_contest_leaderboard_with_virtual(db, contest.id)
-        virtual_participants = await list_virtual_participants(db, contest.id)
-        virtual_count = sum(vp.referral_count for vp in virtual_participants)
-        total_events = await get_contest_events_count(db, contest.id) + virtual_count
-        today_events = await get_contest_events_count(
-            db,
-            contest.id,
-            start=day_start_utc,
-            end=day_end_utc,
-        )
+            tz = self._get_timezone(contest)
+            day_start_local = datetime.combine(target_date, time.min, tzinfo=tz)
+            day_end_local = day_start_local + timedelta(days=1)
+            day_start_utc = day_start_local.astimezone(UTC)
+            day_end_utc = day_end_local.astimezone(UTC)
+
+            leaderboard = await get_contest_leaderboard_with_virtual(db, contest.id)
+            virtual_participants = await list_virtual_participants(db, contest.id)
+            virtual_count = sum(vp.referral_count for vp in virtual_participants)
+            total_events = await get_contest_events_count(db, contest.id) + virtual_count
+            today_events = await get_contest_events_count(
+                db,
+                contest.id,
+                start=day_start_utc,
+                end=day_end_utc,
+            )
 
         await self._notify_admins(
             contest=contest,
@@ -202,10 +221,15 @@ class ReferralContestService:
         if not leaderboard:
             logger.info('Конкурс: пока нет участников', contest_id=contest.id)
 
-        if is_final:
-            await mark_final_summary_sent(db, contest)
-        else:
-            await mark_daily_summary_sent(db, contest, target_date, summary_dt_utc)
+        async with AsyncSessionLocal() as mark_db:
+            contest_ref = await mark_db.get(ReferralContest, contest_id)
+            if contest_ref is None:
+                return
+            if is_final:
+                await mark_final_summary_sent(mark_db, contest_ref)
+            else:
+                await mark_daily_summary_sent(mark_db, contest_ref, target_date, summary_dt_utc)
+            await mark_db.commit()
 
     async def _notify_participants(
         self,

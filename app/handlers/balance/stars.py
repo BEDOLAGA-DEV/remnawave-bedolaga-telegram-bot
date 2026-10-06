@@ -7,6 +7,10 @@ from aiogram.fsm.context import FSMContext
 from app.config import settings
 from app.database.models import User
 from app.external.telegram_stars import TelegramStarsService
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
@@ -32,7 +36,7 @@ async def start_stars_payment(callback: types.CallbackQuery, db_user: User, stat
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -42,11 +46,16 @@ async def start_stars_payment(callback: types.CallbackQuery, db_user: User, stat
         await callback.answer()
         return
 
-    message_text = texts.TOP_UP_AMOUNT
+    message_text = (
+        '<tg-emoji emoji-id="4983746717313664194">⭐️</tg-emoji> Пополнение через Telegram Stars\n\n'
+        'Введите сумму пополнения от 10 до 10 000 ₽:\n'
+        '<tg-emoji emoji-id="5400071306202867643">⚡️</tg-emoji>Мгновенное зачисление\n'
+        '<tg-emoji emoji-id="5400163201323130799">💯</tg-emoji>Безопасная оплата'
+    )
 
     keyboard = await get_topup_amount_keyboard('stars', db_user.language, back_callback='back_to_menu')
 
-    await callback.message.edit_text(message_text, reply_markup=keyboard)
+    await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
     await state.update_data(
         stars_prompt_message_id=callback.message.message_id,
@@ -69,7 +78,7 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -88,22 +97,20 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
 
     try:
         amount_rubles = amount_kopeks / 100
+        if amount_rubles < 10:
+            await message.answer(
+                'Минимальная сумма пополнения: 10 ₽',
+                reply_markup=get_back_keyboard(db_user.language),
+            )
+            return
+        if amount_rubles > 10000:
+            await message.answer(
+                'Максимальная сумма пополнения: 10 000 ₽',
+                reply_markup=get_back_keyboard(db_user.language),
+            )
+            return
+
         stars_amount = TelegramStarsService.calculate_stars_from_rubles(amount_rubles)
-        stars_rate = settings.get_stars_rate()
-
-        payment_service = PaymentService(message.bot)
-        invoice_link = await payment_service.create_stars_invoice(
-            amount_kopeks=amount_kopeks,
-            description=f'Пополнение баланса на {texts.format_price(amount_kopeks)}',
-            payload=f'balance_{db_user.id}_{amount_kopeks}',
-        )
-
-        keyboard = types.InlineKeyboardMarkup(
-            inline_keyboard=[
-                [types.InlineKeyboardButton(text='⭐ Оплатить', url=invoice_link)],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
-            ]
-        )
 
         state_data = await state.get_data()
 
@@ -121,14 +128,19 @@ async def process_stars_payment_amount(message: types.Message, db_user: User, am
             except Exception as delete_error:  # pragma: no cover - диагностический лог
                 logger.warning('Не удалось удалить сообщение с запросом суммы Stars', delete_error=delete_error)
 
-        invoice_message = await message.answer(
-            f'⭐ <b>Оплата через Telegram Stars</b>\n\n'
-            f'💰 Сумма: {texts.format_price(amount_kopeks)}\n'
-            f'⭐ К оплате: {stars_amount} звезд\n'
-            f'📊 Курс: {stars_rate}₽ за звезду\n\n'
-            f'Нажмите кнопку ниже для оплаты:',
-            reply_markup=keyboard,
-            parse_mode='HTML',
+        invoice_message = await message.bot.send_invoice(
+            chat_id=message.chat.id,
+            title='⭐ Пополнение баланса',
+            description=f'Пополнение баланса на {texts.format_price(amount_kopeks)} ({stars_amount} ⭐)',
+            payload=f'balance_{db_user.id}_{amount_kopeks}',
+            provider_token='',
+            currency='XTR',
+            prices=[types.LabeledPrice(label='Пополнение баланса', amount=stars_amount)],
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [build_back_button(texts, 'balance_topup')],
+                ]
+            ),
         )
 
         await state.update_data(

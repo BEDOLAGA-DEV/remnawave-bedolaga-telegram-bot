@@ -14,7 +14,7 @@ from app.utils.promo_offer import get_user_active_promo_discount_percent
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.database.models import Subscription, Tariff, User
+    from app.database.models import PromoGroup, Subscription, Tariff, User
 
 
 logger = structlog.get_logger(__name__)
@@ -148,6 +148,13 @@ class PricingEngine:
             pg = user.get_primary_promo_group()
             if pg is not None:
                 return pg
+        from sqlalchemy import inspect
+        try:
+            state = inspect(user)
+            if 'promo_group' in state.unloaded:
+                return None
+        except Exception:
+            pass
         return getattr(user, 'promo_group', None)
 
     @staticmethod

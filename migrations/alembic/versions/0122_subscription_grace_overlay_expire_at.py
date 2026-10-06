@@ -1,7 +1,7 @@
 """дата оверлея грейса на подписке
 
 Revision ID: 0122
-Revises: 0121
+Revises: slig_0121_grace
 Create Date: 2026-09-15
 
 Пока грейс открыт, в панели стоит его оверлей: ACTIVE до «конца грейса», сквад
@@ -26,7 +26,7 @@ from alembic import op
 
 
 revision: str = '0122'
-down_revision: Union[str, None] = '0121'
+down_revision: Union[str, None] = 'slig_0121_grace'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

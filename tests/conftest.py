@@ -32,7 +32,10 @@ os.environ.setdefault('BACKUP_LOCATION', _tempfile.mkdtemp(prefix='bedolaga_test
 
 # Создаём заглушки для драйверов, которых может не быть в окружении тестов.
 sys.modules.setdefault('asyncpg', types.ModuleType('asyncpg'))
-sys.modules.setdefault('aiosqlite', types.ModuleType('aiosqlite'))
+try:
+    import aiosqlite
+except ImportError:
+    sys.modules.setdefault('aiosqlite', types.ModuleType('aiosqlite'))
 
 # Эмуляция redis.asyncio, чтобы модуль кеша мог импортироваться.
 if 'redis.asyncio' not in sys.modules:

@@ -1595,7 +1595,6 @@ async def activate_trial(
             # of holding the cabinet response open after the trial is committed.
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
                 panel_user = await subscription_service.create_remnawave_user(db, subscription)
-                await db.refresh(subscription)
     except Exception as e:
         logger.error('Failed to create RemnaWave user for trial', error=e)
 

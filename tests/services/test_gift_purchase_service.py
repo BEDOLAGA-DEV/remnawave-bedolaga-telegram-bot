@@ -188,6 +188,7 @@ async def test_list_gift_offers_applies_sender_discounts_and_clamps(monkeypatch)
             telegram_id=123456,
             balance_kopeks=50000,
             promo_group_id=promo_group.id,
+            promo_group=promo_group,
             promo_offer_discount_percent=50,  # 50% personal promo offer
         )
         tariff = Tariff(
