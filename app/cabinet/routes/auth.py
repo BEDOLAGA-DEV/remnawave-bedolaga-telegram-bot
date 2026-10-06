@@ -459,6 +459,8 @@ async def _process_campaign_bonus(
             balance_kopeks=result.balance_kopeks,
             subscription_days=result.subscription_days,
             tariff_name=result.tariff_name,
+            discount_percent=result.discount_percent,
+            discount_expires_at=result.discount_expires_at,
         )
     finally:
         # Clear Redis pending_campaign whenever we consumed it. Done regardless

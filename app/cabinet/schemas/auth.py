@@ -198,6 +198,8 @@ class CampaignBonusInfo(BaseModel):
     balance_kopeks: int = 0
     subscription_days: int | None = None
     tariff_name: str | None = None
+    discount_percent: int | None = None
+    discount_expires_at: datetime | None = None
 
 
 class AuthResponse(BaseModel):

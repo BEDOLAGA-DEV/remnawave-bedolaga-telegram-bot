@@ -7,9 +7,12 @@ from pydantic import BaseModel, Field, validator
 
 
 CampaignBonusType = Annotated[
-    Literal['balance', 'subscription', 'none', 'tariff'],
+    Literal['balance', 'subscription', 'none', 'tariff', 'discount'],
     Field(
-        description='Тип бонуса кампании: balance (баланс), subscription (пробная подписка), none (без награды), tariff (тариф)'
+        description=(
+            'Тип бонуса кампании: balance (баланс), subscription (пробная подписка), none (без награды), '
+            'tariff (тариф), discount (персональная скидка на покупку)'
+        )
     ),
 ]
 
@@ -26,6 +29,11 @@ class CampaignBase(BaseModel):
     # Поля для типа "tariff"
     tariff_id: int | None = Field(None, ge=1, description='ID тарифа для выдачи')
     tariff_duration_days: int | None = Field(None, ge=1, description='Длительность тарифа в днях')
+    # Поля для типа "discount"
+    discount_percent: int | None = Field(None, ge=1, le=100, description='Процент персональной скидки')
+    discount_duration_hours: int | None = Field(
+        None, ge=0, description='Срок действия скидки в часах, 0 — до первой покупки'
+    )
 
     @validator('name', 'start_parameter')
     def strip_strings(cls, value: str) -> str:
@@ -62,6 +70,13 @@ class CampaignCreateRequest(CampaignBase):
                 raise ValueError('tariff_duration_days must be positive for tariff bonus')
         return value
 
+    @validator('discount_percent', always=True)
+    @classmethod
+    def validate_discount_percent(cls, value: int | None, values: dict):
+        if values.get('bonus_type') == 'discount' and not value:
+            raise ValueError('discount_percent must be set for discount bonus')
+        return value
+
 
 class CampaignResponse(BaseModel):
     id: int
@@ -78,6 +93,9 @@ class CampaignResponse(BaseModel):
     tariff_id: int | None = None
     tariff_duration_days: int | None = None
     tariff_name: str | None = None  # Для отображения названия тарифа
+    # Поля для типа "discount"
+    discount_percent: int | None = None
+    discount_duration_hours: int | None = None
     is_active: bool
     created_by: int | None = None
     created_at: datetime
@@ -104,6 +122,9 @@ class CampaignUpdateRequest(BaseModel):
     # Поля для типа "tariff"
     tariff_id: int | None = Field(None, ge=1)
     tariff_duration_days: int | None = Field(None, ge=1)
+    # Поля для типа "discount"
+    discount_percent: int | None = Field(None, ge=1, le=100)
+    discount_duration_hours: int | None = Field(None, ge=0)
     is_active: bool | None = None
 
     @validator('name', 'start_parameter', pre=True)

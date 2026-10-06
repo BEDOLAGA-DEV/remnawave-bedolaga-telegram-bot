@@ -389,6 +389,11 @@ class AdminNotificationService:
         if campaign.is_none_bonus:
             return ['🔗 Только отслеживание']
 
+        if campaign.is_discount_bonus:
+            hours = campaign.discount_duration_hours or 0
+            term = f'{hours} ч.' if hours > 0 else 'до первой покупки'
+            return [f'🏷️ Скидка: {campaign.discount_percent or 0}% ({term})']
+
         return ['ℹ️ Бонусы не предусмотрены']
 
     async def send_trial_activation_notification(

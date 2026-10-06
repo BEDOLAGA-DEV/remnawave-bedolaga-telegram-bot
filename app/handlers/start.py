@@ -87,6 +87,7 @@ from app.utils.gift_links import InvalidGiftTokenError, parse_gift_claim_input
 from app.utils.long_messages import answer_long_text, edit_long_text, send_long_text
 from app.utils.rich_menu import try_answer_rich_main_menu, try_send_rich_main_menu
 from app.utils.telegram_html import html_to_telegram
+from app.utils.timezone import format_local_datetime
 from app.utils.user_utils import generate_unique_referral_code
 
 
@@ -988,6 +989,25 @@ async def _apply_campaign_bonus_if_needed(
             days=result.tariff_duration_days,
             traffic=traffic_text,
             devices=result.subscription_device_limit,
+        )
+
+    if result.bonus_type == 'discount':
+        # Скидку не выдали: у человека уже была не меньше — сообщать нечего
+        if not result.discount_percent:
+            return None
+        if result.discount_expires_at:
+            validity = texts.t('CAMPAIGN_BONUS_DISCOUNT_UNTIL', 'Действует до {expires_at}.').format(
+                expires_at=format_local_datetime(result.discount_expires_at, '%d.%m.%Y %H:%M'),
+            )
+        else:
+            validity = texts.t('CAMPAIGN_BONUS_DISCOUNT_FIRST_PURCHASE', 'Действует до первой покупки.')
+        return texts.t(
+            'CAMPAIGN_BONUS_DISCOUNT',
+            '🏷️ По кампании «{name}» вам доступна скидка {percent}% на покупку!\n{validity}',
+        ).format(
+            name=html.escape(campaign.name),
+            percent=result.discount_percent,
+            validity=validity,
         )
 
     return None

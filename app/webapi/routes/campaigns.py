@@ -53,6 +53,8 @@ def _serialize_campaign(campaign) -> CampaignResponse:
         tariff_id=campaign.tariff_id,
         tariff_duration_days=campaign.tariff_duration_days,
         tariff_name=tariff_name,
+        discount_percent=campaign.discount_percent,
+        discount_duration_hours=campaign.discount_duration_hours,
         is_active=campaign.is_active,
         created_by=campaign.created_by,
         created_at=campaign.created_at,
@@ -88,6 +90,8 @@ async def create_campaign_endpoint(
             subscription_squads=payload.subscription_squads,
             tariff_id=payload.tariff_id,
             tariff_duration_days=payload.tariff_duration_days,
+            discount_percent=payload.discount_percent,
+            discount_duration_hours=payload.discount_duration_hours,
             is_active=payload.is_active,
         )
     except IntegrityError as exc:  # duplicate start_parameter

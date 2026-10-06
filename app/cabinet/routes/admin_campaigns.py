@@ -244,6 +244,8 @@ async def get_campaign(
         tariff_id=campaign.tariff_id,
         tariff_duration_days=campaign.tariff_duration_days,
         tariff=tariff_info,
+        discount_percent=campaign.discount_percent,
+        discount_duration_hours=campaign.discount_duration_hours,
         partner_user_id=campaign.partner_user_id,
         partner_name=_get_partner_name(campaign),
         created_by=campaign.created_by,
@@ -308,6 +310,7 @@ async def get_campaign_stats(
             balance_issued_kopeks=stats['balance_issued'],
             balance_issued_rubles=_safe_div(stats['balance_issued']),
             subscription_issued=stats['subscription_issued'],
+            discount_issued=stats['discount_issued'],
             last_registration=stats['last_registration'],
             total_revenue_kopeks=stats['total_revenue_kopeks'],
             total_revenue_rubles=_safe_div(stats['total_revenue_kopeks']),
@@ -399,6 +402,7 @@ async def get_campaign_registrations(
                 subscription_duration_days=reg.subscription_duration_days,
                 tariff_id=reg.tariff_id,
                 tariff_duration_days=reg.tariff_duration_days,
+                discount_percent=reg.discount_percent,
                 created_at=reg.created_at,
                 user_balance_kopeks=user.balance_kopeks or 0,
                 has_subscription=user.id in active_sub_user_ids,
@@ -444,6 +448,12 @@ async def create_new_campaign(
                 detail='Tariff not found',
             )
 
+    if request.bonus_type == 'discount' and not request.discount_percent:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Discount percent is required for discount bonus type',
+        )
+
     # Validate partner exists and is approved
     if request.partner_user_id is not None:
         partner_user = await db.get(User, request.partner_user_id)
@@ -466,6 +476,8 @@ async def create_new_campaign(
         subscription_squads=request.subscription_squads,
         tariff_id=request.tariff_id,
         tariff_duration_days=request.tariff_duration_days,
+        discount_percent=request.discount_percent,
+        discount_duration_hours=request.discount_duration_hours,
         is_active=request.is_active,
         partner_user_id=request.partner_user_id,
     )
@@ -511,6 +523,16 @@ async def update_existing_campaign(
                     detail='Tariff not found',
                 )
 
+    next_bonus_type = request.bonus_type if 'bonus_type' in request.model_fields_set else campaign.bonus_type
+    next_discount = (
+        request.discount_percent if 'discount_percent' in request.model_fields_set else campaign.discount_percent
+    )
+    if next_bonus_type == 'discount' and not next_discount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Discount percent is required for discount bonus type',
+        )
+
     # Build updates using model_fields_set to distinguish "not sent" from "sent as None"
     updates = {}
     if 'name' in request.model_fields_set:
@@ -535,6 +557,10 @@ async def update_existing_campaign(
         updates['tariff_id'] = request.tariff_id
     if 'tariff_duration_days' in request.model_fields_set:
         updates['tariff_duration_days'] = request.tariff_duration_days
+    if 'discount_percent' in request.model_fields_set:
+        updates['discount_percent'] = request.discount_percent
+    if 'discount_duration_hours' in request.model_fields_set:
+        updates['discount_duration_hours'] = request.discount_duration_hours
 
     # Handle partner_user_id separately (allows explicit None to unassign)
     partner_changed = False
