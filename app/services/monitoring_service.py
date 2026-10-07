@@ -443,6 +443,11 @@ class MonitoringService:
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
+                # Проверка каналов идёт минутами (getChatMember по каждой подписке)
+                # в собственных сессиях. Закрываем транзакцию этой сессии, иначе она
+                # простаивает дольше idle_in_transaction_session_timeout, PostgreSQL
+                # рвёт соединение, и все следующие шаги падают с «connection is closed».
+                await db.commit()
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_traffic_warnings(db)
