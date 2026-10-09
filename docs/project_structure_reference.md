@@ -3193,7 +3193,7 @@
   Функции: `base_discount_settings`, `test_base_promo_discount_applies_to_all_categories`, `test_specific_category_discount_overrides_base`
 - `tests/test_readme_payment_providers.py` — Python-модуль
   Классы: нет
-  Функции: `test_every_gateway_is_listed_in_readme`, `test_table_has_no_rows_for_unknown_providers` — Каждая строка таблицы указывает на существующий шлюз., `test_claimed_provider_count_matches_reality` — Число провайдеров в тексте не должно отставать от кода.
+  Функции: `test_table_has_no_rows_for_unknown_providers` — Каждая строка таблицы указывает на существующий шлюз.
 - `tests/test_redis_client_contract.py` — Python-модуль
   Классы: нет
   Функции: `redis_client_module`, `test_every_injected_kwarg_is_accepted_by_async_connection` — Каждый добавленный аргумент обязан приниматься асинхронным соединением., `test_connection_is_actually_creatable` — Соединение создаётся (не подключается) — ровно там падал TypeError., `test_connect_is_retried` — У подключения есть повторы: разовая заминка на старте не должна быть ошибкой., `test_transient_connect_failure_is_retried` — Первая попытка упала по таймауту — вторая доводит подключение до конца., `test_pool_is_blocking_and_sized_from_settings`, `test_busy_pool_waits_for_a_free_connection_instead_of_failing`
@@ -3825,6 +3825,9 @@
 - `tests/database/test_renewal_survives_stale_panel_snapshot_postgres.py` — Python-модуль
   Классы: нет
   Функции: `single_tariff_mode_quiet`, `test_paid_renewal_is_not_undone_by_a_stale_panel_snapshot`, `test_autopay_does_not_charge_again_after_a_stale_panel_snapshot`
+- `tests/database/test_sales_stats_classification_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_tariff_device_word_is_not_classified_as_addon`, `test_all_time_renewals_exclude_first_payment`
 - `tests/database/test_tabpay_payments_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match` — Integer вместо Boolean в рукописном DDL иначе не заметить., `test_order_id_is_unique` — Уникальность orderId не даёт двум записям претендовать на один вебхук., `test_downgrade_removes_the_table` — Откат обязан снимать таблицу, иначе повторный upgrade упрётся в неё.

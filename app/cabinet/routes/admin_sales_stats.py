@@ -790,9 +790,22 @@ async def get_renewals_stats(
         not_addon = ~addon_description_clause(Transaction.description)
 
         if is_all_time:
-            # For "all time": renewals = users with more than 1 real subscription payment
-            repeat_users_subquery = (
-                select(Transaction.user_id)
+            # For "all time", number only the second and subsequent real
+            # subscription payments of each user. Selecting every payment made
+            # by a repeat payer also counted that user's first purchase as a
+            # renewal.
+            ranked_payments = (
+                select(
+                    Transaction.user_id.label('user_id'),
+                    Transaction.created_at.label('created_at'),
+                    Transaction.amount_kopeks.label('amount_kopeks'),
+                    func.row_number()
+                    .over(
+                        partition_by=Transaction.user_id,
+                        order_by=(Transaction.created_at, Transaction.id),
+                    )
+                    .label('payment_number'),
+                )
                 .where(
                     and_(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
@@ -800,23 +813,23 @@ async def get_renewals_stats(
                         not_addon,
                     )
                 )
-                .group_by(Transaction.user_id)
-                .having(func.count(Transaction.id) > 1)
+                .subquery()
             )
-            existing_users_subquery = repeat_users_subquery
+            all_time_renewals = (
+                select(
+                    ranked_payments.c.user_id,
+                    ranked_payments.c.created_at,
+                    ranked_payments.c.amount_kopeks,
+                )
+                .where(ranked_payments.c.payment_number > 1)
+                .subquery()
+            )
 
             current_result = await db.execute(
                 select(
-                    func.count(Transaction.id).label('count'),
-                    func.coalesce(func.sum(func.abs(Transaction.amount_kopeks)), 0).label('revenue'),
-                ).where(
-                    and_(
-                        Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-                        Transaction.is_completed == True,
-                        not_addon,
-                        Transaction.user_id.in_(repeat_users_subquery),
-                    )
-                )
+                    func.count().label('count'),
+                    func.coalesce(func.sum(func.abs(all_time_renewals.c.amount_kopeks)), 0).label('revenue'),
+                ).select_from(all_time_renewals)
             )
             current = current_result.one()
             current_count = current.count
@@ -835,6 +848,7 @@ async def get_renewals_stats(
                     and_(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
+                        not_addon,
                         Transaction.created_at < period_start,
                     )
                 )
@@ -866,6 +880,7 @@ async def get_renewals_stats(
                     and_(
                         Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
                         Transaction.is_completed == True,
+                        not_addon,
                         Transaction.created_at < prev_start,
                     )
                 )
@@ -916,24 +931,37 @@ async def get_renewals_stats(
         total_sub_payments = total_sub_payments_result.scalar() or 0
         renewal_rate = round((current_count / total_sub_payments * 100), 1) if total_sub_payments > 0 else 0.0
 
-        daily_query = await db.execute(
-            select(
-                local_date_expr(Transaction.created_at, db).label('date'),
-                func.count(Transaction.id).label('count'),
-            )
-            .where(
-                and_(
-                    Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
-                    Transaction.is_completed == True,
-                    not_addon,
-                    Transaction.created_at >= period_start,
-                    Transaction.created_at <= period_end,
-                    Transaction.user_id.in_(existing_users_subquery),
+        if is_all_time:
+            renewal_date = local_date_expr(all_time_renewals.c.created_at, db)
+            daily_query = await db.execute(
+                select(
+                    renewal_date.label('date'),
+                    func.count().label('count'),
                 )
+                .select_from(all_time_renewals)
+                .group_by(renewal_date)
+                .order_by(renewal_date)
             )
-            .group_by(local_date_expr(Transaction.created_at, db))
-            .order_by(local_date_expr(Transaction.created_at, db))
-        )
+        else:
+            renewal_date = local_date_expr(Transaction.created_at, db)
+            daily_query = await db.execute(
+                select(
+                    renewal_date.label('date'),
+                    func.count(Transaction.id).label('count'),
+                )
+                .where(
+                    and_(
+                        Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        Transaction.is_completed == True,
+                        not_addon,
+                        Transaction.created_at >= period_start,
+                        Transaction.created_at <= period_end,
+                        Transaction.user_id.in_(existing_users_subquery),
+                    )
+                )
+                .group_by(renewal_date)
+                .order_by(renewal_date)
+            )
         daily = [
             DailyRenewalItem(
                 date=row.date.isoformat() if hasattr(row.date, 'isoformat') else str(row.date),
