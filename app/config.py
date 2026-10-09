@@ -985,7 +985,7 @@ class Settings(BaseSettings):
 
     # Overpay (pay.overpay.io)
     OVERPAY_ENABLED: bool = False
-    OVERPAY_API_URL: str = 'https://api.overpay.io'
+    OVERPAY_API_URL: str = 'https://api-pay.overpay.io'
     OVERPAY_USERNAME: str | None = None
     OVERPAY_PASSWORD: str | None = None
     OVERPAY_PROJECT_ID: str | None = None
