@@ -135,7 +135,9 @@ def _apply_search_filter(query, search: str):
     # кириллица не сворачивается, и «поз» не находил «Позитив».
     # См. app/utils/text_search.py.
     conditions = contains_conditions(
-        (User.username, User.first_name, User.last_name, User.referral_code),
+        # Почта — единственное, что есть у клиентов, пришедших без Telegram:
+        # без неё внешние интеграции искали их перебором всех страниц.
+        (User.username, User.first_name, User.last_name, User.referral_code, User.email),
         search,
     )
 
