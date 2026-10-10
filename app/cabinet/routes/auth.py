@@ -1255,6 +1255,7 @@ async def register_email(
     Requires valid JWT token from Telegram authentication.
     Sends verification email to the provided address.
     If the email belongs to another active user, offers account merge.
+    If it belongs to a deleted account, the same emailed code releases it to the caller.
     """
     await require_email_auth_enabled(db)
     # Rate limit
@@ -1299,12 +1300,32 @@ async def register_email(
         )
     )
     existing_email_user = existing_result.scalar_one_or_none()
-    if existing_email_user:
-        if existing_email_user.id == user.id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='This email is already linked to your account',
+    if existing_email_user and existing_email_user.id == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='This email is already linked to your account',
+        )
+
+    # A DELETED account keeps its email (inactive-user cleanup only flips the status),
+    # and the unique index on users.email still covers it. Skipping it here used to
+    # fall through to the UPDATE below and fail with a 500 on every attempt. The
+    # address is released only after the caller proves control of the inbox — the
+    # same emailed code as for a live account — and then moves to the caller without
+    # a merge (see verify_email_merge). Until then the deleted row is left untouched.
+    deleted_email_user = None
+    if existing_email_user is None:
+        deleted_result = await db.execute(
+            select(User)
+            .where(
+                func.lower(User.email) == email_lower,
+                User.status == UserStatus.DELETED.value,
             )
+            .limit(1)
+        )
+        deleted_email_user = deleted_result.scalars().first()
+
+    conflict_user = existing_email_user or deleted_email_user
+    if conflict_user:
         # SECURITY — account-takeover prevention. Merging absorbs the existing
         # account (its subscription, balance, email) into the caller's account
         # and issues a session for the result. The OAuth and Telegram link flows
@@ -1321,7 +1342,13 @@ async def register_email(
                 detail='Email service is not configured; cannot verify the existing account',
             )
         merge_code = generate_email_change_code()
-        await store_email_merge_otp(user.id, existing_email_user.id, email_lower, merge_code)
+        await store_email_merge_otp(
+            user.id,
+            conflict_user.id,
+            email_lower,
+            merge_code,
+            password_hash=hash_password(request.password) if deleted_email_user else None,
+        )
         lang = user.language or 'ru'
         expire_minutes = settings.get_cabinet_email_change_code_expire_minutes()
         override = await get_rendered_override(
@@ -1349,8 +1376,11 @@ async def register_email(
         logger.info(
             'Email register conflict: merge confirmation code sent to existing account',
             current_user_id=user.id,
-            existing_user_id=existing_email_user.id,
+            existing_user_id=conflict_user.id,
+            existing_user_deleted=deleted_email_user is not None,
         )
+        # Same response for a live and a deleted holder: the caller must not be able
+        # to tell which one owns the address.
         return {
             'message': 'A confirmation code was sent to that email address.',
             'merge_required': True,
@@ -1361,6 +1391,16 @@ async def register_email(
     # Update user
     user.email = request.email
     user.password_hash = hash_password(request.password)
+    try:
+        # Two concurrent links of the same free address: the loser hits the unique
+        # index here and gets a readable 409 instead of a 500.
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='This email is already registered',
+        )
 
     if not settings.is_cabinet_email_verification_enabled():
         # Верификация отключена — сразу помечаем email как verified
@@ -1430,7 +1470,9 @@ async def verify_email_merge(
     Confirm an email account merge with the code mailed to the existing account.
 
     Proves the caller controls that account's inbox, then mints the merge token
-    (consumed at POST /cabinet/auth/merge/{token}).
+    (consumed at POST /cabinet/auth/merge/{token}). If that account is deleted,
+    there is nothing to merge: the email is linked to the caller right away and the
+    response carries ``email_linked: true`` instead of a token.
     """
     await require_email_auth_enabled(db)
     # Rate-limit like the other OTP-verify endpoints (IP + per-account); on the
@@ -1477,6 +1519,12 @@ async def verify_email_merge(
         )
 
     await clear_email_merge_otp(user.id)
+
+    if secondary.status == UserStatus.DELETED.value:
+        # Nothing to merge into a deleted account — the inbox owner just gets the
+        # address back on their current account.
+        return await _reclaim_email_from_deleted(db, user, pending_email, pending.get('password_hash'))
+
     merge_token = await create_merge_token(
         primary_user_id=user.id,
         secondary_user_id=secondary_user_id,
@@ -1492,6 +1540,85 @@ async def verify_email_merge(
         'message': 'Account merge confirmed',
         'merge_required': True,
         'merge_token': merge_token,
+    }
+
+
+async def _reclaim_email_from_deleted(
+    db: AsyncSession,
+    user: User,
+    email_lower: str,
+    password_hash: str | None,
+) -> dict:
+    """Move an email from DELETED accounts to ``user`` once the inbox code is confirmed.
+
+    The caller has just proven control of the inbox, so the address is linked as
+    verified right away, exactly as /email/verify would do. The deleted rows keep
+    everything else (history, OAuth ids) — only the address and its password leave.
+    """
+    holders_result = await db.execute(
+        select(User).where(
+            func.lower(User.email) == email_lower,
+            User.id != user.id,
+        )
+    )
+    holders = holders_result.scalars().all()
+    if any(holder.status != UserStatus.DELETED.value for holder in holders):
+        # Revived or re-registered while the code was in flight — that is a live
+        # account now and needs the regular merge.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='That account is no longer available to merge.',
+        )
+    if user.email and user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='You already have a verified email',
+        )
+
+    for holder in holders:
+        holder.email = None
+        holder.email_verified = False
+        holder.email_verified_at = None
+        holder.email_verification_source = None
+        holder.email_verification_token = None
+        holder.email_verification_expires = None
+        holder.password_hash = None
+
+    try:
+        # Free the unique index before the address lands on the caller.
+        await db.flush()
+        now = datetime.now(UTC)
+        user.email = email_lower
+        user.email_verified = True
+        user.email_verified_at = now
+        user.email_verification_source = 'cabinet'
+        user.email_verification_token = None
+        user.email_verification_expires = None
+        user.password_reset_token = None
+        user.password_reset_expires = None
+        if password_hash:
+            user.password_hash = password_hash
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='This email is already registered',
+        )
+
+    logger.info(
+        'Email reclaimed from deleted account after inbox code',
+        current_user_id=user.id,
+        released_from_user_ids=[holder.id for holder in holders],
+    )
+
+    await _sync_subscription_from_panel_by_email(db, user)
+
+    return {
+        'message': 'Email linked successfully',
+        'merge_required': False,
+        'email_linked': True,
+        'email': email_lower,
     }
 
 
