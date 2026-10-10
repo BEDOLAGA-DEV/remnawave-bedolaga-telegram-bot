@@ -89,7 +89,7 @@
   Функции: `create_bot` — Create a Bot instance with SOCKS5 proxy and/or custom Telegram API server.
 - `app/cabinet/`
 - `app/config.py` — Python-модуль
-  Классы: `Settings` (414 методов)
+  Классы: `Settings` (418 методов)
   Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
 - `app/database/`
 - `app/external/`
@@ -642,7 +642,7 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `CasheraPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `PayPearPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `LirPayPayment` (5 методов), `CasheraPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
   Функции: нет
 
 #### app/database/crud
@@ -719,6 +719,9 @@
 - `app/database/crud/lava_subscription.py` — Python-модуль
   Классы: нет
   Функции: `create_lava_subscription`, `get_lava_subscription_by_id`, `get_lava_subscription_by_id_for_update`, `get_lava_subscription_by_lava_id`, `get_lava_subscription_by_order_id` — Поиск по orderId — основной путь вебхука: списание приходит инвойсом., `get_active_lava_subscription_by_subscription`, `update_lava_subscription`, `list_lava_subscriptions_by_statuses`, `list_recently_cancelled_lava_subscriptions` — Недавно отменённые локально записи с remote-идентификатором.
+- `app/database/crud/lirpay.py` — Python-модуль
+  Классы: нет
+  Функции: `create_lirpay_payment` — Создаёт запись о платеже LirPay., `get_lirpay_payment_by_order_id` — Получает платёж по нашему order_id (= Idempotency-Key)., `get_lirpay_payment_by_invoice_id` — Получает платёж по public_id, выданному LirPay., `get_lirpay_payment_by_id` — Получает платёж по локальному ID., `get_lirpay_payment_by_id_for_update` — Получает платёж с блокировкой FOR UPDATE., `update_lirpay_payment_status` — Обновляет статус платежа., `get_pending_lirpay_payments` — Возвращает незавершённые платежи пользователя., `link_lirpay_payment_to_transaction` — Связывает платёж с транзакцией.
 - `app/database/crud/main_menu_button.py` — Python-модуль
   Классы: нет
   Функции: `count_main_menu_buttons`, `get_main_menu_buttons`, `get_main_menu_button_by_id`, `get_next_display_order`, `create_main_menu_button`, `update_main_menu_button`, `delete_main_menu_button`, `reorder_main_menu_buttons`
@@ -1187,6 +1190,9 @@
 - `app/handlers/balance/lava.py` — Python-модуль
   Классы: нет
   Функции: `process_lava_payment_amount` — Обрабатывает сумму для Lava., `start_lava_topup`, `start_lava_card_topup`, `start_lava_sbp_topup`
+- `app/handlers/balance/lirpay.py` — Python-модуль
+  Классы: нет
+  Функции: `process_lirpay_payment_amount` — Обрабатывает сумму, введённую пользователем для LirPay., `start_lirpay_topup` — Единая точка входа: одна кнопка «LirPay», способ — на странице оплаты.
 - `app/handlers/balance/main.py` — Python-модуль
   Классы: нет
   Функции: `route_payment_by_method` — Роутер платежей по методу оплаты., `show_balance_menu`, `show_balance_history`, `handle_balance_history_pagination`, `show_payment_methods`, `handle_payment_methods_unavailable`, `handle_successful_topup_with_cart`, `request_support_topup`, `process_topup_amount`, `handle_sbp_payment`, `handle_topup_amount_callback`, `register_balance_handlers`
@@ -1596,6 +1602,9 @@
 - `app/services/legal_consent_service.py` — Python-модуль
   Классы: `LegalConsentRequirement`
   Функции: `get_requirement` — Требование согласия для НОВОГО пользователя кабинета., `missing_documents` — Какие из обязательных документов пользователь не отметил., `record_consent` — Записать факт согласия. Сбой записи не должен ронять регистрацию.
+- `app/services/lirpay_service.py` — Python-модуль
+  Классы: `LirPayAPIError` (1 методов), `LirPayNetworkError`, `LirPayService` (21 методов)
+  Функции: `kopeks_to_amount` — Копейки → строка рублей с двумя знаками («129.00»)., `amount_to_kopeks` — Строка/число рублей из ответа LirPay → копейки, либо None.
 - `app/services/live_menu_service.py` — Python-модуль
   Классы: нет
   Функции: `live_menu_loop`, `refresh_live_menus` — Один проход. True — бот/панель/Telegram заняты или была ошибка: следующий проход реже.
@@ -2057,6 +2066,9 @@
 - `app/services/payment/lava.py` — Python-модуль
   Классы: `LavaPaymentMixin` (14 методов)
   Функции: `enable_lava_recurring` — Включить автопродление Lava. Возвращает {local_id, lava_subscription_id, redirect_url, status}., `purchase_tariff_with_lava_recurring` — Оформление подписки на тариф оплатой через автопродление Lava., `cancel_lava_recurring_for_subscription_safe` — Точка входа для путей удаления/отзыва подписки: отменяет активное, `get_lava_recurring_status` — Состояние активной привязки Lava для UI (бот/кабинет) либо None., `cancel_lava_recurring_by_local_id` — Отмена привязки по локальному id (кабинет/бот). Идемпотентна., `shift_lava_next_charge_after_manual_extension` — Сдвигает дату следующего списания Lava после РУЧНОГО продления подписки.
+- `app/services/payment/lirpay.py` — Python-модуль
+  Классы: `LirPayPaymentMixin` (5 методов)
+  Функции: нет
 - `app/services/payment/mulenpay.py` — Python-модуль
   Классы: `MulenPayPaymentMixin` (4 методов)
   Функции: нет
@@ -2109,14 +2121,14 @@
   Классы: нет
   Функции: нет
 - `app/services/reachability/batches.py` — Python-модуль
-  Классы: `BatchService` (3 методов), `BatchPreview`
-  Функции: `chunk_targets`, `estimate_batch_minutes` — Примерное время всей пачки: раунды по ``parallel`` чашек, раунд длится по числу симок., `batch_status_from_jobs` — None — пачка ещё идёт; иначе итог: отменена, не удалась целиком или завершена., `batch_cost_kopeks`, `batch_done_targets`, `preview_batch` — Цена и время всей пачки: превью каждой чашки (бесплатно, без троттла) и сумма., `create_batch` — Одна пачка и задача на каждую чашку; деньги проверяются до записи, драйвер стартует после коммита.
+  Классы: не разобран (SyntaxError)
+  Функции: не разобраны
 - `app/services/reachability/cores.py` — Python-модуль
   Классы: нет
   Функции: нет
 - `app/services/reachability/gate.py` — Python-модуль
-  Классы: `PaidCallGate` (3 методов)
-  Функции: нет
+  Классы: не разобран (SyntaxError)
+  Функции: не разобраны
 - `app/services/reachability/geo_catalog.py` — Python-модуль
   Классы: `GeoCatalogCache` (4 методов)
   Функции: `catalog_params` — Query к сервису: пустые фильтры не уходят, округ — латиницей, потолок городов — в рамках 1..5000., `city_name_key`, `names_from_catalog` — {'regions': token → {name, district}, 'cities': 'region|city' → city_ru} из ответа справочника.
@@ -2289,8 +2301,8 @@
   Классы: нет
   Функции: `get_user_notification_pref` — Get a single notification preference for user., `is_subscription_expiry_enabled` — Check if subscription expiry notifications are enabled for user., `get_subscription_expiry_days` — Get the number of days before expiry to notify., `is_traffic_warning_enabled` — Check if traffic warning notifications are enabled for user., `get_traffic_warning_percent` — Get the traffic usage percentage threshold for warning., `is_balance_low_enabled` — Check if low balance notifications are enabled for user., `get_balance_low_threshold` — Get the low balance threshold in kopeks., `is_news_enabled` — Check if news notifications are enabled for user., `is_promo_offers_enabled` — Check if promo offer notifications are enabled for user., `filter_users_by_broadcast_category` — Отсеивает отписавшихся от рассылки этой категории.
 - `app/utils/pagination.py` — Python-модуль
-  Классы: `PaginationResult` (1 методов)
-  Функции: `paginate_list`, `get_pagination_info`, `get_page_numbers`
+  Классы: не разобран (SyntaxError)
+  Функции: не разобраны
 - `app/utils/panel_node_usage.py` — Python-модуль
   Классы: нет
   Функции: `coerce_bytes`, `normalize_node_usage` — Привести элементы потребления к форме `{user_id, username, node_uuid, total_bytes}`.
@@ -2665,6 +2677,7 @@
 - `docs/contests-api.md` — файл
 - `docs/grace-access.md` — файл
 - `docs/handoffs/`
+- `docs/lirpay-integration.md` — файл
 - `docs/menu_stats_api_usage.md` — файл
 - `docs/miniapp-setup.md` — файл
 - `docs/mobile-support-websocket-v1.md` — файл
@@ -3087,6 +3100,9 @@
   Классы: нет
   Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0131_add_cashera_subscriptions.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0132_create_lirpay_payments.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 
@@ -3649,8 +3665,8 @@
 
 - `tests/contracts/fixtures/`
 - `tests/contracts/test_bschek_geo_client_paths_match_spec.py` — Python-модуль
-  Классы: нет
-  Функции: `test_every_geo_call_of_the_client_exists_in_the_spec`, `test_client_covers_the_five_endpoints_we_use`
+  Классы: не разобран (SyntaxError)
+  Функции: не разобраны
 - `tests/contracts/test_local_day_guard.py` — Python-модуль
   Классы: нет
   Функции: `find_violations`, `test_known_utc_sites_still_exist` — Список исключений не должен пережить переименование: каждая функция обязана существовать., `test_detector_sees_every_idiom` — Сторож не ослеп: на синтетическом примере находит все пять идиом., `test_app_has_no_hand_made_utc_days`
@@ -3664,8 +3680,8 @@
   Классы: нет
   Функции: `test_route_reads_only_fields_that_exist_on_panel_dataclasses`
 - `tests/contracts/test_remnawave_client_paths_match_spec.py` — Python-модуль
-  Классы: нет
-  Функции: `test_client_calls_only_endpoints_that_exist_in_panel_spec`, `test_legacy_allowlist_entries_are_really_absent_from_spec` — Если ручка из allowlist вернулась в спецификацию, запись устарела — убрать.
+  Классы: не разобран (SyntaxError)
+  Функции: не разобраны
 - `tests/contracts/test_renewal_applies_tariff_traffic_rule.py` — Python-модуль
   Классы: нет
   Функции: `collect_offenders`, `test_every_renewal_applies_the_tariff_traffic_rule`, `test_known_exceptions_still_exist` — Список исключений не должен протухать: переименовали функцию — обнови причину., `test_detector_sees_the_recurring_gateways` — Самопроверка детектора: рекуррентные Lava и Platega двигают дату методом модели.
@@ -4687,6 +4703,9 @@
 - `tests/services/test_payment_service_heleket.py` — Python-модуль
   Классы: `DummySession` (4 методов), `DummyLocalPayment` (1 методов), `StubHeleketService` (4 методов)
   Функции: `anyio_backend`, `test_create_heleket_payment_success`, `test_create_heleket_payment_returns_none_without_service`, `test_create_heleket_payment_handles_empty_response`, `test_sync_heleket_payment_status_success`, `test_sync_heleket_payment_status_without_response`, `test_sync_heleket_payment_status_history_fallback`
+- `tests/services/test_payment_service_lirpay.py` — Python-модуль
+  Классы: `DummySession` (4 методов), `DummyLocalPayment` (1 методов), `FakeLirPayPayment` (1 методов), `StubLirPayService` (2 методов)
+  Функции: `anyio_backend`, `test_kopeks_to_amount_roundtrip`, `test_amount_to_kopeks_unparseable`, `test_create_payment_passes_idempotency_and_customer`, `test_create_payment_below_min`, `test_create_payment_above_max`, `test_create_payment_without_project_id`, `test_webhook_success_credits_balance`, `test_webhook_test_mode_never_credits` — TEST-ключ «оплачивает» эмулятором без денег — баланс не начисляем., `test_webhook_amount_mismatch`, `test_webhook_without_amount_not_credited`, `test_webhook_already_paid_idempotent`, `test_webhook_unknown_payment_acked` — Чужой счёт повторами не появится — подтверждаем доставку., `test_webhook_non_payment_event_acked`, `test_webhook_expired_marks_expired`, `test_webhook_refund_requires_manual_review`, `test_webhook_signature_ok`, `test_webhook_signature_bad`, `test_webhook_signature_no_secret` — Без секрета HMAC считался бы от известного тела — подпись подделал бы кто угодно., `test_webhook_signature_uses_raw_body` — Подпись считается от сырого тела, а не от пере-сериализованного JSON., `test_is_test_key_detects_prefix` — Среда определяется ключом: lpk_test_ — песочница, lpk_live_ — бой., `test_api_check_with_test_key_never_credits` — Сверка по тестовому ключу видит paid, но баланс не начисляет., `test_webhook_takes_for_update_lock` — Вебхук обязан брать FOR UPDATE до применения события., `test_webhook_ambiguous_fallback_nacks` — Неоднозначный матч по customer_id+сумме — повторная доставка, не ACK., `test_webhook_currency_mismatch_not_credited` — Счёт в USD не зачисляется как рубли., `test_webhook_late_expired_does_not_touch_paid` — Поздний expired после зачисления не перезаписывает оплаченный платёж., `test_webhook_repeat_succeeded_idempotent` — Повторная доставка succeeded не зачисляет дважды (гвард is_paid)., `test_api_check_credits_production_payment` — Сверка доначисляет боевой платёж при потерянном вебхуке.
 - `tests/services/test_payment_service_modularity.py` — Python-модуль
   Классы: нет
   Функции: `test_payment_service_mro_contains_all_mixins` — Убеждаемся, что сервис действительно включает все mixin-классы., `test_payment_service_exposes_provider_methods` — Каждый mixin обязан добавить публичный метод в PaymentService.

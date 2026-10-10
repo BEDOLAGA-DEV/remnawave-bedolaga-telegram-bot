@@ -349,6 +349,19 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_lirpay_enabled():
+        # Один способ: СБП/крипту/баланс LolzTeam покупатель выбирает на странице LirPay.
+        lirpay_name = settings.get_lirpay_display_name()
+        methods.append(
+            {
+                'id': 'lirpay',
+                'name': lirpay_name,
+                'icon': '💳',
+                'description': f'через {lirpay_name}',
+                'callback': 'topup_lirpay',
+            }
+        )
+
     if settings.is_cashera_enabled():
         cashera_name = settings.get_cashera_display_name()
         if settings.CASHERA_INLINE_METHODS:
@@ -692,6 +705,8 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_lava_card_enabled()
     if method_id == 'cispay':
         return settings.is_cispay_enabled()
+    if method_id == 'lirpay':
+        return settings.is_lirpay_enabled()
     if method_id == 'cashera':
         return settings.is_cashera_enabled()
     if method_id.startswith('cashera_m_'):

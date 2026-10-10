@@ -273,6 +273,13 @@ def _get_method_defaults() -> dict:
                 {'id': 'sbp', 'name': 'СБП'},
             ],
         },
+        'lirpay': {
+            'default_display_name': settings.get_lirpay_display_name(),
+            'is_configured': settings.is_lirpay_enabled(),
+            'default_min': settings.LIRPAY_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.LIRPAY_MAX_AMOUNT_KOPEKS,
+            # sub-опций нет: способ оплаты выбирается на странице LirPay
+        },
         'paritypay': {
             'default_display_name': settings.get_paritypay_display_name(),
             'is_configured': settings.is_paritypay_enabled(),
@@ -373,6 +380,7 @@ DEFAULT_METHOD_ORDER = [
     'donut',
     'lava',
     'cispay',
+    'lirpay',
     'tabpay',
     'paritypay',
     'cashera',

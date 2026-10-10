@@ -2313,5 +2313,8 @@
   "CASHERA_RECURRING_PAY_BUTTON": "💳 Подтвердить",
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 Отключить автопродление Cashera",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ Автопродление через Cashera",
-  "CASHERA_RECURRING_CANCELLED": "✅ Автопродление Cashera отключено"
+  "CASHERA_RECURRING_CANCELLED": "✅ Автопродление Cashera отключено",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>Оплата через {name}</b>\n\nСумма: <b>{amount}₽</b>\n\nНажмите кнопку ниже, чтобы перейти на страницу оплаты.\nСпособ оплаты выберите на странице.\nБаланс будет пополнен автоматически после подтверждения платежа.",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>Платёж создан через {name}</b>\n\nСумма: <b>{amount}₽</b>\n\nПлатёж обрабатывается. Статус придёт уведомлением после подтверждения.",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽"
 }

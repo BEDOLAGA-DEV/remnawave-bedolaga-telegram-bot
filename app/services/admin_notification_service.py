@@ -1853,6 +1853,7 @@ class AdminNotificationService:
             'kassa_ai': f'💳 {settings.get_kassa_ai_display_name()}',
             'cispay': f'💳 {settings.get_cispay_display_name()}',
             'cashera': f'💳 {settings.get_cashera_display_name()}',
+            'lirpay': f'💳 {settings.get_lirpay_display_name()}',
             'tabpay': f'💳 {settings.get_tabpay_display_name()}',
             'paritypay': f'💳 {settings.get_paritypay_display_name()}',
             'manual': '🛠️ Вручную (админ)',
