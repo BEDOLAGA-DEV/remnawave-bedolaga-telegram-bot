@@ -2110,6 +2110,82 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
+    # LirPay webhook (lirpay.org, Integration API v2)
+    if settings.is_lirpay_configured():
+
+        @router.get(settings.LIRPAY_WEBHOOK_PATH)
+        async def lirpay_health() -> JSONResponse:
+            return JSONResponse(
+                {
+                    'status': 'ok',
+                    'service': 'lirpay_webhook',
+                    'enabled': settings.is_lirpay_enabled(),
+                }
+            )
+
+        @router.post(settings.LIRPAY_WEBHOOK_PATH)
+        async def lirpay_webhook(request: Request) -> JSONResponse:
+            raw_body = await request.body()
+
+            from app.services.lirpay_service import lirpay_service
+
+            # Подпись = HMAC-SHA256 (hex) от СЫРОГО тела, ключ — секрет вебхука
+            # из кабинета LirPay (выдаётся при PUT /webhook, отличается от ключей
+            # API). Имя заголовка в доках не зафиксировано — пробуем варианты.
+            received_signature = (
+                request.headers.get('X-Lirpay-Signature')
+                or request.headers.get('X-Lirpay-Sign')
+                or request.headers.get('X-Signature')
+            )
+            if not lirpay_service.verify_webhook_signature(raw_body, received_signature):
+                logger.warning('LirPay webhook: invalid signature')
+                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                payload = json.loads(raw_body)
+            except Exception as parse_error:
+                logger.error('LirPay webhook: failed to parse JSON', parse_error=parse_error)
+                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            if not isinstance(payload, dict):
+                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
+
+            # Режим окружения (test/live) прокидываем в обработчик: тестовые
+            # события «оплачиваются» эмулятором и баланс не начисляют.
+            mode = request.headers.get('X-Lirpay-Mode')
+            if mode:
+                payload['_lirpay_mode'] = mode
+
+            # События по счетам обрабатываем; остальные (балансы, выплаты,
+            # конверсии) подтверждаем, чтобы LirPay не повторял доставку в пустоту.
+            event = str(payload.get('type') or payload.get('event') or '')
+            if event and not event.startswith('payment.'):
+                return JSONResponse({'status': 'ignored'}, status_code=status.HTTP_200_OK)
+
+            try:
+                success = await _process_payment_service_callback(
+                    payment_service,
+                    payload,
+                    'process_lirpay_callback',
+                )
+            except Exception as e:
+                logger.exception('LirPay webhook processing error', error=e)
+                success = False
+
+            if not success:
+                logger.error(
+                    'LirPay webhook processing failed',
+                    lirpay_event=event,
+                    public_id=payload.get('public_id'),
+                )
+                # Live-доставки ретраятся до восьми раз — не-2xx заставит
+                # LirPay повторить, когда обработка нужна заново.
+                return JSONResponse({'status': 'error'}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            return JSONResponse({'status': 'ok'}, status_code=status.HTTP_200_OK)
+
+        routes_registered = True
+
     # TabPay webhook (tabpay.org)
     if settings.is_tabpay_configured():
 
@@ -2260,6 +2336,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'cashera_enabled': settings.is_cashera_enabled(),
                     'tabpay_enabled': settings.is_tabpay_enabled(),
                     'paritypay_enabled': settings.is_paritypay_enabled(),
+                    'lirpay_enabled': settings.is_lirpay_enabled(),
                 }
             )
 

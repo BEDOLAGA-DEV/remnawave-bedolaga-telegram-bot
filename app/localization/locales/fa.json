@@ -2313,5 +2313,8 @@
   "CASHERA_RECURRING_PAY_BUTTON": "💳 تأیید",
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 غیرفعال کردن تمدید خودکار Cashera",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ تمدید خودکار از طریق Cashera",
-  "CASHERA_RECURRING_CANCELLED": "✅ تمدید خودکار Cashera غیرفعال شد"
+  "CASHERA_RECURRING_CANCELLED": "✅ تمدید خودکار Cashera غیرفعال شد",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>پرداخت از طریق {name}</b>\n\nمبلغ: <b>{amount}₽</b>\n\nبرای رفتن به صفحه پرداخت، روی دکمه زیر بزنید.\nروش پرداخت را در همان صفحه انتخاب کنید.\nپس از تأیید پرداخت، موجودی به‌طور خودکار شارژ می‌شود.",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>پرداخت از طریق {name} ایجاد شد</b>\n\nمبلغ: <b>{amount}₽</b>\n\nپرداخت در حال پردازش است. پس از تأیید، پیام وضعیت دریافت می‌کنید.",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>شارژ از طریق {name}</b>\n\nمبلغ شارژ را به روبل وارد کنید.\n\nحداقل: {min_amount}₽\nحداکثر: {max_amount}₽"
 }

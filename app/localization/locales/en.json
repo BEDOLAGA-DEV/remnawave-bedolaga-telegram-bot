@@ -2313,5 +2313,8 @@
   "CASHERA_RECURRING_PAY_BUTTON": "💳 Confirm",
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 Turn off Cashera auto-renewal",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ Auto-renewal via Cashera",
-  "CASHERA_RECURRING_CANCELLED": "✅ Cashera auto-renewal turned off"
+  "CASHERA_RECURRING_CANCELLED": "✅ Cashera auto-renewal turned off",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to open the payment page.\nChoose the payment method on the page.\nYour balance will be topped up automatically after the payment is confirmed.",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>Payment created via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nThe payment is being processed. You will get a notification once it is confirmed.",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽"
 }

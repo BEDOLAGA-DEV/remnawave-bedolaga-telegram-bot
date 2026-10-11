@@ -2313,5 +2313,8 @@
   "CASHERA_RECURRING_PAY_BUTTON": "💳 确认",
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 关闭 Cashera 自动续费",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ 通过 Cashera 自动续费",
-  "CASHERA_RECURRING_CANCELLED": "✅ 已关闭 Cashera 自动续费"
+  "CASHERA_RECURRING_CANCELLED": "✅ 已关闭 Cashera 自动续费",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>通过 {name} 付款</b>\n\n金额：<b>{amount}₽</b>\n\n点击下方按钮打开付款页面。\n请在页面上选择付款方式。\n付款确认后余额将自动充值。",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>已通过 {name} 创建付款</b>\n\n金额：<b>{amount}₽</b>\n\n付款正在处理中。确认后将收到状态通知。",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低：{min_amount}₽\n最高：{max_amount}₽"
 }

@@ -41,6 +41,7 @@ from app.services.payment.freekassa import FreekassaPaymentMixin
 from app.services.payment.jupiter import JupiterPaymentMixin
 from app.services.payment.kassa_ai import KassaAiPaymentMixin
 from app.services.payment.lava import LavaPaymentMixin
+from app.services.payment.lirpay import LirPayPaymentMixin
 from app.services.payment.overpay import OverpayPaymentMixin
 from app.services.payment.paritypay import ParityPayPaymentMixin
 from app.services.payment.payer_identity import resolve_guest_payer
@@ -862,6 +863,7 @@ class PaymentService(
     DonutPaymentMixin,
     LavaPaymentMixin,
     CisPayPaymentMixin,
+    LirPayPaymentMixin,
     TabPayPaymentMixin,
     ParityPayPaymentMixin,
     CasheraPaymentMixin,

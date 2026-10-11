@@ -1236,6 +1236,7 @@ class UserService:
                 EtoplatezhiPayment,
                 JupiterPayment,
                 LavaPayment,
+                LirPayPayment,
                 OverpayPayment,
                 ParityPayPayment,
                 PayPearPayment,
@@ -1260,6 +1261,7 @@ class UserService:
                 CisPayPayment,
                 TabPayPayment,
                 ParityPayPayment,
+                LirPayPayment,
                 CasheraPayment,
             )
             for model in extra_payment_models:

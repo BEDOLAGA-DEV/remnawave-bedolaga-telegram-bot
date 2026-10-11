@@ -37,6 +37,7 @@ PROVIDERS = [
     'jupiter',
     'kassa_ai',
     'lava',
+    'lirpay',
     'mulenpay',
     'overpay',
     'pal24',
