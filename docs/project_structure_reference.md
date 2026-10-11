@@ -2121,14 +2121,14 @@
   Классы: нет
   Функции: нет
 - `app/services/reachability/batches.py` — Python-модуль
-  Классы: не разобран (SyntaxError)
-  Функции: не разобраны
+  Классы: `BatchService` (3 методов), `BatchPreview`
+  Функции: `chunk_targets`, `estimate_batch_minutes` — Примерное время всей пачки: раунды по ``parallel`` чашек, раунд длится по числу симок., `batch_status_from_jobs` — None — пачка ещё идёт; иначе итог: отменена, не удалась целиком или завершена., `batch_cost_kopeks`, `batch_done_targets`, `preview_batch` — Цена и время всей пачки: превью каждой чашки (бесплатно, без троттла) и сумма., `create_batch` — Одна пачка и задача на каждую чашку; деньги проверяются до записи, драйвер стартует после коммита.
 - `app/services/reachability/cores.py` — Python-модуль
   Классы: нет
   Функции: нет
 - `app/services/reachability/gate.py` — Python-модуль
-  Классы: не разобран (SyntaxError)
-  Функции: не разобраны
+  Классы: `PaidCallGate` (3 методов)
+  Функции: нет
 - `app/services/reachability/geo_catalog.py` — Python-модуль
   Классы: `GeoCatalogCache` (4 методов)
   Функции: `catalog_params` — Query к сервису: пустые фильтры не уходят, округ — латиницей, потолок городов — в рамках 1..5000., `city_name_key`, `names_from_catalog` — {'regions': token → {name, district}, 'cities': 'region|city' → city_ru} из ответа справочника.
@@ -2301,8 +2301,8 @@
   Классы: нет
   Функции: `get_user_notification_pref` — Get a single notification preference for user., `is_subscription_expiry_enabled` — Check if subscription expiry notifications are enabled for user., `get_subscription_expiry_days` — Get the number of days before expiry to notify., `is_traffic_warning_enabled` — Check if traffic warning notifications are enabled for user., `get_traffic_warning_percent` — Get the traffic usage percentage threshold for warning., `is_balance_low_enabled` — Check if low balance notifications are enabled for user., `get_balance_low_threshold` — Get the low balance threshold in kopeks., `is_news_enabled` — Check if news notifications are enabled for user., `is_promo_offers_enabled` — Check if promo offer notifications are enabled for user., `filter_users_by_broadcast_category` — Отсеивает отписавшихся от рассылки этой категории.
 - `app/utils/pagination.py` — Python-модуль
-  Классы: не разобран (SyntaxError)
-  Функции: не разобраны
+  Классы: `PaginationResult` (1 методов)
+  Функции: `paginate_list`, `get_pagination_info`, `get_page_numbers`
 - `app/utils/panel_node_usage.py` — Python-модуль
   Классы: нет
   Функции: `coerce_bytes`, `normalize_node_usage` — Привести элементы потребления к форме `{user_id, username, node_uuid, total_bytes}`.
@@ -3665,8 +3665,8 @@
 
 - `tests/contracts/fixtures/`
 - `tests/contracts/test_bschek_geo_client_paths_match_spec.py` — Python-модуль
-  Классы: не разобран (SyntaxError)
-  Функции: не разобраны
+  Классы: нет
+  Функции: `test_every_geo_call_of_the_client_exists_in_the_spec`, `test_client_covers_the_five_endpoints_we_use`
 - `tests/contracts/test_local_day_guard.py` — Python-модуль
   Классы: нет
   Функции: `find_violations`, `test_known_utc_sites_still_exist` — Список исключений не должен пережить переименование: каждая функция обязана существовать., `test_detector_sees_every_idiom` — Сторож не ослеп: на синтетическом примере находит все пять идиом., `test_app_has_no_hand_made_utc_days`
@@ -3680,8 +3680,8 @@
   Классы: нет
   Функции: `test_route_reads_only_fields_that_exist_on_panel_dataclasses`
 - `tests/contracts/test_remnawave_client_paths_match_spec.py` — Python-модуль
-  Классы: не разобран (SyntaxError)
-  Функции: не разобраны
+  Классы: нет
+  Функции: `test_client_calls_only_endpoints_that_exist_in_panel_spec`, `test_legacy_allowlist_entries_are_really_absent_from_spec` — Если ручка из allowlist вернулась в спецификацию, запись устарела — убрать.
 - `tests/contracts/test_renewal_applies_tariff_traffic_rule.py` — Python-модуль
   Классы: нет
   Функции: `collect_offenders`, `test_every_renewal_applies_the_tariff_traffic_rule`, `test_known_exceptions_still_exist` — Список исключений не должен протухать: переименовали функцию — обнови причину., `test_detector_sees_the_recurring_gateways` — Самопроверка детектора: рекуррентные Lava и Platega двигают дату методом модели.
