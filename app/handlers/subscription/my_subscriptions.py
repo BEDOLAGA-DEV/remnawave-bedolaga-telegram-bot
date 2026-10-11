@@ -124,6 +124,24 @@ def _build_subscriptions_keyboard(
     return types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def _tariff_switch_callback(sub) -> str | None:
+    """Колбэк «Сменить тариф» для карточки подписки или None, если менять нечего.
+
+    Смена берёт подписку из FSM (``active_subscription_id`` ставит карточка),
+    поэтому sub_id в колбэке не нужен. Триал не меняют, а покупают: покупка
+    конвертирует его на месте. Суточный и бесплатный тарифы идут через список с
+    выбором периода, как в одиночном режиме: пересчёт остатка к ним неприменим.
+    """
+    if sub is None or not settings.is_tariffs_mode():
+        return None
+    if not getattr(sub, 'tariff_id', None) or getattr(sub, 'is_trial', False):
+        return None
+    tariff = getattr(sub, 'tariff', None)
+    is_daily = bool(getattr(tariff, 'is_daily', False))
+    is_free = bool(tariff is not None and getattr(tariff, 'is_free', False) and settings.TARIFF_SWITCH_RESET_FREE_DAYS)
+    return 'tariff_switch' if (is_daily or is_free) else 'instant_switch'
+
+
 def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKeyboardMarkup:
     """Build keyboard for single subscription management.
 
@@ -143,6 +161,9 @@ def _build_subscription_detail_keyboard(sub_id: int, sub=None) -> types.InlineKe
         buttons.append([types.InlineKeyboardButton(text='💳 Автоплатеж', callback_data='subscription_autopay')])
         buttons.append([types.InlineKeyboardButton(text='📊 Трафик', callback_data=f'st:{sub_id}')])
         buttons.append([types.InlineKeyboardButton(text='📱 Устройства', callback_data=f'sd:{sub_id}')])
+        switch_callback = _tariff_switch_callback(sub)
+        if switch_callback:
+            buttons.append([types.InlineKeyboardButton(text='📦 Сменить тариф', callback_data=switch_callback)])
 
     if is_inactive:
         buttons.append([types.InlineKeyboardButton(text='🗑 Удалить подписку', callback_data=f'sub_del:{sub_id}')])

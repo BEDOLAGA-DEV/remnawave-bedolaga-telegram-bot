@@ -103,6 +103,70 @@ def test_autopay_button_present_when_status_unknown() -> None:
     assert 'subscription_autopay' in _callbacks(keyboard)
 
 
+def _tariffs_mode(monkeypatch: pytest.MonkeyPatch, *, enabled: bool = True) -> None:
+    monkeypatch.setattr(type(my_subscriptions.settings), 'is_tariffs_mode', lambda self: enabled)
+    monkeypatch.setattr(my_subscriptions.settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', True)
+
+
+def _paid_sub(**over) -> SimpleNamespace:
+    fields = {
+        'actual_status': 'active',
+        'tariff_id': 1,
+        'is_trial': False,
+        'tariff': SimpleNamespace(is_daily=False, is_free=False),
+    }
+    fields.update(over)
+    return SimpleNamespace(**fields)
+
+
+def _switch_callbacks(sub) -> set[str]:
+    callbacks = _callbacks(_build_subscription_detail_keyboard(sub_id=42, sub=sub))
+    return {c for c in callbacks if c in ('instant_switch', 'tariff_switch')}
+
+
+def test_tariff_switch_button_on_paid_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Мультитариф: на живой платной подписке есть «Сменить тариф» с пересчётом.
+
+    Без кнопки человек мог только купить ещё одну подписку на другой тариф или
+    просить админа поменять тариф руками."""
+    _tariffs_mode(monkeypatch)
+
+    assert _switch_callbacks(_paid_sub()) == {'instant_switch'}
+
+
+def test_tariff_switch_goes_through_periods_for_daily_and_free_tariffs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Суточный и бесплатный тарифы меняются через список с выбором периода, как в одиночном режиме."""
+    _tariffs_mode(monkeypatch)
+
+    daily = _paid_sub(tariff=SimpleNamespace(is_daily=True, is_free=False))
+    free = _paid_sub(tariff=SimpleNamespace(is_daily=False, is_free=True))
+
+    assert _switch_callbacks(daily) == {'tariff_switch'}
+    assert _switch_callbacks(free) == {'tariff_switch'}
+
+
+@pytest.mark.parametrize(
+    'over',
+    [
+        {'is_trial': True},
+        {'actual_status': 'expired'},
+        {'actual_status': 'disabled'},
+        {'tariff_id': None},
+    ],
+)
+def test_tariff_switch_button_hidden_where_switch_does_not_apply(monkeypatch: pytest.MonkeyPatch, over) -> None:
+    """Триал покупают, а не меняют; истёкшую и отключённую продлевают; без тарифа менять нечего."""
+    _tariffs_mode(monkeypatch)
+
+    assert _switch_callbacks(_paid_sub(**over)) == set()
+
+
+def test_tariff_switch_button_hidden_outside_tariffs_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    _tariffs_mode(monkeypatch, enabled=False)
+
+    assert _switch_callbacks(_paid_sub()) == set()
+
+
 @pytest.mark.anyio('asyncio')
 async def test_show_subscription_detail_writes_active_subscription_id_to_fsm(
     monkeypatch: pytest.MonkeyPatch,
