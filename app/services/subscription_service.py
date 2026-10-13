@@ -857,6 +857,9 @@ class SubscriptionService:
             try:
                 await db.refresh(subscription, ['tariff'])
             except Exception:
+                # Тарифа может не быть или он уже загружен (как в
+                # update_remnawave_user); если сборщик всё же споткнётся о
+                # незагруженный тариф, это поймает внешний except.
                 pass
 
             async with self.get_api_client() as api:
