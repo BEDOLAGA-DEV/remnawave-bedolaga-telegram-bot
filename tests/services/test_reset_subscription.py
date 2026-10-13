@@ -5,6 +5,7 @@ so support tickets survive. The RemnaWave panel user is DISABLED (not deleted).
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -17,6 +18,7 @@ from app.cabinet.schemas.users import ResetSubscriptionRequest
 from app.config import Settings
 from app.database.crud.subscription import reset_subscription
 from app.database.models import SubscriptionStatus
+from app.services.panel_sync import BULK_SNAPSHOT, project_onto_subscription, read_panel_user
 
 
 def _set_multi_tariff(monkeypatch, enabled: bool):
@@ -38,6 +40,18 @@ def _sub(**kw) -> SimpleNamespace:
     )
     base.update(kw)
     return SimpleNamespace(**base)
+
+
+def _record_extinguish(monkeypatch) -> list[int]:
+    """Гашение даты в панели — отдельные тесты ниже; здесь только куда оно ушло."""
+    extinguished: list[int] = []
+
+    async def fake_extinguish(self, _db, _user, _subscription, panel_user_id):
+        extinguished.append(panel_user_id)
+        return True
+
+    monkeypatch.setattr(ss.SubscriptionService, 'extinguish_remnawave_expiry', fake_extinguish)
+    return extinguished
 
 
 async def test_reset_subscription_zeroes_fields():
@@ -62,6 +76,7 @@ async def test_reset_with_panel_disables_subscription_panel_id(monkeypatch):
         return True
 
     monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', fake_disable)
+    extinguished = _record_extinguish(monkeypatch)
     _set_multi_tariff(monkeypatch, True)
 
     sub = _sub(remnawave_id=7001)
@@ -70,6 +85,7 @@ async def test_reset_with_panel_disables_subscription_panel_id(monkeypatch):
     result = await ss.reset_subscription_with_panel(AsyncMock(), user, sub)
 
     assert disabled == [7001]  # per-subscription panel id (never the user-level one)
+    assert extinguished == [7001]  # дату гасим у того же аккаунта
     assert result['panel_disabled'] is True
     assert result['panel_user_id'] == 7001
     assert sub.status == SubscriptionStatus.DISABLED.value  # DB reset applied too
@@ -105,6 +121,7 @@ async def test_reset_with_panel_singletariff_falls_back_to_user_panel_id(monkeyp
         return True
 
     monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', fake_disable)
+    extinguished = _record_extinguish(monkeypatch)
     _set_multi_tariff(monkeypatch, False)
 
     sub = _sub(remnawave_id=None)
@@ -113,6 +130,7 @@ async def test_reset_with_panel_singletariff_falls_back_to_user_panel_id(monkeyp
     await ss.reset_subscription_with_panel(AsyncMock(), user, sub)
 
     assert disabled == [9001]  # legacy single-tariff fallback is correct here
+    assert extinguished == [9001]
 
 
 async def test_reset_with_panel_no_panel_id_skips_panel(monkeypatch):
@@ -141,6 +159,7 @@ async def test_reset_with_panel_survives_panel_error(monkeypatch):
         raise RuntimeError('panel down')
 
     monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', boom)
+    _record_extinguish(monkeypatch)
 
     sub = _sub(remnawave_id=7001)
     user = SimpleNamespace(id=1, remnawave_id=None)
@@ -148,6 +167,106 @@ async def test_reset_with_panel_survives_panel_error(monkeypatch):
     result = await ss.reset_subscription_with_panel(AsyncMock(), user, sub)
 
     assert result['panel_disabled'] is False
+    assert sub.status == SubscriptionStatus.DISABLED.value
+
+
+def _owner(**kw) -> SimpleNamespace:
+    base = dict(id=1, full_name='Owner', username=None, telegram_id=1000, email=None, status='active')
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def _panel_keeps_paid_date(monkeypatch, *, paid_until: datetime) -> tuple[list[dict], dict]:
+    """Панель держит оплаченный срок, пока его не перепишут PATCH-ем.
+
+    Отключение дату не трогает — как в настоящей панели. Возвращает отправленные
+    PATCH-и и состояние панели.
+    """
+    updates: list[dict] = []
+    panel = {'expire_at': paid_until}
+
+    async def fake_disable(self, panel_user_id):
+        return True
+
+    async def update_panel_user(_api, _subscription_id, **kwargs):
+        updates.append(kwargs)
+        if 'expire_at' in kwargs:
+            panel['expire_at'] = kwargs['expire_at']
+        return SimpleNamespace(
+            id=kwargs['user_id'],
+            expire_at=panel['expire_at'],
+            subscription_url=None,
+            happ_crypto_link=None,
+            short_uuid=None,
+        )
+
+    async def create_user(**_kwargs):
+        raise AssertionError('аккаунт в панели есть — создавать нечего')
+
+    @asynccontextmanager
+    async def api_client(_self):
+        yield SimpleNamespace(create_user=create_user)
+
+    monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', fake_disable)
+    monkeypatch.setattr(ss.SubscriptionService, 'get_api_client', api_client)
+    monkeypatch.setattr('app.services.grace_access_runtime.update_panel_user_grace_safe', update_panel_user)
+    _set_multi_tariff(monkeypatch, True)
+    return updates, panel
+
+
+async def test_reset_with_panel_extinguishes_paid_date_in_panel(monkeypatch):
+    """Обнуление гасило срок только в боте: отключение дату в панели не трогает,
+    и там оставался оплаченный срок."""
+    now = datetime.now(UTC)
+    updates, panel = _panel_keeps_paid_date(monkeypatch, paid_until=now + timedelta(days=30))
+    sub = _sub(remnawave_id=7001, end_date=now + timedelta(days=30))
+
+    result = await ss.reset_subscription_with_panel(AsyncMock(), _owner(), sub)
+
+    assert result['panel_expiry_extinguished'] is True
+    assert {update['user_id'] for update in updates} == {7001}  # тот же аккаунт, что отключали
+    assert now < panel['expire_at'] < datetime.now(UTC) + timedelta(minutes=20)
+
+
+async def test_panel_truth_sync_after_reset_does_not_return_paid_days(monkeypatch):
+    """Сверка «панель — истина» переносит дату панели в бота при любом статусе.
+
+    С оплаченным сроком в панели первый же полный проход возвращал его в
+    обнулённую подписку, а реактивация (возврат в обязательный канал,
+    ``user.enabled``) снова включала её до этой даты.
+    """
+    now = datetime.now(UTC)
+    _updates, panel = _panel_keeps_paid_date(monkeypatch, paid_until=now + timedelta(days=30))
+    sub = _sub(remnawave_id=7001, end_date=now + timedelta(days=30))
+
+    await ss.reset_subscription_with_panel(AsyncMock(), _owner(), sub)
+    snapshot = read_panel_user({'status': 'DISABLED', 'expireAt': panel['expire_at'].isoformat()})
+    project_onto_subscription(sub, snapshot, policy=BULK_SNAPSHOT)
+
+    assert sub.status == SubscriptionStatus.DISABLED.value
+    assert sub.end_date < datetime.now(UTC) + timedelta(minutes=20)
+
+
+async def test_reset_with_panel_survives_extinguish_error(monkeypatch):
+    """Ошибка панели при гашении даты не отменяет обнуления в боте."""
+
+    async def fake_disable(self, panel_user_id):
+        return True
+
+    @asynccontextmanager
+    async def broken_client(_self):
+        raise RuntimeError('panel down')
+        yield
+
+    monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', fake_disable)
+    monkeypatch.setattr(ss.SubscriptionService, 'get_api_client', broken_client)
+    _set_multi_tariff(monkeypatch, True)
+
+    sub = _sub(remnawave_id=7001)
+    result = await ss.reset_subscription_with_panel(AsyncMock(), _owner(), sub)
+
+    assert result['panel_disabled'] is True
+    assert result['panel_expiry_extinguished'] is False
     assert sub.status == SubscriptionStatus.DISABLED.value
 
 

@@ -328,10 +328,14 @@ async def test_subscription_actions_accept_an_owned_subscription(
     """An ownership guard must not reject the requested user's own subscription."""
     sync = AsyncMock()
     panel_disable = AsyncMock(return_value=True)
+    panel_extinguish = AsyncMock(return_value=True)
     reset_subscription = AsyncMock()
     monkeypatch.setattr(admin_users, '_sync_subscription_to_panel', sync)
     monkeypatch.setattr(admin_users, '_build_subscription_info_async', AsyncMock(return_value=None))
     monkeypatch.setattr('app.services.subscription_service.SubscriptionService.disable_remnawave_user', panel_disable)
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService.extinguish_remnawave_expiry', panel_extinguish
+    )
     monkeypatch.setattr('app.database.crud.subscription.reset_subscription', reset_subscription)
     monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', AsyncMock())
     monkeypatch.setattr('app.services.payment.lava.cancel_lava_recurring_for_subscription_safe', AsyncMock())
@@ -344,6 +348,10 @@ async def test_subscription_actions_accept_an_owned_subscription(
     if action == 'reset':
         panel_disable.assert_awaited_once_with(owned_subscription.remnawave_id)
         reset_subscription.assert_awaited_once_with(db, owned_subscription)
+        # Без погашенной даты сверка вернёт в бота оплаченный срок.
+        panel_extinguish.assert_awaited_once_with(
+            db, ownership_boundary, owned_subscription, owned_subscription.remnawave_id
+        )
     else:
         sync.assert_awaited_once_with(db, ownership_boundary, owned_subscription, pinned_subscription_identity=True)
         assert db.commit.await_count == 1
@@ -544,6 +552,10 @@ async def test_selected_reset_cancels_both_recurring_bindings(monkeypatch, owner
     lava_cancel = AsyncMock()
     monkeypatch.setattr(
         'app.services.subscription_service.SubscriptionService.disable_remnawave_user',
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        'app.services.subscription_service.SubscriptionService.extinguish_remnawave_expiry',
         AsyncMock(return_value=True),
     )
     monkeypatch.setattr('app.database.crud.subscription.reset_subscription', AsyncMock())

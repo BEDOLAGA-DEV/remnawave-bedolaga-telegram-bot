@@ -3400,6 +3400,7 @@ async def _reset_user_subscription(
             user_id=user_id,
             subscription_id=subscription.id,
             panel_disabled=result.get('panel_disabled'),
+            panel_expiry_extinguished=result.get('panel_expiry_extinguished'),
         )
         return True
 

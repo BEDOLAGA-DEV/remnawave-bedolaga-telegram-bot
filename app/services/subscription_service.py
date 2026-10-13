@@ -833,6 +833,63 @@ class SubscriptionService:
             logger.error('Ошибка отключения RemnaWave пользователя', error=e)
             return False
 
+    async def extinguish_remnawave_expiry(
+        self, db: AsyncSession, user: User, subscription: Subscription, panel_user_id: int
+    ) -> bool:
+        """Погасить в панели дату подписки, срок которой бот уже обнулил.
+
+        Панель — истина: сверки (полный проход, мониторинг, кнопка «из панели в
+        бота») переносят её дату в бота при любом статусе подписки. Отключение
+        дату в панели не трогает, и после обнуления там оставался оплаченный
+        срок: первая же сверка возвращала его в бота, а реактивация (возврат в
+        обязательный канал, ``user.enabled``) снова включала подписку до этой
+        даты. Прошедшую дату панель при обновлении не принимает — чем гасить,
+        решает ``panel_sync``.
+
+        Возвращает, пришлось ли гасить. Ошибку панели не пробрасывает: обнуление
+        в боте уже записано, и откатывать его из-за панели нельзя.
+        """
+        try:
+            from app.services.grace_access_runtime import update_panel_user_grace_safe
+
+            # Тариф нужен сборщику запроса; без предзагрузки обращение к нему в
+            # async-контексте роняет запись.
+            try:
+                await db.refresh(subscription, ['tariff'])
+            except Exception:
+                pass
+
+            async with self.get_api_client() as api:
+                result = await push_subscription(
+                    api,
+                    user,
+                    subscription,
+                    db=db,
+                    identity=PanelIdentity(known_id=panel_user_id),
+                    only_fields={'status', 'expire_at'},
+                    reset_devices=False,
+                    create_if_missing=False,
+                    recreate_on_missing=False,
+                    update_call=lambda **kwargs: update_panel_user_grace_safe(api, subscription.id, **kwargs),
+                )
+            await db.commit()
+        except Exception as e:
+            logger.warning(
+                'Не удалось погасить дату обнулённой подписки в панели',
+                subscription_id=subscription.id,
+                panel_user_id=panel_user_id,
+                error=e,
+            )
+            return False
+
+        if result.expiry_extinguished:
+            logger.info(
+                'Дата обнулённой подписки погашена в панели',
+                subscription_id=subscription.id,
+                panel_user_id=panel_user_id,
+            )
+        return result.expiry_extinguished
+
     async def delete_remnawave_user(self, panel_user_id: int) -> bool:
         """Полное удаление пользователя из панели RemnaWave (хуки прекращаются)."""
         try:
@@ -1445,8 +1502,10 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
     """Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
     НЕ удаляя пользователя из БД (тикеты и аккаунт остаются).
 
-    Панельного пользователя ОТКЛЮЧАЕМ (disable), а не удаляем — обратимо. Дальше юзер
-    может купить тариф с нуля. Возвращает ``{'panel_disabled': bool, 'panel_user_id': int|None}``.
+    Панельного пользователя ОТКЛЮЧАЕМ (disable), а не удаляем — обратимо, и гасим ему
+    дату: иначе сверка вернёт в бота оплаченный срок. Дальше юзер может купить тариф с
+    нуля. Возвращает ``{'panel_disabled': bool, 'panel_user_id': int|None,
+    'panel_expiry_extinguished': bool}``.
     """
     from app.database.crud.subscription import reset_subscription
     from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
@@ -1482,4 +1541,16 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
         )
 
     await reset_subscription(db, subscription)
-    return {'panel_disabled': panel_disabled, 'panel_user_id': panel_user_id}
+
+    # Гасим и при неудачном отключении: погашенная дата закроет доступ сама,
+    # как только пройдёт.
+    panel_expiry_extinguished = False
+    if panel_user_id:
+        panel_expiry_extinguished = await SubscriptionService().extinguish_remnawave_expiry(
+            db, user, subscription, panel_user_id
+        )
+    return {
+        'panel_disabled': panel_disabled,
+        'panel_user_id': panel_user_id,
+        'panel_expiry_extinguished': panel_expiry_extinguished,
+    }

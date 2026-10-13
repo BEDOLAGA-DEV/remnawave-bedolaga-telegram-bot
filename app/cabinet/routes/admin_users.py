@@ -1691,7 +1691,14 @@ async def update_user_subscription(
                     )
 
             await reset_subscription(db, subscription)
-            result = {'panel_disabled': panel_disabled}
+            # Как в reset_subscription_with_panel: без погашенной даты сверка вернёт
+            # в бота оплаченный срок, и реактивация снова включит подписку.
+            panel_expiry_extinguished = False
+            if panel_user_id:
+                panel_expiry_extinguished = await SubscriptionService().extinguish_remnawave_expiry(
+                    db, user, subscription, panel_user_id
+                )
+            result = {'panel_disabled': panel_disabled, 'panel_expiry_extinguished': panel_expiry_extinguished}
         else:
             from app.services.subscription_service import reset_subscription_with_panel
 
@@ -1703,6 +1710,7 @@ async def update_user_subscription(
             user_id=user_id,
             subscription_id=subscription.id,
             panel_disabled=result.get('panel_disabled'),
+            panel_expiry_extinguished=result.get('panel_expiry_extinguished'),
         )
 
         return UpdateSubscriptionResponse(
