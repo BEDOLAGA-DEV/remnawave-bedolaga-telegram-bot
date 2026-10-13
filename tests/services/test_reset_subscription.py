@@ -200,12 +200,15 @@ def _panel_keeps_paid_date(monkeypatch, *, paid_until: datetime) -> tuple[list[d
             short_uuid=None,
         )
 
+    async def get_user_by_id(user_id):
+        return SimpleNamespace(id=user_id, expire_at=panel['expire_at'])
+
     async def create_user(**_kwargs):
         raise AssertionError('аккаунт в панели есть — создавать нечего')
 
     @asynccontextmanager
     async def api_client(_self):
-        yield SimpleNamespace(create_user=create_user)
+        yield SimpleNamespace(get_user_by_id=get_user_by_id, create_user=create_user)
 
     monkeypatch.setattr(ss.SubscriptionService, 'disable_remnawave_user', fake_disable)
     monkeypatch.setattr(ss.SubscriptionService, 'get_api_client', api_client)
@@ -224,7 +227,8 @@ async def test_reset_with_panel_extinguishes_paid_date_in_panel(monkeypatch):
     result = await ss.reset_subscription_with_panel(AsyncMock(), _owner(), sub)
 
     assert result['panel_expiry_extinguished'] is True
-    assert {update['user_id'] for update in updates} == {7001}  # тот же аккаунт, что отключали
+    # Один PATCH тому же аккаунту, что отключали: дата и статус вместе, без эха со старой датой.
+    assert [update['user_id'] for update in updates] == [7001]
     assert now < panel['expire_at'] < datetime.now(UTC) + timedelta(minutes=20)
 
 

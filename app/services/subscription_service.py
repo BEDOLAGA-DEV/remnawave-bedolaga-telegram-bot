@@ -26,6 +26,7 @@ from app.services.panel_sync import (
     get_traffic_reset_strategy as get_traffic_reset_strategy,  # noqa: PLC0414
     is_subscription_live,
     link_subscription_panel_identity,
+    panel_date_is_closing,
     panel_id_is_free_for,
     patch_panel_account,
     push_subscription,
@@ -663,7 +664,7 @@ class SubscriptionService:
                             multi_tariff=multi_tariff,
                             payload=panel_payload,
                             only_fields=only_fields,
-                            identity=PanelIdentity(known_id=remnawave_id),
+                            identity=await self._known_panel_identity(api, remnawave_id, is_live=is_actually_active),
                             create_if_missing=False,
                             recreate_on_missing=False,
                             reset_devices=False,
@@ -833,6 +834,35 @@ class SubscriptionService:
             logger.error('Ошибка отключения RemnaWave пользователя', error=e)
             return False
 
+    @staticmethod
+    async def _known_panel_identity(api: RemnaWaveAPI, panel_user_id: int, *, is_live: bool) -> PanelIdentity:
+        """Адрес аккаунта для записи, а у неживой подписки — ещё и дата в панели.
+
+        Неживой подписке писатель гасит дату в панели (``panel_sync.expiry``). Не
+        зная, что там стоит, он шлёт гашение вторым PATCH, и эхо первого —
+        ``user.modified`` ещё со старой датой — вебхук переносит в бота вместе со
+        статусом ACTIVE. Двое суток после оплаты эхо второго PATCH вебхук не
+        принимает («срок короче оплаченного») и ставит повтор, который отправляет
+        в панель вернувшийся срок: снятие дней админом откатывалось целиком. С
+        датой на руках гашение уходит первым же запросом, и эхо приходит уже с ней.
+
+        Живой подписке дата уходит первым запросом и так — лишний GET не нужен.
+        Прочитать не вышло — пишем как раньше, двумя запросами.
+        """
+        if not is_live:
+            try:
+                panel_user = await api.get_user_by_id(panel_user_id)
+            except Exception as error:
+                logger.warning(
+                    'Не удалось прочитать аккаунт панели перед записью — дата уйдёт вторым запросом',
+                    panel_user_id=panel_user_id,
+                    error=error,
+                )
+                panel_user = None
+            if panel_user is not None:
+                return PanelIdentity(panel_user=panel_user, known_id=panel_user_id)
+        return PanelIdentity(known_id=panel_user_id)
+
     async def extinguish_remnawave_expiry(
         self, db: AsyncSession, user: User, subscription: Subscription, panel_user_id: int
     ) -> bool:
@@ -846,8 +876,9 @@ class SubscriptionService:
         даты. Прошедшую дату панель при обновлении не принимает — чем гасить,
         решает ``panel_sync``.
 
-        Возвращает, пришлось ли гасить. Ошибку панели не пробрасывает: обнуление
-        в боте уже записано, и откатывать его из-за панели нельзя.
+        Возвращает, погашена ли теперь дата в панели — прошла или вот-вот пройдёт.
+        Ошибку панели не пробрасывает: обнуление в боте уже записано, и откатывать
+        его из-за панели нельзя.
         """
         try:
             from app.services.grace_access_runtime import update_panel_user_grace_safe
@@ -868,7 +899,7 @@ class SubscriptionService:
                     user,
                     subscription,
                     db=db,
-                    identity=PanelIdentity(known_id=panel_user_id),
+                    identity=await self._known_panel_identity(api, panel_user_id, is_live=False),
                     only_fields={'status', 'expire_at'},
                     reset_devices=False,
                     create_if_missing=False,
@@ -885,13 +916,24 @@ class SubscriptionService:
             )
             return False
 
-        if result.expiry_extinguished:
+        # Флаг писателя тут не годится: если дата ушла первым же запросом, он
+        # сверяет уже погашенную дату из ответа и говорит «гасить не пришлось».
+        panel_expire_at = getattr(result.panel_user, 'expire_at', None)
+        extinguished = panel_expire_at is not None and panel_date_is_closing(panel_expire_at)
+        if extinguished:
             logger.info(
                 'Дата обнулённой подписки погашена в панели',
                 subscription_id=subscription.id,
                 panel_user_id=panel_user_id,
             )
-        return result.expiry_extinguished
+        else:
+            logger.warning(
+                'В панели осталась будущая дата обнулённой подписки',
+                subscription_id=subscription.id,
+                panel_user_id=panel_user_id,
+                panel_expire_at=panel_expire_at,
+            )
+        return extinguished
 
     async def delete_remnawave_user(self, panel_user_id: int) -> bool:
         """Полное удаление пользователя из панели RemnaWave (хуки прекращаются)."""
