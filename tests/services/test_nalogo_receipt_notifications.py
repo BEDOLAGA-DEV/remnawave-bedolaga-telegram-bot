@@ -421,6 +421,48 @@ async def test_download_reads_full_body_not_just_first_network_chunk(monkeypatch
     assert data.endswith(b'\xff\xd9'), 'файл должен заканчиваться JPEG-маркером EOI, а не обрывом на первом чанке'
 
 
+@pytest.mark.parametrize(
+    ('proxy_url', 'expected_url', 'expected_rdns'),
+    [
+        ('socks5h://user:pass@10.0.0.1:1080', 'socks5://user:pass@10.0.0.1:1080', True),
+        ('socks5://user:pass@10.0.0.1:1080', 'socks5://user:pass@10.0.0.1:1080', False),
+    ],
+)
+async def test_download_goes_through_socks_connector(monkeypatch, proxy_url, expected_url, expected_rdns):
+    """Прокси настроек — всегда SOCKS, а proxy= у aiohttp умеет только HTTP:
+    SOCKS-сервер рвал такое соединение («Server disconnected») на каждом чеке,
+    и клиент получал только ссылку. Ходим через коннектор aiohttp-socks."""
+    import aiohttp
+    import aiohttp_socks
+
+    connector = object()
+    from_url_calls = []
+    session_kwargs = {}
+    get_kwargs = {}
+
+    def fake_from_url(url, **kwargs):
+        from_url_calls.append((url, kwargs))
+        return connector
+
+    class _RecordingSession(_FakeSession):
+        def get(self, *args, **kwargs):
+            get_kwargs.update(kwargs)
+            return super().get(*args, **kwargs)
+
+    def make_session(*args, **kwargs):
+        session_kwargs.update(kwargs)
+        return _RecordingSession(_FakeResponse(content_type='image/png', body=b'png'))
+
+    monkeypatch.setattr(aiohttp_socks.ProxyConnector, 'from_url', staticmethod(fake_from_url))
+    monkeypatch.setattr(aiohttp, 'ClientSession', make_session)
+    monkeypatch.setattr(settings, 'NALOGO_PROXY_URL', proxy_url, raising=False)
+
+    assert await _REAL_DOWNLOAD('https://x/print') == (b'png', 'image/png')
+    assert from_url_calls == [(expected_url, {'rdns': expected_rdns})]
+    assert session_kwargs['connector'] is connector
+    assert 'proxy' not in get_kwargs
+
+
 async def test_download_rejects_oversized_receipt(monkeypatch):
     """Предохранитель от вычитывания мусора в память."""
     from app.services.nalogo_service import _RECEIPT_MAX_BYTES
