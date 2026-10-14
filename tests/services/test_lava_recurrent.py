@@ -10,6 +10,7 @@ import pytest
 
 from app.config import settings
 from app.database.models import (
+    AuraPaySubscription,
     GraceAccessSessionModel,
     LavaSubscription,
     PromoGroup,
@@ -37,6 +38,7 @@ TABLES = (
     UserPromoGroup.__table__,
     tariff_promo_groups,
     LavaSubscription.__table__,
+    AuraPaySubscription.__table__,
     Transaction.__table__,
     GraceAccessSessionModel.__table__,
 )

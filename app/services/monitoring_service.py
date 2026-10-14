@@ -38,6 +38,7 @@ from app.database.crud.user import (
 )
 from app.database.database import AsyncSessionLocal
 from app.database.models import (
+    AuraPaySubscription,
     MonitoringLog,
     Subscription,
     SubscriptionStatus,
@@ -1591,6 +1592,12 @@ class MonitoringService:
                         ),
                         Subscription.autopay_enabled == True,
                         Subscription.is_trial == False,
+                        ~select(AuraPaySubscription.id)
+                        .where(
+                            AuraPaySubscription.subscription_id == Subscription.id,
+                            AuraPaySubscription.status.in_(('NEW', 'WAITING_PAYMENT', 'ACTIVE')),
+                        )
+                        .exists(),
                     )
                 )
             )

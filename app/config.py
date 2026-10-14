@@ -1024,6 +1024,7 @@ class Settings(BaseSettings):
     AURAPAY_SBP_DISPLAY_NAME: str = 'СБП (AuraPay)'
     AURAPAY_CARD_ENABLED: bool = False
     AURAPAY_CARD_DISPLAY_NAME: str = 'Карта (AuraPay)'
+    AURAPAY_RECURRENT_ENABLED: bool = False
 
     # Antilopay (lk.antilopay.com)
     ANTILOPAY_ENABLED: bool = False
@@ -3182,6 +3183,9 @@ class Settings(BaseSettings):
 
     def is_aurapay_card_enabled(self) -> bool:
         return self.AURAPAY_CARD_ENABLED and self.is_aurapay_enabled()
+
+    def is_aurapay_recurrent_enabled(self) -> bool:
+        return self.AURAPAY_RECURRENT_ENABLED and self.is_aurapay_enabled()
 
     def get_aurapay_card_display_name(self) -> str:
         name = (self.AURAPAY_CARD_DISPLAY_NAME or '').strip()

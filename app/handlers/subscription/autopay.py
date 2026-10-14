@@ -118,6 +118,7 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
                     )
                 ]
             )
+        daily_keyboard_rows.extend(await _aurapay_recurrent_rows(db, subscription))
         daily_keyboard_rows.extend(await _cashera_recurring_rows(db, subscription, texts))
         back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
         daily_keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
@@ -170,6 +171,9 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
             ],
         )
 
+    for row in await _aurapay_recurrent_rows(db, subscription):
+        keyboard.inline_keyboard.insert(-1, row)
+
     for row in await _cashera_recurring_rows(db, subscription, texts):
         keyboard.inline_keyboard.insert(-1, row)
 
@@ -179,6 +183,21 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
         parse_mode='HTML',
     )
     await callback.answer()
+
+
+async def _aurapay_recurrent_rows(db: AsyncSession, subscription) -> list[list[types.InlineKeyboardButton]]:
+    from app.services.aurapay_recurrent import get_active
+
+    if not settings.is_aurapay_recurrent_enabled() and await get_active(db, subscription.id) is None:
+        return []
+    return [
+        [
+            types.InlineKeyboardButton(
+                text='💳 Автопродление AuraPay',
+                callback_data='aurapay_recurrent_menu',
+            )
+        ]
+    ]
 
 
 async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None):
@@ -228,6 +247,13 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
                 ),
                 show_alert=True,
             )
+            return
+
+    if enable:
+        from app.services.aurapay_recurrent import get_active as get_active_aurapay
+
+        if await get_active_aurapay(db, subscription.id):
+            await callback.answer('Сначала отключите автопродление AuraPay', show_alert=True)
             return
 
     await update_subscription_autopay(db, subscription, enable)

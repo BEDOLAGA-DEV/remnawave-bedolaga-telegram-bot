@@ -58,6 +58,7 @@ async def test_enable_autopay_cancels_active_sbp_recurring(monkeypatch):
         'app.services.payment.platega.cancel_platega_recurring_for_subscription_safe',
         mock_cancel,
     )
+    monkeypatch.setattr('app.services.aurapay_recurrent.get_active', AsyncMock(return_value=None))
 
     result = await route.update_autopay(
         AutopayUpdateRequest(enabled=True),

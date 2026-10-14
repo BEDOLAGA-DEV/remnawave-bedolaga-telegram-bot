@@ -1356,6 +1356,36 @@ class OverpayPayment(Base):
         return f'<OverpayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
+class AuraPaySubscription(Base):
+    """Card renewal authorized by an initial AuraPay payment."""
+
+    __tablename__ = 'aurapay_subscriptions'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='CASCADE'), nullable=False, index=True)
+    merchant_id = Column(String(64), unique=True, nullable=False)
+    provider_id = Column(String(128), unique=True, nullable=True)
+    amount_kopeks = Column(Integer, nullable=False)
+    charge_days = Column(Integer, nullable=False)
+    period = Column(Integer, nullable=False)
+    interval = Column(String(10), nullable=False)
+    status = Column(String(20), nullable=False, default='NEW')
+    redirect_url = Column(Text, nullable=True)
+    next_charge_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+
+    __table_args__ = (
+        Index(
+            'uq_aurapay_subscriptions_alive',
+            'subscription_id',
+            unique=True,
+            postgresql_where=text("status IN ('NEW', 'WAITING_PAYMENT', 'ACTIVE')"),
+            sqlite_where=text("status IN ('NEW', 'WAITING_PAYMENT', 'ACTIVE')"),
+        ),
+    )
+
+
 class AuraPayPayment(Base):
     """Платежи через AuraPay (aurapay.tech)."""
 

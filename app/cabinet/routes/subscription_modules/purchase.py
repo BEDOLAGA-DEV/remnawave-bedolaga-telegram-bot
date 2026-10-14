@@ -433,6 +433,7 @@ async def get_purchase_options(
                 # подписки, если фича включена.
                 'lava_recurrent_enabled': settings.is_lava_recurrent_enabled(),
                 'cashera_recurrent_enabled': settings.is_cashera_recurrent_enabled(),
+                'aurapay_recurrent_enabled': settings.is_aurapay_recurrent_enabled(),
             }
 
         # Classic mode - return periods
@@ -445,6 +446,7 @@ async def get_purchase_options(
         payload['platega_recurrent_enabled'] = settings.is_platega_recurrent_enabled()
         payload['lava_recurrent_enabled'] = settings.is_lava_recurrent_enabled()
         payload['cashera_recurrent_enabled'] = settings.is_cashera_recurrent_enabled()
+        payload['aurapay_recurrent_enabled'] = settings.is_aurapay_recurrent_enabled()
         return payload
 
     except PurchaseValidationError as e:

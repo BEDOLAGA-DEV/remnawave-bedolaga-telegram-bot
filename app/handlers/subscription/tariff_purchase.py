@@ -369,6 +369,15 @@ def get_tariff_confirm_keyboard(
                 )
             ]
         )
+    if settings.is_aurapay_recurrent_enabled():
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text='💳 Оформить с автооплатой AuraPay',
+                    callback_data=f'tariff_aurapay:{tariff_id}',
+                )
+            ]
+        )
     if settings.is_lava_recurrent_enabled():
         buttons.append(
             [
@@ -498,6 +507,15 @@ def _sbp_purchase_rows(tariff_id: int, texts) -> list[list[InlineKeyboardButton]
                 )
             ]
         )
+    if settings.is_aurapay_recurrent_enabled():
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text='💳 Оформить с автооплатой AuraPay',
+                    callback_data=f'tariff_aurapay:{tariff_id}',
+                )
+            ]
+        )
     if settings.is_lava_recurrent_enabled():
         rows.append(
             [
@@ -571,6 +589,15 @@ def get_daily_tariff_confirm_keyboard(
                 InlineKeyboardButton(
                     text=texts.t('SBP_PURCHASE_BUTTON', '⚡ Оформить с автооплатой СБП'),
                     callback_data=f'tariff_sbp:{tariff_id}',
+                )
+            ]
+        )
+    if settings.is_aurapay_recurrent_enabled():
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text='💳 Оформить с автооплатой AuraPay',
+                    callback_data=f'tariff_aurapay:{tariff_id}',
                 )
             ]
         )
@@ -5666,6 +5693,46 @@ async def return_to_saved_tariff_cart(
     await callback.answer(texts.t('TARIFF_PURCHASE_CART_RESTORED', '✅ Корзина восстановлена!'))
 
 
+async def purchase_tariff_with_aurapay(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+):
+    if not settings.is_aurapay_recurrent_enabled():
+        await callback.answer('Автопродление AuraPay недоступно', show_alert=True)
+        return
+    try:
+        tariff_id = int(callback.data.split(':', 1)[1])
+    except (IndexError, ValueError):
+        await callback.answer('Неверный тариф', show_alert=True)
+        return
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if tariff is None or not tariff.is_active:
+        await callback.answer('Тариф недоступен', show_alert=True)
+        return
+    from app.services.aurapay_recurrent import purchase
+
+    try:
+        record = await purchase(db, user=db_user, tariff=tariff)
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
+    except Exception:
+        await callback.answer('Не удалось оформить автопродление', show_alert=True)
+        return
+    buttons = []
+    if record.redirect_url:
+        buttons.append([InlineKeyboardButton(text='💳 Перейти к оплате', url=record.redirect_url)])
+    buttons.append([InlineKeyboardButton(text='Назад', callback_data='tariff_list')])
+    await callback.message.edit_text(
+        '💳 <b>Автопродление AuraPay</b>\n\n'
+        'Оплатите первый период картой. Подписка активируется после первого списания.',
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
 async def purchase_tariff_with_sbp(
     callback: types.CallbackQuery,
     db_user: User,
@@ -5745,6 +5812,7 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
 
     # Оформление через СБП-автопродление Platega (альтернатива балансу)
     dp.callback_query.register(purchase_tariff_with_sbp, F.data.startswith('tariff_sbp:'))
+    dp.callback_query.register(purchase_tariff_with_aurapay, F.data.startswith('tariff_aurapay:'))
     dp.callback_query.register(purchase_tariff_with_lava, F.data.startswith('tariff_lava:'))
     dp.callback_query.register(purchase_tariff_with_cashera, F.data.startswith('tariff_cashera:'))
 

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
 from app.database.crud import platega_subscription as sub_crud
-from app.database.models import Base, PlategaSubscription
+from app.database.models import AuraPaySubscription, Base, PlategaSubscription
 from app.services.platega_service import PlategaService
 
 
@@ -43,7 +43,12 @@ async def _memory_session(monkeypatch):
     _ensure_real_aiosqlite(monkeypatch)
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as conn:
-        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[PlategaSubscription.__table__]))
+        await conn.run_sync(
+            lambda c: Base.metadata.create_all(
+                c,
+                tables=[PlategaSubscription.__table__, AuraPaySubscription.__table__],
+            )
+        )
     maker = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with maker() as session:
@@ -333,6 +338,7 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
         call_order.append('platega_cancel')
 
     monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', fake_cancel)
+    monkeypatch.setattr('app.services.aurapay_recurrent.cancel_for_subscription', AsyncMock())
 
     class FakeSubscription(SimpleNamespace):
         pass
@@ -407,6 +413,7 @@ async def test_cancel_safe_wiring_proof_my_subscriptions_delete_execute(monkeypa
         call_order.append('platega_cancel')
 
     monkeypatch.setattr('app.services.payment.platega.cancel_platega_recurring_for_subscription_safe', fake_cancel)
+    monkeypatch.setattr('app.services.aurapay_recurrent.cancel_for_subscription', AsyncMock())
 
     subscription = SimpleNamespace(
         id=99,

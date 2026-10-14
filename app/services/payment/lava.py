@@ -730,6 +730,10 @@ class LavaPaymentMixin:
             }
 
         product_id = (getattr(tariff, 'lava_product_id', None) or '').strip()
+        from app.services.aurapay_recurrent import get_active as get_active_aurapay
+
+        if await get_active_aurapay(db, subscription.id):
+            raise ValueError('Cancel AuraPay auto-renewal before enabling Lava')
         if not product_id:
             raise ValueError('Для тарифа не задан продукт Lava — автопродление недоступно')
 

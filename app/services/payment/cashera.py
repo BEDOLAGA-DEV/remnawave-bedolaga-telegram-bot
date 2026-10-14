@@ -714,6 +714,11 @@ class CasheraPaymentMixin:
                 'status': existing.status,
             }
 
+        from app.services.aurapay_recurrent import get_active as get_active_aurapay
+
+        if await get_active_aurapay(db, subscription.id):
+            raise ValueError('Cancel AuraPay auto-renewal before enabling Cashera')
+
         period_days = (
             resolve_autopay_period_candidate(getattr(subscription, 'autopay_period_days', None), tariff)
             or resolve_autopay_period_candidate(getattr(settings, 'DEFAULT_AUTOPAY_PERIOD_DAYS', 0), tariff)

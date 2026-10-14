@@ -121,6 +121,11 @@ from app.utils.subscription_utils import (
 )
 from app.utils.timezone import format_local_datetime
 
+from .aurapay_recurrent import (
+    handle_aurapay_recurrent_cancel,
+    handle_aurapay_recurrent_enable,
+    handle_aurapay_recurrent_menu,
+)
 from .autopay import (
     handle_autopay_menu,
     handle_cashera_recurring_cancel,
@@ -4266,6 +4271,10 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_sbp_recurring_enable, F.data == 'sbp_recurring_enable')
 
     dp.callback_query.register(handle_sbp_recurring_cancel, F.data == 'sbp_recurring_cancel')
+
+    dp.callback_query.register(handle_aurapay_recurrent_menu, F.data == 'aurapay_recurrent_menu')
+    dp.callback_query.register(handle_aurapay_recurrent_enable, F.data == 'aurapay_recurrent_enable')
+    dp.callback_query.register(handle_aurapay_recurrent_cancel, F.data == 'aurapay_recurrent_cancel')
 
     dp.callback_query.register(handle_cashera_recurring_enable, F.data == 'cashera_recurring_enable')
 
