@@ -670,9 +670,22 @@ async def _download_receipt_file(receipt_url: str) -> tuple[bytes, str] | None:
     import aiohttp
 
     timeout = aiohttp.ClientTimeout(total=20)
+    # proxy= у aiohttp понимает только HTTP-прокси, а настройки допускают лишь
+    # SOCKS: с ним SOCKS-сервер рвал соединение («Server disconnected») на каждом
+    # чеке. Ходим через коннектор aiohttp-socks; socks5h ему неизвестна —
+    # это socks5 с резолвом имени на стороне прокси (rdns).
+    connector = None
     proxy_url = settings.get_nalogo_proxy_url()
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(receipt_url, proxy=proxy_url) as resp:
+    if proxy_url:
+        from aiohttp_socks import ProxyConnector
+
+        rdns = proxy_url.lower().startswith('socks5h://')
+        if rdns:
+            proxy_url = 'socks5://' + proxy_url[len('socks5h://') :]
+        connector = ProxyConnector.from_url(proxy_url, rdns=rdns)
+
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+        async with session.get(receipt_url) as resp:
             if resp.status != 200:
                 logger.warning('Не удалось скачать чек NaloGO для отправки файлом', status=resp.status)
                 return None
