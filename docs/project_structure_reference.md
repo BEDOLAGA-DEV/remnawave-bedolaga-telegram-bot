@@ -4219,6 +4219,9 @@
 - `tests/handlers/test_start_menu_media.py` — Python-модуль
   Классы: нет
   Функции: `test_video_takes_precedence_over_logo`, `test_without_video_falls_back_to_logo`, `test_removed_video_returns_to_logo` — Удаление видео в кабинете сразу возвращает прежнее поведение., `test_long_caption_goes_to_plain_text` — Подпись длиннее лимита Telegram нельзя приложить ни к видео, ни к фото., `test_video_send_failure_still_delivers_menu` — Битый file_id не должен оставлять пользователя без меню., `test_video_used_even_when_logo_mode_disabled` — Видео — самостоятельная настройка, не зависит от ENABLE_LOGO_MODE., `test_answer_path_sends_video` — /start отвечает через message.answer — видео обязано работать и там., `test_answer_path_without_video_delegates_unchanged` — Без видео поведение обязано остаться ровно прежним (патченный answer)., `test_answer_path_falls_back_when_video_broken`, `test_answer_path_long_caption_delegates_to_text`
+- `tests/handlers/test_start_retroactive_referral_window.py` — Python-модуль
+  Классы: нет
+  Функции: `test_user_created_by_miniapp_seconds_before_start_gets_referrer`, `test_user_inside_window_gets_referrer`, `test_long_registered_user_does_not_become_referral_by_clicking_link`, `test_user_just_outside_window_does_not_become_referral`, `test_user_without_created_at_does_not_become_referral`
 - `tests/handlers/test_start_subid.py` — Python-модуль
   Классы: `TestSplitStartParamSubid` (9 методов)
   Функции: нет

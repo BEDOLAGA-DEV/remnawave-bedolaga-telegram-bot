@@ -1,7 +1,7 @@
 import asyncio
 import html
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -91,6 +91,17 @@ from app.utils.user_utils import generate_unique_referral_code
 
 
 logger = structlog.get_logger(__name__)
+
+# Ретро-привязка реферера к уже существующему юзеру нужна только для гонки
+# «мини-апп создал запись за секунды до /start». Без ограничения по времени
+# любой давно зарегистрированный юзер без реферера становился рефералом того,
+# чью ссылку нажал первой.
+_RETROACTIVE_REFERRAL_WINDOW = timedelta(minutes=10)
+
+
+def _within_retroactive_referral_window(user) -> bool:
+    created_at = getattr(user, 'created_at', None)
+    return created_at is not None and datetime.now(UTC) - created_at <= _RETROACTIVE_REFERRAL_WINDOW
 
 
 _registration_invite_service = RegistrationInviteService()
@@ -1469,7 +1480,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     await save_pending_referral(message.from_user.id, referral_code, referrer.id)
                 except Exception as exc:
                     logger.warning('Failed to persist pending referral', referral_code=referral_code, error=exc)
-            elif db_user.referred_by_id is None:
+            elif db_user.referred_by_id is None and _within_retroactive_referral_window(db_user):
                 # RACE FIX: the miniapp may have created the user row
                 # between the /start link click and this handler firing
                 # (e.g. user tapped the WebApp menu button immediately
