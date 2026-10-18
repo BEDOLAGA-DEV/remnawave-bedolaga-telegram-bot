@@ -4141,6 +4141,9 @@
 - `tests/handlers/test_admin_tariff_server_limits.py` — Python-модуль
   Классы: нет
   Функции: `test_card_summarizes_limits_and_has_entry`, `test_screen_lists_allowed_squads_with_limits`, `test_screen_lists_all_squads_when_tariff_allows_all`, `test_input_sets_limit_without_mutating_stored_dict`, `test_zero_removes_limit`, `test_invalid_input_keeps_state`
+- `tests/handlers/test_admin_user_autopay_frozen_callback.py` — Python-модуль
+  Классы: нет
+  Функции: `test_autopay_handlers_rerender_without_mutating_frozen_callback`
 - `tests/handlers/test_balance_quick_topup.py` — Python-модуль
   Классы: нет
   Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
