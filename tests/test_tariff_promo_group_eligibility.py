@@ -18,20 +18,18 @@ def _tariff(*group_ids: int) -> Tariff:
         period_prices={'30': 10000},
         is_daily=False,
     )
-    tariff.allowed_promo_groups = [
-        PromoGroup(id=group_id, name=f'Группа {group_id}') for group_id in group_ids
-    ]
+    tariff.allowed_promo_groups = [PromoGroup(id=group_id, name=f'Группа {group_id}') for group_id in group_ids]
     return tariff
 
 
 @pytest.mark.parametrize(
     ('allowed', 'user_group_id', 'expected'),
     [
-        ((), None, True),   # Публичный тариф доступен без промогруппы.
-        ((), 10, True),     # Публичный тариф доступен любой промогруппе.
+        ((), None, True),  # Публичный тариф доступен без промогруппы.
+        ((), 10, True),  # Публичный тариф доступен любой промогруппе.
         ((10,), None, False),  # Закрытый тариф нельзя купить без группы.
-        ((10,), 11, False),    # Чужая группа не даёт доступ.
-        ((10,), 10, True),     # Своя группа даёт доступ.
+        ((10,), 11, False),  # Чужая группа не даёт доступ.
+        ((10,), 10, True),  # Своя группа даёт доступ.
         ((10, 12), 12, True),
     ],
 )
@@ -46,9 +44,7 @@ async def test_telegram_guard_denies_restricted_tariff_without_group():
     texts = SimpleNamespace(t=lambda _key, default: default)
     user = SimpleNamespace(promo_group=None)
 
-    blocked = await tariff_purchase._reject_unavailable_tariff(
-        callback, _tariff(10), user, texts
-    )
+    blocked = await tariff_purchase._reject_unavailable_tariff(callback, _tariff(10), user, texts)
 
     assert blocked is True
     callback.answer.assert_awaited_once()
@@ -63,9 +59,7 @@ async def test_telegram_guard_allows_matching_group():
     group = PromoGroup(id=10, name='Группа 10')
     user = SimpleNamespace(promo_group=group)
 
-    blocked = await tariff_purchase._reject_unavailable_tariff(
-        callback, _tariff(10), user, texts
-    )
+    blocked = await tariff_purchase._reject_unavailable_tariff(callback, _tariff(10), user, texts)
 
     assert blocked is False
     callback.answer.assert_not_awaited()
