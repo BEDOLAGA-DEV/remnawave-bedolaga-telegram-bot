@@ -2673,6 +2673,7 @@
 - `docs/postgresql-18-upgrade.md` — файл
 - `docs/project_structure_reference.md` — файл
 - `docs/referral_program_setting.md` — файл
+- `docs/tariff-entitlement-families.md` — файл
 - `docs/web-admin-integration-guide.md` — файл
 - `docs/web-admin-integration.md` — файл
 - `docs/websocket-and-webhooks.md` — файл
