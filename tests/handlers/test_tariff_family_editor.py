@@ -40,9 +40,7 @@ async def test_family_editor_rejects_invalid_input_before_write(monkeypatch):
     state = _state()
     message = _message('Invalid Family')
 
-    await _unwrap(mod.process_edit_tariff_entitlement_family)(
-        message, SimpleNamespace(language='ru'), db, state
-    )
+    await _unwrap(mod.process_edit_tariff_entitlement_family)(message, SimpleNamespace(language='ru'), db, state)
 
     update.assert_not_awaited()
     state.clear.assert_not_awaited()
@@ -71,9 +69,7 @@ async def test_family_editor_updates_or_clears(monkeypatch, incoming, expected):
     message = _message(incoming)
     db = MagicMock()
 
-    await _unwrap(mod.process_edit_tariff_entitlement_family)(
-        message, SimpleNamespace(language='ru'), db, state
-    )
+    await _unwrap(mod.process_edit_tariff_entitlement_family)(message, SimpleNamespace(language='ru'), db, state)
 
     editor.assert_awaited_once_with(db, tariff, entitlement_family=expected)
     state.clear.assert_awaited_once()
