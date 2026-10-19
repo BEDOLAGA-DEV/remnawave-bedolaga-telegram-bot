@@ -224,6 +224,7 @@ class AdminStates(StatesGroup):
 
     editing_tariff_name = State()
     editing_tariff_description = State()
+    editing_tariff_entitlement_family = State()
     editing_tariff_traffic = State()
     editing_tariff_devices = State()
     editing_tariff_tier = State()
