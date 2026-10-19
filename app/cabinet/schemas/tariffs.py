@@ -52,6 +52,7 @@ class TariffListItem(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    entitlement_family: str | None = None
     is_trial_available: bool
     # Тариф отмечен оператором как выгодный — выделяется в списке.
     is_highlighted: bool = False
@@ -88,6 +89,7 @@ class TariffDetailResponse(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    entitlement_family: str | None = None
     is_trial_available: bool
     is_highlighted: bool = False
     allow_traffic_topup: bool = True
@@ -156,6 +158,59 @@ class TariffCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     is_active: bool = True
+    # Только метаданные: XOR и ограничения продаж здесь ещё не включены.
+    entitlement_family: str | None = Field(None, pattern=r'^[a-z][a-z0-9_-]{0,63}    is_highlighted: bool = False
+    allow_traffic_topup: bool = True
+    traffic_topup_enabled: bool = False
+    traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
+    max_topup_traffic_gb: int = Field(0, ge=0)
+    traffic_limit_gb: int = Field(0, ge=0, description='0 = unlimited')
+    device_limit: int = Field(1, ge=1)
+    device_price_kopeks: int | None = Field(None, ge=0)
+    max_device_limit: int | None = Field(None, ge=1)
+    tier_level: int = Field(1, ge=1, le=10)
+    period_prices: list[PeriodPrice] = Field(default_factory=list)
+    # Выделение необязательно: кабинет шлёт 0, когда оператор ничего не отметил
+    # (тот же объект уходит и на правку, где 0 = «снять»). Ноль здесь = None.
+    highlight_period_days: int | None = Field(None, ge=0, description='Period marked as the best value, 0 = none')
+    allowed_squads: list[str] = Field(default_factory=list, description='Server UUIDs')
+    server_traffic_limits: dict[str, ServerTrafficLimit] = Field(
+        default_factory=dict, description='Per-server traffic limits'
+    )
+    promo_group_ids: list[int] = Field(default_factory=list)
+    # Произвольное количество дней
+    custom_days_enabled: bool = False
+    price_per_day_kopeks: int = Field(0, ge=0)
+    min_days: int = Field(1, ge=1)
+    max_days: int = Field(365, ge=1)
+    # Произвольный трафик при покупке
+    custom_traffic_enabled: bool = False
+    traffic_price_per_gb_kopeks: int = Field(0, ge=0)
+    min_traffic_gb: int = Field(1, ge=1)
+    max_traffic_gb: int = Field(1000, ge=1)
+    # Дневной тариф
+    is_daily: bool = False
+    daily_price_kopeks: int = Field(0, ge=0)
+    # UUID продукта Lava для рекуррентных подписок (цена/период заданы в кабинете Lava)
+    lava_product_id: str | None = Field(None, max_length=255)
+    # Свой тег панели: пусто = общий тег из настроек; приводится к верхнему регистру
+    panel_tag: str | None = Field(None, max_length=64)
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = Field(None, ge=1)
+    # Режим сброса трафика
+    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
+    # Внешний сквад RemnaWave
+    external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
+    # Показывать в подарках
+    show_in_gift: bool = True
+
+    @field_validator('panel_tag')
+    @classmethod
+    def _normalize_panel_tag(cls, value: str | None) -> str | None:
+        # Правила панели: до 16 символов, A–Z, 0–9, _. Пустая строка = «снять тег».
+        return normalize_panel_tag(value)
+
+, max_length=64)
     is_highlighted: bool = False
     allow_traffic_topup: bool = True
     traffic_topup_enabled: bool = False
@@ -214,6 +269,56 @@ class TariffUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     is_active: bool | None = None
+    # Только метаданные: XOR и ограничения продаж здесь ещё не включены.
+    entitlement_family: str | None = Field(None, pattern=r'^[a-z][a-z0-9_-]{0,63}    is_highlighted: bool | None = None
+    allow_traffic_topup: bool | None = None
+    traffic_topup_enabled: bool | None = None
+    traffic_topup_packages: dict[str, int] | None = None
+    max_topup_traffic_gb: int | None = Field(None, ge=0)
+    traffic_limit_gb: int | None = Field(None, ge=0)
+    device_limit: int | None = Field(None, ge=1)
+    device_price_kopeks: int | None = Field(None, ge=0)
+    max_device_limit: int | None = Field(None, ge=1)
+    tier_level: int | None = Field(None, ge=1, le=10)
+    display_order: int | None = Field(None, ge=0)
+    period_prices: list[PeriodPrice] | None = None
+    # 0 снимает выделение: None здесь означало бы «поле не передано».
+    highlight_period_days: int | None = Field(None, ge=0)
+    allowed_squads: list[str] | None = None
+    server_traffic_limits: dict[str, ServerTrafficLimit] | None = None
+    promo_group_ids: list[int] | None = None
+    # Произвольное количество дней
+    custom_days_enabled: bool | None = None
+    price_per_day_kopeks: int | None = Field(None, ge=0)
+    min_days: int | None = Field(None, ge=1)
+    max_days: int | None = Field(None, ge=1)
+    # Произвольный трафик при покупке
+    custom_traffic_enabled: bool | None = None
+    traffic_price_per_gb_kopeks: int | None = Field(None, ge=0)
+    min_traffic_gb: int | None = Field(None, ge=1)
+    max_traffic_gb: int | None = Field(None, ge=1)
+    # Дневной тариф
+    is_daily: bool | None = None
+    daily_price_kopeks: int | None = Field(None, ge=0)
+    lava_product_id: str | None = Field(None, max_length=255)
+    # Свой тег панели: пусто = общий тег из настроек; приводится к верхнему регистру
+    panel_tag: str | None = Field(None, max_length=64)
+    # Дни триала на тарифе; None = глобальный TRIAL_DURATION_DAYS
+    trial_duration_days: int | None = Field(None, ge=1)
+    # Режим сброса трафика
+    traffic_reset_mode: str | None = None  # DAY, WEEK, MONTH, MONTH_ROLLING, NO_RESET, None = глобальная настройка
+    # Внешний сквад RemnaWave
+    external_squad_uuid: str | None = Field(None, pattern=UUID_PATTERN)
+    # Показывать в подарках
+    show_in_gift: bool | None = None
+
+    @field_validator('panel_tag')
+    @classmethod
+    def _normalize_panel_tag(cls, value: str | None) -> str | None:
+        # Правила панели: до 16 символов, A–Z, 0–9, _. Пустая строка = «снять тег».
+        return normalize_panel_tag(value)
+
+, max_length=64)
     is_highlighted: bool | None = None
     allow_traffic_topup: bool | None = None
     traffic_topup_enabled: bool | None = None
