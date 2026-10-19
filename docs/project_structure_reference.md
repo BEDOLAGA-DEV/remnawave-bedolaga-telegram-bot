@@ -4252,7 +4252,7 @@
   Функции: `mock_db_user`, `mock_db`, `mock_bot`, `mock_callback`, `memory_state`, `sample_quote`, `sample_purchase_result`
 - `tests/handlers/test_tariff_editor_parity.py` — Python-модуль
   Классы: нет
-  Функции: `test_editor_modules_are_found`, `test_every_cabinet_field_is_editable_from_telegram`, `test_telegram_editor_writes_only_real_columns` — Дни триала писались в атрибут, которого не было в модели — молча терялись., `test_new_editor_modules_are_registered_from_tariff_router`, `_unwrap`, `test_telegram_family_editor_sets_and_clears_metadata`, `test_telegram_family_editor_rejects_invalid_key_without_write`
+  Функции: `test_editor_modules_are_found`, `test_every_cabinet_field_is_editable_from_telegram`, `test_telegram_editor_writes_only_real_columns` — Дни триала писались в атрибут, которого не было в модели — молча терялись., `test_new_editor_modules_are_registered_from_tariff_router`, `test_telegram_family_editor_sets_and_clears_metadata`, `test_telegram_family_editor_rejects_invalid_key_without_write`
 - `tests/handlers/test_tariff_extend_subscription_id.py` — Python-модуль
   Классы: нет
   Функции: `test_confirm_keyboard_puts_subscription_id_first_period_last`, `test_extend_keyboard_embeds_subscription_id_before_tariff_and_period`
