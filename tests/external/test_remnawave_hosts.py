@@ -102,3 +102,21 @@ def test_parse_node_without_config_profile_has_no_inbounds() -> None:
     payload = {key: value for key, value in NODE_PAYLOAD.items() if key != 'configProfile'}
     node = RemnaWaveAPI(base_url='https://panel.example', api_key='k')._parse_node(payload)
     assert (node.active_config_profile_uuid, node.active_inbound_uuids) == (None, [])
+
+
+def test_parse_node_exposes_active_inbound_tags_by_uuid() -> None:
+    payload = {
+        **NODE_PAYLOAD,
+        'configProfile': {
+            'activeConfigProfileUuid': 'cp-1',
+            'activeInbounds': [{'uuid': 'u1', 'tag': 'vless-simple'}, {'uuid': 'u2'}, {'tag': 'без uuid'}],
+        },
+    }
+    node = RemnaWaveAPI(base_url='https://panel.example', api_key='k')._parse_node(payload)
+    assert node.active_inbound_tags == {'u1': 'vless-simple'}
+
+
+def test_parse_node_without_config_profile_has_no_inbound_tags() -> None:
+    payload = {key: value for key, value in NODE_PAYLOAD.items() if key != 'configProfile'}
+    node = RemnaWaveAPI(base_url='https://panel.example', api_key='k')._parse_node(payload)
+    assert node.active_inbound_tags == {}
