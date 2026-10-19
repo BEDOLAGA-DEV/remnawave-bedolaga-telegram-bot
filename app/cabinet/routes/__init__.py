@@ -23,6 +23,7 @@ from .admin_grace_access import router as admin_grace_access_router
 from .admin_info_pages import router as admin_info_pages_router
 from .admin_landings import router as admin_landings_router
 from .admin_legal_pages import router as admin_legal_pages_router
+from .admin_locations import router as admin_locations_router
 from .admin_menu_layout import router as admin_menu_layout_router
 from .admin_news import router as admin_news_router
 from .admin_news_categories import router as admin_news_categories_router
@@ -145,6 +146,7 @@ router.include_router(admin_wheel_router)
 router.include_router(admin_tariffs_router)
 router.include_router(admin_servers_router)
 router.include_router(admin_stats_router)
+router.include_router(admin_locations_router)
 router.include_router(admin_referral_network_router)
 router.include_router(admin_sales_stats_router)
 router.include_router(admin_ban_system_router)

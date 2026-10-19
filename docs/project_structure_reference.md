@@ -89,7 +89,7 @@
   Функции: `create_bot` — Create a Bot instance with SOCKS5 proxy and/or custom Telegram API server.
 - `app/cabinet/`
 - `app/config.py` — Python-модуль
-  Классы: `Settings` (414 методов)
+  Классы: `Settings` (417 методов)
   Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
 - `app/database/`
 - `app/external/`
@@ -234,6 +234,9 @@
 - `app/cabinet/routes/admin_legal_pages.py` — Python-модуль
   Классы: `LegalDocumentItem`, `LegalDocumentResponse`, `LegalDocumentItemUpdate`, `LegalDocumentUpdateRequest`, `RulesItem`, `RulesResponse`, `RulesItemUpdate`, `RulesUpdateRequest`, `FaqSettingItem`, `FaqPageItem`, `FaqResponse`, `FaqUpdateRequest`, `FaqPageCreateRequest`, `FaqPageUpdateRequest`
   Функции: `get_privacy_policy_admin`, `update_privacy_policy_admin`, `get_public_offer_admin`, `update_public_offer_admin`, `get_recurrent_payments_admin`, `update_recurrent_payments_admin`, `get_rules_admin`, `update_rules_admin`, `get_faq_admin`, `update_faq_admin`, `create_faq_page_admin`, `update_faq_page_admin`, `delete_faq_page_admin`
+- `app/cabinet/routes/admin_locations.py` — Python-модуль
+  Классы: `ReportDevice`, `LocationReport`, `ReportAccepted`, `LocationExit`, `LocationItem`, `LocationsOverview`
+  Функции: `require_counter_token` — Пустой токен в настройках выключает приём; иначе заголовок должен совпасть с ним., `receive_location_report` — Принять отчёт счётчика с ноды (без админской авторизации — только токен)., `get_locations` — Карточки локаций: хосты панели, на каждой — число пользователей онлайн.
 - `app/cabinet/routes/admin_menu_layout.py` — Python-модуль
   Классы: `ButtonConfig`, `RowConfig`, `MenuConfigResponse`, `MenuConfigUpdateRequest`
   Функции: `get_menu_layout` — Return merged menu layout config (rows + button styles). Admin only., `update_menu_layout` — Save full menu layout config. Splits into layout + button styles. Admin only., `reset_menu_layout` — Reset menu layout AND button styles to defaults. Admin only.
@@ -1599,6 +1602,9 @@
 - `app/services/live_menu_service.py` — Python-модуль
   Классы: нет
   Функции: `live_menu_loop`, `refresh_live_menus` — Один проход. True — бот/панель/Telegram заняты или была ошибка: следующий проход реже.
+- `app/services/location_presence.py` — Python-модуль
+  Классы: `Device`, `Presence`, `LocationCard`
+  Функции: `devices_from_report`, `merge_presence` — Свести устройства со всех нод: устройство считается там, где его видели последним., `build_location_cards` — Карточка на каждый видимый в подписке хост, в порядке подписки.
 - `app/services/log_rotation_service.py` — Python-модуль
   Классы: `LogRotationStatus`, `LogRotationService` (16 методов)
   Функции: нет
@@ -3102,7 +3108,20 @@
 - `scripts/generate_structure_reference.py` — Python-модуль
   Классы: нет
   Функции: `tracked_paths` — Файлы проекта: отслеживаемые плюс новые, которые git не игнорирует., `describe_module` — Строки «Классы:» и «Функции:» для модуля., `render_entries`, `render`, `build`, `main`
+- `scripts/location_counter/`
 - `scripts/pg-upgrade.sh` — файл
+
+### scripts/location_counter
+
+- `scripts/location_counter/README.md` — файл
+- `scripts/location_counter/__init__.py` — Python-модуль
+  Классы: нет
+  Функции: нет
+- `scripts/location_counter/location-counter.env.example` — файл
+- `scripts/location_counter/location-counter.service` — файл
+- `scripts/location_counter/location_counter.py` — Python-модуль
+  Классы: `LogEvent`, `DeviceState`, `DeviceTracker` (4 методов)
+  Функции: `log_command`, `parse_line`, `make_key`, `build_report`, `clock_skew` — Расхождение «часы ноды - время событий в логе» в секундах, если оно больше допустимого., `main`
 
 ## tests
 
@@ -3124,6 +3143,7 @@
 - `tests/live/`
 - `tests/middlewares/`
 - `tests/migrations/`
+- `tests/scripts/`
 - `tests/services/`
 - `tests/test_compose_postgres_service.py` — Python-модуль
   Классы: нет
@@ -3284,6 +3304,9 @@
 - `tests/cabinet/test_admin_legal_pages_routes.py` — Python-модуль
   Классы: нет
   Функции: `test_admin_legal_pages_routes_registered`, `test_legal_responses_expose_env_lock_flag`, `test_set_display_mode_commits`, `test_set_display_mode_env_locked_conflict`, `test_set_display_mode_env_locked_same_value_allowed`, `test_require_language_rejects_unknown`
+- `tests/cabinet/test_admin_locations_http.py` — Python-модуль
+  Классы: `FakeCache` (4 методов), `FakeApi` (2 методов), `FakeService` (2 методов)
+  Функции: `test_report_rejected_when_token_unset`, `test_report_rejected_with_wrong_token`, `test_report_stored_with_ttl`, `test_report_with_broken_body_is_rejected_and_not_stored`, `test_report_returns_503_when_cache_unavailable`, `test_get_merges_reports_from_two_nodes`, `test_get_reports_disabled_without_token_and_skips_panel`, `test_get_skips_corrupted_stored_report`, `test_get_returns_503_when_panel_fails`
 - `tests/cabinet/test_admin_overpay_certificate_routes.py` — Python-модуль
   Классы: нет
   Функции: `p12_bytes`, `stubbed_service`, `test_admin_overpay_certificate_routes_registered`, `test_upload_certificate_commits`, `test_upload_certificate_env_locked_warning`, `test_upload_certificate_invalid_returns_422`, `test_upload_certificate_oversize_returns_413`, `test_delete_certificate_commits`
@@ -3893,7 +3916,7 @@
   Функции: `test_request_geocheck_posts_to_connections_endpoint`, `test_request_geocheck_default_mode_sends_empty_json_body` — requestBody у команды required: «по умолчанию» — это ``{}``, а не отсутствие тела., `test_request_geocheck_sends_ip_only`, `test_request_geocheck_sends_interface_only`, `test_request_geocheck_rejects_ip_and_interface_together` — Панель выбирает один источник маршрута; отправлять оба — молча неоднозначно., `test_request_geocheck_ignores_blank_values`, `test_request_geocheck_raises_when_panel_returns_no_job_id`, `test_get_geocheck_result_uses_job_id_path`, `test_get_geocheck_result_returns_completed_payload`, `test_parse_node_exposes_ips`, `test_parse_node_ips_defaults_to_empty_list`
 - `tests/external/test_remnawave_hosts.py` — Python-модуль
   Классы: нет
-  Функции: `test_parse_host_maps_panel_fields`, `test_parse_host_tolerates_missing_optional_fields`, `test_get_all_hosts_calls_hosts_endpoint`, `test_parse_node_exposes_active_inbound_uuids_for_host_linking`, `test_parse_node_without_config_profile_has_no_inbounds`
+  Функции: `test_parse_host_maps_panel_fields`, `test_parse_host_tolerates_missing_optional_fields`, `test_get_all_hosts_calls_hosts_endpoint`, `test_parse_node_exposes_active_inbound_uuids_for_host_linking`, `test_parse_node_without_config_profile_has_no_inbounds`, `test_parse_node_exposes_active_inbound_tags_by_uuid`, `test_parse_node_without_config_profile_has_no_inbound_tags`
 - `tests/external/test_remnawave_rate_limit.py` — Python-модуль
   Классы: нет
   Функции: `test_429_retries_with_growing_delays_until_success`, `test_429_honours_retry_after_header`, `test_429_sets_shared_throttle_for_other_requests`, `test_request_waits_for_shared_throttle_before_sending`, `test_429_after_all_retries_is_transient_and_not_logged_as_error`
@@ -3932,6 +3955,9 @@
 - `tests/fixtures/local_day.py` — Python-модуль
   Классы: нет
   Функции: `use_timezone` — Переключить settings.TIMEZONE на ``name`` и вернуть саму зону., `zone_where_local_date_differs_from_utc` — Зона, в которой прямо сейчас другая календарная дата, чем в UTC., `reset_local_timezone_cache` — Сбросить кэш зоны после теста, чтобы подмена не утекла в соседей.
+- `tests/fixtures/locations.py` — Python-модуль
+  Классы: нет
+  Функции: `make_node` — Нода с минимальным набором полей; tags — uuid инбаунда -> тег., `make_host`, `sample_nodes`, `sample_hosts`
 - `tests/fixtures/postgres_db.py` — Python-модуль
   Классы: нет
   Функции: `postgres_dsn` — URL тестовой базы из окружения или ``None``., `postgres_is_required` — Требует ли окружение, чтобы тесты на PostgreSQL действительно шли., `require_postgres_dsn` — URL живого PostgreSQL, иначе пропуск теста (или падение, если требуется)., `real_asyncpg` — Снимает заглушку ``sys.modules['asyncpg']``, поставленную conftest., `postgres_database` — URL тестовой базы, в которой уже создана полная схема проекта., `truncate_tables` — Очищает переданные таблицы вместе со счётчиками идентификаторов., `postgres_engine` — Движок к тестовой базе; переданные таблицы очищаются до и после теста., `postgres_session` — Одна сессия к тестовой базе (зеркало ``memory_session``, но на PostgreSQL)., `postgres_sessions` — Несколько независимых сессий, каждая на своём соединении., `lock_waiter_appeared` — Дождалась ли база сессии, стоящей в очереди за блокировкой., `wait_for_lock_waiter` — То же, но отсутствие соперника — сразу падение теста.
@@ -4343,6 +4369,12 @@
   Классы: нет
   Функции: `test_revision_chain`, `test_upgrade_matches_model_and_downgrade_drops`
 
+### tests/scripts
+
+- `tests/scripts/test_location_counter.py` — Python-модуль
+  Классы: нет
+  Функции: `test_parse_regular_line`, `test_parse_double_arrow_and_tcp_prefix`, `test_parse_ipv6_client`, `test_skip_lines_without_user`, `ev`, `test_last_connection_wins_and_exit_tracked`, `test_inbound_switch_resets_exit`, `test_older_event_ignored`, `test_snapshot_prunes_after_window`, `test_report_has_no_raw_ids`, `test_stale_exit_dropped_but_device_stays`, `test_fresh_exit_kept_in_window`, `test_exit_refreshed_by_new_bridge_connection`, `test_exit_not_leaked_across_inbound_switch_via_exit_seen`, `test_exit_requires_prefix_and_is_reported_without_it`, `test_empty_prefix_disables_exit_tracking`, `test_log_command_wraps_tail_with_stdin_watchdog`, `test_log_command_takes_container_and_quoted_path`, `test_log_reader_keeps_stdin_pipe_open`, `test_clock_skew_flags_both_directions_beyond_limit`, `test_tracker_remembers_newest_event_and_count`
+
 ### tests/services
 
 - `tests/services/__init__.py` — Python-модуль
@@ -4582,6 +4614,9 @@
 - `tests/services/test_live_menu.py` — Python-модуль
   Классы: `FakeRedis` (6 методов)
   Функции: `env`, `test_live_menu_is_wired` — Пины: при переносе на новый upstream эти строки теряются молча, а остальные тесты зелёные., `test_press_on_live_menu_forgets_it_and_passes_through` — Нажатие на живом меню — дальше подменю: фон это сообщение больше не трогает., `test_try_edit_remembers_live_menu`, `test_try_send_remembers_live_menu_only_when_enabled`, `test_live_menu_fingerprint_tracks_only_visible_changes` — Меню показывает целые ГБ: доли гигабайта не повод править сообщение., `test_sub_gigabyte_change_goes_to_db_without_edit`, `test_subscription_changed_after_snapshot_keeps_db_value` — Сброс трафика коммитит БД до вызова панели: снимок, взятый чуть позже, ещё со старым расходом., `test_visible_change_edits_the_same_message`, `test_multi_tariff_takes_traffic_by_subscription_panel_id`, `test_new_menu_during_build_is_not_overwritten`, `test_press_during_edit_is_not_undone` — Нажали на меню, пока фон ждал ответа Telegram: запись снимка не возвращает ключ., `test_telegram_errors`, `test_flood_limit_aborts_the_pass`, `test_busy_bot_skips_the_pass`, `test_load_or_switch_off_during_pass_stops_it` — Нагрузка или выключение в кабинете посреди прохода: остальные меню не трогаем., `test_panel_down_still_redraws_from_db_but_backs_off`, `test_interval_backs_off_under_load_and_resets_when_idle`
+- `tests/services/test_location_presence.py` — Python-модуль
+  Классы: нет
+  Функции: `dev`, `test_devices_from_report_parses_utc_and_node`, `test_latest_device_wins_across_nodes`, `test_stale_devices_dropped`, `test_users_unique_and_exits_counted`, `test_location_host_node_overrides_parsing`, `test_location_exit_breakdown_inbounds_parsing`, `test_location_skip_host_markers_parsing`, `test_cards_order_filters_and_mapping`, `test_separator_without_skip_markers_takes_the_card`, `test_counter_source_with_zero`, `test_exits_sorted_by_count_descending`, `test_panel_fallback_single_location`, `test_no_data_for_multi_location_node_without_report`, `test_ambiguous_host_without_override`, `test_exit_breakdown_only_for_configured_inbounds`, `test_exit_breakdown_disabled_when_setting_empty`
 - `tests/services/test_log_level_resolver.py` — Python-модуль
   Классы: нет
   Функции: `test_resolves_canonical_uppercase_names`, `test_resolves_lowercase_names` — REGRESSION: ``LOG_LEVEL=warning`` from .env must NOT return, `test_resolves_mixed_case_and_whitespace` — Whitespace and mixed-case variants normalize to the canonical level., `test_lowercase_does_not_return_the_logger_function` — The exact failure mode: the ``logging`` module has BOTH, `test_unknown_or_empty_falls_back_to_default`, `test_non_string_input_falls_back_to_default` — The resolver accepts only str input. Anything else → default., `test_default_argument_is_respected` — Custom default values flow through the fallback paths., `test_resolver_output_is_acceptable_to_structlog` — REGRESSION smoke: ``make_filtering_bound_logger`` must accept

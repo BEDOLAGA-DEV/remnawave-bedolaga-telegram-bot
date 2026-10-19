@@ -223,6 +223,8 @@ class RemnaWaveNode:
     # По ним хост панели (inbound.configProfileInboundUuid) привязывается к ноде.
     active_config_profile_uuid: str | None = None
     active_inbound_uuids: list[str] = field(default_factory=list)
+    # uuid активного инбаунда -> его tag (configProfile.activeInbounds[].tag)
+    active_inbound_tags: dict[str, str] = field(default_factory=dict)
 
     @property
     def is_node_online(self) -> bool:
@@ -2223,6 +2225,11 @@ class RemnaWaveAPI:
                 for inbound in config_profile.get('activeInbounds') or []
                 if isinstance(inbound, dict) and inbound.get('uuid')
             ],
+            active_inbound_tags={
+                str(inbound['uuid']): str(inbound['tag'])
+                for inbound in config_profile.get('activeInbounds') or []
+                if isinstance(inbound, dict) and inbound.get('uuid') and inbound.get('tag')
+            },
         )
 
     def _parse_subscription_info(self, data: dict) -> SubscriptionInfo:
