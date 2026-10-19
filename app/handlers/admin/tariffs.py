@@ -219,9 +219,7 @@ def get_tariff_view_keyboard(
             InlineKeyboardButton(text='👥 Промогруппы', callback_data=f'admin_tariff_edit_promo:{tariff.id}'),
         ]
     )
-    buttons.append(
-        [InlineKeyboardButton(text='🏷️ Семейство', callback_data=f'admin_tariff_edit_family:{tariff.id}')]
-    )
+    buttons.append([InlineKeyboardButton(text='🏷️ Семейство', callback_data=f'admin_tariff_edit_family:{tariff.id}')])
     buttons.append(
         [
             InlineKeyboardButton(
@@ -1084,6 +1082,7 @@ async def process_tariff_prices(
 
 # ============ РЕДАКТИРОВАНИЕ ТАРИФА ============
 
+
 @admin_required
 @error_handler
 async def start_edit_tariff_entitlement_family(
@@ -1150,7 +1149,6 @@ async def process_edit_tariff_entitlement_family(
         reply_markup=get_tariff_view_keyboard(tariff, db_user.language),
         parse_mode='HTML',
     )
-
 
 
 @admin_required
