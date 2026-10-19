@@ -158,7 +158,8 @@ async def test_telegram_family_editor_rejects_invalid_key_without_write(monkeypa
     update = AsyncMock()
 
     monkeypatch.setattr(
-        mod, 'get_tariff_by_id',
+        mod,
+        'get_tariff_by_id',
         AsyncMock(return_value=SimpleNamespace(id=7, name='VPN', entitlement_family=None)),
     )
     monkeypatch.setattr(mod, 'update_tariff', update)
