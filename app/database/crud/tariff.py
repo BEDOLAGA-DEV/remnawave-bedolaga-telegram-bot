@@ -12,7 +12,7 @@ from app.utils.panel_tag import normalize_panel_tag
 logger = structlog.get_logger(__name__)
 
 
-_FAMILY_KEY = re.compile(r'^[a-z][a-z0-9_-]{0,63}
+_FAMILY_KEY = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 
 
 def normalize_entitlement_family(value: str | None) -> str | None:
