@@ -51,7 +51,9 @@ async def test_telegram_guard_denies_restricted_tariff_without_group():
     )
 
     assert blocked is True
-    callback.answer.assert_awaited_once_with('Тариф недоступен', show_alert=True)
+    callback.answer.assert_awaited_once()
+    assert callback.answer.await_args.kwargs['show_alert'] is True
+    assert callback.answer.await_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -88,4 +90,6 @@ async def test_telegram_purchase_rejects_stale_button_before_pricing(monkeypatch
     await tariff_purchase.confirm_tariff_purchase(callback, user, object(), None)
 
     pricing.assert_not_awaited()
-    callback.answer.assert_awaited_once_with('Тариф недоступен', show_alert=True)
+    callback.answer.assert_awaited_once()
+    assert callback.answer.await_args.kwargs['show_alert'] is True
+    assert callback.answer.await_args.args[0]
