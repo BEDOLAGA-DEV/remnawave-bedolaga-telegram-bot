@@ -2123,6 +2123,9 @@ class Tariff(Base):
     description = Column(Text, nullable=True)
     display_order = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Необязательное коммерческое семейство; пока только метаданные.
+    # NULL у legacy-тарифов не меняет правила продажи и не включает XOR.
+    entitlement_family = Column(String(64), nullable=True, default=None)
 
     # Параметры тарифа
     traffic_limit_gb = Column(Integer, nullable=False, default=100)  # 0 = безлимит

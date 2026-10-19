@@ -19,6 +19,7 @@ from app.database.crud.tariff import (
     get_tariff_by_id,
     get_tariff_subscriptions_count,
     get_tariffs_with_subscriptions_count,
+    normalize_entitlement_family,
     update_tariff,
 )
 from app.database.models import Tariff, User
@@ -218,6 +219,7 @@ def get_tariff_view_keyboard(
             InlineKeyboardButton(text='👥 Промогруппы', callback_data=f'admin_tariff_edit_promo:{tariff.id}'),
         ]
     )
+    buttons.append([InlineKeyboardButton(text='🏷️ Семейство', callback_data=f'admin_tariff_edit_family:{tariff.id}')])
     buttons.append(
         [
             InlineKeyboardButton(
@@ -375,6 +377,7 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
 
 {status} | {tariff_type}
 🎚️ Уровень: {tariff.tier_level}
+🏷️ Семейство: {html.escape(getattr(tariff, 'entitlement_family', None) or 'не назначено')}
 📊 Порядок: {tariff.display_order}
 
 <b>Параметры:</b>
@@ -1078,6 +1081,74 @@ async def process_tariff_prices(
 
 
 # ============ РЕДАКТИРОВАНИЕ ТАРИФА ============
+
+
+@admin_required
+@error_handler
+async def start_edit_tariff_entitlement_family(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Начинает редактирование метаданных семейства тарифа."""
+    texts = get_texts(db_user.language)
+    tariff_id = int(callback.data.split(':')[1])
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff:
+        await callback.answer('Тариф не найден', show_alert=True)
+        return
+
+    await state.set_state(AdminStates.editing_tariff_entitlement_family)
+    await state.update_data(tariff_id=tariff_id)
+    current = html.escape(tariff.entitlement_family or 'не назначено')
+    await callback.message.edit_text(
+        f'🏷️ <b>Коммерческое семейство тарифа «{html.escape(tariff.name)}»</b>\n\n'
+        f'Текущее значение: <code>{current}</code>\n\n'
+        'Введите идентификатор семейства, например <code>main</code> или '
+        '<code>metered_bypass</code>; <code>-</code> удалит метку.\n\n'
+        'Допустимы строчные латинские буквы, цифры, _ и -, до 64 символов. '
+        'Это пока только метаданные: ограничения покупки не включаются.',
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text=texts.CANCEL, callback_data=f'admin_tariff_view:{tariff_id}')]]
+        ),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+@admin_required
+@error_handler
+async def process_edit_tariff_entitlement_family(
+    message: types.Message,
+    db_user: User,
+    db: AsyncSession,
+    state: FSMContext,
+):
+    """Проверяет и сохраняет семейство, не изменяя подписки."""
+    data = await state.get_data()
+    tariff_id = data.get('tariff_id')
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if not tariff:
+        await message.answer('Тариф не найден')
+        await state.clear()
+        return
+
+    raw = (message.text or '').strip()
+    try:
+        family = normalize_entitlement_family(None if raw == '-' else raw)
+    except ValueError:
+        await message.answer('Введите ключ вида main, metered_bypass или vpn-2 (до 64 символов), либо - для сброса.')
+        return
+
+    tariff = await update_tariff(db, tariff, entitlement_family=family)
+    await state.clear()
+    subs_count = await get_tariff_subscriptions_count(db, tariff_id)
+    await message.answer(
+        '✅ Семейство обновлено!\n\n' + format_tariff_info(tariff, db_user.language, subs_count),
+        reply_markup=get_tariff_view_keyboard(tariff, db_user.language),
+        parse_mode='HTML',
+    )
 
 
 @admin_required
@@ -3045,6 +3116,10 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(select_tariff_type_periodic, F.data == 'tariff_type_periodic')
     dp.callback_query.register(select_tariff_type_daily, F.data == 'tariff_type_daily')
     dp.message.register(process_tariff_prices, AdminStates.creating_tariff_prices)
+
+    # Метаданные семейства
+    dp.callback_query.register(start_edit_tariff_entitlement_family, F.data.startswith('admin_tariff_edit_family:'))
+    dp.message.register(process_edit_tariff_entitlement_family, AdminStates.editing_tariff_entitlement_family)
 
     # Редактирование названия
     dp.callback_query.register(start_edit_tariff_name, F.data.startswith('admin_tariff_edit_name:'))
