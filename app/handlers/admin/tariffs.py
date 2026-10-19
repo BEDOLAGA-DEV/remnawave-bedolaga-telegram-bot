@@ -1104,10 +1104,10 @@ async def start_edit_tariff_entitlement_family(
     await state.update_data(tariff_id=tariff_id)
     current = html.escape(tariff.entitlement_family or 'не назначено')
     await callback.message.edit_text(
-        f'🏷️ <b>Коммерческое семейство тарифа «{html.escape(tariff.name)}»</b>\\n\\n'
-        f'Текущее значение: <code>{current}</code>\\n\\n'
+        f'🏷️ <b>Коммерческое семейство тарифа «{html.escape(tariff.name)}»</b>\n\n'
+        f'Текущее значение: <code>{current}</code>\n\n'
         'Введите идентификатор семейства, например <code>main</code> или '
-        '<code>metered_bypass</code>; <code>-</code> удалит метку.\\n\\n'
+        '<code>metered_bypass</code>; <code>-</code> удалит метку.\n\n'
         'Допустимы строчные латинские буквы, цифры, _ и -, до 64 символов. '
         'Это пока только метаданные: ограничения покупки не включаются.',
         reply_markup=InlineKeyboardMarkup(
@@ -1146,7 +1146,7 @@ async def process_edit_tariff_entitlement_family(
     await state.clear()
     subs_count = await get_tariff_subscriptions_count(db, tariff_id)
     await message.answer(
-        '✅ Семейство обновлено!\\n\\n' + format_tariff_info(tariff, db_user.language, subs_count),
+        '✅ Семейство обновлено!\n\n' + format_tariff_info(tariff, db_user.language, subs_count),
         reply_markup=get_tariff_view_keyboard(tariff, db_user.language),
         parse_mode='HTML',
     )
