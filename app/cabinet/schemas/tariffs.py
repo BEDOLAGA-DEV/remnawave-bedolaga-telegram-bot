@@ -159,7 +159,8 @@ class TariffCreateRequest(BaseModel):
     description: str | None = None
     is_active: bool = True
     # Только метаданные: XOR и ограничения продаж здесь ещё не включены.
-    entitlement_family: str | None = Field(None, pattern=r'^[a-z][a-z0-9_-]{0,63}    is_highlighted: bool = False
+    entitlement_family: str | None = Field(None, max_length=64, pattern=r'\A[a-z][a-z0-9_-]{0,63}\z')
+    is_highlighted: bool = False
     allow_traffic_topup: bool = True
     traffic_topup_enabled: bool = False
     traffic_topup_packages: dict[str, int] = Field(default_factory=dict)
@@ -270,7 +271,8 @@ class TariffUpdateRequest(BaseModel):
     description: str | None = None
     is_active: bool | None = None
     # Только метаданные: XOR и ограничения продаж здесь ещё не включены.
-    entitlement_family: str | None = Field(None, pattern=r'^[a-z][a-z0-9_-]{0,63}    is_highlighted: bool | None = None
+    entitlement_family: str | None = Field(None, max_length=64, pattern=r'\A[a-z][a-z0-9_-]{0,63}\z')
+    is_highlighted: bool | None = None
     allow_traffic_topup: bool | None = None
     traffic_topup_enabled: bool | None = None
     traffic_topup_packages: dict[str, int] | None = None
