@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
+
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import settings
 from app.database.models import (
@@ -48,10 +52,7 @@ def _callback(data: str):
 
 
 def _state():
-    state = MagicMock()
-    state.update_data = AsyncMock()
-    state.get_data = AsyncMock(return_value={})
-    return state
+    return FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=1, user_id=1))
 
 
 async def test_preview_uses_engine_price_with_extra_devices(monkeypatch):

@@ -179,6 +179,23 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                                 'tariff_checkout_id': checkout_id,
                             },
                         )
+                elif flow == 'telegram_period':
+                    price = 301 + (5 - base) * 137
+                    state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
+                    await state.update_data(target_subscription_id=10)
+                    callback = SimpleNamespace(
+                        data='tariff_period:1:30',
+                        answer=AsyncMock(),
+                        message=SimpleNamespace(edit_text=AsyncMock()),
+                    )
+                    await inspect.unwrap(telegram.select_tariff_period)(callback, user, db, state)
+                    callback.data = (
+                        callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+                    )
+                    checkout = (await state.get_data())['restored_tariff_checkout']
+                    await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
+                    await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
+                    assert not await auto._auto_purchase_tariff(db, user, checkout['identity'])
                 elif flow in ('telegram_daily', 'auto_daily', 'cart_return_daily'):
                     price = 101 + (5 - base) * 137
                     if flow == 'auto_daily':
@@ -290,6 +307,15 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         bot=SimpleNamespace(send_message=AsyncMock()),
                         message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
                     )
+                    if flow == 'telegram_custom':
+                        callback.data = 'custom_days:1:0'
+                        await inspect.unwrap(telegram.handle_custom_days_change)(callback, user, db, state)
+                        callback.data = next(
+                            b.callback_data
+                            for row in callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+                            for b in row
+                            if b.callback_data and b.callback_data.startswith('custom_confirm:')
+                        )
                     if flow in ('cart_return_custom', 'cart_return_traffic'):
                         await state.update_data(target_subscription_id=None, active_subscription_id=20)
                         await telegram.return_to_saved_tariff_cart(
@@ -336,7 +362,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
 
                     else:
                         await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
-                        if flow in ('cart_return_custom', 'cart_return_traffic'):
+                        if flow in ('telegram_custom', 'cart_return_custom', 'cart_return_traffic'):
                             checkout = (await state.get_data())['restored_tariff_checkout']
                             await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
                             assert not await auto._auto_purchase_tariff(db, user, checkout['identity'])
@@ -371,6 +397,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
     [
         'cabinet',
         'telegram_custom',
+        'telegram_period',
         'cabinet_daily',
         'telegram_daily',
         'auto_daily',

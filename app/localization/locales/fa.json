@@ -2315,5 +2315,6 @@
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 غیرفعال کردن تمدید خودکار Cashera",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ تمدید خودکار از طریق Cashera",
   "CASHERA_RECURRING_CANCELLED": "✅ تمدید خودکار Cashera غیرفعال شد",
+  "TARIFF_PURCHASE_CONFIRMATION_EXPIRED": "این تأیید منقضی شده است. لطفاً تعرفه را دوباره انتخاب کنید.",
   "TARIFF_PURCHASE_IN_PROGRESS": "⏳ این خرید در حال پردازش است. نیازی به پرداخت مجدد نیست."
 }

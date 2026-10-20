@@ -3900,7 +3900,7 @@
   Функции: `test_paid_renewal_resets_bot_and_panel_together`
 - `tests/database/test_saved_tariff_cart_idempotency_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `test_saved_cart_only_charged_once`, `test_saved_cart_retries_only_after_atomic_compensation`, `test_concurrent_saved_cart_consumes_promo_once`, `test_restored_manual_and_auto_share_checkout`, `test_legacy_restored_checkout_keeps_original_identity`, `test_old_saved_cart_button_cannot_charge_after_state_clear`, `test_restored_manual_compensation_and_fresh_checkout`, `test_saved_checkout_does_not_overwrite_changed_paid_source`, `test_cabinet_request_and_cart_share_payment_identity`, `test_cabinet_retry_requires_compensation_or_new_identity`, `test_cabinet_insufficient_balance_cart_retains_request_identity`
+  Функции: `test_saved_cart_only_charged_once`, `test_saved_cart_retries_only_after_atomic_compensation`, `test_concurrent_saved_cart_consumes_promo_once`, `test_restored_manual_and_auto_share_checkout`, `test_legacy_restored_checkout_keeps_original_identity`, `test_old_saved_cart_button_cannot_charge_after_state_clear`, `test_restored_manual_compensation_and_fresh_checkout`, `test_saved_checkout_does_not_overwrite_changed_paid_source`, `test_cabinet_request_and_cart_share_payment_identity`, `test_cabinet_retry_requires_compensation_or_new_identity`, `test_cabinet_insufficient_balance_cart_retains_request_identity`, `test_fresh_telegram_preview_is_one_purchase_attempt`, `test_fresh_telegram_compensation_and_new_selection`, `test_fresh_telegram_old_state_and_changed_source_are_safe`
 - `tests/database/test_simple_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: `PanelBoundary`
   Функции: `test_simple_payment_resets_db_and_panel_together`
@@ -5029,7 +5029,7 @@
   Функции: `test_parse_positive_rubles_to_kopeks`, `test_parse_positive_rubles_to_kopeks_rejects_invalid_values`, `test_parse_positive_gb`, `test_parse_positive_gb_rejects_invalid_values`, `test_valid_custom_traffic_configuration_has_no_errors`, `test_invalid_custom_traffic_configuration_reports_specific_error`, `test_invalid_configuration_reports_all_independent_missing_fields`
 - `tests/services/test_tariff_purchase_subscription_pinning.py` — Python-модуль
   Классы: нет
-  Функции: `test_select_tariff_period_resolves_and_pins_target_subscription_id` — REGRESSION: ``select_tariff_period`` must resolve the existing, `test_confirm_tariff_purchase_reads_target_subscription_id_from_fsm` — REGRESSION: ``confirm_tariff_purchase`` must read, `test_confirm_tariff_purchase_guards_against_tariff_divergence` — If the FSM-pinned subscription's tariff_id no longer matches, `test_confirm_tariff_purchase_does_not_use_only_tariff_lookup` — Pre-fix shape: confirm_tariff_purchase ran a single
+  Функции: `purchase_context`, `confirmation`, `test_purchase_keeps_preview_source_after_status_and_current_selection_change`, `test_foreign_or_missing_preview_source_never_reaches_pricing`, `test_fixed_purchase_preserves_max_active_subscriptions_before_debit`, `test_unbound_legacy_confirmation_requires_reselection`, `test_custom_preview_buttons_bind_options_and_reject_previous_selection`
 - `tests/services/test_tariff_switch_flows_use_policy.py` — Python-модуль
   Классы: нет
   Функции: `test_flow_computes_remaining_days_through_policy`, `test_flow_asks_policy_before_resetting_traffic`, `test_no_new_direct_readers_of_the_traffic_switch` — Новый читатель выключателя обязан объясниться здесь.

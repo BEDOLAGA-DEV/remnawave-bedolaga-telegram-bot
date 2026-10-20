@@ -195,6 +195,29 @@ async def test_saved_cart_only_charged_once(
                     callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
                 )
 
+        async def preview_fresh():
+            nonlocal cart
+            async with maker() as db:
+                user = await get_user_by_id(db, 1)
+                await state.update_data(target_subscription_id=10, custom_days=days, custom_traffic_gb=100)
+                callback.data = 'tariff_period:1:30' if days == 30 else 'custom_days:1:0'
+                preview_handler = telegram.select_tariff_period if days == 30 else telegram.handle_custom_days_change
+                await inspect.unwrap(preview_handler)(callback, user, db, state)
+                markup = callback.message.edit_text.await_args.kwargs['reply_markup']
+                callback.data = next(
+                    button.callback_data
+                    for row in markup.inline_keyboard
+                    for button in row
+                    if button.callback_data and button.callback_data.startswith(('tariff_confirm:', 'custom_confirm:'))
+                )
+                assert len(callback.data.encode()) <= 64
+                checkout = (await state.get_data()).get('restored_tariff_checkout')
+                if checkout:
+                    cart = dict(checkout['cart'])
+
+        if 'fresh' in (first_flow, second_flow):
+            await preview_fresh()
+
         if failure == 'stale_source':
             async with maker() as db:
                 db.add(Tariff(id=2, name='Changed', is_active=True, device_limit=7))
@@ -272,6 +295,8 @@ async def test_saved_cart_only_charged_once(
                             .inline_keyboard[0][0]
                             .callback_data
                         )
+            if failure == 'new_checkout' and second_flow == 'fresh':
+                await preview_fresh()
             results = [first_result, await purchase(second_flow)]
         expected_results = (
             [False, False]
@@ -431,4 +456,45 @@ async def test_cabinet_insufficient_balance_cart_retains_request_identity(
         first_flow=first_flow,
         second_flow=second_flow,
         days=days,
+    )
+
+
+@pytest.mark.parametrize(('first_flow', 'second_flow'), [('fresh', 'fresh'), ('fresh', 'auto'), ('auto', 'fresh')])
+@pytest.mark.parametrize('concurrent', [False, True])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_fresh_telegram_preview_is_one_purchase_attempt(
+    postgres_database, monkeypatch, first_flow, second_flow, concurrent, days
+):
+    await test_saved_cart_only_charged_once(
+        postgres_database, monkeypatch, concurrent, first_flow=first_flow, second_flow=second_flow, days=days
+    )
+
+
+@pytest.mark.parametrize('failure', ['ledger', 'provision', 'refund', 'new_checkout'])
+@pytest.mark.parametrize('promo', [0, 17, 100])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_fresh_telegram_compensation_and_new_selection(postgres_database, monkeypatch, failure, promo, days):
+    await test_saved_cart_only_charged_once(
+        postgres_database,
+        monkeypatch,
+        False,
+        failure=failure,
+        promo=promo,
+        days=days,
+        first_flow='fresh',
+        second_flow='fresh',
+    )
+
+
+@pytest.mark.parametrize('failure', ['cleared_state', 'stale_source'])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_fresh_telegram_old_state_and_changed_source_are_safe(postgres_database, monkeypatch, failure, days):
+    await test_saved_cart_only_charged_once(
+        postgres_database,
+        monkeypatch,
+        False,
+        failure=failure,
+        days=days,
+        first_flow='fresh',
+        second_flow='fresh',
     )

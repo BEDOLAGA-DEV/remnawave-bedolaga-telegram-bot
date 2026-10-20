@@ -1,183 +1,208 @@
-"""Source-level pin for the FSM-driven subscription_id resolution in
-`app/handlers/subscription/tariff_purchase.py::confirm_tariff_purchase`.
+"""Behavioral coverage for binding a Telegram purchase to its owned source row.
 
-Background — the bug this defends against
------------------------------------------
-User report (2026-05-16): a user with two subscriptions of the same
-tariff (one expired, one active) tries to renew the active one. Money
-is deducted, log says "Тариф уже активен у пользователя", money gets
-refunded, subscription is NOT extended. User has to re-try.
-
-Root cause: ``confirm_tariff_purchase`` re-queried the target sub by
-``(user_id, tariff_id)`` instead of using the EXACT subscription_id
-the user clicked on at preview time. Under a race with a concurrent
-panel webhook that briefly flips the active sub's status, the lookup
-returns ``None`` → falls through to ``create_paid_subscription`` →
-the partial UNIQUE ``uq_subscriptions_user_tariff_active`` raises
-``IntegrityError`` → "Тариф уже активен" log + refund.
-
-Fix shape:
-  1. ``select_tariff_period`` (preview handler) resolves the target
-     subscription at preview time and pins ``target_subscription_id``
-     in FSM.
-  2. ``confirm_tariff_purchase`` reads that pinned id first via
-     ``get_subscription_by_id_for_user`` (ownership-checked), and only
-     falls back to the tariff-level lookup if the pinned id is absent
-     or its tariff has diverged.
-
-These tests pin the SOURCE-LEVEL contract — a full integration test
-would need a real DB + Redis + aiogram FSM dispatcher, which is heavy.
-The bug class is "drop the pin", which is grep-detectable.
+This replaces source-shape assertions: pricing/fulfillment can be shared without
+losing the selected subscription or allowing a stale callback to debit a new one.
 """
 
-from __future__ import annotations
+import inspect
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-import ast
-from pathlib import Path
+import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
+from sqlalchemy import select
 
-
-TARIFF_PURCHASE_PATH = Path(__file__).resolve().parents[2] / 'app' / 'handlers' / 'subscription' / 'tariff_purchase.py'
-
-
-def _find_async_function(tree: ast.Module, name: str) -> ast.AsyncFunctionDef:
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f'async function {name!r} not found in tariff_purchase.py')
-
-
-def _function_source(source: str, func: ast.AsyncFunctionDef) -> str:
-    """Slice the literal source between the function's start and end lines.
-
-    Used so we can grep ONLY inside the function body — assertions about
-    "X must appear inside confirm_tariff_purchase" don't false-positive
-    on identical names elsewhere in the file.
-    """
-    lines = source.splitlines(keepends=True)
-    end_line = func.end_lineno or len(lines)
-    return ''.join(lines[func.lineno - 1 : end_line])
+from app.config import settings
+from app.database.crud.user import get_user_by_id
+from app.database.models import Base, Subscription, Tariff, Transaction, User
+from app.handlers.subscription import tariff_purchase as telegram
+from app.services import subscription_auto_purchase_service as auto
+from app.services.subscription_service import SubscriptionService
+from tests.fixtures.sqlite_memory import memory_session
 
 
-# ---------------------------------------------------------------------------
-# Preview handler must pin target_subscription_id.
-# ---------------------------------------------------------------------------
+@asynccontextmanager
+async def purchase_context(monkeypatch, *, source=True):
+    monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+    monkeypatch.setattr(settings, 'MAX_ACTIVE_SUBSCRIPTIONS', 1)
+    monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
+    monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
+    monkeypatch.setattr(SubscriptionService, 'create_remnawave_user', AsyncMock())
+    monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        now = datetime.now(UTC)
+        db.add_all(
+            [
+                User(id=1, telegram_id=101, language='ru', balance_kopeks=10000),
+                User(id=2, telegram_id=202),
+                Tariff(
+                    id=1,
+                    name='Test',
+                    is_active=True,
+                    device_limit=1,
+                    device_price_kopeks=100,
+                    traffic_limit_gb=100,
+                    period_prices={'30': 300},
+                    allowed_squads=['test-squad'],
+                    custom_days_enabled=True,
+                    price_per_day_kopeks=10,
+                    min_days=1,
+                    max_days=365,
+                ),
+                Tariff(id=2, name='Neighbor', is_active=True, device_limit=7),
+            ]
+        )
+        db.add(
+            Subscription(
+                id=20,
+                remnawave_short_id='test-20',
+                user_id=1,
+                tariff_id=2,
+                is_trial=False,
+                status='active',
+                device_limit=7,
+                end_date=now + timedelta(days=50),
+            )
+        )
+        db.add(
+            Subscription(
+                id=21, user_id=2, is_trial=False, status='active', device_limit=5, end_date=now + timedelta(days=50)
+            )
+        )
+        if source:
+            db.add(
+                Subscription(
+                    id=10,
+                    remnawave_short_id='test-10',
+                    user_id=1,
+                    tariff_id=None,
+                    is_trial=False,
+                    status='expired',
+                    device_limit=3,
+                    end_date=now - timedelta(days=1),
+                )
+            )
+        await db.commit()
+        state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
+        if source:
+            await state.update_data(target_subscription_id=10, custom_days=75, custom_traffic_gb=100)
+        callback = SimpleNamespace(
+            data='tariff_period:1:30', answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock())
+        )
+        yield db, await get_user_by_id(db, 1), state, callback
 
 
-def test_select_tariff_period_resolves_and_pins_target_subscription_id() -> None:
-    """REGRESSION: ``select_tariff_period`` must resolve the existing
-    subscription for this tariff and write its id to FSM under
-    ``target_subscription_id``. Without this pin,
-    ``confirm_tariff_purchase`` falls back to a race-vulnerable
-    tariff-level lookup.
-    """
-    source = TARIFF_PURCHASE_PATH.read_text(encoding='utf-8')
-    tree = ast.parse(source)
-    func = _find_async_function(tree, 'select_tariff_period')
-    body = _function_source(source, func)
-
-    # Must look up the existing sub by (user, tariff) inside the preview.
-    assert 'get_subscription_by_user_and_tariff' in body, (
-        'select_tariff_period must resolve the target subscription at preview time '
-        'so confirm_tariff_purchase can pin it'
-    )
-
-    # Must store target_subscription_id in FSM. Pin the literal kwarg
-    # name so a refactor that renames it (and breaks the confirm-side
-    # reader) trips this test.
-    assert 'target_subscription_id=' in body, (
-        'select_tariff_period must write target_subscription_id into FSM state — '
-        'confirm_tariff_purchase reads this key to pin the exact subscription user '
-        'clicked on, avoiding the race that produced the "Тариф уже активен" bug'
-    )
-
-
-# ---------------------------------------------------------------------------
-# Confirm handler must prefer the FSM-pinned id over tariff lookup.
-# ---------------------------------------------------------------------------
-
-
-def test_confirm_tariff_purchase_reads_target_subscription_id_from_fsm() -> None:
-    """REGRESSION: ``confirm_tariff_purchase`` must read
-    ``target_subscription_id`` from FSM state BEFORE falling back to
-    ``get_subscription_by_user_and_tariff``.
-    """
-    source = TARIFF_PURCHASE_PATH.read_text(encoding='utf-8')
-    tree = ast.parse(source)
-    func = _find_async_function(tree, 'confirm_tariff_purchase')
-    body = _function_source(source, func)
-
-    assert 'target_subscription_id' in body, (
-        'confirm_tariff_purchase must read target_subscription_id from FSM state to '
-        'pin the exact subscription user confirmed on — without it, this handler '
-        'races with concurrent panel webhooks and produces the duplicate-key bug'
-    )
-
-    # Must call the ownership-checked lookup, not the unscoped one.
-    # ``get_subscription_by_id_for_user`` enforces ``Subscription.user_id == user_id``
-    # which is the IDOR protection we want at the FSM-deserialization
-    # boundary (the pinned id could in principle be stale or tampered).
-    assert 'get_subscription_by_id_for_user' in body, (
-        'confirm_tariff_purchase must look up the pinned subscription via '
-        'get_subscription_by_id_for_user (IDOR-safe), not the unscoped variant'
-    )
-
-    # The order must be: pinned-id FIRST, fallback SECOND. We compare
-    # the index of the .get('target_subscription_id') READ against the
-    # actual CALL to get_subscription_by_user_and_tariff (with paren —
-    # not the import line, which mentions the name without calling it).
-    pinned_idx = body.find("'target_subscription_id'")
-    if pinned_idx < 0:
-        pinned_idx = body.find('"target_subscription_id"')
-    fallback_call_idx = body.find('get_subscription_by_user_and_tariff(')
-    assert pinned_idx >= 0, 'target_subscription_id read not found in confirm body'
-    assert fallback_call_idx >= 0, 'tariff-level fallback CALL not found in confirm body'
-    assert pinned_idx < fallback_call_idx, (
-        f'confirm_tariff_purchase must READ target_subscription_id from FSM '
-        f'BEFORE calling get_subscription_by_user_and_tariff. Reversing the '
-        f'order re-introduces the race. (pinned_idx={pinned_idx}, call_idx={fallback_call_idx})'
+def confirmation(callback):
+    keyboard = callback.message.edit_text.await_args.kwargs['reply_markup']
+    return next(
+        b.callback_data
+        for row in keyboard.inline_keyboard
+        for b in row
+        if b.callback_data and b.callback_data.startswith(('tariff_confirm:', 'custom_confirm:'))
     )
 
 
-def test_confirm_tariff_purchase_guards_against_tariff_divergence() -> None:
-    """If the FSM-pinned subscription's tariff_id no longer matches
-    the confirm's tariff_id (admin swapped tariff between preview
-    and confirm), we must fall back rather than extend a subscription
-    of a different tariff with the new tariff's parameters.
-    """
-    source = TARIFF_PURCHASE_PATH.read_text(encoding='utf-8')
-    tree = ast.parse(source)
-    func = _find_async_function(tree, 'confirm_tariff_purchase')
-    body = _function_source(source, func)
-
-    # NULL is the paid classic migration, not a different paid tariff.
-    # Runtime PostgreSQL controls cover both the migration and stale paid pin.
-    assert 'existing_sub.tariff_id not in (None, tariff_id)' in body, (
-        'confirm_tariff_purchase must guard against the pinned subscription '
-        'pointing to a different tariff than the confirm carries — otherwise '
-        'extending it with the wrong tariff parameters would corrupt state'
-    )
-
-
-# ---------------------------------------------------------------------------
-# Negative-control: the buggy pattern must NOT remain. If anyone deletes
-# the FSM-pin logic and reverts to "lookup by (user, tariff) only", these
-# pins fail.
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize('custom', [False, True])
+async def test_purchase_keeps_preview_source_after_status_and_current_selection_change(monkeypatch, custom):
+    async with purchase_context(monkeypatch) as (db, user, state, callback):
+        if custom:
+            callback.data = 'custom_days:1:0'
+        preview = telegram.handle_custom_days_change if custom else telegram.select_tariff_period
+        await inspect.unwrap(preview)(callback, user, db, state)
+        bound = (await state.get_data())['restored_tariff_checkout']['cart']
+        assert bound['subscription_id'] == 10
+        selected = await db.get(Subscription, 10)
+        selected.status = 'disabled'
+        await db.commit()
+        await state.update_data(target_subscription_id=20)
+        callback.data = confirmation(callback)
+        handler = telegram.handle_custom_confirm if custom else telegram.confirm_tariff_purchase
+        await inspect.unwrap(handler)(callback, user, db, state)
+        await db.refresh(user)
+        await db.refresh(selected)
+        assert user.balance_kopeks == 10000 - (1150 if custom else 500)
+        assert selected.tariff_id == 1 and selected.device_limit == 3 and selected.status == 'active'
+        assert (await db.get(Subscription, 20)).device_limit == 7
+        assert (await db.get(Subscription, 20)).tariff_id == 2
+        assert len((await db.scalars(select(Transaction))).all()) == 1
 
 
-def test_confirm_tariff_purchase_does_not_use_only_tariff_lookup() -> None:
-    """Pre-fix shape: confirm_tariff_purchase ran a single
-    ``get_subscription_by_user_and_tariff`` call with no FSM-pinned
-    override. Detect a regression to that shape.
-    """
-    source = TARIFF_PURCHASE_PATH.read_text(encoding='utf-8')
-    tree = ast.parse(source)
-    func = _find_async_function(tree, 'confirm_tariff_purchase')
-    body = _function_source(source, func)
+@pytest.mark.parametrize('selected', [21, 999])
+async def test_foreign_or_missing_preview_source_never_reaches_pricing(monkeypatch, selected):
+    from app.services.pricing_engine import pricing_engine
 
-    # If `target_subscription_id` is absent, the fix has been removed.
-    assert 'target_subscription_id' in body, (
-        'confirm_tariff_purchase no longer pins the FSM target_subscription_id — '
-        'this re-opens the race-condition bug fixed by commit handling the '
-        'two-subscriptions-same-tariff renewal scenario'
-    )
+    async with purchase_context(monkeypatch) as (db, user, state, callback):
+        await state.update_data(target_subscription_id=selected)
+        pricing = AsyncMock(side_effect=AssertionError('Invalid source reached pricing'))
+        monkeypatch.setattr(pricing_engine, 'calculate_tariff_purchase_price', pricing)
+        await inspect.unwrap(telegram.select_tariff_period)(callback, user, db, state)
+        pricing.assert_not_awaited()
+        assert callback.answer.await_args.kwargs['show_alert']
+        assert user.balance_kopeks == 10000
+        assert not (await db.scalars(select(Transaction))).all()
+
+
+async def test_fixed_purchase_preserves_max_active_subscriptions_before_debit(monkeypatch):
+    async with purchase_context(monkeypatch, source=False) as (db, user, state, callback):
+        await inspect.unwrap(telegram.select_tariff_period)(callback, user, db, state)
+        callback.data = confirmation(callback)
+        await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
+        assert 'Максимум подписок' in callback.answer.await_args.args[0]
+        assert user.balance_kopeks == 10000
+        assert not (await db.scalars(select(Transaction))).all()
+
+
+@pytest.mark.parametrize('custom', [False, True])
+async def test_unbound_legacy_confirmation_requires_reselection(monkeypatch, custom):
+    async with purchase_context(monkeypatch) as (db, user, state, callback):
+        callback.data = 'custom_confirm:1' if custom else 'tariff_confirm:1:30'
+        handler = telegram.handle_custom_confirm if custom else telegram.confirm_tariff_purchase
+        await inspect.unwrap(handler)(callback, user, db, state)
+        assert 'устарело' in callback.answer.await_args.args[0]
+        assert user.balance_kopeks == 10000
+        assert not (await db.scalars(select(Transaction))).all()
+
+
+@pytest.mark.parametrize('entry', ['select', 'days', 'traffic', 'period_traffic'])
+async def test_custom_preview_buttons_bind_options_and_reject_previous_selection(monkeypatch, entry):
+    async with purchase_context(monkeypatch) as (db, user, state, callback):
+        tariff = await db.get(Tariff, 1)
+        tariff.custom_traffic_enabled = True
+        tariff.min_traffic_gb = 0
+        tariff.max_traffic_gb = 1000
+        tariff.traffic_price_per_gb_kopeks = 1
+        await db.commit()
+        callback.data, handler = {
+            'select': ('tariff:1', telegram.select_tariff),
+            'days': ('custom_days:1:0', telegram.handle_custom_days_change),
+            'traffic': ('custom_traffic:1:0', telegram.handle_custom_traffic_change),
+            'period_traffic': ('tariff_period_traffic:1:30', telegram.select_tariff_period_with_traffic),
+        }[entry]
+        await inspect.unwrap(handler)(callback, user, db, state)
+        old_confirmation = confirmation(callback)
+        old_cart = (await state.get_data())['restored_tariff_checkout']['cart']
+        callback.data = 'custom_traffic:1:1'
+        await inspect.unwrap(telegram.handle_custom_traffic_change)(callback, user, db, state)
+        new_confirmation = confirmation(callback)
+        new_cart = (await state.get_data())['restored_tariff_checkout']['cart']
+        assert old_confirmation != new_confirmation and len(new_confirmation.encode()) <= 64
+        assert new_cart['custom_traffic_gb'] == old_cart['custom_traffic_gb'] + 1
+        callback.data = old_confirmation
+        await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
+        assert user.balance_kopeks == 10000 and not (await db.scalars(select(Transaction))).all()
+        callback.data = new_confirmation
+        await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
+        await db.refresh(user)
+        source = await db.get(Subscription, 10)
+        await db.refresh(source)
+        assert source.traffic_limit_gb == new_cart['custom_traffic_gb']
+        assert len((await db.scalars(select(Transaction))).all()) == 1
+        # A change after completion also remains usable; the old receipt cannot debit it.
+        callback.data = 'custom_traffic:1:1'
+        await inspect.unwrap(telegram.handle_custom_traffic_change)(callback, user, db, state)
+        assert confirmation(callback) != new_confirmation

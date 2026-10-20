@@ -273,7 +273,14 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 )
                 assert f'Итого: {telegram.format_price_kopeks(expected_price)}' in preview
                 assert f'Устройств: {telegram.Texts.format_device_limit(expected)}' in preview
-                callback.data = 'custom_confirm:1'
+                callback.data = 'custom_days:1:0'
+                await inspect.unwrap(telegram.handle_custom_days_change)(callback, user, db, state)
+                callback.data = next(
+                    b.callback_data
+                    for row in callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+                    for b in row
+                    if b.callback_data and b.callback_data.startswith('custom_confirm:')
+                )
                 await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
                 success_text = callback.message.edit_text.await_args.args[0]
                 assert f'Устройств: {expected}' in success_text
@@ -284,7 +291,9 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 assert preview_state['final_price'] == expected_price
                 if multi:
                     assert preview_state['target_subscription_id'] == 10
-                callback.data = f'tariff_confirm:1:{days}'
+                callback.data = (
+                    callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+                )
                 await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
         if repeat:
             if flow == 'auto_daily':
@@ -508,10 +517,10 @@ async def test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing(
         state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
         await state.update_data(target_subscription_id=10)
         callback = SimpleNamespace(
-            data='tariff_confirm:1:30', answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock())
+            data='tariff_period:1:30', answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock())
         )
         with pytest.raises(PricingBoundary):
-            await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
+            await inspect.unwrap(telegram.select_tariff_period)(callback, user, db, state)
         assert pricing.await_args.kwargs['device_limit'] == 7
         assert (await db.get(Subscription, 10)).tariff_id == 2
         await db.refresh(user)

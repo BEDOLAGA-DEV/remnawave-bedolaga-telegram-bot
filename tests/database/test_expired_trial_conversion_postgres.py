@@ -186,6 +186,12 @@ async def test_expired_trial_purchase_preserves_identity(postgres_database, monk
                 bot=SimpleNamespace(send_message=AsyncMock()),
                 message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock(), chat=SimpleNamespace(id=101)),
             )
+            if not daily:
+                callback.data = 'tariff_period:1:30'
+                await inspect.unwrap(telegram.select_tariff_period)(callback, user, db, state)
+                callback.data = (
+                    callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+                )
             handler = telegram.confirm_daily_tariff_purchase if daily else telegram.confirm_tariff_purchase
             await inspect.unwrap(handler)(callback, user, db, state)
         subs = (await db.scalars(select(Subscription).where(Subscription.user_id == 1))).all()

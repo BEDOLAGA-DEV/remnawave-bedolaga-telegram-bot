@@ -2315,5 +2315,6 @@
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 Вимкнути автопродовження Cashera",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ Автопродовження через Cashera",
   "CASHERA_RECURRING_CANCELLED": "✅ Автопродовження Cashera вимкнено",
+  "TARIFF_PURCHASE_CONFIRMATION_EXPIRED": "Підтвердження застаріло. Виберіть тариф знову.",
   "TARIFF_PURCHASE_IN_PROGRESS": "⏳ Покупка вже обробляється. Повторне списання не потрібне."
 }

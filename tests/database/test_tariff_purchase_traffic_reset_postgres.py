@@ -3,6 +3,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import settings
 from app.database.models import Base, Subscription, Tariff, User
@@ -40,7 +43,7 @@ async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
     panel = SimpleNamespace(
         create_remnawave_user=panel_call, update_remnawave_user=panel_call, sync_remnawave_user=panel_call
     )
-    module = telegram if flow in {'telegram', 'custom'} else miniapp if flow == 'miniapp' else auto
+    module = miniapp if flow == 'miniapp' else auto
     monkeypatch.setattr(module, 'SubscriptionService', lambda: panel)
     now = datetime.now(UTC)
     async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
@@ -86,14 +89,18 @@ async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
             callback = SimpleNamespace(
                 data='tariff_confirm:1:30', answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock())
             )
-            state = SimpleNamespace(
-                get_data=AsyncMock(
-                    return_value={
-                        'target_subscription_id': None if expired else 7,
-                        'custom_days': 30,
-                        'custom_traffic_gb': 100,
-                    }
-                )
+            state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=42, user_id=42))
+            await state.update_data(
+                target_subscription_id=None if expired else 7, custom_days=30, custom_traffic_gb=100
+            )
+            callback.data = 'custom_days:1:0' if flow == 'custom' else 'tariff_period:1:30'
+            preview = telegram.handle_custom_days_change if flow == 'custom' else telegram.select_tariff_period
+            await preview(callback, user, db, state)
+            callback.data = next(
+                b.callback_data
+                for row in callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+                for b in row
+                if b.callback_data and b.callback_data.startswith(('tariff_confirm:', 'custom_confirm:'))
             )
             handler = telegram.handle_custom_confirm if flow == 'custom' else telegram.confirm_tariff_purchase
             operation = handler(callback, user, db, state)
