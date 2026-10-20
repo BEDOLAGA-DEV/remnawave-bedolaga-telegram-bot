@@ -1048,9 +1048,10 @@ async def sync_from_panel(
     try:
         stats = await service.sync_users_from_panel(db, payload.mode)
         logger.info('Admin synced from panel (mode: )', telegram_id=admin.telegram_id, mode=payload.mode)
+        errors = stats.get('errors', 0)
         return SyncResponse(
-            success=True,
-            message='Sync from panel completed',
+            success=errors == 0,
+            message=f'Sync from panel completed with {errors} errors' if errors else 'Sync from panel completed',
             data=stats,
         )
     except RemnaWaveConfigurationError as exc:
