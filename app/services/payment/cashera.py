@@ -1124,7 +1124,9 @@ async def enable_cashera_recurring(
     )
 
 
-async def purchase_tariff_with_cashera_recurring(db: AsyncSession, *, user: Any, tariff: Any) -> dict[str, Any]:
+async def purchase_tariff_with_cashera_recurring(
+    db: AsyncSession, *, user: Any, tariff: Any, subscription_id: int | None = None
+) -> dict[str, Any]:
     """Покупка тарифа оплатой через автопродление Cashera.
 
     Зеркало Platega/Lava: нет подписки на тариф → EXPIRED-заготовка без доступа,
@@ -1140,7 +1142,16 @@ async def purchase_tariff_with_cashera_recurring(db: AsyncSession, *, user: Any,
         get_subscription_by_user_id,
     )
 
-    if settings.is_multi_tariff_enabled():
+    if subscription_id is not None:
+        from app.services.recurrent_purchase_selection import resolve_recurrent_purchase_selection
+
+        subscription = await resolve_recurrent_purchase_selection(
+            db,
+            user_id=user.id,
+            tariff_id=tariff.id,
+            subscription_id=subscription_id,
+        )
+    elif settings.is_multi_tariff_enabled():
         subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
     else:
         subscription = await get_subscription_by_user_id(db, user.id)

@@ -1736,6 +1736,9 @@
 - `app/services/recurrent_payments_service.py` — Python-модуль
   Классы: `RecurrentPaymentsService` (8 методов)
   Функции: нет
+- `app/services/recurrent_purchase_selection.py` — Python-модуль
+  Классы: нет
+  Функции: `resolve_recurrent_purchase_selection`
 - `app/services/referral_contest_service.py` — Python-модуль
   Классы: `ReferralContestService` (23 методов)
   Функции: нет
@@ -3871,6 +3874,9 @@
 - `tests/database/test_reachability_crud.py` — Python-модуль
   Классы: нет
   Функции: `test_create_get_and_update_job`, `test_idempotency_key_is_unique`, `test_active_job_is_found_per_kind_only_while_running`, `test_list_jobs_filters_and_counts`, `test_latest_legs_returns_newest_per_target_and_unit`, `test_replace_legs_drops_previous_legs_of_the_job`, `test_prefs_upsert_and_list`, `test_last_vless_leg_price_uses_latest_done_vless_job`
+- `tests/database/test_recurrent_purchase_selected_subscription_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_selected_row_validated_before_provider`, `test_http_query_reaches_owned_selected_row`
 - `tests/database/test_referral_levels_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_reward_levels_columns_match`, `test_reward_levels_indexes_match` — Именно это и расходилось: create_all делает ix_..._id, миграция — не делала., `test_new_earning_columns_match`, `test_no_duplicate_tariff_foreign_key` — Миграция не должна вешать второй FK поверх созданного по модели., `test_column_shapes_match`, `test_threshold_columns_are_not_nullable` — Порог и флаг подсчёта читаются напрямую в расчёт награды., `test_downgrade_removes_everything_it_added` — Откат обязан возвращать базу к исходному виду., `test_upgrade_is_idempotent` — Повторный прогон на уже обновлённой базе не должен падать.
