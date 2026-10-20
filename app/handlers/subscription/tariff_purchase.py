@@ -97,13 +97,31 @@ async def _resolve_switch_subscription(callback, db_user, db, state=None):
     resolver would mistake for a sub_id (and renew/switch the WRONG subscription
     when that number equals one of the user's subscription ids). The switch entry
     (show_tariff_switch_list / show_instant_switch_list) stores the chosen
-    subscription in FSM ``active_subscription_id``, so it is authoritative here.
+    subscription in FSM ``active_subscription_id``, so it is authoritative for
+    continuation callbacks. Only ``tariff_switch_for`` carries an explicit source.
     """
     from app.database.crud.subscription import (
         get_active_subscriptions_by_user_id,
         get_subscription_by_id_for_user,
         get_subscription_by_user_id,
     )
+
+    if (callback.data or '').startswith('tariff_switch_for:'):
+        try:
+            selected_id = int(callback.data.split(':', 1)[1])
+        except (ValueError, TypeError):
+            selected_id = 0
+        sub = (
+            await get_subscription_by_id_for_user(db, selected_id, db_user.id)
+            if selected_id > 0 and settings.is_multi_tariff_enabled()
+            else None
+        )
+        if not sub or sub.is_pending_trial:
+            await callback.answer(
+                get_texts(db_user.language).t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True
+            )
+            return None, None
+        return sub, sub.id
 
     if not settings.is_multi_tariff_enabled():
         sub = await get_subscription_by_user_id(db, db_user.id)
@@ -2653,6 +2671,7 @@ def get_tariff_extend_keyboard(
     db_user: User | None = None,
     subscription_device_limit: int | None = None,
     subscription_id: int | None = None,
+    show_switch: bool = False,
 ) -> InlineKeyboardMarkup:
     """Создает клавиатуру выбора периода для продления по тарифу с учетом скидок по периодам."""
     from app.services.pricing_engine import PricingEngine
@@ -2704,6 +2723,15 @@ def get_tariff_extend_keyboard(
             ]
         )
 
+    if show_switch and subscription_id is not None:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('CHANGE_TARIFF_BUTTON', '📦 Тариф'),
+                    callback_data=f'tariff_switch_for:{subscription_id}',
+                )
+            ]
+        )
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -2911,6 +2939,13 @@ async def show_tariff_extend(
             db_user=db_user,
             subscription_device_limit=actual_device_limit,
             subscription_id=subscription.id,
+            show_switch=bool(
+                settings.is_multi_tariff_enabled()
+                and not subscription.is_trial
+                and subscription.end_date
+                and subscription.end_date > datetime.now(UTC)
+                and (settings.TARIFF_SWITCH_UPGRADE_ENABLED or settings.TARIFF_SWITCH_DOWNGRADE_ENABLED)
+            ),
         ),
         parse_mode='HTML',
     )
@@ -3473,12 +3508,14 @@ async def show_tariff_switch_list(
 ):
     """Показывает список тарифов для переключения."""
     texts = get_texts(db_user.language)
-    await state.clear()
 
     # Проверяем наличие активной подписки
     subscription, _sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
     if not subscription:
         return
+
+    await state.clear()
+    await state.update_data(active_subscription_id=subscription.id)
 
     # Старая подписка (куплена в классике, тарифа нет): это не смена тарифа, а
     # первый выбор. Ограничения смены и запрет для истёкших к ней не относятся —
@@ -4641,12 +4678,14 @@ async def show_instant_switch_list(
     """Показывает список тарифов для мгновенного переключения."""
 
     texts = get_texts(db_user.language)
-    await state.clear()
 
     # Проверяем наличие активной подписки
     subscription, _sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
     if not subscription:
         return
+
+    await state.clear()
+    await state.update_data(active_subscription_id=subscription.id)
 
     if not subscription.tariff_id:
         # Legacy subscription without tariff — redirect to tariff_switch migration flow
@@ -5851,5 +5890,6 @@ def register_tariff_purchase_handlers(dp: Dispatcher):
 
     # Мгновенное переключение тарифов (без выбора периода)
     dp.callback_query.register(show_instant_switch_list, F.data == 'instant_switch')
+    dp.callback_query.register(show_instant_switch_list, F.data.startswith('tariff_switch_for:'))
     dp.callback_query.register(preview_instant_switch, F.data.startswith('instant_sw_preview:'))
     dp.callback_query.register(confirm_instant_switch, F.data.startswith('instant_sw_confirm:'))

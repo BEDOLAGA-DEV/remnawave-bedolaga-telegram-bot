@@ -3811,6 +3811,9 @@
 - `tests/database/test_mode_switch_keeps_panel_account_postgres.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `test_account_created_in_single_mode_survives_switch_to_multi`, `test_account_created_in_multi_mode_survives_switch_to_single`, `test_old_multi_rows_without_user_account_still_resolve_in_single_mode` — Строки, созданные ДО правки: аккаунт только у подписки. Одиночный режим всё равно находит его.
+- `tests/database/test_multi_renew_switch_menu_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_multi_renew_reaches_switch_for_selected_subscription`, `test_explicit_switch_entry_rejects_foreign_missing_or_invalid_source`, `test_renew_switch_entry_respects_existing_policy`
 - `tests/database/test_multi_tariff_switch_postgres.py` — Python-модуль
   Классы: нет
   Функции: `switch_data`, `test_multi_switch_rejects_ambiguous_or_foreign_subscription`, `test_switch_updates_only_the_selected_subscription`, `test_concurrent_switch_of_selected_subscription_charges_once`
