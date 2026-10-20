@@ -78,7 +78,7 @@ def _rows(*, traffic_reset_mode: str | None, hours_since_charge: int) -> list:
             is_trial=False,
             is_daily_paused=False,
             start_date=now - timedelta(days=5),
-            end_date=now + timedelta(hours=3),
+            end_date=now + timedelta(hours=24 - hours_since_charge),
             last_daily_charge_at=now - timedelta(hours=hours_since_charge),
             traffic_limit_gb=100,
             traffic_used_gb=100.0,

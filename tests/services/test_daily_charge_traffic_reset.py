@@ -68,7 +68,7 @@ def _subscription(*, status: str = SubscriptionStatus.ACTIVE.value) -> Subscript
         is_trial=False,
         is_daily_paused=False,
         start_date=now - timedelta(days=5),
-        end_date=now + timedelta(hours=2),
+        end_date=now - timedelta(hours=1),
         last_daily_charge_at=now - timedelta(days=1, hours=1),
         traffic_limit_gb=100,
         traffic_used_gb=90.0,

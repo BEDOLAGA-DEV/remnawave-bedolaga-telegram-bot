@@ -151,6 +151,16 @@ class DailySubscriptionService:
 
         user = await lock_user_for_pricing(db, user.id)
 
+        # Дни могли добавить после выборки планировщика; повторное списание также
+        # должно увидеть срок, сохранённый предыдущим обработчиком под блокировкой.
+        await db.refresh(subscription, attribute_names=['end_date'], with_for_update=True)
+        end_date = subscription.end_date
+        if end_date is not None:
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=UTC)
+            if end_date > datetime.now(UTC):
+                return 'skipped'
+
         # Только скидка группы — тот же расчёт, что показывает кабинет (PricingEngine.daily_group_price).
         from app.services.pricing_engine import PricingEngine
 

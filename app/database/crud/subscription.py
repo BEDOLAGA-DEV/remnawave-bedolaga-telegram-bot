@@ -2931,6 +2931,8 @@ async def get_daily_subscriptions_for_charge(db: AsyncSession) -> list[Subscript
                 User.status == UserStatus.ACTIVE.value,
                 Subscription.is_daily_paused.is_(False),
                 Subscription.is_trial.is_(False),  # Не списываем с триальных подписок
+                # Уже выданные дни (включая промокод) должны закончиться до новой оплаты.
+                (Subscription.end_date.is_(None) | (Subscription.end_date <= now)),
                 # Списания ещё не было ИЛИ прошло более 24 часов
                 ((Subscription.last_daily_charge_at.is_(None)) | (Subscription.last_daily_charge_at < one_day_ago)),
             )
