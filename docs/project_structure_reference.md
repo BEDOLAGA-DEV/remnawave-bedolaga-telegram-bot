@@ -1840,6 +1840,9 @@
 - `app/services/tariff_custom_traffic.py` — Python-модуль
   Классы: нет
   Функции: `parse_positive_rubles_to_kopeks` — Parse a positive ruble amount without floating-point rounding., `parse_positive_gb` — Parse a positive whole-number traffic amount in gigabytes., `validate_custom_traffic_configuration` — Return user-facing validation errors for enabling custom traffic.
+- `app/services/tariff_family_policy.py` — Python-модуль
+  Классы: нет
+  Функции: `find_live_entitlement_family_conflict` — Возвращает другую живую подписку семьи покупаемого тарифа.
 - `app/services/tariff_squad_sync.py` — Python-модуль
   Классы: нет
   Функции: `schedule_tariff_squad_sync` — Запустить синхронизацию в фоне; ссылка на задачу держится до её конца., `sync_tariff_squads_in_background` — Прогнать сквады тарифа по всем его живым подпискам со своей сессией БД.
@@ -2665,6 +2668,7 @@
 - `docs/contests-api.md` — файл
 - `docs/grace-access.md` — файл
 - `docs/handoffs/`
+- `docs/main-family-xor-design.md` — файл
 - `docs/menu_stats_api_usage.md` — файл
 - `docs/miniapp-setup.md` — файл
 - `docs/mobile-support-websocket-v1.md` — файл
@@ -4922,6 +4926,9 @@
 - `tests/services/test_tabpay_client.py` — Python-модуль
   Классы: `RecordingService` (2 методов)
   Функции: `anyio_backend`, `test_create_payment_request_shape`, `test_create_payment_omits_empty_optionals` — Необязательные поля не должны уходить как null — спека их просто не ждёт., `test_create_payment_truncates_to_api_limits` — orderId 1-64 символа, description до 255 — обрезаем на своей стороне., `test_create_payment_rejects_response_without_pay_url` — Без payUrl платёж бесполезен: покупателя некуда вести., `test_create_payment_rejects_response_without_id`, `test_get_payment_by_id_and_by_order_id`, `test_headers_carry_api_key`, `test_base_url_falls_back_and_strips_slash`, `test_error_message_formats` — При ошибках валидации message — массив со всеми проблемами сразу., `test_request_returns_none_on_404_when_allowed`, `test_request_raises_on_404_when_not_allowed`, `test_request_raises_api_error_with_message`, `test_connection_error_becomes_network_error` — Исход неизвестен — вызывающий обязан отличать это от отказа API., `test_timeout_becomes_network_error`
+- `tests/services/test_tariff_family_policy.py` — Python-модуль
+  Классы: нет
+  Функции: `test_other_main_tariff_is_conflict_but_independent_addon_is_not`, `test_trial_and_limited_count_as_live_but_expired_and_disabled_do_not`, `test_legacy_null_family_unrestricted_and_missing_tariff_is_not_null`, `test_current_subscription_not_conflict_when_switching_or_renewing`
 - `tests/services/test_tariff_custom_traffic.py` — Python-модуль
   Классы: нет
   Функции: `test_parse_positive_rubles_to_kopeks`, `test_parse_positive_rubles_to_kopeks_rejects_invalid_values`, `test_parse_positive_gb`, `test_parse_positive_gb_rejects_invalid_values`, `test_valid_custom_traffic_configuration_has_no_errors`, `test_invalid_custom_traffic_configuration_reports_specific_error`, `test_invalid_configuration_reports_all_independent_missing_fields`
