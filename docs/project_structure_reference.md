@@ -3880,6 +3880,9 @@
 - `tests/database/test_tariff_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: `PanelBoundary`
   Функции: `test_tariff_purchase_uses_same_reset_decision_in_db_and_panel`, `test_expired_tariff_renewal_preserves_and_prices_extra_devices`
+- `tests/database/test_unpaid_trial_visibility_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_unpaid_trial_invoice_stays_hidden_after_back`
 - `tests/database/test_user_balance_lock_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_user_lock_blocks_second_session` — Пока одно зачисление держит строку пользователя, второе ждёт., `test_concurrent_topups_do_not_lose_money` — Два одновременных зачисления складываются, а не затирают друг друга., `test_lock_returns_fresh_values_not_the_cached_object` — Блокировка обязана отдавать значения из БД, а не из кеша сессии.

@@ -176,6 +176,7 @@ async def show_my_subscriptions(
     texts = get_texts(db_user.language)
     gift_enabled = True
     subscriptions = await get_all_subscriptions_by_user_id(db, db_user.id)
+    subscriptions = [sub for sub in subscriptions if not sub.is_pending_trial]
 
     if not subscriptions:
         text = '📋 <b>Мои подписки</b>\n\nУ вас нет подписок.'
@@ -221,7 +222,7 @@ async def show_subscription_detail(
     sub_id = int(parts[1])
     subscription = await get_subscription_by_id_for_user(db, sub_id, db_user.id)
 
-    if not subscription:
+    if not subscription or subscription.is_pending_trial:
         await callback.answer('Подписка не найдена', show_alert=True)
         return
 
