@@ -6095,10 +6095,13 @@ async def toggle_admin_user_autopay(callback: types.CallbackQuery, db_user: User
 
     await update_subscription_autopay(db, subscription, not subscription.autopay_enabled)
     await callback.answer('✅ Сохранено')
-    callback.data = f'admin_user_autopay_{user_id}' + (
-        f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
-    )
-    await show_admin_user_autopay(callback, db_user, db)
+    refreshed_callback = callback.model_copy(
+        update={
+            'data': f'admin_user_autopay_{user_id}'
+            + (f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else '')
+        }
+    ).as_(callback.bot)
+    await show_admin_user_autopay(refreshed_callback, db_user, db)
 
 
 @admin_required
@@ -6150,8 +6153,8 @@ async def set_admin_user_autopay_days(callback: types.CallbackQuery, db_user: Us
     await callback.answer(f'✅ Установлено: {days} дн.')
 
     _sid = f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
-    callback.data = f'admin_user_autopay_{user_id}{_sid}'
-    await show_admin_user_autopay(callback, db_user, db)
+    refreshed_callback = callback.model_copy(update={'data': f'admin_user_autopay_{user_id}{_sid}'}).as_(callback.bot)
+    await show_admin_user_autopay(refreshed_callback, db_user, db)
 
 
 @admin_required
@@ -6245,8 +6248,8 @@ async def set_admin_user_autopay_period(callback: types.CallbackQuery, db_user: 
         await callback.answer(f'✅ Период: {days} дн.')
 
     _sid = f'_s{subscription_id}' if subscription_id and settings.is_multi_tariff_enabled() else ''
-    callback.data = f'admin_user_autopay_{user_id}{_sid}'
-    await show_admin_user_autopay(callback, db_user, db)
+    refreshed_callback = callback.model_copy(update={'data': f'admin_user_autopay_{user_id}{_sid}'}).as_(callback.bot)
+    await show_admin_user_autopay(refreshed_callback, db_user, db)
 
 
 def register_handlers(dp: Dispatcher):
