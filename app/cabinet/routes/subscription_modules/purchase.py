@@ -16,6 +16,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +32,7 @@ from app.database.crud.subscription import (
     should_carry_trial_remaining_days,
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
-from app.database.crud.transaction import create_transaction
+from app.database.crud.transaction import create_transaction, emit_transaction_side_effects
 from app.database.crud.user import add_user_balance, get_user_by_id, subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
@@ -712,6 +713,8 @@ async def purchase_tariff(
             detail='Subscription purchases are restricted for this account',
         )
 
+    purchase_user_id = user.id
+    checkout_external_id = None
     try:
         # Check tariffs mode
         if not settings.is_tariffs_mode():
@@ -732,6 +735,27 @@ async def purchase_tariff(
         from app.database.crud.user import lock_user_for_pricing
 
         user = await lock_user_for_pricing(db, user.id)
+
+        if request.checkout_id is not None and not tariff.is_daily:
+            from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id
+
+            checkout_external_id = _saved_tariff_checkout_external_id(
+                purchase_user_id, {'tariff_checkout_id': str(request.checkout_id)}
+            )
+            existing_payment = await db.scalar(
+                select(Transaction.id).where(
+                    Transaction.external_id == checkout_external_id,
+                    Transaction.payment_method == PaymentMethod.BALANCE.value,
+                )
+            )
+            if existing_payment is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        'code': 'checkout_already_processed',
+                        'message': 'Эта покупка уже принята. Проверьте список подписок перед новой покупкой.',
+                    },
+                )
 
         # Check tariff availability for user's promo group and get promo group for discounts
         promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
@@ -922,6 +946,9 @@ async def purchase_tariff(
                     'subscription_id': existing_subscription.id if existing_subscription else None,
                 }
 
+            if checkout_external_id is not None:
+                cart_data['tariff_checkout_id'] = str(request.checkout_id)
+
             try:
                 await user_cart_service.save_user_cart(user.id, cart_data)
                 logger.info('Cart saved for auto-purchase (cabinet) user tariff', user_id=user.id, tariff_id=tariff.id)
@@ -960,29 +987,43 @@ async def purchase_tariff(
             description += f' (скидка {discount_percent}%)'
         if promo_offer_discount_value > 0:
             description += f' (промо -{promo_offer_discount_percent}%)'
-        success = await subtract_user_balance(
-            db,
-            user,
-            price_kopeks,
-            description,
-            consume_promo_offer=promo_offer_discount_value > 0,
-            mark_as_paid_subscription=True,
+        saved_promo = (
+            user.promo_offer_discount_percent,
+            user.promo_offer_discount_source,
+            user.promo_offer_discount_expires_at,
         )
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail='Failed to charge balance',
+        try:
+            success = await subtract_user_balance(
+                db,
+                user,
+                price_kopeks,
+                description,
+                consume_promo_offer=promo_offer_discount_value > 0,
+                mark_as_paid_subscription=True,
+                **({'commit': False} if checkout_external_id else {}),
             )
-
-        # Create transaction
-        transaction = await create_transaction(
-            db=db,
-            user_id=user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=price_kopeks,
-            description=description,
-            payment_method=PaymentMethod.BALANCE,
-        )
+            if not success:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to charge balance')
+            transaction = await create_transaction(
+                db=db,
+                user_id=purchase_user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=price_kopeks,
+                description=description,
+                payment_method=PaymentMethod.BALANCE,
+                **(
+                    {'external_id': checkout_external_id, 'is_completed': False, 'commit': False}
+                    if checkout_external_id
+                    else {}
+                ),
+            )
+            if checkout_external_id:
+                await db.commit()
+        except Exception:
+            if checkout_external_id:
+                await db.rollback()
+            raise
+        transaction_id = transaction.id
 
         # Плоские копии для веток возврата средств ниже: после db.rollback()
         # ORM-объекты expired, а синхронный доступ к их атрибутам в async-контексте
@@ -1015,10 +1056,13 @@ async def purchase_tariff(
                     refund_user,
                     price_kopeks,
                     reason,
-                    create_transaction=True,
+                    create_transaction=not bool(checkout_external_id),
                     transaction_type=TransactionType.REFUND,
+                    **({'commit': False} if checkout_external_id else {}),
                 )
                 if not refund_success:
+                    if checkout_external_id:
+                        await db.rollback()
                     logger.critical(
                         'CRITICAL: add_user_balance вернул False при возврате средств в кабинете',
                         user_id=refund_user_id,
@@ -1028,12 +1072,35 @@ async def purchase_tariff(
                         refund_user_id, price_kopeks, reason, 'add_user_balance returned False'
                     )
                     return
+                if checkout_external_id:
+                    refund = await create_transaction(
+                        db, refund_user_id, TransactionType.REFUND, price_kopeks, reason, commit=False
+                    )
+                    failed_transaction = await db.get(Transaction, transaction_id)
+                    failed_transaction.external_id = None
+                    if promo_offer_discount_value > 0:
+                        (
+                            refund_user.promo_offer_discount_percent,
+                            refund_user.promo_offer_discount_source,
+                            refund_user.promo_offer_discount_expires_at,
+                        ) = saved_promo
+                    await db.commit()
+                    await emit_transaction_side_effects(
+                        db,
+                        refund,
+                        amount_kopeks=price_kopeks,
+                        user_id=refund_user_id,
+                        type=TransactionType.REFUND,
+                        description=reason,
+                    )
                 logger.info(
                     'Cabinet purchase: средства возвращены после ошибки покупки тарифа',
                     user_id=refund_user_id,
                     refund_kopeks=price_kopeks,
                 )
             except Exception as refund_error:
+                if checkout_external_id:
+                    await db.rollback()
                 logger.critical(
                     'CRITICAL: не удалось вернуть средства после ошибки покупки тарифа в кабинете',
                     user_id=refund_user_id,
@@ -1164,6 +1231,21 @@ async def purchase_tariff(
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail='Failed to process tariff purchase',
+            )
+
+        if checkout_external_id:
+            transaction.is_completed = True
+            transaction.completed_at = datetime.now(UTC)
+            await db.commit()
+            await emit_transaction_side_effects(
+                db,
+                transaction,
+                amount_kopeks=price_kopeks,
+                user_id=purchase_user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                payment_method=PaymentMethod.BALANCE,
+                external_id=checkout_external_id,
+                description=description,
             )
 
         # Add remaining trial time to paid subscription
@@ -1364,7 +1446,7 @@ async def purchase_tariff(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error('Failed to purchase tariff for user', user_id=user.id, error=e)
+        logger.error('Failed to purchase tariff for user', user_id=purchase_user_id, error=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to process tariff purchase',

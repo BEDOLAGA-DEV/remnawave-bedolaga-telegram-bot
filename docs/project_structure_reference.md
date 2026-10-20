@@ -3900,7 +3900,7 @@
   Функции: `test_paid_renewal_resets_bot_and_panel_together`
 - `tests/database/test_saved_tariff_cart_idempotency_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `test_saved_cart_only_charged_once`, `test_saved_cart_retries_only_after_atomic_compensation`, `test_concurrent_saved_cart_consumes_promo_once`, `test_restored_manual_and_auto_share_checkout`, `test_legacy_restored_checkout_keeps_original_identity`, `test_old_saved_cart_button_cannot_charge_after_state_clear`, `test_restored_manual_compensation_and_fresh_checkout`, `test_saved_checkout_does_not_overwrite_changed_paid_source`
+  Функции: `test_saved_cart_only_charged_once`, `test_saved_cart_retries_only_after_atomic_compensation`, `test_concurrent_saved_cart_consumes_promo_once`, `test_restored_manual_and_auto_share_checkout`, `test_legacy_restored_checkout_keeps_original_identity`, `test_old_saved_cart_button_cannot_charge_after_state_clear`, `test_restored_manual_compensation_and_fresh_checkout`, `test_saved_checkout_does_not_overwrite_changed_paid_source`, `test_cabinet_request_and_cart_share_payment_identity`, `test_cabinet_retry_requires_compensation_or_new_identity`, `test_cabinet_insufficient_balance_cart_retains_request_identity`
 - `tests/database/test_simple_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: `PanelBoundary`
   Функции: `test_simple_payment_resets_db_and_panel_together`

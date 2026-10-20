@@ -22,6 +22,7 @@ import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.cabinet.routes.subscription_modules import purchase as cabinet
@@ -154,14 +155,30 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         assert preview['daily_price_kopeks'] == price
                     else:
                         assert next(p for p in preview['periods'] if p['days'] == 30)['price_kopeks'] == price
-                    result = await cabinet.purchase_tariff(
-                        cabinet.TariffPurchaseRequest(
-                            tariff_id=1, period_days=1 if flow.endswith('daily') else 30, subscription_id=10
-                        ),
-                        user,
-                        db,
+                    checkout_id = '11111111-1111-4111-8111-111111111111'
+                    purchase_request = cabinet.TariffPurchaseRequest(
+                        tariff_id=1,
+                        period_days=1 if flow.endswith('daily') else 30,
+                        subscription_id=10,
+                        checkout_id=None if flow.endswith('daily') else checkout_id,
                     )
+                    result = await cabinet.purchase_tariff(purchase_request, user, db)
                     assert result['success']
+                    if flow == 'cabinet':
+                        with pytest.raises(HTTPException) as duplicate:
+                            await cabinet.purchase_tariff(purchase_request, user, db)
+                        assert duplicate.value.status_code == 409
+                        assert not await auto._auto_purchase_tariff(
+                            db,
+                            user,
+                            {
+                                'cart_mode': 'tariff_purchase',
+                                'tariff_id': 1,
+                                'period_days': 30,
+                                'subscription_id': 10,
+                                'tariff_checkout_id': checkout_id,
+                            },
+                        )
                 elif flow in ('telegram_daily', 'auto_daily', 'cart_return_daily'):
                     price = 101 + (5 - base) * 137
                     if flow == 'auto_daily':

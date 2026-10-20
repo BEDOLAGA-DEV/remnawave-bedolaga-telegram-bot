@@ -170,10 +170,9 @@ def test_refund_helper_uses_fresh_user_and_refund_transaction() -> None:
     assert isinstance(tx_type, ast.Attribute) and tx_type.attr == 'REFUND', (
         'refund must be recorded as TransactionType.REFUND'
     )
-    create_tx = keywords.get('create_transaction')
-    assert isinstance(create_tx, ast.Constant) and create_tx.value is True, (
-        'refund must create a transaction record (create_transaction=True)'
-    )
+    # Keyed checkouts stage the refund ledger explicitly in the same transaction
+    # as releasing their reservation. Its persistence (including failed refunds)
+    # is exercised against PostgreSQL in test_saved_tariff_cart_idempotency_postgres.
 
 
 def test_refund_helper_records_failed_refund_when_credit_fails() -> None:

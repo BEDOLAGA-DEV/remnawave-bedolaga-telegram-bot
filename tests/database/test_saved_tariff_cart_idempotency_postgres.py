@@ -7,13 +7,16 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
+from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.cabinet.routes.subscription_modules import purchase as cabinet
 from app.config import settings
 from app.database.crud import subscription as subscriptions
 from app.database.crud.user import get_user_by_id
@@ -73,7 +76,10 @@ async def test_saved_cart_only_charged_once(
             return await original_transaction(*args, **kwargs)
 
         monkeypatch.setattr(transactions, 'create_transaction', create_transaction)
+        monkeypatch.setattr(cabinet, 'create_transaction', create_transaction)
     if failure == 'refund':
+        monkeypatch.setattr(cabinet, 'add_user_balance', AsyncMock(return_value=False))
+        monkeypatch.setattr(cabinet, '_persist_failed_refund', AsyncMock())
         monkeypatch.setattr('app.database.crud.user.add_user_balance', AsyncMock(return_value=False))
     original_extend = subscriptions.extend_subscription
     calls = 0
@@ -90,6 +96,8 @@ async def test_saved_cart_only_charged_once(
 
     monkeypatch.setattr(subscriptions, 'extend_subscription', extend)
     monkeypatch.setattr(telegram, 'extend_subscription', extend)
+    monkeypatch.setattr(cabinet, 'extend_subscription', extend)
+    monkeypatch.setattr(cabinet.user_cart_service, 'save_user_cart', AsyncMock(return_value=True))
     async with postgres_engine(postgres_database, list(Base.metadata.sorted_tables)) as engine:
         maker = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
         async with maker() as db:
@@ -142,8 +150,34 @@ async def test_saved_cart_only_charged_once(
             'tariff_id': 1,
             'period_days': days,
             'subscription_id': 10,
-            'tariff_checkout_id': 'test-checkout-1',
+            'tariff_checkout_id': '11111111-1111-4111-8111-111111111111',
         }
+
+        if failure == 'topup':
+            from fastapi import HTTPException
+
+            async with maker() as db:
+                user = await get_user_by_id(db, 1)
+                user.balance_kopeks = 0
+                await db.commit()
+                with pytest.raises(HTTPException) as insufficient:
+                    await cabinet.purchase_tariff(
+                        cabinet.TariffPurchaseRequest(
+                            tariff_id=1,
+                            period_days=days,
+                            subscription_id=10,
+                            checkout_id=cart['tariff_checkout_id'],
+                        ),
+                        user,
+                        db,
+                    )
+                assert insufficient.value.status_code == 402
+                saved = cabinet.user_cart_service.save_user_cart.await_args.args[1]
+                assert saved['tariff_checkout_id'] == cart['tariff_checkout_id']
+                assert saved['subscription_id'] == 10 and saved['period_days'] == days
+                cart = dict(saved)
+                user.balance_kopeks = 10000
+                await db.commit()
 
         if legacy:
             cart.pop('tariff_checkout_id')
@@ -172,6 +206,37 @@ async def test_saved_cart_only_charged_once(
         async def purchase(flow='auto'):
             async with maker() as db:
                 user = await get_user_by_id(db, 1)
+                if flow == 'cabinet':
+                    app = FastAPI()
+                    app.add_api_route('/purchase', cabinet.purchase_tariff, methods=['POST'])
+
+                    async def current_user():
+                        return user
+
+                    async def current_db():
+                        return db
+
+                    app.dependency_overrides[cabinet.get_current_cabinet_user] = current_user
+                    app.dependency_overrides[cabinet.get_cabinet_db] = current_db
+                    async with httpx.AsyncClient(
+                        transport=httpx.ASGITransport(app=app), base_url='https://cabinet.example'
+                    ) as client:
+                        response = await client.post(
+                            '/purchase',
+                            json={
+                                'tariff_id': 1,
+                                'period_days': days,
+                                'subscription_id': 10,
+                                'checkout_id': cart['tariff_checkout_id'],
+                            },
+                        )
+                    if response.status_code == 409:
+                        assert response.json()['detail']['code'] == 'checkout_already_processed'
+                        return False
+                    if failure in ('ledger', 'provision', 'refund') and response.status_code == 500:
+                        return False
+                    assert response.status_code == 200, response.text
+                    return response.json()
                 if flow == 'auto':
                     return await auto._auto_purchase_tariff(db, user, dict(cart))
                 handler = (
@@ -195,7 +260,7 @@ async def test_saved_cart_only_charged_once(
             if failure == 'cleared_state':
                 await state.clear()
             if failure == 'new_checkout':
-                cart['tariff_checkout_id'] = 'test-checkout-2'
+                cart['tariff_checkout_id'] = '22222222-2222-4222-8222-222222222222'
                 if second_flow == 'manual':
                     async with maker() as db:
                         user = await get_user_by_id(db, 1)
@@ -320,4 +385,50 @@ async def test_restored_manual_compensation_and_fresh_checkout(postgres_database
 async def test_saved_checkout_does_not_overwrite_changed_paid_source(postgres_database, monkeypatch, flow, days):
     await test_saved_cart_only_charged_once(
         postgres_database, monkeypatch, False, failure='stale_source', first_flow=flow, second_flow=flow, days=days
+    )
+
+
+@pytest.mark.parametrize(
+    ('first_flow', 'second_flow'), [('cabinet', 'cabinet'), ('cabinet', 'auto'), ('auto', 'cabinet')]
+)
+@pytest.mark.parametrize('concurrent', [False, True])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_cabinet_request_and_cart_share_payment_identity(
+    postgres_database, monkeypatch, first_flow, second_flow, concurrent, days
+):
+    await test_saved_cart_only_charged_once(
+        postgres_database, monkeypatch, concurrent, first_flow=first_flow, second_flow=second_flow, days=days
+    )
+
+
+@pytest.mark.parametrize('failure', ['ledger', 'provision', 'refund', 'new_checkout'])
+@pytest.mark.parametrize('promo', [0, 17, 100])
+@pytest.mark.parametrize('second_flow', ['cabinet', 'auto'])
+async def test_cabinet_retry_requires_compensation_or_new_identity(
+    postgres_database, monkeypatch, failure, promo, second_flow
+):
+    await test_saved_cart_only_charged_once(
+        postgres_database,
+        monkeypatch,
+        False,
+        failure=failure,
+        promo=promo,
+        first_flow='cabinet',
+        second_flow=second_flow,
+    )
+
+
+@pytest.mark.parametrize(('first_flow', 'second_flow'), [('cabinet', 'auto'), ('auto', 'cabinet')])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_cabinet_insufficient_balance_cart_retains_request_identity(
+    postgres_database, monkeypatch, first_flow, second_flow, days
+):
+    await test_saved_cart_only_charged_once(
+        postgres_database,
+        monkeypatch,
+        False,
+        failure='topup',
+        first_flow=first_flow,
+        second_flow=second_flow,
+        days=days,
     )

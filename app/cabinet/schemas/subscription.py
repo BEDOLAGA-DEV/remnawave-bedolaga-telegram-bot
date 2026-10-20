@@ -1,6 +1,7 @@
 """Subscription schemas for cabinet."""
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -218,6 +219,8 @@ class PurchasePreviewRequest(BaseModel):
 
 class TariffPurchaseRequest(BaseModel):
     """Request to purchase a tariff."""
+
+    checkout_id: UUID | None = Field(None, description='Stable purchase attempt ID; reuse on retries')
 
     tariff_id: int = Field(..., description='Tariff ID to purchase')
     period_days: int = Field(..., ge=1, le=3650, description='Period in days')
