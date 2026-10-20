@@ -149,7 +149,7 @@ async def test_empty_response_is_success():
 
 async def test_reset_user_devices_is_a_single_delete_all_call():
     api = _api()
-    api._make_request = AsyncMock(return_value={'response': {}})
+    api._make_request = AsyncMock(return_value={'response': {'total': 0, 'devices': []}})
 
     assert await api.reset_user_devices(PANEL_USER_ID) is True
 
@@ -163,7 +163,7 @@ async def test_reset_user_devices_is_a_single_delete_all_call():
 
 async def test_reset_user_devices_coerces_digit_string_id_to_int():
     api = _api()
-    api._make_request = AsyncMock(return_value={'response': {}})
+    api._make_request = AsyncMock(return_value={'response': {'total': 0, 'devices': []}})
 
     assert await api.reset_user_devices('4242') is True
 
@@ -196,4 +196,23 @@ async def test_reset_user_devices_failure_is_reported(failure):
     api = _api()
     api._make_request = AsyncMock(side_effect=failure)
 
+    assert await api.reset_user_devices(PANEL_USER_ID) is False
+
+
+@pytest.mark.parametrize(
+    'response',
+    [
+        None,
+        {},
+        {'response': {}},
+        {'response': {'total': 'broken', 'devices': []}},
+        {'response': {'total': -1, 'devices': []}},
+        {'response': {'total': False, 'devices': []}},
+        {'response': {'total': 0, 'devices': [{'hwid': 'still-connected'}]}},
+        {'response': {'total': 0, 'devices': 'invalid'}},
+    ],
+)
+async def test_reset_user_devices_requires_evidence_of_an_empty_list(response):
+    api = _api()
+    api._make_request = AsyncMock(return_value=response)
     assert await api.reset_user_devices(PANEL_USER_ID) is False

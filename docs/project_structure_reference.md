@@ -1821,7 +1821,7 @@
   Классы: `SubscriptionRenewalError`, `SubscriptionRenewalChargeError`, `SubscriptionRenewalPricing` (2 методов), `SubscriptionRenewalResult`, `RenewalPaymentDescriptor` (1 методов), `SubscriptionRenewalService` (1 методов)
   Функции: `build_renewal_period_id`, `build_payment_descriptor`, `encode_payment_payload`, `decode_payment_payload`, `build_payment_metadata`, `parse_payment_metadata`, `with_admin_notification_service`, `calculate_missing_amount`
 - `app/services/subscription_service.py` — Python-модуль
-  Классы: `PropagateSquadsResult`, `SubscriptionService` (32 методов)
+  Классы: `PropagateSquadsResult`, `SubscriptionReissueResult`, `SubscriptionService` (32 методов)
   Функции: `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
 - `app/services/support_settings_service.py` — Python-модуль
   Классы: `SupportSettingsService` (25 методов)
@@ -3850,6 +3850,9 @@
 - `tests/database/test_referrer_attachment_race_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_two_referrers_have_one_winner`
+- `tests/database/test_reissue_devices_postgres.py` — Python-модуль
+  Классы: `Panel` (3 методов)
+  Функции: `test_reissue_resets_selected_hwid_and_preserves_new_link`, `test_reissue_never_guesses_or_accepts_a_foreign_subscription`
 - `tests/database/test_remaining_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_paid_existing_purchase_preserves_traffic_contract`, `test_guest_nonrenewal_keeps_existing_panel_reset_policy`
@@ -3945,7 +3948,7 @@
   Функции: `test_429_retries_with_growing_delays_until_success`, `test_429_honours_retry_after_header`, `test_429_sets_shared_throttle_for_other_requests`, `test_request_waits_for_shared_throttle_before_sending`, `test_429_after_all_retries_is_transient_and_not_logged_as_error`
 - `tests/external/test_remnawave_remove_device.py` — Python-модуль
   Классы: нет
-  Функции: `test_remove_device_posts_numeric_user_id_in_body` — Тело запроса — {'userId': int, 'hwid': str}; никакого userUuid., `test_remove_device_coerces_digit_string_id_to_int` — БД отдаёт BigInteger, но JSON/FSM могут донести строку — коерсим до запроса., `test_remove_device_rejects_uuid_id_without_hitting_the_panel` — Протухший UUID вместо id — наша битая ссылка, а не запрос к панели., `test_success_when_target_hwid_absent_from_remaining_list`, `test_failure_when_panel_acks_but_hwid_still_present`, `test_404_is_treated_as_success`, `test_other_api_error_is_failure`, `test_transient_exception_is_failure`, `test_bare_ack_without_device_list_is_success` — Panels that reply with just an ack (no devices echo) keep the old behaviour., `test_empty_response_is_success`, `test_reset_user_devices_is_a_single_delete_all_call`, `test_reset_user_devices_coerces_digit_string_id_to_int`, `test_reset_user_devices_rejects_uuid_id_without_hitting_the_panel`, `test_reset_user_devices_404_is_success` — Пользователя/устройств уже нет — цель достигнута., `test_reset_user_devices_failure_is_reported`
+  Функции: `test_remove_device_posts_numeric_user_id_in_body` — Тело запроса — {'userId': int, 'hwid': str}; никакого userUuid., `test_remove_device_coerces_digit_string_id_to_int` — БД отдаёт BigInteger, но JSON/FSM могут донести строку — коерсим до запроса., `test_remove_device_rejects_uuid_id_without_hitting_the_panel` — Протухший UUID вместо id — наша битая ссылка, а не запрос к панели., `test_success_when_target_hwid_absent_from_remaining_list`, `test_failure_when_panel_acks_but_hwid_still_present`, `test_404_is_treated_as_success`, `test_other_api_error_is_failure`, `test_transient_exception_is_failure`, `test_bare_ack_without_device_list_is_success` — Panels that reply with just an ack (no devices echo) keep the old behaviour., `test_empty_response_is_success`, `test_reset_user_devices_is_a_single_delete_all_call`, `test_reset_user_devices_coerces_digit_string_id_to_int`, `test_reset_user_devices_rejects_uuid_id_without_hitting_the_panel`, `test_reset_user_devices_404_is_success` — Пользователя/устройств уже нет — цель достигнута., `test_reset_user_devices_failure_is_reported`, `test_reset_user_devices_requires_evidence_of_an_empty_list`
 - `tests/external/test_remnawave_request_pacing.py` — Python-модуль
   Классы: `SimpleNamespaceLike` (1 методов)
   Функции: `pace` — Фальшивые часы: «сон» двигает их вперёд, реального ожидания нет., `test_no_pacing_by_default`, `test_requests_beyond_the_minute_budget_wait_for_the_window`, `test_window_slides_and_frees_a_slot_after_a_minute`

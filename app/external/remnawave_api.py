@@ -1815,23 +1815,20 @@ class RemnaWaveAPI:
         # Игнорировать его нельзя: панель может ответить 200, оставив устройства
         # на месте, и вызывающий отрапортует пользователю ложный успех.
         payload = (result or {}).get('response') if isinstance(result, dict) else None
-        if isinstance(payload, dict):
-            remaining = payload.get('total')
-            if remaining is None:
-                remaining = len(payload.get('devices') or [])
-            try:
-                remaining = int(remaining)
-            except (TypeError, ValueError):
-                remaining = 0
-            if remaining > 0:
-                logger.error(
-                    'Панель приняла сброс устройств, но устройства остались',
-                    panel_user_id=panel_user_id,
-                    remaining=remaining,
-                )
-                return False
-
-        return True
+        if not isinstance(payload, dict):
+            return False
+        devices = payload.get('devices')
+        if devices is not None and (not isinstance(devices, list) or devices):
+            return False
+        remaining = payload.get('total')
+        if remaining is None:
+            return devices == []
+        if isinstance(remaining, bool) or not isinstance(remaining, int | str):
+            return False
+        try:
+            return int(remaining) == 0
+        except (TypeError, ValueError):
+            return False
 
     async def remove_device(self, user_id: int, device_hwid: str) -> bool:
         """Удалить одно HWID-устройство пользователя.

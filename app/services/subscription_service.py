@@ -48,6 +48,12 @@ class PropagateSquadsResult:
     failed_ids: list[int] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class SubscriptionReissueResult:
+    subscription_url: str
+    devices_reset: bool
+
+
 class SubscriptionService:
     def __init__(self):
         self._config_error: str | None = None
@@ -897,7 +903,9 @@ class SubscriptionService:
             logger.error('Ошибка получения серверов из RemnaWave', error=e)
             return None
 
-    async def revoke_subscription(self, db: AsyncSession, subscription: Subscription) -> str | None:
+    async def revoke_subscription(
+        self, db: AsyncSession, subscription: Subscription
+    ) -> SubscriptionReissueResult | None:
         try:
             user = await get_user_by_id(db, subscription.user_id)
             if not user:
@@ -918,14 +926,25 @@ class SubscriptionService:
 
             async with self.get_api_client() as api:
                 updated_user = await api.revoke_user_subscription(revoke_id)
+                if not updated_user.subscription_url:
+                    logger.error('Panel reissue response has no subscription URL', subscription_id=subscription.id)
+                    return None
 
                 subscription.remnawave_short_uuid = updated_user.short_uuid
                 subscription.subscription_url = updated_user.subscription_url
                 subscription.subscription_crypto_link = updated_user.happ_crypto_link
                 await db.commit()
 
+                # Revoking credentials does not remove HWID registrations. The
+                # new link is already durable even if device deletion fails.
+                try:
+                    devices_reset = await api.reset_user_devices(revoke_id)
+                except Exception as reset_error:
+                    logger.warning('Reissued link but failed to reset devices', error=str(reset_error))
+                    devices_reset = False
+
                 logger.info('✅ Обновлена ссылка подписки', _format_user_log=self._format_user_log(user))
-                return updated_user.subscription_url
+                return SubscriptionReissueResult(updated_user.subscription_url, bool(devices_reset))
 
         except Exception as e:
             logger.error('Ошибка обновления ссылки подписки', error=e)

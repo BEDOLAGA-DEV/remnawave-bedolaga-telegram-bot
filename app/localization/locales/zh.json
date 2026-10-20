@@ -1715,6 +1715,7 @@
   "SUBSCRIPTION_REVOKE_WARNING": "⚠️ <b>重新签发订阅</b>\n\n此操作将：\n• 生成新的连接链接\n• 断开所有已连接的设备\n• 旧链接将失效\n\n是否继续？",
   "SUBSCRIPTION_REVOKE_CONFIRM_BTN": "✅ 确认",
   "SUBSCRIPTION_REVOKE_SUCCESS": "✅ <b>订阅已重新签发！</b>\n\n新的连接链接已准备就绪。旧链接已失效。\n\n所有设备已断开连接。",
+  "SUBSCRIPTION_REVOKE_PARTIAL_SUCCESS": "✅ <b>订阅已重新签发！</b>\n\n新链接已准备就绪，旧链接已失效。未能重置所有设备，请检查设备列表。",
   "SUBSCRIPTION_REVOKE_COOLDOWN": "⏱ 重新签发将在 {minutes} 分 {seconds} 秒后可用。",
   "SUBSCRIPTION_REVOKE_DISABLED": "订阅重新签发不可用",
   "SUBSCRIPTION_REVOKE_ERROR": "❌ 重新签发订阅时出错。请稍后重试。",
