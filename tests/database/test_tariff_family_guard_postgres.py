@@ -88,6 +88,7 @@ async def test_family_change_cannot_make_two_live_subscriptions_conflict(postgre
     async with postgres_sessions(postgres_database, TABLES, count=2) as (first, second):
         user, basic, premium, _ = await _fixtures(first)
         premium.entitlement_family = None
+        await first.commit()
         first.add_all([_sub(user.id, basic.id, 'basic_alive'), _sub(user.id, premium.id, 'legacy_alive')])
         await first.commit()
 
