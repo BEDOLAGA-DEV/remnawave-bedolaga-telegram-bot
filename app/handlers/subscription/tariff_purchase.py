@@ -128,6 +128,17 @@ async def _resolve_switch_subscription(callback, db_user, db, state=None):
     return None, None
 
 
+async def _reject_unavailable_tariff(callback: types.CallbackQuery, tariff: Tariff, user: User, texts: Texts) -> bool:
+    """Запретить недоступный тариф до расчёта и списания, включая старые кнопки."""
+    from app.services.pricing_engine import PricingEngine
+
+    group = PricingEngine.resolve_promo_group(user)
+    if tariff.is_available_for_promo_group(group.id if group else None):
+        return False
+    await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+    return True
+
+
 def _apply_promo_discount(price: int, group_pct: int, offer_pct: int = 0) -> int:
     """Применяет стекинг скидок к цене (sequential floor division, как PricingEngine)."""
     from app.services.pricing_engine import PricingEngine
@@ -1310,6 +1321,9 @@ async def handle_custom_confirm(
 
     db_user = await lock_user_for_pricing(db, db_user.id)
 
+    if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
+
     state_data = await state.get_data()
     custom_days = state_data.get('custom_days', tariff.min_days)
     custom_traffic = state_data.get('custom_traffic_gb', tariff.min_traffic_gb)
@@ -1845,6 +1859,9 @@ async def confirm_tariff_purchase(
 
     db_user = await lock_user_for_pricing(db, db_user.id)
 
+    if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
+
     # Calculate price via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
 
@@ -2295,6 +2312,9 @@ async def confirm_daily_tariff_purchase(
     from app.database.crud.user import lock_user_for_pricing
 
     db_user = await lock_user_for_pricing(db, db_user.id)
+
+    if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
 
     # Apply group + promo-offer discounts via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
@@ -3833,6 +3853,9 @@ async def confirm_tariff_switch(
 
     db_user = await lock_user_for_pricing(db, db_user.id)
 
+    if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
+
     # Проверяем наличие подписки (switched FROM — resolved via FSM state)
     subscription, _sw_confirm_sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
     if not subscription:
@@ -4111,6 +4134,9 @@ async def confirm_daily_tariff_switch(
     from app.database.crud.user import lock_user_for_pricing
 
     db_user = await lock_user_for_pricing(db, db_user.id)
+
+    if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
 
     # Apply group + promo-offer discounts via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
@@ -5054,6 +5080,9 @@ async def confirm_instant_switch(
     from app.database.crud.user import lock_user_for_pricing
 
     db_user = await lock_user_for_pricing(db, db_user.id)
+
+    if await _reject_unavailable_tariff(callback, new_tariff, db_user, texts):
+        return
 
     # Recompute upgrade_cost under lock (FSM-stored value may be stale)
     current_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None

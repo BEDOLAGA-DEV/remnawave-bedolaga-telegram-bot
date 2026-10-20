@@ -2316,7 +2316,7 @@ class Tariff(Base):
         if not self.allowed_promo_groups:
             return True  # Если нет ограничений - доступен всем
         if promo_group_id is None:
-            return True  # Если у пользователя нет группы - доступен
+            return False  # Ограниченный тариф недоступен без подходящей группы
         return any(pg.id == promo_group_id for pg in self.allowed_promo_groups)
 
     def get_traffic_topup_packages(self) -> dict[int, int]:
