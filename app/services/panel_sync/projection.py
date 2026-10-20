@@ -377,6 +377,11 @@ def project_onto_subscription(
     if snapshot.subscription_url and subscription.subscription_url != snapshot.subscription_url:
         subscription.subscription_url = snapshot.subscription_url
         changed.add('subscription_url')
+        # A cached encrypted link encodes the previous URL. Leave it missing so
+        # connection consumers can generate one for the new URL.
+        if not snapshot.crypto_link and subscription.subscription_crypto_link:
+            subscription.subscription_crypto_link = None
+            changed.add('subscription_crypto_link')
     if snapshot.crypto_link and subscription.subscription_crypto_link != snapshot.crypto_link:
         subscription.subscription_crypto_link = snapshot.crypto_link
         changed.add('subscription_crypto_link')

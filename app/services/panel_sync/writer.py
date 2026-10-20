@@ -366,11 +366,14 @@ async def _record_identity(
     if short_uuid:
         subscription.remnawave_short_uuid = short_uuid
     subscription_url = getattr(panel_user, 'subscription_url', None)
+    url_changed = bool(subscription_url and subscription.subscription_url != subscription_url)
     if subscription_url:
         subscription.subscription_url = subscription_url
     crypto_link = getattr(panel_user, 'happ_crypto_link', None)
     if crypto_link is not None:
         subscription.subscription_crypto_link = crypto_link
+    elif url_changed:
+        subscription.subscription_crypto_link = None
 
     # Одиночный режим адресует панель через человека. В мультитарифе аккаунты у
     # подписок, но первый из них записываем и человеку: иначе после возврата

@@ -120,6 +120,8 @@ def _make_subscription(*, status=SubscriptionStatus.ACTIVE.value, days_left=10):
         status=status,
         end_date=now + timedelta(days=days_left),
         traffic_limit_gb=100,
+        subscription_url=None,
+        subscription_crypto_link=None,
         connected_squads=[],
         tariff=None,
         remnawave_id=None,

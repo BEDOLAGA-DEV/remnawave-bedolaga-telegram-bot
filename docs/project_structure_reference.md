@@ -3865,6 +3865,9 @@
 - `tests/database/test_subscription_deletion_identity_postgres.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `subscription`, `seed`, `test_deletion_spares_referenced_identity`, `test_shared_short_identity_survives_legacy_or_foreign_reference`, `test_unavailable_identity_lookup_spares_possible_sibling`, `test_foreign_owner_numeric_identity_is_not_deleted`, `test_single_tariff_checks_short_uuid_of_actual_panel_target`, `test_open_grace_rejects_delete_without_panel_changes`, `test_cabinet_rejects_unowned_or_live_subscription`, `test_concurrent_delete_reaches_panel_once`
+- `tests/database/test_subscription_link_refresh_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_url_refresh_invalidates_only_its_stale_crypto`, `test_cabinet_regenerates_crypto_for_the_changed_url`
 - `tests/database/test_tabpay_payments_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match` — Integer вместо Boolean в рукописном DDL иначе не заметить., `test_order_id_is_unique` — Уникальность orderId не даёт двум записям претендовать на один вебхук., `test_downgrade_removes_the_table` — Откат обязан снимать таблицу, иначе повторный upgrade упрётся в неё.
