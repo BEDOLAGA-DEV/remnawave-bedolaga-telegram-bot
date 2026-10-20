@@ -34,6 +34,28 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
+async def _resolve_switch_subscription(
+    db: AsyncSession, user: User, subscription_id: int | None
+) -> Subscription | None:
+    """Never guess which subscription a multi-subscription switch will charge."""
+    if subscription_id is not None and subscription_id <= 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Subscription not found')
+    if settings.is_multi_tariff_enabled() and subscription_id is None:
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        subscriptions = await get_active_subscriptions_by_user_id(db, user.id)
+        if len(subscriptions) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    'code': 'subscription_selection_required',
+                    'message': 'Select the subscription to switch',
+                },
+            )
+        return subscriptions[0] if subscriptions else None
+    return await resolve_subscription(db, user, subscription_id)
+
+
 @router.post('/tariff/switch/preview')
 async def preview_tariff_switch(
     request: TariffPurchaseRequest,
@@ -48,7 +70,7 @@ async def preview_tariff_switch(
             detail='Tariffs mode is not enabled',
         )
 
-    subscription = await resolve_subscription(db, user, subscription_id)
+    subscription = await _resolve_switch_subscription(db, user, subscription_id)
 
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
@@ -206,7 +228,7 @@ async def switch_tariff(
             detail='Tariffs mode is not enabled',
         )
 
-    resolved = await resolve_subscription(db, user, subscription_id)
+    resolved = await _resolve_switch_subscription(db, user, subscription_id)
 
     if not resolved or not resolved.tariff_id:
         raise HTTPException(

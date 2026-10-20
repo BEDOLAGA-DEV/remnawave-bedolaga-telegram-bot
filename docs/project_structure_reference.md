@@ -3805,6 +3805,9 @@
 - `tests/database/test_mode_switch_keeps_panel_account_postgres.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `test_account_created_in_single_mode_survives_switch_to_multi`, `test_account_created_in_multi_mode_survives_switch_to_single`, `test_old_multi_rows_without_user_account_still_resolve_in_single_mode` — Строки, созданные ДО правки: аккаунт только у подписки. Одиночный режим всё равно находит его.
+- `tests/database/test_multi_tariff_switch_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `switch_data`, `test_multi_switch_rejects_ambiguous_or_foreign_subscription`, `test_switch_updates_only_the_selected_subscription`, `test_concurrent_switch_of_selected_subscription_charges_once`
 - `tests/database/test_panel_account_reuse_postgres.py` — Python-модуль
   Классы: нет
   Функции: `multi_tariff`, `single_tariff`, `test_multi_tariff_row_with_panel_id_is_updated`, `test_multi_tariff_row_without_id_adopts_free_user_account` — Старая подписка без id, аккаунт у человека есть и свободен — привязать и обновить, не создавать., `test_multi_tariff_row_without_id_creates_when_user_account_is_taken` — Аккаунт человека уже у другой подписки — новой строке нужен свой аккаунт., `test_multi_tariff_row_without_any_account_creates`, `test_single_tariff_follows_user_account_only`, `test_single_tariff_adopts_subscription_account_when_user_has_none` — Аккаунт создан в мультитарифе (записан у подписки), оператор вернулся в одиночный режим:, `test_single_tariff_does_not_steal_account_held_by_another_user`
