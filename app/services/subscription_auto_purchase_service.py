@@ -58,6 +58,7 @@ from app.services.traffic_reset_policy import lift_panel_traffic_limit, should_r
 from app.services.user_cart_service import user_cart_service
 from app.utils.formatters import format_days_declension
 from app.utils.pricing_utils import format_period_description
+from app.utils.subscription_utils import resolve_tariff_renewal_device_limit
 from app.utils.timezone import format_local_datetime
 
 
@@ -984,7 +985,9 @@ async def _auto_purchase_tariff(
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
             if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                effective_device_limit = resolve_tariff_renewal_device_limit(
+                    tariff.device_limit, existing_subscription.device_limit
+                )
             else:
                 effective_device_limit = tariff.device_limit
             subscription = await extend_subscription(

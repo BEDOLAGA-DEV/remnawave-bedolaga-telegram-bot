@@ -50,6 +50,7 @@ from app.services.subscription_service import SubscriptionService
 from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.services.user_cart_service import user_cart_service
 from app.utils.pricing_utils import calculate_price_per_month, format_period_description
+from app.utils.subscription_utils import resolve_tariff_renewal_device_limit
 from app.utils.timezone import format_local_datetime
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
@@ -166,7 +167,7 @@ async def _build_tariff_response(
     # Вычисляем доп. устройства для текущего тарифа (при продлении)
     extra_devices_count = 0
     extra_device_price_per_month = 0
-    if subscription and subscription.tariff_id == tariff.id:
+    if subscription and subscription.tariff_id == tariff.id and tariff.device_limit != 0:
         extra_devices_count = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
         if extra_devices_count > 0:
             extra_device_price_per_month = (
@@ -275,7 +276,7 @@ async def _build_tariff_response(
     # Показываем реальное количество устройств (с докупленными) для текущего тарифа
     actual_device_limit = tariff.device_limit
     if subscription and subscription.tariff_id == tariff.id:
-        actual_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
+        actual_device_limit = resolve_tariff_renewal_device_limit(tariff.device_limit, subscription.device_limit)
 
     response: dict[str, Any] = {
         'id': tariff.id,
@@ -809,8 +810,9 @@ async def purchase_tariff(
         effective_device_limit = tariff.device_limit
         if existing_subscription and existing_subscription.tariff_id == tariff.id:
             device_limit = existing_subscription.device_limit
-            if (existing_subscription.device_limit or 0) > (tariff.device_limit or 0):
-                effective_device_limit = existing_subscription.device_limit
+            effective_device_limit = resolve_tariff_renewal_device_limit(
+                tariff.device_limit, existing_subscription.device_limit
+            )
 
         # Calculate price via PricingEngine (single source of truth)
         result = await pricing_engine.calculate_tariff_purchase_price(

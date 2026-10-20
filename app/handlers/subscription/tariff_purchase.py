@@ -34,6 +34,7 @@ from app.utils.formatting import format_period, format_price_kopeks, format_traf
 from app.utils.legacy_subscription import is_legacy_subscription as _legacy_subscription
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.subscription_time import local_days_until
+from app.utils.subscription_utils import resolve_tariff_renewal_device_limit
 
 
 logger = structlog.get_logger(__name__)
@@ -1418,7 +1419,9 @@ async def handle_custom_confirm(
             # Продлеваем существующую подписку и обновляем параметры тарифа
             # Сохраняем докупленные устройства при продлении того же тарифа
             if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                effective_device_limit = resolve_tariff_renewal_device_limit(
+                    tariff.device_limit, existing_subscription.device_limit
+                )
             else:
                 effective_device_limit = tariff.device_limit
             subscription = await extend_subscription(
@@ -1977,7 +1980,9 @@ async def confirm_tariff_purchase(
         if settings.is_multi_tariff_enabled():
             if existing_subscription and existing_subscription.tariff_id == tariff.id:
                 # Extend existing subscription for this tariff
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                effective_device_limit = resolve_tariff_renewal_device_limit(
+                    tariff.device_limit, existing_subscription.device_limit
+                )
                 subscription = await extend_subscription(
                     db,
                     existing_subscription,
@@ -2044,7 +2049,9 @@ async def confirm_tariff_purchase(
             # Legacy single-subscription: extend or switch
             # Сохраняем докупленные устройства при продлении того же тарифа
             if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = max(tariff.device_limit or 0, existing_subscription.device_limit or 0)
+                effective_device_limit = resolve_tariff_renewal_device_limit(
+                    tariff.device_limit, existing_subscription.device_limit
+                )
             else:
                 effective_device_limit = tariff.device_limit
             subscription = await extend_subscription(
@@ -3942,7 +3949,7 @@ async def confirm_tariff_switch(
         # Обновляем подписку с новыми параметрами тарифа
         # Сохраняем докупленные устройства при продлении того же тарифа
         if subscription.tariff_id == tariff.id:
-            effective_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
+            effective_device_limit = resolve_tariff_renewal_device_limit(tariff.device_limit, subscription.device_limit)
         else:
             effective_device_limit = tariff.device_limit
         subscription = await extend_subscription(

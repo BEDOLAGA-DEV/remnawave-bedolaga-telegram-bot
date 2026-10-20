@@ -130,6 +130,13 @@ def coerce_panel_device_limit(value: object, default: int = 1) -> int:
     return default
 
 
+def resolve_tariff_renewal_device_limit(base_limit: int | None, current_limit: int | None) -> int:
+    """Продление сохраняет докупки лимитного тарифа; ноль у тарифа — безлимит."""
+    if base_limit == 0:
+        return 0
+    return max(base_limit or 0, current_limit or 0)
+
+
 def resolve_min_device_limit(tariff: object | None = None) -> int:
     """Нижняя граница, до которой пользователь может уменьшить лимит устройств.
 
@@ -154,11 +161,11 @@ def resolve_min_device_limit(tariff: object | None = None) -> int:
 
 
 def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
-    """Return a device limit value for RemnaWave payloads when selection is enabled.
+    """Return a positive effective device limit, or None for no finite limit.
 
     Ноль или пусто в ``device_limit`` — «без ограничения» (HWID выключен): это
-    штатное состояние подписки, а не ошибка, поэтому в панель поле не шлём и
-    пишем об этом только в debug. Полная синхронизация прогоняет через эту
+    штатное состояние подписки, а не ошибка, поэтому пишем об этом только
+    в debug. Payload resolver отдельно передаёт явный ноль. Синхронизация прогоняет через эту
     функцию каждую подписку — warning здесь превращался в шум на всю базу.
     """
     import structlog
@@ -184,7 +191,7 @@ def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
     limit = getattr(subscription, 'device_limit', None)
     if limit is None or limit <= 0:
         _logger.debug(
-            'device_limit не задан (без ограничения) — hwidDeviceLimit в панель не шлём',
+            'device_limit не задаёт положительного ограничения HWID',
             device_limit=limit,
             subscription_id=getattr(subscription, 'id', None),
         )
@@ -202,14 +209,18 @@ def resolve_hwid_device_limit_for_payload(
     RemnaWave should continue receiving the subscription's stored limit so the
     external panel stays aligned with the bot configuration.
 
-    Раньше здесь был «запасной» путь, читавший тот же ``device_limit`` ещё раз
-    и писавший второй warning на ту же подписку; значения он дать не мог.
+    Explicit zero must be sent on updates too: omitting it would preserve an
+    old finite panel limit. Missing/invalid limits still omit the field, and a
+    positive forced override retains precedence.
     """
     import structlog
 
     _logger = structlog.get_logger('resolve_hwid_device_limit')
 
     resolved_limit = resolve_hwid_device_limit(subscription)
+    stored_limit = getattr(subscription, 'device_limit', None)
+    if resolved_limit is None and type(stored_limit) is int and stored_limit == 0:
+        return 0
     if resolved_limit is not None:
         _logger.info(
             'hwid_device_limit resolved',

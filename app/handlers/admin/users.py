@@ -5914,8 +5914,8 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
 
         subscription.tariff_id = tariff.id
 
-        new_base = tariff.device_limit or 1
-        new_total = new_base + extra_devices
+        new_base = tariff.device_limit if tariff.device_limit is not None else 1
+        new_total = 0 if new_base == 0 else new_base + extra_devices
         effective_max = tariff.max_device_limit or (
             settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None
         )

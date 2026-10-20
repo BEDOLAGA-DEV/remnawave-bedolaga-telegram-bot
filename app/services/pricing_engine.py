@@ -602,7 +602,7 @@ class PricingEngine:
             tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
         )
         tariff_device_limit = tariff.device_limit or 0
-        extra_devices = max(0, (device_limit or 0) - tariff_device_limit)
+        extra_devices = 0 if tariff.device_limit == 0 else max(0, (device_limit or 0) - tariff_device_limit)
         if is_daily and period_days <= 1:
             devices_price = extra_devices * device_price_per_unit
         else:

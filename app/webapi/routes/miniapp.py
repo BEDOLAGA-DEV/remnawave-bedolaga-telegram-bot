@@ -105,7 +105,7 @@ from app.utils.pricing_utils import (
 )
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.subscription_time import days_left_rounded_up
-from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
+from app.utils.subscription_utils import get_happ_cryptolink_redirect_link, resolve_tariff_renewal_device_limit
 from app.utils.telegram_webapp import (
     TelegramWebAppAuthError,
     parse_webapp_init_data,
@@ -6771,7 +6771,7 @@ async def purchase_tariff_endpoint(
     if subscription:
         # Preserve extra purchased devices when renewing the same tariff
         if subscription.tariff_id == tariff.id:
-            effective_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
+            effective_device_limit = resolve_tariff_renewal_device_limit(tariff.device_limit, subscription.device_limit)
         else:
             effective_device_limit = tariff.device_limit
         # Смена/продление тарифа
