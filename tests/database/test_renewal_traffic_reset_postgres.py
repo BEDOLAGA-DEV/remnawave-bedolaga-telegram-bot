@@ -23,6 +23,8 @@ async def test_paid_renewal_resets_bot_and_panel_together(
     postgres_database, monkeypatch, reset, expired, multi, panel_exists
 ):
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
+    monkeypatch.setattr(settings, 'TRAFFIC_SELECTION_MODE', 'fixed_with_topup')
+    monkeypatch.setattr(settings, 'FIXED_TRAFFIC_LIMIT_GB', 100)
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset)
     monkeypatch.setattr(settings, 'RESET_DEVICES_ON_RENEWAL', False)
@@ -42,7 +44,7 @@ async def test_paid_renewal_resets_bot_and_panel_together(
             remnawave_id=123 if panel_exists else None,
         )
         tariff = Tariff(
-            id=1, name='Test', is_active=True, traffic_limit_gb=100, device_limit=2, period_prices={'30': 1000}
+            id=1, name='Test', is_active=True, traffic_limit_gb=500, device_limit=2, period_prices={'30': 1000}
         )
         subscription = Subscription(
             id=7,
@@ -52,7 +54,7 @@ async def test_paid_renewal_resets_bot_and_panel_together(
             status='expired' if expired else 'active',
             start_date=now - timedelta(days=25),
             end_date=old_end,
-            traffic_limit_gb=100,
+            traffic_limit_gb=500,
             traffic_used_gb=17.5,
             device_limit=2,
             connected_squads=[],
@@ -77,7 +79,7 @@ async def test_paid_renewal_resets_bot_and_panel_together(
         await db.refresh(subscription)
         assert user.balance_kopeks == 9000
         assert subscription.traffic_used_gb == (0 if reset else 17.5)
-        assert subscription.traffic_limit_gb == 100
+        assert subscription.traffic_limit_gb == 500
         assert subscription.device_limit == 2
         expected_end = (now if expired else old_end) + timedelta(days=30)
         assert abs((subscription.end_date - expected_end).total_seconds()) < 3

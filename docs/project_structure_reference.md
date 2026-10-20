@@ -3778,6 +3778,9 @@
 - `tests/database/test_errors.py` — Python-модуль
   Классы: нет
   Функции: `test_bare_missing_greenlet_sqlalchemy_2_0`, `test_missing_greenlet_wrapped_in_statement_error_sqlalchemy_2_1`, `test_other_database_errors_are_not_missing_greenlet`
+- `tests/database/test_expired_tariff_limit_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_tariff_renewal_preserves_base_and_only_active_purchases`
 - `tests/database/test_guest_purchase_gift_idempotency.py` — Python-модуль
   Классы: нет
   Функции: `test_guest_purchase_model_has_idempotency_key_column` — GuestPurchase model must have idempotency_key column and ux_guest_purchases_idempotency_key index., `test_multiple_null_idempotency_keys_are_allowed` — Multiple legacy guest purchases with NULL idempotency_key must be allowed., `test_duplicate_non_null_idempotency_key_is_rejected` — Duplicate non-null idempotency_key must trigger uniqueness violation., `test_migration_0107_upgrade_downgrade_upgrade_lifecycle` — Verify revision 0107 upgrade, downgrade, and upgrade on a SQLite database with legacy null rows.
