@@ -3859,6 +3859,9 @@
 - `tests/database/test_remaining_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_paid_existing_purchase_preserves_traffic_contract`, `test_guest_nonrenewal_keeps_existing_panel_reset_policy`
+- `tests/database/test_renewal_hwid_postgres.py` — Python-модуль
+  Классы: `Panel` (5 методов)
+  Функции: `test_same_tariff_90_day_purchase_preserves_hwid`
 - `tests/database/test_renewal_survives_stale_panel_snapshot_postgres.py` — Python-модуль
   Классы: нет
   Функции: `single_tariff_mode_quiet`, `test_paid_renewal_is_not_undone_by_a_stale_panel_snapshot`, `test_autopay_does_not_charge_again_after_a_stale_panel_snapshot`
