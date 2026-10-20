@@ -913,6 +913,7 @@ async def purchase_tariff(
                     'return_to_cart': True,
                     'description': f'Покупка тарифа {tariff.name} на {period_days} дней',
                     'traffic_limit_gb': traffic_limit_gb,
+                    'custom_traffic_gb': custom_traffic_gb,
                     'device_limit': effective_device_limit,
                     'allowed_squads': tariff.allowed_squads or [],
                     'discount_percent': discount_percent,

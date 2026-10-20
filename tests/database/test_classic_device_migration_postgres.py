@@ -76,6 +76,8 @@ async def test_selected_classic_devices_are_priced_and_preserved(
     daily=False,
     repeat=False,
     trial=False,
+    custom_traffic=None,
+    custom_enabled=False,
 ):
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
@@ -115,6 +117,10 @@ async def test_selected_classic_devices_are_priced_and_preserved(
             name='Test',
             is_active=True,
             traffic_limit_gb=100,
+            custom_traffic_enabled=custom_traffic is not None or custom_enabled,
+            traffic_price_per_gb_kopeks=2,
+            min_traffic_gb=10,
+            max_traffic_gb=500,
             device_limit=base,
             max_device_limit=tariff_max,
             device_price_kopeks=100,
@@ -147,6 +153,28 @@ async def test_selected_classic_devices_are_priced_and_preserved(
         sub = await db.get(Subscription, 10)
         expected_extra = 0 if base == 0 else max(0, expected - base)
         expected_price = (100 if daily else days * 10) + expected_extra * 100 * max(1, round(days / 30))
+        expected_price += (custom_traffic or 0) * 2
+        saved_cart = None
+        if flow in ('auto_cabinet_cart', 'telegram_cabinet_cart'):
+            from fastapi import HTTPException
+
+            saved = AsyncMock()
+            monkeypatch.setattr(cabinet.user_cart_service, 'save_user_cart', saved)
+            user.balance_kopeks = 1
+            await db.commit()
+            with pytest.raises(HTTPException) as error:
+                await cabinet.purchase_tariff(
+                    cabinet.TariffPurchaseRequest(
+                        tariff_id=1, period_days=days, traffic_gb=custom_traffic, subscription_id=10 if multi else None
+                    ),
+                    user,
+                    db,
+                )
+            assert error.value.status_code == 402
+            saved_cart = saved.await_args.args[1]
+            assert saved_cart['traffic_limit_gb'] == (custom_traffic if custom_traffic is not None else 100)
+            user.balance_kopeks = 10000
+            await db.commit()
         if flow == 'cabinet':
             preview = await cabinet._build_tariff_response(db, tariff, user=user, subscription=sub)
             assert preview['device_limit'] == expected
@@ -155,16 +183,18 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 assert preview['daily_price_kopeks'] == expected_price
             if days in [30, 45]:
                 period = next(p for p in preview['periods'] if p['days'] == days)
-                assert period['price_kopeks'] == expected_price
+                assert period['price_kopeks'] == expected_price - (custom_traffic or 0) * 2
             response = await cabinet.purchase_tariff(
-                cabinet.TariffPurchaseRequest(tariff_id=1, period_days=days, subscription_id=10 if multi else None),
+                cabinet.TariffPurchaseRequest(
+                    tariff_id=1, period_days=days, traffic_gb=custom_traffic, subscription_id=10 if multi else None
+                ),
                 user,
                 db,
             )
             assert response['success']
-        elif flow == 'auto':
+        elif flow in ('auto', 'auto_cabinet_cart'):
             assert await auto._auto_purchase_tariff(
-                db, user, {'tariff_id': 1, 'period_days': days, 'subscription_id': 10}
+                db, user, saved_cart or {'tariff_id': 1, 'period_days': days, 'subscription_id': 10}
             )
         elif flow == 'auto_daily':
             assert await auto._auto_purchase_daily_tariff(db, user, {'tariff_id': 1, 'subscription_id': 10})
@@ -177,14 +207,15 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 bot=SimpleNamespace(send_message=AsyncMock()),
                 message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
             )
-            if flow in ('telegram_cart_daily', 'telegram_cart_period'):
+            if flow in ('telegram_cart_daily', 'telegram_cart_period', 'telegram_cabinet_cart'):
                 await state.update_data(target_subscription_id=None, active_subscription_id=20)
                 await telegram.return_to_saved_tariff_cart(
                     callback,
                     state,
                     user,
                     db,
-                    {
+                    saved_cart
+                    or {
                         'cart_mode': 'daily_tariff_purchase' if daily else 'tariff_purchase',
                         'tariff_id': 1,
                         'period_days': days,
@@ -254,6 +285,7 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
         await db.refresh(sub)
         await db.refresh(user)
+        assert sub.traffic_limit_gb == (custom_traffic if custom_traffic is not None else 100)
         assert sub.tariff_id == 1 and sub.device_limit == expected
         assert sub.remnawave_id == 9001 and sub.subscription_url == 'https://vpn.example/sub/test'
         assert user.balance_kopeks == 10000 - expected_price
@@ -263,6 +295,9 @@ async def test_selected_classic_devices_are_priced_and_preserved(
         assert (await db.get(Subscription, 20)).device_limit == 7
         assert (await db.get(Subscription, 20)).end_date == now + timedelta(days=50)
         assert len(panel.patches) == 1 and panel.patches[0]['hwidDeviceLimit'] == expected
+        assert (
+            panel.patches[0]['trafficLimitBytes'] == (custom_traffic if custom_traffic is not None else 100) * 1024**3
+        )
 
 
 @pytest.mark.parametrize(
@@ -622,4 +657,34 @@ async def test_saved_cart_return_keeps_selected_classic_and_requotes(
         multi,
         days=days,
         daily=daily,
+    )
+
+
+@pytest.mark.parametrize('flow', ['cabinet', 'auto_cabinet_cart', 'telegram_cabinet_cart'])
+@pytest.mark.parametrize('multi', [False, True])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_custom_traffic_survives_saved_checkout(postgres_database, monkeypatch, flow, multi, days):
+    await test_selected_classic_devices_are_priced_and_preserved(
+        postgres_database,
+        monkeypatch,
+        flow,
+        multi,
+        days=days,
+        custom_traffic=250,
+    )
+
+
+@pytest.mark.parametrize('flow', ['auto_cabinet_cart', 'telegram_cabinet_cart'])
+@pytest.mark.parametrize('custom_traffic', [None, 100])
+async def test_cart_distinguishes_default_from_explicit_base_traffic(
+    postgres_database, monkeypatch, flow, custom_traffic
+):
+    await test_selected_classic_devices_are_priced_and_preserved(
+        postgres_database,
+        monkeypatch,
+        flow,
+        True,
+        days=75,
+        custom_traffic=custom_traffic,
+        custom_enabled=True,
     )

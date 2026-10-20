@@ -62,7 +62,7 @@ from app.services.traffic_reset_policy import (
 from app.services.user_cart_service import user_cart_service
 from app.utils.formatters import format_days_declension
 from app.utils.pricing_utils import format_period_description
-from app.utils.subscription_utils import resolve_tariff_purchase_device_limit
+from app.utils.subscription_utils import resolve_tariff_cart_traffic, resolve_tariff_purchase_device_limit
 from app.utils.timezone import format_local_datetime
 
 
@@ -902,6 +902,12 @@ async def _auto_purchase_tariff(
             )
             return False
 
+    try:
+        custom_traffic_gb, traffic_limit_gb = resolve_tariff_cart_traffic(tariff, cart_data)
+    except ValueError:
+        logger.warning('Saved tariff cart traffic is no longer available', user_id=user.id, tariff_id=tariff_id)
+        return False
+
     # Lock user BEFORE price computation to prevent TOCTOU on promo offer
     from app.database.crud.user import lock_user_for_pricing
 
@@ -947,6 +953,7 @@ async def _auto_purchase_tariff(
         tariff,
         period_days,
         device_limit=device_limit,
+        custom_traffic_gb=custom_traffic_gb,
         user=user,
     )
     final_price = result.final_total
@@ -1014,7 +1021,7 @@ async def _auto_purchase_tariff(
                 existing_subscription,
                 days=period_days,
                 tariff_id=tariff.id,
-                traffic_limit_gb=tariff.traffic_limit_gb,
+                traffic_limit_gb=traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
                 reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
@@ -1030,7 +1037,7 @@ async def _auto_purchase_tariff(
                 db=db,
                 user_id=user.id,
                 duration_days=period_days,
-                traffic_limit_gb=tariff.traffic_limit_gb,
+                traffic_limit_gb=traffic_limit_gb,
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,

@@ -112,6 +112,10 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         name='Audit',
                         is_active=True,
                         traffic_limit_gb=100,
+                        custom_traffic_enabled=flow in ('cart_return_traffic', 'auto_cart_traffic'),
+                        traffic_price_per_gb_kopeks=2,
+                        min_traffic_gb=10,
+                        max_traffic_gb=500,
                         device_limit=base,
                         max_device_limit=5,
                         device_price_kopeks=137,
@@ -245,13 +249,16 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                     assert await actor._finalize_lava_payment(db, payment, trigger='test-repeat')
                     assert await cart.get_all_subscription_carts(1) == []
                 else:
-                    price = 750 + (5 - base) * 137 * 2
+                    custom_traffic = 250 if flow in ('cart_return_traffic', 'auto_cart_traffic') else None
+                    price = 750 + (5 - base) * 137 * 2 + (custom_traffic or 0) * 2
                     state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
-                    await state.update_data(target_subscription_id=10, custom_days=75, custom_traffic_gb=100)
+                    await state.update_data(
+                        target_subscription_id=10, custom_days=75, custom_traffic_gb=custom_traffic or 100
+                    )
                     preview = await telegram.format_custom_tariff_preview(
                         tariff,
                         75,
-                        100,
+                        custom_traffic or 100,
                         user.balance_kopeks,
                         db_user=user,
                         db=db,
@@ -264,7 +271,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         bot=SimpleNamespace(send_message=AsyncMock()),
                         message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
                     )
-                    if flow == 'cart_return_custom':
+                    if flow in ('cart_return_custom', 'cart_return_traffic'):
                         await state.update_data(target_subscription_id=None, active_subscription_id=20)
                         await telegram.return_to_saved_tariff_cart(
                             callback,
@@ -275,6 +282,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                                 'cart_mode': 'tariff_purchase',
                                 'tariff_id': 1,
                                 'period_days': 75,
+                                'custom_traffic_gb': custom_traffic,
                                 'subscription_id': 10,
                                 'total_price': 1,
                             },
@@ -286,7 +294,21 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         )
                         assert callback.data == 'custom_confirm:1'
                         assert telegram.format_price_kopeks(price) in callback.message.edit_text.await_args.args[0]
-                    await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
+                    if flow == 'auto_cart_traffic':
+                        assert await auto._auto_purchase_tariff(
+                            db,
+                            user,
+                            {
+                                'tariff_id': 1,
+                                'period_days': 75,
+                                'subscription_id': 10,
+                                'custom_traffic_gb': 250,
+                                'traffic_limit_gb': 250,
+                                'total_price': 1,
+                            },
+                        )
+                    else:
+                        await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
                 await db.refresh(user)
                 await db.refresh(subscription)
                 assert user.balance_kopeks == (1000 if flow == 'wallet_topup' else 10000) - price
@@ -300,6 +322,9 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                 assert len((await db.scalars(select(Subscription))).all()) == 2
                 remote = await request('GET', f'/api/users/{old["id"]}')
                 assert remote['hwidDeviceLimit'] == 5
+                if flow in ('cart_return_traffic', 'auto_cart_traffic'):
+                    assert subscription.traffic_limit_gb == 250
+                    assert remote['trafficLimitBytes'] == 250 * 1024**3
                 untouched = await request('GET', f'/api/users/{neighbor["id"]}')
                 assert untouched['hwidDeviceLimit'] == 7 and untouched['expireAt'] == neighbor['expireAt']
                 assert (await db.get(Subscription, 20)).device_limit == 7
@@ -321,6 +346,8 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
         'wallet_topup',
         'cart_return_daily',
         'cart_return_custom',
+        'cart_return_traffic',
+        'auto_cart_traffic',
     ],
 )
 async def test_purchase_price_and_cap_reach_real_panel(postgres_database, monkeypatch, base, flow):

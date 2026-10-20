@@ -11,6 +11,25 @@ from app.database.models import Subscription
 logger = structlog.get_logger(__name__)
 
 
+def resolve_tariff_cart_traffic(tariff, cart_data: dict) -> tuple[int | None, int]:
+    """Resolve explicit custom traffic; reject ambiguous legacy or stale selections."""
+    if 'custom_traffic_gb' not in cart_data:
+        legacy = cart_data.get('traffic_limit_gb')
+        if legacy is not None and legacy != tariff.traffic_limit_gb:
+            raise ValueError('Legacy cart traffic selection must be recreated')
+    custom = cart_data.get('custom_traffic_gb')
+    if custom is None:
+        return None, tariff.traffic_limit_gb
+    if (
+        isinstance(custom, bool)
+        or not isinstance(custom, int)
+        or not tariff.can_purchase_custom_traffic()
+        or tariff.get_price_for_custom_traffic(custom) is None
+    ):
+        raise ValueError('Custom traffic selection is unavailable')
+    return custom, custom
+
+
 async def cleanup_duplicate_subscriptions(db: AsyncSession) -> int:
     # В multi-tariff режиме несколько подписок у пользователя — это нормально
     if settings.is_multi_tariff_enabled():

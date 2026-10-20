@@ -32,8 +32,13 @@ pytestmark = pytest.mark.postgres
             'corrupt_source',
             'corrupt_days',
             'invalid_period',
+            'invalid_traffic',
+            'disabled_traffic',
+            'legacy_traffic',
+            'malformed_traffic',
         ]
-        if mode != 'daily_tariff_purchase' or case not in ['corrupt_days', 'invalid_period']
+        if (mode != 'daily_tariff_purchase' or case not in ['corrupt_days', 'invalid_period'])
+        and (mode == 'tariff_purchase' or not case.endswith('_traffic'))
     ],
 )
 async def test_restore_validates_and_requotes(postgres_database, monkeypatch, mode, case):
@@ -42,7 +47,9 @@ async def test_restore_validates_and_requotes(postgres_database, monkeypatch, mo
     monkeypatch.setattr(settings, 'MAX_DEVICES_LIMIT', 10)
     saved = AsyncMock()
     monkeypatch.setattr(telegram.user_cart_service, 'save_user_cart', saved)
-    bad = case in ['foreign', 'missing', 'corrupt_source', 'corrupt_days', 'invalid_period']
+    bad = case in ['foreign', 'missing', 'corrupt_source', 'corrupt_days', 'invalid_period'] or case.endswith(
+        '_traffic'
+    )
     if bad:
         pricing = AsyncMock(side_effect=AssertionError('Invalid cart reached pricing'))
         monkeypatch.setattr(pricing_engine, 'calculate_tariff_purchase_price', pricing)
@@ -66,6 +73,10 @@ async def test_restore_validates_and_requotes(postgres_database, monkeypatch, mo
                     device_limit=1,
                     device_price_kopeks=100,
                     traffic_limit_gb=100,
+                    custom_traffic_enabled=case != 'disabled_traffic',
+                    traffic_price_per_gb_kopeks=2,
+                    min_traffic_gb=10,
+                    max_traffic_gb=500,
                     is_daily=mode == 'daily_tariff_purchase',
                     daily_price_kopeks=100,
                     period_prices={'30': 300},
@@ -111,7 +122,17 @@ async def test_restore_validates_and_requotes(postgres_database, monkeypatch, mo
             'total_price': 100,
             'discount_percent': 100 if case == 'promo100' else 0,
         }
+        if case == 'legacy_traffic':
+            cart['traffic_limit_gb'] = 250
+        elif case.endswith('_traffic'):
+            cart['custom_traffic_gb'] = (
+                600 if case == 'invalid_traffic' else 'oops' if case == 'malformed_traffic' else 250
+            )
         await telegram.return_to_saved_tariff_cart(callback, state, user, db, cart)
+        if case.endswith('_traffic'):
+            from app.services.subscription_auto_purchase_service import _auto_purchase_tariff
+
+            assert not await _auto_purchase_tariff(db, user, cart)
         if bad:
             pricing.assert_not_awaited()
             callback.message.edit_text.assert_not_awaited()

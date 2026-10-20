@@ -35,7 +35,11 @@ from app.utils.formatting import format_period, format_price_kopeks, format_traf
 from app.utils.legacy_subscription import is_legacy_subscription as _legacy_subscription
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.subscription_time import local_days_until
-from app.utils.subscription_utils import resolve_tariff_purchase_device_limit, resolve_tariff_renewal_device_limit
+from app.utils.subscription_utils import (
+    resolve_tariff_cart_traffic,
+    resolve_tariff_purchase_device_limit,
+    resolve_tariff_renewal_device_limit,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -1382,7 +1386,20 @@ async def handle_custom_confirm(
 
     state_data = await state.get_data()
     custom_days = state_data.get('custom_days', tariff.min_days)
-    custom_traffic = state_data.get('custom_traffic_gb', tariff.min_traffic_gb)
+    try:
+        custom_traffic, traffic_limit = resolve_tariff_cart_traffic(
+            tariff,
+            {
+                'custom_traffic_gb': state_data.get('custom_traffic_gb', tariff.min_traffic_gb)
+                if tariff.can_purchase_custom_traffic()
+                else None
+            },
+        )
+    except ValueError:
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
+        )
+        return
 
     try:
         existing_subscription = await _resolve_purchase_subscription(db, db_user, tariff, state)
@@ -1465,9 +1482,6 @@ async def handle_custom_confirm(
 
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
-
-    # Определяем трафик
-    traffic_limit = custom_traffic if tariff.can_purchase_custom_traffic() else tariff.traffic_limit_gb
 
     is_tariff_renewal = existing_subscription is not None and existing_subscription.tariff_id == tariff.id
     reset_used_traffic = not is_tariff_renewal or should_reset_traffic_on_tariff_purchase(
@@ -5632,6 +5646,19 @@ async def return_to_saved_tariff_cart(
         )
         return
 
+    try:
+        traffic_cart = (
+            cart_data if cart_mode == 'tariff_purchase' else {'custom_traffic_gb': cart_data.get('custom_traffic_gb')}
+        )
+        custom_traffic_gb, traffic_limit_gb = resolve_tariff_cart_traffic(tariff, traffic_cart)
+        if custom_traffic_gb is not None and cart_mode != 'tariff_purchase':
+            raise ValueError('Unsupported custom traffic cart mode')
+    except ValueError:
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
+        )
+        return
+
     from app.services.pricing_engine import pricing_engine
 
     effective_device_limit = resolve_tariff_purchase_device_limit(tariff, subscription)
@@ -5639,6 +5666,7 @@ async def return_to_saved_tariff_cart(
         tariff,
         period,
         device_limit=effective_device_limit,
+        custom_traffic_gb=custom_traffic_gb,
         user=db_user,
     )
     total_price = quote.final_total
@@ -5647,6 +5675,8 @@ async def return_to_saved_tariff_cart(
     cart_data.update(
         total_price=total_price,
         period_days=period,
+        custom_traffic_gb=custom_traffic_gb,
+        traffic_limit_gb=traffic_limit_gb,
         device_limit=effective_device_limit,
         subscription_id=subscription.id if subscription else None,
         discount_percent=discount_percent,
@@ -5661,10 +5691,10 @@ async def return_to_saved_tariff_cart(
         target_subscription_id=subscription.id if subscription else None,
         active_subscription_id=None,
         custom_days=period,
-        custom_traffic_gb=tariff.traffic_limit_gb,
+        custom_traffic_gb=custom_traffic_gb,
     )
     user_balance = db_user.balance_kopeks or 0
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(traffic_limit_gb)
 
     # Проверяем баланс (при 100% скидке — пропускаем)
     if total_price > 0 and user_balance < total_price:
@@ -5824,7 +5854,7 @@ async def return_to_saved_tariff_cart(
     else:  # tariff_purchase
         period = int(cart_data.get('period_days', 30))
         confirm_keyboard = get_tariff_confirm_keyboard(tariff_id, period, db_user.language)
-        if str(period) not in (tariff.period_prices or {}):
+        if custom_traffic_gb is not None or str(period) not in (tariff.period_prices or {}):
             confirm_keyboard.inline_keyboard[0][0].callback_data = f'custom_confirm:{tariff_id}'
 
         discount_text = ''
