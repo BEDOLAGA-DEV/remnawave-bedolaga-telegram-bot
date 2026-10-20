@@ -39,9 +39,12 @@ async def test_other_main_tariff_is_conflict_but_independent_addon_is_not(monkey
 
         conflict = await find_live_entitlement_family_conflict(db, user_id=47, tariff_id=standard.id)
         assert conflict is main
-        assert await find_live_entitlement_family_conflict(
-            db, user_id=47, tariff_id=addon.id, current_subscription_id=addon_sub.id
-        ) is None
+        assert (
+            await find_live_entitlement_family_conflict(
+                db, user_id=47, tariff_id=addon.id, current_subscription_id=addon_sub.id
+            )
+            is None
+        )
         assert await find_live_entitlement_family_conflict(db, user_id=48, tariff_id=standard.id) is None
 
 
@@ -94,7 +97,10 @@ async def test_current_subscription_not_conflict_when_switching_or_renewing(monk
         db.add(current)
         await db.flush()
 
-        assert await find_live_entitlement_family_conflict(
-            db, user_id=53, tariff_id=premium.id, current_subscription_id=current.id
-        ) is None
+        assert (
+            await find_live_entitlement_family_conflict(
+                db, user_id=53, tariff_id=premium.id, current_subscription_id=current.id
+            )
+            is None
+        )
         assert await find_live_entitlement_family_conflict(db, user_id=53, tariff_id=basic.id) is current
