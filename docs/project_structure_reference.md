@@ -3814,6 +3814,9 @@
 - `tests/database/test_panel_account_reuse_postgres.py` — Python-модуль
   Классы: нет
   Функции: `multi_tariff`, `single_tariff`, `test_multi_tariff_row_with_panel_id_is_updated`, `test_multi_tariff_row_without_id_adopts_free_user_account` — Старая подписка без id, аккаунт у человека есть и свободен — привязать и обновить, не создавать., `test_multi_tariff_row_without_id_creates_when_user_account_is_taken` — Аккаунт человека уже у другой подписки — новой строке нужен свой аккаунт., `test_multi_tariff_row_without_any_account_creates`, `test_single_tariff_follows_user_account_only`, `test_single_tariff_adopts_subscription_account_when_user_has_none` — Аккаунт создан в мультитарифе (записан у подписки), оператор вернулся в одиночный режим:, `test_single_tariff_does_not_steal_account_held_by_another_user`
+- `tests/database/test_panel_identity_recovery_postgres.py` — Python-модуль
+  Классы: `Panel` (8 методов)
+  Функции: `test_identity_sync_repairs_only_proven_dead_links`
 - `tests/database/test_panel_import_billing_postgres.py` — Python-модуль
   Классы: нет
   Функции: `account`, `service`, `tariff`, `seed`, `test_import_reads_configured_trial_marker`, `test_ambiguous_squads_do_not_assign_a_tariff`, `test_unique_tariff_mapping_is_preserved`, `test_exact_relink_preserves_billing_row_and_addons`, `test_exact_short_identity_precedes_legacy_longest_subscription`, `test_concurrent_imports_respect_subscription_cap`, `test_panel_snapshot_does_not_recreate_deleted_account`, `test_refreshing_owner_does_not_discard_previous_account_update`, `test_ambiguous_legacy_identity_does_not_pick_an_arbitrary_row`, `test_current_panel_owner_change_does_not_import_foreign_account`, `test_parallel_reversed_pages_do_not_deadlock_owner_locks`, `test_trial_marker_reads_live_database_override`, `test_cabinet_reports_partial_import_errors`
