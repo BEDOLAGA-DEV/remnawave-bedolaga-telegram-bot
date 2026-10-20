@@ -99,9 +99,7 @@ async def test_api_purchase_denied_without_group(monkeypatch, platform):
 
         monkeypatch.setattr(m, 'get_tariff_by_id', AsyncMock(return_value=_tariff(10)))
         monkeypatch.setattr(m, '_authorize_miniapp_user', AsyncMock(return_value=user))
-        call = m.purchase_tariff_endpoint(
-            MiniAppTariffPurchaseRequest(initData='test', tariffId=9, periodDays=30), db
-        )
+        call = m.purchase_tariff_endpoint(MiniAppTariffPurchaseRequest(initData='test', tariffId=9, periodDays=30), db)
     with pytest.raises(HTTPException) as exc:
         await call
     assert exc.value.status_code == 403

@@ -3603,6 +3603,9 @@
 - `tests/cabinet/test_system_errors_permissions.py` — Python-модуль
   Классы: нет
   Функции: `test_section_is_registered`, `test_permission_is_grantable`, `test_wildcard_from_bootstrap_survives_a_role_save` — Bootstrap раздаёт ``system_errors:*`` — редактор ролей обязан его принять., `test_every_permission_required_by_cabinet_routes_is_registered` — Ратчет: право, проверяемое роутом, но не заведённое в реестре, не выдать никому., `test_bootstrap_roles_only_grant_registered_permissions` — То же с другой стороны: роль из bootstrap должна проходить валидацию редактора.
+- `tests/cabinet/test_system_role_update_payload.py` — Python-модуль
+  Классы: нет
+  Функции: `test_system_role_protected_fields_must_not_change`, `test_non_system_role_can_change_level`
 - `tests/cabinet/test_telegram_auth_jwks.py` — Python-модуль
   Классы: нет
   Функции: `test_build_public_keys_handles_mixed_jwks` — Real Telegram JWKS (RSA + EC + OKP + EC-secp256k1) must not raise., `test_build_public_keys_loads_ec_and_okp_keys` — EC P-256 + Ed25519 + EC secp256k1 keys should all parse with pyjwt 2.11+., `test_build_public_keys_skips_unsupported_kty` — Unknown kty (e.g. future-Telegram-quantum key) is silently skipped, not crashes., `test_build_public_keys_skips_jwk_without_kid` — JWK без kid не может быть selected'ом по header'у токена — пропускаем., `test_build_public_keys_returns_tuple_compatible_with_pyjwt_decode` — Возврат должен быть (public_key, alg) — иначе validate_telegram_oidc_token упадёт., `test_build_public_keys_defaults_alg_when_jwk_omits_it` — JWK без поля `alg` → берём _KTY_DEFAULT_ALG[kty]; alg всё равно не пустой.
@@ -3826,6 +3829,9 @@
 - `tests/database/test_referral_levels_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_reward_levels_columns_match`, `test_reward_levels_indexes_match` — Именно это и расходилось: create_all делает ix_..._id, миграция — не делала., `test_new_earning_columns_match`, `test_no_duplicate_tariff_foreign_key` — Миграция не должна вешать второй FK поверх созданного по модели., `test_column_shapes_match`, `test_threshold_columns_are_not_nullable` — Порог и флаг подсчёта читаются напрямую в расчёт награды., `test_downgrade_removes_everything_it_added` — Откат обязан возвращать базу к исходному виду., `test_upgrade_is_idempotent` — Повторный прогон на уже обновлённой базе не должен падать.
+- `tests/database/test_referrer_attachment_race_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_two_referrers_have_one_winner`
 - `tests/database/test_renewal_survives_stale_panel_snapshot_postgres.py` — Python-модуль
   Классы: нет
   Функции: `single_tariff_mode_quiet`, `test_paid_renewal_is_not_undone_by_a_stale_panel_snapshot`, `test_autopay_does_not_charge_again_after_a_stale_panel_snapshot`
@@ -4145,6 +4151,9 @@
 - `tests/handlers/test_admin_tariff_server_limits.py` — Python-модуль
   Классы: нет
   Функции: `test_card_summarizes_limits_and_has_entry`, `test_screen_lists_allowed_squads_with_limits`, `test_screen_lists_all_squads_when_tariff_allows_all`, `test_input_sets_limit_without_mutating_stored_dict`, `test_zero_removes_limit`, `test_invalid_input_keeps_state`
+- `tests/handlers/test_admin_user_autopay_frozen_callback.py` — Python-модуль
+  Классы: нет
+  Функции: `test_autopay_rerenders_without_mutation`
 - `tests/handlers/test_balance_quick_topup.py` — Python-модуль
   Классы: нет
   Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
@@ -4223,6 +4232,9 @@
 - `tests/handlers/test_start_menu_media.py` — Python-модуль
   Классы: нет
   Функции: `test_video_takes_precedence_over_logo`, `test_without_video_falls_back_to_logo`, `test_removed_video_returns_to_logo` — Удаление видео в кабинете сразу возвращает прежнее поведение., `test_long_caption_goes_to_plain_text` — Подпись длиннее лимита Telegram нельзя приложить ни к видео, ни к фото., `test_video_send_failure_still_delivers_menu` — Битый file_id не должен оставлять пользователя без меню., `test_video_used_even_when_logo_mode_disabled` — Видео — самостоятельная настройка, не зависит от ENABLE_LOGO_MODE., `test_answer_path_sends_video` — /start отвечает через message.answer — видео обязано работать и там., `test_answer_path_without_video_delegates_unchanged` — Без видео поведение обязано остаться ровно прежним (патченный answer)., `test_answer_path_falls_back_when_video_broken`, `test_answer_path_long_caption_delegates_to_text`
+- `tests/handlers/test_start_retroactive_referral_window.py` — Python-модуль
+  Классы: нет
+  Функции: `test_start_referral_respects_account_age`, `test_new_user_still_saves_pending_referral`
 - `tests/handlers/test_start_subid.py` — Python-модуль
   Классы: `TestSplitStartParamSubid` (9 методов)
   Функции: нет
