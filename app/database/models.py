@@ -38,6 +38,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 from sqlalchemy.sql import func
 
+from app.database.tariff_family_schema import PG_FAMILY_DDL
+
 
 class AwareDateTime(TypeDecorator):
     """DateTime that auto-converts naive values to UTC-aware on load from DB.
@@ -5449,7 +5451,5 @@ class UserReminderState(Base):
 # На пустой PostgreSQL create_all выполняется без Alembic upgrade: ту же
 # защиту, что миграция 0133, надо установить и в свежую схему. В SQLite
 # SQL-триггеры не выполняются (проверки здесь остаются в прикладном слое).
-from app.database.tariff_family_schema import PG_FAMILY_DDL
-
 for _family_ddl in PG_FAMILY_DDL:
     event.listen(Base.metadata, 'after_create', DDL(_family_ddl).execute_if(dialect='postgresql'))
