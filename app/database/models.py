@@ -11,6 +11,7 @@ def _aware(dt: datetime | None) -> datetime | None:
 from enum import Enum, StrEnum
 
 from sqlalchemy import (
+    DDL,
     JSON,
     BigInteger,
     Boolean,
@@ -29,6 +30,7 @@ from sqlalchemy import (
     Time,
     TypeDecorator,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -5442,3 +5444,12 @@ class UserReminderState(Base):
     # Последний успех — по нему общий лимит «одно напоминание в сутки».
     last_success_at = Column(AwareDateTime(), nullable=True)
     dismissed_at = Column(AwareDateTime(), nullable=True)
+
+
+# На пустой PostgreSQL create_all выполняется без Alembic upgrade: ту же
+# защиту, что миграция 0133, надо установить и в свежую схему. В SQLite
+# SQL-триггеры не выполняются (проверки здесь остаются в прикладном слое).
+from app.database.tariff_family_schema import PG_FAMILY_DDL
+
+for _family_ddl in PG_FAMILY_DDL:
+    event.listen(Base.metadata, 'after_create', DDL(_family_ddl).execute_if(dialect='postgresql'))
