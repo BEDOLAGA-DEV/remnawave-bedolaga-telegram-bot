@@ -85,6 +85,7 @@ async def test_selected_classic_devices_are_priced_and_preserved(
     monkeypatch.setattr(telegram.user_cart_service, 'delete_user_cart', AsyncMock())
     monkeypatch.setattr(telegram.user_cart_service, 'delete_subscription_cart', AsyncMock())
     monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
+    monkeypatch.setattr(telegram.AdminNotificationService, 'send_subscription_purchase_notification', AsyncMock())
     now = datetime.now(UTC)
     panel = Panel(now)
 
@@ -172,14 +173,32 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 bot=SimpleNamespace(send_message=AsyncMock()),
                 message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
             )
-            callback.data = f'tariff_period:1:{days}'
-            await inspect.unwrap(telegram.select_tariff_period)(callback, user, db, state)
-            preview_state = await state.get_data()
-            assert preview_state['final_price'] == expected_price
-            if multi:
-                assert preview_state['target_subscription_id'] == 10
-            callback.data = f'tariff_confirm:1:{days}'
-            await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
+            if flow == 'telegram_custom':
+                await state.update_data(custom_days=days, custom_traffic_gb=100)
+                preview = await telegram.format_custom_tariff_preview(
+                    tariff,
+                    days,
+                    100,
+                    user.balance_kopeks,
+                    db_user=user,
+                    db=db,
+                    state=state,
+                )
+                assert f'Итого: {telegram.format_price_kopeks(expected_price)}' in preview
+                assert f'Устройств: {telegram.Texts.format_device_limit(expected)}' in preview
+                callback.data = 'custom_confirm:1'
+                await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
+                success_text = callback.message.edit_text.await_args.args[0]
+                assert f'Устройств: {expected}' in success_text
+            else:
+                callback.data = f'tariff_period:1:{days}'
+                await inspect.unwrap(telegram.select_tariff_period)(callback, user, db, state)
+                preview_state = await state.get_data()
+                assert preview_state['final_price'] == expected_price
+                if multi:
+                    assert preview_state['target_subscription_id'] == 10
+                callback.data = f'tariff_confirm:1:{days}'
+                await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
         await db.refresh(sub)
         await db.refresh(user)
         assert sub.tariff_id == 1 and sub.device_limit == expected
@@ -195,7 +214,14 @@ async def test_selected_classic_devices_are_priced_and_preserved(
 
 @pytest.mark.parametrize(
     ('base', 'old', 'tariff_max', 'global_max', 'expected'),
-    [(5, 3, None, 10, 5), (1, 5, 3, 10, 3), (1, 5, None, 3, 3), (0, 3, None, 1, 0)],
+    [
+        (5, 3, None, 10, 5),
+        (1, 5, 3, 10, 3),
+        (1, 5, None, 3, 3),
+        (0, 3, None, 1, 0),
+        (1, 10, 5, 10, 5),
+        (2, 10, 5, 10, 5),
+    ],
 )
 async def test_classic_migration_limits(postgres_database, monkeypatch, base, old, tariff_max, global_max, expected):
     await test_selected_classic_devices_are_priced_and_preserved(
@@ -219,13 +245,40 @@ async def test_classic_migration_non_month_period_price(postgres_database, monke
 
 
 @pytest.mark.parametrize('multi', [False, True])
+@pytest.mark.parametrize(
+    ('base', 'old', 'tariff_max', 'expected'),
+    [(1, 3, None, 3), (1, 10, 5, 5), (2, 10, 5, 5), (0, 3, None, 0), (5, 3, None, 5)],
+)
+async def test_classic_custom_telegram_selected_purchase(
+    postgres_database,
+    monkeypatch,
+    multi,
+    base,
+    old,
+    tariff_max,
+    expected,
+):
+    await test_selected_classic_devices_are_priced_and_preserved(
+        postgres_database,
+        monkeypatch,
+        'telegram_custom',
+        multi,
+        days=75,
+        base=base,
+        old=old,
+        tariff_max=tariff_max,
+        expected=expected,
+    )
+
+
+@pytest.mark.parametrize('multi', [False, True])
 async def test_cabinet_daily_classic_price_matches_charge(postgres_database, monkeypatch, multi):
     await test_selected_classic_devices_are_priced_and_preserved(
         postgres_database, monkeypatch, 'cabinet', multi, days=1, daily=True
     )
 
 
-@pytest.mark.parametrize('flow', ['cabinet', 'telegram', 'auto'])
+@pytest.mark.parametrize('flow', ['cabinet', 'telegram', 'auto', 'telegram_custom'])
 @pytest.mark.parametrize('selected', [21, 999])
 async def test_invalid_selected_classic_subscription_is_rejected_before_pricing(
     postgres_database, monkeypatch, flow, selected
@@ -277,7 +330,8 @@ async def test_invalid_selected_classic_subscription_is_rejected_before_pricing(
             callback = SimpleNamespace(
                 data='tariff_confirm:1:30', answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock())
             )
-            await inspect.unwrap(telegram.confirm_tariff_purchase)(callback, user, db, state)
+            handler = telegram.handle_custom_confirm if flow == 'telegram_custom' else telegram.confirm_tariff_purchase
+            await inspect.unwrap(handler)(callback, user, db, state)
             assert callback.answer.await_count == 1
         pricing.assert_not_awaited()
         await db.refresh(user)
@@ -331,3 +385,31 @@ async def test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing(
         await db.refresh(user)
         assert user.balance_kopeks == 10000
         assert (await db.scalars(select(Transaction))).all() == []
+
+
+async def test_custom_fallback_prefers_active_tariff_over_later_disabled_record(postgres_database, monkeypatch):
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+    async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
+        db.add(User(id=1, telegram_id=101))
+        db.add(Tariff(id=1, name='Test', device_limit=1, is_active=True))
+        now = datetime.now(UTC)
+        for sub_id, status, days in [(10, 'active', 5), (20, 'disabled', 50)]:
+            db.add(
+                Subscription(
+                    id=sub_id,
+                    user_id=1,
+                    tariff_id=1,
+                    is_trial=False,
+                    status=status,
+                    end_date=now + timedelta(days=days),
+                    device_limit=3,
+                    remnawave_short_id=f'test-{sub_id}',
+                )
+            )
+        await db.commit()
+        selected = await telegram._resolve_custom_tariff_subscription(
+            db,
+            await get_user_by_id(db, 1),
+            await db.get(Tariff, 1),
+        )
+        assert selected.id == 10
