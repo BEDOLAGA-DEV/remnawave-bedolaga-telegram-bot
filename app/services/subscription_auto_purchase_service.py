@@ -2303,7 +2303,13 @@ async def try_auto_extend_expired_after_topup(
         from app.database.crud.subscription import get_all_subscriptions_by_user_id
 
         all_subs = await get_all_subscriptions_by_user_id(db, user.id)
-        expired_subs = [s for s in all_subs if s.status == SubscriptionStatus.EXPIRED.value and s.is_trial is False]
+        expired_subs = [
+            s
+            for s in all_subs
+            if s.status == SubscriptionStatus.EXPIRED.value
+            and s.is_trial is False
+            and not getattr(s, 'is_daily_tariff', False)
+        ]
         if not expired_subs:
             subscription = None
         else:
@@ -2323,6 +2329,10 @@ async def try_auto_extend_expired_after_topup(
     if subscription.status != SubscriptionStatus.EXPIRED.value:
         return False
     if subscription.is_trial is not False:
+        return False
+    # Daily charging has its own settings, price and +24h lifecycle. Falling
+    # through here after daily resume was disabled must not buy a period instead.
+    if getattr(subscription, 'is_daily_tariff', False):
         return False
 
     # Требуем явное согласие: продлеваем с баланса после пополнения ТОЛЬКО если
@@ -2695,9 +2705,16 @@ async def try_resume_disabled_daily_after_topup(
     """
     from app.cabinet.routes.websocket import notify_user_subscription_renewed
     from app.database.crud.subscription import get_subscription_by_user_id, update_daily_charge_time
+    from app.database.crud.user import lock_user_for_pricing
 
     if not user or not getattr(user, 'id', None):
         return False
+    if not settings.is_auto_purchase_after_topup_enabled() or not settings.DAILY_SUBSCRIPTIONS_ENABLED:
+        return False
+
+    # Serialize callbacks before reading eligibility. Keep this lock until the
+    # balance, activation, payment record and charge time are committed together.
+    user = await lock_user_for_pricing(db, user.id)
 
     if settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_all_subscriptions_by_user_id
@@ -2764,11 +2781,6 @@ async def try_resume_disabled_daily_after_topup(
         )
         return False
 
-    # Lock user row to prevent TOCTOU between discount read and balance charge
-    from app.database.crud.user import lock_user_for_pricing
-
-    user = await lock_user_for_pricing(db, user.id)
-
     # Apply group discount to daily price (consistent with PricingEngine._calculate_switch_to_daily)
     from app.services.pricing_engine import PricingEngine
 
@@ -2807,8 +2819,10 @@ async def try_resume_disabled_daily_after_topup(
             check_error=check_error,
         )
 
-    # Deduct daily price FIRST (before changing status to avoid free-access window)
+    # Charge, activate and record the paid day in one transaction. No committed
+    # debit can escape on activation/ledger failure or expose a second callback.
     previous_status = subscription.status
+    old_end_date = subscription.end_date
     description = f'Суточная оплата тарифа «{tariff.name}» (авто-возобновление)'
     try:
         deducted = await subtract_user_balance(
@@ -2817,96 +2831,46 @@ async def try_resume_disabled_daily_after_topup(
             daily_price,
             description,
             mark_as_paid_subscription=True,
+            commit=False,
         )
-    except Exception as error:
-        logger.error(
-            '❌ Авто-возобновление daily: ошибка списания средств',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        return False
+        if not deducted:
+            await db.rollback()
+            return False
 
-    if not deducted:
-        logger.warning(
-            '❌ Авто-возобновление daily: списание не выполнено',
-            format_user_id=_format_user_id(user),
-        )
-        return False
-
-    # Activate the subscription (balance already deducted)
-    subscription.status = SubscriptionStatus.ACTIVE.value
-    try:
-        await db.commit()
-        await db.refresh(subscription)
-    except Exception as error:
-        logger.error(
-            '❌ Авто-возобновление daily: ошибка активации подписки',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            await add_user_balance(
-                db,
-                user,
-                daily_price,
-                'Возврат: ошибка авто-возобновления суточной подписки',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-            )
-            logger.info(
-                '💰 Авто-возобновление daily: возврат средств после ошибки активации',
-                format_user_id=_format_user_id(user),
-                refund_kopeks=daily_price,
-            )
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: Авто-возобновление daily: не удалось вернуть средства',
-                format_user_id=_format_user_id(user),
-                price_kopeks=daily_price,
-                refund_error=refund_error,
-            )
-        return False
-
-    logger.info(
-        '✅ Авто-возобновление daily: подписка → ACTIVE после пополнения',
-        format_user_id=_format_user_id(user),
-        previous_status=previous_status,
-        subscription_id=subscription.id,
-    )
-
-    # Create transaction
-    transaction = None
-    try:
+        subscription.status = SubscriptionStatus.ACTIVE.value
         transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=daily_price,
             description=description,
+            commit=False,
         )
+        subscription = await update_daily_charge_time(db, subscription, commit=False)
+        await db.commit()
     except Exception as error:
         logger.error(
-            '⚠️ Авто-возобновление daily: не удалось создать транзакцию',
-            format_user_id=_format_user_id(user),
+            '❌ Авто-возобновление daily: ошибка оплаты и активации подписки',
             error=error,
+            exc_info=True,
         )
+        await db.rollback()
+        return False
 
-    # Update charge time and end_date (+24h)
-    old_end_date = subscription.end_date
-    try:
-        subscription = await update_daily_charge_time(db, subscription)
-    except Exception as error:
-        logger.error(
-            '⚠️ Авто-возобновление daily: не удалось обновить время списания',
-            format_user_id=_format_user_id(user),
-            error=error,
-        )
+    await db.refresh(subscription)
+    # create_transaction(commit=False) defers these until the payment is durable.
+    from app.database.crud.transaction import emit_transaction_side_effects
+    from app.database.models import PaymentMethod
+
+    await emit_transaction_side_effects(
+        db,
+        transaction,
+        amount_kopeks=daily_price,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        payment_method=PaymentMethod.BALANCE,
+        description=description,
+    )
 
     # Restore connected_squads from tariff if cleared by deactivation sync
     try:

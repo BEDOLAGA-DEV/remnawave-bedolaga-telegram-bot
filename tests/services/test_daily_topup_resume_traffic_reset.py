@@ -116,6 +116,8 @@ async def _resume_after_topup(
 
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset_on_payment)
     monkeypatch.setattr(settings, 'DEFAULT_TRAFFIC_RESET_STRATEGY', 'MONTH')
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'DAILY_SUBSCRIPTIONS_ENABLED', True)
 
     panel = _FakePanelSync()
     monkeypatch.setattr(auto_purchase, 'SubscriptionService', lambda: panel)
