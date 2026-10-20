@@ -1691,7 +1691,10 @@ async def update_user_subscription(
                     )
 
             await reset_subscription(db, subscription)
-            result = {'panel_disabled': panel_disabled}
+            expiry_extinguished = await SubscriptionService().extinguish_remnawave_expiry(
+                db, user, subscription, panel_user_id
+            )
+            result = {'panel_disabled': panel_disabled, 'panel_expiry_extinguished': expiry_extinguished}
         else:
             from app.services.subscription_service import reset_subscription_with_panel
 
@@ -1703,6 +1706,7 @@ async def update_user_subscription(
             user_id=user_id,
             subscription_id=subscription.id,
             panel_disabled=result.get('panel_disabled'),
+            panel_expiry_extinguished=result.get('panel_expiry_extinguished'),
         )
 
         return UpdateSubscriptionResponse(

@@ -1821,7 +1821,7 @@
   Классы: `SubscriptionRenewalError`, `SubscriptionRenewalChargeError`, `SubscriptionRenewalPricing` (2 методов), `SubscriptionRenewalResult`, `RenewalPaymentDescriptor` (1 методов), `SubscriptionRenewalService` (1 методов)
   Функции: `build_renewal_period_id`, `build_payment_descriptor`, `encode_payment_payload`, `decode_payment_payload`, `build_payment_metadata`, `parse_payment_metadata`, `with_admin_notification_service`, `calculate_missing_amount`
 - `app/services/subscription_service.py` — Python-модуль
-  Классы: `PropagateSquadsResult`, `SubscriptionReissueResult`, `SubscriptionService` (32 методов)
+  Классы: `PropagateSquadsResult`, `SubscriptionReissueResult`, `SubscriptionService` (34 методов)
   Функции: `reset_subscription_with_panel` — Обнулить подписку «как будто не оформляли» и снять доступ в панели RemnaWave,
 - `app/services/support_settings_service.py` — Python-модуль
   Классы: `SupportSettingsService` (25 методов)
@@ -3766,6 +3766,9 @@
 ### tests/database
 
 - `tests/database/crud/`
+- `tests/database/test_admin_expiry_reset_postgres.py` — Python-модуль
+  Классы: `Panel` (4 методов)
+  Функции: `test_reset_does_not_regain_paid_days_from_panel`, `test_expired_update_sends_closing_date_in_first_patch`, `test_reset_preserves_local_reset_when_expiry_patch_fails`
 - `tests/database/test_admin_trial_device_cap_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
   Функции: `test_admin_trial_conversion_sends_selected_cap`, `test_explicit_foreign_or_missing_subscription_never_falls_back`, `test_explicit_multi_callback_after_mode_change_is_rejected`

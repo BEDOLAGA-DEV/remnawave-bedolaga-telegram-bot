@@ -26,6 +26,7 @@ from app.services.panel_sync import (
     get_traffic_reset_strategy as get_traffic_reset_strategy,  # noqa: PLC0414
     is_subscription_live,
     link_subscription_panel_identity,
+    panel_date_is_closing,
     panel_id_is_free_for,
     patch_panel_account,
     push_subscription,
@@ -669,7 +670,7 @@ class SubscriptionService:
                             multi_tariff=multi_tariff,
                             payload=panel_payload,
                             only_fields=only_fields,
-                            identity=PanelIdentity(known_id=remnawave_id),
+                            identity=await self._known_panel_identity(api, user, subscription, remnawave_id),
                             create_if_missing=False,
                             recreate_on_missing=False,
                             reset_devices=False,
@@ -812,6 +813,47 @@ class SubscriptionService:
             logger.warning(
                 '⚠️ Не удалось сбросить трафик RemnaWave', _format_user_log=self._format_user_log(user), error=exc
             )
+
+    async def _known_panel_identity(self, api, user, subscription, panel_user_id: int) -> PanelIdentity:
+        """Read a non-live account's date so its closing date goes in the first PATCH."""
+        if not is_subscription_live(user, subscription):
+            try:
+                return PanelIdentity(panel_user=await api.get_user_by_id(panel_user_id), known_id=panel_user_id)
+            except Exception as error:
+                logger.warning(
+                    'Не удалось прочитать дату панели перед гашением', panel_user_id=panel_user_id, error=error
+                )
+        return PanelIdentity(known_id=panel_user_id)
+
+    async def extinguish_remnawave_expiry(
+        self, db: AsyncSession, user: User, subscription: Subscription, panel_user_id: int | None
+    ) -> bool:
+        """Write an admin reset's status and expiry without creating a panel account."""
+        if not panel_user_id:
+            return False
+        try:
+            from app.services.grace_access_runtime import update_panel_user_grace_safe
+
+            async with self.get_api_client() as api:
+                result = await push_subscription(
+                    api,
+                    user,
+                    subscription,
+                    db=db,
+                    multi_tariff=settings.is_multi_tariff_enabled(),
+                    identity=await self._known_panel_identity(api, user, subscription, panel_user_id),
+                    only_fields={'status', 'expire_at'},
+                    create_if_missing=False,
+                    recreate_on_missing=False,
+                    reset_devices=False,
+                    update_call=lambda **kwargs: update_panel_user_grace_safe(api, subscription.id, **kwargs),
+                )
+                return result.panel_user is not None and panel_date_is_closing(result.panel_user.expire_at)
+        except Exception as error:
+            logger.warning(
+                'Не удалось погасить срок панели после обнуления', subscription_id=subscription.id, error=error
+            )
+            return False
 
     async def disable_remnawave_user(self, panel_user_id: int, db: AsyncSession | None = None) -> bool:
         """``db`` — сессия вызывающего, уже держащего grace-локи (пути удаления
@@ -1501,4 +1543,9 @@ async def reset_subscription_with_panel(db, user: User, subscription: Subscripti
         )
 
     await reset_subscription(db, subscription)
-    return {'panel_disabled': panel_disabled, 'panel_user_id': panel_user_id}
+    expiry_extinguished = await SubscriptionService().extinguish_remnawave_expiry(db, user, subscription, panel_user_id)
+    return {
+        'panel_disabled': panel_disabled,
+        'panel_user_id': panel_user_id,
+        'panel_expiry_extinguished': expiry_extinguished,
+    }
