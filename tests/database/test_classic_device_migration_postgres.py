@@ -177,7 +177,40 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 bot=SimpleNamespace(send_message=AsyncMock()),
                 message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
             )
-            if flow == 'telegram_daily':
+            if flow in ('telegram_cart_daily', 'telegram_cart_period'):
+                await state.update_data(target_subscription_id=None, active_subscription_id=20)
+                await telegram.return_to_saved_tariff_cart(
+                    callback,
+                    state,
+                    user,
+                    db,
+                    {
+                        'cart_mode': 'daily_tariff_purchase' if daily else 'tariff_purchase',
+                        'tariff_id': 1,
+                        'period_days': days,
+                        'subscription_id': 10,
+                        'total_price': 100,
+                        'daily_price_kopeks': 100,
+                    },
+                )
+                preview = callback.message.edit_text.await_args.args[0]
+                assert f'Устройств: {expected}' in preview
+                assert telegram.format_price_kopeks(expected_price) in preview
+                assert (await state.get_data())['target_subscription_id'] == 10
+                callback.data = (
+                    callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+                )
+                handler = (
+                    telegram.confirm_daily_tariff_purchase
+                    if daily
+                    else (
+                        telegram.handle_custom_confirm
+                        if callback.data.startswith('custom_confirm:')
+                        else telegram.confirm_tariff_purchase
+                    )
+                )
+                await inspect.unwrap(handler)(callback, user, db, state)
+            elif flow == 'telegram_daily':
                 await telegram._proceed_with_selected_tariff(callback, user, db, state, 1)
                 preview = callback.message.edit_text.await_args.args[0]
                 assert f'Устройств: {expected}' in preview
@@ -567,4 +600,26 @@ async def test_daily_selected_trial_keeps_conversion_marker(postgres_database, m
         daily=True,
         trial=True,
         expected=1,
+    )
+
+
+@pytest.mark.parametrize('multi', [False, True])
+@pytest.mark.parametrize(
+    ('flow', 'days', 'daily'),
+    [
+        ('telegram_cart_daily', 1, True),
+        ('telegram_cart_period', 30, False),
+        ('telegram_cart_period', 75, False),
+    ],
+)
+async def test_saved_cart_return_keeps_selected_classic_and_requotes(
+    postgres_database, monkeypatch, multi, flow, days, daily
+):
+    await test_selected_classic_devices_are_priced_and_preserved(
+        postgres_database,
+        monkeypatch,
+        flow,
+        multi,
+        days=days,
+        daily=daily,
     )

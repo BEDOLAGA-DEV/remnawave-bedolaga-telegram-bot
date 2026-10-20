@@ -158,7 +158,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         db,
                     )
                     assert result['success']
-                elif flow in ('telegram_daily', 'auto_daily'):
+                elif flow in ('telegram_daily', 'auto_daily', 'cart_return_daily'):
                     price = 101 + (5 - base) * 137
                     if flow == 'auto_daily':
                         assert await auto._auto_purchase_daily_tariff(db, user, {'tariff_id': 1, 'subscription_id': 10})
@@ -171,7 +171,29 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                             bot=SimpleNamespace(send_message=AsyncMock()),
                             message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
                         )
-                        await telegram._proceed_with_selected_tariff(callback, user, db, state, 1)
+                        if flow == 'cart_return_daily':
+                            await state.update_data(target_subscription_id=None, active_subscription_id=20)
+                            await telegram.return_to_saved_tariff_cart(
+                                callback,
+                                state,
+                                user,
+                                db,
+                                {
+                                    'cart_mode': 'daily_tariff_purchase',
+                                    'tariff_id': 1,
+                                    'subscription_id': 10,
+                                    'total_price': 1,
+                                    'daily_price_kopeks': 1,
+                                },
+                            )
+                            callback.data = (
+                                callback.message.edit_text.await_args.kwargs['reply_markup']
+                                .inline_keyboard[0][0]
+                                .callback_data
+                            )
+                            assert (await state.get_data())['target_subscription_id'] == 10
+                        else:
+                            await telegram._proceed_with_selected_tariff(callback, user, db, state, 1)
                         assert telegram.format_price_kopeks(price) in callback.message.edit_text.await_args.args[0]
                         await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
                     if flow == 'auto_daily':
@@ -242,6 +264,28 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         bot=SimpleNamespace(send_message=AsyncMock()),
                         message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
                     )
+                    if flow == 'cart_return_custom':
+                        await state.update_data(target_subscription_id=None, active_subscription_id=20)
+                        await telegram.return_to_saved_tariff_cart(
+                            callback,
+                            state,
+                            user,
+                            db,
+                            {
+                                'cart_mode': 'tariff_purchase',
+                                'tariff_id': 1,
+                                'period_days': 75,
+                                'subscription_id': 10,
+                                'total_price': 1,
+                            },
+                        )
+                        callback.data = (
+                            callback.message.edit_text.await_args.kwargs['reply_markup']
+                            .inline_keyboard[0][0]
+                            .callback_data
+                        )
+                        assert callback.data == 'custom_confirm:1'
+                        assert telegram.format_price_kopeks(price) in callback.message.edit_text.await_args.args[0]
                     await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
                 await db.refresh(user)
                 await db.refresh(subscription)
@@ -267,7 +311,17 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
 
 @pytest.mark.parametrize('base', [1, 2])
 @pytest.mark.parametrize(
-    'flow', ['cabinet', 'telegram_custom', 'cabinet_daily', 'telegram_daily', 'auto_daily', 'wallet_topup']
+    'flow',
+    [
+        'cabinet',
+        'telegram_custom',
+        'cabinet_daily',
+        'telegram_daily',
+        'auto_daily',
+        'wallet_topup',
+        'cart_return_daily',
+        'cart_return_custom',
+    ],
 )
 async def test_purchase_price_and_cap_reach_real_panel(postgres_database, monkeypatch, base, flow):
     async with real_migration(postgres_database, monkeypatch, base, flow) as (_, old, request):

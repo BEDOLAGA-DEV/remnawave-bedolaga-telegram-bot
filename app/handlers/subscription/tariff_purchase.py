@@ -5563,7 +5563,10 @@ async def return_to_saved_tariff_cart(
     """Восстанавливает сохраненную корзину тарифа после пополнения баланса."""
     texts = get_texts(db_user.language)
     cart_mode = cart_data.get('cart_mode')
-    tariff_id = cart_data.get('tariff_id')
+    try:
+        tariff_id = int(cart_data.get('tariff_id') or 0)
+    except (TypeError, ValueError):
+        tariff_id = 0
 
     if not tariff_id:
         await callback.answer(
@@ -5584,13 +5587,90 @@ async def return_to_saved_tariff_cart(
             await user_cart_service.delete_user_cart(db_user.id)
         return
 
-    total_price = cart_data.get('total_price', 0)
+    if cart_mode not in ('tariff_purchase', 'daily_tariff_purchase', 'extend'):
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
+        )
+        return
+    if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
+
+    try:
+        source_id = int(cart_data['subscription_id']) if cart_data.get('subscription_id') is not None else None
+        period = 1 if cart_mode == 'daily_tariff_purchase' else int(cart_data.get('period_days', 30))
+    except (TypeError, ValueError):
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
+        )
+        return
+    if source_id is not None:
+        subscription = await get_subscription_by_id_for_user(db, source_id, db_user.id)
+        if subscription is None:
+            await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+            return
+    else:
+        subscription = await _resolve_purchase_subscription(db, db_user, tariff)
+    if cart_mode == 'extend' and (subscription is None or subscription.tariff_id != tariff_id):
+        await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+        return
+    if (
+        settings.is_multi_tariff_enabled()
+        and subscription is not None
+        and subscription.tariff_id not in (None, tariff_id)
+    ):
+        subscription = await _resolve_purchase_subscription(db, db_user, tariff)
+
+    fixed_price = tariff.get_price_for_period(period)
+    if (cart_mode == 'daily_tariff_purchase' and (not tariff.is_daily or tariff.daily_price_kopeks <= 0)) or (
+        cart_mode != 'daily_tariff_purchase'
+        and not (fixed_price is not None and fixed_price >= 0)
+        and (cart_mode != 'tariff_purchase' or tariff.get_price_for_custom_days(period) is None)
+    ):
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_PERIOD_UNAVAILABLE_FOR_TARIFF', 'Выбранный период недоступен для этого тарифа'),
+            show_alert=True,
+        )
+        return
+
+    from app.services.pricing_engine import pricing_engine
+
+    effective_device_limit = resolve_tariff_purchase_device_limit(tariff, subscription)
+    quote = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period,
+        device_limit=effective_device_limit,
+        user=db_user,
+    )
+    total_price = quote.final_total
+    discount_amount = quote.original_total - total_price
+    discount_percent = discount_amount * 100 // quote.original_total if quote.original_total else 0
+    cart_data.update(
+        total_price=total_price,
+        period_days=period,
+        device_limit=effective_device_limit,
+        subscription_id=subscription.id if subscription else None,
+        discount_percent=discount_percent,
+    )
+    if cart_mode == 'daily_tariff_purchase':
+        cart_data['daily_price_kopeks'] = total_price
+    await state.update_data(
+        selected_tariff_id=tariff_id,
+        selected_period=period,
+        final_price=total_price,
+        tariff_discount_percent=discount_percent,
+        target_subscription_id=subscription.id if subscription else None,
+        active_subscription_id=None,
+        custom_days=period,
+        custom_traffic_gb=tariff.traffic_limit_gb,
+    )
     user_balance = db_user.balance_kopeks or 0
     traffic = format_traffic(tariff.traffic_limit_gb)
 
     # Проверяем баланс (при 100% скидке — пропускаем)
     if total_price > 0 and user_balance < total_price:
         missing = total_price - user_balance
+        cart_data.update(missing_amount=missing, return_to_cart=True)
+        await user_cart_service.save_user_cart(db_user.id, cart_data)
 
         if cart_mode == 'daily_tariff_purchase':
             await callback.message.edit_text(
@@ -5613,12 +5693,6 @@ async def return_to_saved_tariff_cart(
             )
         elif cart_mode == 'extend':
             period = cart_data.get('period_days', 30)
-            # Метка «пополняю ради корзины» живёт 30 минут, сама корзина — час.
-            # Экран возврата рисует кнопки оплаты на недостающую сумму, поэтому
-            # без продления метки пользователь мог оплатить ровно столько,
-            # сколько нужно, уже после её истечения — и автопродление молча не
-            # срабатывало. Пересохранение обновляет оба срока.
-            await user_cart_service.save_user_cart(db_user.id, cart_data)
             await callback.message.edit_text(
                 texts.t(
                     'TARIFF_PURCHASE_STILL_INSUFFICIENT',
@@ -5670,25 +5744,7 @@ async def return_to_saved_tariff_cart(
         await callback.answer()
         return
 
-    # Баланс достаточен - показываем подтверждение
-    discount_percent = cart_data.get('discount_percent', 0)
-
-    # Pin FSM keys read by confirm_tariff_purchase before showing the
-    # confirm keyboard. Without this, the cart-restore-after-topup path
-    # bypasses select_tariff_period (the normal preview) and confirm
-    # falls back to the race-vulnerable (user_id, tariff_id) lookup —
-    # which is exactly the scenario that produced the user-reported
-    # "Тариф уже активен" bug in the cart-restore flow.
-    if cart_mode in ('tariff_purchase', 'extend'):
-        _period_for_pin = cart_data.get('period_days', 30)
-        await state.update_data(
-            selected_tariff_id=tariff_id,
-            selected_period=_period_for_pin,
-            final_price=total_price,
-            tariff_discount_percent=discount_percent,
-            target_subscription_id=cart_data.get('subscription_id'),
-        )
-
+    # Баланс достаточен — подтверждаем свежую серверную цену и выбранную строку.
     if cart_mode == 'daily_tariff_purchase':
         daily_price = cart_data.get('daily_price_kopeks', total_price)
 
@@ -5706,7 +5762,7 @@ async def return_to_saved_tariff_cart(
             ).format(
                 name=html.escape(tariff.name),
                 traffic=traffic,
-                devices=tariff.device_limit,
+                devices=effective_device_limit,
                 price=format_price_kopeks(daily_price),
                 balance=format_price_kopeks(user_balance),
                 after=format_price_kopeks(user_balance - daily_price),
@@ -5719,10 +5775,9 @@ async def return_to_saved_tariff_cart(
 
         discount_text = ''
         if discount_percent > 0:
-            original_price = int(total_price / (1 - discount_percent / 100))
             discount_text = texts.t(
                 'TARIFF_PURCHASE_DISCOUNT_SHORT_LINE', '\n🎁 Скидка: {percent}% (-{amount})'
-            ).format(percent=discount_percent, amount=format_price_kopeks(original_price - total_price))
+            ).format(percent=discount_percent, amount=format_price_kopeks(discount_amount))
 
         # subscription_id обязателен в callback продления (issue #3012), берём из корзины
         _extend_sub_id = cart_data.get('subscription_id')
@@ -5742,7 +5797,7 @@ async def return_to_saved_tariff_cart(
             ).format(
                 name=html.escape(tariff.name),
                 traffic=traffic,
-                devices=tariff.device_limit,
+                devices=effective_device_limit,
                 period=format_period(period),
                 discount=discount_text,
                 total=format_price_kopeks(total_price),
@@ -5767,14 +5822,16 @@ async def return_to_saved_tariff_cart(
             parse_mode='HTML',
         )
     else:  # tariff_purchase
-        period = cart_data.get('period_days', 30)
+        period = int(cart_data.get('period_days', 30))
+        confirm_keyboard = get_tariff_confirm_keyboard(tariff_id, period, db_user.language)
+        if str(period) not in (tariff.period_prices or {}):
+            confirm_keyboard.inline_keyboard[0][0].callback_data = f'custom_confirm:{tariff_id}'
 
         discount_text = ''
         if discount_percent > 0:
-            original_price = int(total_price / (1 - discount_percent / 100))
             discount_text = texts.t(
                 'TARIFF_PURCHASE_DISCOUNT_SHORT_LINE', '\n🎁 Скидка: {percent}% (-{amount})'
-            ).format(percent=discount_percent, amount=format_price_kopeks(original_price - total_price))
+            ).format(percent=discount_percent, amount=format_price_kopeks(discount_amount))
 
         await callback.message.edit_text(
             texts.t(
@@ -5791,14 +5848,14 @@ async def return_to_saved_tariff_cart(
             ).format(
                 name=html.escape(tariff.name),
                 traffic=traffic,
-                devices=tariff.device_limit,
+                devices=effective_device_limit,
                 period=format_period(period),
                 discount=discount_text,
                 total=format_price_kopeks(total_price),
                 balance=format_price_kopeks(user_balance),
                 after=format_price_kopeks(user_balance - total_price),
             ),
-            reply_markup=get_tariff_confirm_keyboard(tariff_id, period, db_user.language),
+            reply_markup=confirm_keyboard,
             parse_mode='HTML',
         )
 

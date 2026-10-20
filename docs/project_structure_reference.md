@@ -3783,7 +3783,7 @@
   Функции: `real_migration`, `test_purchase_price_and_cap_reach_real_panel`, `test_tariff_maximum_applies_to_previously_registered_hwids` — Known RED acceptance criterion; do not replace with HTTP200 assertions or xfail.
 - `tests/database/test_classic_device_migration_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
-  Функции: `test_selected_classic_devices_are_priced_and_preserved`, `test_classic_migration_limits`, `test_classic_migration_non_month_period_price`, `test_classic_custom_telegram_selected_purchase`, `test_cabinet_daily_classic_price_matches_charge`, `test_daily_selected_classic_devices`, `test_invalid_selected_classic_subscription_is_rejected_before_pricing`, `test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing`, `test_custom_fallback_prefers_active_tariff_over_later_disabled_record`, `test_daily_insufficient_balance_cart_replays_selected_classic`, `test_repeated_daily_purchase_does_not_charge_twice`, `test_daily_selected_trial_keeps_conversion_marker`
+  Функции: `test_selected_classic_devices_are_priced_and_preserved`, `test_classic_migration_limits`, `test_classic_migration_non_month_period_price`, `test_classic_custom_telegram_selected_purchase`, `test_cabinet_daily_classic_price_matches_charge`, `test_daily_selected_classic_devices`, `test_invalid_selected_classic_subscription_is_rejected_before_pricing`, `test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing`, `test_custom_fallback_prefers_active_tariff_over_later_disabled_record`, `test_daily_insufficient_balance_cart_replays_selected_classic`, `test_repeated_daily_purchase_does_not_charge_twice`, `test_daily_selected_trial_keeps_conversion_marker`, `test_saved_cart_return_keeps_selected_classic_and_requotes`
 - `tests/database/test_daily_promo_days_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_daily_promo_days_defer_charge_and_keep_access`, `test_parallel_daily_workers_charge_only_once`
@@ -3910,6 +3910,9 @@
 - `tests/database/test_tabpay_payments_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match` — Integer вместо Boolean в рукописном DDL иначе не заметить., `test_order_id_is_unique` — Уникальность orderId не даёт двум записям претендовать на один вебхук., `test_downgrade_removes_the_table` — Откат обязан снимать таблицу, иначе повторный upgrade упрётся в неё.
+- `tests/database/test_tariff_cart_restore_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_restore_validates_and_requotes`
 - `tests/database/test_tariff_panel_tag_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `test_model_declares_both_columns`, `test_migration_adds_the_same_columns_as_the_model`, `test_migration_is_idempotent_on_a_table_that_already_has_the_columns`
