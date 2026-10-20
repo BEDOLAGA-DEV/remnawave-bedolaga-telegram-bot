@@ -9,6 +9,7 @@ Remnawave identity. Для PostgreSQL устанавливает сериали�
 """
 
 from alembic import op
+from sqlalchemy import text
 
 from app.database.tariff_family_schema import PG_FAMILY_DDL, PG_FAMILY_DROP_DDL
 
@@ -25,6 +26,27 @@ def upgrade() -> None:
     if op.get_bind().dialect.name != 'postgresql':
         return
 
+    connection = op.get_bind()
+    # Окно миграции должно блокировать конкурирующие записи; проверяем лишь
+    # агрегат нарушений, не выводя user_id и данные подписок в логи.
+    connection.execute(text('LOCK TABLE tariffs, subscriptions IN SHARE ROW EXCLUSIVE MODE'))
+    conflicts = connection.scalar(
+        text(
+            "SELECT count(*) FROM ("
+            "SELECT s.user_id, t.entitlement_family "
+            "FROM subscriptions s JOIN tariffs t ON t.id = s.tariff_id "
+            "WHERE t.entitlement_family IS NOT NULL "
+            "AND s.status IN ('active', 'trial', 'limited') "
+            "GROUP BY s.user_id, t.entitlement_family HAVING count(*) > 1"
+            ") conflicting"
+        )
+    )
+    if conflicts:
+        raise RuntimeError(f'Миграция 0133: обнаружены конфликты live семейства: {conflicts}')
+
+    # На свежей схеме create_all мог уже установить эти триггеры.
+    for statement in PG_FAMILY_DROP_DDL:
+        op.execute(statement)
     for statement in PG_FAMILY_DDL:
         op.execute(statement)
 
