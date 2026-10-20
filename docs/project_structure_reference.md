@@ -4250,6 +4250,9 @@
 - `tests/handlers/test_cashera_topup_flow.py` — Python-модуль
   Классы: нет
   Функции: `test_single_button_by_default`, `test_inline_methods_show_one_button_per_method`, `test_prefilled_amount_keeps_method_in_callback`, `test_quick_amounts_resolve_to_cashera_config`, `test_hidden_when_disabled`, `test_several_methods_ask_to_choose`, `test_choosing_a_method_asks_for_amount`, `test_disabled_method_is_refused`, `test_invoice_is_a_qr_photo_when_requisites_are_ready`
+- `tests/handlers/test_custom_days_quote_metadata.py` — Python-модуль
+  Классы: нет
+  Функции: `test_custom_days_metadata_matches_exact_period_quote`
 - `tests/handlers/test_custom_tariff_preview_devices.py` — Python-модуль
   Классы: нет
   Функции: `test_custom_preview_shows_inherited_devices_and_checkout_price`

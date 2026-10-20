@@ -343,6 +343,31 @@ async def _build_tariff_response(
         response['original_price_per_day_kopeks'] = original_price_per_day
         response['custom_days_discount_percent'] = custom_days_discount_percent
 
+    if tariff.custom_days_enabled:
+        # Custom days use exact-period rates and discount whole category totals.
+        # Keep legacy discounted units for other consumers of purchase-options.
+        custom_group = pricing_engine.resolve_promo_group(user)
+        if custom_group is not None and not tariff.is_available_for_promo_group(custom_group.id):
+            custom_group = None
+        discount_days = set()
+        if custom_group is not None:
+            discount_days.update(custom_group._get_period_discounts_map())
+            if custom_group.is_default and settings.is_base_promo_group_period_discount_enabled():
+                discount_days.update(settings.get_base_promo_group_period_discounts())
+        response['custom_days_pricing'] = {
+            'price_per_day_kopeks': original_price_per_day,
+            'device_price_kopeks': original_device_price,
+            'period_prices': tariff.period_prices or {},
+            'default_device_discount_percent': custom_group.get_discount_percent('devices') if custom_group else 0,
+            'discounts_by_days': {
+                str(days): {
+                    'period': custom_group.get_discount_percent('period', days),
+                    'devices': custom_group.get_discount_percent('devices', days),
+                }
+                for days in sorted(discount_days)
+            },
+        }
+
     return response
 
 
