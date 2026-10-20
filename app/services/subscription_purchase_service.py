@@ -1120,7 +1120,7 @@ class MiniAppSubscriptionPurchaseService:
             subscription.connected_squads = pricing.selection.servers
 
             extension_base_date = now
-            if subscription.end_date and subscription.end_date > now:
+            if not was_trial_conversion and subscription.end_date and subscription.end_date > now:
                 extension_base_date = subscription.end_date
             else:
                 subscription.start_date = now

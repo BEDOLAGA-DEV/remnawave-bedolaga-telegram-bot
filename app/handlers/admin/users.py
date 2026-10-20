@@ -5079,7 +5079,9 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
             current_time = datetime.now(UTC)
             bonus_period = timedelta()
 
-            if subscription.is_trial and settings.TRIAL_ADD_REMAINING_DAYS_TO_PAID and subscription.end_date:
+            from app.database.crud.subscription import should_carry_trial_remaining_days
+
+            if subscription.is_trial and should_carry_trial_remaining_days() and subscription.end_date:
                 remaining_trial_delta = subscription.end_date - current_time
                 if remaining_trial_delta.total_seconds() > 0:
                     bonus_period = remaining_trial_delta
@@ -5090,7 +5092,7 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                     )
 
             extension_base_date = current_time
-            if subscription.end_date and subscription.end_date > current_time:
+            if not subscription.is_trial and subscription.end_date and subscription.end_date > current_time:
                 extension_base_date = subscription.end_date
             else:
                 subscription.start_date = current_time

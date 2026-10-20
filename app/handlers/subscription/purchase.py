@@ -2532,10 +2532,14 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
 
             existing_subscription.connected_squads = selected_countries
 
-            # Если подписка еще активна, продлеваем от текущей даты окончания,
-            # иначе начинаем новый период с текущего момента
+            # Платную подписку продлеваем от даты окончания; триал — от now,
+            # поскольку разрешённый остаток уже учтён в bonus_period.
             extension_base_date = current_time
-            if existing_subscription.end_date and existing_subscription.end_date > current_time:
+            if (
+                not was_trial_conversion
+                and existing_subscription.end_date
+                and existing_subscription.end_date > current_time
+            ):
                 extension_base_date = existing_subscription.end_date
             else:
                 existing_subscription.start_date = current_time
