@@ -3790,6 +3790,9 @@
 - `tests/database/test_expired_tariff_limit_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_tariff_renewal_preserves_base_and_only_active_purchases`
+- `tests/database/test_expired_trial_conversion_postgres.py` — Python-модуль
+  Классы: `Panel` (8 методов)
+  Функции: `test_expired_trial_purchase_preserves_identity`, `test_conversion_candidate_priority_and_exclusions`, `test_concurrent_purchases_do_not_convert_same_trial_twice`, `test_missing_trial_panel_account_is_recreated_without_a_second_database_row`
 - `tests/database/test_guest_existing_email_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_etoplatezhi_guest_purchase_reaches_email_owner`

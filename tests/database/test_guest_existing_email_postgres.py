@@ -152,6 +152,9 @@ async def test_etoplatezhi_guest_purchase_reaches_email_owner(
             assert len(transactions) == 1
             assert transactions[0].user_id == owner.id and transactions[0].amount_kopeks == -29900
             assert transactions[0].external_id == 'test-guest-payment'
-            assert len(subscriptions) == (2 if multi and old_tariff is None and history != 'new' else 1)
+            keeps_old_paid_row = multi and old_tariff is None and history not in ['new', 'expired_trial']
+            assert len(subscriptions) == (2 if keeps_old_paid_row else 1)
+            if history == 'expired_trial':
+                assert paid[0].id == 7  # Convert the trial in place, including the legacy tariff-less case.
         await db.refresh(payment)
         assert payment.is_paid and payment.status == 'success'

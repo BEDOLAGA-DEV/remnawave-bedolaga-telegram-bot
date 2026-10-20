@@ -2594,7 +2594,7 @@ async def confirm_daily_tariff_purchase(
             subscription,
             None,
             1,  # 1 день
-            was_trial_conversion=False,
+            was_trial_conversion=bool(getattr(subscription, '_converted_from_trial', False)),
             amount_kopeks=final_daily_price,
             purchase_type='renewal' if existing_subscription else 'first_purchase',
         )
