@@ -5449,7 +5449,8 @@ class UserReminderState(Base):
 
 
 # На пустой PostgreSQL create_all выполняется без Alembic upgrade: ту же
-# защиту, что миграция 0133, надо установить и в свежую схему. В SQLite
-# SQL-триггеры не выполняются (проверки здесь остаются в прикладном слое).
+# защиту, что миграция 0133, надо установить и в свежую схему.
+# SQLite-триггеры здесь не устанавливаются: для SQLite запрет семейств
+# пока НЕ обеспечен. Это отдельно блокирует готовность полного продукта.
 for _family_ddl in PG_FAMILY_DDL:
     event.listen(Base.metadata, 'after_create', DDL(_family_ddl).execute_if(dialect='postgresql'))
