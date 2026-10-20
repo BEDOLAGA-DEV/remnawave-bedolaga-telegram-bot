@@ -28,6 +28,7 @@ from app.services.admin_notification_service import AdminNotificationService
 from app.services.panel_sync import should_create_panel_account
 from app.services.subscription_service import SubscriptionService
 from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
+from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
@@ -1414,6 +1415,13 @@ async def handle_custom_confirm(
     else:
         existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
+    is_tariff_renewal = existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+    reset_used_traffic = not is_tariff_renewal or should_reset_traffic_on_tariff_purchase(
+        is_tariff_change=False,
+        was_trial=existing_subscription.is_trial,
+        paid_kopeks=total_price,
+    )
+
     try:
         if existing_subscription:
             # Продлеваем существующую подписку и обновляем параметры тарифа
@@ -1432,6 +1440,7 @@ async def handle_custom_confirm(
                 traffic_limit_gb=traffic_limit,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
+                reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
             )
         else:
             # Создаем новую подписку
@@ -1490,7 +1499,7 @@ async def handle_custom_confirm(
 
     try:
         # Обновляем пользователя в Remnawave
-        # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
+        # При продлении того же тарифа решение совпадает с переданным в CRUD.
         _should_create = await should_create_panel_account(db, subscription, db_user)
         try:
             subscription_service = SubscriptionService()
@@ -1498,14 +1507,14 @@ async def handle_custom_confirm(
                 await subscription_service.create_remnawave_user(
                     db,
                     subscription,
-                    reset_traffic=True,
+                    reset_traffic=reset_used_traffic,
                     reset_reason='покупка тарифа',
                 )
             else:
                 await subscription_service.update_remnawave_user(
                     db,
                     subscription,
-                    reset_traffic=True,
+                    reset_traffic=reset_used_traffic,
                     reset_reason='покупка тарифа',
                 )
         except Exception as e:
@@ -1976,6 +1985,13 @@ async def confirm_tariff_purchase(
     # Reuse existing_sub fetched above for device pricing
     existing_subscription = existing_sub
 
+    is_tariff_renewal = existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+    reset_used_traffic = not is_tariff_renewal or should_reset_traffic_on_tariff_purchase(
+        is_tariff_change=False,
+        was_trial=existing_subscription.is_trial,
+        paid_kopeks=final_price,
+    )
+
     try:
         if settings.is_multi_tariff_enabled():
             if existing_subscription and existing_subscription.tariff_id == tariff.id:
@@ -1991,6 +2007,7 @@ async def confirm_tariff_purchase(
                     traffic_limit_gb=tariff.traffic_limit_gb,
                     device_limit=effective_device_limit,
                     connected_squads=squads,
+                    reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
                 )
             else:
                 # Guard: enforce MAX_ACTIVE_SUBSCRIPTIONS limit.
@@ -2062,6 +2079,7 @@ async def confirm_tariff_purchase(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
+                reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
             )
         else:
             # Создаем новую подписку
@@ -2169,7 +2187,7 @@ async def confirm_tariff_purchase(
         return
 
     # Обновляем пользователя в Remnawave
-    # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
+    # При продлении того же тарифа решение совпадает с переданным в CRUD.
     # In multi-tariff mode, each subscription has its own panel user.
     # A new subscription has no remnawave_id yet, so always CREATE.
     # In single-tariff mode, reuse the user-level panel id if available.
@@ -2180,14 +2198,14 @@ async def confirm_tariff_purchase(
             await subscription_service.create_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=True,
+                reset_traffic=reset_used_traffic,
                 reset_reason='покупка тарифа',
             )
         else:
             await subscription_service.update_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=True,
+                reset_traffic=reset_used_traffic,
                 reset_reason='покупка тарифа',
             )
     except Exception as e:

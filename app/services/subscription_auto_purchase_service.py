@@ -54,7 +54,11 @@ from app.services.subscription_purchase_service import (
     PurchaseValidationError,
 )
 from app.services.subscription_service import SubscriptionService
-from app.services.traffic_reset_policy import lift_panel_traffic_limit, should_reset_traffic_on_daily_charge
+from app.services.traffic_reset_policy import (
+    lift_panel_traffic_limit,
+    should_reset_traffic_on_daily_charge,
+    should_reset_traffic_on_tariff_purchase,
+)
 from app.services.user_cart_service import user_cart_service
 from app.utils.formatters import format_days_declension
 from app.utils.pricing_utils import format_period_description
@@ -980,6 +984,13 @@ async def _auto_purchase_tariff(
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
+    is_tariff_renewal = existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+    reset_used_traffic = not is_tariff_renewal or should_reset_traffic_on_tariff_purchase(
+        is_tariff_change=False,
+        was_trial=existing_subscription.is_trial,
+        paid_kopeks=final_price,
+    )
+
     try:
         if existing_subscription:
             # Продлеваем существующую подписку
@@ -998,6 +1009,7 @@ async def _auto_purchase_tariff(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
+                reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
             )
             was_trial_conversion = existing_subscription.is_trial
             if was_trial_conversion:
@@ -1074,13 +1086,13 @@ async def _auto_purchase_tariff(
         transaction = None
 
     # Обновляем Remnawave
-    # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
+    # При продлении того же тарифа решение совпадает с переданным в CRUD.
     try:
         subscription_service = SubscriptionService()
         await subscription_service.create_remnawave_user(
             db,
             subscription,
-            reset_traffic=True,
+            reset_traffic=reset_used_traffic,
             reset_reason='покупка тарифа',
         )
     except Exception as error:

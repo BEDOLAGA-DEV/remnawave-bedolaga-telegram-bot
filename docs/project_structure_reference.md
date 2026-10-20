@@ -3841,12 +3841,18 @@
 - `tests/database/test_renewal_survives_stale_panel_snapshot_postgres.py` — Python-модуль
   Классы: нет
   Функции: `single_tariff_mode_quiet`, `test_paid_renewal_is_not_undone_by_a_stale_panel_snapshot`, `test_autopay_does_not_charge_again_after_a_stale_panel_snapshot`
+- `tests/database/test_renewal_traffic_reset_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_paid_renewal_resets_bot_and_panel_together`
 - `tests/database/test_tabpay_payments_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match` — Integer вместо Boolean в рукописном DDL иначе не заметить., `test_order_id_is_unique` — Уникальность orderId не даёт двум записям претендовать на один вебхук., `test_downgrade_removes_the_table` — Откат обязан снимать таблицу, иначе повторный upgrade упрётся в неё.
 - `tests/database/test_tariff_panel_tag_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `test_model_declares_both_columns`, `test_migration_adds_the_same_columns_as_the_model`, `test_migration_is_idempotent_on_a_table_that_already_has_the_columns`
+- `tests/database/test_tariff_purchase_traffic_reset_postgres.py` — Python-модуль
+  Классы: `PanelBoundary`
+  Функции: `test_tariff_purchase_uses_same_reset_decision_in_db_and_panel`
 - `tests/database/test_user_balance_lock_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_user_lock_blocks_second_session` — Пока одно зачисление держит строку пользователя, второе ждёт., `test_concurrent_topups_do_not_lose_money` — Два одновременных зачисления складываются, а не затирают друг друга., `test_lock_returns_fresh_values_not_the_cached_object` — Блокировка обязана отдавать значения из БД, а не из кеша сессии.

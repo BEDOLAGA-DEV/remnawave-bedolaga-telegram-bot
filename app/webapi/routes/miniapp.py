@@ -86,6 +86,7 @@ from app.services.subscription_renewal_service import (
 )
 from app.services.subscription_service import SubscriptionService
 from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
+from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.services.trial_activation_service import (
     TrialPaymentChargeFailed,
     TrialPaymentInsufficientFunds,
@@ -6768,6 +6769,17 @@ async def purchase_tariff_endpoint(
     else:
         subscription = await get_subscription_by_user_id(db, user.id)
 
+    is_tariff_renewal = subscription is not None and subscription.tariff_id == tariff.id
+    reset_used_traffic = (
+        is_daily_tariff
+        or not is_tariff_renewal
+        or should_reset_traffic_on_tariff_purchase(
+            is_tariff_change=False,
+            was_trial=subscription.is_trial,
+            paid_kopeks=price_kopeks,
+        )
+    )
+
     if subscription:
         # Preserve extra purchased devices when renewing the same tariff
         if subscription.tariff_id == tariff.id:
@@ -6783,6 +6795,7 @@ async def purchase_tariff_endpoint(
             traffic_limit_gb=tariff.traffic_limit_gb,
             device_limit=effective_device_limit,
             connected_squads=squads,
+            reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
         )
     else:
         # Создание новой подписки
@@ -6809,12 +6822,12 @@ async def purchase_tariff_endpoint(
         await db.refresh(subscription)
 
     # Синхронизируем с RemnaWave: новая подписка панели ещё не известна — sync
-    # выберет create; существующая — update. При покупке тарифа ВСЕГДА сбрасываем трафик.
+    # выберет create; существующая — update. Решение о сбросе совпадает с переданным в CRUD.
     service = SubscriptionService()
     await service.sync_remnawave_user(
         db,
         subscription,
-        reset_traffic=True,
+        reset_traffic=reset_used_traffic,
         reset_reason='покупка тарифа (miniapp)',
     )
 
