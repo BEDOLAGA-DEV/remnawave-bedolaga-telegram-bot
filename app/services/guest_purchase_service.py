@@ -52,6 +52,7 @@ from app.services.registration_access_service import (
     VerifiedRegistrationIdentity,
 )
 from app.services.subscription_service import SubscriptionService
+from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.utils.gift_links import GIFT_TOKEN_MIN_PREFIX_LENGTH
 
 
@@ -512,7 +513,9 @@ async def fulfill_purchase(
 
             # In multi-tariff mode, only block if user already has THIS SPECIFIC tariff active.
             # Different tariffs can be purchased simultaneously — that's the whole point.
-            existing_subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
+            existing_subscription = await get_subscription_by_user_and_tariff(
+                db, user.id, tariff.id, include_inactive=not purchase.is_gift
+            )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
         if existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift):
@@ -562,8 +565,26 @@ async def fulfill_purchase(
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-        if existing_subscription is not None:
-            # Expired/inactive subscription — replace it
+        is_tariff_renewal = (
+            not purchase.is_gift and existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+        )
+        reset_traffic = False  # Preserve the existing policy for new purchases and tariff changes.
+        if is_tariff_renewal:
+            reset_traffic = should_reset_traffic_on_tariff_purchase(
+                is_tariff_change=False, was_trial=existing_subscription.is_trial, paid_kopeks=purchase.amount_kopeks
+            )
+            subscription = await extend_subscription(
+                db,
+                existing_subscription,
+                purchase.period_days,
+                tariff_id=tariff.id,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                device_limit=tariff.device_limit,
+                connected_squads=squads,
+                reset_used_traffic=reset_traffic,
+            )
+        elif existing_subscription is not None:
+            # A different tariff keeps the existing replacement policy.
             existing_subscription.tariff_id = tariff.id
             subscription = await replace_subscription(
                 db,
@@ -589,7 +610,7 @@ async def fulfill_purchase(
             )
 
         subscription_service = SubscriptionService()
-        await subscription_service.create_remnawave_user(db, subscription)
+        await subscription_service.create_remnawave_user(db, subscription, reset_traffic=reset_traffic)
         await db.refresh(subscription)
 
         purchase.subscription_url = subscription.subscription_url
@@ -1535,100 +1556,66 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-        # In multi-tariff mode, always create a new subscription (new Remnawave user)
         if settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-            existing_for_tariff = await get_subscription_by_user_and_tariff(db, user.id, tariff.id)
-            _has_time = (
-                existing_for_tariff is not None
-                and existing_for_tariff.end_date is not None
-                and _aware(existing_for_tariff.end_date) > datetime.now(UTC)
+            existing_subscription = await get_subscription_by_user_and_tariff(
+                db, user.id, tariff.id, include_inactive=not purchase.is_gift
             )
-            if existing_for_tariff and _has_time:
-                # Extend existing active/trial subscription instead of replacing (preserve remaining days)
-                subscription = await extend_subscription(
-                    db,
-                    existing_for_tariff,
-                    purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    commit=False,
-                )
-            elif existing_for_tariff:
-                # Expired subscription — replace with fresh dates
-                subscription = await replace_subscription(
-                    db,
-                    existing_for_tariff,
-                    duration_days=purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    is_trial=False,
-                    tariff_id=tariff.id,
-                    update_server_counters=True,
-                    commit=False,
-                )
-            else:
-                subscription = await create_paid_subscription(
-                    db=db,
-                    user_id=user.id,
-                    duration_days=purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    tariff_id=tariff.id,
-                    update_server_counters=True,
-                    commit=False,
-                )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
-            _sub_has_time = (
-                existing_subscription is not None
-                and existing_subscription.end_date is not None
-                and _aware(existing_subscription.end_date) > datetime.now(UTC)
+        is_tariff_renewal = (
+            not purchase.is_gift and existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+        )
+        reset_traffic = False  # New purchases and tariff changes retain their existing policy.
+        if is_tariff_renewal:
+            reset_traffic = should_reset_traffic_on_tariff_purchase(
+                is_tariff_change=False, was_trial=existing_subscription.is_trial, paid_kopeks=purchase.amount_kopeks
             )
-            if existing_subscription is not None and _sub_has_time:
-                # Extend existing active subscription (preserve remaining days)
-                subscription = await extend_subscription(
-                    db,
-                    existing_subscription,
-                    purchase.period_days,
-                    tariff_id=tariff.id,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    commit=False,
-                )
-            elif existing_subscription is not None:
-                # Expired subscription — replace with fresh dates
-                subscription = await replace_subscription(
-                    db,
-                    existing_subscription,
-                    duration_days=purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    is_trial=False,
-                    tariff_id=tariff.id,
-                    update_server_counters=True,
-                    commit=False,
-                )
-            else:
-                subscription = await create_paid_subscription(
-                    db=db,
-                    user_id=user.id,
-                    duration_days=purchase.period_days,
-                    traffic_limit_gb=tariff.traffic_limit_gb,
-                    device_limit=tariff.device_limit,
-                    connected_squads=squads,
-                    tariff_id=tariff.id,
-                    update_server_counters=True,
-                    commit=False,
-                )
+        has_time = (
+            existing_subscription is not None
+            and existing_subscription.end_date is not None
+            and (_aware(existing_subscription.end_date) > datetime.now(UTC))
+        )
+        if existing_subscription is not None and (is_tariff_renewal or has_time):
+            subscription = await extend_subscription(
+                db,
+                existing_subscription,
+                purchase.period_days,
+                tariff_id=tariff.id if is_tariff_renewal or not settings.is_multi_tariff_enabled() else None,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                device_limit=tariff.device_limit,
+                connected_squads=squads,
+                reset_used_traffic=reset_traffic if is_tariff_renewal else None,
+                commit=False,
+            )
+        elif existing_subscription is not None:
+            subscription = await replace_subscription(
+                db,
+                existing_subscription,
+                duration_days=purchase.period_days,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                device_limit=tariff.device_limit,
+                connected_squads=squads,
+                is_trial=False,
+                tariff_id=tariff.id,
+                update_server_counters=True,
+                commit=False,
+            )
+        else:
+            subscription = await create_paid_subscription(
+                db=db,
+                user_id=user.id,
+                duration_days=purchase.period_days,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                device_limit=tariff.device_limit,
+                connected_squads=squads,
+                tariff_id=tariff.id,
+                update_server_counters=True,
+                commit=False,
+            )
 
-        await subscription_service.create_remnawave_user(db, subscription)
+        await subscription_service.create_remnawave_user(db, subscription, reset_traffic=reset_traffic)
         await db.refresh(subscription)
 
         purchase.subscription_url = subscription.subscription_url

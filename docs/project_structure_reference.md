@@ -3838,12 +3838,18 @@
 - `tests/database/test_referrer_attachment_race_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_two_referrers_have_one_winner`
+- `tests/database/test_remaining_purchase_traffic_reset_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_paid_existing_purchase_preserves_traffic_contract`, `test_guest_nonrenewal_keeps_existing_panel_reset_policy`
 - `tests/database/test_renewal_survives_stale_panel_snapshot_postgres.py` — Python-модуль
   Классы: нет
   Функции: `single_tariff_mode_quiet`, `test_paid_renewal_is_not_undone_by_a_stale_panel_snapshot`, `test_autopay_does_not_charge_again_after_a_stale_panel_snapshot`
 - `tests/database/test_renewal_traffic_reset_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_paid_renewal_resets_bot_and_panel_together`
+- `tests/database/test_simple_purchase_traffic_reset_postgres.py` — Python-модуль
+  Классы: `PanelBoundary`
+  Функции: `test_simple_payment_resets_db_and_panel_together`
 - `tests/database/test_tabpay_payments_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match` — Integer вместо Boolean в рукописном DDL иначе не заметить., `test_order_id_is_unique` — Уникальность orderId не даёт двум записям претендовать на один вебхук., `test_downgrade_removes_the_table` — Откат обязан снимать таблицу, иначе повторный upgrade упрётся в неё.
@@ -3852,7 +3858,7 @@
   Функции: `test_model_declares_both_columns`, `test_migration_adds_the_same_columns_as_the_model`, `test_migration_is_idempotent_on_a_table_that_already_has_the_columns`
 - `tests/database/test_tariff_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: `PanelBoundary`
-  Функции: `test_tariff_purchase_uses_same_reset_decision_in_db_and_panel`
+  Функции: `test_tariff_purchase_uses_same_reset_decision_in_db_and_panel`, `test_expired_tariff_renewal_preserves_and_prices_extra_devices`
 - `tests/database/test_user_balance_lock_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_user_lock_blocks_second_session` — Пока одно зачисление держит строку пользователя, второе ждёт., `test_concurrent_topups_do_not_lose_money` — Два одновременных зачисления складываются, а не затирают друг друга., `test_lock_returns_fresh_values_not_the_cached_object` — Блокировка обязана отдавать значения из БД, а не из кеша сессии.
@@ -4178,6 +4184,9 @@
 - `tests/handlers/test_cashera_topup_flow.py` — Python-модуль
   Классы: нет
   Функции: `test_single_button_by_default`, `test_inline_methods_show_one_button_per_method`, `test_prefilled_amount_keeps_method_in_callback`, `test_quick_amounts_resolve_to_cashera_config`, `test_hidden_when_disabled`, `test_several_methods_ask_to_choose`, `test_choosing_a_method_asks_for_amount`, `test_disabled_method_is_refused`, `test_invoice_is_a_qr_photo_when_requisites_are_ready`
+- `tests/handlers/test_custom_tariff_preview_devices.py` — Python-модуль
+  Классы: нет
+  Функции: `test_custom_preview_shows_inherited_devices_and_checkout_price`
 - `tests/handlers/test_daily_bot_resume_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `test_bot_resume_resets_traffic_when_enabled` — RESET_TRAFFIC_ON_PAYMENT=true — оплата возобновления обнуляет счётчик и в панели, и у себя., `test_bot_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем (прежнее поведение)., `test_bot_resume_leaves_daily_reset_to_panel` — Панель обнуляет сама раз в сутки — свой сброс не добавляем, иначе две квоты за день., `test_bot_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно., `test_bot_unpause_without_charge_keeps_traffic` — Снятие своей паузы у активной подписки — не оплата: денег не берём и счётчик не трогаем.

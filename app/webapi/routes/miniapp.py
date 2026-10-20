@@ -6689,6 +6689,15 @@ async def purchase_tariff_endpoint(
     subs = getattr(user, 'subscriptions', None) or []
     # Find subscription with same tariff for device limit inheritance
     matching_sub = next((s for s in subs if s.tariff_id == tariff.id and s.is_active), None)
+    if matching_sub is None and not is_daily_tariff:
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            matching_sub = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
+        else:
+            candidate = await get_subscription_by_user_id(db, user.id)
+            if candidate is not None and candidate.tariff_id == tariff.id:
+                matching_sub = candidate
     device_limit = matching_sub.device_limit if matching_sub else None
 
     result = await pricing_engine.calculate_tariff_purchase_price(
@@ -6766,6 +6775,10 @@ async def purchase_tariff_endpoint(
     if settings.is_multi_tariff_enabled():
         active_subs = await get_active_subscriptions_by_user_id(db, user.id)
         subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
+        if subscription is None and not is_daily_tariff:
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
     else:
         subscription = await get_subscription_by_user_id(db, user.id)
 

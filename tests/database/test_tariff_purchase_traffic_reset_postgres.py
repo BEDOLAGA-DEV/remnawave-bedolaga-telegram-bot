@@ -24,8 +24,9 @@ class PanelBoundary(BaseException):
 @pytest.mark.parametrize('reset', [False, True])
 @pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('trial', [False, True])
+@pytest.mark.parametrize('expired', [False, True])
 async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
-    postgres_database, monkeypatch, flow, reset, multi, trial
+    postgres_database, monkeypatch, flow, reset, multi, trial, expired, devices=2, expected_price=300
 ):
     from app.services import subscription_renewal_service as renewal
 
@@ -59,6 +60,7 @@ async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
             is_daily=False,
             traffic_limit_gb=100,
             device_limit=2,
+            device_price_kopeks=100,
             period_prices={'30': 300},
             allowed_squads=['test-squad'],
             custom_days_enabled=True,
@@ -69,12 +71,12 @@ async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
             user_id=42,
             tariff_id=1,
             is_trial=trial,
-            status='active',
+            status='expired' if expired else 'active',
             start_date=now - timedelta(days=25),
-            end_date=now + timedelta(days=5),
+            end_date=now + timedelta(days=-1 if expired else 5),
             traffic_limit_gb=100,
             traffic_used_gb=17.5,
-            device_limit=2,
+            device_limit=devices,
             connected_squads=['test-squad'],
             remnawave_id=123,
         )
@@ -86,7 +88,11 @@ async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
             )
             state = SimpleNamespace(
                 get_data=AsyncMock(
-                    return_value={'target_subscription_id': 7, 'custom_days': 30, 'custom_traffic_gb': 100}
+                    return_value={
+                        'target_subscription_id': None if expired else 7,
+                        'custom_days': 30,
+                        'custom_traffic_gb': 100,
+                    }
                 )
             )
             handler = telegram.handle_custom_confirm if flow == 'custom' else telegram.confirm_tariff_purchase
@@ -97,7 +103,7 @@ async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
             operation = miniapp.purchase_tariff_endpoint(payload, db)
         else:
             operation = auto._auto_purchase_tariff(
-                db, user, {'tariff_id': 1, 'period_days': 30, 'total_price': 300, 'subscription_id': 7}
+                db, user, {'tariff_id': 1, 'period_days': 30, 'total_price': expected_price, 'subscription_id': 7}
             )
         with pytest.raises(PanelBoundary):
             await operation
@@ -106,6 +112,14 @@ async def test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
         expected_reset = reset or trial
         assert subscription.traffic_used_gb == (0 if expected_reset else 17.5)
         assert panel_call.await_args.kwargs['reset_traffic'] is expected_reset
-        assert user.balance_kopeks == 9700
+        assert user.balance_kopeks == 10000 - expected_price
+        assert subscription.device_limit == devices
         assert subscription.tariff_id == 1
         assert subscription.is_trial is False
+
+
+@pytest.mark.parametrize('flow', ['telegram', 'custom', 'miniapp', 'auto'])
+async def test_expired_tariff_renewal_preserves_and_prices_extra_devices(postgres_database, monkeypatch, flow):
+    await test_tariff_purchase_uses_same_reset_decision_in_db_and_panel(
+        postgres_database, monkeypatch, flow, False, True, False, True, devices=5, expected_price=600
+    )

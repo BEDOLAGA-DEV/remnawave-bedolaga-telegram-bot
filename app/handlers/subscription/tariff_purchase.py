@@ -763,12 +763,23 @@ async def format_custom_tariff_preview(
     discount_percent: int = 0,
     group_pct: int = 0,
     offer_pct: int = 0,
+    db: AsyncSession | None = None,
 ) -> str:
     """Форматирует предпросмотр покупки с кастомными параметрами.
 
     Uses PricingEngine when db_user is provided for accurate per-category discounts
     (period, traffic addon). Falls back to manual calculation otherwise.
     """
+    device_limit = tariff.device_limit
+    if db_user is not None and db is not None:
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing = await get_subscription_by_user_and_tariff(db, db_user.id, tariff.id, include_inactive=True)
+        else:
+            existing = await get_subscription_by_user_id(db, db_user.id)
+        if existing is not None and existing.tariff_id == tariff.id:
+            device_limit = resolve_tariff_renewal_device_limit(tariff.device_limit, existing.device_limit)
     if db_user is not None:
         # Use PricingEngine — single source of truth for all discounts
         from app.services.pricing_engine import pricing_engine
@@ -776,7 +787,7 @@ async def format_custom_tariff_preview(
         result = await pricing_engine.calculate_tariff_purchase_price(
             tariff,
             days,
-            device_limit=tariff.device_limit,
+            device_limit=device_limit,
             custom_traffic_gb=traffic_gb if tariff.can_purchase_custom_traffic() else None,
             user=db_user,
         )
@@ -823,7 +834,7 @@ async def format_custom_tariff_preview(
         text += texts.t('TARIFF_PURCHASE_TRAFFIC_LINE', '📊 Трафик: {traffic}\n').format(traffic=traffic_display)
 
     text += texts.t('TARIFF_PURCHASE_DEVICES_LINE', '📱 Устройств: {devices}\n').format(
-        devices=Texts.format_device_limit(tariff.device_limit)
+        devices=Texts.format_device_limit(device_limit)
     )
 
     if has_discount:
@@ -1109,6 +1120,7 @@ async def _proceed_with_selected_tariff(
                 traffic_gb=initial_traffic,
                 user_balance=user_balance,
                 db_user=db_user,
+                db=db,
                 discount_percent=discount_percent,
             )
 
@@ -1216,6 +1228,7 @@ async def handle_custom_days_change(
         traffic_gb=current_traffic,
         user_balance=user_balance,
         db_user=db_user,
+        db=db,
         discount_percent=discount_percent,
     )
 
@@ -1279,6 +1292,7 @@ async def handle_custom_traffic_change(
         traffic_gb=new_traffic,
         user_balance=user_balance,
         db_user=db_user,
+        db=db,
         discount_percent=discount_percent,
     )
 
@@ -1330,13 +1344,30 @@ async def handle_custom_confirm(
     custom_days = state_data.get('custom_days', tariff.min_days)
     custom_traffic = state_data.get('custom_traffic_gb', tariff.min_traffic_gb)
 
+    # Проверяем есть ли уже подписка
+    if settings.is_multi_tariff_enabled():
+        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
+        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
+        if existing_subscription is None:
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing_subscription = await get_subscription_by_user_and_tariff(
+                db, db_user.id, tariff.id, include_inactive=True
+            )
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, db_user.id)
+
     # Calculate price via PricingEngine (single source of truth for all discounts)
     from app.services.pricing_engine import pricing_engine
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
         custom_days,
-        device_limit=tariff.device_limit,
+        device_limit=(
+            existing_subscription.device_limit
+            if existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+            else tariff.device_limit
+        ),
         custom_traffic_gb=custom_traffic if tariff.can_purchase_custom_traffic() else None,
         user=db_user,
     )
@@ -1407,13 +1438,6 @@ async def handle_custom_confirm(
 
     # Определяем трафик
     traffic_limit = custom_traffic if tariff.can_purchase_custom_traffic() else tariff.traffic_limit_gb
-
-    # Проверяем есть ли уже подписка
-    if settings.is_multi_tariff_enabled():
-        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
-        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
-    else:
-        existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
     is_tariff_renewal = existing_subscription is not None and existing_subscription.tariff_id == tariff.id
     reset_used_traffic = not is_tariff_renewal or should_reset_traffic_on_tariff_purchase(
@@ -1661,6 +1685,7 @@ async def select_tariff_period_with_traffic(
         traffic_gb=initial_traffic,
         user_balance=user_balance,
         db_user=db_user,
+        db=db,
         discount_percent=discount_percent,
     )
 
@@ -1912,7 +1937,7 @@ async def confirm_tariff_purchase(
                 )
                 existing_sub = None
         if existing_sub is None:
-            existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+            existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id, include_inactive=True)
     else:
         existing_sub = await get_subscription_by_user_id(db, db_user.id)
 

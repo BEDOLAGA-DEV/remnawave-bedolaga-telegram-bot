@@ -923,6 +923,16 @@ async def _auto_purchase_tariff(
     else:
         existing_subscription = await get_subscription_by_user_id(db, user.id)
 
+    if settings.is_multi_tariff_enabled() and existing_subscription is None and not is_daily_tariff:
+        from app.database.crud.subscription import get_subscription_by_id_for_user, get_subscription_by_user_and_tariff
+
+        if _cart_sub_id:
+            existing_subscription = await get_subscription_by_id_for_user(db, int(_cart_sub_id), user.id)
+        else:
+            existing_subscription = await get_subscription_by_user_and_tariff(
+                db, user.id, tariff_id, include_inactive=True
+            )
+
     user = await lock_user_for_pricing(db, user.id)
 
     # Calculate price via PricingEngine (single source of truth)

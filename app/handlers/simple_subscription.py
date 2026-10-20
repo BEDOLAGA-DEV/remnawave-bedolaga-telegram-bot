@@ -478,6 +478,9 @@ async def handle_simple_subscription_pay_with_balance(
 
         existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
+        reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT or bool(
+            existing_subscription and existing_subscription.is_trial
+        )
         if existing_subscription:
             # Если подписка уже существует (платная или тестовая), продлеваем её
             # Сохраняем информацию о текущей подписке, особенно является ли она пробной
@@ -490,6 +493,7 @@ async def handle_simple_subscription_pay_with_balance(
                 traffic_limit_gb=subscription_params['traffic_limit_gb'],
                 device_limit=subscription_params['device_limit'],
                 connected_squads=[resolved_squad_uuid] if resolved_squad_uuid else None,
+                reset_used_traffic=reset_traffic,
             )
 
             # Если текущая подписка была пробной, и мы обновляем её
@@ -538,7 +542,9 @@ async def handle_simple_subscription_pay_with_balance(
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            remnawave_user = await subscription_service.create_remnawave_user(db, subscription)
+            remnawave_user = await subscription_service.create_remnawave_user(
+                db, subscription, reset_traffic=reset_traffic
+            )
             if remnawave_user:
                 await db.refresh(subscription)
         except Exception as sync_error:
@@ -2226,6 +2232,9 @@ async def confirm_simple_subscription_purchase(
 
         existing_subscription = await get_subscription_by_user_id(db, db_user.id)
 
+        reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT or bool(
+            existing_subscription and existing_subscription.is_trial
+        )
         if existing_subscription:
             # Если подписка уже существует, продлеваем её
             # Сохраняем информацию о текущей подписке, особенно является ли она пробной
@@ -2238,6 +2247,7 @@ async def confirm_simple_subscription_purchase(
                 traffic_limit_gb=subscription_params['traffic_limit_gb'],
                 device_limit=subscription_params['device_limit'],
                 connected_squads=[resolved_squad_uuid] if resolved_squad_uuid else None,
+                reset_used_traffic=reset_traffic,
             )
 
             # Если текущая подписка была пробной, и мы обновляем её
@@ -2286,7 +2296,9 @@ async def confirm_simple_subscription_purchase(
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
-            remnawave_user = await subscription_service.create_remnawave_user(db, subscription)
+            remnawave_user = await subscription_service.create_remnawave_user(
+                db, subscription, reset_traffic=reset_traffic
+            )
             if remnawave_user:
                 await db.refresh(subscription)
         except Exception as sync_error:

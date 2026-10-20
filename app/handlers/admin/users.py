@@ -5460,6 +5460,12 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
     target_user = await lock_user_for_pricing(db, target_user.id)
 
     existing_subscription = await _resolve_admin_subscription(db, target_user.id, tariff_id=tariff_id)
+    if existing_subscription is None and settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing_subscription = await get_subscription_by_user_and_tariff(
+            db, target_user.id, tariff_id, include_inactive=True
+        )
 
     # Recalculate price from locked state (callback data may be stale)
     from app.services.pricing_engine import PricingEngine
@@ -5525,6 +5531,20 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
 
         # Проверяем есть ли подписка с этим тарифом
         existing_subscription = await _resolve_admin_subscription(db, target_user.id, tariff_id=tariff_id)
+        if existing_subscription is None and settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            existing_subscription = await get_subscription_by_user_and_tariff(
+                db, target_user.id, tariff_id, include_inactive=True
+            )
+        is_tariff_renewal = existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+        reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT
+        if is_tariff_renewal:
+            from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
+
+            reset_traffic = should_reset_traffic_on_tariff_purchase(
+                is_tariff_change=False, was_trial=existing_subscription.is_trial, paid_kopeks=price_kopeks
+            )
 
         if existing_subscription:
             # Продлеваем существующую подписку
@@ -5536,6 +5556,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
+                reset_used_traffic=reset_traffic if is_tariff_renewal else None,
             )
         else:
             # Создаем новую подписку
@@ -5555,7 +5576,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             await subscription_service.create_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+                reset_traffic=reset_traffic,
                 reset_reason='покупка тарифа (администратор)',
             )
         except Exception as e:
