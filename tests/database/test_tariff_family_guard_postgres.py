@@ -51,9 +51,7 @@ async def test_one_main_and_separate_addon_allowed_but_second_main_denied(postgr
             await second.flush()
         await second.rollback()
 
-        existing = (
-            await second.scalars(select(Subscription).where(Subscription.user_id == user.id))
-        ).all()
+        existing = (await second.scalars(select(Subscription).where(Subscription.user_id == user.id))).all()
         assert {s.tariff_id for s in existing} == {basic.id, addon.id}
 
 
@@ -73,9 +71,7 @@ async def test_trial_and_limited_are_live_but_disabled_is_not(postgres_database)
         second.add(_sub(user.id, premium.id, 'second_main'))
         await second.commit()
 
-        second_sub = (
-            await first.scalars(select(Subscription).where(Subscription.tariff_id == premium.id))
-        ).one()
+        second_sub = (await first.scalars(select(Subscription).where(Subscription.tariff_id == premium.id))).one()
         second_sub.status = 'limited'
         await first.commit()
         trial.status = 'active'
@@ -121,10 +117,12 @@ async def test_two_simultaneous_main_inserts_are_serialized(postgres_database):
         await first.commit()
         accepted_second = await asyncio.wait_for(competing, timeout=10)
 
-        count = (await watcher.execute(
-            text("SELECT count(*) FROM subscriptions WHERE user_id = :user_id AND status = 'active'"),
-            {'user_id': user.id},
-        )).scalar_one()
+        count = (
+            await watcher.execute(
+                text("SELECT count(*) FROM subscriptions WHERE user_id = :user_id AND status = 'active'"),
+                {'user_id': user.id},
+            )
+        ).scalar_one()
         assert count == 1, 'конкурентные покупки создали два Main'
         assert accepted_second is False, 'вторая покупка прошла без семейного отказа'
         assert locked, 'PostgreSQL не наблюдал ожидания семейной блокировки'
