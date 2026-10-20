@@ -2314,5 +2314,6 @@
   "CASHERA_RECURRING_PAY_BUTTON": "💳 Confirm",
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 Turn off Cashera auto-renewal",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ Auto-renewal via Cashera",
-  "CASHERA_RECURRING_CANCELLED": "✅ Cashera auto-renewal turned off"
+  "CASHERA_RECURRING_CANCELLED": "✅ Cashera auto-renewal turned off",
+  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ This purchase is already being processed. You will not be charged again."
 }

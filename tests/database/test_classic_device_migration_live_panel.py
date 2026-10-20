@@ -294,7 +294,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                             .inline_keyboard[0][0]
                             .callback_data
                         )
-                        assert callback.data == 'custom_confirm:1'
+                        assert callback.data.startswith('custom_confirm:1:') and len(callback.data.encode()) <= 64
                         assert telegram.format_price_kopeks(price) in callback.message.edit_text.await_args.args[0]
                     if flow == 'auto_cart_traffic':
                         replay_cart = {
@@ -307,8 +307,22 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         }
                         assert await auto._auto_purchase_tariff(db, user, replay_cart)
                         assert not await auto._auto_purchase_tariff(db, user, replay_cart)
+                        await telegram.return_to_saved_tariff_cart(
+                            callback, state, user, db, dict(replay_cart, cart_mode='tariff_purchase')
+                        )
+                        callback.data = (
+                            callback.message.edit_text.await_args.kwargs['reply_markup']
+                            .inline_keyboard[0][0]
+                            .callback_data
+                        )
+                        await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
+
                     else:
                         await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
+                        if flow in ('cart_return_custom', 'cart_return_traffic'):
+                            checkout = (await state.get_data())['restored_tariff_checkout']
+                            await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
+                            assert not await auto._auto_purchase_tariff(db, user, checkout['identity'])
                 await db.refresh(user)
                 await db.refresh(subscription)
                 assert user.balance_kopeks == (1000 if flow == 'wallet_topup' else 10000) - price

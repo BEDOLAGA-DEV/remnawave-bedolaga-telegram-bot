@@ -2314,5 +2314,6 @@
   "CASHERA_RECURRING_PAY_BUTTON": "💳 Подтвердить",
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 Отключить автопродление Cashera",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ Автопродление через Cashera",
-  "CASHERA_RECURRING_CANCELLED": "✅ Автопродление Cashera отключено"
+  "CASHERA_RECURRING_CANCELLED": "✅ Автопродление Cashera отключено",
+  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ Покупка уже обрабатывается. Повторное списание не требуется."
 }

@@ -7,6 +7,7 @@ import structlog
 from aiogram import Dispatcher, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,7 @@ from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.database import AsyncSessionLocal
-from app.database.models import Tariff, Transaction, TransactionType, User
+from app.database.models import PaymentMethod, Tariff, Transaction, TransactionType, User
 from app.localization.texts import Texts, get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.panel_sync import should_create_panel_account
@@ -1002,6 +1003,7 @@ async def _proceed_with_selected_tariff(
     ``skip_selection=True``: экран списка тарифов был пропущен, поэтому «Назад»
     ведёт в главное меню (``back_to_menu``), а не в ``menu_buy`` / список.
     """
+    await state.update_data(restored_tariff_checkout=None)
     texts = get_texts(db_user.language)
     back_callback = 'back_to_menu' if skip_selection else 'menu_buy'
     # Признак нужен последующим перерисовкам в других хендлерах.
@@ -1234,6 +1236,7 @@ async def handle_custom_days_change(
     # Экран списка мог быть пропущен — «Назад» обязан помнить об этом
     # и при перерисовке, иначе он вернёт на этот же экран.
     back_callback = await _tariff_back_callback(state)
+    await state.update_data(restored_tariff_checkout=None)
     texts = get_texts(db_user.language)
     parts = callback.data.split(':')
     tariff_id = int(parts[1])
@@ -1306,6 +1309,7 @@ async def handle_custom_traffic_change(
     # Экран списка мог быть пропущен — «Назад» обязан помнить об этом
     # и при перерисовке, иначе он вернёт на этот же экран.
     back_callback = await _tariff_back_callback(state)
+    await state.update_data(restored_tariff_checkout=None)
     texts = get_texts(db_user.language)
     parts = callback.data.split(':')
     tariff_id = int(parts[1])
@@ -1360,6 +1364,118 @@ async def handle_custom_traffic_change(
     await callback.answer()
 
 
+async def _confirm_restored_tariff_checkout(callback, state, db_user, db, tariff, period) -> bool:
+    """Use the same durable payment reservation for restored manual and auto checkout."""
+    data = await state.get_data() if state else {}
+    checkout = data.get('restored_tariff_checkout')
+    texts = get_texts(db_user.language)
+    callback_parts = callback.data.split(':')
+    base_parts = 3 if callback_parts[0] == 'tariff_confirm' else 2
+    has_token = len(callback_parts) > base_parts
+    if not checkout:
+        if has_token:
+            await callback.answer(
+                texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
+            )
+            return True
+        return False
+    cart = checkout['cart']
+    if cart.get('tariff_id') != tariff.id or cart.get('period_days') != period:
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
+        )
+        return True
+
+    from app.services.subscription_auto_purchase_service import (
+        _auto_purchase_tariff,
+        _saved_tariff_checkout_external_id,
+    )
+
+    user_id = db_user.id
+    tariff_id = tariff.id
+    identity = checkout['identity']
+    expected_token = _saved_tariff_checkout_external_id(user_id, identity).rsplit(':', 1)[-1][:24]
+    if len(callback_parts) != base_parts + 1 or callback_parts[-1] != expected_token:
+        await callback.answer(
+            texts.t('TARIFF_PURCHASE_CART_CORRUPTED', '❌ Данные корзины повреждены'), show_alert=True
+        )
+        return True
+    await callback.answer()
+    await _auto_purchase_tariff(db, db_user, dict(cart), checkout_identity=identity)
+    if (await state.get_data()).get('restored_tariff_checkout') != checkout:
+        return True
+    payment = await db.scalar(
+        select(Transaction).where(
+            Transaction.user_id == user_id,
+            Transaction.external_id == _saved_tariff_checkout_external_id(user_id, identity),
+            Transaction.payment_method == PaymentMethod.BALANCE.value,
+        )
+    )
+    if payment is None:
+        await callback.message.edit_text(
+            texts.t('TARIFF_PURCHASE_ERROR', '❌ Произошла ошибка при оформлении подписки')
+        )
+        return True
+    if not payment.is_completed:
+        await callback.message.edit_text(
+            texts.t('TARIFF_PURCHASE_IN_PROGRESS', '⏳ Покупка уже обрабатывается. Повторное списание не требуется.')
+        )
+        return True
+
+    if cart.get('subscription_id') is not None:
+        subscription = await get_subscription_by_id_for_user(db, cart['subscription_id'], user_id)
+    else:
+        active = await get_active_subscriptions_by_user_id(db, user_id)
+        subscription = next((sub for sub in active if sub.tariff_id == tariff_id), None)
+    if subscription is None or subscription.tariff_id != tariff_id:
+        await callback.message.edit_text(
+            texts.t('TARIFF_PURCHASE_ERROR', '❌ Произошла ошибка при оформлении подписки')
+        )
+        return True
+    await db.refresh(tariff)
+    await state.clear()
+    # Keep the completed identity for old callback replay; a new selection clears it.
+    await state.update_data(
+        restored_tariff_checkout=checkout,
+        custom_days=period,
+        custom_traffic_gb=cart.get('custom_traffic_gb'),
+        target_subscription_id=subscription.id,
+    )
+    await callback.message.edit_text(
+        texts.t(
+            'TARIFF_PURCHASE_SUCCESS',
+            '🎉 <b>Подписка успешно оформлена!</b>\n\n'
+            '📦 Тариф: <b>{name}</b>\n'
+            '📊 Трафик: {traffic}\n'
+            '📱 Устройств: {devices}\n'
+            '📅 Период: {period}\n'
+            '💰 Списано: {price}\n\n'
+            'Перейдите в раздел «Подписка» для подключения.',
+        ).format(
+            name=html.escape(tariff.name),
+            traffic=format_traffic(subscription.traffic_limit_gb),
+            devices=subscription.device_limit,
+            period=format_period(period),
+            price=format_price_kopeks(abs(payment.amount_kopeks)),
+        ),
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
+                        callback_data=f'sm:{subscription.id}'
+                        if settings.is_multi_tariff_enabled()
+                        else 'menu_subscription',
+                    )
+                ],
+                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+            ]
+        ),
+        parse_mode='HTML',
+    )
+    return True
+
+
 @error_handler
 async def handle_custom_confirm(
     callback: types.CallbackQuery,
@@ -1382,6 +1498,11 @@ async def handle_custom_confirm(
     db_user = await lock_user_for_pricing(db, db_user.id)
 
     if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
+
+    if await _confirm_restored_tariff_checkout(
+        callback, state, db_user, db, tariff, (await state.get_data()).get('custom_days', tariff.min_days)
+    ):
         return
 
     state_data = await state.get_data()
@@ -1683,6 +1804,7 @@ async def select_tariff_period_with_traffic(
     # Экран списка мог быть пропущен — «Назад» обязан помнить об этом
     # и при перерисовке, иначе он вернёт на этот же экран.
     back_callback = await _tariff_back_callback(state)
+    await state.update_data(restored_tariff_checkout=None)
     texts = get_texts(db_user.language)
     parts = callback.data.split(':')
     tariff_id = int(parts[1])
@@ -1755,6 +1877,7 @@ async def select_tariff_period(
     state: FSMContext,
 ):
     """Обрабатывает выбор периода для тарифа."""
+    await state.update_data(restored_tariff_checkout=None)
     texts = get_texts(db_user.language)
     parts = callback.data.split(':')
     tariff_id = int(parts[1])
@@ -1944,6 +2067,9 @@ async def confirm_tariff_purchase(
     db_user = await lock_user_for_pricing(db, db_user.id)
 
     if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
+        return
+
+    if await _confirm_restored_tariff_checkout(callback, state, db_user, db, tariff, period):
         return
 
     # Calculate price via PricingEngine (single source of truth)
@@ -5577,6 +5703,7 @@ async def return_to_saved_tariff_cart(
     """Восстанавливает сохраненную корзину тарифа после пополнения баланса."""
     texts = get_texts(db_user.language)
     cart_mode = cart_data.get('cart_mode')
+    checkout_identity = dict(cart_data)
     try:
         tariff_id = int(cart_data.get('tariff_id') or 0)
     except (TypeError, ValueError):
@@ -5684,6 +5811,9 @@ async def return_to_saved_tariff_cart(
     if cart_mode == 'daily_tariff_purchase':
         cart_data['daily_price_kopeks'] = total_price
     await state.update_data(
+        restored_tariff_checkout={'cart': dict(cart_data), 'identity': checkout_identity}
+        if cart_mode == 'tariff_purchase'
+        else None,
         selected_tariff_id=tariff_id,
         selected_period=period,
         final_price=total_price,
@@ -5856,6 +5986,10 @@ async def return_to_saved_tariff_cart(
         confirm_keyboard = get_tariff_confirm_keyboard(tariff_id, period, db_user.language)
         if custom_traffic_gb is not None or str(period) not in (tariff.period_prices or {}):
             confirm_keyboard.inline_keyboard[0][0].callback_data = f'custom_confirm:{tariff_id}'
+        from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id
+
+        checkout_token = _saved_tariff_checkout_external_id(db_user.id, checkout_identity).rsplit(':', 1)[-1][:24]
+        confirm_keyboard.inline_keyboard[0][0].callback_data += f':{checkout_token}'
 
         discount_text = ''
         if discount_percent > 0:

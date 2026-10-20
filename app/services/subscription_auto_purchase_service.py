@@ -834,12 +834,22 @@ async def _auto_extend_subscription(
     return True
 
 
+def _saved_tariff_checkout_external_id(user_id: int, cart_data: dict) -> str:
+    checkout_id = cart_data.get('tariff_checkout_id') or {
+        key: cart_data.get(key)
+        for key in ('tariff_id', 'period_days', 'subscription_id', 'custom_traffic_gb', 'traffic_limit_gb')
+    }
+    checkout_hash = hashlib.sha256(json.dumps(checkout_id, sort_keys=True).encode()).hexdigest()
+    return f'tariff-cart:{user_id}:{checkout_hash}'
+
+
 async def _auto_purchase_tariff(
     db: AsyncSession,
     user: User,
     cart_data: dict,
     *,
     bot: Bot | None = None,
+    checkout_identity: dict | None = None,
 ) -> bool:
     """Автоматическая покупка периодного тарифа из сохранённой корзины."""
     # Lazy imports to avoid circular dependency
@@ -948,13 +958,22 @@ async def _auto_purchase_tariff(
 
     user = await lock_user_for_pricing(db, user.id)
 
+    if (
+        settings.is_multi_tariff_enabled()
+        and existing_subscription is not None
+        and existing_subscription.tariff_id not in (None, tariff_id)
+    ):
+        logger.warning(
+            'Saved checkout source tariff changed; refusing stale purchase',
+            user_id=user.id,
+            subscription_id=existing_subscription.id,
+        )
+        return False
+
     purchase_user_id = user.id
-    checkout_id = cart_data.get('tariff_checkout_id') or {
-        key: cart_data.get(key)
-        for key in ('tariff_id', 'period_days', 'subscription_id', 'custom_traffic_gb', 'traffic_limit_gb')
-    }
-    checkout_hash = hashlib.sha256(json.dumps(checkout_id, sort_keys=True).encode()).hexdigest()
-    checkout_external_id = f'tariff-cart:{purchase_user_id}:{checkout_hash}'
+    checkout_external_id = _saved_tariff_checkout_external_id(
+        user.id, checkout_identity if checkout_identity is not None else cart_data
+    )
     previous = await db.scalar(
         select(Transaction.id).where(
             Transaction.external_id == checkout_external_id,
@@ -1049,6 +1068,7 @@ async def _auto_purchase_tariff(
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
             effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
+            was_trial_conversion = bool(existing_subscription.is_trial)
             subscription = await extend_subscription(
                 db,
                 existing_subscription,
@@ -1059,7 +1079,6 @@ async def _auto_purchase_tariff(
                 connected_squads=squads,
                 reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
             )
-            was_trial_conversion = existing_subscription.is_trial
             if was_trial_conversion:
                 subscription.is_trial = False
                 subscription.status = 'active'
@@ -1184,7 +1203,7 @@ async def _auto_purchase_tariff(
                 transaction,
                 period_days,
                 was_trial_conversion,
-                purchase_type='renewal',
+                purchase_type='renewal' if existing_subscription else 'first_purchase',
             )
         )
     except Exception as error:

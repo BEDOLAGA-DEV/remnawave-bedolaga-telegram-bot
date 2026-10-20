@@ -89,6 +89,14 @@ async def test_selected_classic_devices_are_priced_and_preserved(
     monkeypatch.setattr(telegram.user_cart_service, 'delete_user_cart', AsyncMock())
     monkeypatch.setattr(telegram.user_cart_service, 'delete_subscription_cart', AsyncMock())
     monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
+    trial_notice = AsyncMock()
+    if trial and flow == 'telegram_cart_period':
+
+        async def notify(callback):
+            await callback(SimpleNamespace(send_subscription_purchase_notification=trial_notice))
+
+        monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', notify)
+
     monkeypatch.setattr(telegram.AdminNotificationService, 'send_subscription_purchase_notification', AsyncMock())
     now = datetime.now(UTC)
     panel = Panel(now)
@@ -283,6 +291,9 @@ async def test_selected_classic_devices_are_priced_and_preserved(
                 assert not await auto._auto_purchase_daily_tariff(db, user, {'tariff_id': 1, 'subscription_id': 10})
             else:
                 await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
+        if trial and flow == 'telegram_cart_period':
+            call = trial_notice.await_args
+            assert call.kwargs.get('was_trial_conversion', call.args[5] if len(call.args) > 5 else None) is True
         await db.refresh(sub)
         await db.refresh(user)
         assert sub.traffic_limit_gb == (custom_traffic if custom_traffic is not None else 100)
@@ -687,4 +698,17 @@ async def test_cart_distinguishes_default_from_explicit_base_traffic(
         days=75,
         custom_traffic=custom_traffic,
         custom_enabled=True,
+    )
+
+
+@pytest.mark.parametrize('days', [30, 75])
+async def test_restored_trial_keeps_conversion_notice(postgres_database, monkeypatch, days):
+    await test_selected_classic_devices_are_priced_and_preserved(
+        postgres_database,
+        monkeypatch,
+        'telegram_cart_period',
+        True,
+        days=days,
+        trial=True,
+        expected=1,
     )

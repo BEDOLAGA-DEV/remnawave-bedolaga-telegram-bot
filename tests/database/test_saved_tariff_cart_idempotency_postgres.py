@@ -1,11 +1,16 @@
 """A saved checkout must debit at most once across sessions and commits."""
 
 import asyncio
+import inspect
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -13,6 +18,7 @@ from app.config import settings
 from app.database.crud import subscription as subscriptions
 from app.database.crud.user import get_user_by_id
 from app.database.models import Base, Subscription, Tariff, Transaction, TransactionType, User
+from app.handlers.subscription import tariff_purchase as telegram
 from app.services import subscription_auto_purchase_service as auto
 from app.services.subscription_service import SubscriptionService
 from tests.database.test_classic_device_migration_postgres import Panel
@@ -23,11 +29,24 @@ pytestmark = pytest.mark.postgres
 
 
 @pytest.mark.parametrize('concurrent', [False, True])
-async def test_saved_cart_only_charged_once(postgres_database, monkeypatch, concurrent, failure=None, promo=0):
+async def test_saved_cart_only_charged_once(
+    postgres_database,
+    monkeypatch,
+    concurrent,
+    failure=None,
+    promo=0,
+    first_flow='auto',
+    second_flow='auto',
+    days=30,
+    legacy=False,
+):
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
     monkeypatch.setattr(settings, 'MAX_DEVICES_LIMIT', 10)
     monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
+    monkeypatch.setattr(telegram.user_cart_service, 'delete_user_cart', AsyncMock())
+    monkeypatch.setattr(telegram.user_cart_service, 'delete_subscription_cart', AsyncMock())
+    monkeypatch.setattr(telegram.AdminNotificationService, 'send_subscription_purchase_notification', AsyncMock())
     monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
     monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
     now = datetime.now(UTC)
@@ -70,6 +89,7 @@ async def test_saved_cart_only_charged_once(postgres_database, monkeypatch, conc
         return await original_extend(*args, **kwargs)
 
     monkeypatch.setattr(subscriptions, 'extend_subscription', extend)
+    monkeypatch.setattr(telegram, 'extend_subscription', extend)
     async with postgres_engine(postgres_database, list(Base.metadata.sorted_tables)) as engine:
         maker = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
         async with maker() as db:
@@ -95,6 +115,10 @@ async def test_saved_cart_only_charged_once(postgres_database, monkeypatch, conc
                     device_price_kopeks=100,
                     traffic_limit_gb=100,
                     period_prices={'30': 300},
+                    custom_days_enabled=True,
+                    price_per_day_kopeks=10,
+                    min_days=1,
+                    max_days=365,
                     allowed_squads=['test-squad'],
                 )
             )
@@ -116,51 +140,103 @@ async def test_saved_cart_only_charged_once(postgres_database, monkeypatch, conc
         cart = {
             'cart_mode': 'tariff_purchase',
             'tariff_id': 1,
-            'period_days': 30,
+            'period_days': days,
             'subscription_id': 10,
             'tariff_checkout_id': 'test-checkout-1',
         }
 
-        async def purchase():
+        if legacy:
+            cart.pop('tariff_checkout_id')
+        state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
+        callback = SimpleNamespace(
+            answer=AsyncMock(),
+            bot=SimpleNamespace(send_message=AsyncMock()),
+            message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
+        )
+        if 'manual' in (first_flow, second_flow):
             async with maker() as db:
                 user = await get_user_by_id(db, 1)
-                return await auto._auto_purchase_tariff(db, user, dict(cart))
+                await telegram.return_to_saved_tariff_cart(callback, state, user, db, dict(cart))
+                callback.data = (
+                    callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+                )
+
+        if failure == 'stale_source':
+            async with maker() as db:
+                db.add(Tariff(id=2, name='Changed', is_active=True, device_limit=7))
+                await db.flush()
+                changed = await db.get(Subscription, 10)
+                changed.tariff_id = 2
+                await db.commit()
+
+        async def purchase(flow='auto'):
+            async with maker() as db:
+                user = await get_user_by_id(db, 1)
+                if flow == 'auto':
+                    return await auto._auto_purchase_tariff(db, user, dict(cart))
+                handler = (
+                    telegram.handle_custom_confirm
+                    if callback.data.startswith('custom_confirm:')
+                    else telegram.confirm_tariff_purchase
+                )
+                await inspect.unwrap(handler)(callback, user, db, state)
+                return None
 
         if concurrent:
-            first = asyncio.create_task(purchase())
+            first = asyncio.create_task(purchase(first_flow))
             try:
                 await asyncio.wait_for(entered.wait(), 10)
-                second = await asyncio.wait_for(purchase(), 10)
+                second = await asyncio.wait_for(purchase(second_flow), 10)
             finally:
                 release.set()
             results = [await first, second]
         else:
-            first_result = await purchase()
+            first_result = await purchase(first_flow)
+            if failure == 'cleared_state':
+                await state.clear()
             if failure == 'new_checkout':
                 cart['tariff_checkout_id'] = 'test-checkout-2'
-            results = [first_result, await purchase()]
+                if second_flow == 'manual':
+                    async with maker() as db:
+                        user = await get_user_by_id(db, 1)
+                        await telegram._proceed_with_selected_tariff(callback, user, db, state, 1)
+                        assert (await state.get_data()).get('restored_tariff_checkout') is None
+                        await telegram.return_to_saved_tariff_cart(callback, state, user, db, dict(cart))
+                        callback.data = (
+                            callback.message.edit_text.await_args.kwargs['reply_markup']
+                            .inline_keyboard[0][0]
+                            .callback_data
+                        )
+            results = [first_result, await purchase(second_flow)]
         expected_results = (
             [False, False]
-            if failure == 'refund'
+            if failure in ('refund', 'stale_source')
             else [False, True]
             if failure in ('ledger', 'provision')
             else [True, True]
             if failure == 'new_checkout'
             else [True, False]
         )
-        assert results == expected_results
+        if first_flow == second_flow == 'auto':
+            assert results == expected_results
         async with maker() as db:
             user = await get_user_by_id(db, 1)
             sub = await db.get(Subscription, 10)
             payments = (await db.scalars(select(Transaction))).all()
-            price = 500 - 500 * promo // 100
+            base_price = days * 10 + 200 * max(1, round(days / 30))
+            price = base_price - base_price * promo // 100
+            if failure == 'stale_source':
+                assert user.balance_kopeks == 10000 and not payments
+                assert sub.tariff_id == 2 and sub.device_limit == 3
+                assert sub.end_date == now + timedelta(days=10) and not panel.patches
+                return
             count = 2 if failure == 'new_checkout' else 1
-            total = price + 500 if failure == 'new_checkout' else price
+            total = price + base_price if failure == 'new_checkout' else price
             assert user.balance_kopeks == 10000 - total
             assert sorted(p.amount_kopeks for p in payments) == (
                 [-price, -price, price]
                 if failure == 'provision'
-                else [-500, -price]
+                else [-base_price, -price]
                 if failure == 'new_checkout'
                 else [-price]
             )
@@ -171,7 +247,7 @@ async def test_saved_cart_only_charged_once(postgres_database, monkeypatch, conc
                     sum(p.is_completed and p.type == TransactionType.SUBSCRIPTION_PAYMENT.value for p in payments)
                     == count
                 )
-            assert sub.end_date == now + timedelta(days=10 if failure == 'refund' else 10 + 30 * count)
+            assert sub.end_date == now + timedelta(days=10 if failure == 'refund' else 10 + days * count)
             if failure == 'provision' and promo:
                 assert user.promo_offer_discount_percent == 0
             assert sub.remnawave_id == 9001 and sub.device_limit == 3
@@ -187,3 +263,61 @@ async def test_saved_cart_retries_only_after_atomic_compensation(postgres_databa
 @pytest.mark.parametrize('promo', [17, 100])
 async def test_concurrent_saved_cart_consumes_promo_once(postgres_database, monkeypatch, promo):
     await test_saved_cart_only_charged_once(postgres_database, monkeypatch, True, promo=promo)
+
+
+@pytest.mark.parametrize(('first_flow', 'second_flow'), [('auto', 'manual'), ('manual', 'auto'), ('manual', 'manual')])
+@pytest.mark.parametrize('concurrent', [False, True])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_restored_manual_and_auto_share_checkout(
+    postgres_database, monkeypatch, first_flow, second_flow, concurrent, days
+):
+    await test_saved_cart_only_charged_once(
+        postgres_database, monkeypatch, concurrent, first_flow=first_flow, second_flow=second_flow, days=days
+    )
+
+
+@pytest.mark.parametrize('days', [30, 75])
+@pytest.mark.parametrize(('first_flow', 'second_flow'), [('auto', 'manual'), ('manual', 'auto')])
+async def test_legacy_restored_checkout_keeps_original_identity(
+    postgres_database, monkeypatch, days, first_flow, second_flow
+):
+    await test_saved_cart_only_charged_once(
+        postgres_database, monkeypatch, True, first_flow=first_flow, second_flow=second_flow, days=days, legacy=True
+    )
+
+
+@pytest.mark.parametrize('days', [30, 75])
+async def test_old_saved_cart_button_cannot_charge_after_state_clear(postgres_database, monkeypatch, days):
+    await test_saved_cart_only_charged_once(
+        postgres_database,
+        monkeypatch,
+        False,
+        first_flow='manual',
+        second_flow='manual',
+        days=days,
+        failure='cleared_state',
+    )
+
+
+@pytest.mark.parametrize('failure', ['ledger', 'provision', 'refund', 'new_checkout'])
+@pytest.mark.parametrize('days', [30, 75])
+@pytest.mark.parametrize('promo', [0, 17, 100])
+async def test_restored_manual_compensation_and_fresh_checkout(postgres_database, monkeypatch, failure, days, promo):
+    await test_saved_cart_only_charged_once(
+        postgres_database,
+        monkeypatch,
+        False,
+        failure=failure,
+        promo=promo,
+        first_flow='manual',
+        second_flow='manual',
+        days=days,
+    )
+
+
+@pytest.mark.parametrize('flow', ['auto', 'manual'])
+@pytest.mark.parametrize('days', [30, 75])
+async def test_saved_checkout_does_not_overwrite_changed_paid_source(postgres_database, monkeypatch, flow, days):
+    await test_saved_cart_only_charged_once(
+        postgres_database, monkeypatch, False, failure='stale_source', first_flow=flow, second_flow=flow, days=days
+    )

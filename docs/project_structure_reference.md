@@ -3783,7 +3783,7 @@
   Функции: `real_migration`, `test_purchase_price_and_cap_reach_real_panel`, `test_tariff_maximum_applies_to_previously_registered_hwids` — Known RED acceptance criterion; do not replace with HTTP200 assertions or xfail.
 - `tests/database/test_classic_device_migration_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
-  Функции: `test_selected_classic_devices_are_priced_and_preserved`, `test_classic_migration_limits`, `test_classic_migration_non_month_period_price`, `test_classic_custom_telegram_selected_purchase`, `test_cabinet_daily_classic_price_matches_charge`, `test_daily_selected_classic_devices`, `test_invalid_selected_classic_subscription_is_rejected_before_pricing`, `test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing`, `test_custom_fallback_prefers_active_tariff_over_later_disabled_record`, `test_daily_insufficient_balance_cart_replays_selected_classic`, `test_repeated_daily_purchase_does_not_charge_twice`, `test_daily_selected_trial_keeps_conversion_marker`, `test_saved_cart_return_keeps_selected_classic_and_requotes`, `test_custom_traffic_survives_saved_checkout`, `test_cart_distinguishes_default_from_explicit_base_traffic`
+  Функции: `test_selected_classic_devices_are_priced_and_preserved`, `test_classic_migration_limits`, `test_classic_migration_non_month_period_price`, `test_classic_custom_telegram_selected_purchase`, `test_cabinet_daily_classic_price_matches_charge`, `test_daily_selected_classic_devices`, `test_invalid_selected_classic_subscription_is_rejected_before_pricing`, `test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing`, `test_custom_fallback_prefers_active_tariff_over_later_disabled_record`, `test_daily_insufficient_balance_cart_replays_selected_classic`, `test_repeated_daily_purchase_does_not_charge_twice`, `test_daily_selected_trial_keeps_conversion_marker`, `test_saved_cart_return_keeps_selected_classic_and_requotes`, `test_custom_traffic_survives_saved_checkout`, `test_cart_distinguishes_default_from_explicit_base_traffic`, `test_restored_trial_keeps_conversion_notice`
 - `tests/database/test_daily_promo_days_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_daily_promo_days_defer_charge_and_keep_access`, `test_parallel_daily_workers_charge_only_once`
@@ -3900,7 +3900,7 @@
   Функции: `test_paid_renewal_resets_bot_and_panel_together`
 - `tests/database/test_saved_tariff_cart_idempotency_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `test_saved_cart_only_charged_once`, `test_saved_cart_retries_only_after_atomic_compensation`, `test_concurrent_saved_cart_consumes_promo_once`
+  Функции: `test_saved_cart_only_charged_once`, `test_saved_cart_retries_only_after_atomic_compensation`, `test_concurrent_saved_cart_consumes_promo_once`, `test_restored_manual_and_auto_share_checkout`, `test_legacy_restored_checkout_keeps_original_identity`, `test_old_saved_cart_button_cannot_charge_after_state_clear`, `test_restored_manual_compensation_and_fresh_checkout`, `test_saved_checkout_does_not_overwrite_changed_paid_source`
 - `tests/database/test_simple_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: `PanelBoundary`
   Функции: `test_simple_payment_resets_db_and_panel_together`

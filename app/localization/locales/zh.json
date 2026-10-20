@@ -2314,5 +2314,6 @@
   "CASHERA_RECURRING_PAY_BUTTON": "💳 确认",
   "CASHERA_RECURRING_CANCEL_BUTTON": "🛑 关闭 Cashera 自动续费",
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ 通过 Cashera 自动续费",
-  "CASHERA_RECURRING_CANCELLED": "✅ 已关闭 Cashera 自动续费"
+  "CASHERA_RECURRING_CANCELLED": "✅ 已关闭 Cashera 自动续费",
+  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ 此购买正在处理中，无需再次付款。"
 }
