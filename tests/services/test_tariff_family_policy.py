@@ -4,18 +4,19 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.database.models import Subscription, SubscriptionStatus, Tariff
+from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, tariff_promo_groups
 from app.services.tariff_family_policy import find_live_entitlement_family_conflict
 from tests.fixtures.sqlite_memory import memory_session
 
 
-TABLES = (Tariff.__table__, Subscription.__table__)
+TABLES = (PromoGroup.__table__, Tariff.__table__, tariff_promo_groups, Subscription.__table__)
 
 
 def _subscription(user_id: int, tariff_id: int, status: SubscriptionStatus) -> Subscription:
     return Subscription(
         user_id=user_id,
         tariff_id=tariff_id,
+        remnawave_short_id=f'family-{user_id}-{tariff_id}',
         status=status.value,
         is_trial=status == SubscriptionStatus.TRIAL,
         start_date=datetime.now(UTC),
