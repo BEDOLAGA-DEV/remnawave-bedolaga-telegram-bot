@@ -54,7 +54,8 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
     monkeypatch.setattr(settings, 'HAPP_CRYPTOLINK_API_FALLBACK_ENABLED', False)
     monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
     monkeypatch.setattr(telegram.AdminNotificationService, 'send_subscription_purchase_notification', AsyncMock())
-    monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
+    if flow != 'wallet_topup':
+        monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
     monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
 
     @asynccontextmanager
@@ -179,6 +180,48 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         )
                     else:
                         await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
+                elif flow == 'wallet_topup':
+                    from app.database.models import LavaPayment
+                    from app.services.payment import common
+                    from app.services.payment.lava import LavaPaymentMixin
+                    from app.services.user_cart_service import UserCartService
+                    from tests.database.test_topup_classic_cart_postgres import CartStorage
+
+                    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+                    cart = UserCartService()
+                    cart._initialized = True
+                    cart._redis_client = CartStorage()
+                    monkeypatch.setattr(auto, 'user_cart_service', cart)
+                    monkeypatch.setattr(common, 'user_cart_service', cart)
+                    price = 301 + (5 - base) * 137
+                    user.balance_kopeks = 0
+                    payment = LavaPayment(
+                        user_id=1,
+                        order_id='test-' + secrets.token_hex(8),
+                        amount_kopeks=1000,
+                        currency='RUB',
+                        is_paid=False,
+                        status='pending',
+                    )
+                    db.add(payment)
+                    await db.commit()
+                    assert await cart.save_user_cart(
+                        1,
+                        {
+                            'cart_mode': 'tariff_purchase',
+                            'tariff_id': 1,
+                            'period_days': 30,
+                            'subscription_id': 10,
+                            'total_price': price,
+                            'return_to_cart': True,
+                        },
+                    )
+                    await cart.delete_global_cart_only(1)
+                    actor = LavaPaymentMixin()
+                    actor.bot = None
+                    assert await actor._finalize_lava_payment(db, payment, trigger='test-callback')
+                    assert await actor._finalize_lava_payment(db, payment, trigger='test-repeat')
+                    assert await cart.get_all_subscription_carts(1) == []
                 else:
                     price = 750 + (5 - base) * 137 * 2
                     state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
@@ -202,12 +245,14 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                     await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
                 await db.refresh(user)
                 await db.refresh(subscription)
-                assert user.balance_kopeks == 10000 - price
+                assert user.balance_kopeks == (1000 if flow == 'wallet_topup' else 10000) - price
                 assert subscription.tariff_id == 1 and subscription.device_limit == 5
                 assert subscription.remnawave_id == old['id']
                 assert subscription.subscription_url == old['subscriptionUrl']
                 transactions = (await db.scalars(select(Transaction))).all()
-                assert len(transactions) == 1 and transactions[0].amount_kopeks == -price
+                assert sorted(t.amount_kopeks for t in transactions) == (
+                    [-price, 1000] if flow == 'wallet_topup' else [-price]
+                )
                 assert len((await db.scalars(select(Subscription))).all()) == 2
                 remote = await request('GET', f'/api/users/{old["id"]}')
                 assert remote['hwidDeviceLimit'] == 5
@@ -221,7 +266,9 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
 
 
 @pytest.mark.parametrize('base', [1, 2])
-@pytest.mark.parametrize('flow', ['cabinet', 'telegram_custom', 'cabinet_daily', 'telegram_daily', 'auto_daily'])
+@pytest.mark.parametrize(
+    'flow', ['cabinet', 'telegram_custom', 'cabinet_daily', 'telegram_daily', 'auto_daily', 'wallet_topup']
+)
 async def test_purchase_price_and_cap_reach_real_panel(postgres_database, monkeypatch, base, flow):
     async with real_migration(postgres_database, monkeypatch, base, flow) as (_, old, request):
         devices = await request('GET', f'/api/hwid/devices/{old["id"]}')

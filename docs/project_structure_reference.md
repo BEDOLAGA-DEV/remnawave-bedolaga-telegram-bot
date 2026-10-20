@@ -3916,6 +3916,9 @@
 - `tests/database/test_tariff_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: `PanelBoundary`
   Функции: `test_tariff_purchase_uses_same_reset_decision_in_db_and_panel`, `test_expired_tariff_renewal_preserves_and_prices_extra_devices`
+- `tests/database/test_topup_classic_cart_postgres.py` — Python-модуль
+  Классы: `CartStorage` (6 методов)
+  Функции: `test_topup_finalizer_purchases_selected_classic`
 - `tests/database/test_unpaid_trial_visibility_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_unpaid_trial_invoice_stays_hidden_after_back`
