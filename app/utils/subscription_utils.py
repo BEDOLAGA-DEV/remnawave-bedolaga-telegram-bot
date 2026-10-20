@@ -137,6 +137,20 @@ def resolve_tariff_renewal_device_limit(base_limit: int | None, current_limit: i
     return max(base_limit or 0, current_limit or 0)
 
 
+def resolve_tariff_purchase_device_limit(tariff, subscription: Subscription | None = None) -> int:
+    """Price and provision the same device limit when a paid classic row gets its first tariff."""
+    base = tariff.device_limit
+    if subscription is not None and subscription.tariff_id == tariff.id:
+        return resolve_tariff_renewal_device_limit(base, subscription.device_limit)
+    if base == 0:
+        return 0
+    if subscription is not None and subscription.tariff_id is None and not subscription.is_trial:
+        limit = max(base or 1, subscription.device_limit or 0)
+        maximum = tariff.max_device_limit or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
+        return min(limit, maximum) if maximum else limit
+    return base if base is not None else 1
+
+
 def resolve_min_device_limit(tariff: object | None = None) -> int:
     """Нижняя граница, до которой пользователь может уменьшить лимит устройств.
 

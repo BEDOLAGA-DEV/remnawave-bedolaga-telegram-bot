@@ -49,8 +49,8 @@ from app.services.subscription_purchase_service import (
 from app.services.subscription_service import SubscriptionService
 from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.services.user_cart_service import user_cart_service
-from app.utils.pricing_utils import calculate_price_per_month, format_period_description
-from app.utils.subscription_utils import resolve_tariff_renewal_device_limit
+from app.utils.pricing_utils import calculate_months_from_days, calculate_price_per_month, format_period_description
+from app.utils.subscription_utils import resolve_tariff_purchase_device_limit
 from app.utils.timezone import format_local_datetime
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
@@ -167,8 +167,9 @@ async def _build_tariff_response(
     # Вычисляем доп. устройства для текущего тарифа (при продлении)
     extra_devices_count = 0
     extra_device_price_per_month = 0
-    if subscription and subscription.tariff_id == tariff.id and tariff.device_limit != 0:
-        extra_devices_count = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
+    actual_device_limit = resolve_tariff_purchase_device_limit(tariff, subscription)
+    if tariff.device_limit != 0:
+        extra_devices_count = max(0, actual_device_limit - (tariff.device_limit or 0))
         if extra_devices_count > 0:
             extra_device_price_per_month = (
                 tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
@@ -180,7 +181,7 @@ async def _build_tariff_response(
             if int(price_kopeks) < 0:
                 continue  # Skip disabled periods (negative price)
             period_days = int(period_str)
-            months = max(1, period_days // 30)
+            months = calculate_months_from_days(period_days)
 
             # Базовая цена тарифа
             base_tariff_price = int(price_kopeks)
@@ -254,6 +255,12 @@ async def _build_tariff_response(
     # кабинет для показа и сервер при списании (PricingEngine.daily_group_price).
     original_daily_price = getattr(tariff, 'daily_price_kopeks', 0) or 0
     daily_price, daily_discount_percent = PricingEngine.daily_group_price(original_daily_price, user)
+    if tariff.is_daily and extra_devices_count:
+        daily_devices_cost = extra_devices_count * extra_device_price_per_month
+        devices_percent = promo_group.get_discount_percent('devices', 1) if promo_group else 0
+        daily_price += pricing_engine.apply_discount(daily_devices_cost, devices_percent)
+        original_daily_price += daily_devices_cost
+        daily_discount_percent = round((1 - daily_price / original_daily_price) * 100) if original_daily_price else 0
 
     # Apply discount to custom price_per_day if applicable
     price_per_day = tariff.price_per_day_kopeks or 0
@@ -265,7 +272,7 @@ async def _build_tariff_response(
             price_per_day = pricing_engine.apply_discount(price_per_day, custom_days_discount_percent)
 
     # Apply discount to device price if applicable
-    device_price = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else 0
+    device_price = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
     original_device_price = device_price
     device_discount_percent = 0
     if promo_group and device_price > 0:
@@ -274,9 +281,7 @@ async def _build_tariff_response(
             device_price = pricing_engine.apply_discount(device_price, device_discount_percent)
 
     # Показываем реальное количество устройств (с докупленными) для текущего тарифа
-    actual_device_limit = tariff.device_limit
-    if subscription and subscription.tariff_id == tariff.id:
-        actual_device_limit = resolve_tariff_renewal_device_limit(tariff.device_limit, subscription.device_limit)
+    actual_device_limit = resolve_tariff_purchase_device_limit(tariff, subscription)
 
     response: dict[str, Any] = {
         'id': tariff.id,
@@ -774,6 +779,8 @@ async def purchase_tariff(
         if settings.is_multi_tariff_enabled():
             if request.subscription_id is not None:
                 existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
+                if existing_subscription is None:
+                    raise HTTPException(status_code=404, detail='Subscription not found')
                 if existing_subscription is not None and existing_subscription.tariff_id is None:
                     # Старая подписка (куплена в классике, тариф не задан): тариф
                     # надевается на неё же — та же строка и тот же аккаунт панели,
@@ -806,13 +813,8 @@ async def purchase_tariff(
                 )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
-        device_limit = None
-        effective_device_limit = tariff.device_limit
-        if existing_subscription and existing_subscription.tariff_id == tariff.id:
-            device_limit = existing_subscription.device_limit
-            effective_device_limit = resolve_tariff_renewal_device_limit(
-                tariff.device_limit, existing_subscription.device_limit
-            )
+        effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
+        device_limit = effective_device_limit
 
         # Calculate price via PricingEngine (single source of truth)
         result = await pricing_engine.calculate_tariff_purchase_price(

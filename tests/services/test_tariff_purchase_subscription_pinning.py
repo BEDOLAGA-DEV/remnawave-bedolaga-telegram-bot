@@ -149,9 +149,9 @@ def test_confirm_tariff_purchase_guards_against_tariff_divergence() -> None:
     func = _find_async_function(tree, 'confirm_tariff_purchase')
     body = _function_source(source, func)
 
-    # The divergence guard must compare tariff_ids. Pin the exact
-    # pattern so a refactor that drops this check trips the test.
-    assert 'tariff_id != tariff_id' in body or 'existing_sub.tariff_id != tariff_id' in body, (
+    # NULL is the paid classic migration, not a different paid tariff.
+    # Runtime PostgreSQL controls cover both the migration and stale paid pin.
+    assert 'existing_sub.tariff_id not in (None, tariff_id)' in body, (
         'confirm_tariff_purchase must guard against the pinned subscription '
         'pointing to a different tariff than the confirm carries — otherwise '
         'extending it with the wrong tariff parameters would corrupt state'

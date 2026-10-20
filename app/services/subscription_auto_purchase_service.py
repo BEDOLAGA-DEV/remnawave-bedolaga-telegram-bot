@@ -62,7 +62,7 @@ from app.services.traffic_reset_policy import (
 from app.services.user_cart_service import user_cart_service
 from app.utils.formatters import format_days_declension
 from app.utils.pricing_utils import format_period_description
-from app.utils.subscription_utils import resolve_tariff_renewal_device_limit
+from app.utils.subscription_utils import resolve_tariff_purchase_device_limit
 from app.utils.timezone import format_local_datetime
 
 
@@ -928,6 +928,11 @@ async def _auto_purchase_tariff(
 
         if _cart_sub_id:
             existing_subscription = await get_subscription_by_id_for_user(db, int(_cart_sub_id), user.id)
+            if existing_subscription is None:
+                logger.warning(
+                    'Автопокупка: выбранная подписка не найдена', user_id=user.id, subscription_id=_cart_sub_id
+                )
+                return False
         else:
             existing_subscription = await get_subscription_by_user_and_tariff(
                 db, user.id, tariff_id, include_inactive=True
@@ -936,9 +941,7 @@ async def _auto_purchase_tariff(
     user = await lock_user_for_pricing(db, user.id)
 
     # Calculate price via PricingEngine (single source of truth)
-    device_limit = None
-    if existing_subscription and existing_subscription.tariff_id == tariff_id:
-        device_limit = existing_subscription.device_limit
+    device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
@@ -1005,12 +1008,7 @@ async def _auto_purchase_tariff(
         if existing_subscription:
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
-            if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = resolve_tariff_renewal_device_limit(
-                    tariff.device_limit, existing_subscription.device_limit
-                )
-            else:
-                effective_device_limit = tariff.device_limit
+            effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
             subscription = await extend_subscription(
                 db,
                 existing_subscription,

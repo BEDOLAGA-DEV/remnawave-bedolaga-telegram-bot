@@ -33,6 +33,8 @@ pytestmark = pytest.mark.postgres
 TABLES = list(Base.metadata.sorted_tables)
 PANEL_ID = 555
 PRICE_KOPEKS = 30_000
+DEVICE_PRICE_KOPEKS = 1_000
+TOTAL_PRICE_KOPEKS = PRICE_KOPEKS + 2 * DEVICE_PRICE_KOPEKS
 PERIOD_DAYS = 30
 LEGACY_DAYS_LEFT = 10
 
@@ -72,6 +74,7 @@ def _tariff() -> Tariff:
         period_prices={str(PERIOD_DAYS): PRICE_KOPEKS},
         traffic_limit_gb=100,
         device_limit=3,
+        device_price_kopeks=DEVICE_PRICE_KOPEKS,
         allowed_squads=['squad-new'],
         display_order=1,
     )
@@ -94,7 +97,9 @@ def _legacy_subscription(user_id: int, now: datetime) -> Subscription:
 
 
 async def _seed(db, now: datetime) -> tuple[User, Subscription, Tariff]:
-    user = User(telegram_id=1001, first_name='Старый', language='ru', status='active', balance_kopeks=PRICE_KOPEKS)
+    user = User(
+        telegram_id=1001, first_name='Старый', language='ru', status='active', balance_kopeks=TOTAL_PRICE_KOPEKS
+    )
     tariff = _tariff()
     db.add_all([user, tariff])
     await db.flush()
@@ -137,6 +142,7 @@ async def test_legacy_subscription_gets_the_tariff_in_place(postgres_database):
         assert [row.id for row in rows] == [legacy.id], 'покупка завела вторую подписку вместо перевода старой'
         moved = rows[0]
         assert moved.tariff_id == tariff.id
+        assert moved.device_limit == 5
         assert moved.remnawave_id == PANEL_ID, 'аккаунт панели (ссылка человека) должен остаться прежним'
         assert moved.status == SubscriptionStatus.ACTIVE.value
         assert moved.is_trial is False
@@ -180,7 +186,7 @@ async def test_legacy_subscription_refuses_tariff_user_already_has(postgres_data
             'чужая живая подписка того же тарифа не должна продлеваться за эти деньги'
         )
         await db.refresh(user)
-        assert user.balance_kopeks == PRICE_KOPEKS, 'при отказе деньги не списываются'
+        assert user.balance_kopeks == TOTAL_PRICE_KOPEKS, 'при отказе деньги не списываются'
 
 
 @pytest.mark.asyncio
@@ -193,7 +199,7 @@ async def test_legacy_subscription_without_row_panel_id_keeps_the_user_account(p
             first_name='Старый',
             language='ru',
             status='active',
-            balance_kopeks=PRICE_KOPEKS,
+            balance_kopeks=TOTAL_PRICE_KOPEKS,
             remnawave_id=PANEL_ID,
         )
         tariff = _tariff()
@@ -209,6 +215,7 @@ async def test_legacy_subscription_without_row_panel_id_keeps_the_user_account(p
         assert response.get('success') is True, response
         rows = await _user_subscriptions(db, user.id)
         assert [row.id for row in rows] == [legacy.id]
+        assert rows[0].device_limit == 5
         assert rows[0].remnawave_id == PANEL_ID, (
             'аккаунт человека должен стать аккаунтом подписки, а не создаваться заново'
         )

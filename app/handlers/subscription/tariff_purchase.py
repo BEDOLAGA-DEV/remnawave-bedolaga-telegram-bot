@@ -35,7 +35,7 @@ from app.utils.formatting import format_period, format_price_kopeks, format_traf
 from app.utils.legacy_subscription import is_legacy_subscription as _legacy_subscription
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.subscription_time import local_days_until
-from app.utils.subscription_utils import resolve_tariff_renewal_device_limit
+from app.utils.subscription_utils import resolve_tariff_purchase_device_limit, resolve_tariff_renewal_device_limit
 
 
 logger = structlog.get_logger(__name__)
@@ -1750,13 +1750,22 @@ async def select_tariff_period(
     if settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-        _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
+        source_data = await state.get_data() if state else {}
+        source_id = source_data.get('target_subscription_id') or source_data.get('active_subscription_id')
+        _existing_sub = None
+        if source_id:
+            selected = await get_subscription_by_id_for_user(db, int(source_id), db_user.id)
+            if selected is None:
+                await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+                return
+            if selected.tariff_id in (None, tariff_id):
+                _existing_sub = selected
+        if _existing_sub is None:
+            _existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
     else:
         _existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
-    device_limit = None
-    if _existing_sub and _existing_sub.tariff_id == tariff.id:
-        device_limit = _existing_sub.device_limit
+    device_limit = resolve_tariff_purchase_device_limit(tariff, _existing_sub)
 
     # Цена — тем же PricingEngine, что и confirm_tariff_purchase: ручной расчёт от
     # period_prices не видел доплату за устройства сверх включённых в тариф, превью
@@ -1942,10 +1951,13 @@ async def confirm_tariff_purchase(
         existing_sub = None
         if _pinned_sub_id:
             existing_sub = await get_subscription_by_id_for_user(db, int(_pinned_sub_id), db_user.id)
+            if existing_sub is None:
+                await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+                return
             # Defence: if admin/user switched tariff between preview
             # and confirm, the pinned sub may no longer match —
             # ignore it and fall back to fresh tariff lookup.
-            if existing_sub and existing_sub.tariff_id != tariff_id:
+            if existing_sub and existing_sub.tariff_id not in (None, tariff_id):
                 logger.warning(
                     'FSM-pinned subscription tariff diverged from confirm tariff; falling back',
                     pinned_sub_id=_pinned_sub_id,
@@ -1959,9 +1971,7 @@ async def confirm_tariff_purchase(
     else:
         existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
-    device_limit = None
-    if existing_sub and existing_sub.tariff_id == tariff.id:
-        device_limit = existing_sub.device_limit
+    device_limit = resolve_tariff_purchase_device_limit(tariff, existing_sub)
 
     result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
@@ -2037,11 +2047,12 @@ async def confirm_tariff_purchase(
 
     try:
         if settings.is_multi_tariff_enabled():
-            if existing_subscription and existing_subscription.tariff_id == tariff.id:
-                # Extend existing subscription for this tariff
-                effective_device_limit = resolve_tariff_renewal_device_limit(
-                    tariff.device_limit, existing_subscription.device_limit
-                )
+            if existing_subscription and (
+                existing_subscription.tariff_id == tariff.id
+                or (existing_subscription.tariff_id is None and not existing_subscription.is_trial)
+            ):
+                # Extend the selected tariff or migrate the selected paid classic row.
+                effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
                 subscription = await extend_subscription(
                     db,
                     existing_subscription,
@@ -2108,12 +2119,7 @@ async def confirm_tariff_purchase(
         elif existing_subscription:
             # Legacy single-subscription: extend or switch
             # Сохраняем докупленные устройства при продлении того же тарифа
-            if existing_subscription.tariff_id == tariff.id:
-                effective_device_limit = resolve_tariff_renewal_device_limit(
-                    tariff.device_limit, existing_subscription.device_limit
-                )
-            else:
-                effective_device_limit = tariff.device_limit
+            effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
             subscription = await extend_subscription(
                 db,
                 existing_subscription,
