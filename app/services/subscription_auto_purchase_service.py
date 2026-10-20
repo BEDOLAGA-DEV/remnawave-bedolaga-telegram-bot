@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
+import json
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -854,7 +856,7 @@ async def _auto_purchase_tariff(
     from app.database.crud.tariff import get_tariff_by_id
     from app.database.crud.transaction import create_transaction
     from app.database.crud.user import subtract_user_balance
-    from app.database.models import TransactionType
+    from app.database.models import PaymentMethod, Transaction, TransactionType
 
     tariff_id = _safe_int(cart_data.get('tariff_id'))
     period_days = _safe_int(cart_data.get('period_days'))
@@ -946,6 +948,22 @@ async def _auto_purchase_tariff(
 
     user = await lock_user_for_pricing(db, user.id)
 
+    purchase_user_id = user.id
+    checkout_id = cart_data.get('tariff_checkout_id') or {
+        key: cart_data.get(key)
+        for key in ('tariff_id', 'period_days', 'subscription_id', 'custom_traffic_gb', 'traffic_limit_gb')
+    }
+    checkout_hash = hashlib.sha256(json.dumps(checkout_id, sort_keys=True).encode()).hexdigest()
+    checkout_external_id = f'tariff-cart:{purchase_user_id}:{checkout_hash}'
+    previous = await db.scalar(
+        select(Transaction.id).where(
+            Transaction.external_id == checkout_external_id,
+            Transaction.payment_method == PaymentMethod.BALANCE.value,
+        )
+    )
+    if previous is not None:
+        return False
+
     # Calculate price via PricingEngine (single source of truth)
     device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
 
@@ -973,31 +991,6 @@ async def _auto_purchase_tariff(
     saved_promo_source = getattr(user, 'promo_offer_discount_source', None) if consume_promo else None
     saved_promo_expires = getattr(user, 'promo_offer_discount_expires_at', None) if consume_promo else None
 
-    # Списываем баланс
-    try:
-        description = f'Покупка тарифа {tariff.name} на {format_days_declension(period_days)}'
-        success = await subtract_user_balance(
-            db,
-            user,
-            final_price,
-            description,
-            consume_promo_offer=consume_promo,
-            mark_as_paid_subscription=True,
-        )
-        if not success:
-            logger.warning(
-                '❌ Автопокупка тарифа: не удалось списать баланс пользователя', format_user_id=_format_user_id(user)
-            )
-            return False
-    except Exception as error:
-        logger.error(
-            '❌ Автопокупка тарифа: ошибка списания баланса пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        return False
-
     # Получаем список серверов из тарифа
     squads = tariff.allowed_squads or []
     if not squads:
@@ -1010,6 +1003,46 @@ async def _auto_purchase_tariff(
         was_trial=existing_subscription.is_trial,
         paid_kopeks=final_price,
     )
+
+    # Списываем баланс
+    try:
+        description = f'Покупка тарифа {tariff.name} на {format_days_declension(period_days)}'
+        success = await subtract_user_balance(
+            db,
+            user,
+            final_price,
+            description,
+            consume_promo_offer=consume_promo,
+            mark_as_paid_subscription=True,
+            commit=False,
+        )
+        if not success:
+            logger.warning(
+                '❌ Автопокупка тарифа: не удалось списать баланс пользователя', format_user_id=_format_user_id(user)
+            )
+            return False
+        transaction = await create_transaction(
+            db=db,
+            user_id=purchase_user_id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_price,
+            description=description,
+            payment_method=PaymentMethod.BALANCE,
+            external_id=checkout_external_id,
+            is_completed=False,
+            commit=False,
+        )
+        await db.commit()
+        transaction_id = transaction.id
+    except Exception as error:
+        logger.error(
+            '❌ Автопокупка тарифа: ошибка списания баланса пользователя',
+            user_id=purchase_user_id,
+            error=error,
+            exc_info=True,
+        )
+        await db.rollback()
+        return False
 
     try:
         if existing_subscription:
@@ -1051,54 +1084,64 @@ async def _auto_purchase_tariff(
             exc_info=True,
         )
         await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
+        # Refund and release this checkout only in the same committed transaction.
         try:
-            from app.database.crud.user import add_user_balance
+            from app.database.crud.transaction import emit_transaction_side_effects
+            from app.database.crud.user import add_user_balance, get_user_by_id
 
-            await add_user_balance(
+            user = await get_user_by_id(db, purchase_user_id)
+            if not await add_user_balance(db, user, final_price, create_transaction=False, commit=False):
+                raise RuntimeError('Compensating refund failed')
+            refund_description = 'Возврат: ошибка автопокупки тарифа'
+            refund = await create_transaction(
                 db,
-                user,
+                purchase_user_id,
+                TransactionType.REFUND,
                 final_price,
-                'Возврат: ошибка автопокупки тарифа',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
+                refund_description,
+                commit=False,
             )
-            # Restore promo offer if consumed
+            failed_transaction = await db.get(Transaction, transaction_id)
+            failed_transaction.external_id = None
             if consume_promo and saved_promo_percent > 0:
                 user.promo_offer_discount_percent = saved_promo_percent
                 user.promo_offer_discount_source = saved_promo_source
                 user.promo_offer_discount_expires_at = saved_promo_expires
-                await db.commit()
-            logger.info(
-                '💰 Автопокупка тарифа: возврат средств после ошибки создания подписки',
-                format_user_id=_format_user_id(user),
-                refund_kopeks=final_price,
+            await db.commit()
+            await emit_transaction_side_effects(
+                db,
+                refund,
+                amount_kopeks=final_price,
+                user_id=purchase_user_id,
+                type=TransactionType.REFUND,
+                description=refund_description,
             )
         except Exception as refund_error:
+            await db.rollback()
             logger.critical(
-                'CRITICAL: Автопокупка тарифа: не удалось вернуть средства после ошибки создания подписки',
-                format_user_id=_format_user_id(user),
+                'Saved checkout refund failed; further debit blocked',
+                user_id=purchase_user_id,
                 price_kopeks=final_price,
                 refund_error=refund_error,
             )
         return False
 
-    # Создаём транзакцию
-    try:
-        transaction = await create_transaction(
-            db=db,
-            user_id=user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_price,
-            description=description,
-        )
-    except Exception as error:
-        logger.warning(
-            '⚠️ Автопокупка тарифа: не удалось создать транзакцию для пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-        )
-        transaction = None
+    # Complete the reserved payment only after provisioning has persisted.
+    from app.database.crud.transaction import emit_transaction_side_effects
+
+    transaction.is_completed = True
+    transaction.completed_at = datetime.now(UTC)
+    await db.commit()
+    await emit_transaction_side_effects(
+        db,
+        transaction,
+        amount_kopeks=final_price,
+        user_id=purchase_user_id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        payment_method=PaymentMethod.BALANCE,
+        external_id=checkout_external_id,
+        description=description,
+    )
 
     # Обновляем Remnawave
     # При продлении того же тарифа решение совпадает с переданным в CRUD.

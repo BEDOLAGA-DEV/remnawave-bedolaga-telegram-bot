@@ -1,5 +1,6 @@
 import json
 from typing import Any
+from uuid import uuid4
 
 import redis.asyncio as redis
 import structlog
@@ -64,6 +65,8 @@ class UserCartService:
             return False
 
         try:
+            if cart_data.get('cart_mode') == 'tariff_purchase':
+                cart_data.setdefault('tariff_checkout_id', uuid4().hex)
             key = f'user_cart:{user_id}'
             json_data = json.dumps(cart_data, ensure_ascii=False)
             effective_ttl = ttl if ttl is not None else settings.CART_TTL_SECONDS

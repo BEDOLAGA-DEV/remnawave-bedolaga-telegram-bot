@@ -242,12 +242,14 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                             'return_to_cart': True,
                         },
                     )
+                    replay_cart = await cart.get_subscription_cart(1, 10)
                     await cart.delete_global_cart_only(1)
                     actor = LavaPaymentMixin()
                     actor.bot = None
                     assert await actor._finalize_lava_payment(db, payment, trigger='test-callback')
                     assert await actor._finalize_lava_payment(db, payment, trigger='test-repeat')
                     assert await cart.get_all_subscription_carts(1) == []
+                    assert not await auto._auto_purchase_tariff(db, user, replay_cart)
                 else:
                     custom_traffic = 250 if flow in ('cart_return_traffic', 'auto_cart_traffic') else None
                     price = 750 + (5 - base) * 137 * 2 + (custom_traffic or 0) * 2
@@ -295,18 +297,16 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         assert callback.data == 'custom_confirm:1'
                         assert telegram.format_price_kopeks(price) in callback.message.edit_text.await_args.args[0]
                     if flow == 'auto_cart_traffic':
-                        assert await auto._auto_purchase_tariff(
-                            db,
-                            user,
-                            {
-                                'tariff_id': 1,
-                                'period_days': 75,
-                                'subscription_id': 10,
-                                'custom_traffic_gb': 250,
-                                'traffic_limit_gb': 250,
-                                'total_price': 1,
-                            },
-                        )
+                        replay_cart = {
+                            'tariff_id': 1,
+                            'period_days': 75,
+                            'subscription_id': 10,
+                            'custom_traffic_gb': 250,
+                            'traffic_limit_gb': 250,
+                            'total_price': 1,
+                        }
+                        assert await auto._auto_purchase_tariff(db, user, replay_cart)
+                        assert not await auto._auto_purchase_tariff(db, user, replay_cart)
                     else:
                         await inspect.unwrap(telegram.handle_custom_confirm)(callback, user, db, state)
                 await db.refresh(user)
