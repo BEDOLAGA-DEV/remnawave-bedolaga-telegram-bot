@@ -2492,55 +2492,48 @@ class AdminNotificationService:
             )
             return False
 
-        # Если есть медиа, отправляем фото с текстом как caption (если влезает) или текст + фото
-        if media_file_id and media_type == 'photo':
-            return await self._send_ticket_photo_notification(text, media_file_id, keyboard)
+        # Если есть фото или видео, отправляем его с текстом как caption (если влезает) или текст + медиа
+        if media_file_id and media_type in ('photo', 'video'):
+            return await self._send_ticket_media_notification(text, media_type, media_file_id, keyboard)
 
         return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
 
-    async def _send_ticket_photo_notification(
+    async def _send_ticket_media_notification(
         self,
         text: str,
-        photo_file_id: str,
+        media_type: str,
+        file_id: str,
         keyboard: types.InlineKeyboardMarkup | None = None,
     ) -> bool:
-        """Отправить фото с текстом в тикет-топик.
-        Если текст помещается в caption (≤1024 символов после парсинга HTML) — фото с caption.
-        Иначе — сначала текст, потом фото в тот же топик.
+        """Отправить фото или видео с текстом в тикет-топик.
+        Если текст помещается в caption (≤1024 символов после парсинга HTML) — медиа с caption.
+        Иначе — сначала текст, потом медиа в тот же топик.
         """
         if not self.chat_id:
             return False
 
         thread_id = self._resolve_topic_id(category=NotificationCategory.TICKETS)
+        send = self.bot.send_video if media_type == 'video' else self.bot.send_photo
 
         try:
+            media_kwargs: dict = {'chat_id': self.chat_id, media_type: file_id}
+            if thread_id:
+                media_kwargs['message_thread_id'] = thread_id
             if not caption_exceeds_telegram_limit(text):
-                # Фото с caption — всё в одном сообщении
-                photo_kwargs: dict = {
-                    'chat_id': self.chat_id,
-                    'photo': photo_file_id,
-                    'caption': text,
-                    'parse_mode': 'HTML',
-                }
-                if thread_id:
-                    photo_kwargs['message_thread_id'] = thread_id
+                # Медиа с caption — всё в одном сообщении
+                media_kwargs['caption'] = text
+                media_kwargs['parse_mode'] = 'HTML'
                 if keyboard:
-                    photo_kwargs['reply_markup'] = keyboard
-                await self.bot.send_photo(**photo_kwargs)
+                    media_kwargs['reply_markup'] = keyboard
+                await send(**media_kwargs)
             else:
-                # Текст отдельно, фото следом в тот же топик
+                # Текст отдельно, медиа следом в тот же топик
                 await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
-                photo_kwargs = {
-                    'chat_id': self.chat_id,
-                    'photo': photo_file_id,
-                }
-                if thread_id:
-                    photo_kwargs['message_thread_id'] = thread_id
-                await self.bot.send_photo(**photo_kwargs)
+                await send(**media_kwargs)
 
             return True
         except Exception as e:
-            logger.error('Ошибка отправки фото-уведомления тикета', error=e)
+            logger.error('Ошибка отправки уведомления тикета с вложением', media_type=media_type, error=e)
             # Fallback: отправляем хотя бы текст
             return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
 

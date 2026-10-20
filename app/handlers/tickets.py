@@ -26,6 +26,12 @@ from app.utils.cache import RateLimitCache, cache, cache_key
 from app.utils.formatters import format_username_link
 from app.utils.miniapp_buttons import build_admin_ticket_cabinet_button
 from app.utils.photo_message import edit_or_answer_photo, safe_edit_or_resend
+from app.utils.ticket_media import (
+    build_ticket_media_group,
+    extract_ticket_media,
+    has_ticket_media,
+    ticket_media_label,
+)
 from app.utils.ticket_text import (
     TICKET_MESSAGE_MAX_LENGTH,
     TICKET_PAGE_MAX_LEN,
@@ -193,15 +199,9 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
         pass
 
     """Обработать ввод сообщения тикета и создать тикет"""
-    # Поддержка фото: если прислали фото с подписью — берём caption, сохраняем file_id
+    # Фото или видео: если прислали с подписью — берём caption, сохраняем file_id
     message_text = (message.text or message.caption or '').strip()
-    media_type = None
-    media_file_id = None
-    media_caption = None
-    if message.photo:
-        media_type = 'photo'
-        media_file_id = message.photo[-1].file_id
-        media_caption = message.caption
+    media_type, media_file_id, media_caption = extract_ticket_media(message)
     # Глобальный блок
     from app.database.crud.ticket import TicketCRUD
 
@@ -231,7 +231,7 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
     # Удалим сообщение пользователя через 2 секунды
     asyncio.create_task(_try_delete_message_later(message.bot, message.chat.id, message.message_id, 2.0))
     # Валидируем: допускаем пустой текст, если есть фото
-    if (not message_text or len(message_text) < 10) and not message.photo:
+    if (not message_text or len(message_text) < 10) and not media_file_id:
         texts = get_texts(db_user.language)
         data_prompt = await state.get_data()
         prompt_chat_id = data_prompt.get('prompt_chat_id')
@@ -286,7 +286,7 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
             f'📊 Статус: {ticket.status_emoji} '
             f'{texts.t("TICKET_STATUS_OPEN", "Открыт")}\n'
             f'📅 Создан: {format_local_datetime(ticket.created_at, "%d.%m.%Y %H:%M")}\n'
-            + ('📎 Вложение: фото\n' if media_type == 'photo' else '')
+            + ticket_media_label(media_type)
         )
 
         data_prompt = await state.get_data()
@@ -518,8 +518,8 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         for msg in ticket.messages:
             sender = '👤 Вы' if msg.is_user_message else '🛠️ Поддержка'
             block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n{html.escape(msg.message_text or "")}\n\n'
-            if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                block += '📎 Вложение: фото\n\n'
+            if has_ticket_media(msg):
+                block += ticket_media_label(msg.media_type) + '\n'
             message_blocks.append(block)
     pages = build_ticket_pages(header, message_blocks, max_len=TICKET_PAGE_MAX_LEN)
     total_pages = len(pages)
@@ -531,9 +531,7 @@ async def view_ticket(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         db_user.language,
     )
     # Если есть вложения фото — добавим кнопку для просмотра
-    has_photos = any(
-        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' for m in ticket.messages or []
-    )
+    has_photos = any(has_ticket_media(m) for m in ticket.messages or [])
     if has_photos:
         try:
             keyboard.inline_keyboard.insert(
@@ -584,22 +582,15 @@ async def send_ticket_attachments(callback: types.CallbackQuery, db_user: User, 
         await callback.answer(texts.t('TICKET_NOT_FOUND', 'Тикет не найден.'), show_alert=True)
         return
 
-    photos = [
-        m.media_file_id
-        for m in ticket.messages
-        if getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' and m.media_file_id
-    ]
-    if not photos:
+    attachments = build_ticket_media_group(ticket.messages)
+    if not attachments:
         await callback.answer(texts.t('NO_ATTACHMENTS', 'Вложений нет.'), show_alert=True)
         return
 
     # Telegram ограничивает media group до 10 элементов. Отправим чанками.
-    from aiogram.types import InputMediaPhoto
-
-    chunks = [photos[i : i + 10] for i in range(0, len(photos), 10)]
+    chunks = [attachments[i : i + 10] for i in range(0, len(attachments), 10)]
     last_group_message = None
-    for chunk in chunks:
-        media = [InputMediaPhoto(media=pid) for pid in chunk]
+    for media in chunks:
         try:
             messages = await callback.message.bot.send_media_group(chat_id=callback.from_user.id, media=media)
             if messages:
@@ -737,17 +728,12 @@ async def handle_ticket_reply(message: types.Message, state: FSMContext, db_user
         logger.debug('Антиспам ответа на тикет: состояние не обновлено', error=str(exc))
 
     """Обработать ответ на тикет"""
-    # Поддержка фото для ответа пользователя
+    # Фото или видео во вложении ответа пользователя
     reply_text = (message.text or message.caption or '').strip()
-    media_type = None
-    media_file_id = None
-    media_caption = None
-    if message.photo:
-        media_type = 'photo'
-        media_file_id = message.photo[-1].file_id
-        media_caption = message.caption
+    media_type, media_file_id, media_caption = extract_ticket_media(message)
 
-    if len(reply_text) < 5:
+    # Вложение без подписи — полноценный ответ: минимум длины только для текста.
+    if len(reply_text) < 5 and not media_file_id:
         texts = get_texts(db_user.language)
         await message.answer(
             texts.t('TICKET_REPLY_TOO_SHORT', 'Ответ должен содержать минимум 5 символов. Попробуйте еще раз:')
