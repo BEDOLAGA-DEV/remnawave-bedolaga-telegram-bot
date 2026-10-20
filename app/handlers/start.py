@@ -618,6 +618,7 @@ async def _activate_pending_trial(
 
         trial_traffic_limit = settings.TRIAL_TRAFFIC_LIMIT_GB
         trial_device_limit = settings.TRIAL_DEVICE_LIMIT
+        trial_duration_days = settings.TRIAL_DURATION_DAYS
         trial_squads: list[str] = []
         tariff_id_for_trial = None
 
@@ -631,6 +632,8 @@ async def _activate_pending_trial(
             trial_device_limit = trial_tariff.device_limit
             trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
             tariff_id_for_trial = trial_tariff.id
+            if trial_tariff.trial_duration_days:
+                trial_duration_days = trial_tariff.trial_duration_days
         if not trial_squads:
             trial_squad_uuid = await get_random_trial_squad_uuid(db)
             trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
@@ -638,7 +641,7 @@ async def _activate_pending_trial(
         subscription = await create_trial_subscription(
             db=db,
             user_id=user.id,
-            duration_days=settings.TRIAL_DURATION_DAYS,
+            duration_days=trial_duration_days,
             traffic_limit_gb=trial_traffic_limit,
             device_limit=trial_device_limit,
             connected_squads=trial_squads or None,
