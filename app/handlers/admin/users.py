@@ -5655,7 +5655,7 @@ async def change_subscription_type_confirm(callback: types.CallbackQuery, db_use
         else f'admin_user_subscription_{user_id}'
     )
 
-    success = await _change_subscription_type(db, user_id, new_type, db_user.id)
+    success = await _change_subscription_type(db, user_id, new_type, db_user.id, subscription_id)
 
     if success:
         type_text = 'платной' if new_type == 'paid' else 'триальной'
@@ -5676,11 +5676,15 @@ async def change_subscription_type_confirm(callback: types.CallbackQuery, db_use
     await callback.answer()
 
 
-async def _change_subscription_type(db: AsyncSession, user_id: int, new_type: str, admin_id: int) -> bool:
+async def _change_subscription_type(
+    db: AsyncSession, user_id: int, new_type: str, admin_id: int, subscription_id: int | None = None
+) -> bool:
     try:
         from app.services.subscription_service import SubscriptionService
 
-        subscription = await _resolve_admin_subscription(db, user_id)
+        if subscription_id is not None and (subscription_id <= 0 or not settings.is_multi_tariff_enabled()):
+            return False
+        subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
         if not subscription:
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
             return False
