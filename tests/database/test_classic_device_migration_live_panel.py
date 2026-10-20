@@ -30,6 +30,7 @@ from app.database.crud.user import get_user_by_id
 from app.database.models import Base, Subscription, Tariff, Transaction, User
 from app.external.remnawave_api import RemnaWaveAPI
 from app.handlers.subscription import tariff_purchase as telegram
+from app.services import subscription_auto_purchase_service as auto
 from app.services.subscription_service import SubscriptionService
 from tests.fixtures.postgres_db import postgres_session
 
@@ -53,6 +54,8 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
     monkeypatch.setattr(settings, 'HAPP_CRYPTOLINK_API_FALLBACK_ENABLED', False)
     monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
     monkeypatch.setattr(telegram.AdminNotificationService, 'send_subscription_purchase_notification', AsyncMock())
+    monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
+    monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
 
     @asynccontextmanager
     async def client(self):
@@ -112,6 +115,8 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         max_device_limit=5,
                         device_price_kopeks=137,
                         period_prices={'30': 301},
+                        is_daily=flow.endswith('daily'),
+                        daily_price_kopeks=101,
                         custom_days_enabled=True,
                         price_per_day_kopeks=10,
                         allowed_squads=[],
@@ -136,17 +141,44 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                 user = await get_user_by_id(db, 1)
                 subscription = await db.get(Subscription, 10)
                 tariff = await db.get(Tariff, 1)
-                if flow == 'cabinet':
-                    price = 301 + (5 - base) * 137
+                if flow in ('cabinet', 'cabinet_daily'):
+                    price = (101 if flow.endswith('daily') else 301) + (5 - base) * 137
                     preview = await cabinet._build_tariff_response(db, tariff, user=user, subscription=subscription)
                     assert preview['device_limit'] == 5
-                    assert next(p for p in preview['periods'] if p['days'] == 30)['price_kopeks'] == price
+                    if flow.endswith('daily'):
+                        assert preview['daily_price_kopeks'] == price
+                    else:
+                        assert next(p for p in preview['periods'] if p['days'] == 30)['price_kopeks'] == price
                     result = await cabinet.purchase_tariff(
-                        cabinet.TariffPurchaseRequest(tariff_id=1, period_days=30, subscription_id=10),
+                        cabinet.TariffPurchaseRequest(
+                            tariff_id=1, period_days=1 if flow.endswith('daily') else 30, subscription_id=10
+                        ),
                         user,
                         db,
                     )
                     assert result['success']
+                elif flow in ('telegram_daily', 'auto_daily'):
+                    price = 101 + (5 - base) * 137
+                    if flow == 'auto_daily':
+                        assert await auto._auto_purchase_daily_tariff(db, user, {'tariff_id': 1, 'subscription_id': 10})
+                    else:
+                        state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
+                        await state.update_data(target_subscription_id=10)
+                        callback = SimpleNamespace(
+                            data='daily_tariff_confirm:1',
+                            answer=AsyncMock(),
+                            bot=SimpleNamespace(send_message=AsyncMock()),
+                            message=SimpleNamespace(edit_text=AsyncMock(), answer=AsyncMock()),
+                        )
+                        await telegram._proceed_with_selected_tariff(callback, user, db, state, 1)
+                        assert telegram.format_price_kopeks(price) in callback.message.edit_text.await_args.args[0]
+                        await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
+                    if flow == 'auto_daily':
+                        assert not await auto._auto_purchase_daily_tariff(
+                            db, user, {'tariff_id': 1, 'subscription_id': 10}
+                        )
+                    else:
+                        await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
                 else:
                     price = 750 + (5 - base) * 137 * 2
                     state = FSMContext(storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=101, user_id=101))
@@ -189,7 +221,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
 
 
 @pytest.mark.parametrize('base', [1, 2])
-@pytest.mark.parametrize('flow', ['cabinet', 'telegram_custom'])
+@pytest.mark.parametrize('flow', ['cabinet', 'telegram_custom', 'cabinet_daily', 'telegram_daily', 'auto_daily'])
 async def test_purchase_price_and_cap_reach_real_panel(postgres_database, monkeypatch, base, flow):
     async with real_migration(postgres_database, monkeypatch, base, flow) as (_, old, request):
         devices = await request('GET', f'/api/hwid/devices/{old["id"]}')

@@ -772,7 +772,7 @@ def _calculate_custom_tariff_price(
     return period_price, traffic_price, total_price
 
 
-async def _resolve_custom_tariff_subscription(db, db_user, tariff, state=None):
+async def _resolve_purchase_subscription(db, db_user, tariff, state=None):
     if not settings.is_multi_tariff_enabled():
         return await get_subscription_by_user_id(db, db_user.id)
 
@@ -812,7 +812,7 @@ async def format_custom_tariff_preview(
     """
     device_limit = tariff.device_limit
     if db_user is not None and db is not None:
-        existing = await _resolve_custom_tariff_subscription(db, db_user, tariff, state)
+        existing = await _resolve_purchase_subscription(db, db_user, tariff, state)
         device_limit = resolve_tariff_purchase_device_limit(tariff, existing)
     if db_user is not None:
         # Use PricingEngine — single source of truth for all discounts
@@ -1030,11 +1030,22 @@ async def _proceed_with_selected_tariff(
 
     if is_daily:
         # Для суточного тарифа показываем подтверждение без выбора периода
-        raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
-        group_pct, offer_pct, daily_discount = _get_user_period_discount(db_user, 1)
-        daily_price = (
-            _apply_promo_discount(raw_daily_price, group_pct, offer_pct) if daily_discount > 0 else raw_daily_price
+        try:
+            _daily_existing_sub = await _resolve_purchase_subscription(db, db_user, tariff, state)
+        except LookupError:
+            await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+            return
+        effective_device_limit = resolve_tariff_purchase_device_limit(tariff, _daily_existing_sub)
+        from app.services.pricing_engine import pricing_engine
+
+        quote = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period_days=1,
+            device_limit=effective_device_limit,
+            user=db_user,
         )
+        daily_price = quote.final_total
+        _, _, daily_discount = _get_user_period_discount(db_user, 1)
         discount_text = (
             texts.t('TARIFF_PURCHASE_DAILY_DISCOUNT_LINE', '\n💎 Скидка: {percent}%').format(percent=daily_discount)
             if daily_discount > 0
@@ -1059,7 +1070,7 @@ async def _proceed_with_selected_tariff(
                 ).format(
                     name=html.escape(tariff.name),
                     traffic=traffic,
-                    devices=tariff.device_limit,
+                    devices=effective_device_limit,
                     price=format_price_kopeks(daily_price),
                     discount=discount_text,
                     balance=format_price_kopeks(user_balance),
@@ -1071,14 +1082,6 @@ async def _proceed_with_selected_tariff(
             )
         else:
             missing = daily_price - user_balance
-
-            # Ищем существующую подписку для передачи subscription_id в корзину
-            if settings.is_multi_tariff_enabled():
-                from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-                _daily_existing_sub = await get_subscription_by_user_and_tariff(db, db_user.id, tariff_id)
-            else:
-                _daily_existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
             # Сохраняем данные корзины для автопокупки суточного тарифа
             cart_data = {
@@ -1093,7 +1096,7 @@ async def _proceed_with_selected_tariff(
                 'return_to_cart': True,
                 'description': f'Покупка суточного тарифа {tariff.name}',
                 'traffic_limit_gb': tariff.traffic_limit_gb,
-                'device_limit': tariff.device_limit,
+                'device_limit': effective_device_limit,
                 'allowed_squads': tariff.allowed_squads or [],
                 'subscription_id': _daily_existing_sub.id if _daily_existing_sub else None,
             }
@@ -1382,7 +1385,7 @@ async def handle_custom_confirm(
     custom_traffic = state_data.get('custom_traffic_gb', tariff.min_traffic_gb)
 
     try:
-        existing_subscription = await _resolve_custom_tariff_subscription(db, db_user, tariff, state)
+        existing_subscription = await _resolve_purchase_subscription(db, db_user, tariff, state)
     except LookupError:
         await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
         return
@@ -2393,13 +2396,38 @@ async def confirm_daily_tariff_purchase(
     if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
         return
 
+    try:
+        existing_subscription = await _resolve_purchase_subscription(db, db_user, tariff, state)
+    except LookupError:
+        await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+        return
+    if (
+        existing_subscription is not None
+        and existing_subscription.tariff_id == tariff.id
+        and not existing_subscription.is_trial
+        and existing_subscription.is_active
+        and not existing_subscription.is_daily_paused
+    ):
+        await callback.answer(
+            texts.t(
+                'TARIFF_PURCHASE_ALREADY_ACTIVE',
+                'Тариф «{name}» уже активен ({days} дн.). Продлите через "Мои подписки".',
+            ).format(
+                name=tariff.name,
+                days=local_days_until(existing_subscription.end_date),
+            ),
+            show_alert=True,
+        )
+        return
+    effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
+
     # Apply group + promo-offer discounts via PricingEngine (single source of truth)
     from app.services.pricing_engine import pricing_engine
 
     pricing_result = await pricing_engine.calculate_tariff_purchase_price(
         tariff,
         period_days=1,
-        device_limit=tariff.device_limit,
+        device_limit=effective_device_limit,
         user=db_user,
     )
     final_daily_price = pricing_result.final_total
@@ -2454,30 +2482,14 @@ async def confirm_daily_tariff_purchase(
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
-    # Проверяем есть ли уже подписка
-    if settings.is_multi_tariff_enabled():
-        active_subs = await get_active_subscriptions_by_user_id(db, db_user.id)
-        existing_subscription = next((s for s in active_subs if s.tariff_id == tariff.id), None)
-    else:
-        existing_subscription = await get_subscription_by_user_id(db, db_user.id)
-
     try:
         if existing_subscription:
             # Обновляем существующую подписку на суточный тариф
-            # Сбрасываем лимит устройств на базу нового тарифа (докупленные не переносятся)
-            from app.database.crud.subscription import calc_device_limit_on_tariff_switch
-
-            old_tariff = (
-                await get_tariff_by_id(db, existing_subscription.tariff_id) if existing_subscription.tariff_id else None
-            )
+            if existing_subscription.is_trial:
+                existing_subscription._converted_from_trial = True
             existing_subscription.tariff_id = tariff.id
             existing_subscription.traffic_limit_gb = tariff.traffic_limit_gb
-            existing_subscription.device_limit = calc_device_limit_on_tariff_switch(
-                current_device_limit=existing_subscription.device_limit,
-                old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
-                new_tariff_device_limit=tariff.device_limit,
-                max_device_limit=getattr(tariff, 'max_device_limit', None),
-            )
+            existing_subscription.device_limit = effective_device_limit
             existing_subscription.connected_squads = squads
             existing_subscription.status = 'active'
             existing_subscription.is_trial = False  # Сбрасываем триальный статус
@@ -2507,7 +2519,7 @@ async def confirm_daily_tariff_purchase(
                 user_id=db_user.id,
                 duration_days=1,
                 traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                device_limit=effective_device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
             )
@@ -2639,7 +2651,7 @@ async def confirm_daily_tariff_purchase(
         ).format(
             name=html.escape(tariff.name),
             traffic=traffic,
-            devices=tariff.device_limit,
+            devices=effective_device_limit,
             price=format_price_kopeks(final_daily_price),
         ),
         reply_markup=InlineKeyboardMarkup(

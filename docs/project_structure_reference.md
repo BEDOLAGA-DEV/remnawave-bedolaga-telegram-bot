@@ -3780,7 +3780,7 @@
   Функции: `real_migration`, `test_purchase_price_and_cap_reach_real_panel`, `test_tariff_maximum_applies_to_previously_registered_hwids` — Known RED acceptance criterion; do not replace with HTTP200 assertions or xfail.
 - `tests/database/test_classic_device_migration_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
-  Функции: `test_selected_classic_devices_are_priced_and_preserved`, `test_classic_migration_limits`, `test_classic_migration_non_month_period_price`, `test_classic_custom_telegram_selected_purchase`, `test_cabinet_daily_classic_price_matches_charge`, `test_invalid_selected_classic_subscription_is_rejected_before_pricing`, `test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing`, `test_custom_fallback_prefers_active_tariff_over_later_disabled_record`
+  Функции: `test_selected_classic_devices_are_priced_and_preserved`, `test_classic_migration_limits`, `test_classic_migration_non_month_period_price`, `test_classic_custom_telegram_selected_purchase`, `test_cabinet_daily_classic_price_matches_charge`, `test_daily_selected_classic_devices`, `test_invalid_selected_classic_subscription_is_rejected_before_pricing`, `test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing`, `test_custom_fallback_prefers_active_tariff_over_later_disabled_record`, `test_daily_insufficient_balance_cart_replays_selected_classic`, `test_repeated_daily_purchase_does_not_charge_twice`, `test_daily_selected_trial_keeps_conversion_marker`
 - `tests/database/test_daily_promo_days_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_daily_promo_days_defer_charge_and_keep_access`, `test_parallel_daily_workers_charge_only_once`
