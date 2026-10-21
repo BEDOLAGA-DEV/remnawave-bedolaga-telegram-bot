@@ -562,3 +562,112 @@ async def test_period_selection_preserves_cart_permissions_and_atomic_fsm(carts,
                 callback.message.edit_text.assert_awaited_once()
     finally:
         await client.delete(builder.build(key, 'state'), builder.build(key, 'data'))
+
+
+@pytest.mark.parametrize('action', ['catalog', 'back_tariffs', 'tariff', 'back_periods'])
+@pytest.mark.parametrize('change', ['state', 'data', 'both', 'none'])
+async def test_navigation_rejects_selection_changed_at_redis_write(carts, monkeypatch, action, change):
+    from aiogram.fsm.storage.redis import RedisStorage
+
+    service, uid, client = carts
+    builder = DefaultKeyBuilder(prefix='gift-navigation-write-audit', with_bot_id=True)
+    key = StorageKey(bot_id=1, chat_id=uid, user_id=uid)
+    original = FSMContext(RedisStorage(client, key_builder=builder), key)
+    data = {
+        'gift_checkout_id': 'old',
+        'gift_checkout_selection': [1, 30],
+        'gift_tariff_id': 1,
+        'gift_period_days': 30,
+        'gift_expected_price_kopeks': 100,
+        'gift_origin_callback': 'menu_subscription',
+    }
+    await original.set_state(gift.GiftPurchaseStates.confirming_purchase)
+    await original.set_data(data)
+    await service.save_user_cart(uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'old', 'return_to_cart': True})
+    cart = await service.get_user_cart(uid)
+    expected_state = (
+        'new_selection' if change in ('state', 'both') else gift.GiftPurchaseStates.confirming_purchase.state
+    )
+    expected_data = {'gift_checkout_id': 'new', 'gift_tariff_id': 2} if change in ('data', 'both') else data
+
+    async def replace():
+        if change != 'none':
+            await original.set_state(expected_state)
+            await original.set_data(expected_data)
+
+    probe = MutationProbe(client, replace)
+    state = FSMContext(RedisStorage(probe, key_builder=builder), key)
+    quote = gift.GiftQuote(1, 'Gift', 30, 100, 1, 100, 100, 0, 0, False)
+    offer = gift.GiftTariffOffer(1, 'Gift', None, 100, 1, 1, (quote,))
+
+    async def offers(*args, **kwargs):
+        probe.armed = True
+        return [offer]
+
+    monkeypatch.setattr(gift, 'is_gift_enabled', AsyncMock(return_value=True))
+    monkeypatch.setattr(gift, 'has_sender_gifts', AsyncMock(return_value=False))
+    monkeypatch.setattr(gift, 'list_gift_offers', offers)
+    payload, handler = {
+        'catalog': ('subscription_gift', gift.handle_gift_catalog),
+        'back_tariffs': ('gift_back_tariffs', gift.handle_gift_back_tariffs),
+        'tariff': ('gift_tariff:1', gift.handle_gift_tariff_select),
+        'back_periods': ('gift_back_periods', gift.handle_gift_back_periods),
+    }[action]
+    callback = SimpleNamespace(data=payload, message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
+    try:
+        await handler(callback, SimpleNamespace(id=uid, language='ru', balance_kopeks=1000), AsyncMock(), state)
+        assert probe.triggered
+        assert await service.get_user_cart(uid) == cart
+        assert await service.has_topup_intent(uid, cart)
+        if change != 'none':
+            assert await original.get_state() == expected_state
+            assert await original.get_data() == expected_data
+            callback.message.edit_text.assert_not_awaited()
+        else:
+            expected = (
+                gift.GiftPurchaseStates.selecting_tariff
+                if action in ('catalog', 'back_tariffs')
+                else gift.GiftPurchaseStates.selecting_period
+            )
+            assert await original.get_state() == expected.state
+            assert await original.get_data() == data
+            callback.message.edit_text.assert_awaited_once()
+    finally:
+        await client.delete(builder.build(key, 'state'), builder.build(key, 'data'))
+
+
+@pytest.mark.parametrize('branch', ['disabled', 'empty', 'missing_tariff'])
+async def test_readonly_navigation_does_not_extend_fsm_ttl_or_cart_permission(carts, monkeypatch, branch):
+    from aiogram.fsm.storage.redis import RedisStorage
+
+    service, uid, client = carts
+    builder = DefaultKeyBuilder(prefix='gift-navigation-ttl-audit', with_bot_id=True)
+    key = StorageKey(bot_id=1, chat_id=uid, user_id=uid)
+    context = FSMContext(RedisStorage(client, key_builder=builder, state_ttl=90, data_ttl=120), key)
+    data = {'gift_checkout_id': 'old', 'gift_tariff_id': 1, 'gift_expected_price_kopeks': 100}
+    await context.set_state(gift.GiftPurchaseStates.confirming_purchase)
+    await context.set_data(data)
+    await client.pexpire(builder.build(key, 'state'), 30000)
+    await client.pexpire(builder.build(key, 'data'), 20000)
+    await service.save_user_cart(uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'old', 'return_to_cart': True})
+    cart = await service.get_user_cart(uid)
+    monkeypatch.setattr(gift, 'is_gift_enabled', AsyncMock(return_value=branch != 'disabled'))
+    monkeypatch.setattr(gift, 'has_sender_gifts', AsyncMock(return_value=False))
+    monkeypatch.setattr(gift, 'list_gift_offers', AsyncMock(return_value=[]))
+    callback = SimpleNamespace(
+        data='gift_tariff:1' if branch == 'missing_tariff' else 'subscription_gift',
+        message=SimpleNamespace(edit_text=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    handler = gift.handle_gift_tariff_select if branch == 'missing_tariff' else gift.handle_gift_catalog
+    try:
+        await handler(callback, SimpleNamespace(id=uid, language='ru', balance_kopeks=1000), AsyncMock(), context)
+        assert await context.get_data() == data
+        assert await context.get_state() == gift.GiftPurchaseStates.confirming_purchase.state
+        assert 0 < await client.pttl(builder.build(key, 'state')) <= 30000
+        assert 0 < await client.pttl(builder.build(key, 'data')) <= 20000
+        assert await service.get_user_cart(uid) == cart
+        assert await service.has_topup_intent(uid, cart)
+        callback.message.edit_text.assert_awaited_once()
+    finally:
+        await client.delete(builder.build(key, 'state'), builder.build(key, 'data'))

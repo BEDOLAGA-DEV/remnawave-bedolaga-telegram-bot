@@ -342,6 +342,9 @@ async def handle_gift_catalog(
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
+    *,
+    expected_data: dict | None = None,
+    expected_state: str | None = None,
 ) -> None:
     """Entry point for native gift catalog and history hub."""
     if isinstance(callback.message, InaccessibleMessage):
@@ -349,10 +352,13 @@ async def handle_gift_catalog(
         return
 
     texts = get_texts(db_user.language)
-    entry_data = await state.get_data()
-    entry_state = await state.get_state()
+    entry_data = await state.get_data() if expected_data is None else expected_data
+    entry_state = await state.get_state() if expected_data is None else expected_state
     sales_enabled = await is_gift_enabled(db)
     has_history = await has_sender_gifts(db, db_user.id)
+    if await state.get_data() != entry_data or await state.get_state() != entry_state:
+        await callback.answer()
+        return
 
     if not sales_enabled:
         if has_history:
@@ -415,6 +421,9 @@ async def handle_gift_catalog(
         return
 
     offers = await list_gift_offers(db, buyer=db_user)
+    if await state.get_data() != entry_data or await state.get_state() != entry_state:
+        await callback.answer()
+        return
     if not offers:
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -446,17 +455,21 @@ async def handle_gift_catalog(
         await callback.answer()
         return
 
-    data = await state.get_data()
-    checkout_id = data.get('gift_checkout_id') or uuid.uuid4().hex
-    origin = data.get('gift_origin_callback') or (
+    checkout_id = entry_data.get('gift_checkout_id') or uuid.uuid4().hex
+    origin = entry_data.get('gift_origin_callback') or (
         callback.data if callback.data != 'subscription_gift' else 'menu_subscription'
     )
-
-    await state.set_state(GiftPurchaseStates.selecting_tariff)
-    data = await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_origin_callback=origin,
-    )
+    updates = {'gift_checkout_id': checkout_id, 'gift_origin_callback': origin}
+    if not await mutate_fsm_if_current(
+        state,
+        entry_state,
+        entry_data,
+        new_state=GiftPurchaseStates.selecting_tariff,
+        updates=updates,
+    ):
+        await callback.answer()
+        return
+    data = {**entry_data, **updates}
 
     text, keyboard = _render_tariff_catalog(db_user, offers)
     keyboard = _bind_gift_actions(keyboard, data, GiftPurchaseStates.selecting_tariff.state)
@@ -470,6 +483,9 @@ async def _render_and_show_periods(
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
+    *,
+    expected_data: dict | None = None,
+    expected_state: str | None = None,
 ) -> None:
     """Render and display periods for a selected tariff without mutating callback data."""
     if isinstance(callback.message, InaccessibleMessage):
@@ -477,6 +493,8 @@ async def _render_and_show_periods(
         return
 
     texts = get_texts(db_user.language)
+    entry_data = await state.get_data() if expected_data is None else expected_data
+    entry_state = await state.get_state() if expected_data is None else expected_state
     if not await is_gift_enabled(db):
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
@@ -485,6 +503,9 @@ async def _render_and_show_periods(
         return
 
     offers = await list_gift_offers(db, buyer=db_user)
+    if await state.get_data() != entry_data or await state.get_state() != entry_state:
+        await callback.answer()
+        return
     offer = next((o for o in offers if o.tariff_id == tariff_id), None)
     if offer is None or not offer.quotes:
         back_kb = InlineKeyboardMarkup(
@@ -504,13 +525,18 @@ async def _render_and_show_periods(
         await callback.answer()
         return
 
-    data = await state.get_data()
-    checkout_id = data.get('gift_checkout_id') or uuid.uuid4().hex
-    await state.set_state(GiftPurchaseStates.selecting_period)
-    data = await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_tariff_id=tariff_id,
-    )
+    checkout_id = entry_data.get('gift_checkout_id') or uuid.uuid4().hex
+    updates = {'gift_checkout_id': checkout_id, 'gift_tariff_id': tariff_id}
+    if not await mutate_fsm_if_current(
+        state,
+        entry_state,
+        entry_data,
+        new_state=GiftPurchaseStates.selecting_period,
+        updates=updates,
+    ):
+        await callback.answer()
+        return
+    data = {**entry_data, **updates}
 
     text, keyboard = _render_period_selection(db_user, offer)
     keyboard = _bind_gift_actions(keyboard, data, GiftPurchaseStates.selecting_period.state)
@@ -714,12 +740,28 @@ async def handle_gift_back_periods(
 ) -> None:
     """Navigate back to period selection for current tariff."""
     data = await state.get_data()
+    selection_state = await state.get_state()
     tariff_id = data.get('gift_tariff_id')
     if tariff_id is None:
-        await handle_gift_catalog(callback, db_user, db, state)
+        await handle_gift_catalog(
+            callback,
+            db_user,
+            db,
+            state,
+            expected_data=data,
+            expected_state=selection_state,
+        )
         return
 
-    await _render_and_show_periods(callback, tariff_id, db_user, db, state)
+    await _render_and_show_periods(
+        callback,
+        tariff_id,
+        db_user,
+        db,
+        state,
+        expected_data=data,
+        expected_state=selection_state,
+    )
 
 
 async def handle_gift_cancel(

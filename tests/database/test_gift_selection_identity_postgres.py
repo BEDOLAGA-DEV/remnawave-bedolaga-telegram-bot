@@ -104,8 +104,15 @@ async def test_second_selection_while_first_result_waits_has_separate_idempotent
         try:
             await asyncio.wait_for(delivering.wait(), 10)
             tariff_id, days = (2, 30) if change == 'tariff' else (1, 90)
-            await state.set_state(gift.GiftPurchaseStates.selecting_period)
-            await state.update_data(gift_tariff_id=tariff_id)
+            navigation = SimpleNamespace(
+                data=f'gift_tariff:{tariff_id}' if change == 'tariff' else 'gift_back_periods',
+                message=SimpleNamespace(edit_text=AsyncMock()),
+                answer=AsyncMock(),
+            )
+            navigate = gift.handle_gift_tariff_select if change == 'tariff' else gift.handle_gift_back_periods
+            await navigate(navigation, user, db, state)
+            assert await state.get_state() == gift.GiftPurchaseStates.selecting_period.state
+            assert user.balance_kopeks == 900
             second_callback = SimpleNamespace(
                 data=f'gift_period:{tariff_id}:{days}',
                 message=SimpleNamespace(edit_text=AsyncMock()),
