@@ -923,6 +923,10 @@ async def _auto_purchase_tariff(
     # Lock user BEFORE price computation to prevent TOCTOU on promo offer
     from app.database.crud.user import lock_user_for_pricing
 
+    # Resolve the source only after acquiring the wallet lock. A concurrent
+    # deletion/ownership change may have invalidated an earlier ORM instance.
+    user = await lock_user_for_pricing(db, user.id)
+
     if settings.is_multi_tariff_enabled():
         from app.database.crud.subscription import get_active_subscriptions_by_user_id
 
@@ -955,8 +959,6 @@ async def _auto_purchase_tariff(
             existing_subscription = await get_subscription_by_user_and_tariff(
                 db, user.id, tariff_id, include_inactive=True
             )
-
-    user = await lock_user_for_pricing(db, user.id)
 
     if (
         settings.is_multi_tariff_enabled()
