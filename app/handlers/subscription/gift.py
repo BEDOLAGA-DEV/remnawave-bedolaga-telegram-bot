@@ -667,6 +667,7 @@ async def handle_gift_confirm(
 
     texts = get_texts(db_user.language)
     data = await state.get_data()
+    selection_state = await state.get_state()
     tariff_id = data.get('gift_tariff_id')
     period_days = data.get('gift_period_days')
     expected_price_kopeks = data.get('gift_expected_price_kopeks')
@@ -715,7 +716,10 @@ async def handle_gift_confirm(
             source='bot',
         )
     except GiftPriceChangedError as err:
-        # Update FSM with fresh price, retain checkout for re-confirmation
+        # A completed old request must not change a newer selection.
+        if await state.get_data() != data or await state.get_state() != selection_state:
+            await callback.answer()
+            return
         await state.update_data(
             gift_expected_price_kopeks=err.fresh_quote.final_price_kopeks,
         )
@@ -742,7 +746,7 @@ async def handle_gift_confirm(
             'return_to_cart': True,
             'user_id': db_user.id,
         }
-        if await state.get_data() != data:
+        if await state.get_data() != data or await state.get_state() != selection_state:
             await callback.answer()
             return
         saved = await user_cart_service.save_gift_cart_if_current(db_user.id, cart_data, original_cart)
@@ -784,6 +788,9 @@ async def handle_gift_confirm(
         await callback.answer()
         return
     except GiftPurchaseRestrictedError:
+        if await state.get_data() != data or await state.get_state() != selection_state:
+            await callback.answer()
+            return
         await state.clear()
         await callback.answer(
             texts.t('GIFT_PURCHASE_RESTRICTED_ERROR', '❌ Покупка подписок недоступна для вашего аккаунта.'),
@@ -791,6 +798,9 @@ async def handle_gift_confirm(
         )
         return
     except GiftFeatureDisabledError:
+        if await state.get_data() != data or await state.get_state() != selection_state:
+            await callback.answer()
+            return
         await state.clear()
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
@@ -798,6 +808,9 @@ async def handle_gift_confirm(
         )
         return
     except GiftTariffUnavailableError:
+        if await state.get_data() != data or await state.get_state() != selection_state:
+            await callback.answer()
+            return
         await state.clear()
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -816,6 +829,9 @@ async def handle_gift_confirm(
         await callback.answer()
         return
     except GiftPeriodUnavailableError:
+        if await state.get_data() != data or await state.get_state() != selection_state:
+            await callback.answer()
+            return
         await state.clear()
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -852,6 +868,9 @@ async def handle_gift_confirm(
     if saved_cart:
         await user_cart_service.delete_processed_cart(db_user.id, saved_cart)
 
+    if await state.get_data() != data or await state.get_state() != selection_state:
+        await callback.answer()
+        return
     text, keyboard = build_gift_result_presentation(
         language=db_user.language,
         purchase_result=result,
@@ -860,7 +879,10 @@ async def handle_gift_confirm(
     )
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
     await callback.answer()
-    await state.clear()
+    # Preserve retry data if delivery fails, and a new selection if delivery
+    # yields to another callback before the completed checkout is cleared.
+    if await state.get_data() == data and await state.get_state() == selection_state:
+        await state.clear()
 
 
 async def handle_return_to_gift_cart(
