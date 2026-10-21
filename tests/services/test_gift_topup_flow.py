@@ -104,6 +104,11 @@ def test_cart_service(mock_redis):
         await service.delete_user_cart(user_id)
         return await service.save_user_cart(user_id, replacement)
 
+    async def save_gift(user_id, cart, original):
+        assert await service.get_user_cart(user_id) == original
+        return await service.save_user_cart(user_id, cart)
+
+    service.save_gift_cart_if_current = AsyncMock(side_effect=save_gift)
     service.delete_processed_cart = AsyncMock(side_effect=cleanup)
     service.update_processed_global_cart = AsyncMock(side_effect=update)
     return service

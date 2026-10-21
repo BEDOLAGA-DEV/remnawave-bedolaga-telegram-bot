@@ -104,6 +104,68 @@ class UserCartService:
             logger.error('🛒 Ошибка сохранения корзины пользователя', user_id=user_id, error=e)
             return False
 
+    async def save_gift_cart_if_current(
+        self, user_id: int, cart_data: dict[str, Any], original: dict[str, Any] | None
+    ) -> bool:
+        """Publish a confirmed gift and its intent only over the captured global snapshot.
+
+        A fresh explicit gift confirmation may replace the original global cart;
+        independent subscription aliases and permissions are never changed.
+        """
+        client = self._get_redis_client()
+        if (
+            client is None
+            or cart_data.get('cart_mode') != 'gift_purchase'
+            or cart_data.get('subscription_id') is not None
+        ):
+            return False
+        try:
+            cart_ttl = settings.CART_TTL_SECONDS
+            intent_ttl = settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS
+            if cart_ttl <= 0 or intent_ttl <= 0 or not cart_data.get('return_to_cart'):
+                return False
+            replacement = {**cart_data, '_cart_revision': uuid4().hex}
+            script = """
+                local raw = redis.call('GET', KEYS[1])
+                if ARGV[1] == 'absent' then
+                    if raw then return 0 end
+                else
+                    if not raw then return 0 end
+                    if ARGV[3] == '' then
+                        if raw ~= ARGV[2] then return 0 end
+                    else
+                        local ok, data = pcall(cjson.decode, raw)
+                        if not ok or type(data) ~= 'table' or data['_cart_revision'] ~= ARGV[3] then
+                            return 0
+                        end
+                    end
+                end
+                redis.call('SET', KEYS[1], ARGV[4], 'EX', ARGV[5])
+                redis.call('SET', KEYS[2], ARGV[6], 'EX', ARGV[7])
+                return 1
+            """
+            saved = bool(
+                await client.eval(
+                    script,
+                    2,
+                    f'user_cart:{user_id}',
+                    self._topup_intent_key(user_id),
+                    'absent' if original is None else 'present',
+                    json.dumps(original, ensure_ascii=False),
+                    (original or {}).get('_cart_revision') or '',
+                    json.dumps(replacement, ensure_ascii=False),
+                    cart_ttl,
+                    replacement['_cart_revision'],
+                    intent_ttl,
+                )
+            )
+            if saved:
+                cart_data.update(replacement)
+            return saved
+        except Exception as error:
+            logger.error('Ошибка условного сохранения подарочной корзины', user_id=user_id, error=error)
+            return False
+
     async def get_user_cart(self, user_id: int) -> dict[str, Any] | None:
         """
         Получить корзину пользователя из Redis.

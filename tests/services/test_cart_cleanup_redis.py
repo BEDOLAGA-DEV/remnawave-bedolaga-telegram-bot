@@ -662,3 +662,112 @@ async def test_manual_gift_shortfall_resume_preserves_new_selection(carts, monke
         assert 0 < await client.pttl(f'cart_topup_intent:{uid}') <= 20000
         assert await service.has_topup_intent(uid, current)
         callback.message.edit_text.assert_awaited_once()
+
+
+@pytest.mark.parametrize('initial', ['absent', 'gift', 'subscription'])
+@pytest.mark.parametrize('change', ['none', 'gift', 'subscription', 'fsm'])
+async def test_initial_gift_shortfall_does_not_replace_new_checkout(carts, monkeypatch, initial, change):
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    from app.handlers.subscription import gift
+    from app.services.gift_purchase_service import GiftInsufficientBalanceError
+
+    service, uid, _ = carts
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    monkeypatch.setattr(gift, 'resolve_gift_claim_channel', AsyncMock(return_value=('test_bot', None)))
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    if initial == 'absent':
+        await service.delete_global_cart_only(uid)
+    else:
+        await service.save_user_cart(
+            uid,
+            {
+                'cart_mode': 'gift_purchase' if initial == 'gift' else 'tariff_purchase',
+                'gift_checkout_id': 'old',
+                'subscription_id': 20 if initial == 'subscription' else None,
+                'return_to_cart': True,
+            },
+        )
+    original = await service.get_user_cart(uid)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=uid, user_id=uid))
+    selection = {
+        'gift_checkout_id': 'old',
+        'gift_tariff_id': 1,
+        'gift_period_days': 30,
+        'gift_expected_price_kopeks': 100,
+    }
+    await state.set_data(selection)
+    await state.set_state('confirming')
+    replacement = None
+
+    async def purchase(**kwargs):
+        nonlocal replacement
+        if change in ('gift', 'subscription'):
+            await service.save_user_cart(
+                uid,
+                {
+                    'cart_mode': 'gift_purchase' if change == 'gift' else 'tariff_purchase',
+                    'gift_checkout_id': 'new',
+                    'subscription_id': 20 if change == 'subscription' else None,
+                    'return_to_cart': True,
+                },
+            )
+            replacement = await service.get_user_cart(uid)
+        if change == 'fsm':
+            await state.set_data({'gift_checkout_id': 'new'})
+        raise GiftInsufficientBalanceError(100, 50)
+
+    monkeypatch.setattr(gift, 'purchase_gift_from_balance', purchase)
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock(), bot=AsyncMock())
+    await gift.handle_gift_confirm(callback, SimpleNamespace(id=uid, language='ru'), AsyncMock(), state)
+    current = await service.get_user_cart(uid)
+    assert await service.has_topup_intent(uid, independent)
+    if change != 'none':
+        assert current == (replacement if change != 'fsm' else original)
+        callback.message.edit_text.assert_not_awaited()
+    else:
+        assert current['gift_checkout_id'] == 'old'
+        assert current['missing_amount'] == 50
+        assert await service.has_topup_intent(uid, current)
+        callback.message.edit_text.assert_awaited_once()
+    assert await state.get_data() == ({'gift_checkout_id': 'new'} if change == 'fsm' else selection)
+
+
+@pytest.mark.parametrize('original_kind', ['absent', 'legacy', 'versioned'])
+@pytest.mark.parametrize('replaced', [False, True])
+async def test_conditional_gift_publication_checks_snapshot_at_redis_boundary(carts, original_kind, replaced):
+    service, uid, client = carts
+    original = None
+    if original_kind == 'legacy':
+        original = {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'legacy'}
+        await client.set(f'user_cart:{uid}', json.dumps(original, ensure_ascii=False), ex=60)
+    elif original_kind == 'versioned':
+        await service.save_user_cart(uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'original'})
+        original = await service.get_user_cart(uid)
+    replacement = None
+    if replaced:
+        await service.save_user_cart(
+            uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'new', 'return_to_cart': True}
+        )
+        replacement = await service.get_user_cart(uid)
+    gift_cart = {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'submitted', 'return_to_cart': True}
+    assert await service.save_gift_cart_if_current(uid, gift_cart, original) is (not replaced)
+    current = await service.get_user_cart(uid)
+    if replaced:
+        assert current == replacement
+        assert '_cart_revision' not in gift_cart
+    else:
+        assert current == gift_cart
+        assert current['gift_checkout_id'] == 'submitted'
+    assert await service.has_topup_intent(uid, current)
+
+
+async def test_conditional_gift_publication_fails_closed_without_redis(carts):
+    service, uid, _ = carts
+    service._redis_client = None
+    assert not await service.save_gift_cart_if_current(
+        uid, {'cart_mode': 'gift_purchase', 'return_to_cart': True}, None
+    )

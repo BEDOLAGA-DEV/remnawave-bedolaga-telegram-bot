@@ -681,9 +681,10 @@ async def handle_gift_confirm(
     checkout_id = data.get('gift_checkout_id')
     if not checkout_id:
         checkout_id = uuid.uuid4().hex
-        await state.update_data(gift_checkout_id=checkout_id)
+        data = await state.update_data(gift_checkout_id=checkout_id)
 
-    saved_cart = await user_cart_service.get_user_cart(db_user.id)
+    original_cart = await user_cart_service.get_user_cart(db_user.id)
+    saved_cart = original_cart
     if not (
         saved_cart
         and saved_cart.get('cart_mode') == 'gift_purchase'
@@ -741,7 +742,10 @@ async def handle_gift_confirm(
             'return_to_cart': True,
             'user_id': db_user.id,
         }
-        saved = await user_cart_service.save_user_cart(db_user.id, cart_data)
+        if await state.get_data() != data:
+            await callback.answer()
+            return
+        saved = await user_cart_service.save_gift_cart_if_current(db_user.id, cart_data, original_cart)
         if not saved:
             req_str = texts.format_price(err.required_kopeks)
             avail_str = texts.format_price(err.available_kopeks)
