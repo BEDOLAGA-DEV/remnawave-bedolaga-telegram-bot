@@ -1588,6 +1588,9 @@
 - `app/services/kassa_ai_service.py` — Python-модуль
   Классы: `KassaAiService` (10 методов)
   Функции: `get_public_ip` — Получает публичный IP сервера.
+- `app/services/landing_payment_records.py` — Python-модуль
+  Классы: нет
+  Функции: `get_landing_payment`, `fetch_landing_payments`, `exclude_landing_duplicates` — Match by purchase token/provider, never by amount, user or numeric row id.
 - `app/services/lava_recurrent.py` — Python-модуль
   Классы: нет
   Функции: `build_recurrent_order_id` — orderId подписки: префикс + id локальной подписки + случайный хвост., `is_recurrent_order_id`, `resolve_product_charge_days` — Шаг продления по данным продукта Lava., `normalize_remote_status` — Приводит статус подписки из ``subscription/status`` к нормализованному виду., `lava_reconcile_decision` — Новый локальный статус по данным Lava, либо None — не трогать.
@@ -3775,6 +3778,9 @@
 - `tests/database/test_admin_expiry_reset_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
   Функции: `test_reset_does_not_regain_paid_days_from_panel`, `test_expired_update_sends_closing_date_in_first_patch`, `test_reset_preserves_local_reset_when_expiry_patch_fails`
+- `tests/database/test_admin_landing_payments_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_paid_landing_purchase_visible_without_provider_user`, `test_landing_deduplicates_provider_and_transaction_but_preserves_other_payment`, `test_internal_and_unpaid_purchases_are_excluded`, `test_cryptobot_payload_does_not_duplicate_landing_purchase`, `test_confirmed_gift_replay_and_http_details_keep_source_identity`, `test_payment_confirmed_between_admin_queries_is_not_duplicated`
 - `tests/database/test_admin_recurring_payments_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_real_recurring_callback_is_visible_once_after_replay`, `test_recurring_read_queries_exclude_wallet_deposits_and_old_charges`

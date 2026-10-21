@@ -45,6 +45,7 @@ from app.database.models import (
     WataPayment,
     YooKassaPayment,
 )
+from app.services.landing_payment_records import exclude_landing_duplicates, fetch_landing_payments
 from app.services.payment_verification_service import (
     PendingPayment,
     _build_record,
@@ -1250,6 +1251,17 @@ async def search_payments(
     for batch in provider_results:
         all_records.extend(batch)
 
+    all_records.extend(
+        await fetch_landing_payments(
+            db,
+            params.cutoff,
+            upper_bound=params.upper_bound,
+            search=params.search,
+            method=params.method_filter,
+            limit=MAX_RECORDS_PER_PROVIDER,
+        )
+    )
+    all_records = await exclude_landing_duplicates(db, all_records)
     # Apply status filter in Python (status classification depends on provider logic)
     if params.status_filter != StatusFilter.ALL:
         all_records = [r for r in all_records if _classify_status(r) == params.status_filter]
@@ -1297,6 +1309,19 @@ async def search_payments_stats(
         all_records = []
         for search_fn in _PROVIDER_SEARCH_MAP.values():
             all_records.extend(await search_fn(db, stats_params))
+
+    all_records.extend(
+        await fetch_landing_payments(
+            db,
+            stats_params.cutoff,
+            upper_bound=stats_params.upper_bound,
+            search=stats_params.search,
+            method=stats_params.method_filter,
+            limit=MAX_RECORDS_PER_PROVIDER,
+        )
+    )
+
+    all_records = await exclude_landing_duplicates(db, all_records)
 
     # Classify
     pending_count = 0

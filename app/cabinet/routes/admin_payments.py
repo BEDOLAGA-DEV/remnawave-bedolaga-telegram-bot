@@ -2,6 +2,7 @@
 
 import math
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -43,6 +44,7 @@ class PendingPaymentResponse(BaseModel):
     """Pending payment details."""
 
     id: int
+    source: Literal['provider', 'landing'] = 'provider'
     method: str
     method_display: str
     identifier: str
@@ -301,8 +303,9 @@ def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
     status_emoji, status_text = _get_status_info(record)
     return PendingPaymentResponse(
         id=record.local_id,
+        source=record.source,
         method=record.method.value,
-        method_display=method_display_name(record.method),
+        method_display=method_display_name(record.method) + (' · Лендинг' if record.source == 'landing' else ''),
         identifier=record.identifier,
         amount_kopeks=record.amount_kopeks,
         amount_rubles=record.amount_kopeks / 100,
@@ -521,6 +524,7 @@ async def search_payments_stats_endpoint(
 async def get_pending_payment_details(
     method: str,
     payment_id: int,
+    source: Literal['provider', 'landing'] = 'provider',
     admin: User = Depends(require_permission('payments:read')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -533,7 +537,7 @@ async def get_pending_payment_details(
             detail='Invalid payment method',
         )
 
-    record = await get_payment_record(db, payment_method, payment_id)
+    record = await get_payment_record(db, payment_method, payment_id, source=source)
 
     if not record:
         raise HTTPException(
@@ -548,6 +552,7 @@ async def get_pending_payment_details(
 async def check_payment_status(
     method: str,
     payment_id: int,
+    source: Literal['provider', 'landing'] = 'provider',
     admin: User = Depends(require_permission('payments:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -561,7 +566,7 @@ async def check_payment_status(
         )
 
     # Get current record
-    record = await get_payment_record(db, payment_method, payment_id)
+    record = await get_payment_record(db, payment_method, payment_id, source=source)
 
     if not record:
         raise HTTPException(
