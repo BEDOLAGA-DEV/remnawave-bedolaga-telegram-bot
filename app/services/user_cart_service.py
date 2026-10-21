@@ -67,6 +67,7 @@ class UserCartService:
         try:
             if cart_data.get('cart_mode') == 'tariff_purchase':
                 cart_data.setdefault('tariff_checkout_id', uuid4().hex)
+            cart_data['_cart_revision'] = uuid4().hex
             key = f'user_cart:{user_id}'
             json_data = json.dumps(cart_data, ensure_ascii=False)
             effective_ttl = ttl if ttl is not None else settings.CART_TTL_SECONDS
@@ -107,7 +108,7 @@ class UserCartService:
                     await client.setex(
                         self._topup_intent_key(user_id),
                         settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS,
-                        '1',
+                        cart_data['_cart_revision'],
                     )
                 except Exception as intent_error:
                     logger.warning(
@@ -193,6 +194,55 @@ class UserCartService:
             return bool(result)
         except Exception as e:
             logger.error('Ошибка удаления корзины пользователя', user_id=user_id, error=e)
+            return False
+
+    async def delete_processed_cart(self, user_id: int, cart_data: dict[str, Any]) -> bool:
+        """Atomically delete only aliases and intent belonging to this saved revision.
+
+        Old carts without a revision use exact serialized-payload comparison;
+        changed legacy payloads are retained rather than risking another intent.
+        """
+        client = self._get_redis_client()
+        if client is None:
+            return False
+        try:
+            sub_id = int(cart_data.get('subscription_id') or 0)
+            script = """
+                local function matches(key)
+                    local raw = redis.call('GET', key)
+                    if not raw then return false end
+                    if ARGV[2] == '' then return raw == ARGV[1] end
+                    local ok, data = pcall(cjson.decode, raw)
+                    return ok and type(data) == 'table' and data['_cart_revision'] == ARGV[2]
+                end
+                local removed = 0
+                local global_matches = matches(KEYS[1])
+                if global_matches then
+                    removed = removed + redis.call('DEL', KEYS[1])
+                end
+                local intent = redis.call('GET', KEYS[3])
+                if (ARGV[2] ~= '' and intent == ARGV[2]) or
+                   (global_matches and ARGV[2] == '' and intent == '1') then
+                    redis.call('DEL', KEYS[3])
+                end
+                if ARGV[3] == '1' and matches(KEYS[2]) then
+                    removed = removed + redis.call('DEL', KEYS[2])
+                end
+                return removed
+            """
+            result = await client.eval(
+                script,
+                3,
+                f'user_cart:{user_id}',
+                self._subscription_cart_key(user_id, sub_id),
+                self._topup_intent_key(user_id),
+                json.dumps(cart_data, ensure_ascii=False),
+                cart_data.get('_cart_revision') or '',
+                '1' if sub_id else '0',
+            )
+            return bool(result)
+        except Exception as error:
+            logger.error('Ошибка условной очистки обработанной корзины', user_id=user_id, error=error)
             return False
 
     async def delete_global_cart_only(self, user_id: int) -> bool:
@@ -310,6 +360,7 @@ class UserCartService:
             return False
 
         try:
+            cart_data['_cart_revision'] = uuid4().hex
             key = self._subscription_cart_key(user_id, subscription_id)
             json_data = json.dumps(cart_data, ensure_ascii=False)
             effective_ttl = ttl if ttl is not None else settings.CART_TTL_SECONDS

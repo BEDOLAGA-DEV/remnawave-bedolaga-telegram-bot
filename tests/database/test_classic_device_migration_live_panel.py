@@ -78,6 +78,7 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
         config = await request('GET', '/api/subscription-settings')
         assert config['hwidSettings']['enabled'], 'Enable HWID checks on the disposable panel first'
         accounts = []
+        cart_redis_client = None
         now = datetime.now(UTC)
         try:
             for index, cap in enumerate([10, 7]):
@@ -265,7 +266,20 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                     monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
                     cart = UserCartService()
                     cart._initialized = True
-                    cart._redis_client = CartStorage()
+                    redis_url = os.environ.get('TEST_CART_REDIS_URL')
+                    if redis_url:
+                        from tests.fixtures.real_redis import ensure_real_redis
+
+                        cart_redis_client = ensure_real_redis(monkeypatch).create_redis(redis_url)
+                        cart._redis_client = cart_redis_client
+                    else:
+                        cart._redis_client = CartStorage()
+
+                        async def cleanup(user_id, processed):
+                            await cart.delete_subscription_cart(user_id, processed['subscription_id'])
+                            return await cart.delete_user_cart(user_id)
+
+                        cart.delete_processed_cart = AsyncMock(side_effect=cleanup)
                     monkeypatch.setattr(auto, 'user_cart_service', cart)
                     monkeypatch.setattr(common, 'user_cart_service', cart)
                     price = 301 + (5 - base) * 137
@@ -402,6 +416,9 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                 assert (await db.get(Subscription, 20)).device_limit == 7
                 yield setup, old, request
         finally:
+            if cart_redis_client is not None:
+                await cart_redis_client.delete('user_cart:1', 'user_cart:1:sub:10', 'cart_topup_intent:1')
+                await cart_redis_client.aclose()
             for account in reversed(accounts):
                 await request('DELETE', f'/api/users/{account["id"]}')
 

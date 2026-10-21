@@ -5,12 +5,14 @@ credit, common dispatch, pricing, purchase persistence and ledgers are real.
 """
 
 import fnmatch
+import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 
 from app.config import settings
@@ -31,9 +33,10 @@ from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import UserCartService
 from tests.database.test_classic_device_migration_postgres import Panel
 from tests.fixtures.postgres_db import postgres_session
+from tests.fixtures.real_redis import ensure_real_redis
 
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 
 class CartStorage:
@@ -57,9 +60,35 @@ class CartStorage:
         return 0, [key for key in self.values if fnmatch.fnmatch(key, match)]
 
 
+@pytest_asyncio.fixture
+async def cart_service(monkeypatch):
+    service = UserCartService()
+    url = os.environ.get('TEST_CART_REDIS_URL')
+    service._redis_client = ensure_real_redis(monkeypatch).create_redis(url) if url else CartStorage()
+    service._initialized = True
+    if not url:
+        # Sequential storage boundary for the standalone PostgreSQL profile;
+        # the combined Redis/PostgreSQL profile executes the real Lua script.
+        async def cleanup(user_id, processed):
+            await service.delete_subscription_cart(user_id, processed['subscription_id'])
+            return await service.delete_user_cart(user_id)
+
+        service.delete_processed_cart = AsyncMock(side_effect=cleanup)
+    try:
+        yield service
+    finally:
+        if url:
+            await service._redis_client.delete(
+                'user_cart:1', 'user_cart:1:sub:10', 'user_cart:1:sub:20', 'cart_topup_intent:1'
+            )
+            await service._redis_client.aclose()
+
+
 @pytest.mark.parametrize('provider', ['lava', 'cashera', 'platega'])
 @pytest.mark.parametrize('cart_case', ['global', 'per_subscription', 'daily_neighbor', 'stale_intent'])
-async def test_topup_finalizer_purchases_selected_classic(postgres_database, monkeypatch, provider, cart_case):
+async def test_topup_finalizer_purchases_selected_classic(
+    postgres_database, monkeypatch, provider, cart_case, cart_service
+):
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
     monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
@@ -68,9 +97,7 @@ async def test_topup_finalizer_purchases_selected_classic(postgres_database, mon
     monkeypatch.setattr(settings, 'MAX_DEVICES_LIMIT', 10)
     monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
     monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
-    service = UserCartService()
-    service._redis_client = CartStorage()
-    service._initialized = True
+    service = cart_service
     monkeypatch.setattr(common, 'user_cart_service', service)
     monkeypatch.setattr(auto, 'user_cart_service', service)
     now = datetime.now(UTC)

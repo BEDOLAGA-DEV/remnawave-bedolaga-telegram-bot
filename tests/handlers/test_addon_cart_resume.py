@@ -61,6 +61,15 @@ def cart_service():
     service = UserCartService()
     service._redis_client = _MockRedis()
     service._initialized = True
+
+    # This suite tests purchase/dispatch, with a sequential Redis boundary.
+    # Atomic Lua semantics and replacement races run against real Valkey in
+    # test_cart_cleanup_redis.py; do not emulate the script in this fake.
+    async def completed_cart_cleanup(user_id, processed):
+        assert await service.get_user_cart(user_id) == processed
+        return await service.delete_user_cart(user_id)
+
+    service.delete_processed_cart = AsyncMock(side_effect=completed_cart_cleanup)
     return service
 
 
@@ -89,6 +98,7 @@ async def test_topup_auto_purchases_addon_cart(monkeypatch, cart_service):
 
     async def fake_process(db, user, cart_data, *, bot=None, manual=False):
         processed.append({'mode': cart_data['cart_mode'], 'manual': manual})
+        await auto_service._delete_cart_for_subscription(user.id, cart_data)
         return True
 
     monkeypatch.setattr(auto_service, '_process_single_cart', fake_process)

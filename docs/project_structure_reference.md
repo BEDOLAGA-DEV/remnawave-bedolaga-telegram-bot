@@ -1872,7 +1872,7 @@
   Классы: нет
   Функции: `pick_avatar_file_id` — Самый маленький размер, который ещё не мылится в шапке; иначе самый крупный., `get_avatar_file_id` — file_id текущего фото профиля или None. Никогда не бросает: аватар — не повод ронять кабинет.
 - `app/services/user_cart_service.py` — Python-модуль
-  Классы: `UserCartService` (15 методов)
+  Классы: `UserCartService` (16 методов)
   Функции: нет
 - `app/services/user_reminders/`
 - `app/services/user_revival_service.py` — Python-модуль
@@ -3936,7 +3936,7 @@
   Функции: `test_selected_classic_rejects_owned_alive_target_before_quote`, `test_inactive_or_foreign_target_does_not_block_selected_classic`
 - `tests/database/test_topup_classic_cart_postgres.py` — Python-модуль
   Классы: `CartStorage` (6 методов)
-  Функции: `test_topup_finalizer_purchases_selected_classic`
+  Функции: `cart_service`, `test_topup_finalizer_purchases_selected_classic`
 - `tests/database/test_unpaid_trial_visibility_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_unpaid_trial_invoice_stays_hidden_after_back`
@@ -4556,6 +4556,9 @@
 - `tests/services/test_campaign_bonus_expired_user.py` — Python-модуль
   Классы: нет
   Функции: `test_apply_campaign_bonus_refreshes_user_before_attribute_access` — Пользователь перечитывается асинхронно на входе — до любых sync-чтений, `test_apply_campaign_bonus_survives_refresh_failure` — Сбой refresh (например, PendingRollbackError) не роняет начисление —
+- `tests/services/test_cart_cleanup_redis.py` — Python-модуль
+  Классы: нет
+  Функции: `carts`, `test_finished_cart_does_not_delete_replacement`, `test_completed_global_and_subscription_aliases_are_both_removed`, `test_new_save_of_same_options_is_preserved`, `test_dispatch_completion_preserves_new_topup_intent`, `test_legacy_cart_cleanup_compares_payload`, `test_repriced_revision_still_cleans_its_aliases`, `test_subscription_only_cleanup_consumes_its_own_intent`
 - `tests/services/test_cashera_import_cycle.py` — Python-модуль
   Классы: нет
   Функции: `test_module_is_not_on_import_cycle`

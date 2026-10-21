@@ -175,7 +175,7 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
     )
     delete_cart_mock = AsyncMock()
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.user_cart_service.delete_user_cart',
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_processed_cart',
         delete_cart_mock,
     )
     clear_draft_mock = AsyncMock()
@@ -215,7 +215,7 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
     result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=bot)
 
     assert result is True
-    delete_cart_mock.assert_awaited_once_with(user.id)
+    delete_cart_mock.assert_awaited_once_with(user.id, cart_data)
     clear_draft_mock.assert_awaited_once_with(user.id)
     bot.send_message.assert_awaited()
     admin_service_mock.send_subscription_purchase_notification.assert_awaited()
@@ -295,7 +295,7 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     # Корзина продления привязана к подписке -> удаляется per-subscription ключ
     delete_cart_mock = AsyncMock()
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.user_cart_service.delete_subscription_cart',
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_processed_cart',
         delete_cart_mock,
     )
     monkeypatch.setattr(
@@ -395,7 +395,7 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     assert subscription.device_limit == 2
     assert subscription.traffic_limit_gb == 500
     assert 'squad-b' in subscription.connected_squads
-    delete_cart_mock.assert_awaited_once_with(user.id, subscription.id)
+    delete_cart_mock.assert_awaited_once_with(user.id, cart_data)
     clear_draft_mock.assert_awaited_once_with(user.id)
     admin_service_mock.send_subscription_extension_notification.assert_awaited()
     bot.send_message.assert_awaited()
