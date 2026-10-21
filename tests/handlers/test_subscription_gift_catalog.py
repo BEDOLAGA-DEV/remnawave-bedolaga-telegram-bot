@@ -46,6 +46,7 @@ from app.handlers.subscription.purchase import show_subscription_info
 from app.keyboards.inline import get_subscription_keyboard
 from app.services.gift_purchase_service import GiftQuote, GiftTariffOffer
 from app.states import GiftPurchaseStates
+from tests.fixtures.gift_callbacks import bind_gift_action
 
 
 def _callbacks(keyboard: InlineKeyboardMarkup) -> list[str]:
@@ -256,7 +257,7 @@ class TestSubscriptionGiftCatalogFlow:
             reply_markup = mock_callback.message.edit_text.call_args[1].get('reply_markup')
             assert reply_markup is not None
             assert 'gift_enter_code' in _callbacks(reply_markup)
-            assert 'gift_cancel' in _callbacks(reply_markup)
+            assert any(value.startswith('gift_cancel:') for value in _callbacks(reply_markup))
 
     @pytest.mark.asyncio
     async def test_gift_catalog_renders_offers_and_sets_state(self, mock_callback, mock_db_user, mock_db, memory_state):
@@ -295,7 +296,7 @@ class TestSubscriptionGiftCatalogFlow:
             assert 'gift_tariff:1' in callbacks
             assert 'gift_tariff:2' in callbacks
             assert 'gift_enter_code' in callbacks
-            assert 'gift_cancel' in callbacks
+            assert any(value.startswith('gift_cancel:') for value in callbacks)
 
             # FSM state check
             assert await memory_state.get_state() == GiftPurchaseStates.selecting_tariff.state
@@ -341,7 +342,7 @@ class TestSubscriptionGiftCatalogFlow:
             assert 'gift_period:1:30' in callbacks
             assert 'gift_period:1:90' in callbacks
             assert 'gift_back_tariffs' in callbacks
-            assert 'gift_cancel' in callbacks
+            assert any(value.startswith('gift_cancel:') for value in callbacks)
 
             assert await memory_state.get_state() == GiftPurchaseStates.selecting_period.state
             data = await memory_state.get_data()
@@ -388,9 +389,9 @@ class TestSubscriptionGiftCatalogFlow:
             assert '<VIP>' not in text
 
             callbacks = _callbacks(reply_markup)
-            assert 'gift_confirm' in callbacks
+            assert any(value.startswith('gift_confirm:') for value in callbacks)
             assert 'gift_back_periods' in callbacks
-            assert 'gift_cancel' in callbacks
+            assert any(value.startswith('gift_cancel:') for value in callbacks)
 
             assert await memory_state.get_state() == GiftPurchaseStates.confirming_purchase.state
             data = await memory_state.get_data()
@@ -525,6 +526,7 @@ class TestSubscriptionGiftCatalogFlow:
         mock_callback.data = 'gift_cancel'
 
         with patch('app.handlers.subscription.gift.show_subscription_info', AsyncMock()) as mock_show_sub:
+            await bind_gift_action(mock_callback, memory_state, 'gift_cancel')
             await handle_gift_cancel(mock_callback, mock_db_user, mock_db, memory_state)
 
             assert await memory_state.get_state() is None

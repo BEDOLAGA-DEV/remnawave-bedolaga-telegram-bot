@@ -2193,6 +2193,7 @@
   "GIFT_TARIFF_UNAVAILABLE": "所选套餐不可作为礼物赠送。",
   "GIFT_PERIOD_UNAVAILABLE": "所选周期不可用。",
   "GIFT_INVALID_SELECTION": "选择参数无效。",
+  "GIFT_SELECTION_EXPIRED": "❌ 此选择已失效，请重新打开礼物。",
   "GIFT_GENERIC_ERROR": "处理礼物时出错，请稍后重试。",
   "GIFT_TRAFFIC_UNLIMITED": "∞ (无限制)",
   "GIFT_PURCHASE_SUCCESS_TEXT": "🎁 <b>礼物已成功创建！</b>\n\n📦 套餐：<b>{tariff_name}</b>\n📅 时长：<b>{period_days} 天</b>\n📊 流量：<b>{traffic}</b>\n📱 设备数：<b>{devices}</b>\n🔑 礼物代码：<code>{public_code}</code>\n\n🔗 礼物链接：\n{claim_link}\n\n将此链接发送给接收者或使用下方的“发送礼物”按钮。接收者可一键激活订阅。",

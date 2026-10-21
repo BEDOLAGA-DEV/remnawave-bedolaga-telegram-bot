@@ -9,6 +9,7 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.handlers.subscription import gift
+from tests.fixtures.gift_callbacks import bind_gift_action
 
 
 @pytest.mark.asyncio
@@ -54,6 +55,7 @@ async def test_confirmation_preserves_selection_changed_during_purchase(monkeypa
 
     monkeypatch.setattr(gift, 'purchase_gift_from_balance', purchase)
     callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock(), bot=AsyncMock())
+    await bind_gift_action(callback, state, 'gift_confirm')
     await gift.handle_gift_confirm(callback, SimpleNamespace(id=42, language='ru'), AsyncMock(), state)
     if changed != 'none':
         assert await state.get_data() == ({'gift_checkout_id': 'new'} if changed == 'data' else selection)
@@ -92,6 +94,7 @@ async def test_success_does_not_clear_selection_started_during_result_delivery(m
     callback = SimpleNamespace(
         message=SimpleNamespace(edit_text=AsyncMock(side_effect=deliver)), answer=AsyncMock(), bot=AsyncMock()
     )
+    await bind_gift_action(callback, state, 'gift_confirm')
     await gift.handle_gift_confirm(callback, SimpleNamespace(id=42, language='ru'), AsyncMock(), state)
     assert await state.get_state() == 'new_selection'
     assert await state.get_data() == {'gift_checkout_id': 'new'}
@@ -118,6 +121,7 @@ async def test_success_delivery_failure_keeps_checkout_for_idempotent_retry(monk
         bot=AsyncMock(),
     )
     with pytest.raises(RuntimeError, match='delivery failed'):
+        await bind_gift_action(callback, state, 'gift_confirm')
         await gift.handle_gift_confirm(callback, SimpleNamespace(id=42, language='ru'), AsyncMock(), state)
     assert await state.get_state() == 'confirming'
     assert await state.get_data() == selection

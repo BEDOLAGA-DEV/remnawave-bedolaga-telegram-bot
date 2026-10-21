@@ -13,6 +13,7 @@ import pytest_asyncio
 from app.config import settings
 from app.services import subscription_auto_purchase_service as auto
 from app.services.user_cart_service import UserCartService
+from tests.fixtures.gift_callbacks import bind_gift_action
 from tests.fixtures.real_redis import ensure_real_redis
 
 
@@ -537,23 +538,31 @@ async def test_manual_gift_cleanup_preserves_replacement(carts, monkeypatch, act
 
     callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock(), bot=AsyncMock())
     user = SimpleNamespace(id=uid, language='ru', telegram_id=None, balance_kopeks=1000)
-    state = AsyncMock()
-    state.get_data.return_value = {
-        'gift_checkout_id': 'old',
-        'gift_tariff_id': 1,
-        'gift_period_days': 30,
-        'gift_expected_price_kopeks': 100,
-        'gift_origin_callback': 'menu_subscription',
-    }
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=uid, user_id=uid))
+    await state.set_data(
+        {
+            'gift_checkout_id': 'old',
+            'gift_tariff_id': 1,
+            'gift_period_days': 30,
+            'gift_expected_price_kopeks': 100,
+            'gift_origin_callback': 'menu_subscription',
+        }
+    )
     db = AsyncMock()
     result = MagicMock()
     result.scalar_one_or_none.return_value = None
     db.execute.return_value = result
     if action == 'cancel':
         monkeypatch.setattr(service, 'get_user_cart', read_then_replace)
+        await bind_gift_action(callback, state, 'gift_cancel')
         await gift.handle_gift_cancel(callback, user, db, state)
     elif action == 'confirm':
         monkeypatch.setattr(gift, 'purchase_gift_from_balance', purchase)
+        await bind_gift_action(callback, state, 'gift_confirm')
         await gift.handle_gift_confirm(callback, user, db, state)
     else:
         monkeypatch.setattr(gift, 'quote_gift_purchase', quote)
@@ -722,6 +731,7 @@ async def test_initial_gift_shortfall_does_not_replace_new_checkout(carts, monke
 
     monkeypatch.setattr(gift, 'purchase_gift_from_balance', purchase)
     callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock(), bot=AsyncMock())
+    await bind_gift_action(callback, state, 'gift_confirm')
     await gift.handle_gift_confirm(callback, SimpleNamespace(id=uid, language='ru'), AsyncMock(), state)
     current = await service.get_user_cart(uid)
     assert await service.has_topup_intent(uid, independent)

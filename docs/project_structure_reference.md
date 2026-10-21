@@ -4044,6 +4044,9 @@
 - `tests/fixtures/dpichecker_fixtures.py` — Python-модуль
   Классы: нет
   Функции: `load_dpichecker_fixture` — {'status': int, 'body': ...} — ответ живого API после очистки.
+- `tests/fixtures/gift_callbacks.py` — Python-модуль
+  Классы: нет
+  Функции: `bind_gift_action`
 - `tests/fixtures/local_day.py` — Python-модуль
   Классы: нет
   Функции: `use_timezone` — Переключить settings.TIMEZONE на ``name`` и вернуть саму зону., `zone_where_local_date_differs_from_utc` — Зона, в которой прямо сейчас другая календарная дата, чем в UTC., `reset_local_timezone_cache` — Сбросить кэш зоны после теста, чтобы подмена не утекла в соседей.
@@ -4637,6 +4640,9 @@
 - `tests/services/test_full_sync_lock.py` — Python-модуль
   Классы: нет
   Функции: `test_second_full_sync_is_refused_while_first_runs`, `test_lock_is_released_after_a_failure`, `test_scheduler_sees_a_manual_full_sync_as_running`
+- `tests/services/test_gift_action_callbacks.py` — Python-модуль
+  Классы: нет
+  Функции: `action_payload` — Versioned callback contract, independent of handler admission checks., `test_old_gift_action_cannot_purchase_or_cancel_current_selection`, `test_bound_keyboard_keeps_labels_navigation_and_telegram_callback_limit`
 - `tests/services/test_gift_claim_notify.py` — Python-модуль
   Классы: нет
   Функции: `test_email_recipient_and_buyer_both_get_claim_link`, `test_telegram_recipient_is_not_auto_dmed_but_buyer_still_gets_link`, `test_send_failure_never_raises`, `test_non_gift_purchase_is_a_noop`, `test_email_recipient_gets_admin_override_when_saved` — Жалоба из «Багов»: шаблон письма нельзя было поменять со стандартного., `test_override_lookup_uses_the_gift_template_type_and_claim_context` — Override ищется под тем же типом, что и дефолт, и с тем же контекстом (ссылка на claim)., `test_buyer_backstop_uses_its_own_template_and_admin_override` — Письмо покупателю со ссылкой раньше было зашито в код на двух языках —, `test_disabled_types_are_not_sent` — Выключатель писем: отключённый тип пропускается, остальные уходят.
@@ -4648,7 +4654,7 @@
   Функции: `test_confirmation_preserves_selection_changed_during_purchase`, `test_success_does_not_clear_selection_started_during_result_delivery`, `test_success_delivery_failure_keeps_checkout_for_idempotent_retry`
 - `tests/services/test_gift_fsm_redis.py` — Python-модуль
   Классы: `MutationProbe` (6 методов)
-  Функции: `test_new_selection_survives_at_fsm_write_boundary`, `test_conditional_fsm_update_supports_absent_keys_and_configured_ttl`, `test_conditional_fsm_redis_failure_does_not_fall_back_to_unconditional_clear`, `test_legacy_checkout_identity_creation_cannot_overwrite_new_selection`, `test_gift_resume_cannot_overwrite_selection_at_fsm_write`, `test_conditional_fsm_transition_sets_both_ttls_and_preserves_other_fields`, `test_invalid_fsm_transition_ttl_never_partially_changes_selection`
+  Функции: `test_new_selection_survives_at_fsm_write_boundary`, `test_conditional_fsm_update_supports_absent_keys_and_configured_ttl`, `test_conditional_fsm_redis_failure_does_not_fall_back_to_unconditional_clear`, `test_legacy_checkout_identity_creation_cannot_overwrite_new_selection`, `test_gift_resume_cannot_overwrite_selection_at_fsm_write`, `test_conditional_fsm_transition_sets_both_ttls_and_preserves_other_fields`, `test_invalid_fsm_transition_ttl_never_partially_changes_selection`, `test_bound_cancel_preserves_changes_at_atomic_fsm_write`
 - `tests/services/test_gift_history_service.py` — Python-модуль
   Классы: нет
   Функции: `test_list_sender_gifts_source_neutral_and_status_filtering` — History returns bot-, cabinet-, and landing-origin gifts for the buyer,, `test_list_sender_gifts_stable_ordering_with_equal_timestamps` — Ordering must be strictly `created_at DESC, id DESC` for deterministic pagination., `test_list_sender_gifts_pagination_and_boundary_clamping` — Pagination metadata must be accurate and limit/offset parameters clamped., `test_list_sender_gifts_returns_more_than_legacy_fifty_item_cap` — The cabinet's 100-item request must not be silently truncated to the old 50-item cap., `test_list_sender_gifts_graceful_on_missing_deleted_tariff` — If a tariff was deleted (ON DELETE SET NULL), the history item must load gracefully., `test_safe_recipient_display_formatting` — Safe recipient display formats username or masked email without leaking private data (names, IDs)., `test_get_sender_gift_exact_owner_and_status_checks` — get_sender_gift returns the item only if buyer_id matches and status is eligible., `test_has_sender_gifts_lightweight_existence_query` — has_sender_gifts returns boolean indicating if buyer owns any eligible gifts., `test_gift_history_item_immutability_and_artifacts` — GiftHistoryItem is a frozen immutable dataclass that builds canonical claim artifacts., `test_gift_history_service_is_purely_read_only` — History queries must never modify database state or create transactions.

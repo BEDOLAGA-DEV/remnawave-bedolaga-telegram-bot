@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import DefaultKeyBuilder, StorageKey
 
 from app.handlers.subscription import gift
+from tests.fixtures.gift_callbacks import bind_gift_action
 from tests.services.test_cart_cleanup_redis import carts  # noqa: F401
 
 
@@ -105,6 +106,7 @@ async def test_new_selection_survives_at_fsm_write_boundary(carts, monkeypatch, 
     monkeypatch.setattr(gift, 'purchase_gift_from_balance', purchase)
     callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock(), bot=AsyncMock())
     try:
+        await bind_gift_action(callback, state, 'gift_confirm')
         await gift.handle_gift_confirm(callback, SimpleNamespace(id=uid, language='ru'), AsyncMock(), state)
         assert probe.triggered, 'The concurrent selection must actually run at the write boundary'
         if change != 'none':
@@ -202,6 +204,7 @@ async def test_legacy_checkout_identity_creation_cannot_overwrite_new_selection(
     monkeypatch.setattr(gift, 'build_gift_result_presentation', lambda **kwargs: ('result', None))
     callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock(), bot=AsyncMock())
     try:
+        await bind_gift_action(callback, state, 'gift_confirm')
         await gift.handle_gift_confirm(callback, SimpleNamespace(id=uid, language='ru'), AsyncMock(), state)
         assert probe.triggered
         if change != 'none':
@@ -372,5 +375,68 @@ async def test_invalid_fsm_transition_ttl_never_partially_changes_selection(cart
         )
         assert await original.get_state() == 'old'
         assert await original.get_data() == {'gift_checkout_id': 'old'}
+    finally:
+        await client.delete(builder.build(key, 'state'), builder.build(key, 'data'))
+
+
+@pytest.mark.parametrize('change', ['state', 'data', 'both', 'cart_only', 'none'])
+async def test_bound_cancel_preserves_changes_at_atomic_fsm_write(carts, monkeypatch, change):
+    from aiogram.fsm.storage.redis import RedisStorage
+
+    service, uid, client = carts
+    builder = DefaultKeyBuilder(prefix='gift-bound-cancel-audit', with_bot_id=True)
+    key = StorageKey(bot_id=1, chat_id=uid, user_id=uid)
+    original = FSMContext(RedisStorage(client, key_builder=builder), key)
+    selection = {
+        'gift_checkout_id': 'old',
+        'gift_tariff_id': 1,
+        'gift_period_days': 30,
+        'gift_expected_price_kopeks': 100,
+    }
+    await original.set_state('confirming')
+    await original.set_data(selection)
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'old', 'return_to_cart': True})
+    old_cart = await service.get_user_cart(uid)
+    replacement = None
+    expected_state = 'new_selection' if change in ('state', 'both') else 'confirming'
+    expected_data = {'gift_checkout_id': 'new'} if change in ('data', 'both') else selection
+
+    async def replace():
+        nonlocal replacement
+        if change in ('state', 'data', 'both'):
+            await original.set_state(expected_state)
+            await original.set_data(expected_data)
+        if change == 'cart_only':
+            await service.save_user_cart(
+                uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'new', 'return_to_cart': True}
+            )
+            replacement = await service.get_user_cart(uid)
+
+    probe = MutationProbe(client, replace)
+    probe.armed = True
+    state = FSMContext(RedisStorage(probe, key_builder=builder), key)
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    show_origin = AsyncMock()
+    monkeypatch.setattr(gift, 'show_subscription_info', show_origin)
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
+    await bind_gift_action(callback, state, 'gift_cancel')
+    try:
+        await gift.handle_gift_cancel(callback, SimpleNamespace(id=uid, language='ru'), AsyncMock(), state)
+        assert probe.triggered
+        assert await service.has_topup_intent(uid, independent)
+        if change in ('state', 'data', 'both'):
+            assert await original.get_state() == expected_state
+            assert await original.get_data() == expected_data
+            assert await service.get_user_cart(uid) == old_cart
+            show_origin.assert_not_awaited()
+        else:
+            assert await original.get_state() is None
+            assert await original.get_data() == {}
+            assert await service.get_user_cart(uid) == replacement
+            show_origin.assert_awaited_once()
+            if replacement:
+                assert await service.has_topup_intent(uid, replacement)
     finally:
         await client.delete(builder.build(key, 'state'), builder.build(key, 'data'))

@@ -32,6 +32,7 @@ from app.services.payment.common import PaymentCommonMixin
 from app.services.subscription_auto_purchase_service import auto_purchase_saved_cart_after_topup
 from app.services.user_cart_service import UserCartService
 from app.states import GiftPurchaseStates
+from tests.fixtures.gift_callbacks import bind_gift_action
 from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 
 
@@ -307,6 +308,7 @@ class TestGiftInsufficientBalanceAndCart:
                 AsyncMock(side_effect=GiftInsufficientBalanceError(required_kopeks=30050, available_kopeks=10025)),
             ),
         ):
+            await bind_gift_action(mock_callback, memory_state, 'gift_confirm')
             await handle_gift_confirm(mock_callback, mock_db_user, mock_db, memory_state)
 
             # Cart must be saved in Redis
@@ -364,6 +366,7 @@ class TestGiftInsufficientBalanceAndCart:
                 AsyncMock(side_effect=GiftInsufficientBalanceError(required_kopeks=30050, available_kopeks=10025)),
             ),
         ):
+            await bind_gift_action(mock_callback, memory_state, 'gift_confirm')
             await handle_gift_confirm(mock_callback, mock_db_user, mock_db, memory_state)
 
             # Alert shown
@@ -401,7 +404,9 @@ class TestGiftInsufficientBalanceAndCart:
         assert await test_cart_service.has_user_cart(mock_db_user.id) is True
         assert await test_cart_service.has_topup_intent(mock_db_user.id) is True
 
+        await memory_state.update_data(gift_checkout_id='chk_cancel')
         with patch('app.handlers.subscription.gift.show_subscription_info', AsyncMock()):
+            await bind_gift_action(mock_callback, memory_state, 'gift_cancel')
             await handle_gift_cancel(mock_callback, mock_db_user, mock_db, memory_state)
 
         # Gift cart and intent cleared
@@ -453,6 +458,7 @@ class TestGiftInsufficientBalanceAndCart:
                 AsyncMock(return_value=sample_purchase_result),
             ),
         ):
+            await bind_gift_action(mock_callback, memory_state, 'gift_confirm')
             await handle_gift_confirm(mock_callback, mock_db_user, mock_db, memory_state)
 
         assert await test_cart_service.has_user_cart(mock_db_user.id) is False
@@ -617,7 +623,7 @@ class TestGiftTopupSuccessKeyboardAndResume:
             text = mock_callback.message.edit_text.call_args[0][0]
             assert 'подтверждение' in text.lower() or 'confirmation' in text.lower() or 'подарок' in text.lower()
             reply_markup = mock_callback.message.edit_text.call_args[1]['reply_markup']
-            assert 'gift_confirm' in _callbacks(reply_markup)
+            assert any(value.startswith('gift_confirm:') for value in _callbacks(reply_markup))
 
             # FSM state updated
             assert await memory_state.get_state() == GiftPurchaseStates.confirming_purchase.state
@@ -676,7 +682,7 @@ class TestGiftTopupSuccessKeyboardAndResume:
             text = mock_callback.message.edit_text.call_args[0][0]
             assert '380' in text
             reply_markup = mock_callback.message.edit_text.call_args[1]['reply_markup']
-            assert 'gift_confirm' in _callbacks(reply_markup)
+            assert any(value.startswith('gift_confirm:') for value in _callbacks(reply_markup))
 
             # FSM updated to new price
             data = await memory_state.get_data()

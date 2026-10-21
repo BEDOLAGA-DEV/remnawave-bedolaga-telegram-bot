@@ -162,3 +162,60 @@ async def test_committed_gift_cleanup_preserves_new_cart_and_single_debit(
         classic = await db.get(Subscription, 10)
         assert (classic.tariff_id, classic.device_limit, classic.end_date) == (None, 3, now + timedelta(days=10))
         assert await service.get_user_cart(uid) == replacement
+
+        # An old displayed button must not debit the newly selected gift, nor
+        # cancel its real cached cart, even though the new checkout is valid.
+        from aiogram.fsm.context import FSMContext
+        from aiogram.fsm.storage.base import StorageKey
+        from aiogram.fsm.storage.memory import MemoryStorage
+
+        from app.handlers.subscription import gift
+
+        new_checkout = uuid4().hex
+        state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=uid, user_id=uid))
+        selection = {
+            'gift_checkout_id': new_checkout,
+            'gift_tariff_id': 1,
+            'gift_period_days': 30,
+            'gift_expected_price_kopeks': 100,
+        }
+        await state.set_state(gift.GiftPurchaseStates.confirming_purchase)
+        await state.set_data(selection)
+        await service.save_user_cart(
+            uid,
+            {
+                'cart_mode': 'gift_purchase',
+                'gift_checkout_id': new_checkout,
+                'tariff_id': 1,
+                'period_days': 30,
+                'total_price': 100,
+                'user_id': uid,
+                'return_to_cart': True,
+            },
+        )
+        new_cart = await service.get_user_cart(uid)
+        monkeypatch.setattr(gift, 'user_cart_service', service)
+        monkeypatch.setattr(gift, 'resolve_gift_claim_channel', AsyncMock(return_value=('test_bot', None)))
+        monkeypatch.setattr(gift, 'build_gift_result_presentation', lambda **kwargs: ('result', None))
+        monkeypatch.setattr(gift, 'show_subscription_info', AsyncMock())
+        for action, handler in [('gift_confirm', gift.handle_gift_confirm), ('gift_cancel', gift.handle_gift_cancel)]:
+            old_payload = gift._gift_action_callback(
+                action,
+                {**selection, 'gift_checkout_id': checkout},
+                gift.GiftPurchaseStates.confirming_purchase.state,
+            )
+            callback = SimpleNamespace(
+                data=old_payload,
+                message=SimpleNamespace(edit_text=AsyncMock()),
+                answer=AsyncMock(),
+                bot=AsyncMock(),
+            )
+            await handler(callback, user, db, state)
+            callback.message.edit_text.assert_not_awaited()
+            assert await state.get_data() == selection
+            assert await service.get_user_cart(uid) == new_cart
+            assert await service.has_topup_intent(uid, new_cart)
+        await db.refresh(user)
+        assert user.balance_kopeks == 900
+        assert len(list(await db.scalars(select(GuestPurchase)))) == 1
+        assert len(list(await db.scalars(select(Transaction)))) == 1

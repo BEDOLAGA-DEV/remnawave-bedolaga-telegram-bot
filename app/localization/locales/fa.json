@@ -2193,6 +2193,7 @@
   "GIFT_TARIFF_UNAVAILABLE": "تعرفه انتخاب شده برای هدیه در دسترس نیست.",
   "GIFT_PERIOD_UNAVAILABLE": "دوره انتخاب شده در دسترس نیست.",
   "GIFT_INVALID_SELECTION": "پارامترهای انتخاب نامعتبر است.",
+  "GIFT_SELECTION_EXPIRED": "❌ این انتخاب منقضی شده است. هدیه را دوباره باز کنید.",
   "GIFT_GENERIC_ERROR": "هنگام پردازش هدیه خطایی رخ داد. لطفاً بعداً دوباره امتحان کنید.",
   "GIFT_TRAFFIC_UNLIMITED": "∞ (نامحدود)",
   "GIFT_PURCHASE_SUCCESS_TEXT": "🎁 <b>هدیه با موفقیت ایجاد شد!</b>\n\n📦 پلن: <b>{tariff_name}</b>\n📅 مدت: <b>{period_days} روز</b>\n📊 ترافیک: <b>{traffic}</b>\n📱 دستگاه‌ها: <b>{devices}</b>\n🔑 کد هدیه: <code>{public_code}</code>\n\n🔗 لینک هدیه:\n{claim_link}\n\nاین لینک را برای دریافت‌کننده ارسال کنید یا از دکمه «ارسال هدیه» زیر استفاده کنید. دریافت‌کننده می‌تواند با یک کلیک اشتراک را فعال کند.",

@@ -2193,6 +2193,7 @@
   "GIFT_TARIFF_UNAVAILABLE": "The selected tariff is unavailable for gifting.",
   "GIFT_PERIOD_UNAVAILABLE": "The selected period is unavailable.",
   "GIFT_INVALID_SELECTION": "Invalid selection parameters.",
+  "GIFT_SELECTION_EXPIRED": "❌ This selection has expired. Open the gift again.",
   "GIFT_GENERIC_ERROR": "An error occurred while processing the gift. Please try again later.",
   "GIFT_TRAFFIC_UNLIMITED": "∞ (unlimited)",
   "GIFT_PURCHASE_SUCCESS_TEXT": "🎁 <b>Gift subscription successfully created!</b>\n\n📦 Plan: <b>{tariff_name}</b>\n📅 Period: <b>{period_days} days</b>\n📊 Traffic: <b>{traffic}</b>\n📱 Devices: <b>{devices}</b>\n🔑 Gift code: <code>{public_code}</code>\n\n🔗 Gift link:\n{claim_link}\n\nSend this link to the recipient or use the «Send gift» button below. The recipient can activate the subscription in one click.",
