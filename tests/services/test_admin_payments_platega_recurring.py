@@ -56,7 +56,7 @@ def _recurring_charge(*, user_id: int = 1, external_id: str = CHARGE_ID, **over)
     fields = {
         'user_id': user_id,
         'type': TransactionType.SUBSCRIPTION_PAYMENT.value,
-        'amount_kopeks': 29900,
+        'amount_kopeks': -29900,
         'description': 'СБП-автопродление Platega',
         'payment_method': PaymentMethod.PLATEGA.value,
         'external_id': external_id,

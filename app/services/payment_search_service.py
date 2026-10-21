@@ -1174,7 +1174,7 @@ async def _search_platega_recurring(db: AsyncSession, params: SearchParams) -> l
             PaymentMethod.PLATEGA_RECURRENT,
             transaction,
             identifier=transaction.external_id or str(transaction.id),
-            amount_kopeks=transaction.amount_kopeks,
+            amount_kopeks=abs(transaction.amount_kopeks),
             status='paid' if transaction.is_completed else 'pending',
             is_paid=bool(transaction.is_completed),
         )

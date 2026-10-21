@@ -1311,7 +1311,7 @@ async def _fetch_platega_recurring_charges(db: AsyncSession, cutoff: datetime) -
             PaymentMethod.PLATEGA_RECURRENT,
             transaction,
             identifier=transaction.external_id or str(transaction.id),
-            amount_kopeks=transaction.amount_kopeks,
+            amount_kopeks=abs(transaction.amount_kopeks),
             status='paid' if transaction.is_completed else 'pending',
             is_paid=bool(transaction.is_completed),
         )
@@ -1765,7 +1765,7 @@ async def get_payment_record(
             method,
             transaction,
             identifier=transaction.external_id or str(transaction.id),
-            amount_kopeks=transaction.amount_kopeks,
+            amount_kopeks=abs(transaction.amount_kopeks),
             status='paid' if transaction.is_completed else 'pending',
             is_paid=bool(transaction.is_completed),
         )

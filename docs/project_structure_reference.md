@@ -3775,6 +3775,9 @@
 - `tests/database/test_admin_expiry_reset_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
   Функции: `test_reset_does_not_regain_paid_days_from_panel`, `test_expired_update_sends_closing_date_in_first_patch`, `test_reset_preserves_local_reset_when_expiry_patch_fails`
+- `tests/database/test_admin_recurring_payments_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_real_recurring_callback_is_visible_once_after_replay`, `test_recurring_read_queries_exclude_wallet_deposits_and_old_charges`
 - `tests/database/test_admin_trial_device_cap_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
   Функции: `test_admin_trial_conversion_sends_selected_cap`, `test_explicit_foreign_or_missing_subscription_never_falls_back`, `test_explicit_multi_callback_after_mode_change_is_rejected`
