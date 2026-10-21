@@ -402,9 +402,15 @@ async def send_cart_notification_after_topup(
     )
 
     cart_data = await user_cart_service.get_user_cart(user.id)
-    subscription_carts = await user_cart_service.get_all_subscription_carts(user.id) if not cart_data else []
+    subscription_carts = []
+    fresh_cart_intent = bool(cart_data and await user_cart_service.has_topup_intent(user.id, cart_data))
+    if not fresh_cart_intent:
+        subscription_carts = await user_cart_service.get_all_subscription_carts(user.id) or []
+        for candidate in subscription_carts:
+            if await user_cart_service.has_topup_intent(user.id, candidate):
+                fresh_cart_intent = True
+                break
     has_cart = bool(cart_data or subscription_carts)
-    fresh_cart_intent = has_cart and await user_cart_service.has_topup_intent(user.id)
 
     # A fresh explicit checkout owns this top-up. A stale cart must not disable
     # the existing daily-resume behavior or authorize a purchase on its own.
@@ -422,7 +428,7 @@ async def send_cart_notification_after_topup(
             )
 
     if has_cart:
-        candidates = [cart_data] if cart_data else subscription_carts
+        candidates = ([cart_data] if cart_data else []) + subscription_carts
         if not any(cart.get('total_price') or cart.get('price_kopeks') for cart in candidates):
             logger.warning('Сохраненные корзины не содержат корректной цены', user_id=user.id)
             return False

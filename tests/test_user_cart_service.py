@@ -22,6 +22,11 @@ class MockRedis(SequentialPipelineMixin):
             return 1
         return 0
 
+    async def scan(self, cursor=0, match='*', count=50):
+        import fnmatch
+
+        return 0, [key for key in self.storage if fnmatch.fnmatch(key, match)]
+
     async def exists(self, key):
         return 1 if key in self.storage else 0
 

@@ -80,13 +80,18 @@ async def cart_service(monkeypatch):
     finally:
         if url:
             await service._redis_client.delete(
-                'user_cart:1', 'user_cart:1:sub:10', 'user_cart:1:sub:20', 'cart_topup_intent:1'
+                'user_cart:1',
+                'user_cart:1:sub:10',
+                'user_cart:1:sub:20',
+                'cart_topup_intent:1',
+                'cart_topup_intent:1:sub:10',
+                'cart_topup_intent:1:sub:20',
             )
             await service._redis_client.aclose()
 
 
 @pytest.mark.parametrize('provider', ['lava', 'cashera', 'platega'])
-@pytest.mark.parametrize('cart_case', ['global', 'per_subscription', 'daily_neighbor', 'stale_intent'])
+@pytest.mark.parametrize('cart_case', ['global', 'per_subscription', 'daily_neighbor', 'stale_intent', 'unconfirmed'])
 async def test_topup_finalizer_purchases_selected_classic(
     postgres_database, monkeypatch, provider, cart_case, cart_service
 ):
@@ -183,6 +188,10 @@ async def test_topup_finalizer_purchases_selected_classic(
             await service.delete_global_cart_only(1)
         elif cart_case == 'stale_intent':
             await service.clear_topup_intent(1)
+        elif cart_case == 'unconfirmed':
+            replacement = await service.get_user_cart(1)
+            replacement['return_to_cart'] = False
+            assert await service.save_user_cart(1, replacement)
         module = import_module(f'app.services.payment.{provider}')
         actor = getattr(module, provider.capitalize() + 'PaymentMixin')()
         actor.bot = None
@@ -196,7 +205,7 @@ async def test_topup_finalizer_purchases_selected_classic(
         assert await finalize()
         await db.refresh(user)
         selected = await db.get(Subscription, 10)
-        if cart_case == 'stale_intent':
+        if cart_case in ('stale_intent', 'unconfirmed'):
             assert selected.tariff_id is None and selected.device_limit == 3
             assert user.balance_kopeks == 1000
             assert [t.amount_kopeks for t in (await db.scalars(select(Transaction))).all()] == [1000]

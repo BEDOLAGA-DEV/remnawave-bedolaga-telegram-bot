@@ -3530,7 +3530,7 @@ async def auto_purchase_saved_cart_after_topup(
     # Check for explicit global gift_purchase cart first (isolated from subscription carts)
     global_cart = await user_cart_service.get_user_cart(user.id)
     if global_cart and (global_cart.get('cart_mode') == 'gift_purchase' or global_cart.get('mode') == 'gift_purchase'):
-        has_fresh_intent = await user_cart_service.has_topup_intent(user.id)
+        has_fresh_intent = await user_cart_service.has_topup_intent(user.id, global_cart)
         if not has_fresh_intent:
             logger.info(
                 'Автопокупка подарка: пропуск — нет свежего намерения пополнить ради корзины',
@@ -3592,6 +3592,8 @@ async def auto_purchase_saved_cart_after_topup(
 
     any_succeeded = False
     for cart_data in carts_to_process:
+        if not await user_cart_service.has_topup_intent(user.id, cart_data):
+            continue
         cart_mode = cart_data.get('cart_mode') or cart_data.get('mode')
 
         # For non-mode carts (legacy generic purchase), handle separately below

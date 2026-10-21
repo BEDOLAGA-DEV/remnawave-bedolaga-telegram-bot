@@ -1872,7 +1872,7 @@
   Классы: нет
   Функции: `pick_avatar_file_id` — Самый маленький размер, который ещё не мылится в шапке; иначе самый крупный., `get_avatar_file_id` — file_id текущего фото профиля или None. Никогда не бросает: аватар — не повод ронять кабинет.
 - `app/services/user_cart_service.py` — Python-модуль
-  Классы: `UserCartService` (16 методов)
+  Классы: `UserCartService` (17 методов)
   Функции: нет
 - `app/services/user_reminders/`
 - `app/services/user_revival_service.py` — Python-модуль
@@ -3250,7 +3250,7 @@
   Классы: нет
   Функции: `test_tariff_renewal_device_limit`, `test_unlimited_tariff_does_not_charge_device_addons`, `test_admin_tariff_change_preserves_unlimited`
 - `tests/test_user_cart_service.py` — Python-модуль
-  Классы: `MockRedis` (5 методов)
+  Классы: `MockRedis` (6 методов)
   Функции: `mock_redis`, `user_cart_service`, `test_save_user_cart` — Тест сохранения корзины пользователя, `test_get_user_cart` — Тест получения корзины пользователя, `test_get_user_cart_not_found` — Тест получения несуществующей корзины пользователя, `test_delete_user_cart` — Тест удаления корзины пользователя, `test_delete_user_cart_not_found` — Тест удаления несуществующей корзины пользователя, `test_has_user_cart` — Тест проверки наличия корзины пользователя, `test_has_user_cart_not_found` — Тест проверки отсутствия корзины пользователя, `test_save_cart_with_return_to_cart_sets_intent` — return_to_cart=True ставит метку намерения пополнить ради корзины., `test_save_cart_without_return_to_cart_no_intent` — Обычное сохранение корзины (без return_to_cart) метку НЕ ставит., `test_has_topup_intent_is_non_destructive` — Проверка наличия метки не гасит её — частичное пополнение может до-сработать., `test_clear_topup_intent` — clear_topup_intent гасит метку (вызывается после успешной авто-покупки)., `test_delete_user_cart_clears_intent` — Очистка корзины снимает и метку намерения, чтобы она не «висела»., `test_has_topup_intent_false_when_redis_down` — Redis недоступен → намерение считается отсутствующим (не списываем молча)., `test_tariff_checkout_identity_survives_repricing_but_not_new_checkout`
 - `tests/test_wheel_fixes.py` — Python-модуль
   Классы: нет
@@ -4561,7 +4561,7 @@
   Функции: `test_apply_campaign_bonus_refreshes_user_before_attribute_access` — Пользователь перечитывается асинхронно на входе — до любых sync-чтений, `test_apply_campaign_bonus_survives_refresh_failure` — Сбой refresh (например, PendingRollbackError) не роняет начисление —
 - `tests/services/test_cart_cleanup_redis.py` — Python-модуль
   Классы: `PublicationProbe` (4 методов)
-  Функции: `carts`, `test_finished_cart_does_not_delete_replacement`, `test_completed_global_and_subscription_aliases_are_both_removed`, `test_new_save_of_same_options_is_preserved`, `test_dispatch_completion_preserves_new_topup_intent`, `test_legacy_cart_cleanup_compares_payload`, `test_repriced_revision_still_cleans_its_aliases`, `test_subscription_only_cleanup_consumes_its_own_intent`, `test_save_publishes_matching_aliases_and_intent`
+  Функции: `carts`, `test_finished_cart_does_not_delete_replacement`, `test_completed_global_and_subscription_aliases_are_both_removed`, `test_new_save_of_same_options_is_preserved`, `test_dispatch_completion_preserves_new_topup_intent`, `test_legacy_cart_cleanup_compares_payload`, `test_repriced_revision_still_cleans_its_aliases`, `test_subscription_only_cleanup_consumes_its_own_intent`, `test_save_publishes_matching_aliases_and_intent`, `test_old_intent_does_not_authorize_unconfirmed_replacement`, `test_independently_confirmed_subscription_carts_remain_eligible`, `test_expired_source_intent_cannot_use_neighbor_intent`, `test_stale_collected_revision_cannot_use_replacement_intent`, `test_legacy_global_intent_requires_explicit_confirmation`, `test_explicit_intent_clear_revokes_all_sources`, `test_topup_priority_uses_actual_cart_permission`
 - `tests/services/test_cashera_import_cycle.py` — Python-модуль
   Классы: нет
   Функции: `test_module_is_not_on_import_cycle`

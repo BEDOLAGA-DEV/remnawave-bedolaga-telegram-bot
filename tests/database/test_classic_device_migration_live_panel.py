@@ -417,7 +417,13 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                 yield setup, old, request
         finally:
             if cart_redis_client is not None:
-                await cart_redis_client.delete('user_cart:1', 'user_cart:1:sub:10', 'cart_topup_intent:1')
+                await cart_redis_client.delete(
+                    'user_cart:1',
+                    'user_cart:1:sub:10',
+                    'cart_topup_intent:1',
+                    'cart_topup_intent:1:sub:10',
+                    'cart_topup_intent:1:sub:20',
+                )
                 await cart_redis_client.aclose()
             for account in reversed(accounts):
                 await request('DELETE', f'/api/users/{account["id"]}')

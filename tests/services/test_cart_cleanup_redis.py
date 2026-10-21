@@ -4,6 +4,7 @@ import json
 import os
 from copy import deepcopy
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -36,7 +37,12 @@ async def carts(monkeypatch):
         yield service, uid, client
     finally:
         await client.delete(
-            f'user_cart:{uid}', f'user_cart:{uid}:sub:10', f'user_cart:{uid}:sub:20', f'cart_topup_intent:{uid}'
+            f'user_cart:{uid}',
+            f'user_cart:{uid}:sub:10',
+            f'user_cart:{uid}:sub:20',
+            f'cart_topup_intent:{uid}',
+            f'cart_topup_intent:{uid}:sub:10',
+            f'cart_topup_intent:{uid}:sub:20',
         )
         await client.aclose()
 
@@ -212,3 +218,120 @@ async def test_save_publishes_matching_aliases_and_intent(carts, subscription_id
         if subscription_id is not None:
             assert json.loads(snapshot[2]) == global_cart
     assert (await second_service.get_user_cart(uid))['tariff_id'] == (3 if interleave else 2)
+
+
+@pytest.mark.parametrize('subscription_id', [None, 10])
+async def test_old_intent_does_not_authorize_unconfirmed_replacement(carts, monkeypatch, subscription_id):
+    service, uid, _ = carts
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    await service.save_user_cart(
+        uid,
+        {'cart_mode': 'tariff_purchase', 'subscription_id': subscription_id, 'tariff_id': 1, 'return_to_cart': True},
+    )
+    await service.save_user_cart(
+        uid,
+        {'cart_mode': 'tariff_purchase', 'subscription_id': subscription_id, 'tariff_id': 2, 'return_to_cart': False},
+    )
+    process = AsyncMock(return_value=True)
+    monkeypatch.setattr(auto, '_process_single_cart', process)
+    assert not await auto.auto_purchase_saved_cart_after_topup(None, SimpleNamespace(id=uid, telegram_id=None))
+    process.assert_not_awaited()
+    assert (await service.get_user_cart(uid))['tariff_id'] == 2
+
+
+async def test_independently_confirmed_subscription_carts_remain_eligible(carts, monkeypatch):
+    service, uid, _ = carts
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    for sid in (10, 20):
+        await service.save_user_cart(
+            uid, {'cart_mode': 'tariff_purchase', 'subscription_id': sid, 'tariff_id': sid, 'return_to_cart': True}
+        )
+    processed = []
+
+    async def finish(db, user, cart, **kwargs):
+        processed.append(cart['subscription_id'])
+        await auto._delete_cart_for_subscription(uid, cart)
+        return True
+
+    monkeypatch.setattr(auto, '_process_single_cart', finish)
+    assert await auto.auto_purchase_saved_cart_after_topup(None, SimpleNamespace(id=uid, telegram_id=None))
+    assert sorted(processed) == [10, 20]
+    assert not await service.has_topup_intent(uid)
+
+
+async def test_expired_source_intent_cannot_use_neighbor_intent(carts, monkeypatch):
+    service, uid, client = carts
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    for sid in (10, 20):
+        await service.save_user_cart(
+            uid, {'cart_mode': 'tariff_purchase', 'subscription_id': sid, 'tariff_id': sid, 'return_to_cart': True}
+        )
+    # Simulate this source's intent TTL ending; neighbor's intent is still fresh.
+    await client.delete(f'cart_topup_intent:{uid}:sub:10')
+    process = AsyncMock(return_value=False)
+    monkeypatch.setattr(auto, '_process_single_cart', process)
+    assert not await auto.auto_purchase_saved_cart_after_topup(None, SimpleNamespace(id=uid, telegram_id=None))
+    assert [call.args[2]['subscription_id'] for call in process.await_args_list] == [20]
+
+
+async def test_stale_collected_revision_cannot_use_replacement_intent(carts, monkeypatch):
+    service, uid, _ = carts
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    await service.save_user_cart(
+        uid, {'cart_mode': 'tariff_purchase', 'subscription_id': 10, 'tariff_id': 1, 'return_to_cart': True}
+    )
+    collected = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(uid, dict(collected, tariff_id=2))
+    monkeypatch.setattr(service, 'get_all_subscription_carts', AsyncMock(return_value=[collected]))
+    process = AsyncMock(return_value=True)
+    monkeypatch.setattr(auto, '_process_single_cart', process)
+    assert not await auto.auto_purchase_saved_cart_after_topup(None, SimpleNamespace(id=uid, telegram_id=None))
+    process.assert_not_awaited()
+    assert (await service.get_user_cart(uid))['tariff_id'] == 2
+
+
+@pytest.mark.parametrize('confirmed', [False, True])
+async def test_legacy_global_intent_requires_explicit_confirmation(carts, monkeypatch, confirmed):
+    service, uid, client = carts
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    cart = {'cart_mode': 'tariff_purchase', 'tariff_id': 1, 'return_to_cart': confirmed}
+    await client.set(f'user_cart:{uid}', json.dumps(cart, ensure_ascii=False), ex=60)
+    await client.set(f'cart_topup_intent:{uid}', '1', ex=60)
+    process = AsyncMock(return_value=False)
+    monkeypatch.setattr(auto, '_process_single_cart', process)
+    assert not await auto.auto_purchase_saved_cart_after_topup(None, SimpleNamespace(id=uid, telegram_id=None))
+    assert process.await_count == int(confirmed)
+
+
+async def test_explicit_intent_clear_revokes_all_sources(carts):
+    service, uid, client = carts
+    for sid in (10, 20):
+        await service.save_user_cart(uid, {'subscription_id': sid, 'return_to_cart': True})
+    await service.clear_topup_intent(uid)
+    assert not await service.has_topup_intent(uid)
+    for sid in (10, 20):
+        assert await client.get(f'cart_topup_intent:{uid}:sub:{sid}') is None
+        assert not await service.has_topup_intent(uid, await service.get_subscription_cart(uid, sid))
+
+
+@pytest.mark.parametrize('confirmed_neighbor', [False, True])
+async def test_topup_priority_uses_actual_cart_permission(carts, monkeypatch, confirmed_neighbor):
+    from app.services.payment import common
+
+    service, uid, _ = carts
+    monkeypatch.setattr(common, 'user_cart_service', service)
+    if confirmed_neighbor:
+        await service.save_user_cart(
+            uid, {'cart_mode': 'tariff_purchase', 'subscription_id': 10, 'total_price': 100, 'return_to_cart': True}
+        )
+    await service.save_user_cart(uid, {'cart_mode': 'tariff_purchase', 'total_price': 100, 'return_to_cart': True})
+    await service.save_user_cart(uid, {'cart_mode': 'tariff_purchase', 'total_price': 100, 'return_to_cart': False})
+    resume = AsyncMock(return_value=True)
+    purchase = AsyncMock(return_value=False)
+    monkeypatch.setattr(auto, 'try_resume_disabled_daily_after_topup', resume)
+    monkeypatch.setattr(auto, 'auto_purchase_saved_cart_after_topup', purchase)
+    assert not await common.send_cart_notification_after_topup(
+        SimpleNamespace(id=uid, telegram_id=None), 100, None, None, notify_email=False
+    )
+    assert resume.await_count == int(not confirmed_neighbor)
+    assert purchase.await_count == int(confirmed_neighbor)

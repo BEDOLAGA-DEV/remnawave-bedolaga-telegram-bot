@@ -78,6 +78,7 @@ class UserCartService:
             pipeline = client.pipeline(transaction=True)
             pipeline.setex(f'user_cart:{user_id}', effective_ttl, json_data)
             subscription_id = cart_data.get('subscription_id')
+            sub_id = None
             if subscription_id is not None:
                 try:
                     sub_id = int(subscription_id)
@@ -87,6 +88,10 @@ class UserCartService:
                     pipeline.setex(self._subscription_cart_key(user_id, sub_id), effective_ttl, json_data)
             if cart_data.get('return_to_cart'):
                 pipeline.setex(self._topup_intent_key(user_id), intent_ttl, cart_data['_cart_revision'])
+                if sub_id is not None:
+                    pipeline.setex(
+                        self._subscription_topup_intent_key(user_id, sub_id), intent_ttl, cart_data['_cart_revision']
+                    )
             await pipeline.execute()
             logger.info(
                 '🛒 Корзина пользователя сохранена в Redis',
@@ -163,6 +168,7 @@ class UserCartService:
             if subscription_id is not None:
                 sub_key = self._subscription_cart_key(user_id, subscription_id)
                 await client.delete(sub_key)
+                await client.delete(self._subscription_topup_intent_key(user_id, subscription_id))
 
             # Удаляем метку намерения пополнения вместе с корзиной, чтобы она не
             # «висела» после очистки и не давала повода для авто-покупки.
@@ -204,17 +210,23 @@ class UserCartService:
                    (global_matches and ARGV[2] == '' and intent == '1') then
                     redis.call('DEL', KEYS[3])
                 end
-                if ARGV[3] == '1' and matches(KEYS[2]) then
-                    removed = removed + redis.call('DEL', KEYS[2])
+                if ARGV[3] == '1' then
+                    if matches(KEYS[2]) then
+                        removed = removed + redis.call('DEL', KEYS[2])
+                    end
+                    if ARGV[2] ~= '' and redis.call('GET', KEYS[4]) == ARGV[2] then
+                        redis.call('DEL', KEYS[4])
+                    end
                 end
                 return removed
             """
             result = await client.eval(
                 script,
-                3,
+                4,
                 f'user_cart:{user_id}',
                 self._subscription_cart_key(user_id, sub_id),
                 self._topup_intent_key(user_id),
+                self._subscription_topup_intent_key(user_id, sub_id),
                 json.dumps(cart_data, ensure_ascii=False),
                 cart_data.get('_cart_revision') or '',
                 '1' if sub_id else '0',
@@ -291,17 +303,58 @@ class UserCartService:
         """
         return f'cart_topup_intent:{user_id}'
 
-    async def has_topup_intent(self, user_id: int) -> bool:
-        """Есть ли свежая метка намерения пополнить ради корзины (без удаления).
+    @staticmethod
+    def _subscription_topup_intent_key(user_id: int, subscription_id: int) -> str:
+        return f'cart_topup_intent:{user_id}:sub:{subscription_id}'
 
-        Если Redis недоступен — считаем намерение отсутствующим (безопасно: не
-        списываем баланс молча).
+    async def has_topup_intent(self, user_id: int, cart_data: dict[str, Any] | None = None) -> bool:
+        """Check presence, or authorize a specific currently saved cart revision.
+
+        Presence alone is a compatibility hint, never permission to debit a
+        collected cart. Per-source markers retain independent confirmed carts.
         """
         client = self._get_redis_client()
         if client is None:
             return False
         try:
-            return bool(await client.exists(self._topup_intent_key(user_id)))
+            if cart_data is None:
+                if await client.exists(self._topup_intent_key(user_id)):
+                    return True
+                cursor = 0
+                while True:
+                    cursor, keys = await client.scan(
+                        cursor=cursor, match=f'cart_topup_intent:{user_id}:sub:*', count=50
+                    )
+                    if keys:
+                        return True
+                    if not cursor or cursor == b'0':
+                        return False
+            revision = cart_data.get('_cart_revision')
+            sub_id = int(cart_data.get('subscription_id') or 0)
+            global_intent = await client.get(self._topup_intent_key(user_id))
+            if isinstance(global_intent, bytes):
+                global_intent = global_intent.decode()
+            if not revision:
+                # An old unbound marker cannot authorize arbitrary per-source carts.
+                raw = await client.get(f'user_cart:{user_id}')
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+                return (
+                    bool(cart_data.get('return_to_cart'))
+                    and global_intent == '1'
+                    and raw == json.dumps(cart_data, ensure_ascii=False)
+                )
+            source_intent = await client.get(self._subscription_topup_intent_key(user_id, sub_id)) if sub_id else None
+            if isinstance(source_intent, bytes):
+                source_intent = source_intent.decode()
+            if revision not in (source_intent, global_intent):
+                return False
+            key = self._subscription_cart_key(user_id, sub_id) if sub_id else f'user_cart:{user_id}'
+            raw = await client.get(key)
+            # Compatibility with legacy global-only storage of an explicit source.
+            if raw is None and sub_id:
+                raw = await client.get(f'user_cart:{user_id}')
+            return bool(raw and json.loads(raw).get('_cart_revision') == revision)
         except Exception as e:
             logger.error('🛒 Ошибка чтения метки намерения пополнения', user_id=user_id, error=e)
             return False
@@ -313,6 +366,13 @@ class UserCartService:
             return
         try:
             await client.delete(self._topup_intent_key(user_id))
+            cursor = 0
+            while True:
+                cursor, keys = await client.scan(cursor=cursor, match=f'cart_topup_intent:{user_id}:sub:*', count=50)
+                if keys:
+                    await client.delete(*keys)
+                if not cursor or cursor == b'0':
+                    break
         except Exception as e:
             logger.error('🛒 Ошибка удаления метки намерения пополнения', user_id=user_id, error=e)
 
@@ -398,6 +458,7 @@ class UserCartService:
         try:
             key = self._subscription_cart_key(user_id, subscription_id)
             result = await client.delete(key)
+            await client.delete(self._subscription_topup_intent_key(user_id, subscription_id))
             if result:
                 logger.debug(
                     'Корзина подписки удалена из Redis',
