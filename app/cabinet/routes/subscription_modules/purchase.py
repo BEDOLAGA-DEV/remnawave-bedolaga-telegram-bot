@@ -862,6 +862,15 @@ async def purchase_tariff(
                 )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
+        if (
+            is_daily_tariff
+            and existing_subscription is not None
+            and existing_subscription.tariff_id == tariff.id
+            and not existing_subscription.is_trial
+            and existing_subscription.is_active
+            and not existing_subscription.is_daily_paused
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Daily tariff is already active')
         effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
         device_limit = effective_device_limit
 
@@ -987,6 +996,7 @@ async def purchase_tariff(
             description += f' (скидка {discount_percent}%)'
         if promo_offer_discount_value > 0:
             description += f' (промо -{promo_offer_discount_percent}%)'
+        atomic_charge = bool(checkout_external_id) or is_daily_tariff
         saved_promo = (
             user.promo_offer_discount_percent,
             user.promo_offer_discount_source,
@@ -1000,7 +1010,7 @@ async def purchase_tariff(
                 description,
                 consume_promo_offer=promo_offer_discount_value > 0,
                 mark_as_paid_subscription=True,
-                **({'commit': False} if checkout_external_id else {}),
+                **({'commit': False} if atomic_charge else {}),
             )
             if not success:
                 raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to charge balance')
@@ -1014,13 +1024,15 @@ async def purchase_tariff(
                 **(
                     {'external_id': checkout_external_id, 'is_completed': False, 'commit': False}
                     if checkout_external_id
+                    else {'commit': False}
+                    if is_daily_tariff
                     else {}
                 ),
             )
             if checkout_external_id:
                 await db.commit()
         except Exception:
-            if checkout_external_id:
+            if atomic_charge:
                 await db.rollback()
             raise
         transaction_id = transaction.id
@@ -1038,6 +1050,9 @@ async def purchase_tariff(
             Сбои возврата только логируем (CRITICAL): исходную ошибку покупки
             маскировать нельзя, а двойного списания здесь быть не может.
             """
+            if is_daily_tariff:
+                # Daily debit/product/ledger were rolled back together.
+                return
             try:
                 refund_user = await get_user_by_id(db, refund_user_id)
                 if refund_user is None:
@@ -1185,6 +1200,7 @@ async def purchase_tariff(
                     device_limit=effective_device_limit,
                     connected_squads=squads,
                     reset_used_traffic=reset_used_traffic,
+                    **({'commit': False} if is_daily_tariff else {}),
                 )
             else:
                 # Create new subscription (или конверсия исключённого выше триала)
@@ -1198,6 +1214,7 @@ async def purchase_tariff(
                         connected_squads=squads,
                         tariff_id=tariff.id,
                         conversion_trial=_conversion_trial,
+                        **({'commit': False} if is_daily_tariff else {}),
                     )
                 except IntegrityError:
                     # Partial unique index violation: user already has active subscription for this tariff
@@ -1212,6 +1229,11 @@ async def purchase_tariff(
                         status_code=status.HTTP_409_CONFLICT,
                         detail='You already have an active subscription for this tariff',
                     )
+            if is_daily_tariff:
+                subscription.last_daily_charge_at = datetime.now(UTC)
+                subscription.is_daily_paused = False
+                await db.commit()
+                await db.refresh(subscription)
         except HTTPException:
             # 409-ветка выше уже вернула средства; повторная компенсация здесь
             # превратила бы одиночный возврат в двойной.
@@ -1259,12 +1281,25 @@ async def purchase_tariff(
                 subscription_id=subscription.id,
             )
 
-        # For daily tariffs, set last_daily_charge_at
         if is_daily_tariff:
-            subscription.last_daily_charge_at = datetime.now(UTC)
-            subscription.is_daily_paused = False
-            await db.commit()
-            await db.refresh(subscription)
+            await emit_transaction_side_effects(
+                db,
+                transaction,
+                amount_kopeks=price_kopeks,
+                user_id=purchase_user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                payment_method=PaymentMethod.BALANCE,
+                description=description,
+            )
+            if existing_subscription is not None:
+                # extend_subscription(commit=False) defers this external effect.
+                # Keep it after the activation commit, outside compensation.
+                try:
+                    from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
+
+                    await shift_lava_next_charge_after_manual_extension(db, subscription.id, period_days)
+                except Exception as shift_error:
+                    logger.warning('Failed to shift Lava next charge after daily activation', error=shift_error)
 
         # --- Disable killed trials on RemnaWave panel ---
         service = SubscriptionService()

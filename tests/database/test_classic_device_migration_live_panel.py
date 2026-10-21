@@ -164,6 +164,13 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                     )
                     result = await cabinet.purchase_tariff(purchase_request, user, db)
                     assert result['success']
+                    if flow == 'cabinet_daily':
+                        with pytest.raises(HTTPException) as duplicate:
+                            await cabinet.purchase_tariff(purchase_request, user, db)
+                        assert duplicate.value.status_code == 409
+                        assert not await auto._auto_purchase_daily_tariff(
+                            db, user, {'tariff_id': 1, 'subscription_id': 10}
+                        )
                     if flow == 'cabinet':
                         with pytest.raises(HTTPException) as duplicate:
                             await cabinet.purchase_tariff(purchase_request, user, db)
@@ -240,6 +247,14 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
                         )
                     else:
                         await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
+                    with pytest.raises(HTTPException) as duplicate:
+                        await cabinet.purchase_tariff(
+                            cabinet.TariffPurchaseRequest(tariff_id=1, period_days=1, subscription_id=10),
+                            user,
+                            db,
+                        )
+                    assert duplicate.value.status_code == 409
+                    assert not await auto._auto_purchase_daily_tariff(db, user, {'tariff_id': 1, 'subscription_id': 10})
                 elif flow == 'wallet_topup':
                     from app.database.models import LavaPayment
                     from app.services.payment import common

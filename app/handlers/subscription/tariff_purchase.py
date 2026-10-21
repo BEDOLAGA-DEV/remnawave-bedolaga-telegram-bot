@@ -1950,7 +1950,7 @@ async def confirm_daily_tariff_purchase(
         user=db_user,
     )
     final_daily_price = pricing_result.final_total
-    consume_promo = pricing_result.breakdown.get('offer_discount_pct', 0) > 0
+    consume_promo = pricing_result.promo_offer_discount > 0
 
     # Проверяем баланс (user already locked, balance is fresh)
     user_balance = db_user.balance_kopeks or 0
@@ -1967,124 +1967,92 @@ async def confirm_daily_tariff_purchase(
     except Exception:
         pass
 
-    try:
-        # Списываем первый день сразу
-        success = await subtract_user_balance(
-            db,
-            db_user,
-            final_daily_price,
-            f'Покупка суточного тарифа {tariff.name} (первый день)',
-            consume_promo_offer=consume_promo,
-            mark_as_paid_subscription=True,
-        )
-        if not success:
-            try:
-                await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
-            except Exception:
-                pass
-            return
-    except Exception as e:
-        logger.error('Ошибка списания баланса при покупке суточного тарифа', error=e, exc_info=True)
-        try:
-            await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
-        except Exception:
-            pass
-        return
-
-    # Получаем список серверов из тарифа
     squads = tariff.allowed_squads or []
-
-    # Если allowed_squads пустой - значит "все серверы", получаем их
     if not squads:
         from app.database.crud.server_squad import get_all_server_squads
 
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
-
+    purchase_user_id = db_user.id
+    description = f'Покупка суточного тарифа {tariff.name} (первый день)'
     try:
+        if not await subtract_user_balance(
+            db,
+            db_user,
+            final_daily_price,
+            description,
+            consume_promo_offer=consume_promo,
+            mark_as_paid_subscription=True,
+            commit=False,
+        ):
+            await db.rollback()
+            await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
+            return
         if existing_subscription:
-            # Обновляем существующую подписку на суточный тариф
-            if existing_subscription.is_trial:
-                existing_subscription._converted_from_trial = True
-            existing_subscription.tariff_id = tariff.id
-            existing_subscription.traffic_limit_gb = tariff.traffic_limit_gb
-            existing_subscription.device_limit = effective_device_limit
-            existing_subscription.connected_squads = squads
-            existing_subscription.status = 'active'
-            existing_subscription.is_trial = False  # Сбрасываем триальный статус
-            existing_subscription.is_daily_paused = False
-            existing_subscription.last_daily_charge_at = datetime.now(UTC)
-            # Для суточного тарифа ставим срок на 1 день
-            existing_subscription.end_date = datetime.now(UTC) + timedelta(days=1)
-
-            # Сбрасываем докупленный трафик при смене тарифа
+            subscription = existing_subscription
+            if subscription.is_trial:
+                subscription._converted_from_trial = True
+            subscription.tariff_id = tariff.id
+            subscription.traffic_limit_gb = tariff.traffic_limit_gb
+            subscription.device_limit = effective_device_limit
+            subscription.connected_squads = squads
+            subscription.status = 'active'
+            subscription.is_trial = False
+            subscription.end_date = datetime.now(UTC) + timedelta(days=1)
             from sqlalchemy import delete as sql_delete
 
             from app.database.models import TrafficPurchase
 
-            await db.execute(
-                sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == existing_subscription.id)
-            )
-            existing_subscription.purchased_traffic_gb = 0
-            existing_subscription.traffic_reset_at = None
-
-            await db.commit()
-            await db.refresh(existing_subscription)
-            subscription = existing_subscription
+            await db.execute(sql_delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
+            subscription.purchased_traffic_gb = 0
+            subscription.traffic_reset_at = None
         else:
-            # Создаем новую подписку на 1 день
             subscription = await create_paid_subscription(
                 db=db,
-                user_id=db_user.id,
+                user_id=purchase_user_id,
                 duration_days=1,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
-            )
-            # Устанавливаем время последнего списания
-            subscription.last_daily_charge_at = datetime.now(UTC)
-            subscription.is_daily_paused = False
-            await db.commit()
-            await db.refresh(subscription)
-    except Exception as e:
-        logger.error('Ошибка создания/продления подписки при покупке суточного тарифа', error=e, exc_info=True)
-        await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            refund_success = await add_user_balance(
-                db,
-                db_user,
-                final_daily_price,
-                'Возврат: ошибка покупки суточного тарифа',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
                 commit=False,
             )
-            if not refund_success:
-                await _persist_failed_refund(
-                    user_id=db_user.id,
-                    amount_kopeks=final_daily_price,
-                    reason='Возврат: ошибка покупки суточного тарифа',
-                    error=Exception('add_user_balance returned False'),
-                )
-            await db.commit()
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: не удалось вернуть средства после ошибки покупки суточного тарифа',
-                user_id=db_user.id,
-                price_kopeks=final_daily_price,
-                refund_error=refund_error,
-            )
-        try:
-            await callback.message.edit_text(
-                texts.t('TARIFF_PURCHASE_ERROR', '❌ Произошла ошибка при оформлении подписки')
-            )
-        except Exception:
-            pass
+        subscription.last_daily_charge_at = datetime.now(UTC)
+        subscription.is_daily_paused = False
+        transaction = await create_transaction(
+            db,
+            user_id=purchase_user_id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_daily_price,
+            description=description,
+            commit=False,
+        )
+        await db.commit()
+        await db.refresh(subscription)
+    except Exception as error:
+        await db.rollback()
+        logger.error(
+            'Daily Telegram activation rolled back with debit and ledger',
+            user_id=purchase_user_id,
+            error=error,
+            exc_info=True,
+        )
+        await callback.message.edit_text(
+            texts.t('TARIFF_PURCHASE_ERROR', '❌ Произошла ошибка при оформлении подписки')
+        )
         return
+
+    from app.database.crud.transaction import emit_transaction_side_effects
+
+    await emit_transaction_side_effects(
+        db,
+        transaction,
+        amount_kopeks=final_daily_price,
+        user_id=purchase_user_id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        payment_method=PaymentMethod.BALANCE,
+        description=description,
+    )
 
     # Обновляем пользователя в Remnawave
     # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
@@ -2115,15 +2083,6 @@ async def confirm_daily_tariff_purchase(
             user_id=db_user.id,
             action='create',
         )
-
-    # Создаем транзакцию
-    await create_transaction(
-        db,
-        user_id=db_user.id,
-        type=TransactionType.SUBSCRIPTION_PAYMENT,
-        amount_kopeks=final_daily_price,
-        description=f'Покупка суточного тарифа {tariff.name} (первый день)',
-    )
 
     # Отправляем уведомление админу
     try:
