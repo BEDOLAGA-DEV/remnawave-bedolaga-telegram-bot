@@ -962,7 +962,9 @@ async def handle_return_to_gift_cart(
         )
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
         await user_cart_service.delete_processed_cart(db_user.id, cart_data)
-        await state.clear()
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         await callback.answer()
         return
 
@@ -970,7 +972,9 @@ async def handle_return_to_gift_cart(
         quote = await quote_gift_purchase(db, buyer=db_user, tariff_id=tariff_id, period_days=period_days)
     except GiftFeatureDisabledError:
         await user_cart_service.delete_processed_cart(db_user.id, cart_data)
-        await state.clear()
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
             show_alert=True,
@@ -978,7 +982,9 @@ async def handle_return_to_gift_cart(
         return
     except GiftTariffUnavailableError:
         await user_cart_service.delete_processed_cart(db_user.id, cart_data)
-        await state.clear()
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -997,7 +1003,9 @@ async def handle_return_to_gift_cart(
         return
     except GiftPeriodUnavailableError:
         await user_cart_service.delete_processed_cart(db_user.id, cart_data)
-        await state.clear()
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -1016,7 +1024,9 @@ async def handle_return_to_gift_cart(
         return
     except GiftPurchaseRestrictedError:
         await user_cart_service.delete_processed_cart(db_user.id, cart_data)
-        await state.clear()
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         await callback.answer(
             texts.t('GIFT_PURCHASE_RESTRICTED_ERROR', '❌ Покупка подписок недоступна для вашего аккаунта.'),
             show_alert=True,
@@ -1050,13 +1060,20 @@ async def handle_return_to_gift_cart(
             )
             return
 
-        await state.set_state(GiftPurchaseStates.confirming_purchase)
-        await state.update_data(
-            gift_checkout_id=checkout_id,
-            gift_tariff_id=tariff_id,
-            gift_period_days=period_days,
-            gift_expected_price_kopeks=quote.final_price_kopeks,
-        )
+        if not await mutate_fsm_if_current(
+            state,
+            state_before_quote,
+            selection_before_quote,
+            new_state=GiftPurchaseStates.confirming_purchase,
+            updates={
+                'gift_checkout_id': checkout_id,
+                'gift_tariff_id': tariff_id,
+                'gift_period_days': period_days,
+                'gift_expected_price_kopeks': quote.final_price_kopeks,
+            },
+        ):
+            await callback.answer()
+            return
 
         req_str = texts.format_price(quote.final_price_kopeks)
         bal_str = texts.format_price(db_user.balance_kopeks)
@@ -1086,14 +1103,28 @@ async def handle_return_to_gift_cart(
         await callback.answer()
         return
 
-    # Balance is sufficient -> render confirmation summary
-    await state.set_state(GiftPurchaseStates.confirming_purchase)
-    await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_tariff_id=tariff_id,
-        gift_period_days=period_days,
-        gift_expected_price_kopeks=quote.final_price_kopeks,
-    )
+    # Balance is sufficient -> render confirmation summary only for the cart
+    # that was read before the quote, not a checkout replaced while awaiting it.
+    if await user_cart_service.get_user_cart(db_user.id) != cart_data:
+        await callback.answer(
+            texts.t('GIFT_CART_EXPIRED', '❌ Срок действия сохраненной корзины подарка истек.'),
+            show_alert=True,
+        )
+        return
+    if not await mutate_fsm_if_current(
+        state,
+        state_before_quote,
+        selection_before_quote,
+        new_state=GiftPurchaseStates.confirming_purchase,
+        updates={
+            'gift_checkout_id': checkout_id,
+            'gift_tariff_id': tariff_id,
+            'gift_period_days': period_days,
+            'gift_expected_price_kopeks': quote.final_price_kopeks,
+        },
+    ):
+        await callback.answer()
+        return
 
     text, keyboard = _render_confirmation_summary(db_user, quote)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')

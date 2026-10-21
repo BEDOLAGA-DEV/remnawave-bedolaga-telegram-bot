@@ -20,9 +20,10 @@ from tests.services.test_cart_cleanup_redis import carts  # noqa: F401
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 
+@pytest.mark.parametrize('manual_resume', [False, True])
 @pytest.mark.parametrize('replacement_mode', [None, 'gift_purchase', 'tariff_purchase'])
 async def test_committed_gift_cleanup_preserves_new_cart_and_single_debit(
-    postgres_database, carts, monkeypatch, replacement_mode
+    postgres_database, carts, monkeypatch, replacement_mode, manual_resume
 ):
     service, uid, _ = carts
     monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
@@ -106,6 +107,41 @@ async def test_committed_gift_cleanup_preserves_new_cart_and_single_debit(
         assert not await service.has_topup_intent(uid, original)
         if replacement_mode:
             assert await service.has_topup_intent(uid, replacement)
+        if manual_resume:
+            from aiogram.fsm.context import FSMContext
+            from aiogram.fsm.storage.base import StorageKey
+            from aiogram.fsm.storage.memory import MemoryStorage
+
+            from app.handlers.subscription import gift
+
+            # Recover an already committed gift from its still-saved checkout,
+            # then start a different selection during result delivery.
+            await service.save_user_cart(uid, original)
+            state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=uid, user_id=uid))
+            await state.set_state('old_selection')
+            await state.set_data({'gift_checkout_id': checkout})
+
+            async def manual_delivery(*args, **kwargs):
+                nonlocal replacement
+                if replacement is not None:
+                    await service.save_user_cart(uid, replacement)
+                    replacement = await service.get_user_cart(uid)
+                await state.set_state('new_selection')
+                await state.set_data({'gift_checkout_id': 'new'})
+
+            monkeypatch.setattr(gift, 'user_cart_service', service)
+            monkeypatch.setattr(gift, 'resolve_gift_claim_channel', AsyncMock(return_value=('test_bot', None)))
+            monkeypatch.setattr(gift, 'build_gift_result_presentation', lambda **kwargs: ('gift result', None))
+            callback = SimpleNamespace(
+                message=SimpleNamespace(edit_text=AsyncMock(side_effect=manual_delivery)),
+                answer=AsyncMock(),
+                bot=AsyncMock(),
+            )
+            await gift.handle_return_to_gift_cart(callback, user, db, state)
+            assert await state.get_state() == 'new_selection'
+            assert await state.get_data() == {'gift_checkout_id': 'new'}
+            assert await service.get_user_cart(uid) == replacement
+            assert await service.has_topup_intent(uid, independent)
         # A retry of the original durable gift checkout must not debit again.
         replay = await purchase_gift_from_balance(
             db,

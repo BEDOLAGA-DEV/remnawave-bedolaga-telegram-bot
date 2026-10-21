@@ -771,3 +771,65 @@ async def test_conditional_gift_publication_fails_closed_without_redis(carts):
     assert not await service.save_gift_cart_if_current(
         uid, {'cart_mode': 'gift_purchase', 'return_to_cart': True}, None
     )
+
+
+@pytest.mark.parametrize('balance', [50, 200])
+@pytest.mark.parametrize('replacement_mode', ['gift_purchase', 'tariff_purchase'])
+async def test_gift_resume_does_not_restore_cart_replaced_during_quote(carts, monkeypatch, balance, replacement_mode):
+    from unittest.mock import MagicMock
+
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    from app.handlers.subscription import gift
+
+    service, uid, _ = carts
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    monkeypatch.setattr(gift, '_render_confirmation_summary', lambda *args: ('confirm', None))
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=uid, user_id=uid))
+    selection = {'gift_checkout_id': 'old'}
+    await state.set_state('old_selection')
+    await state.set_data(selection)
+    await service.save_user_cart(
+        uid,
+        {
+            'cart_mode': 'gift_purchase',
+            'gift_checkout_id': 'old',
+            'user_id': uid,
+            'tariff_id': 1,
+            'period_days': 30,
+            'total_price': 100,
+            'return_to_cart': True,
+        },
+    )
+    replacement = None
+
+    async def quote(*args, **kwargs):
+        nonlocal replacement
+        await service.save_user_cart(
+            uid,
+            {
+                'cart_mode': replacement_mode,
+                'gift_checkout_id': 'new',
+                'return_to_cart': True,
+                'subscription_id': 20 if replacement_mode == 'tariff_purchase' else None,
+            },
+        )
+        replacement = await service.get_user_cart(uid)
+        return SimpleNamespace(final_price_kopeks=100)
+
+    monkeypatch.setattr(gift, 'quote_gift_purchase', quote)
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = None
+    db.execute.return_value = result
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
+    await gift.handle_return_to_gift_cart(
+        callback, SimpleNamespace(id=uid, language='ru', balance_kopeks=balance), db, state
+    )
+    assert await state.get_state() == 'old_selection'
+    assert await state.get_data() == selection
+    assert await service.get_user_cart(uid) == replacement
+    assert await service.has_topup_intent(uid, replacement)
+    callback.message.edit_text.assert_not_awaited()
