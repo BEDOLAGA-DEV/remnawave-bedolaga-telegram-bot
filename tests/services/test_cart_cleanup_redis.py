@@ -576,3 +576,89 @@ async def test_gift_resume_does_not_delete_subscription_cart(carts, monkeypatch)
     await gift.handle_return_to_gift_cart(callback, SimpleNamespace(id=uid, language='ru'), AsyncMock(), AsyncMock())
     assert await service.get_user_cart(uid) == original
     assert await service.has_topup_intent(uid, original)
+
+
+@pytest.mark.parametrize(
+    'replacement_kind', ['gift', 'subscription', 'gift_cart_only', 'subscription_cart_only', 'fsm', 'none']
+)
+async def test_manual_gift_shortfall_resume_preserves_new_selection(carts, monkeypatch, replacement_kind):
+    from unittest.mock import MagicMock
+
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    from app.handlers.subscription import gift
+
+    service, uid, client = carts
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=uid, user_id=uid))
+    await state.set_state('old_selection')
+    await state.set_data({'gift_checkout_id': 'old', 'other': 'keep'})
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(
+        uid,
+        {
+            'cart_mode': 'gift_purchase',
+            'gift_checkout_id': 'old',
+            'user_id': uid,
+            'tariff_id': 1,
+            'period_days': 30,
+            'total_price': 100,
+            'return_to_cart': True,
+        },
+    )
+    original = await service.get_user_cart(uid)
+    await client.pexpire(f'user_cart:{uid}', 30000)
+    await client.pexpire(f'cart_topup_intent:{uid}', 20000)
+    replacement = None
+
+    async def quote(*args, **kwargs):
+        nonlocal replacement
+        if replacement_kind in ('gift', 'subscription', 'gift_cart_only', 'subscription_cart_only'):
+            await service.save_user_cart(
+                uid,
+                {
+                    'cart_mode': 'gift_purchase' if replacement_kind.startswith('gift') else 'tariff_purchase',
+                    'gift_checkout_id': 'new',
+                    'subscription_id': 20 if replacement_kind.startswith('subscription') else None,
+                    'return_to_cart': True,
+                },
+            )
+            replacement = await service.get_user_cart(uid)
+        if replacement_kind in ('gift', 'subscription', 'fsm'):
+            await state.set_state('new_selection')
+            await state.set_data({'gift_checkout_id': 'new', 'other': 'new'})
+        return SimpleNamespace(final_price_kopeks=100)
+
+    monkeypatch.setattr(gift, 'quote_gift_purchase', quote)
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = None
+    db.execute.return_value = result
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
+    await gift.handle_return_to_gift_cart(
+        callback,
+        SimpleNamespace(id=uid, language='ru', balance_kopeks=50),
+        db,
+        state,
+    )
+    current = await service.get_user_cart(uid)
+    assert await service.has_topup_intent(uid, independent)
+    if replacement_kind != 'none':
+        assert current == (replacement or original)
+        if replacement_kind.endswith('cart_only'):
+            assert await state.get_state() == 'old_selection'
+            assert await state.get_data() == {'gift_checkout_id': 'old', 'other': 'keep'}
+        else:
+            assert await state.get_state() == 'new_selection'
+            assert await state.get_data() == {'gift_checkout_id': 'new', 'other': 'new'}
+        callback.message.edit_text.assert_not_awaited()
+    else:
+        assert current['_cart_revision'] == original['_cart_revision']
+        assert current['missing_amount'] == 50
+        assert 0 < await client.pttl(f'user_cart:{uid}') <= 30000
+        assert 0 < await client.pttl(f'cart_topup_intent:{uid}') <= 20000
+        assert await service.has_topup_intent(uid, current)
+        callback.message.edit_text.assert_awaited_once()

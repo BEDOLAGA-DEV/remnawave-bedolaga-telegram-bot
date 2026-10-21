@@ -871,6 +871,8 @@ async def handle_return_to_gift_cart(
         return
 
     texts = get_texts(db_user.language)
+    selection_before_quote = await state.get_data()
+    state_before_quote = await state.get_state()
     cart_data = await user_cart_service.get_user_cart(db_user.id)
     if not cart_data:
         await callback.answer(
@@ -1004,9 +1006,22 @@ async def handle_return_to_gift_cart(
     # Check if balance is still insufficient
     if db_user.balance_kopeks < quote.final_price_kopeks:
         new_missing = quote.final_price_kopeks - db_user.balance_kopeks
-        cart_data['total_price'] = quote.final_price_kopeks
-        cart_data['missing_amount'] = new_missing
-        await user_cart_service.save_user_cart(db_user.id, cart_data)
+        # Requoting may yield while another callback selects a new checkout.
+        # Do not restore the old FSM selection or republish its topup permission.
+        if await state.get_data() != selection_before_quote or await state.get_state() != state_before_quote:
+            await callback.answer()
+            return
+        updated = await user_cart_service.update_processed_global_cart(
+            db_user.id,
+            cart_data,
+            {'total_price': quote.final_price_kopeks, 'missing_amount': new_missing},
+        )
+        if not updated:
+            await callback.answer(
+                texts.t('GIFT_CART_EXPIRED', '❌ Срок действия сохраненной корзины подарка истек.'),
+                show_alert=True,
+            )
+            return
 
         await state.set_state(GiftPurchaseStates.confirming_purchase)
         await state.update_data(
