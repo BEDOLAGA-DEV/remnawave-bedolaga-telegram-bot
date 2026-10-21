@@ -4050,6 +4050,9 @@
 - `tests/fixtures/real_redis.py` — Python-модуль
   Классы: нет
   Функции: `ensure_real_redis` — Снять заглушку и вернуть перезагруженный ``app.utils.redis_client``.
+- `tests/fixtures/redis_pipeline.py` — Python-модуль
+  Классы: `SequentialPipelineMixin` (1 методов)
+  Функции: нет
 - `tests/fixtures/sqlite_memory.py` — Python-модуль
   Классы: нет
   Функции: `ensure_real_aiosqlite` — Снять заглушку sys.modules['aiosqlite'] из conftest перед созданием engine., `memory_session` — Сессия к :memory: БД, где созданы только переданные таблицы.
@@ -4557,8 +4560,8 @@
   Классы: нет
   Функции: `test_apply_campaign_bonus_refreshes_user_before_attribute_access` — Пользователь перечитывается асинхронно на входе — до любых sync-чтений, `test_apply_campaign_bonus_survives_refresh_failure` — Сбой refresh (например, PendingRollbackError) не роняет начисление —
 - `tests/services/test_cart_cleanup_redis.py` — Python-модуль
-  Классы: нет
-  Функции: `carts`, `test_finished_cart_does_not_delete_replacement`, `test_completed_global_and_subscription_aliases_are_both_removed`, `test_new_save_of_same_options_is_preserved`, `test_dispatch_completion_preserves_new_topup_intent`, `test_legacy_cart_cleanup_compares_payload`, `test_repriced_revision_still_cleans_its_aliases`, `test_subscription_only_cleanup_consumes_its_own_intent`
+  Классы: `PublicationProbe` (4 методов)
+  Функции: `carts`, `test_finished_cart_does_not_delete_replacement`, `test_completed_global_and_subscription_aliases_are_both_removed`, `test_new_save_of_same_options_is_preserved`, `test_dispatch_completion_preserves_new_topup_intent`, `test_legacy_cart_cleanup_compares_payload`, `test_repriced_revision_still_cleans_its_aliases`, `test_subscription_only_cleanup_consumes_its_own_intent`, `test_save_publishes_matching_aliases_and_intent`
 - `tests/services/test_cashera_import_cycle.py` — Python-модуль
   Классы: нет
   Функции: `test_module_is_not_on_import_cycle`

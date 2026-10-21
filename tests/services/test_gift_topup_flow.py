@@ -32,12 +32,13 @@ from app.services.payment.common import PaymentCommonMixin
 from app.services.subscription_auto_purchase_service import auto_purchase_saved_cart_after_topup
 from app.services.user_cart_service import UserCartService
 from app.states import GiftPurchaseStates
+from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 
 
 # ── Mock Redis ──────────────────────────────────────────────────────────────
 
 
-class MockRedis:
+class MockRedis(SequentialPipelineMixin):
     def __init__(self):
         self.storage: dict[str, str] = {}
 

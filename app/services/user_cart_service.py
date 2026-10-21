@@ -65,56 +65,35 @@ class UserCartService:
             return False
 
         try:
+            effective_ttl = ttl if ttl is not None else settings.CART_TTL_SECONDS
+            intent_ttl = settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS
+            if effective_ttl <= 0 or (cart_data.get('return_to_cart') and intent_ttl <= 0):
+                raise ValueError('Cart TTL must be positive')
             if cart_data.get('cart_mode') == 'tariff_purchase':
                 cart_data.setdefault('tariff_checkout_id', uuid4().hex)
             cart_data['_cart_revision'] = uuid4().hex
-            key = f'user_cart:{user_id}'
             json_data = json.dumps(cart_data, ensure_ascii=False)
-            effective_ttl = ttl if ttl is not None else settings.CART_TTL_SECONDS
-            await client.setex(key, effective_ttl, json_data)
-            cart_mode = cart_data.get('cart_mode', 'unknown')
-            logger.info(
-                '🛒 Корзина пользователя сохранена в Redis',
-                user_id=user_id,
-                cart_mode=cart_mode,
-                effective_ttl=effective_ttl,
-            )
-
-            # Dual-write to per-subscription key when subscription_id is known.
-            # This ensures multi-subscription users don't lose carts when a
-            # second subscription's cart overwrites the global key.
+            # MULTI/EXEC publishes aliases and the intent in one server operation.
+            # Separate SETEX calls could interleave two saves of the same source.
+            pipeline = client.pipeline(transaction=True)
+            pipeline.setex(f'user_cart:{user_id}', effective_ttl, json_data)
             subscription_id = cart_data.get('subscription_id')
             if subscription_id is not None:
                 try:
                     sub_id = int(subscription_id)
-                    sub_key = self._subscription_cart_key(user_id, sub_id)
-                    await client.setex(sub_key, effective_ttl, json_data)
-                    logger.debug(
-                        'Корзина также сохранена по per-subscription ключу',
-                        user_id=user_id,
-                        subscription_id=sub_id,
-                    )
                 except (TypeError, ValueError):
-                    pass  # Non-integer subscription_id -- skip per-sub key
-
-            # «Свежее намерение»: корзина сохранена именно для пополнения и
-            # завершения покупки (поток «недостаточно средств → выбрать оплату»).
-            # Только при наличии этой метки тихая авто-покупка после пополнения
-            # имеет право списать баланс — обычное пополнение просто денег без
-            # сохранённой корзины такой метки не ставит, а для подарков выполняется
-            # только соответствующая явная подарочная корзина (gift_purchase).
+                    pass  # Preserve legacy global-only storage for invalid IDs.
+                else:
+                    pipeline.setex(self._subscription_cart_key(user_id, sub_id), effective_ttl, json_data)
             if cart_data.get('return_to_cart'):
-                try:
-                    await client.setex(
-                        self._topup_intent_key(user_id),
-                        settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS,
-                        cart_data['_cart_revision'],
-                    )
-                except Exception as intent_error:
-                    logger.warning(
-                        '🛒 Не удалось поставить метку намерения пополнения', user_id=user_id, error=intent_error
-                    )
-
+                pipeline.setex(self._topup_intent_key(user_id), intent_ttl, cart_data['_cart_revision'])
+            await pipeline.execute()
+            logger.info(
+                '🛒 Корзина пользователя сохранена в Redis',
+                user_id=user_id,
+                cart_mode=cart_data.get('cart_mode', 'unknown'),
+                effective_ttl=effective_ttl,
+            )
             return True
         except Exception as e:
             logger.error('🛒 Ошибка сохранения корзины пользователя', user_id=user_id, error=e)

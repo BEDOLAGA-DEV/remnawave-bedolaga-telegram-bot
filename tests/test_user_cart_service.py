@@ -1,10 +1,11 @@
 import pytest
 
 from app.services.user_cart_service import UserCartService
+from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 
 
 # Мок для Redis клиента
-class MockRedis:
+class MockRedis(SequentialPipelineMixin):
     def __init__(self):
         self.storage = {}
 

@@ -34,12 +34,13 @@ from app.services.user_cart_service import UserCartService
 from tests.database.test_classic_device_migration_postgres import Panel
 from tests.fixtures.postgres_db import postgres_session
 from tests.fixtures.real_redis import ensure_real_redis
+from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 
-class CartStorage:
+class CartStorage(SequentialPipelineMixin):
     def __init__(self):
         self.values = {}
 

@@ -27,13 +27,14 @@ import pytest
 
 from app.services import subscription_auto_purchase_service as auto_service
 from app.services.user_cart_service import UserCartService
+from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 
 
 APP_ROOT = Path(__file__).resolve().parents[2] / 'app'
 ADDON_MODES = {'add_traffic', 'add_devices'}
 
 
-class _MockRedis:
+class _MockRedis(SequentialPipelineMixin):
     def __init__(self):
         self.storage: dict[str, str] = {}
 
