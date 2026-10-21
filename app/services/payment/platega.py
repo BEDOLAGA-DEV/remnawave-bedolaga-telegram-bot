@@ -145,7 +145,8 @@ class PlategaPaymentMixin:
         )
 
         logger.info(
-            'Создан Platega платёж',
+            f'Создан Platega платёж для {"пользователя " + str(user_id) if user_id is not None else "гостя"} '
+            f'(метод {payment_method_code}, сумма {amount_value:.2f} {settings.PLATEGA_CURRENCY})',
             transaction_id=transaction_id or payment.id,
             user_id=user_id,
             payment_method_code=payment_method_code,
