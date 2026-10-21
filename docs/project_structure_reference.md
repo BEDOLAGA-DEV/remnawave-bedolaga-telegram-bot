@@ -2259,6 +2259,9 @@
 - `app/utils/formatting.py` — Python-модуль
   Классы: нет
   Функции: `safe_html_name` — HTML-escape a display name for Telegram HTML messages., `user_html_link` — Build an HTML-safe clickable user link for Telegram messages., `format_traffic` — Форматирует трафик., `format_price_kopeks` — Форматирует цену из копеек в рубли., `format_period` — Форматирует период.
+- `app/utils/fsm_selection.py` — Python-модуль
+  Классы: нет
+  Функции: `mutate_fsm_if_current` — Compare state AND data before atomically updating data or clearing both.
 - `app/utils/gift_links.py` — Python-модуль
   Классы: `GiftLinkError`, `InvalidGiftTokenError`, `InvalidBotUsernameError`, `MissingBotUsernameError`, `InvalidCabinetUrlError`, `MissingCabinetUrlError`, `InvalidClaimLinkError`, `InvalidShareTextError`, `GiftClaimArtifacts`
   Функции: `build_gift_public_code` — Build the canonical public gift code (``GIFT_<59_chars>``)., `parse_gift_claim_input` — Parse and normalize gift claim credentials from various user inputs., `build_gift_claim_artifacts` — Build immutable gift claim artifacts with public code and available channel URLs., `build_bot_gift_claim_link` — Build a canonical Telegram deep-link for claiming a gift subscription., `build_cabinet_gift_claim_link` — Build a canonical web cabinet claim link containing the full bearer token., `build_telegram_gift_share_url` — Build a native Telegram share URL (``https://t.me/share/url``) with prefilled text.
@@ -4643,6 +4646,9 @@
 - `tests/services/test_gift_confirmation_selection.py` — Python-модуль
   Классы: нет
   Функции: `test_confirmation_preserves_selection_changed_during_purchase`, `test_success_does_not_clear_selection_started_during_result_delivery`, `test_success_delivery_failure_keeps_checkout_for_idempotent_retry`
+- `tests/services/test_gift_fsm_redis.py` — Python-модуль
+  Классы: `MutationProbe` (6 методов)
+  Функции: `test_new_selection_survives_at_fsm_write_boundary`, `test_conditional_fsm_update_supports_absent_keys_and_configured_ttl`, `test_conditional_fsm_redis_failure_does_not_fall_back_to_unconditional_clear`, `test_legacy_checkout_identity_creation_cannot_overwrite_new_selection`
 - `tests/services/test_gift_history_service.py` — Python-модуль
   Классы: нет
   Функции: `test_list_sender_gifts_source_neutral_and_status_filtering` — History returns bot-, cabinet-, and landing-origin gifts for the buyer,, `test_list_sender_gifts_stable_ordering_with_equal_timestamps` — Ordering must be strictly `created_at DESC, id DESC` for deterministic pagination., `test_list_sender_gifts_pagination_and_boundary_clamping` — Pagination metadata must be accurate and limit/offset parameters clamped., `test_list_sender_gifts_returns_more_than_legacy_fifty_item_cap` — The cabinet's 100-item request must not be silently truncated to the old 50-item cap., `test_list_sender_gifts_graceful_on_missing_deleted_tariff` — If a tariff was deleted (ON DELETE SET NULL), the history item must load gracefully., `test_safe_recipient_display_formatting` — Safe recipient display formats username or masked email without leaking private data (names, IDs)., `test_get_sender_gift_exact_owner_and_status_checks` — get_sender_gift returns the item only if buyer_id matches and status is eligible., `test_has_sender_gifts_lightweight_existence_query` — has_sender_gifts returns boolean indicating if buyer owns any eligible gifts., `test_gift_history_item_immutability_and_artifacts` — GiftHistoryItem is a frozen immutable dataclass that builds canonical claim artifacts., `test_gift_history_service_is_purely_read_only` — History queries must never modify database state or create transactions.

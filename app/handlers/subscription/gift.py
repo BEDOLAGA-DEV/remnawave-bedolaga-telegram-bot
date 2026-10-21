@@ -58,6 +58,7 @@ from app.services.gift_purchase_service import (
 from app.services.guest_purchase_service import GuestPurchaseError
 from app.services.user_cart_service import user_cart_service
 from app.states import GiftActivationStates, GiftPurchaseStates
+from app.utils.fsm_selection import mutate_fsm_if_current
 from app.utils.gift_links import build_gift_claim_artifacts
 
 
@@ -682,7 +683,10 @@ async def handle_gift_confirm(
     checkout_id = data.get('gift_checkout_id')
     if not checkout_id:
         checkout_id = uuid.uuid4().hex
-        data = await state.update_data(gift_checkout_id=checkout_id)
+        if not await mutate_fsm_if_current(state, selection_state, data, updates={'gift_checkout_id': checkout_id}):
+            await callback.answer()
+            return
+        data = {**data, 'gift_checkout_id': checkout_id}
 
     original_cart = await user_cart_service.get_user_cart(db_user.id)
     saved_cart = original_cart
@@ -717,12 +721,14 @@ async def handle_gift_confirm(
         )
     except GiftPriceChangedError as err:
         # A completed old request must not change a newer selection.
-        if await state.get_data() != data or await state.get_state() != selection_state:
+        if not await mutate_fsm_if_current(
+            state,
+            selection_state,
+            data,
+            updates={'gift_expected_price_kopeks': err.fresh_quote.final_price_kopeks},
+        ):
             await callback.answer()
             return
-        await state.update_data(
-            gift_expected_price_kopeks=err.fresh_quote.final_price_kopeks,
-        )
         text, keyboard = _render_confirmation_summary(db_user, err.fresh_quote)
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
         await callback.answer(
@@ -788,30 +794,27 @@ async def handle_gift_confirm(
         await callback.answer()
         return
     except GiftPurchaseRestrictedError:
-        if await state.get_data() != data or await state.get_state() != selection_state:
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
             await callback.answer()
             return
-        await state.clear()
         await callback.answer(
             texts.t('GIFT_PURCHASE_RESTRICTED_ERROR', '❌ Покупка подписок недоступна для вашего аккаунта.'),
             show_alert=True,
         )
         return
     except GiftFeatureDisabledError:
-        if await state.get_data() != data or await state.get_state() != selection_state:
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
             await callback.answer()
             return
-        await state.clear()
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
             show_alert=True,
         )
         return
     except GiftTariffUnavailableError:
-        if await state.get_data() != data or await state.get_state() != selection_state:
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
             await callback.answer()
             return
-        await state.clear()
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -829,10 +832,9 @@ async def handle_gift_confirm(
         await callback.answer()
         return
     except GiftPeriodUnavailableError:
-        if await state.get_data() != data or await state.get_state() != selection_state:
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
             await callback.answer()
             return
-        await state.clear()
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -881,8 +883,7 @@ async def handle_gift_confirm(
     await callback.answer()
     # Preserve retry data if delivery fails, and a new selection if delivery
     # yields to another callback before the completed checkout is cleared.
-    if await state.get_data() == data and await state.get_state() == selection_state:
-        await state.clear()
+    await mutate_fsm_if_current(state, selection_state, data, clear=True)
 
 
 async def handle_return_to_gift_cart(
