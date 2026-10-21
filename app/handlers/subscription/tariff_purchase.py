@@ -5109,6 +5109,14 @@ async def return_to_saved_tariff_cart(
         and subscription is not None
         and subscription.tariff_id not in (None, tariff_id)
     ):
+        # An explicit saved source is part of the purchase intent. Do not
+        # reinterpret an old cart as a purchase for a different subscription.
+        if source_id is not None:
+            await callback.answer(
+                texts.t('TARIFF_PURCHASE_CONFIRMATION_EXPIRED', 'Подтверждение устарело. Выберите тариф заново.'),
+                show_alert=True,
+            )
+            return
         subscription = await _resolve_purchase_subscription(db, db_user, tariff)
 
     fixed_price = tariff.get_price_for_period(period)

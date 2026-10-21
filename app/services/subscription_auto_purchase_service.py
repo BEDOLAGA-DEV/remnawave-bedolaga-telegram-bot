@@ -1389,6 +1389,17 @@ async def _auto_purchase_daily_tariff(
     else:
         existing_subscription = await get_subscription_by_user_id(db, user.id)
     if (
+        settings.is_multi_tariff_enabled()
+        and existing_subscription is not None
+        and existing_subscription.tariff_id not in (None, tariff_id)
+    ):
+        logger.warning(
+            'Saved daily checkout source tariff changed; refusing stale purchase',
+            user_id=user.id,
+            subscription_id=existing_subscription.id,
+        )
+        return False
+    if (
         existing_subscription is not None
         and existing_subscription.tariff_id == tariff.id
         and not existing_subscription.is_trial
