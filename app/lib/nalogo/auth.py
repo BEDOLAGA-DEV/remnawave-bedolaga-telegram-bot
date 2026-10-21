@@ -41,6 +41,7 @@ class AuthProviderImpl(AuthProvider):
         storage_path: str | None = None,
         device_id: str | None = None,
         proxy_url: str | None = None,
+        timeout: float = 10.0,
     ):
         self.base_url_v1 = f'{base_url}/v1'
         self.base_url_v2 = f'{base_url}/v2'
@@ -49,6 +50,7 @@ class AuthProviderImpl(AuthProvider):
         self.device_info = DeviceInfo(sourceDeviceId=self.device_id)
         self._token_data: dict[str, Any] | None = None
         self.proxy_url = proxy_url
+        self.timeout = timeout
 
         # Default headers similar to PHP Authenticator
         self.default_headers = {
@@ -137,7 +139,7 @@ class AuthProviderImpl(AuthProvider):
                 f'{self.base_url_v1}/auth/lkfl',
                 json=request_data,
                 headers=self.default_headers,
-                timeout=10.0,
+                timeout=self.timeout,
             )
 
             raise_for_status(response)
@@ -172,7 +174,7 @@ class AuthProviderImpl(AuthProvider):
                 f'{self.base_url_v2}/auth/challenge/sms/start',
                 json=request_data,
                 headers=self.default_headers,
-                timeout=10.0,
+                timeout=self.timeout,
             )
 
             raise_for_status(response)
@@ -207,7 +209,7 @@ class AuthProviderImpl(AuthProvider):
                 f'{self.base_url_v1}/auth/challenge/sms/verify',
                 json=request_data,
                 headers=self.default_headers,
-                timeout=10.0,
+                timeout=self.timeout,
             )
 
             raise_for_status(response)
@@ -240,7 +242,7 @@ class AuthProviderImpl(AuthProvider):
                     f'{self.base_url_v1}/auth/token',
                     json=request_data,
                     headers=self.default_headers,
-                    timeout=10.0,
+                    timeout=self.timeout,
                 )
 
                 # PHP version only checks for 200 status
