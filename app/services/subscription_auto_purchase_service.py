@@ -1407,122 +1407,82 @@ async def _auto_purchase_daily_tariff(
         )
         return False
 
-    # Списываем баланс за первый день
+    # Resolve external inputs before staging money. Retain the user lock until
+    # the activation and its ledger entry are committed with the wallet change.
+    squads = tariff.allowed_squads or []
+    if not squads:
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+    purchase_user_id = user.id
+    description = f'Активация суточного тарифа {tariff.name}'
     try:
-        description = f'Активация суточного тарифа {tariff.name}'
-        success = await subtract_user_balance(
+        if not await subtract_user_balance(
             db,
             user,
             final_price,
             description,
             consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
-        )
-        if not success:
-            logger.warning(
-                '❌ Автопокупка суточного тарифа: не удалось списать баланс пользователя',
-                format_user_id=_format_user_id(user),
-            )
+            commit=False,
+        ):
+            await db.rollback()
             return False
-    except Exception as error:
-        logger.error(
-            '❌ Автопокупка суточного тарифа: ошибка списания баланса пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        return False
-
-    # Получаем список серверов из тарифа
-    squads = tariff.allowed_squads or []
-    if not squads:
-        all_servers, _ = await get_all_server_squads(db, available_only=True)
-        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
-
-    try:
         if existing_subscription:
-            # Обновляем существующую подписку на суточный тариф
-            # Суточность определяется через tariff.is_daily, поэтому достаточно установить tariff_id
-            was_trial_conversion = existing_subscription.is_trial  # Сохраняем до изменения
-            existing_subscription.tariff_id = tariff.id
-            existing_subscription.traffic_limit_gb = tariff.traffic_limit_gb
-            existing_subscription.device_limit = effective_device_limit
-            existing_subscription.connected_squads = squads
-            existing_subscription.status = 'active'
-            existing_subscription.is_trial = False
-            existing_subscription.last_daily_charge_at = datetime.now(UTC)
-            existing_subscription.is_daily_paused = False
-            existing_subscription.end_date = datetime.now(UTC) + timedelta(days=1)
-            await db.commit()
-            await db.refresh(existing_subscription)
             subscription = existing_subscription
+            was_trial_conversion = bool(subscription.is_trial)
+            subscription.tariff_id = tariff.id
+            subscription.traffic_limit_gb = tariff.traffic_limit_gb
+            subscription.device_limit = effective_device_limit
+            subscription.connected_squads = squads
+            subscription.status = 'active'
+            subscription.is_trial = False
+            subscription.end_date = datetime.now(UTC) + timedelta(days=1)
         else:
-            # Создаём новую суточную подписку
-            # Суточность определяется через tariff.is_daily
             subscription = await create_paid_subscription(
                 db=db,
-                user_id=user.id,
+                user_id=purchase_user_id,
                 duration_days=1,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                commit=False,
             )
-            # Устанавливаем параметры для суточного списания
-            subscription.last_daily_charge_at = datetime.now(UTC)
-            subscription.is_daily_paused = False
-            await db.commit()
             was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
-    except Exception as error:
-        logger.error(
-            '❌ Автопокупка суточного тарифа: ошибка создания подписки для пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            await add_user_balance(
-                db,
-                user,
-                final_price,
-                'Возврат: ошибка автопокупки суточного тарифа',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-            )
-            logger.info(
-                '💰 Автопокупка суточного тарифа: возврат средств после ошибки создания подписки',
-                format_user_id=_format_user_id(user),
-                refund_kopeks=final_price,
-            )
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: Автопокупка суточного тарифа: не удалось вернуть средства',
-                format_user_id=_format_user_id(user),
-                price_kopeks=final_price,
-                refund_error=refund_error,
-            )
-        return False
-
-    # Создаём транзакцию
-    try:
+        subscription.last_daily_charge_at = datetime.now(UTC)
+        subscription.is_daily_paused = False
         transaction = await create_transaction(
             db=db,
-            user_id=user.id,
+            user_id=purchase_user_id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=final_price,
             description=description,
+            commit=False,
         )
+        await db.commit()
     except Exception as error:
-        logger.warning(
-            '⚠️ Автопокупка суточного тарифа: не удалось создать транзакцию для пользователя',
-            format_user_id=_format_user_id(user),
+        await db.rollback()
+        # Nothing was committed: a compensating credit would create free money.
+        logger.error(
+            'Daily auto activation rolled back with its debit and ledger',
+            user_id=purchase_user_id,
             error=error,
+            exc_info=True,
         )
-        transaction = None
+        return False
+
+    from app.database.crud.transaction import emit_transaction_side_effects
+    from app.database.models import PaymentMethod
+
+    await emit_transaction_side_effects(
+        db,
+        transaction,
+        amount_kopeks=final_price,
+        user_id=purchase_user_id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        payment_method=PaymentMethod.BALANCE,
+        description=description,
+    )
 
     # Обновляем Remnawave
     # При покупке тарифа ВСЕГДА сбрасываем трафик в панели
