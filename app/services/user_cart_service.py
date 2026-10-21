@@ -317,6 +317,12 @@ class UserCartService:
         if not updates.keys() <= {'total_price', 'missing_amount', 'return_to_cart'}:
             return False
         try:
+            # A revision's permission applies only to its confirmed price.
+            # Enforce this here as well as in callers: quote metadata must
+            # never silently carry an old approval over to a different sum.
+            revoke_intent = revoke_intent or updates.get('total_price', cart_data.get('total_price')) != cart_data.get(
+                'total_price'
+            )
             replacement = {**cart_data, **updates}
             if revoke_intent:
                 replacement['return_to_cart'] = False

@@ -1105,9 +1105,12 @@ async def handle_return_to_gift_cart(
         )
         return
 
-    # Check if balance is still insufficient
-    if db_user.balance_kopeks < quote.final_price_kopeks:
-        new_missing = quote.final_price_kopeks - db_user.balance_kopeks
+    # A refreshed quote is not consent to spend at its new price. This also
+    # covers carts already repriced/revoked by the automatic purchase path.
+    price_changed = quote.final_price_kopeks != saved_total_price
+    requires_confirmation = price_changed or not cart_data.get('return_to_cart')
+    if db_user.balance_kopeks < quote.final_price_kopeks or requires_confirmation:
+        new_missing = max(0, quote.final_price_kopeks - db_user.balance_kopeks)
         # Requoting may yield while another callback selects a new checkout.
         # Do not restore the old FSM selection or republish its topup permission.
         if await state.get_data() != selection_before_quote or await state.get_state() != state_before_quote:
@@ -1117,6 +1120,7 @@ async def handle_return_to_gift_cart(
             db_user.id,
             cart_data,
             {'total_price': quote.final_price_kopeks, 'missing_amount': new_missing},
+            revoke_intent=requires_confirmation,
         )
         if not updated:
             await callback.answer(
@@ -1138,6 +1142,32 @@ async def handle_return_to_gift_cart(
             },
         ):
             await callback.answer()
+            return
+
+        if requires_confirmation:
+            text, keyboard = _render_confirmation_summary(db_user, quote)
+            keyboard = _bind_gift_actions(
+                keyboard,
+                {
+                    **selection_before_quote,
+                    'gift_checkout_id': checkout_id,
+                    'gift_tariff_id': tariff_id,
+                    'gift_period_days': period_days,
+                    'gift_expected_price_kopeks': quote.final_price_kopeks,
+                },
+                GiftPurchaseStates.confirming_purchase.state,
+            )
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+            if price_changed:
+                await callback.answer(
+                    texts.t(
+                        'GIFT_PRICE_CHANGED_ERROR',
+                        '⚠️ Цена на выбранный тариф изменилась. Пожалуйста, подтвердите покупку заново.',
+                    ),
+                    show_alert=True,
+                )
+            else:
+                await callback.answer()
             return
 
         req_str = texts.format_price(quote.final_price_kopeks)

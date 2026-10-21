@@ -843,3 +843,94 @@ async def test_gift_resume_does_not_restore_cart_replaced_during_quote(carts, mo
     assert await service.get_user_cart(uid) == replacement
     assert await service.has_topup_intent(uid, replacement)
     callback.message.edit_text.assert_not_awaited()
+
+
+@pytest.mark.parametrize('old_price', [100, 300, 200])
+@pytest.mark.parametrize('balance', [50, 500])
+async def test_manual_gift_requote_requires_explicit_confirmation_before_new_price_intent(
+    carts, monkeypatch, old_price, balance
+):
+    from unittest.mock import MagicMock
+
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    from app.handlers.subscription import gift
+
+    service, uid, client = carts
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(
+        uid,
+        {
+            'cart_mode': 'gift_purchase',
+            'gift_checkout_id': 'old',
+            'tariff_id': 1,
+            'period_days': 30,
+            'total_price': old_price,
+            'user_id': uid,
+            'return_to_cart': old_price != 200,
+        },
+    )
+    original = await service.get_user_cart(uid)
+    await client.pexpire(f'user_cart:{uid}', 30000)
+    state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=uid, user_id=uid))
+    await state.set_state(gift.GiftPurchaseStates.confirming_purchase)
+    await state.set_data(
+        {
+            'gift_checkout_id': 'old',
+            'gift_tariff_id': 1,
+            'gift_period_days': 30,
+            'gift_expected_price_kopeks': old_price if old_price != 200 else 100,
+        }
+    )
+    quote = gift.GiftQuote(1, 'Gift', 30, 100, 1, 200, 200, 0, 0, False)
+    monkeypatch.setattr(gift, 'quote_gift_purchase', AsyncMock(return_value=quote))
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = None
+    db.execute.return_value = result
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
+    await gift.handle_return_to_gift_cart(
+        callback, SimpleNamespace(id=uid, language='ru', balance_kopeks=balance), db, state
+    )
+    current = await service.get_user_cart(uid)
+    assert current['total_price'] == 200
+    assert current['missing_amount'] == max(0, 200 - balance)
+    assert current['return_to_cart'] is False
+    if old_price != 200:
+        assert current['_cart_revision'] != original['_cart_revision']
+    assert not await service.has_topup_intent(uid, current)
+    assert await service.has_topup_intent(uid, independent)
+    assert 0 < await client.pttl(f'user_cart:{uid}') <= 30000
+    keyboard = callback.message.edit_text.await_args.kwargs['reply_markup']
+    expected = gift._gift_action_callback('gift_confirm', await state.get_data(), await state.get_state())
+    assert expected in [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert (await state.get_data())['gift_expected_price_kopeks'] == 200
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('new_price', [80, 200])
+async def test_price_metadata_change_always_revokes_original_permission(carts, legacy, new_price):
+    service, uid, client = carts
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    original = {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'old', 'total_price': 100, 'return_to_cart': True}
+    if legacy:
+        await client.set(f'user_cart:{uid}', json.dumps(original, ensure_ascii=False), ex=30)
+        await client.set(f'cart_topup_intent:{uid}', '1', ex=20)
+    else:
+        await service.save_user_cart(uid, original)
+        await client.pexpire(f'user_cart:{uid}', 30000)
+    assert await service.has_topup_intent(uid, original)
+    # A caller forgetting revoke_intent must still not authorize a new price.
+    assert await service.update_processed_global_cart(uid, original, {'total_price': new_price})
+    current = await service.get_user_cart(uid)
+    assert current['total_price'] == new_price
+    assert current['return_to_cart'] is False
+    assert current['_cart_revision'] != original.get('_cart_revision')
+    assert not await service.has_topup_intent(uid, current)
+    assert await service.has_topup_intent(uid, independent)
+    assert 0 < await client.pttl(f'user_cart:{uid}') <= 30000
