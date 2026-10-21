@@ -1920,6 +1920,18 @@ async def confirm_daily_tariff_purchase(
     except LookupError:
         await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
         return
+    from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+    active_target = await get_subscription_by_user_and_tariff(db, db_user.id, tariff.id)
+    if active_target is not None and active_target.id != getattr(existing_subscription, 'id', None):
+        await callback.answer(
+            texts.t(
+                'TARIFF_PURCHASE_ALREADY_ACTIVE',
+                'Тариф «{name}» уже активен ({days} дн.). Продлите через "Мои подписки".',
+            ).format(name=tariff.name, days=local_days_until(active_target.end_date)),
+            show_alert=True,
+        )
+        return
     if (
         existing_subscription is not None
         and existing_subscription.tariff_id == tariff.id

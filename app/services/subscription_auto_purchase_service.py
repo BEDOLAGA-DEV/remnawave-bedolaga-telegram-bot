@@ -983,6 +983,17 @@ async def _auto_purchase_tariff(
     if previous is not None:
         return False
 
+    # The partial unique index includes active, trial and limited rows. Check
+    # under the wallet lock, before reserving money for a different source.
+    from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+    active_target = await get_subscription_by_user_and_tariff(db, user.id, tariff_id)
+    if active_target is not None and active_target.id != getattr(existing_subscription, 'id', None):
+        logger.warning(
+            'Tariff purchase conflicts with another owned subscription', user_id=user.id, tariff_id=tariff_id
+        )
+        return False
+
     # Calculate price via PricingEngine (single source of truth)
     device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
 
@@ -1387,6 +1398,10 @@ async def _auto_purchase_daily_tariff(
         logger.info(
             'Daily purchase: selected tariff already active', user_id=user.id, subscription_id=existing_subscription.id
         )
+        return False
+    active_target = await get_subscription_by_user_and_tariff(db, user.id, tariff_id)
+    if active_target is not None and active_target.id != getattr(existing_subscription, 'id', None):
+        logger.warning('Daily purchase conflicts with another owned subscription', user_id=user.id, tariff_id=tariff_id)
         return False
     effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
     pricing_result = await pricing_engine.calculate_tariff_purchase_price(
