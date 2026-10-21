@@ -89,6 +89,23 @@ def test_cart_service(mock_redis):
     service = UserCartService()
     service._redis_client = mock_redis
     service._initialized = True
+
+    # Sequential storage boundary for gift finance/handler unit tests. Actual
+    # version CAS and TTL preservation run against Valkey in the Redis suite.
+    async def cleanup(user_id, processed):
+        assert await service.get_user_cart(user_id) == processed
+        return await service.delete_user_cart(user_id)
+
+    async def update(user_id, processed, updates, *, revoke_intent=False):
+        assert await service.get_user_cart(user_id) == processed
+        replacement = {**processed, **updates}
+        if revoke_intent:
+            replacement['return_to_cart'] = False
+        await service.delete_user_cart(user_id)
+        return await service.save_user_cart(user_id, replacement)
+
+    service.delete_processed_cart = AsyncMock(side_effect=cleanup)
+    service.update_processed_global_cart = AsyncMock(side_effect=update)
     return service
 
 

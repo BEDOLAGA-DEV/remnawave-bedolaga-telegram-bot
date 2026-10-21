@@ -1872,7 +1872,7 @@
   Классы: нет
   Функции: `pick_avatar_file_id` — Самый маленький размер, который ещё не мылится в шапке; иначе самый крупный., `get_avatar_file_id` — file_id текущего фото профиля или None. Никогда не бросает: аватар — не повод ронять кабинет.
 - `app/services/user_cart_service.py` — Python-модуль
-  Классы: `UserCartService` (17 методов)
+  Классы: `UserCartService` (18 методов)
   Функции: нет
 - `app/services/user_reminders/`
 - `app/services/user_revival_service.py` — Python-модуль
@@ -3805,6 +3805,9 @@
 - `tests/database/test_expired_trial_conversion_postgres.py` — Python-модуль
   Классы: `Panel` (8 методов)
   Функции: `test_expired_trial_purchase_preserves_identity`, `test_conversion_candidate_priority_and_exclusions`, `test_concurrent_purchases_do_not_convert_same_trial_twice`, `test_missing_trial_panel_account_is_recreated_without_a_second_database_row`
+- `tests/database/test_gift_cart_completion_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_committed_gift_cleanup_preserves_new_cart_and_single_debit`
 - `tests/database/test_guest_existing_email_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_etoplatezhi_guest_purchase_reaches_email_owner`
@@ -4561,7 +4564,7 @@
   Функции: `test_apply_campaign_bonus_refreshes_user_before_attribute_access` — Пользователь перечитывается асинхронно на входе — до любых sync-чтений, `test_apply_campaign_bonus_survives_refresh_failure` — Сбой refresh (например, PendingRollbackError) не роняет начисление —
 - `tests/services/test_cart_cleanup_redis.py` — Python-модуль
   Классы: `PublicationProbe` (4 методов)
-  Функции: `carts`, `test_finished_cart_does_not_delete_replacement`, `test_completed_global_and_subscription_aliases_are_both_removed`, `test_new_save_of_same_options_is_preserved`, `test_dispatch_completion_preserves_new_topup_intent`, `test_legacy_cart_cleanup_compares_payload`, `test_repriced_revision_still_cleans_its_aliases`, `test_subscription_only_cleanup_consumes_its_own_intent`, `test_save_publishes_matching_aliases_and_intent`, `test_old_intent_does_not_authorize_unconfirmed_replacement`, `test_independently_confirmed_subscription_carts_remain_eligible`, `test_expired_source_intent_cannot_use_neighbor_intent`, `test_stale_collected_revision_cannot_use_replacement_intent`, `test_legacy_global_intent_requires_explicit_confirmation`, `test_explicit_intent_clear_revokes_all_sources`, `test_topup_priority_uses_actual_cart_permission`
+  Функции: `carts`, `test_finished_cart_does_not_delete_replacement`, `test_completed_global_and_subscription_aliases_are_both_removed`, `test_new_save_of_same_options_is_preserved`, `test_dispatch_completion_preserves_new_topup_intent`, `test_legacy_cart_cleanup_compares_payload`, `test_repriced_revision_still_cleans_its_aliases`, `test_subscription_only_cleanup_consumes_its_own_intent`, `test_save_publishes_matching_aliases_and_intent`, `test_old_intent_does_not_authorize_unconfirmed_replacement`, `test_independently_confirmed_subscription_carts_remain_eligible`, `test_expired_source_intent_cannot_use_neighbor_intent`, `test_stale_collected_revision_cannot_use_replacement_intent`, `test_legacy_global_intent_requires_explicit_confirmation`, `test_explicit_intent_clear_revokes_all_sources`, `test_topup_priority_uses_actual_cart_permission`, `test_old_gift_completion_preserves_replacement_and_independent_intent`, `test_old_gift_failure_or_update_cannot_overwrite_replacement`, `test_gift_metadata_update_preserves_ttl_and_other_source_permission`, `test_manual_gift_cleanup_preserves_replacement`, `test_gift_resume_does_not_delete_subscription_cart`
 - `tests/services/test_cashera_import_cycle.py` — Python-модуль
   Классы: нет
   Функции: `test_module_is_not_on_import_cycle`

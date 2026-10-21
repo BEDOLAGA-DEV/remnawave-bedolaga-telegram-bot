@@ -32,7 +32,7 @@ async def carts(monkeypatch):
     service._initialized = True
     service._redis_client = client
     monkeypatch.setattr(auto, 'user_cart_service', service)
-    uid = int(uuid4().hex[:12], 16)
+    uid = int(uuid4().hex[:7], 16)
     try:
         yield service, uid, client
     finally:
@@ -335,3 +335,244 @@ async def test_topup_priority_uses_actual_cart_permission(carts, monkeypatch, co
     )
     assert resume.await_count == int(not confirmed_neighbor)
     assert purchase.await_count == int(confirmed_neighbor)
+
+
+@pytest.mark.parametrize('replacement_mode', ['gift_purchase', 'tariff_purchase'])
+async def test_old_gift_completion_preserves_replacement_and_independent_intent(carts, monkeypatch, replacement_mode):
+    service, uid, _ = carts
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    await service.save_user_cart(uid, {'cart_mode': 'tariff_purchase', 'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'old', 'return_to_cart': True})
+    replacement = None
+
+    async def finish(db, user, cart, **kwargs):
+        nonlocal replacement
+        await service.save_user_cart(
+            uid,
+            {
+                'cart_mode': replacement_mode,
+                'gift_checkout_id': 'new',
+                'subscription_id': 20 if replacement_mode == 'tariff_purchase' else None,
+                'return_to_cart': True,
+            },
+        )
+        replacement = await service.get_user_cart(uid)
+        return True
+
+    monkeypatch.setattr(auto, '_auto_purchase_gift', finish)
+    assert await auto.auto_purchase_saved_cart_after_topup(None, SimpleNamespace(id=uid, telegram_id=None))
+    assert await service.get_user_cart(uid) == replacement
+    assert await service.has_topup_intent(uid, replacement)
+    assert await service.has_topup_intent(uid, independent)
+
+
+@pytest.mark.parametrize(
+    'failure', ['quote_terminal', 'quote_reprice', 'partial', 'purchase_terminal', 'purchase_reprice']
+)
+async def test_old_gift_failure_or_update_cannot_overwrite_replacement(carts, monkeypatch, failure):
+    from unittest.mock import MagicMock
+
+    from app.services.gift_purchase_service import GiftFeatureDisabledError, GiftPriceChangedError
+
+    service, uid, _ = carts
+    await service.save_user_cart(uid, {'cart_mode': 'tariff_purchase', 'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(
+        uid,
+        {
+            'cart_mode': 'gift_purchase',
+            'tariff_id': 1,
+            'period_days': 30,
+            'total_price': 100,
+            'gift_checkout_id': 'old',
+            'return_to_cart': True,
+        },
+    )
+    old = await service.get_user_cart(uid)
+    replacement = None
+
+    async def replace():
+        nonlocal replacement
+        await service.save_user_cart(
+            uid, {'cart_mode': 'tariff_purchase', 'subscription_id': 20, 'tariff_id': 2, 'return_to_cart': True}
+        )
+        replacement = await service.get_user_cart(uid)
+
+    async def quote(*args, **kwargs):
+        if failure in ('quote_terminal', 'quote_reprice', 'partial'):
+            await replace()
+        if failure == 'quote_terminal':
+            raise GiftFeatureDisabledError
+        return SimpleNamespace(final_price_kopeks=200 if failure == 'quote_reprice' else 100)
+
+    async def purchase(**kwargs):
+        await replace()
+        if failure == 'purchase_terminal':
+            raise GiftFeatureDisabledError
+        raise GiftPriceChangedError(100, SimpleNamespace(final_price_kopeks=200))
+
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+    monkeypatch.setattr(auto, 'quote_gift_purchase', quote)
+    monkeypatch.setattr(auto, 'purchase_gift_from_balance', purchase)
+    monkeypatch.setattr(auto, 'resolve_gift_claim_channel', AsyncMock(return_value=('test_bot', None)))
+    assert not await auto._auto_purchase_gift(
+        db,
+        SimpleNamespace(id=uid, telegram_id=None, language='ru', balance_kopeks=50 if failure == 'partial' else 1000),
+        old,
+        bot=AsyncMock(),
+    )
+    assert await service.get_user_cart(uid) == replacement
+    assert await service.has_topup_intent(uid, replacement)
+    assert await service.has_topup_intent(uid, independent)
+
+
+@pytest.mark.parametrize('repriced', [False, True])
+async def test_gift_metadata_update_preserves_ttl_and_other_source_permission(carts, monkeypatch, repriced):
+    from unittest.mock import MagicMock
+
+    service, uid, client = carts
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(
+        uid,
+        {
+            'cart_mode': 'gift_purchase',
+            'tariff_id': 1,
+            'period_days': 30,
+            'total_price': 100,
+            'gift_checkout_id': 'old',
+            'return_to_cart': True,
+        },
+    )
+    old = await service.get_user_cart(uid)
+    await client.pexpire(f'user_cart:{uid}', 30000)
+    await client.pexpire(f'cart_topup_intent:{uid}', 20000)
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+    monkeypatch.setattr(
+        auto,
+        'quote_gift_purchase',
+        AsyncMock(return_value=SimpleNamespace(final_price_kopeks=200 if repriced else 100)),
+    )
+    assert not await auto._auto_purchase_gift(
+        db, SimpleNamespace(id=uid, telegram_id=None, language='ru', balance_kopeks=50), old, bot=AsyncMock()
+    )
+    current = await service.get_user_cart(uid)
+    assert current['total_price'] == (200 if repriced else 100)
+    assert current['missing_amount'] == (150 if repriced else 50)
+    assert current['return_to_cart'] is (not repriced)
+    assert 0 < await client.pttl(f'user_cart:{uid}') <= 30000
+    assert await service.has_topup_intent(uid, independent)
+    if repriced:
+        assert current['_cart_revision'] != old['_cart_revision']
+        assert not await service.has_topup_intent(uid, current)
+    else:
+        assert current['_cart_revision'] == old['_cart_revision']
+        assert 0 < await client.pttl(f'cart_topup_intent:{uid}') <= 20000
+        assert await service.has_topup_intent(uid, current)
+
+
+@pytest.mark.parametrize('action', ['cancel', 'confirm', 'terminal_resume'])
+@pytest.mark.parametrize('replacement_mode', ['gift_purchase', 'tariff_purchase'])
+async def test_manual_gift_cleanup_preserves_replacement(carts, monkeypatch, action, replacement_mode):
+    from unittest.mock import MagicMock
+
+    from app.handlers.subscription import gift
+    from app.services.gift_purchase_service import GiftFeatureDisabledError
+
+    service, uid, _ = carts
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    monkeypatch.setattr(gift, 'show_subscription_info', AsyncMock())
+    monkeypatch.setattr(gift, 'resolve_gift_claim_channel', AsyncMock(return_value=('test_bot', None)))
+    monkeypatch.setattr(gift, 'build_gift_result_presentation', lambda **kwargs: ('done', None))
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(
+        uid,
+        {
+            'cart_mode': 'gift_purchase',
+            'gift_checkout_id': 'old',
+            'user_id': uid,
+            'tariff_id': 1,
+            'period_days': 30,
+            'total_price': 100,
+            'return_to_cart': True,
+        },
+    )
+    original_get = service.get_user_cart
+    replacement = None
+
+    async def replace():
+        nonlocal replacement
+        await service.save_user_cart(
+            uid,
+            {
+                'cart_mode': replacement_mode,
+                'gift_checkout_id': 'new',
+                'subscription_id': 20 if replacement_mode == 'tariff_purchase' else None,
+                'return_to_cart': True,
+            },
+        )
+        replacement = await original_get(uid)
+
+    async def read_then_replace(user_id):
+        result = await original_get(user_id)
+        if replacement is None:
+            await replace()
+        return result
+
+    async def purchase(**kwargs):
+        await replace()
+        return SimpleNamespace()
+
+    async def quote(*args, **kwargs):
+        await replace()
+        raise GiftFeatureDisabledError
+
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock(), bot=AsyncMock())
+    user = SimpleNamespace(id=uid, language='ru', telegram_id=None, balance_kopeks=1000)
+    state = AsyncMock()
+    state.get_data.return_value = {
+        'gift_checkout_id': 'old',
+        'gift_tariff_id': 1,
+        'gift_period_days': 30,
+        'gift_expected_price_kopeks': 100,
+        'gift_origin_callback': 'menu_subscription',
+    }
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+    if action == 'cancel':
+        monkeypatch.setattr(service, 'get_user_cart', read_then_replace)
+        await gift.handle_gift_cancel(callback, user, db, state)
+    elif action == 'confirm':
+        monkeypatch.setattr(gift, 'purchase_gift_from_balance', purchase)
+        await gift.handle_gift_confirm(callback, user, db, state)
+    else:
+        monkeypatch.setattr(gift, 'quote_gift_purchase', quote)
+        await gift.handle_return_to_gift_cart(callback, user, db, state)
+    assert await original_get(uid) == replacement
+    assert await service.has_topup_intent(uid, replacement)
+    assert await service.has_topup_intent(uid, independent)
+
+
+async def test_gift_resume_does_not_delete_subscription_cart(carts, monkeypatch):
+    from app.handlers.subscription import gift
+
+    service, uid, _ = carts
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    await service.save_user_cart(
+        uid, {'cart_mode': 'tariff_purchase', 'subscription_id': 20, 'user_id': uid, 'return_to_cart': True}
+    )
+    original = await service.get_user_cart(uid)
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
+    await gift.handle_return_to_gift_cart(callback, SimpleNamespace(id=uid, language='ru'), AsyncMock(), AsyncMock())
+    assert await service.get_user_cart(uid) == original
+    assert await service.has_topup_intent(uid, original)

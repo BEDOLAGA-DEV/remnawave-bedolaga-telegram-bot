@@ -3294,8 +3294,7 @@ async def _auto_purchase_gift(
             format_user_id=_format_user_id(user),
             cart_data=cart_data,
         )
-        await user_cart_service.delete_user_cart(user.id)
-        await user_cart_service.clear_topup_intent(user.id)
+        await user_cart_service.delete_processed_cart(user.id, cart_data)
         return False
 
     # If bot is None, delivery of claim link cannot be confirmed safely
@@ -3382,8 +3381,7 @@ async def _auto_purchase_gift(
             format_user_id=_format_user_id(user),
             error=str(term_err),
         )
-        await user_cart_service.delete_user_cart(user.id)
-        await user_cart_service.clear_topup_intent(user.id)
+        await user_cart_service.delete_processed_cart(user.id, cart_data)
         if bot and getattr(user, 'telegram_id', None) and settings.is_notifications_enabled():
             try:
                 err_msg = texts.t(
@@ -3406,11 +3404,15 @@ async def _auto_purchase_gift(
             saved_price=saved_expected_price,
             fresh_price=quote.final_price_kopeks,
         )
-        cart_data['total_price'] = quote.final_price_kopeks
-        cart_data['missing_amount'] = max(0, quote.final_price_kopeks - user.balance_kopeks)
-        cart_data['return_to_cart'] = False
-        await user_cart_service.save_user_cart(user.id, cart_data)
-        await user_cart_service.clear_topup_intent(user.id)
+        await user_cart_service.update_processed_global_cart(
+            user.id,
+            cart_data,
+            {
+                'total_price': quote.final_price_kopeks,
+                'missing_amount': max(0, quote.final_price_kopeks - user.balance_kopeks),
+            },
+            revoke_intent=True,
+        )
         return False
 
     # Check if balance is still insufficient (partial top-up)
@@ -3421,8 +3423,9 @@ async def _auto_purchase_gift(
             balance=user.balance_kopeks,
             required=saved_expected_price,
         )
-        cart_data['missing_amount'] = saved_expected_price - user.balance_kopeks
-        await user_cart_service.save_user_cart(user.id, cart_data)
+        await user_cart_service.update_processed_global_cart(
+            user.id, cart_data, {'missing_amount': saved_expected_price - user.balance_kopeks}
+        )
         return False
 
     # Preflight claim channels before debiting
@@ -3447,11 +3450,15 @@ async def _auto_purchase_gift(
     except GiftInsufficientBalanceError:
         return False
     except GiftPriceChangedError as err:
-        cart_data['total_price'] = err.fresh_quote.final_price_kopeks
-        cart_data['missing_amount'] = max(0, err.fresh_quote.final_price_kopeks - user.balance_kopeks)
-        cart_data['return_to_cart'] = False
-        await user_cart_service.save_user_cart(user.id, cart_data)
-        await user_cart_service.clear_topup_intent(user.id)
+        await user_cart_service.update_processed_global_cart(
+            user.id,
+            cart_data,
+            {
+                'total_price': err.fresh_quote.final_price_kopeks,
+                'missing_amount': max(0, err.fresh_quote.final_price_kopeks - user.balance_kopeks),
+            },
+            revoke_intent=True,
+        )
         return False
     except (
         GiftFeatureDisabledError,
@@ -3459,8 +3466,7 @@ async def _auto_purchase_gift(
         GiftPeriodUnavailableError,
         GiftPurchaseRestrictedError,
     ):
-        await user_cart_service.delete_user_cart(user.id)
-        await user_cart_service.clear_topup_intent(user.id)
+        await user_cart_service.delete_processed_cart(user.id, cart_data)
         return False
     except Exception as err:
         logger.error('Автопокупка подарка: неожиданная ошибка покупки', error=str(err), exc_info=True)
@@ -3540,8 +3546,7 @@ async def auto_purchase_saved_cart_after_topup(
 
         succeeded = await _auto_purchase_gift(db, user, global_cart, bot=bot)
         if succeeded:
-            await user_cart_service.clear_topup_intent(user.id)
-            await user_cart_service.delete_user_cart(user.id)
+            await user_cart_service.delete_processed_cart(user.id, global_cart)
         return succeeded
 
     # Collect all carts: per-subscription + global (deduplicated)

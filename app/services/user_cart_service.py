@@ -236,6 +236,65 @@ class UserCartService:
             logger.error('Ошибка условной очистки обработанной корзины', user_id=user_id, error=error)
             return False
 
+    async def update_processed_global_cart(
+        self,
+        user_id: int,
+        cart_data: dict[str, Any],
+        updates: dict[str, Any],
+        *,
+        revoke_intent: bool = False,
+    ) -> bool:
+        """Update global checkout metadata only while its saved revision matches.
+
+        Keep the existing cart/intent TTL for partial topups. A changed quote
+        gets a new revision and revokes only its original global permission.
+        """
+        client = self._get_redis_client()
+        if client is None or cart_data.get('subscription_id') is not None:
+            return False
+        if not updates.keys() <= {'total_price', 'missing_amount', 'return_to_cart'}:
+            return False
+        try:
+            replacement = {**cart_data, **updates}
+            if revoke_intent:
+                replacement['return_to_cart'] = False
+                replacement['_cart_revision'] = uuid4().hex
+            script = """
+                local raw = redis.call('GET', KEYS[1])
+                if not raw then return 0 end
+                if ARGV[2] == '' then
+                    if raw ~= ARGV[1] then return 0 end
+                else
+                    local ok, data = pcall(cjson.decode, raw)
+                    if not ok or type(data) ~= 'table' or data['_cart_revision'] ~= ARGV[2] then
+                        return 0
+                    end
+                end
+                redis.call('SET', KEYS[1], ARGV[3], 'KEEPTTL')
+                if ARGV[4] == '1' then
+                    local intent = redis.call('GET', KEYS[2])
+                    if (ARGV[2] ~= '' and intent == ARGV[2]) or (ARGV[2] == '' and intent == '1') then
+                        redis.call('DEL', KEYS[2])
+                    end
+                end
+                return 1
+            """
+            return bool(
+                await client.eval(
+                    script,
+                    2,
+                    f'user_cart:{user_id}',
+                    self._topup_intent_key(user_id),
+                    json.dumps(cart_data, ensure_ascii=False),
+                    cart_data.get('_cart_revision') or '',
+                    json.dumps(replacement, ensure_ascii=False),
+                    '1' if revoke_intent else '0',
+                )
+            )
+        except Exception as error:
+            logger.error('Ошибка условного обновления корзины', user_id=user_id, error=error)
+            return False
+
     async def delete_global_cart_only(self, user_id: int) -> bool:
         """Delete ONLY the global ``user_cart:{user_id}`` key.
 

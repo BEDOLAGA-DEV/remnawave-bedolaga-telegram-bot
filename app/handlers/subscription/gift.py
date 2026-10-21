@@ -640,8 +640,7 @@ async def handle_gift_cancel(
     # If user has a saved gift cart, clear it and top-up intent
     cart_data = await user_cart_service.get_user_cart(db_user.id)
     if cart_data and cart_data.get('cart_mode') == 'gift_purchase':
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
 
     data = await state.get_data()
     origin = data.get('gift_origin_callback', 'menu_subscription')
@@ -683,6 +682,14 @@ async def handle_gift_confirm(
     if not checkout_id:
         checkout_id = uuid.uuid4().hex
         await state.update_data(gift_checkout_id=checkout_id)
+
+    saved_cart = await user_cart_service.get_user_cart(db_user.id)
+    if not (
+        saved_cart
+        and saved_cart.get('cart_mode') == 'gift_purchase'
+        and (saved_cart.get('gift_checkout_id') or saved_cart.get('idempotency_key')) == checkout_id
+    ):
+        saved_cart = None
 
     # Preflight claim channels before debiting
     bot_username, cabinet_url = await resolve_gift_claim_channel(bot=callback.bot)
@@ -837,11 +844,9 @@ async def handle_gift_confirm(
         )
         return
 
-    # Clear gift cart and intent if present
-    cart_data = await user_cart_service.get_user_cart(db_user.id)
-    if cart_data and cart_data.get('cart_mode') == 'gift_purchase':
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+    # Clear only the saved checkout read before purchasing, never a newer gift.
+    if saved_cart:
+        await user_cart_service.delete_processed_cart(db_user.id, saved_cart)
 
     text, keyboard = build_gift_result_presentation(
         language=db_user.language,
@@ -875,8 +880,10 @@ async def handle_return_to_gift_cart(
         return
 
     if cart_data.get('cart_mode') != 'gift_purchase' or cart_data.get('user_id') != db_user.id:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        # A subscription cart is valid in its own flow; an old gift button must
+        # not erase it. Only malformed gift data itself is eligible for cleanup.
+        if cart_data.get('cart_mode') == 'gift_purchase':
+            await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await callback.answer(
             texts.t('GIFT_CART_INVALID', '❌ Сохраненный подарок недоступен или некорректен.'),
             show_alert=True,
@@ -889,8 +896,7 @@ async def handle_return_to_gift_cart(
     saved_total_price = cart_data.get('total_price')
 
     if not tariff_id or not period_days:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await callback.answer(
             texts.t('GIFT_CART_INVALID', '❌ Сохраненный подарок недоступен или некорректен.'),
             show_alert=True,
@@ -926,8 +932,7 @@ async def handle_return_to_gift_cart(
             cabinet_url=cabinet_url,
         )
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await state.clear()
         await callback.answer()
         return
@@ -935,8 +940,7 @@ async def handle_return_to_gift_cart(
     try:
         quote = await quote_gift_purchase(db, buyer=db_user, tariff_id=tariff_id, period_days=period_days)
     except GiftFeatureDisabledError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await state.clear()
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
@@ -944,8 +948,7 @@ async def handle_return_to_gift_cart(
         )
         return
     except GiftTariffUnavailableError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await state.clear()
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -964,8 +967,7 @@ async def handle_return_to_gift_cart(
         await callback.answer()
         return
     except GiftPeriodUnavailableError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await state.clear()
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -984,8 +986,7 @@ async def handle_return_to_gift_cart(
         await callback.answer()
         return
     except GiftPurchaseRestrictedError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await state.clear()
         await callback.answer(
             texts.t('GIFT_PURCHASE_RESTRICTED_ERROR', '❌ Покупка подписок недоступна для вашего аккаунта.'),
