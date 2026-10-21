@@ -576,6 +576,17 @@ async def handle_gift_period_select(
         await callback.answer(texts.t('GIFT_INVALID_SELECTION', 'Некорректные параметры выбора.'), show_alert=True)
         return
 
+    data = await state.get_data()
+    selection_state = await state.get_state()
+    saved_cart = await user_cart_service.get_user_cart(db_user.id)
+    original_checkout = data.get('gift_checkout_id')
+    matching_cart = bool(
+        original_checkout
+        and saved_cart
+        and saved_cart.get('cart_mode') == 'gift_purchase'
+        and (saved_cart.get('gift_checkout_id') or saved_cart.get('idempotency_key')) == original_checkout
+    )
+
     try:
         quote = await quote_gift_purchase(db, buyer=db_user, tariff_id=tariff_id, period_days=period_days)
     except GiftFeatureDisabledError:
@@ -625,16 +636,59 @@ async def handle_gift_period_select(
         )
         return
 
-    data = await state.get_data()
-    checkout_id = data.get('gift_checkout_id') or uuid.uuid4().hex
-
-    await state.set_state(GiftPurchaseStates.confirming_purchase)
-    data = await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_tariff_id=tariff_id,
-        gift_period_days=period_days,
-        gift_expected_price_kopeks=quote.final_price_kopeks,
+    if await state.get_data() != data or await state.get_state() != selection_state:
+        await callback.answer()
+        return
+    previous_selection = data.get('gift_checkout_selection')
+    if previous_selection is None and matching_cart:
+        previous_selection = [saved_cart.get('tariff_id'), saved_cart.get('period_days')]
+    chosen_selection = [tariff_id, period_days]
+    unused_checkout = (
+        previous_selection is None
+        and not data.get('gift_period_days')
+        and data.get('gift_expected_price_kopeks') is None
     )
+    checkout_id = (
+        original_checkout
+        if original_checkout and (previous_selection == chosen_selection or unused_checkout)
+        else uuid.uuid4().hex
+    )
+
+    if matching_cart and (
+        checkout_id != original_checkout or quote.final_price_kopeks != saved_cart.get('total_price')
+    ):
+        # Retire the replaced selection, or require renewed consent to a fresh
+        # price of the same gift. Never touch a newer saved revision.
+        if checkout_id != original_checkout:
+            retired = await user_cart_service.delete_processed_cart(db_user.id, saved_cart)
+        else:
+            retired = await user_cart_service.update_processed_global_cart(
+                db_user.id, saved_cart, {}, revoke_intent=True
+            )
+        if not retired:
+            await callback.answer(
+                texts.t('GIFT_SELECTION_EXPIRED', '❌ Этот выбор устарел. Откройте подарок заново.'),
+                show_alert=True,
+            )
+            return
+
+    updates = {
+        'gift_checkout_id': checkout_id,
+        'gift_checkout_selection': chosen_selection,
+        'gift_tariff_id': tariff_id,
+        'gift_period_days': period_days,
+        'gift_expected_price_kopeks': quote.final_price_kopeks,
+    }
+    if not await mutate_fsm_if_current(
+        state,
+        selection_state,
+        data,
+        new_state=GiftPurchaseStates.confirming_purchase,
+        updates=updates,
+    ):
+        await callback.answer()
+        return
+    data = {**data, **updates}
 
     text, keyboard = _render_confirmation_summary(db_user, quote)
     keyboard = _bind_gift_actions(keyboard, data, GiftPurchaseStates.confirming_purchase.state)
@@ -1136,6 +1190,7 @@ async def handle_return_to_gift_cart(
             new_state=GiftPurchaseStates.confirming_purchase,
             updates={
                 'gift_checkout_id': checkout_id,
+                'gift_checkout_selection': [tariff_id, period_days],
                 'gift_tariff_id': tariff_id,
                 'gift_period_days': period_days,
                 'gift_expected_price_kopeks': quote.final_price_kopeks,
@@ -1213,6 +1268,7 @@ async def handle_return_to_gift_cart(
         new_state=GiftPurchaseStates.confirming_purchase,
         updates={
             'gift_checkout_id': checkout_id,
+            'gift_checkout_selection': [tariff_id, period_days],
             'gift_tariff_id': tariff_id,
             'gift_period_days': period_days,
             'gift_expected_price_kopeks': quote.final_price_kopeks,

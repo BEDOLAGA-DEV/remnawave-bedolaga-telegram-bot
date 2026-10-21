@@ -306,6 +306,7 @@ async def test_gift_resume_cannot_overwrite_selection_at_fsm_write(carts, monkey
             assert await original.get_state() == gift.GiftPurchaseStates.confirming_purchase.state
             assert await original.get_data() == {
                 **selection,
+                'gift_checkout_selection': [1, 30],
                 'gift_tariff_id': 1,
                 'gift_period_days': 30,
                 'gift_expected_price_kopeks': 100,
@@ -438,5 +439,126 @@ async def test_bound_cancel_preserves_changes_at_atomic_fsm_write(carts, monkeyp
             show_origin.assert_awaited_once()
             if replacement:
                 assert await service.has_topup_intent(uid, replacement)
+    finally:
+        await client.delete(builder.build(key, 'state'), builder.build(key, 'data'))
+
+
+@pytest.mark.parametrize(
+    'selection,change',
+    [
+        ('different', 'none'),
+        ('repriced', 'none'),
+        ('same', 'none'),
+        ('legacy', 'none'),
+        ('different', 'cart'),
+        ('different', 'quote_fsm'),
+        ('different', 'write_fsm'),
+    ],
+)
+async def test_period_selection_preserves_cart_permissions_and_atomic_fsm(carts, monkeypatch, selection, change):
+    from aiogram.fsm.storage.redis import RedisStorage
+
+    service, uid, client = carts
+    builder = DefaultKeyBuilder(prefix='gift-selection-identity-audit', with_bot_id=True)
+    key = StorageKey(bot_id=1, chat_id=uid, user_id=uid)
+    original = FSMContext(RedisStorage(client, key_builder=builder), key)
+    data = {
+        'gift_checkout_id': 'old',
+        'gift_tariff_id': 2 if selection == 'different' else 1,
+        'gift_period_days': 30,
+        'gift_expected_price_kopeks': 100,
+    }
+    if selection != 'legacy':
+        data['gift_checkout_selection'] = [1, 30]
+    await original.set_state(gift.GiftPurchaseStates.selecting_period)
+    await original.set_data(data)
+    await service.save_user_cart(uid, {'subscription_id': 10, 'return_to_cart': True})
+    independent = await service.get_subscription_cart(uid, 10)
+    await service.save_user_cart(
+        uid,
+        {
+            'cart_mode': 'gift_purchase',
+            'gift_checkout_id': 'old',
+            'tariff_id': 1,
+            'period_days': 30,
+            'total_price': 100,
+            'return_to_cart': True,
+        },
+    )
+    old_cart = await service.get_user_cart(uid)
+    await client.pexpire(f'user_cart:{uid}', 30000)
+    replacement = None
+
+    async def replace_fsm():
+        await original.set_state('new_selection')
+        await original.set_data({'gift_checkout_id': 'new'})
+
+    probe = MutationProbe(client, replace_fsm)
+    state = FSMContext(RedisStorage(probe, key_builder=builder), key)
+
+    async def quote(*args, **kwargs):
+        nonlocal replacement
+        if change == 'cart':
+            await service.save_user_cart(
+                uid, {'cart_mode': 'gift_purchase', 'gift_checkout_id': 'new', 'return_to_cart': True}
+            )
+            replacement = await service.get_user_cart(uid)
+        if change == 'quote_fsm':
+            await replace_fsm()
+        if change == 'write_fsm':
+            probe.armed = True
+        return gift.GiftQuote(
+            2 if selection == 'different' else 1,
+            'Gift',
+            30,
+            100,
+            1,
+            200 if selection == 'repriced' else 100,
+            200 if selection == 'repriced' else 100,
+            0,
+            0,
+            False,
+        )
+
+    monkeypatch.setattr(gift, 'quote_gift_purchase', quote)
+    monkeypatch.setattr(gift, 'user_cart_service', service)
+    callback = SimpleNamespace(
+        data=f'gift_period:{2 if selection == "different" else 1}:30',
+        message=SimpleNamespace(edit_text=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    try:
+        await gift.handle_gift_period_select(
+            callback, SimpleNamespace(id=uid, language='ru', balance_kopeks=1000), AsyncMock(), state
+        )
+        current = await service.get_user_cart(uid)
+        assert await service.has_topup_intent(uid, independent)
+        if change == 'cart':
+            assert current == replacement
+            assert await service.has_topup_intent(uid, current)
+            assert await original.get_data() == data
+            callback.message.edit_text.assert_not_awaited()
+        elif change == 'quote_fsm':
+            assert await original.get_data() == {'gift_checkout_id': 'new'}
+            assert current == old_cart and await service.has_topup_intent(uid, current)
+            callback.message.edit_text.assert_not_awaited()
+        else:
+            if selection == 'different':
+                assert current is None
+            else:
+                revoked = selection == 'repriced'
+                assert current['return_to_cart'] is (not revoked)
+                assert await service.has_topup_intent(uid, current) is (not revoked)
+                assert 0 < await client.pttl(f'user_cart:{uid}') <= 30000
+            if change == 'write_fsm':
+                assert probe.triggered
+                assert await original.get_state() == 'new_selection'
+                assert await original.get_data() == {'gift_checkout_id': 'new'}
+                callback.message.edit_text.assert_not_awaited()
+            else:
+                result = await original.get_data()
+                assert (result['gift_checkout_id'] == 'old') is (selection != 'different')
+                assert result['gift_checkout_selection'] == [2 if selection == 'different' else 1, 30]
+                callback.message.edit_text.assert_awaited_once()
     finally:
         await client.delete(builder.build(key, 'state'), builder.build(key, 'data'))
