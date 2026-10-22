@@ -1844,8 +1844,8 @@
   Классы: нет
   Функции: `parse_positive_rubles_to_kopeks` — Parse a positive ruble amount without floating-point rounding., `parse_positive_gb` — Parse a positive whole-number traffic amount in gigabytes., `validate_custom_traffic_configuration` — Return user-facing validation errors for enabling custom traffic.
 - `app/services/tariff_family_policy.py` — Python-модуль
-  Классы: нет
-  Функции: `find_live_entitlement_family_conflict` — Возвращает другую живую подписку семьи покупаемого тарифа.
+  Классы: `ActiveTariffFamilyConflict`
+  Функции: `find_live_entitlement_family_conflict` — Возвращает другую живую подписку семьи покупаемого тарифа., `require_available_entitlement_family` — Предплатёжный отказ для второго Main, если это не renewal/trial conversion.
 - `app/services/tariff_squad_sync.py` — Python-модуль
   Классы: нет
   Функции: `schedule_tariff_squad_sync` — Запустить синхронизацию в фоне; ссылка на задачу держится до её конца., `sync_tariff_squads_in_background` — Прогнать сквады тарифа по всем его живым подпискам со своей сессией БД.
@@ -4940,7 +4940,7 @@
   Функции: `test_parse_positive_rubles_to_kopeks`, `test_parse_positive_rubles_to_kopeks_rejects_invalid_values`, `test_parse_positive_gb`, `test_parse_positive_gb_rejects_invalid_values`, `test_valid_custom_traffic_configuration_has_no_errors`, `test_invalid_custom_traffic_configuration_reports_specific_error`, `test_invalid_configuration_reports_all_independent_missing_fields`
 - `tests/services/test_tariff_family_policy.py` — Python-модуль
   Классы: нет
-  Функции: `test_other_main_tariff_is_conflict_but_independent_addon_is_not`, `test_trial_and_limited_count_as_live_but_expired_and_disabled_do_not`, `test_legacy_null_family_unrestricted_and_missing_tariff_is_not_null`, `test_current_subscription_not_conflict_when_switching_or_renewing`
+  Функции: `test_other_main_tariff_is_conflict_but_independent_addon_is_not`, `test_trial_and_limited_count_as_live_but_expired_and_disabled_do_not`, `test_legacy_null_family_unrestricted_and_missing_tariff_is_not_null`, `test_current_subscription_not_conflict_when_switching_or_renewing`, `test_precharge_guard_blocks_second_main_but_allows_renewal_and_addon`, `test_precharge_guard_allows_only_server_resolved_trial_candidate`
 - `tests/services/test_tariff_purchase_subscription_pinning.py` — Python-модуль
   Классы: нет
   Функции: `test_select_tariff_period_resolves_and_pins_target_subscription_id` — REGRESSION: ``select_tariff_period`` must resolve the existing, `test_confirm_tariff_purchase_reads_target_subscription_id_from_fsm` — REGRESSION: ``confirm_tariff_purchase`` must read, `test_confirm_tariff_purchase_guards_against_tariff_divergence` — If the FSM-pinned subscription's tariff_id no longer matches, `test_confirm_tariff_purchase_does_not_use_only_tariff_lookup` — Pre-fix shape: confirm_tariff_purchase ran a single
