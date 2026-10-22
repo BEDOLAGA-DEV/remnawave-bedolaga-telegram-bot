@@ -1,3 +1,5 @@
+import re
+
 import structlog
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +10,18 @@ from app.utils.panel_tag import normalize_panel_tag
 
 
 logger = structlog.get_logger(__name__)
+
+
+_FAMILY_KEY = re.compile(r'[a-z][a-z0-9_-]{0,63}')
+
+
+def normalize_entitlement_family(value: str | None) -> str | None:
+    """Проверяет slug семейства тарифа; None сохраняет прежнее поведение."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _FAMILY_KEY.fullmatch(value):
+        raise ValueError('entitlement_family must match [a-z][a-z0-9_-]{0,63}')
+    return value
 
 
 def _normalize_period_prices(period_prices: dict[int, int] | None) -> dict[str, int]:
@@ -183,6 +197,7 @@ async def create_tariff(
     name: str,
     *,
     description: str | None = None,
+    entitlement_family: str | None = None,
     display_order: int = 0,
     is_active: bool = True,
     traffic_limit_gb: int = 100,
@@ -232,6 +247,7 @@ async def create_tariff(
     tariff = Tariff(
         name=name.strip(),
         description=description.strip() if description else None,
+        entitlement_family=normalize_entitlement_family(entitlement_family),
         display_order=max(0, display_order),
         is_active=is_active,
         traffic_limit_gb=max(0, traffic_limit_gb),
@@ -305,6 +321,7 @@ async def update_tariff(
     *,
     name: str | None = None,
     description: str | None = None,
+    entitlement_family: str | None = ...,  # ... = не передано, None = сбросить
     display_order: int | None = None,
     is_active: bool | None = None,
     traffic_limit_gb: int | None = None,
@@ -351,6 +368,8 @@ async def update_tariff(
         tariff.name = name.strip()
     if description is not None:
         tariff.description = description.strip() if description else None
+    if entitlement_family is not ...:
+        tariff.entitlement_family = normalize_entitlement_family(entitlement_family)
     if display_order is not None:
         tariff.display_order = max(0, display_order)
     if is_active is not None:

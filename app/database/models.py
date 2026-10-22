@@ -11,6 +11,7 @@ def _aware(dt: datetime | None) -> datetime | None:
 from enum import Enum, StrEnum
 
 from sqlalchemy import (
+    DDL,
     JSON,
     BigInteger,
     Boolean,
@@ -29,12 +30,15 @@ from sqlalchemy import (
     Time,
     TypeDecorator,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Mapped, backref, mapped_column, relationship
 from sqlalchemy.sql import func
+
+from app.database.tariff_family_schema import PG_FAMILY_DDL
 
 
 class AwareDateTime(TypeDecorator):
@@ -2123,6 +2127,9 @@ class Tariff(Base):
     description = Column(Text, nullable=True)
     display_order = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Необязательное коммерческое семейство; пока только метаданные.
+    # NULL у legacy-тарифов не меняет правила продажи и не включает XOR.
+    entitlement_family = Column(String(64), nullable=True, default=None)
 
     # Параметры тарифа
     traffic_limit_gb = Column(Integer, nullable=False, default=100)  # 0 = безлимит
@@ -5439,3 +5446,11 @@ class UserReminderState(Base):
     # Последний успех — по нему общий лимит «одно напоминание в сутки».
     last_success_at = Column(AwareDateTime(), nullable=True)
     dismissed_at = Column(AwareDateTime(), nullable=True)
+
+
+# На пустой PostgreSQL create_all выполняется без Alembic upgrade: ту же
+# защиту, что миграция 0133, надо установить и в свежую схему.
+# SQLite-триггеры здесь не устанавливаются: для SQLite запрет семейств
+# пока НЕ обеспечен. Это отдельно блокирует готовность полного продукта.
+for _family_ddl in PG_FAMILY_DDL:
+    event.listen(Base.metadata, 'after_create', DDL(_family_ddl).execute_if(dialect='postgresql'))

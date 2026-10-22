@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from app.cabinet.schemas.tariffs import TariffUpdateRequest
 from app.database.models import Tariff
@@ -99,3 +103,71 @@ def test_new_editor_modules_are_registered_from_tariff_router() -> None:
         'register_server_limits_handlers(dp)',
     ):
         assert register in source, register
+
+
+def _unwrap(fn):
+    while hasattr(fn, '__wrapped__'):
+        fn = fn.__wrapped__
+    return fn
+
+
+@pytest.mark.asyncio
+async def test_telegram_family_editor_sets_and_clears_metadata(monkeypatch) -> None:
+    from app.handlers.admin import tariffs as mod
+
+    tariff = SimpleNamespace(id=7, name='VPN', entitlement_family=None)
+    message = MagicMock()
+    message.answer = AsyncMock()
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={'tariff_id': 7})
+    state.clear = AsyncMock()
+    updates = []
+
+    async def update(_db, target, **kwargs):
+        updates.append(kwargs)
+        target.entitlement_family = kwargs['entitlement_family']
+        return target
+
+    monkeypatch.setattr(mod, 'get_tariff_by_id', AsyncMock(return_value=tariff))
+    monkeypatch.setattr(mod, 'get_tariff_subscriptions_count', AsyncMock(return_value=0))
+    monkeypatch.setattr(mod, 'update_tariff', update)
+    monkeypatch.setattr(mod, 'format_tariff_info', lambda *_args: 'Тариф')
+    monkeypatch.setattr(mod, 'get_tariff_view_keyboard', lambda *_args: None)
+
+    for text_value, expected in (('main', 'main'), (' - ', None)):
+        message.text = text_value
+        await _unwrap(mod.process_edit_tariff_entitlement_family)(
+            message, SimpleNamespace(language='ru'), MagicMock(), state
+        )
+        assert tariff.entitlement_family == expected
+
+    assert updates == [{'entitlement_family': 'main'}, {'entitlement_family': None}]
+    assert state.clear.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_telegram_family_editor_rejects_invalid_key_without_write(monkeypatch) -> None:
+    from app.handlers.admin import tariffs as mod
+
+    message = MagicMock()
+    message.text = 'Main Family'
+    message.answer = AsyncMock()
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={'tariff_id': 7})
+    state.clear = AsyncMock()
+    update = AsyncMock()
+
+    monkeypatch.setattr(
+        mod,
+        'get_tariff_by_id',
+        AsyncMock(return_value=SimpleNamespace(id=7, name='VPN', entitlement_family=None)),
+    )
+    monkeypatch.setattr(mod, 'update_tariff', update)
+
+    await _unwrap(mod.process_edit_tariff_entitlement_family)(
+        message, SimpleNamespace(language='ru'), MagicMock(), state
+    )
+
+    update.assert_not_awaited()
+    state.clear.assert_not_awaited()
+    message.answer.assert_awaited_once()

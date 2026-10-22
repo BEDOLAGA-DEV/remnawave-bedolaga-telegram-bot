@@ -322,3 +322,18 @@ def test_cabinet_purchase_excludes_conversion_candidate_from_trial_kill():
         'пре-резолвленный кандидат должен передаваться в create_paid_subscription, '
         'чтобы кабинет и CRUD гарантированно работали с ОДНОЙ и той же строкой триала'
     )
+
+
+async def test_single_tariff_purchase_keeps_legacy_trial_cleanup(monkeypatch):
+    """Коммерческое семейство не меняет поведение при выключенном multi-tariff."""
+    monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: False)
+    monkeypatch.setattr(sub_crud, 'generate_unique_short_id', AsyncMock(return_value='test1234'))
+    monkeypatch.setattr(sub_crud, '_resolve_connected_squads', AsyncMock(return_value=[]))
+    cleanup = AsyncMock(return_value=[])
+    monkeypatch.setattr(sub_crud, 'deactivate_user_trial_subscriptions', cleanup)
+    db = _db()
+
+    await sub_crud.create_paid_subscription(db, user_id=77, duration_days=30, tariff_id=17, traffic_limit_gb=20)
+
+    cleanup.assert_awaited_once()
+    assert cleanup.await_args.kwargs['target_tariff_id'] is None

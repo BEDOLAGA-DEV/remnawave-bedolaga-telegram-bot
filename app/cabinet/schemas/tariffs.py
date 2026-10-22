@@ -52,6 +52,7 @@ class TariffListItem(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    entitlement_family: str | None = None
     is_trial_available: bool
     # Тариф отмечен оператором как выгодный — выделяется в списке.
     is_highlighted: bool = False
@@ -88,6 +89,7 @@ class TariffDetailResponse(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    entitlement_family: str | None = None
     is_trial_available: bool
     is_highlighted: bool = False
     allow_traffic_topup: bool = True
@@ -156,6 +158,7 @@ class TariffCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     is_active: bool = True
+    entitlement_family: str | None = Field(None, max_length=64, pattern=r'\A[a-z][a-z0-9_-]{0,63}\z')
     is_highlighted: bool = False
     allow_traffic_topup: bool = True
     traffic_topup_enabled: bool = False
@@ -214,6 +217,7 @@ class TariffUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     is_active: bool | None = None
+    entitlement_family: str | None = Field(None, max_length=64, pattern=r'\A[a-z][a-z0-9_-]{0,63}\z')
     is_highlighted: bool | None = None
     allow_traffic_topup: bool | None = None
     traffic_topup_enabled: bool | None = None

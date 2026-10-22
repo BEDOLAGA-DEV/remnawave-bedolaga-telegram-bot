@@ -805,6 +805,37 @@ async def purchase_tariff(
                 )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
+
+        # Проверяем семейство после блокировки User, ДО скидки, автокорзины,
+        # списания и любых внешних действий. Триал разрешён только если он
+        # совпадает с кандидатом штатной server-side конверсии.
+        family = getattr(tariff, 'entitlement_family', None)
+        if settings.is_multi_tariff_enabled() and isinstance(family, str) and family:
+            from app.database.crud.subscription import resolve_trial_conversion_candidate
+            from app.services.tariff_family_policy import (
+                ActiveTariffFamilyConflict,
+                require_available_entitlement_family,
+            )
+
+            conversion_trial = (
+                await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+                if existing_subscription is None
+                else None
+            )
+            try:
+                await require_available_entitlement_family(
+                    db,
+                    user_id=user.id,
+                    tariff_id=tariff.id,
+                    current_subscription_id=existing_subscription.id if existing_subscription is not None else None,
+                    conversion_trial_id=conversion_trial.id if conversion_trial is not None else None,
+                )
+            except ActiveTariffFamilyConflict as error:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={'code': 'entitlement_family_conflict', 'message': str(error)},
+                ) from error
+
         device_limit = None
         effective_device_limit = tariff.device_limit
         if existing_subscription and existing_subscription.tariff_id == tariff.id:
@@ -1053,6 +1084,7 @@ async def purchase_tariff(
                 db,
                 user.id,
                 exclude_subscription_id=subscription.id if subscription else getattr(_conversion_trial, 'id', None),
+                target_tariff_id=tariff.id if settings.is_multi_tariff_enabled() else None,
             )
             if should_carry_trial_remaining_days():
                 for _kt in killed_trials:

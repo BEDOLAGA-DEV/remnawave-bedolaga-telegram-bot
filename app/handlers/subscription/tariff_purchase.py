@@ -1887,6 +1887,34 @@ async def confirm_tariff_purchase(
     else:
         existing_sub = await get_subscription_by_user_id(db, db_user.id)
 
+    # Отказываем во второй Main-покупке ДО списания средств. Исключение —
+    # именно та живая trial-строка, которую сервер собирается конвертировать.
+    family = getattr(tariff, 'entitlement_family', None)
+    if settings.is_multi_tariff_enabled() and isinstance(family, str) and family:
+        from app.database.crud.subscription import resolve_trial_conversion_candidate
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        conversion_trial = (
+            await resolve_trial_conversion_candidate(db, db_user.id, tariff_id) if existing_sub is None else None
+        )
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=db_user.id,
+                tariff_id=tariff_id,
+                current_subscription_id=existing_sub.id if existing_sub is not None else None,
+                conversion_trial_id=conversion_trial.id if conversion_trial is not None else None,
+            )
+        except ActiveTariffFamilyConflict:
+            await callback.answer(
+                texts.t('TARIFF_FAMILY_CONFLICT', 'У вас уже есть подписка этой группы. Смените её тариф.'),
+                show_alert=True,
+            )
+            return
+
     device_limit = None
     if existing_sub and existing_sub.tariff_id == tariff.id:
         device_limit = existing_sub.device_limit
