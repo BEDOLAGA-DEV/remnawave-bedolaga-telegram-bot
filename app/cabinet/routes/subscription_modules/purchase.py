@@ -1084,6 +1084,7 @@ async def purchase_tariff(
                 db,
                 user.id,
                 exclude_subscription_id=subscription.id if subscription else getattr(_conversion_trial, 'id', None),
+                target_tariff_id=tariff.id if settings.is_multi_tariff_enabled() else None,
             )
             if should_carry_trial_remaining_days():
                 for _kt in killed_trials:
