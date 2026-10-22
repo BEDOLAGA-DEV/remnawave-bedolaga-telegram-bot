@@ -1,4 +1,5 @@
 import html
+from decimal import Decimal, InvalidOperation
 
 import structlog
 from aiogram import Dispatcher, F, types
@@ -560,7 +561,10 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
             await message.answer(texts.INVALID_AMOUNT, reply_markup=get_back_keyboard(db_user.language))
             return
 
-        amount_rubles = float(amount_text.replace(',', '.'))
+        amount_rubles = Decimal(amount_text.replace(',', '.'))
+        if not amount_rubles.is_finite():
+            await message.answer(texts.INVALID_AMOUNT, reply_markup=get_back_keyboard(db_user.language))
+            return
 
         if amount_rubles < 1:
             await message.answer(
@@ -605,7 +609,7 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
         if not await route_payment_by_method(message, db_user, amount_kopeks, state, payment_method):
             await message.answer('Неизвестный способ оплаты')
 
-    except ValueError:
+    except (ValueError, InvalidOperation):
         await message.answer(texts.INVALID_AMOUNT, reply_markup=get_back_keyboard(db_user.language))
 
 

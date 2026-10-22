@@ -158,3 +158,56 @@ async def test_minimum_hint_only_suggests_an_accepted_whole_ruble_amount(
         assert hint.split('Например, отправьте: ')[1] == example
     payment_environment.factory.assert_not_called()
     assert await state.get_state() == BalanceStates.waiting_for_amount.state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method', ['yookassa', 'yookassa_sbp'])
+@pytest.mark.parametrize('typed', ['64.07', '64,07', '64.10', '64.21'])
+async def test_retry_at_exact_fractional_minimum_does_not_lose_a_kopeck(
+    payment_environment, state, user, method, typed
+):
+    expected_kopeks = {'64.07': 6407, '64,07': 6407, '64.10': 6410, '64.21': 6421}[typed]
+    payment_environment.settings.YOOKASSA_MIN_AMOUNT_KOPEKS = expected_kopeks
+    await state.set_state(BalanceStates.waiting_for_amount)
+    await state.set_data({'payment_method': method, 'saved_cart': {'total_price': 10000}})
+
+    await balance_main.process_topup_amount(_message(typed), user, state)
+
+    expected = (
+        payment_environment.service.create_yookassa_payment
+        if method == 'yookassa'
+        else payment_environment.service.create_yookassa_sbp_payment
+    )
+    expected.assert_awaited_once()
+    assert expected.await_args.kwargs['amount_kopeks'] == expected_kopeks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method', ['platega', 'aurapay_card', 'kassa_ai_sbp', 'cryptobot'])
+async def test_manual_amount_reaches_other_payment_routes_without_float_truncation(state, user, monkeypatch, method):
+    route = AsyncMock(return_value=True)
+    monkeypatch.setattr(balance_main, 'route_payment_by_method', route)
+    await state.set_state(BalanceStates.waiting_for_amount)
+    await state.set_data({'payment_method': method, 'saved_cart': {'total_price': 10000}})
+    message = _message('64.07')
+
+    await balance_main.process_topup_amount(message, user, state)
+
+    route.assert_awaited_once_with(message, user, 6407, state, method)
+    assert (await state.get_data())['saved_cart'] == {'total_price': 10000}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('typed', ['nan', 'NaN', 'sNaN', 'inf', '-Infinity', 'not-a-number'])
+async def test_nonfinite_amount_never_reaches_payment_provider(state, user, monkeypatch, typed):
+    route = AsyncMock()
+    monkeypatch.setattr(balance_main, 'route_payment_by_method', route)
+    await state.set_state(BalanceStates.waiting_for_amount)
+    await state.set_data({'payment_method': 'platega'})
+    message = _message(typed)
+
+    await balance_main.process_topup_amount(message, user, state)
+
+    route.assert_not_awaited()
+    message.answer.assert_awaited_once()
+    assert await state.get_state() == BalanceStates.waiting_for_amount.state

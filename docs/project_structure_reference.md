@@ -3958,6 +3958,9 @@
 - `tests/database/test_topup_classic_cart_postgres.py` — Python-модуль
   Классы: `CartStorage` (6 методов)
   Функции: `cart_service`, `test_topup_finalizer_purchases_selected_classic`
+- `tests/database/test_topup_exact_amount_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_rejected_prefill_then_exact_retry_creates_exact_pending_invoice`
 - `tests/database/test_unpaid_trial_visibility_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_unpaid_trial_invoice_stays_hidden_after_back`
@@ -4285,7 +4288,7 @@
   Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
 - `tests/handlers/test_balance_topup_retry_hint.py` — Python-модуль
   Классы: нет
-  Функции: `payment_environment`, `state`, `user`, `test_rejected_purchase_topup_keeps_input_open_until_user_retries`, `test_minimum_hint_only_suggests_an_accepted_whole_ruble_amount`
+  Функции: `payment_environment`, `state`, `user`, `test_rejected_purchase_topup_keeps_input_open_until_user_retries`, `test_minimum_hint_only_suggests_an_accepted_whole_ruble_amount`, `test_retry_at_exact_fractional_minimum_does_not_lose_a_kopeck`, `test_manual_amount_reaches_other_payment_routes_without_float_truncation`, `test_nonfinite_amount_never_reaches_payment_provider`
 - `tests/handlers/test_broadcast_custom_buttons.py` — Python-модуль
   Классы: нет
   Функции: `test_keyboard_passes_icon_custom_emoji_id`, `test_schema_roundtrips_icon_custom_emoji_id`, `test_schema_defaults_to_none_and_rejects_garbage`
