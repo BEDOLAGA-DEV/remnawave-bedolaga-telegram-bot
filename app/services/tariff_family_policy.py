@@ -54,3 +54,37 @@ async def find_live_entitlement_family_conflict(
     if current_subscription_id is not None:
         query = query.where(Subscription.id != current_subscription_id)
     return (await db.execute(query)).scalar_one_or_none()
+
+
+class ActiveTariffFamilyConflict(ValueError):
+    """Для нового тарифа уже занята живая подписка этого семейства."""
+
+
+async def require_available_entitlement_family(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    tariff_id: int,
+    current_subscription_id: int | None = None,
+    conversion_trial_id: int | None = None,
+) -> None:
+    """Предплатёжный отказ для второго Main, если это не renewal/trial conversion.
+
+    Вызывающий получает `current_subscription_id` лишь после проверки владения
+    подпиской, а `conversion_trial_id` — из штатного серверного resolver'а.
+    Обязательная блокировка User и DB-триггеры обеспечиваются отдельно.
+    """
+    conflict = await find_live_entitlement_family_conflict(
+        db,
+        user_id=user_id,
+        tariff_id=tariff_id,
+        current_subscription_id=current_subscription_id,
+    )
+    if conflict is not None and (
+        conversion_trial_id is None
+        or not conflict.is_trial
+        or conflict.id != conversion_trial_id
+    ):
+        raise ActiveTariffFamilyConflict(
+            'Уже есть живая подписка этого семейства; смените тариф существующей подписки'
+        )
