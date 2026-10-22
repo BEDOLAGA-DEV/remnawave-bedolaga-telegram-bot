@@ -534,6 +534,7 @@ async def _alive_trial_conversion_candidate(
     db: AsyncSession,
     user_id: int,
     same_tariff_existing: Subscription | None,
+    target_tariff_id: int | None = None,
 ) -> Subscription | None:
     """Единое правило выбора кандидата конверсии триала при платной покупке.
 
@@ -547,7 +548,17 @@ async def _alive_trial_conversion_candidate(
         and same_tariff_existing.status in _ALIVE_SUBSCRIPTION_STATUSES_TUPLE
     ):
         return same_tariff_existing
-    return await get_alive_trial_subscription(db, user_id)
+    # Коммерческие семейства независимы: paid Main не должен конвертировать
+    # живой CDN trial, у которого уже есть собственный Remnawave identity.
+    # У legacy NULL сохраняем прежний алгоритм подбора любого trial.
+    target_family = None
+    if target_tariff_id is not None:
+        target_family = await db.scalar(
+            select(Tariff.entitlement_family).where(Tariff.id == target_tariff_id)
+        )
+    return await get_alive_trial_subscription(
+        db, user_id, target_family=target_family if isinstance(target_family, str) else None
+    )
 
 
 async def resolve_trial_conversion_candidate(
@@ -568,7 +579,7 @@ async def resolve_trial_conversion_candidate(
     existing = await get_subscription_by_user_and_tariff(db, user_id, tariff_id, include_inactive=True)
     if existing is not None and existing.status == SubscriptionStatus.EXPIRED.value:
         return None
-    return await _alive_trial_conversion_candidate(db, user_id, existing)
+    return await _alive_trial_conversion_candidate(db, user_id, existing, target_tariff_id=tariff_id)
 
 
 async def create_paid_subscription(
@@ -621,7 +632,7 @@ async def create_paid_subscription(
         # second lookup; the selection rule is shared either way.
         _alive_trial = conversion_trial
         if _alive_trial is None:
-            _alive_trial = await _alive_trial_conversion_candidate(db, user_id, _existing)
+            _alive_trial = await _alive_trial_conversion_candidate(db, user_id, _existing, target_tariff_id=tariff_id)
         if _alive_trial is not None:
             _converted = await _convert_trial_subscription_to_paid(
                 db,
@@ -673,7 +684,9 @@ async def create_paid_subscription(
     # Trial = probe, must die on any paid purchase (regardless of path: bot, cabinet, webhook)
     if not is_trial:
         try:
-            killed = await deactivate_user_trial_subscriptions(db, user_id, exclude_subscription_id=subscription.id)
+            killed = await deactivate_user_trial_subscriptions(
+                db, user_id, exclude_subscription_id=subscription.id, target_tariff_id=tariff_id
+            )
             if killed:
                 logger.info(
                     'Deactivated trial subscriptions on paid purchase',
@@ -3324,7 +3337,9 @@ async def get_subscription_by_user_and_tariff(
     return result.scalar_one_or_none()
 
 
-async def get_alive_trial_subscription(db: AsyncSession, user_id: int) -> Subscription | None:
+async def get_alive_trial_subscription(
+    db: AsyncSession, user_id: int, *, target_family: str | None = None
+) -> Subscription | None:
     """Alive (active/trial/limited) trial subscription of the user, if any.
 
     LIMITED is included on purpose: an exhausted-traffic trial is exactly the
@@ -3334,7 +3349,7 @@ async def get_alive_trial_subscription(db: AsyncSession, user_id: int) -> Subscr
     the user is actually using, and converting the wrong row would kill their
     working link right after payment. Ties break by freshest ``end_date``.
     """
-    result = await db.execute(
+    query = (
         select(Subscription)
         .options(selectinload(Subscription.tariff))
         .where(
@@ -3349,6 +3364,11 @@ async def get_alive_trial_subscription(db: AsyncSession, user_id: int) -> Subscr
         )
         .limit(1)
     )
+    if target_family:
+        query = query.join(Tariff, Tariff.id == Subscription.tariff_id).where(
+            Tariff.entitlement_family == target_family
+        )
+    result = await db.execute(query)
     return result.scalar_one_or_none()
 
 
@@ -3357,6 +3377,7 @@ async def deactivate_user_trial_subscriptions(
     user_id: int,
     *,
     exclude_subscription_id: int | None = None,
+    target_tariff_id: int | None = None,
 ) -> list[Subscription]:
     """Deactivate all trial subscriptions for a user.
 
@@ -3367,19 +3388,24 @@ async def deactivate_user_trial_subscriptions(
     unique index and used to survive every paid purchase, hanging in the
     cabinet next to the new subscription.
     """
-    result = await db.execute(
-        select(Subscription).where(
-            Subscription.user_id == user_id,
-            Subscription.is_trial.is_(True),
-            Subscription.status.in_(
-                [
-                    SubscriptionStatus.ACTIVE.value,
-                    SubscriptionStatus.TRIAL.value,
-                    SubscriptionStatus.LIMITED.value,
-                ]
-            ),
-        )
+    query = select(Subscription).where(
+        Subscription.user_id == user_id,
+        Subscription.is_trial.is_(True),
+        Subscription.status.in_(
+            [
+                SubscriptionStatus.ACTIVE.value,
+                SubscriptionStatus.TRIAL.value,
+                SubscriptionStatus.LIMITED.value,
+            ]
+        ),
     )
+    if target_tariff_id is not None:
+        family = await db.scalar(select(Tariff.entitlement_family).where(Tariff.id == target_tariff_id))
+        if isinstance(family, str) and family:
+            query = query.join(Tariff, Tariff.id == Subscription.tariff_id).where(
+                Tariff.entitlement_family == family
+            )
+    result = await db.execute(query)
     trial_subs = list(result.scalars().all())
 
     deactivated = []
