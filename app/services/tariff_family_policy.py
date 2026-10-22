@@ -81,10 +81,6 @@ async def require_available_entitlement_family(
         current_subscription_id=current_subscription_id,
     )
     if conflict is not None and (
-        conversion_trial_id is None
-        or not conflict.is_trial
-        or conflict.id != conversion_trial_id
+        conversion_trial_id is None or not conflict.is_trial or conflict.id != conversion_trial_id
     ):
-        raise ActiveTariffFamilyConflict(
-            'Уже есть живая подписка этого семейства; смените тариф существующей подписки'
-        )
+        raise ActiveTariffFamilyConflict('Уже есть живая подписка этого семейства; смените тариф существующей подписки')
