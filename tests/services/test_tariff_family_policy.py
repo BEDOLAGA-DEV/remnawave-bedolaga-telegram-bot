@@ -5,7 +5,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, tariff_promo_groups
-from app.services.tariff_family_policy import find_live_entitlement_family_conflict
+from app.services.tariff_family_policy import (
+    ActiveTariffFamilyConflict,
+    find_live_entitlement_family_conflict,
+    require_available_entitlement_family,
+)
 from tests.fixtures.sqlite_memory import memory_session
 
 
@@ -105,3 +109,54 @@ async def test_current_subscription_not_conflict_when_switching_or_renewing(monk
             is None
         )
         assert await find_live_entitlement_family_conflict(db, user_id=53, tariff_id=basic.id) is current
+
+
+@pytest.mark.asyncio
+async def test_precharge_guard_blocks_second_main_but_allows_renewal_and_addon(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        basic = Tariff(name='Start', entitlement_family='main')
+        premium = Tariff(name='Max', entitlement_family='main')
+        addon = Tariff(name='CDN', entitlement_family='metered_bypass')
+        db.add_all([basic, premium, addon])
+        await db.flush()
+
+        current = _subscription(61, basic.id, SubscriptionStatus.ACTIVE)
+        db.add(current)
+        await db.flush()
+
+        with pytest.raises(ActiveTariffFamilyConflict, match='смените тариф'):
+            await require_available_entitlement_family(db, user_id=61, tariff_id=premium.id)
+
+        await require_available_entitlement_family(
+            db, user_id=61, tariff_id=premium.id, current_subscription_id=current.id
+        )
+        await require_available_entitlement_family(db, user_id=61, tariff_id=addon.id)
+
+        # Нельзя обойти конфликт, подставив id непробной подписки.
+        with pytest.raises(ActiveTariffFamilyConflict):
+            await require_available_entitlement_family(
+                db, user_id=61, tariff_id=premium.id, conversion_trial_id=current.id
+            )
+
+
+@pytest.mark.asyncio
+async def test_precharge_guard_allows_only_server_resolved_trial_candidate(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        trial_tariff = Tariff(name='Trial', entitlement_family='main')
+        paid_tariff = Tariff(name='Standard', entitlement_family='main')
+        db.add_all([trial_tariff, paid_tariff])
+        await db.flush()
+
+        trial = _subscription(63, trial_tariff.id, SubscriptionStatus.TRIAL)
+        db.add(trial)
+        await db.flush()
+
+        with pytest.raises(ActiveTariffFamilyConflict):
+            await require_available_entitlement_family(db, user_id=63, tariff_id=paid_tariff.id)
+        with pytest.raises(ActiveTariffFamilyConflict):
+            await require_available_entitlement_family(
+                db, user_id=63, tariff_id=paid_tariff.id, conversion_trial_id=999
+            )
+        await require_available_entitlement_family(
+            db, user_id=63, tariff_id=paid_tariff.id, conversion_trial_id=trial.id
+        )
