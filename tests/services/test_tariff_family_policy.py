@@ -4,6 +4,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.database.crud.subscription import (
+    deactivate_user_trial_subscriptions,
+    get_alive_trial_subscription,
+    resolve_trial_conversion_candidate,
+)
 from app.database.models import PromoGroup, Subscription, SubscriptionStatus, Tariff, tariff_promo_groups
 from app.services.tariff_family_policy import (
     ActiveTariffFamilyConflict,
@@ -160,3 +165,60 @@ async def test_precharge_guard_allows_only_server_resolved_trial_candidate(monke
         await require_available_entitlement_family(
             db, user_id=63, tariff_id=paid_tariff.id, conversion_trial_id=trial.id
         )
+
+
+@pytest.mark.asyncio
+async def test_tagged_main_does_not_consume_independent_cdn_trial(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        main = Tariff(name='Main', entitlement_family='main')
+        addon = Tariff(name='CDN', entitlement_family='metered_bypass')
+        db.add_all([main, addon])
+        await db.flush()
+
+        cdn_trial = _subscription(65, addon.id, SubscriptionStatus.TRIAL)
+        db.add(cdn_trial)
+        await db.flush()
+
+        # Покупка Main не должна конвертировать единственный живой CDN trial.
+        assert await get_alive_trial_subscription(db, 65, target_family='main') is None
+        assert await resolve_trial_conversion_candidate(db, 65, main.id) is None
+
+        # И отключать trial другого семейства запрещено.
+        killed = await deactivate_user_trial_subscriptions(db, 65, target_tariff_id=main.id)
+        assert killed == []
+        await db.refresh(cdn_trial)
+        assert cdn_trial.is_trial is True
+        assert cdn_trial.status == SubscriptionStatus.TRIAL.value
+
+        # Legacy (NULL) сохраняет прежнее поведение по умолчанию.
+        assert await get_alive_trial_subscription(db, 65) is cdn_trial
+
+
+@pytest.mark.asyncio
+async def test_tagged_main_converts_its_trial_without_disabling_addon_trial(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        main = Tariff(name='Main', entitlement_family='main')
+        upgrade = Tariff(name='Main Plus', entitlement_family='main')
+        addon = Tariff(name='CDN', entitlement_family='metered_bypass')
+        db.add_all([main, upgrade, addon])
+        await db.flush()
+
+        main_trial = _subscription(67, main.id, SubscriptionStatus.TRIAL)
+        addon_trial = _subscription(67, addon.id, SubscriptionStatus.TRIAL)
+        db.add_all([main_trial, addon_trial])
+        await db.flush()
+
+        assert await resolve_trial_conversion_candidate(db, 67, upgrade.id) is main_trial
+
+        killed = await deactivate_user_trial_subscriptions(
+            db, 67, target_tariff_id=upgrade.id, exclude_subscription_id=main_trial.id
+        )
+        assert killed == []
+        await db.refresh(addon_trial)
+        assert addon_trial.is_trial is True
+
+        # При отдельном завершении Main-trial CDN остаётся живым.
+        killed = await deactivate_user_trial_subscriptions(db, 67, target_tariff_id=main.id)
+        assert [item.id for item in killed] == [main_trial.id]
+        await db.refresh(addon_trial)
+        assert addon_trial.status == SubscriptionStatus.TRIAL.value
