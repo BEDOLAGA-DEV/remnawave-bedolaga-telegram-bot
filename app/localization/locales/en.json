@@ -2317,5 +2317,9 @@
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ Auto-renewal via Cashera",
   "CASHERA_RECURRING_CANCELLED": "✅ Cashera auto-renewal turned off",
   "TARIFF_PURCHASE_CONFIRMATION_EXPIRED": "This confirmation has expired. Please select the tariff again.",
-  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ This purchase is already being processed. You will not be charged again."
+  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ This purchase is already being processed. You will not be charged again.",
+  "TOPUP_RETRY_TOO_LOW": "❌ Minimum top-up amount: {minimum} RUB.\n\nTo continue, send the bot a new top-up amount between {minimum} RUB and {maximum} RUB.",
+  "TOPUP_RETRY_TOO_HIGH": "❌ Maximum top-up amount: {maximum} RUB.\n\nTo continue, send the bot a new top-up amount between {minimum} RUB and {maximum} RUB.",
+  "TOPUP_RETRY_EXAMPLE": "For example, send: {amount}",
+  "TOPUP_RETRY_NO_RANGE": "❌ This method has no valid amount for manual input (minimum {minimum} RUB, maximum {maximum} RUB). Choose another payment method."
 }

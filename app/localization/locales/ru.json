@@ -2317,5 +2317,9 @@
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ Автопродление через Cashera",
   "CASHERA_RECURRING_CANCELLED": "✅ Автопродление Cashera отключено",
   "TARIFF_PURCHASE_CONFIRMATION_EXPIRED": "Подтверждение устарело. Выберите тариф заново.",
-  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ Покупка уже обрабатывается. Повторное списание не требуется."
+  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ Покупка уже обрабатывается. Повторное списание не требуется.",
+  "TOPUP_RETRY_TOO_LOW": "❌ Минимальная сумма пополнения — {minimum} ₽.\n\nЧтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {minimum} ₽ и не больше {maximum} ₽.",
+  "TOPUP_RETRY_TOO_HIGH": "❌ Максимальная сумма пополнения — {maximum} ₽.\n\nЧтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {minimum} ₽ и не больше {maximum} ₽.",
+  "TOPUP_RETRY_EXAMPLE": "Например, отправьте: {amount}",
+  "TOPUP_RETRY_NO_RANGE": "❌ У этого способа нет допустимой суммы для ручного ввода (минимум {minimum} ₽, максимум {maximum} ₽). Выберите другой способ оплаты."
 }

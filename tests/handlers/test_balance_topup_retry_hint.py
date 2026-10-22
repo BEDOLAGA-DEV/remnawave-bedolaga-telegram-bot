@@ -150,8 +150,13 @@ async def test_minimum_hint_only_suggests_an_accepted_whole_ruble_amount(
         await handler(message, user, AsyncMock(), 4000, state)
 
     hint = message.answer.await_args.args[0]
-    assert 'отправьте боту сообщение' in hint
-    assert f'не меньше {displayed_minimum} ₽' in hint
+    if minimum > 5000000:
+        assert 'Выберите другой способ оплаты' in hint
+        assert displayed_minimum in hint
+        assert 'отправьте боту сообщение' not in hint
+    else:
+        assert 'отправьте боту сообщение' in hint
+        assert f'не меньше {displayed_minimum} ₽' in hint
     if example is None:
         assert 'Например' not in hint
     else:

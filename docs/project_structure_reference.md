@@ -2382,6 +2382,9 @@
 - `app/utils/timezone.py` — Python-модуль
   Классы: нет
   Функции: `get_local_timezone` — Return the configured local timezone., `local_date` — Календарная дата момента ``moment`` (по умолчанию — сейчас) в зоне ``tz``., `local_day_start` — Полночь локального дня, к которому относится ``moment``, как момент в UTC., `local_day_bounds` — Полуинтервал ``[начало, конец)`` локального дня в UTC: ``created_at >= start`` и ``< end``., `local_month_start` — Полночь первого числа локального месяца, к которому относится ``moment``, как момент в UTC., `next_local_wall_clock` — Ближайший момент (в UTC), когда часы в зоне ``tz`` покажут одно из ``times``., `panel_datetime_to_utc` — Normalize a RemnaWave panel datetime to aware UTC., `to_local_datetime` — Convert a datetime value to the configured local timezone., `format_local_datetime` — Format a datetime value in the configured local timezone., `format_email_datetime` — Format a datetime for email-template substitution.
+- `app/utils/topup_retry.py` — Python-модуль
+  Классы: нет
+  Функции: `format_topup_amount_retry`
 - `app/utils/user_utils.py` — Python-модуль
   Классы: нет
   Функции: `format_referrer_info` — Return formatted referrer info for admin notifications., `generate_unique_referral_code`, `get_effective_referral_commission_percent` — Возвращает индивидуальный процент комиссии пользователя или дефолтное значение., `mark_user_as_had_paid_subscription`, `get_user_referral_summary`, `get_detailed_referral_list`, `get_referral_analytics`
@@ -4418,6 +4421,9 @@
 - `tests/handlers/test_ticket_view_opens_last_page.py` — Python-модуль
   Классы: нет
   Функции: `test_opens_on_the_last_page_when_no_page_requested`, `test_explicit_page_from_pagination_button_wins`
+- `tests/handlers/test_topup_provider_retry_ranges.py` — Python-модуль
+  Классы: `ProviderSettings` (1 методов)
+  Функции: `test_rejection_keeps_selection_and_shows_exact_enterable_range`, `test_currency_rejection_offers_a_ruble_input_range`, `test_cloudpayments_legacy_manual_entry_accepts_exact_displayed_minimum`
 - `tests/handlers/test_trial_deeplink_duration.py` — Python-модуль
   Классы: нет
   Функции: `free_trial`, `activate`, `test_deeplink_trial_matches_tariff_and_cabinet_preview`, `test_deeplink_trial_duration_persisted_on_postgres`, `test_deeplink_trial_keeps_activation_gates`

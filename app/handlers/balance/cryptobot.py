@@ -1,4 +1,5 @@
 import html
+import math
 
 import structlog
 from aiogram import types
@@ -14,6 +15,7 @@ from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 from app.utils.timezone import format_local_datetime
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -115,15 +117,15 @@ async def process_cryptobot_payment_amount(
 
     if amount_rubles < 100:
         await message.answer(
-            'Минимальная сумма пополнения: 100 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(db_user.language, 10000, 10000000, too_low=True),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_rubles > 100000:
         await message.answer(
-            'Максимальная сумма пополнения: 100,000 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(db_user.language, 10000, 10000000, too_low=False),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
@@ -142,17 +144,25 @@ async def process_cryptobot_payment_amount(
 
         if amount_usd < 1:
             await message.answer(
-                '❌ Минимальная сумма для оплаты в USD: 1.00 USD\n\n'
-                'Отправьте новую сумму пополнения в рублях числом в сообщении.',
-                reply_markup=get_back_keyboard(db_user.language),
+                format_topup_amount_retry(
+                    db_user.language,
+                    max(10000, math.ceil(current_rate * 100)),
+                    min(10000000, math.floor(current_rate * 100000)),
+                    too_low=True,
+                ),
+                reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
 
         if amount_usd > 1000:
             await message.answer(
-                '❌ Максимальная сумма для оплаты в USD: 1,000 USD\n\n'
-                'Отправьте новую сумму пополнения в рублях числом в сообщении.',
-                reply_markup=get_back_keyboard(db_user.language),
+                format_topup_amount_retry(
+                    db_user.language,
+                    max(10000, math.ceil(current_rate * 100)),
+                    min(10000000, math.floor(current_rate * 100000)),
+                    too_low=False,
+                ),
+                reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
 

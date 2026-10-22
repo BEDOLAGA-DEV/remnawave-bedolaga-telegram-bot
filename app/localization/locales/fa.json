@@ -2317,5 +2317,9 @@
   "CASHERA_RECURRING_MENU_BUTTON": "⚡ تمدید خودکار از طریق Cashera",
   "CASHERA_RECURRING_CANCELLED": "✅ تمدید خودکار Cashera غیرفعال شد",
   "TARIFF_PURCHASE_CONFIRMATION_EXPIRED": "این تأیید منقضی شده است. لطفاً تعرفه را دوباره انتخاب کنید.",
-  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ این خرید در حال پردازش است. نیازی به پرداخت مجدد نیست."
+  "TARIFF_PURCHASE_IN_PROGRESS": "⏳ این خرید در حال پردازش است. نیازی به پرداخت مجدد نیست.",
+  "TOPUP_RETRY_TOO_LOW": "❌ حداقل مبلغ شارژ: {minimum} روبل.\n\nبرای ادامه، مبلغ جدید شارژ را بین {minimum} روبل و {maximum} روبل در یک پیام برای ربات ارسال کنید.",
+  "TOPUP_RETRY_TOO_HIGH": "❌ حداکثر مبلغ شارژ: {maximum} روبل.\n\nبرای ادامه، مبلغ جدید شارژ را بین {minimum} روبل و {maximum} روبل در یک پیام برای ربات ارسال کنید.",
+  "TOPUP_RETRY_EXAMPLE": "برای مثال، ارسال کنید: {amount}",
+  "TOPUP_RETRY_NO_RANGE": "❌ این روش مبلغ مجازی برای ورود دستی ندارد (حداقل {minimum} روبل، حداکثر {maximum} روبل). روش پرداخت دیگری انتخاب کنید."
 }
