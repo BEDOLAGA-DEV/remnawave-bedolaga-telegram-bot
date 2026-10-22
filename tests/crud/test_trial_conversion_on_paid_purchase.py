@@ -333,9 +333,7 @@ async def test_single_tariff_purchase_keeps_legacy_trial_cleanup(monkeypatch):
     monkeypatch.setattr(sub_crud, 'deactivate_user_trial_subscriptions', cleanup)
     db = _db()
 
-    await sub_crud.create_paid_subscription(
-        db, user_id=77, duration_days=30, tariff_id=17, traffic_limit_gb=20
-    )
+    await sub_crud.create_paid_subscription(db, user_id=77, duration_days=30, tariff_id=17, traffic_limit_gb=20)
 
     cleanup.assert_awaited_once()
     assert cleanup.await_args.kwargs['target_tariff_id'] is None
