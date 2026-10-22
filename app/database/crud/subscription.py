@@ -553,9 +553,7 @@ async def _alive_trial_conversion_candidate(
     # У legacy NULL сохраняем прежний алгоритм подбора любого trial.
     target_family = None
     if target_tariff_id is not None:
-        target_family = await db.scalar(
-            select(Tariff.entitlement_family).where(Tariff.id == target_tariff_id)
-        )
+        target_family = await db.scalar(select(Tariff.entitlement_family).where(Tariff.id == target_tariff_id))
     return await get_alive_trial_subscription(
         db, user_id, target_family=target_family if isinstance(target_family, str) else None
     )
@@ -3405,9 +3403,7 @@ async def deactivate_user_trial_subscriptions(
     if target_tariff_id is not None:
         family = await db.scalar(select(Tariff.entitlement_family).where(Tariff.id == target_tariff_id))
         if isinstance(family, str) and family:
-            query = query.join(Tariff, Tariff.id == Subscription.tariff_id).where(
-                Tariff.entitlement_family == family
-            )
+            query = query.join(Tariff, Tariff.id == Subscription.tariff_id).where(Tariff.entitlement_family == family)
     result = await db.execute(query)
     trial_subs = list(result.scalars().all())
 
