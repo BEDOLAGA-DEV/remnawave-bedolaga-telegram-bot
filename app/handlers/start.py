@@ -27,7 +27,7 @@ from app.database.crud.user import (
     get_user_by_telegram_id,
 )
 from app.database.crud.user_message import get_random_active_message
-from app.database.models import GuestPurchase, PinnedMessage, SubscriptionStatus, UserStatus
+from app.database.models import GuestPurchase, PinnedMessage, SubscriptionStatus, User, UserStatus
 from app.keyboards.inline import (
     get_back_keyboard,
     get_language_selection_keyboard,

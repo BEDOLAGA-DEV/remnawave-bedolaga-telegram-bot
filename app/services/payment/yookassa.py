@@ -593,6 +593,18 @@ class YooKassaPaymentMixin:
                 provider_name='yookassa',
             )
             if guest_result is not None:
+                purchase_token = payment_metadata.get('purchase_token')
+                if purchase_token:
+                    from app.database.models import GuestPurchase
+                    gp_res = await db.execute(
+                        select(GuestPurchase.user_id).where(GuestPurchase.token == purchase_token)
+                    )
+                    resolved_user_id = gp_res.scalar_one_or_none()
+                    if resolved_user_id:
+                        payment.user_id = resolved_user_id
+                        await db.commit()
+                        if settings.YOOKASSA_RECURRENT_ENABLED and event_object:
+                            await self._save_payment_method_if_available(db, payment, event_object)
                 return True
 
             # --- Standard user payment flow ------------------------------------

@@ -139,6 +139,7 @@ class ChannelSubscriptionService:
 
         # Layer 2: PostgreSQL (single session for all channels)
         channels_needing_api: list[dict] = []
+        sub_map: dict = {}
         if channels_needing_db:
             async with AsyncSessionLocal() as db:
                 subs = await get_user_channel_subs(db, telegram_id)
@@ -157,29 +158,34 @@ class ChannelSubscriptionService:
 
                     channels_needing_api.append(ch)
 
-        # Layer 3: Rate-limited API calls for channels without fresh data
+        # Layer 3: Telegram first, then one short write. The session must not stay
+        # checked out across getChatMember — that call is what filled the pool.
         if channels_needing_api and self.bot:
-            async with AsyncSessionLocal() as db:
-                # Reuse the sub_map from layer 2 above so we can fall back to the
-                # last known DB value when an API call returns None (uncertain).
-                sub_map_local = locals().get('sub_map', {})
-                for ch in channels_needing_api:
-                    check_result = await self._rate_limited_check(telegram_id, ch['channel_id'])
-                    if check_result is None:
-                        # Uncertain — keep last known DB value if any, otherwise
-                        # default to True so a transient API hiccup never punishes
-                        # a paying user (Telegram bug #313502).
-                        last_known = sub_map_local.get(ch['channel_id'])
-                        is_member = last_known.is_member if last_known else True
-                        result[ch['channel_id']] = is_member
-                        # Do NOT persist the uncertain value — let the next check
-                        # try again with fresh API state.
-                        continue
-                    result[ch['channel_id']] = check_result
-                    # Write DB first (source of truth), then cache
-                    await upsert_user_channel_sub(db, telegram_id, ch['channel_id'], check_result)
-                    await ChannelSubCache.set_sub_status(telegram_id, ch['channel_id'], check_result)
-                await db.commit()
+            checked: list[tuple[dict, bool | None]] = []
+            for ch in channels_needing_api:
+                checked.append((ch, await self._rate_limited_check(telegram_id, ch['channel_id'])))
+
+            to_persist: list[tuple[str, bool]] = []
+            for ch, check_result in checked:
+                if check_result is None:
+                    # Uncertain — keep last known DB value if any, otherwise
+                    # default to True so a transient API hiccup never punishes
+                    # a paying user (Telegram bug #313502).
+                    last_known = sub_map.get(ch['channel_id'])
+                    result[ch['channel_id']] = last_known.is_member if last_known else True
+                    # Do NOT persist the uncertain value — let the next check
+                    # try again with fresh API state.
+                    continue
+                result[ch['channel_id']] = check_result
+                to_persist.append((ch['channel_id'], check_result))
+
+            if to_persist:
+                async with AsyncSessionLocal() as db:
+                    for channel_id, is_member in to_persist:
+                        await upsert_user_channel_sub(db, telegram_id, channel_id, is_member)
+                    await db.commit()
+                for channel_id, is_member in to_persist:
+                    await ChannelSubCache.set_sub_status(telegram_id, channel_id, is_member)
         elif channels_needing_api:
             # No bot available (e.g., cabinet API context). Fall back to the last
             # known DB value to avoid revoking access from paying users when the
@@ -189,9 +195,8 @@ class ChannelSubscriptionService:
                 telegram_id=telegram_id,
                 channels=[ch['channel_id'] for ch in channels_needing_api],
             )
-            sub_map_local = locals().get('sub_map', {})
             for ch in channels_needing_api:
-                last_known = sub_map_local.get(ch['channel_id'])
+                last_known = sub_map.get(ch['channel_id'])
                 result[ch['channel_id']] = last_known.is_member if last_known else True
 
         return result

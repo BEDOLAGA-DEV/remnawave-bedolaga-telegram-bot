@@ -51,3 +51,13 @@ def test_every_revision_reaches_base() -> None:
     chain = [rev.revision for rev in script.walk_revisions(base='base', head=head)]
 
     assert len(chain) == len(list(script.walk_revisions())), 'Есть ревизии вне цепочки от base до head'
+
+
+def test_existing_slig_head_runs_new_grace_migration() -> None:
+    """A deployed SLIG database stamped 0121 must still receive upstream grace fields."""
+    script = _script_directory()
+    pending = [revision.revision for revision in script.iterate_revisions('head', '0121')]
+    assert 'slig_0121_grace' in pending
+    assert '0122' in pending
+    assert '0131' in pending
+    assert script.get_revision('0121').down_revision == ('0120', '5651d7089c66')

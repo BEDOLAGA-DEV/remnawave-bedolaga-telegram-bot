@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_happ_download_button_row
+from app.keyboards.inline import (
+    get_happ_download_button_row,
+    build_back_button,
+)
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.services.subscription_purchase_service import SubscriptionPurchaseService
@@ -54,7 +57,7 @@ async def start_simple_subscription_purchase(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription')])
+        keyboard.append([build_back_button(texts, 'subscription')])
 
         await callback.message.edit_text(
             f'🚫 <b>Покупка подписки ограничена</b>\n\n{reason}\n\n'
@@ -202,7 +205,7 @@ async def start_simple_subscription_purchase(
                     text='✅ Подтвердить покупку', callback_data='simple_subscription_confirm_purchase'
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [build_back_button(texts, 'subscription_purchase')],
         ]
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
     else:
@@ -307,7 +310,7 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
         keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='simple_subscription_wata')])
 
     # Кнопка назад
-    keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')])
+    keyboard.append([build_back_button(texts, 'subscription_purchase')])
 
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1043,7 +1046,7 @@ async def handle_simple_subscription_payment_method(
                 ]
             )
             keyboard_buttons.append(
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')]
+                [build_back_button(texts, 'subscription_purchase')]
             )
 
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
@@ -1189,7 +1192,7 @@ async def handle_simple_subscription_payment_method(
                             callback_data=f'check_simple_cryptobot_{crypto_result["local_payment_id"]}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [build_back_button(texts, 'subscription_purchase')],
                 ]
             )
 
@@ -1283,7 +1286,7 @@ async def handle_simple_subscription_payment_method(
                             callback_data=f'check_simple_heleket_{local_payment_id}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [build_back_button(texts, 'subscription_purchase')],
                 ]
             )
 
@@ -1387,7 +1390,7 @@ async def handle_simple_subscription_payment_method(
                             callback_data=f'check_simple_mulenpay_{local_payment_id}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [build_back_button(texts, 'subscription_purchase')],
                 ]
             )
 
@@ -1575,7 +1578,7 @@ async def handle_simple_subscription_payment_method(
                         callback_data=f'check_simple_pal24_{local_payment_id}',
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                [build_back_button(texts, 'subscription_purchase')],
             ]
 
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
@@ -1653,7 +1656,7 @@ async def handle_simple_subscription_payment_method(
                             callback_data=f'check_simple_wata_{local_payment_id}',
                         )
                     ],
-                    [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                    [build_back_button(texts, 'subscription_purchase')],
                 ]
             )
 
@@ -1809,7 +1812,7 @@ async def check_simple_pal24_payment_status(
                         callback_data=f'check_simple_pal24_{local_payment_id}',
                     )
                 ],
-                [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+                [build_back_button(texts, 'subscription_purchase')],
             ]
         )
 
@@ -1896,7 +1899,7 @@ async def check_simple_mulenpay_payment_status(
                     callback_data=f'check_simple_mulenpay_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [build_back_button(texts, 'subscription_purchase')],
         ]
     )
 
@@ -1966,7 +1969,7 @@ async def check_simple_cryptobot_payment_status(
                     callback_data=f'check_simple_cryptobot_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [build_back_button(texts, 'subscription_purchase')],
         ]
     )
 
@@ -2052,7 +2055,7 @@ async def check_simple_heleket_payment_status(
                     callback_data=f'check_simple_heleket_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [build_back_button(texts, 'subscription_purchase')],
         ]
     )
 
@@ -2115,7 +2118,7 @@ async def check_simple_wata_payment_status(
                     callback_data=f'check_simple_wata_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='subscription_purchase')],
+            [build_back_button(texts, 'subscription_purchase')],
         ]
     )
 

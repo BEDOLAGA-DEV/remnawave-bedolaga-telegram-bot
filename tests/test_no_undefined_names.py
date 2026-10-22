@@ -33,12 +33,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 # подарочной активации (b42b75d5) сняло импорт, оставив одну из двух точек
 # вызова. Комментарий утверждал, что функции нет нигде в проекте; это было
 # неверно, и запись в базе мешала вернуть строку обратно.
-KNOWN: dict[str, set[str]] = {
-    'app/handlers/start.py': {'User'},
-    'app/services/payment/heleket.py': {'HeleketPayment'},
-    'app/services/payment_method_config_service.py': {'User'},
-    'app/services/pricing_engine.py': {'PromoGroup'},
-}
+KNOWN: dict[str, set[str]] = {}
 
 
 def _undefined_names() -> dict[str, set[str]]:

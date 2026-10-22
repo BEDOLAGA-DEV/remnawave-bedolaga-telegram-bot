@@ -451,3 +451,55 @@ async def test_different_tariff_subscription_does_not_block_trial_creation(monke
     db.commit.assert_awaited_once()
     added_obj = db.add.call_args[0][0]
     assert result is added_obj
+
+
+@pytest.mark.asyncio
+async def test_create_trial_subscription_recovers_if_server_counter_times_out(monkeypatch):
+    """Если обновление счетчиков серверов упало по таймауту/блокировке,
+    сессия откатывается к сейвпоинту, а не остается сломанной.
+    """
+    monkeypatch.setattr(type(sub_crud.settings), 'is_multi_tariff_enabled', lambda self: True)
+    monkeypatch.setattr(sub_crud, 'get_active_subscriptions_by_user_id', AsyncMock(return_value=[]))
+    monkeypatch.setattr(sub_crud, 'get_subscription_by_user_id', AsyncMock(return_value=None))
+    monkeypatch.setattr(sub_crud, 'generate_unique_short_id', AsyncMock(return_value='test-short'))
+
+    import app.database.crud.server_squad as server_squad_mod
+    monkeypatch.setattr(server_squad_mod, 'get_server_ids_by_uuids', AsyncMock(return_value=[2]))
+    monkeypatch.setattr(server_squad_mod, 'add_user_to_servers', AsyncMock(side_effect=TimeoutError('db lock')))
+
+    db = _db()
+    nested_tx = AsyncMock()
+    nested_tx.__aenter__.return_value = None
+    nested_tx.__aexit__.return_value = None
+    db.begin_nested = MagicMock(return_value=nested_tx)
+
+    result = await sub_crud.create_trial_subscription(
+        db,
+        user_id=123,
+        connected_squads=['squad-timeout'],
+        tariff_id=1,
+    )
+
+    db.add.assert_called_once()
+    db.commit.assert_awaited_once()
+    db.begin_nested.assert_called_once()
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_rollback_trial_subscription_activation_resilient_to_broken_session():
+    """rollback_trial_subscription_activation очищает невалидную транзакцию перед удалением."""
+    from app.services.trial_activation_service import rollback_trial_subscription_activation
+
+    sub = _sub(id=42, user_id=100)
+    db = _db()
+    db.get = AsyncMock(return_value=sub)
+    db.delete = AsyncMock()
+
+    success = await rollback_trial_subscription_activation(db, sub)
+
+    assert success is True
+    assert db.rollback.await_count >= 1
+    db.delete.assert_awaited_once_with(sub)
+    db.commit.assert_awaited_once()
+

@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_back_keyboard
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
@@ -31,7 +34,7 @@ async def _prompt_amount(
     method_code: int,
 ) -> None:
     texts = get_texts(db_user.language)
-    method_name = settings.get_platega_method_display_title(method_code)
+    method_name = settings.get_platega_method_display_name(method_code)
 
     # Всегда фиксируем выбранный метод для последующей обработки
     await state.update_data(payment_method='platega', platega_method=method_code)
@@ -61,25 +64,38 @@ async def _prompt_amount(
     max_amount_kopeks = settings.PLATEGA_MAX_AMOUNT_KOPEKS
     max_amount_label = settings.format_price(max_amount_kopeks) if max_amount_kopeks and max_amount_kopeks > 0 else ''
 
-    default_prompt_body = (
-        'Введите сумму для пополнения от {min_amount} до {max_amount}.\n'
-        if max_amount_kopeks and max_amount_kopeks > 0
-        else 'Введите сумму для пополнения от {min_amount}.\n'
-    )
+    # Choose emoji based on method_code
+    if method_code == 2:
+        emoji_tag = '<tg-emoji emoji-id="5217837965547427903">🔸</tg-emoji>'
+    elif method_code == 12:
+        emoji_tag = '<tg-emoji emoji-id="5357274199071146437">🪙</tg-emoji>'
+    else:
+        emoji_tag = '💳'
 
-    prompt_template = texts.t(
-        'PLATEGA_TOPUP_PROMPT',
-        (f'💳 <b>Оплата через Platega ({{method_name}})</b>\n\n{default_prompt_body}Оплата происходит через Platega.'),
+    def _clean_and_format(val_label: str) -> str:
+        val_str = val_label.replace(' ₽', '').replace(' ', '').replace(',', '').strip()
+        if not val_str:
+            return ''
+        try:
+            num = int(val_str)
+            return f"{num:,}".replace(",", " ")
+        except Exception:
+            return val_str
+
+    min_str = _clean_and_format(min_amount_label)
+    max_str = _clean_and_format(max_amount_label)
+
+    prompt_text = (
+        f'{emoji_tag} Пополнение через {method_name}\n\n'
+        f'Введите сумму пополнения от {min_str} до {max_str} ₽:\n'
+        f'<tg-emoji emoji-id="5400071306202867643">⚡️</tg-emoji>Мгновенное зачисление\n'
+        f'<tg-emoji emoji-id="5400163201323130799">💯</tg-emoji>Безопасная оплата'
     )
 
     keyboard = await get_topup_amount_keyboard('platega', db_user.language, back_callback='back_to_menu')
 
     await message.edit_text(
-        prompt_template.format(
-            method_name=method_name,
-            min_amount=min_amount_label,
-            max_amount=max_amount_label,
-        ),
+        prompt_text,
         reply_markup=keyboard,
         parse_mode='HTML',
     )
@@ -106,7 +122,7 @@ async def start_platega_payment(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -158,7 +174,7 @@ async def start_platega_payment(
             ]
         )
 
-    method_buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')])
+    method_buttons.append([build_back_button(texts, 'balance_topup')])
 
     await callback.message.edit_text(
         texts.t(
@@ -213,7 +229,7 @@ async def start_platega_direct_method(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await callback.message.edit_text(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -258,7 +274,7 @@ async def process_platega_payment_amount(
         keyboard = []
         if support_url:
             keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
-        keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
+        keyboard.append([build_back_button(texts, 'menu_balance')])
 
         await message.answer(
             f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
@@ -339,7 +355,7 @@ async def process_platega_payment_amount(
     redirect_url = payment_result.get('redirect_url')
     local_payment_id = payment_result.get('local_payment_id')
     transaction_id = payment_result.get('transaction_id')
-    method_title = settings.get_platega_method_display_title(method_code)
+    method_title = settings.get_platega_method_display_name(method_code)
 
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
@@ -358,7 +374,7 @@ async def process_platega_payment_amount(
                     callback_data=f'check_platega_{local_payment_id}',
                 )
             ],
-            [types.InlineKeyboardButton(text=texts.BACK, callback_data='balance_topup')],
+            [build_back_button(texts, 'balance_topup')],
         ]
     )
 

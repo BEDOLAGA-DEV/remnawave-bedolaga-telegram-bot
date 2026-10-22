@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.database.crud.user import get_users_count, get_users_list
 from app.database.models import (
@@ -355,3 +356,20 @@ def test_route_declares_new_filters() -> None:
         'traffic_used_percent_min',
         'online',
     } <= params
+
+
+async def test_recurrent_filter_matches_list_and_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.database.models import AntilopayRecurrent, SavedPaymentMethod
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        await _seed(db)
+        users = (await db.execute(select(User))).scalars().all()
+        by_name = {user.username: user for user in users}
+        db.add(AntilopayRecurrent(user_id=by_name['soon'].id, recurrent_id='test-recurrent', is_active=True))
+        db.add(SavedPaymentMethod(user_id=by_name['later'].id, yookassa_payment_method_id='test-saved', is_active=True))
+        await db.commit()
+        assert await _usernames(db, is_recurrent=True) == ['later', 'soon']
+        assert await get_users_count(db, is_recurrent=True) == 2
+        assert await _usernames(db, is_recurrent=False) == ['lapsed', 'nobody']
+        assert await get_users_count(db, is_recurrent=False) == 2
+        assert await _usernames(db, is_recurrent=True, expires_within_days=7) == ['soon']

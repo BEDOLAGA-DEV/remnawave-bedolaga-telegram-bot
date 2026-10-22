@@ -1122,6 +1122,13 @@ class RemnaWaveWebhookService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    async def _release_db(db: AsyncSession) -> None:
+        """Вернуть соединение в пул перед сетью и перед отдельной сессией грейса."""
+        from app.services.panel_sync.db_session import release_transaction
+
+        await release_transaction(db)
+
+    @staticmethod
     def _stamp_webhook_update(subscription: Subscription) -> None:
         """Mark subscription as recently updated by webhook to prevent sync overwrite."""
         subscription.last_webhook_update_at = datetime.now(UTC)
@@ -1167,6 +1174,9 @@ class RemnaWaveWebhookService:
         else:
             await db.commit()
 
+        # refresh() после commit снова открывает транзакцию. Закрыть её до грейса,
+        # иначе вебхук держит соединение, пока грейс берёт второе.
+        await self._release_db(db)
         await grace_access_runtime.consider_candidate(
             subscription.id,
             GraceReason.EXPIRED,
@@ -1270,6 +1280,7 @@ class RemnaWaveWebhookService:
         else:
             await db.commit()
 
+        await self._release_db(db)
         await grace_access_runtime.consider_candidate(
             subscription.id,
             GraceReason.LIMITED,

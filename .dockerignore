@@ -51,3 +51,18 @@ Thumbs.db
 
 # Дампы базы (scripts/pg-upgrade.sh) не должны попадать в образ
 backups/
+data/
+uploads/
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
+**/node_modules/
+**/.venv/
+**/.env
+**/.env.*
+.codex/
+.agents/
+.aws/
+.codegraph/
+.cursor/

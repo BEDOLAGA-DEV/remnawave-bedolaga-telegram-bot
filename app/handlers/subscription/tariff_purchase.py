@@ -23,6 +23,7 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import Tariff, Transaction, TransactionType, User
+from app.keyboards.inline import build_back_button
 from app.localization.texts import Texts, get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.panel_sync import should_create_panel_account
@@ -251,7 +252,7 @@ def get_tariffs_keyboard(
             title = tariff.name
         buttons.append([InlineKeyboardButton(text=title, callback_data=f'tariff_select:{tariff.id}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    buttons.append([build_back_button(texts, 'back_to_menu')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -300,7 +301,7 @@ def get_tariff_periods_keyboard(
         button_text = _period_button_text(tariff, period, price_text, texts)
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'tariff_period:{tariff.id}:{period}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([build_back_button(texts, back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -337,7 +338,7 @@ def get_tariff_periods_keyboard_with_traffic(
             [InlineKeyboardButton(text=button_text, callback_data=f'tariff_period_traffic:{tariff.id}:{period}')]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([build_back_button(texts, back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -357,9 +358,6 @@ def get_tariff_confirm_keyboard(
             )
         ],
     ]
-    # Альтернатива оплате с баланса: оформление через СБП-автопродление
-    # Platega (первое списание = подтверждение привязки в банке, дальше —
-    # автосписания по каденсу тарифа).
     if settings.is_platega_recurrent_enabled():
         buttons.append(
             [
@@ -387,7 +385,7 @@ def get_tariff_confirm_keyboard(
                 )
             ]
         )
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')])
+    buttons.append([build_back_button(texts, f'tariff_select:{tariff_id}')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -592,7 +590,7 @@ def get_daily_tariff_confirm_keyboard(
                 )
             ]
         )
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([build_back_button(texts, back_callback)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -607,7 +605,7 @@ def get_daily_tariff_insufficient_balance_keyboard(
         inline_keyboard=[
             [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup')],
             *_sbp_purchase_rows(tariff_id, texts),
-            [InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)],
+            [build_back_button(texts, back_callback)],
         ]
     )
 
@@ -702,7 +700,7 @@ def get_custom_tariff_keyboard(
     )
 
     # Кнопка назад
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=back_callback)])
+    buttons.append([build_back_button(texts, back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -858,7 +856,7 @@ async def show_tariffs_list(
                 '😔 <b>Нет доступных тарифов</b>\n\nК сожалению, сейчас нет тарифов для покупки.',
             ),
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')]]
+                inline_keyboard=[[build_back_button(texts, 'back_to_menu')]]
             ),
         )
         await callback.answer()
@@ -1570,7 +1568,7 @@ async def handle_custom_confirm(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [build_back_button(texts, 'back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -2254,7 +2252,7 @@ async def confirm_tariff_purchase(
                         else 'menu_subscription',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                [build_back_button(texts, 'back_to_menu')],
             ]
         ),
         parse_mode='HTML',
@@ -2555,7 +2553,7 @@ async def confirm_daily_tariff_purchase(
                         else 'menu_subscription',
                     )
                 ],
-                [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                [build_back_button(texts, 'back_to_menu')],
             ]
         ),
         parse_mode='HTML',
@@ -2634,7 +2632,7 @@ def get_tariff_extend_keyboard(
             ]
         )
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([build_back_button(texts, 'menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -2655,7 +2653,7 @@ def get_tariff_extend_confirm_keyboard(
                     callback_data=f'tariff_ext_confirm:{subscription_id}:{tariff_id}:{period}',
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='subscription_extend')],
+            [build_back_button(texts, 'subscription_extend')],
         ]
     )
 
@@ -2710,9 +2708,7 @@ async def show_tariff_extend(
                             )
                         ]
                     )
-                keyboard.append(
-                    [InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='back_to_menu')]
-                )
+                keyboard.append([build_back_button(texts, 'back_to_menu')])
                 await callback.message.edit_text(
                     texts.t(
                         'TARIFF_RENEW_PICK_SUBSCRIPTION',
@@ -2751,7 +2747,7 @@ async def show_tariff_extend(
                 texts.t('TARIFF_RENEW_NO_TARIFFS', 'Нет доступных тарифов для продления'), show_alert=True
             )
             return
-        keyboard.append([InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='back_to_menu')])
+        keyboard.append([build_back_button(texts, 'back_to_menu')])
 
         await callback.message.edit_text(
             texts.t(
@@ -2786,7 +2782,7 @@ async def show_tariff_extend(
         keyboard = []
         for t in active_tariffs:
             keyboard.append([InlineKeyboardButton(text=f'📦 {t.name}', callback_data=f'tariff_select:{t.id}')])
-        keyboard.append([InlineKeyboardButton(text=texts.t('BACK_BUTTON', '◀️ Назад'), callback_data='back_to_menu')])
+        keyboard.append([build_back_button(texts, 'back_to_menu')])
 
         await callback.message.edit_text(
             texts.t(
@@ -3210,7 +3206,7 @@ async def confirm_tariff_extend(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [build_back_button(texts, 'back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -3314,7 +3310,7 @@ def get_tariff_switch_keyboard(
 
         buttons.append([InlineKeyboardButton(text=tariff.name, callback_data=f'tariff_sw_select:{tariff.id}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([build_back_button(texts, 'menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -3347,7 +3343,7 @@ def get_tariff_switch_periods_keyboard(
         button_text = _period_button_text(tariff, period, price_text, texts)
         buttons.append([InlineKeyboardButton(text=button_text, callback_data=f'tariff_sw_period:{tariff.id}:{period}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='tariff_switch')])
+    buttons.append([build_back_button(texts, 'tariff_switch')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -3367,7 +3363,7 @@ def get_tariff_switch_confirm_keyboard(
                     callback_data=f'tariff_sw_confirm:{tariff_id}:{period}',
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_sw_select:{tariff_id}')],
+            [build_back_button(texts, f'tariff_sw_select:{tariff_id}')],
         ]
     )
 
@@ -3382,7 +3378,7 @@ def get_tariff_switch_insufficient_balance_keyboard(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_sw_select:{tariff_id}')],
+            [build_back_button(texts, f'tariff_sw_select:{tariff_id}')],
         ]
     )
 
@@ -3452,7 +3448,7 @@ async def show_tariff_switch_list(
                 '🚫 <b>Смена тарифа недоступна</b>\n\nАдминистратор отключил возможность смены тарифа.',
             ),
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[build_back_button(texts, 'menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -3486,7 +3482,7 @@ async def show_tariff_switch_list(
                 '😔 <b>Нет доступных тарифов для переключения</b>\n\nВы уже используете единственный доступный тариф.',
             ),
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[build_back_button(texts, 'menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -3624,7 +3620,7 @@ async def select_tariff_switch(
                                 callback_data=f'daily_tariff_switch_confirm:{tariff_id}',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='tariff_switch')],
+                        [build_back_button(texts, 'tariff_switch')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -3655,7 +3651,7 @@ async def select_tariff_switch(
                                 text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup'
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='tariff_switch')],
+                        [build_back_button(texts, 'tariff_switch')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -4061,7 +4057,7 @@ async def confirm_tariff_switch(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [build_back_button(texts, 'back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -4344,7 +4340,7 @@ async def confirm_daily_tariff_switch(
                             else 'menu_subscription',
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                    [build_back_button(texts, 'back_to_menu')],
                 ]
             ),
             parse_mode='HTML',
@@ -4517,7 +4513,7 @@ def get_instant_switch_keyboard(
 
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f'instant_sw_preview:{tariff.id}')])
 
-    buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')])
+    buttons.append([build_back_button(texts, 'menu_subscription')])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -4536,7 +4532,7 @@ def get_instant_switch_confirm_keyboard(
                     callback_data=f'instant_sw_confirm:{tariff_id}',
                 )
             ],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='instant_switch')],
+            [build_back_button(texts, 'instant_switch')],
         ]
     )
 
@@ -4550,7 +4546,7 @@ def get_instant_switch_insufficient_balance_keyboard(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=texts.t('BALANCE_TOPUP', '💳 Пополнить баланс'), callback_data='balance_topup')],
-            [InlineKeyboardButton(text=texts.BACK, callback_data='instant_switch')],
+            [build_back_button(texts, 'instant_switch')],
         ]
     )
 
@@ -4611,7 +4607,7 @@ async def show_instant_switch_list(
                             text=texts.t('BUY_TARIFF_BUTTON', '📦 Купить тариф'), callback_data='menu_buy'
                         )
                     ],
-                    [InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')],
+                    [build_back_button(texts, 'menu_subscription')],
                 ]
             ),
             parse_mode='HTML',
@@ -4627,7 +4623,7 @@ async def show_instant_switch_list(
                 '🚫 <b>Смена тарифа недоступна</b>\n\nАдминистратор отключил возможность смены тарифа.',
             ),
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[build_back_button(texts, 'menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -4656,7 +4652,7 @@ async def show_instant_switch_list(
                 '😔 <b>Нет доступных тарифов для переключения</b>\n\nВы уже используете единственный доступный тариф.',
             ),
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text=texts.BACK, callback_data='menu_subscription')]]
+                inline_keyboard=[[build_back_button(texts, 'menu_subscription')]]
             ),
             parse_mode='HTML',
         )
@@ -5359,7 +5355,7 @@ async def confirm_instant_switch(
                                 else 'menu_subscription',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                        [build_back_button(texts, 'back_to_menu')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -5398,7 +5394,7 @@ async def confirm_instant_switch(
                                 else 'menu_subscription',
                             )
                         ],
-                        [InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')],
+                        [build_back_button(texts, 'back_to_menu')],
                     ]
                 ),
                 parse_mode='HTML',
@@ -5623,6 +5619,7 @@ async def return_to_saved_tariff_cart(
                             text=texts.BACK, callback_data=f'tariff_extend:{_extend_sub_id}:{tariff_id}'
                         )
                     ],
+
                 ]
             ),
             parse_mode='HTML',

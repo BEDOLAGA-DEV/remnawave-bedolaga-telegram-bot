@@ -13,7 +13,10 @@ from app.database.crud.contest import get_active_rounds, get_attempt
 from app.database.crud.subscription import get_active_subscriptions_by_user_id
 from app.database.database import AsyncSessionLocal
 from app.database.models import SubscriptionStatus
-from app.keyboards.inline import get_back_keyboard
+from app.keyboards.inline import (
+    get_back_keyboard,
+    build_back_button,
+)
 from app.localization.texts import get_texts
 from app.services.contests import (
     ContestAttemptService,
@@ -133,7 +136,7 @@ async def _build_contests_menu_view(db: AsyncSession, db_user) -> tuple[str, typ
             ]
         )
 
-    buttons.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    buttons.append([build_back_button(texts, 'back_to_menu')])
 
     return (
         texts.t('CONTEST_MENU_TITLE', '🎲 <b>Игры/Конкурсы</b>\nВыберите игру:'),

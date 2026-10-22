@@ -1382,7 +1382,10 @@ class MonitoringService:
                 select(Subscription)
                 .join(User, Subscription.user_id == User.id)
                 .options(
-                    selectinload(Subscription.user),
+                    selectinload(Subscription.user).options(
+                        selectinload(User.promo_group),
+                        selectinload(User.user_promo_groups),
+                    ),
                     selectinload(Subscription.tariff),
                 )
                 .where(
@@ -2580,6 +2583,10 @@ class MonitoringService:
                 logger.info('Recovered stuck PENDING purchases', recovered=recovered)
         except Exception:
             logger.error('Error recovering stuck PENDING guest purchases', exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
         # Phase 2: Retry fulfillment for purchases in PAID status
         try:
@@ -2588,6 +2595,10 @@ class MonitoringService:
                 logger.info('Retried stuck guest purchases', retried=retried)
         except Exception:
             logger.error('Error retrying stuck PAID guest purchases', exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
         # Phase 3: Retry activation for purchases in PENDING_ACTIVATION status
         try:
@@ -2596,6 +2607,10 @@ class MonitoringService:
                 logger.info('Retried stuck pending_activation purchases', retried=retried_pa)
         except Exception:
             logger.error('Error retrying stuck PENDING_ACTIVATION guest purchases', exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
     async def _check_traffic_warnings(self, db: AsyncSession):
         """Check subscriptions approaching traffic limit and notify users."""

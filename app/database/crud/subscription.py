@@ -30,6 +30,49 @@ from app.utils.timezone import format_local_datetime, local_day_start
 
 logger = structlog.get_logger(__name__)
 
+# Statuses that still represent a live subscription (incl. traffic-limited / legacy trial status).
+_LIVE_SUBSCRIPTION_STATUSES = (
+    SubscriptionStatus.ACTIVE.value,
+    SubscriptionStatus.TRIAL.value,
+    SubscriptionStatus.LIMITED.value,
+)
+
+
+def _live_subscription_filters(now: datetime | None = None):
+    """Subscriptions that are not expired yet (status + end_date)."""
+    current_time = now or datetime.now(UTC)
+    return and_(
+        Subscription.status.in_(_LIVE_SUBSCRIPTION_STATUSES),
+        Subscription.end_date.isnot(None),
+        Subscription.end_date > current_time,
+    )
+
+
+def _trial_subscription_filters(now: datetime | None = None):
+    """Active trial subscriptions — same rules as get_trial_statistics()['active_trials']."""
+    current_time = now or datetime.now(UTC)
+    return and_(
+        Subscription.is_trial.is_(True),
+        Subscription.end_date.isnot(None),
+        Subscription.end_date > current_time,
+        Subscription.status.in_(
+            [
+                SubscriptionStatus.ACTIVE.value,
+                SubscriptionStatus.TRIAL.value,
+            ]
+        ),
+    )
+
+
+def _paid_subscription_filters(now: datetime | None = None):
+    """Active paid (non-trial) subscriptions."""
+    return and_(
+        _live_subscription_filters(now),
+        Subscription.is_trial.is_(False),
+        Subscription.status != SubscriptionStatus.TRIAL.value,
+    )
+
+
 # Статусы «живой» подписки — в app.database.constants; имя здесь оставлено для
 # существующих импортов.
 ALIVE_SUBSCRIPTION_STATUSES = _ALIVE_SUBSCRIPTION_STATUSES
@@ -328,7 +371,8 @@ async def create_trial_subscription(
 
             server_ids = await get_server_ids_by_uuids(db, final_squads)
             if server_ids:
-                await add_user_to_servers(db, server_ids)
+                async with db.begin_nested():
+                    await add_user_to_servers(db, server_ids)
                 logger.info('📈 Обновлен счетчик пользователей для триальных сквадов', final_squads=final_squads)
             else:
                 logger.warning('⚠️ Не удалось найти серверы для обновления счетчика (сквады)', final_squads=final_squads)
@@ -338,6 +382,8 @@ async def create_trial_subscription(
                 final_squads=final_squads,
                 error=error,
             )
+            with contextlib.suppress(Exception):
+                await db.rollback()
 
     return subscription
 
@@ -1754,6 +1800,19 @@ async def update_subscription_autopay(
 
     status = 'включен' if enabled else 'выключен'
     logger.info('💳 Автоплатеж для подписки пользователя', user_id=subscription.user_id, status=status)
+
+    if not enabled:
+        try:
+            from app.services.antilopay_recurring_cancel import cancel_user_antilopay_recurrents
+
+            await cancel_user_antilopay_recurrents(db, subscription.user_id)
+        except Exception as error:
+            logger.warning(
+                'Antilopay: ошибка при отмене рекуррентов при отключении autopay',
+                user_id=subscription.user_id,
+                error=error,
+            )
+
     return subscription
 
 
@@ -1924,24 +1983,23 @@ async def get_subscriptions_for_autopay(db: AsyncSession) -> list[Subscription]:
 
 
 async def get_subscriptions_statistics(db: AsyncSession) -> dict:
-    total_result = await db.execute(select(func.count(Subscription.id)))
-    total_subscriptions = total_result.scalar()
+    now = datetime.now(UTC)
 
-    active_result = await db.execute(
-        select(func.count(Subscription.id)).where(Subscription.status == SubscriptionStatus.ACTIVE.value)
+    total_result = await db.execute(select(func.count(Subscription.id)))
+    total_subscriptions = total_result.scalar() or 0
+
+    paid_result = await db.execute(
+        select(func.count(Subscription.id)).where(_paid_subscription_filters(now))
     )
-    active_subscriptions = active_result.scalar()
+    paid_subscriptions = paid_result.scalar() or 0
 
     trial_result = await db.execute(
-        select(func.count(Subscription.id)).where(
-            and_(Subscription.is_trial == True, Subscription.status == SubscriptionStatus.ACTIVE.value)
-        )
+        select(func.count(Subscription.id)).where(_trial_subscription_filters(now))
     )
-    trial_subscriptions = trial_result.scalar()
+    trial_subscriptions = trial_result.scalar() or 0
 
-    paid_subscriptions = active_subscriptions - trial_subscriptions
+    active_subscriptions = paid_subscriptions + trial_subscriptions
 
-    now = datetime.now(UTC)
     today_start = local_day_start(now)
     week_ago = today_start - timedelta(days=7)
     month_ago = today_start - timedelta(days=30)
@@ -2030,11 +2088,7 @@ async def get_trial_statistics(db: AsyncSession) -> dict:
     total_trials = total_trials_result.scalar() or 0
 
     active_trials_result = await db.execute(
-        select(func.count(Subscription.id)).where(
-            Subscription.is_trial.is_(True),
-            Subscription.end_date > now,
-            Subscription.status.in_([SubscriptionStatus.TRIAL.value, SubscriptionStatus.ACTIVE.value]),
-        )
+        select(func.count(Subscription.id)).where(_trial_subscription_filters(now))
     )
     active_trials = active_trials_result.scalar() or 0
 
@@ -2189,24 +2243,76 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
         await db.rollback()
         return 0
 
-    for subscription in to_reset:
+    if len(to_reset) <= 10:
+        for subscription in to_reset:
+            try:
+                await decrement_subscription_server_counts(db, subscription)
+            except Exception as error:  # pragma: no cover - defensive logging
+                logger.error(
+                    'Не удалось обновить счётчики серверов при сбросе триала',
+                    subscription_id=getattr(subscription, 'id', None),
+                    error=error,
+                )
+    else:
         try:
-            await decrement_subscription_server_counts(db, subscription)
-        except Exception as error:  # pragma: no cover - defensive logging
-            logger.error(
-                'Не удалось обновить счётчики серверов при сбросе триала', subscription_id=subscription.id, error=error
-            )
+            from collections import defaultdict
 
+            from app.database.crud.server_squad import ServerSquad
+
+            sub_ids = [sub.id for sub in to_reset if hasattr(sub, 'id')]
+            server_counts: dict[int, int] = defaultdict(int)
+
+            CHUNK_SIZE = 200
+            for i in range(0, len(sub_ids), CHUNK_SIZE):
+                chunk = sub_ids[i : i + CHUNK_SIZE]
+                res = await db.execute(
+                    select(SubscriptionServer.server_squad_id).where(
+                        SubscriptionServer.subscription_id.in_(chunk),
+                        SubscriptionServer.server_squad_id.isnot(None),
+                    )
+                )
+                for (ssq_id,) in res.fetchall():
+                    server_counts[ssq_id] += 1
+
+            all_squad_uuids = {
+                uuid
+                for sub in to_reset
+                for uuid in (getattr(sub, 'connected_squads', None) or [])
+            }
+            if all_squad_uuids:
+                res = await db.execute(
+                    select(ServerSquad.id, ServerSquad.squad_uuid).where(
+                        ServerSquad.squad_uuid.in_(list(all_squad_uuids))
+                    )
+                )
+                uuid_to_id = {row[1]: row[0] for row in res.fetchall()}
+                for sub in to_reset:
+                    for uuid in (getattr(sub, 'connected_squads', None) or []):
+                        if uuid in uuid_to_id:
+                            server_counts[uuid_to_id[uuid]] += 1
+
+            if server_counts:
+                for server_id, count in sorted(server_counts.items()):
+                    await db.execute(
+                        update(ServerSquad)
+                        .where(ServerSquad.id == server_id)
+                        .values(current_users=func.greatest(ServerSquad.current_users - count, 0))
+                    )
+        except Exception as error:  # pragma: no cover - defensive logging
+            logger.error('Не удалось пакетно обновить счётчики серверов при сбросе триалов', error=error)
+
+    CHUNK_SIZE = 200
     subscription_ids = [subscription.id for subscription in to_reset]
     subscription_users = {subscription.id: subscription.user_id for subscription in to_reset}
 
-    try:
-        await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id.in_(subscription_ids)))
-    except Exception as error:  # pragma: no cover - defensive logging
-        logger.error('Ошибка удаления серверных связей триалов', subscription_ids=subscription_ids, error=error)
-        raise
-
-    await db.execute(delete(Subscription).where(Subscription.id.in_(subscription_ids)))
+    for i in range(0, len(subscription_ids), CHUNK_SIZE):
+        chunk_sub_ids = subscription_ids[i : i + CHUNK_SIZE]
+        try:
+            await db.execute(delete(SubscriptionServer).where(SubscriptionServer.subscription_id.in_(chunk_sub_ids)))
+        except Exception as error:  # pragma: no cover - defensive logging
+            logger.error('Ошибка удаления серверных связей триалов', subscription_ids=chunk_sub_ids, error=error)
+            raise
+        await db.execute(delete(Subscription).where(Subscription.id.in_(chunk_sub_ids)))
 
     # single-tariff: панель-юзер на уровне пользователя — чистим устаревшую панельную
     # идентичность, чтобы синк по ней ничего не восстанавливал. Историческую колонку
@@ -2216,7 +2322,9 @@ async def wipe_trial_subscriptions(db: AsyncSession, subscriptions) -> int:
     # покупка заведёт рядом дубль вместо того, чтобы включить отключённый аккаунт.
     if not is_multi and delete_panel_user:
         user_ids = list({subscription.user_id for subscription in to_reset})
-        await db.execute(update(User).where(User.id.in_(user_ids)).values(remnawave_id=None, remnawave_uuid=None))
+        for i in range(0, len(user_ids), CHUNK_SIZE):
+            chunk_user_ids = user_ids[i : i + CHUNK_SIZE]
+            await db.execute(update(User).where(User.id.in_(chunk_user_ids)).values(remnawave_id=None, remnawave_uuid=None))
     elif is_multi:
         # Мультитариф: первый аккаунт записан и человеку. Оставить там id удалённого
         # аккаунта — отдать его следующей покупке (should_create_panel_account привяжет

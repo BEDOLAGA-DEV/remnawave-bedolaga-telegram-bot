@@ -178,18 +178,18 @@ def _directory_is_writable(directory: Path) -> bool:
             'Locale directory is not writable. Ensure the mounted directory allows writes for the container user or configure LOCALES_PATH to a writable path.',
             directory=directory,
             user_hint=user_hint,
-            error=error,
+            error=str(error),
         )
     except OSError as error:
         _logger.warning(
             'Unable to prepare locale directory for writing. Configure LOCALES_PATH to a writable path.',
             directory=directory,
             user_hint=user_hint,
-            error=error,
+            error=str(error),
         )
     except Exception as error:  # pragma: no cover - defensive logging
         _logger.warning(
-            'Unexpected error while checking locale directory', directory=directory, user_hint=user_hint, error=error
+            'Unexpected error while checking locale directory', directory=directory, user_hint=user_hint, error=str(error)
         )
     return False
 

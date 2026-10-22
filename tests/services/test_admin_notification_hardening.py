@@ -7,6 +7,7 @@ Covers commits 3756ad66 + 0461279e:
 """
 
 from __future__ import annotations
+from typing import Any
 
 import asyncio
 from types import SimpleNamespace

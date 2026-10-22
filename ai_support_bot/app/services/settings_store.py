@@ -1,0 +1,119 @@
+from typing import Any
+
+from sqlalchemy import select
+
+from ai_support_bot.app.core.config import settings
+from ai_support_bot.app.db.database import AsyncSessionLocal
+from ai_support_bot.app.db.models import RuntimeSetting
+
+
+_DEFAULTS: dict[str, Any] = {}
+_cache: dict[str, str] = {}
+
+
+def _base_defaults() -> dict[str, Any]:
+    return {
+        'SYSTEM_PROMPT': settings.SYSTEM_PROMPT,
+        'MODEL': settings.MODEL,
+        'EMBEDDING_MODEL': settings.EMBEDDING_MODEL,
+        'MAX_TOKENS': str(settings.MAX_TOKENS),
+        'TEMPERATURE': str(settings.TEMPERATURE),
+        'TOP_K': str(settings.TOP_K),
+        'MIN_SCORE': str(settings.MIN_SCORE),
+        'CONTEXT_MESSAGES': str(settings.CONTEXT_MESSAGES),
+        'HISTORY_LIMIT': str(settings.HISTORY_LIMIT),
+        'DAILY_MESSAGE_LIMIT': str(settings.DAILY_MESSAGE_LIMIT),
+        'THROTTLE_SECONDS': str(settings.THROTTLE_SECONDS),
+        'RESPONSE_CACHE_TTL': str(settings.RESPONSE_CACHE_TTL),
+        'EMBEDDING_CACHE_TTL': str(settings.EMBEDDING_CACHE_TTL),
+        'VISION_ENABLED': '1' if settings.VISION_ENABLED else '0',
+        'INCLUDE_REMNAWAVE_DATA': '1' if settings.INCLUDE_REMNAWAVE_DATA else '0',
+        'SUMMARY_ENABLED': '1' if settings.SUMMARY_ENABLED else '0',
+        'SUMMARY_EVERY_N_TURNS': str(settings.SUMMARY_EVERY_N_TURNS),
+        'SUMMARY_MAX_TOKENS': str(settings.SUMMARY_MAX_TOKENS),
+        'SUMMARY_MODEL': settings.SUMMARY_MODEL,
+        'MAX_QUESTION_CHARS': str(settings.MAX_QUESTION_CHARS),
+        'KB_MIN_QUESTION_CHARS': str(settings.KB_MIN_QUESTION_CHARS),
+        'KB_DROP_LOW_VALUE': '1' if settings.KB_DROP_LOW_VALUE else '0',
+        'RETRIEVAL_CONTEXT_MESSAGES': str(settings.RETRIEVAL_CONTEXT_MESSAGES),
+        'HEDGE_ESCALATION': '1' if settings.HEDGE_ESCALATION else '0',
+        'ESCALATION_USER_NOTICE': settings.ESCALATION_USER_NOTICE,
+        'PGVECTOR_ENABLED': '1' if settings.PGVECTOR_ENABLED else '0',
+        'ALERT_ADMINS_ON_FAILURE': '1' if settings.ALERT_ADMINS_ON_FAILURE else '0',
+        'ALERT_THROTTLE_SECONDS': str(settings.ALERT_THROTTLE_SECONDS),
+        'NAVIGATION_ENABLED': '1' if settings.NAVIGATION_ENABLED else '0',
+        'NAVIGATION_LANGUAGES': settings.NAVIGATION_LANGUAGES,
+        'NAVIGATION_TTL': str(settings.NAVIGATION_TTL),
+        'NAVIGATION_TOP_K': str(settings.NAVIGATION_TOP_K),
+        'NAVIGATION_DEPTH': str(settings.NAVIGATION_DEPTH),
+        'NAVIGATION_MAX_CHILDREN': str(settings.NAVIGATION_MAX_CHILDREN),
+        'NAVIGATION_MAX_CHARS': str(settings.NAVIGATION_MAX_CHARS),
+        'NAVIGATION_MIN_QUESTION_CHARS': str(settings.NAVIGATION_MIN_QUESTION_CHARS),
+        'SERVICE_CATALOG_ENABLED': '1' if settings.SERVICE_CATALOG_ENABLED else '0',
+        'SERVICE_CATALOG_TTL': str(settings.SERVICE_CATALOG_TTL),
+        'SERVICE_CATALOG_MAX_CHARS': str(settings.SERVICE_CATALOG_MAX_CHARS),
+    }
+
+
+async def load() -> None:
+    global _DEFAULTS
+    _DEFAULTS = _base_defaults()
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(RuntimeSetting))
+        for row in result.scalars().all():
+            if row.value is not None:
+                _cache[row.key] = row.value
+
+
+def get(key: str) -> str:
+    global _DEFAULTS
+    if not _DEFAULTS:
+        _DEFAULTS = _base_defaults()
+    val = _cache.get(key)
+    if val is not None and val.strip():
+        return val.strip()
+    return str(_DEFAULTS.get(key, '') or '')
+
+
+def get_int(key: str) -> int:
+    try:
+        return int(float(get(key)))
+    except (ValueError, TypeError):
+        return int(_DEFAULTS.get(key, 0) or 0)
+
+
+def get_float(key: str) -> float:
+    try:
+        return float(get(key))
+    except (ValueError, TypeError):
+        return float(_DEFAULTS.get(key, 0.0) or 0.0)
+
+
+def get_bool(key: str) -> bool:
+    return get(key) in {'1', 'true', 'True', 'yes', 'on'}
+
+
+async def set_value(key: str, value: str) -> None:
+    cleaned = value.strip() if value else ''
+    async with AsyncSessionLocal() as session:
+        existing = await session.get(RuntimeSetting, key)
+        if cleaned:
+            if existing:
+                existing.value = cleaned
+            else:
+                session.add(RuntimeSetting(key=key, value=cleaned))
+        elif existing:
+            await session.delete(existing)
+        await session.commit()
+    if cleaned:
+        _cache[key] = cleaned
+    else:
+        _cache.pop(key, None)
+
+
+def all_settings() -> dict[str, str]:
+    merged = {k: str(v) for k, v in _base_defaults().items()}
+    for k, v in _cache.items():
+        if v and v.strip():
+            merged[k] = v.strip()
+    return merged

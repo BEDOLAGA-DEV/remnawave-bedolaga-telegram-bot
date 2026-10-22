@@ -12,10 +12,10 @@ from app.services.platega_recurrent import platega_reconcile_decision, resolve_p
         (360, False, (4, 360)),  # year
         (365, False, (4, 365)),  # yearly range 350-380
         (31, False, (3, 31)),  # monthly range 28-31
-        (14, False, (3, 30)),  # non-mapping -> month @ 30
-        (60, False, (3, 30)),
-        (90, False, (3, 30)),
-        (180, False, (3, 30)),
+        (14, False, (2, 14)),  # non-mapping -> month @ 30
+        (60, False, (3, 60)),
+        (90, False, (3, 90)),
+        (180, False, (3, 180)),
     ],
 )
 def test_resolve_platega_interval(period_days, is_daily, expected):

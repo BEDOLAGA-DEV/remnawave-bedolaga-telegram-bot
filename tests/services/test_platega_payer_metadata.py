@@ -19,11 +19,57 @@ from app.config import settings
 from app.database.models import Base, GuestPurchase, User
 from app.services.payment import platega as platega_mixin
 from app.services.payment.payer_identity import PayerIdentity
+from app.services.platega_service import PlategaService
 from tests.fixtures.sqlite_memory import memory_session
 
 
 TABLES = list(Base.metadata.sorted_tables)
 TOKEN = 'b' * 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('explicit_payer', [False, True])
+async def test_balance_recurring_payment_sends_payer_metadata(monkeypatch, explicit_payer) -> None:
+    """Exercise the real subscription signature and HTTP body for method 6."""
+    payer = PayerIdentity(user_id='555', user_name='@neo', contact='555')
+    resolve_payer = AsyncMock(return_value=payer)
+    monkeypatch.setattr(platega_mixin, 'resolve_user_payer', resolve_payer)
+    persist_subscription = AsyncMock()
+    monkeypatch.setattr('app.database.crud.platega_subscription.create_platega_subscription', persist_subscription)
+    service = PlategaService()
+    service.merchant_id = 'merchant'
+    service.secret = 'secret'
+    request = AsyncMock(
+        return_value=({'transactionId': 'sub-1', 'redirect': 'https://pay/sub-1', 'status': 'PENDING'}, 200)
+    )
+    monkeypatch.setattr(service, '_request', request)
+    mixin = platega_mixin.PlategaPaymentMixin()
+    mixin.platega_service = service
+    db = object()
+
+    result = await mixin.create_platega_payment(
+        db,
+        user_id=None if explicit_payer else 42,
+        amount_kopeks=17_000,
+        description='Пополнение',
+        language='ru',
+        payment_method_code=6,
+        payer=payer if explicit_payer else None,
+    )
+
+    assert result is not None
+    assert result['redirect_url'] == 'https://pay/sub-1'
+    request.assert_awaited_once()
+    body = request.await_args.kwargs['json_data']
+    assert body['paymentMethod'] == 6
+    assert body['paymentDetails']['amount'] == 170
+    assert body['metadata'] == {'userId': '555', 'userName': '@neo'}
+    persist_subscription.assert_awaited_once()
+    assert persist_subscription.await_args.kwargs['platega_subscription_id'] == 'sub-1'
+    if explicit_payer:
+        resolve_payer.assert_not_awaited()
+    else:
+        resolve_payer.assert_awaited_once_with(db, 42)
 
 
 class _StubPlatega:

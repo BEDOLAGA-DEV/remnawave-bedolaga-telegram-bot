@@ -3,10 +3,11 @@
 import math
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Integer, delete as sa_delete, func, literal, select
+from sqlalchemy import Integer, delete as sa_delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -72,10 +73,13 @@ from app.utils.timezone import local_day_start, panel_datetime_to_utc
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.users import (
+    AdminGenerateLoginLinkResponse,
+    AdminResetPasswordResponse,
     AdminUserGiftItem,
     AdminUserGiftsResponse,
     AssignReferrerRequest,
     AssignReferrerResponse,
+    CancelAllRecurringResponse,
     DeleteDeviceResponse,
     DeleteUserRequest,
     DeleteUserResponse,
@@ -270,6 +274,11 @@ def _build_user_list_item(user: User, spending_stats: dict = None, highlight: st
                 )
             )
 
+    is_recurrent = (
+        any(r.is_active for r in getattr(user, 'antilopay_recurrents', []) or []) or
+        any(s.is_active for s in getattr(user, 'saved_payment_methods', []) or [])
+    )
+
     return UserListItem(
         id=user.id,
         telegram_id=user.telegram_id,
@@ -301,6 +310,7 @@ def _build_user_list_item(user: User, spending_stats: dict = None, highlight: st
         has_restrictions=user.has_restrictions,
         restriction_topup=user.restriction_topup,
         restriction_subscription=user.restriction_subscription,
+        is_recurrent=is_recurrent,
     )
 
 
@@ -486,6 +496,7 @@ async def list_users(
     promo_group_id: int | None = Query(None),
     campaign_id: int | None = Query(None),
     partner_id: int | None = Query(None),
+    is_recurrent: Annotated[bool | None, Query()] = None,
     expires_within_days: int | None = Query(None, ge=0, le=365),
     active_within_minutes: int | None = Query(None, ge=1, le=1440),
     has_restrictions: bool | None = Query(None),
@@ -507,6 +518,7 @@ async def list_users(
     - **search**: Search by telegram_id, username, first_name, last_name, email
     - **email**: Search by email
     - **status**: Filter by user status (active, blocked, deleted)
+    - **is_recurrent**: Filter by recurrent payment status (true = has active card, false = does not)
     - **expires_within_days**: Active subscription ends within N days (daily tariffs excluded)
     - **active_within_minutes**: Last activity in the bot or cabinet within N minutes
     - **online**: Only users connected to the VPN right now (by the panel's onlineAt)
@@ -567,6 +579,7 @@ async def list_users(
         promo_group_id=promo_group_id,
         campaign_id=campaign_id,
         partner_id=partner_id,
+        is_recurrent=is_recurrent,
         expires_within_days=expires_within_days,
         active_within_minutes=active_within_minutes,
         has_restrictions=has_restrictions,
@@ -595,6 +608,7 @@ async def list_users(
         promo_group_id=promo_group_id,
         campaign_id=campaign_id,
         partner_id=partner_id,
+        is_recurrent=is_recurrent,
         expires_within_days=expires_within_days,
         active_within_minutes=active_within_minutes,
         has_restrictions=has_restrictions,
@@ -695,6 +709,27 @@ async def get_users_stats(
     active_week = (await db.execute(active_week_q)).scalar() or 0
     active_month = (await db.execute(active_month_q)).scalar() or 0
 
+    # Count deleted users
+    deleted_q = select(func.count(User.id)).where(User.status == UserStatus.DELETED.value)
+    deleted_count = (await db.execute(deleted_q)).scalar() or 0
+
+    # Count recurrent users (users with active card)
+    from app.database.models import AntilopayRecurrent, SavedPaymentMethod
+
+    active_recurrent_exists = select(AntilopayRecurrent.id).where(
+        AntilopayRecurrent.user_id == User.id,
+        AntilopayRecurrent.is_active == True,
+    ).exists()
+    active_yookassa_exists = select(SavedPaymentMethod.id).where(
+        SavedPaymentMethod.user_id == User.id,
+        SavedPaymentMethod.is_active == True,
+    ).exists()
+    recurrent_count_q = (
+        select(func.count(User.id))
+        .select_from(User)
+        .where(or_(active_recurrent_exists, active_yookassa_exists))
+    )
+    recurrent_users_count = (await db.execute(recurrent_count_q)).scalar() or 0
     return UsersStatsResponse(
         total_users=stats['total_users'],
         active_users=stats['active_users'],
@@ -707,6 +742,7 @@ async def get_users_stats(
         users_with_active_subscription=users_with_active,
         users_with_trial=users_with_trial,
         users_with_expired_subscription=users_with_expired,
+        recurrent_users_count=recurrent_users_count,
         total_balance_kopeks=total_balance,
         total_balance_rubles=total_balance / 100,
         avg_balance_kopeks=avg_balance,
@@ -916,6 +952,15 @@ async def get_user_detail(
             if settings.is_multi_tariff_enabled() and primary_sub and primary_sub.remnawave_id
             else user.remnawave_id
         ),
+        recurrent_cards=[
+            r.title or r.pay_data
+            for r in (getattr(user, 'antilopay_recurrents', None) or [])
+            if r.is_active and (r.title or r.pay_data)
+        ] + [
+            s.title or f"{s.card_type or 'Card'} *{s.card_last4 or '****'}"
+            for s in (getattr(user, 'saved_payment_methods', None) or [])
+            if s.is_active
+        ],
     )
 
 
@@ -1911,6 +1956,35 @@ async def cancel_user_sbp_recurring(
     )
 
     return {'status': 'cancelled'}
+
+
+@router.post('/{user_id}/cancel-all-recurring', response_model=CancelAllRecurringResponse)
+async def admin_cancel_all_user_recurring(
+    user_id: int,
+    admin: User = Depends(require_permission('users:subscription')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Admin endpoint to force-cancel all recurring subscriptions across payment APIs (Platega, Lava, Antilopay),
+    deactivate saved payment methods (YooKassa), and disable bot autopay, regardless of DB status.
+    """
+    from app.services.admin_recurring_cancellation_service import cancel_all_user_recurring_subscriptions
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    report = await cancel_all_user_recurring_subscriptions(db, user_id)
+
+    logger.info(
+        'Admin force-cancelled all recurring subscriptions for user',
+        admin_id=admin.id,
+        user_id=user_id,
+        total_actions=report['summary']['total_actions'],
+        success_count=report['summary']['success_count'],
+        failed_count=report['summary']['failed_count'],
+    )
+
+    return report
 
 
 @router.delete('/{user_id}/subscriptions/{sub_id}')
@@ -3289,6 +3363,69 @@ async def disable_user(
         panel_deactivated=panel_deactivated,
         user_blocked=True,
         panel_error=panel_error,
+    )
+
+
+@router.post('/{user_id}/reset-password', response_model=AdminResetPasswordResponse)
+async def reset_user_password(
+    user_id: int,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Generate a new random password for user, set it, and return plaintext."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='User not found',
+        )
+
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    new_pwd = ''.join(secrets.choice(alphabet) for _ in range(12))
+
+    from app.cabinet.auth import hash_password
+    user.password_hash = hash_password(new_pwd)
+    user.updated_at = datetime.now(UTC)
+    await db.commit()
+
+    logger.info('Admin reset password for user', admin_id=admin.id, user_id=user_id)
+
+    return AdminResetPasswordResponse(
+        success=True,
+        message='Password reset successfully',
+        new_password=new_pwd,
+    )
+
+
+@router.post('/{user_id}/generate-login-link', response_model=AdminGenerateLoginLinkResponse)
+async def generate_user_login_link(
+    user_id: int,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Generate an auto-login link for user."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='User not found',
+        )
+
+    from app.cabinet.auth import create_auto_login_token
+    token = create_auto_login_token(user.id, ttl_hours=72)
+
+    cabinet_url = settings.CABINET_URL or 'https://example.com/cabinet'
+    cabinet_url = cabinet_url.rstrip('/')
+    login_link = f"{cabinet_url}/auto-login?token={token}"
+
+    logger.info('Admin generated login link for user', admin_id=admin.id, user_id=user_id)
+
+    return AdminGenerateLoginLinkResponse(
+        success=True,
+        message='Login link generated successfully',
+        login_link=login_link,
     )
 
 

@@ -198,9 +198,10 @@ class ContestRotationService:
         return times
 
     async def _tick(self) -> None:
+        pending_rounds: list[tuple[ContestTemplate, datetime, datetime, dict]] = []
+
         async with AsyncSessionLocal() as db:
             templates = await list_templates(db)
-            # Get current time in configured timezone
             tz = self._get_timezone()
             now_utc = datetime.now(UTC)
             now_local = now_utc.astimezone(tz)
@@ -208,7 +209,6 @@ class ContestRotationService:
             for tpl in templates:
                 times = self._parse_times(tpl.schedule_times) or []
                 for slot in times[: tpl.times_per_day]:
-                    # Apply schedule time to local date
                     starts_at_local = now_local.replace(hour=slot.hour, minute=slot.minute, second=0, microsecond=0)
                     if starts_at_local > now_local:
                         starts_at_local -= timedelta(days=1)
@@ -220,21 +220,29 @@ class ContestRotationService:
                     if exists:
                         continue
 
-                    # Convert to UTC for storage
                     starts_at_utc = starts_at_local.astimezone(UTC)
                     ends_at_utc = ends_at_local.astimezone(UTC)
-
-                    # Анонс перед созданием раунда
-                    await self._announce_round_start(tpl, starts_at_local, ends_at_local)
                     payload = self._build_payload_for_template(tpl)
-                    round_obj = await create_round(
-                        db,
-                        template=tpl,
-                        starts_at=starts_at_utc,
-                        ends_at=ends_at_utc,
-                        payload=payload,
-                    )
-                    logger.info('Создан раунд для шаблона', round_obj_id=round_obj.id, slug=tpl.slug)
+                    pending_rounds.append((tpl, starts_at_utc, ends_at_utc, payload))
+
+        for tpl, starts_at_utc, ends_at_utc, payload in pending_rounds:
+            starts_at_local = starts_at_utc.astimezone(self._get_timezone())
+            ends_at_local = ends_at_utc.astimezone(self._get_timezone())
+            await self._announce_round_start(tpl, starts_at_local, ends_at_local)
+
+            async with AsyncSessionLocal() as db:
+                exists = await get_active_round_by_template(db, tpl.id)
+                if exists:
+                    continue
+                round_obj = await create_round(
+                    db,
+                    template=tpl,
+                    starts_at=starts_at_utc,
+                    ends_at=ends_at_utc,
+                    payload=payload,
+                )
+                await db.commit()
+                logger.info('Создан раунд для шаблона', round_obj_id=round_obj.id, slug=tpl.slug)
 
     def _get_timezone(self) -> ZoneInfo:
         tz_name = settings.TIMEZONE or 'UTC'

@@ -154,15 +154,28 @@ async def rollback_trial_subscription_activation(
     if not subscription:
         return True
 
+    # If the transaction is broken from a prior failure, clear it so we can clean up
+    try:
+        await db.rollback()
+    except Exception:
+        pass
+
     try:
         await decrement_subscription_server_counts(db, subscription)
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error(
             'Failed to decrement server counters during trial rollback', user_id=subscription.user_id, error=error
         )
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     try:
-        await db.delete(subscription)
+        sub_to_delete = subscription
+        if hasattr(subscription, 'id'):
+            sub_to_delete = await db.get(Subscription, subscription.id) or subscription
+        await db.delete(sub_to_delete)
         await db.commit()
     except Exception as error:  # pragma: no cover - defensive logging
         logger.error(
@@ -170,7 +183,10 @@ async def rollback_trial_subscription_activation(
             getattr=getattr(subscription, 'id', '<unknown>'),
             error=error,
         )
-        await db.rollback()
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         return False
 
     return True

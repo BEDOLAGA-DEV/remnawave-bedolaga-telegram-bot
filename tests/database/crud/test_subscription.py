@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, MagicMock
 
 from app.database.crud import subscription as subscription_crud
 
@@ -9,6 +9,7 @@ async def test_create_trial_subscription_uses_all_available_squads_by_default(mo
     db.add = Mock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    db.begin_nested = MagicMock(return_value=MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock(return_value=False)))
 
     monkeypatch.setattr('app.database.crud.subscription.get_subscription_by_user_id', AsyncMock(return_value=None))
     monkeypatch.setattr('app.database.crud.subscription.generate_unique_short_id', AsyncMock(return_value='abc123'))
