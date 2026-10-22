@@ -685,7 +685,10 @@ async def create_paid_subscription(
     if not is_trial:
         try:
             killed = await deactivate_user_trial_subscriptions(
-                db, user_id, exclude_subscription_id=subscription.id, target_tariff_id=tariff_id
+                db,
+                user_id,
+                exclude_subscription_id=subscription.id,
+                target_tariff_id=tariff_id if settings.is_multi_tariff_enabled() else None,
             )
             if killed:
                 logger.info(
