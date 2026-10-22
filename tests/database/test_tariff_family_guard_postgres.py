@@ -88,11 +88,12 @@ async def test_family_change_cannot_make_two_live_subscriptions_conflict(postgre
         first.add_all([_sub(user.id, basic.id, 'basic_alive'), _sub(user.id, premium.id, 'legacy_alive')])
         await first.commit()
 
+        premium_id = premium.id
         premium.entitlement_family = 'main'
         with pytest.raises(IntegrityError, match='active entitlement family conflict'):
             await first.commit()
         await first.rollback()
-        stored = await second.scalar(select(Tariff.entitlement_family).where(Tariff.id == premium.id))
+        stored = await second.scalar(select(Tariff.entitlement_family).where(Tariff.id == premium_id))
         assert stored is None
 
 
