@@ -843,11 +843,31 @@ async def purchase_tariff(
                     # тарифа уже есть → отказ до списания, а не падение на
                     # частичном уникальном индексе после.
                     await _ensure_tariff_not_already_active(db, user.id, tariff.id)
-                # If the pinned sub points to a different tariff than
-                # the request carries (admin swap, stale client state),
-                # ignore it and fall back to tariff-level lookup so the
-                # purchase doesn't extend a sub of the wrong tariff.
                 elif existing_subscription and existing_subscription.tariff_id != tariff.id:
+                    # A paid switch must use the switch endpoint and its quote.
+                    # Discarding the explicit source would charge for a new
+                    # subscription (or renew a different one) instead.
+                    if not existing_subscription.is_trial and existing_subscription.actual_status in (
+                        'active',
+                        'limited',
+                    ):
+                        source_tariff = await get_tariff_by_id(db, existing_subscription.tariff_id)
+                        purchase_fallback = (
+                            settings.TARIFF_SWITCH_RESET_FREE_DAYS
+                            and source_tariff is not None
+                            and source_tariff.is_free
+                        )
+                        if not purchase_fallback:
+                            raise HTTPException(
+                                status_code=status.HTTP_409_CONFLICT,
+                                detail={
+                                    'code': 'subscription_tariff_mismatch',
+                                    'message': 'Для выбранной подписки требуется смена тарифа. '
+                                    'Обновите страницу и выберите «Сменить тариф».',
+                                },
+                            )
+                    # Trial/expired/free-source purchases retain their existing
+                    # conversion policy; they have no paid switch quote.
                     logger.warning(
                         'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
                         request_subscription_id=request.subscription_id,

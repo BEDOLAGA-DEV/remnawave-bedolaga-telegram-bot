@@ -6,12 +6,14 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.cabinet.routes.subscription_modules import tariff_switch as route
+from app.cabinet.dependencies import get_cabinet_db, get_current_cabinet_user
+from app.cabinet.routes.subscription_modules import purchase, tariff_switch as route
 from app.cabinet.schemas.subscription import TariffPurchaseRequest
 from app.config import settings
 from app.database.models import Base, Subscription, Tariff, Transaction, User
@@ -19,6 +21,73 @@ from tests.fixtures.postgres_db import postgres_session
 
 
 pytestmark = pytest.mark.postgres
+
+
+@pytest.mark.parametrize('kind', ['new', 'renew', 'trial', 'expired', 'free'])
+async def test_purchase_guard_preserves_supported_purchase_flows(postgres_database, monkeypatch, kind):
+    async with switch_data(postgres_database, monkeypatch) as (db, user):
+        source = await db.get(Subscription, 11)
+        if kind == 'trial':
+            source.is_trial = True
+        elif kind == 'expired':
+            source.status = 'expired'
+            source.end_date = datetime.now(UTC) - timedelta(days=1)
+        elif kind == 'free':
+            (await db.get(Tariff, 1)).period_prices = {'30': 0}
+            monkeypatch.setattr(settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', True)
+        await db.commit()
+        panel = SimpleNamespace(create_remnawave_user=AsyncMock(), update_remnawave_user=AsyncMock())
+        monkeypatch.setattr(purchase, 'SubscriptionService', lambda: panel)
+        target = 1 if kind == 'renew' else 3
+        result = await purchase.purchase_tariff(
+            TariffPurchaseRequest(tariff_id=target, period_days=30, subscription_id=None if kind == 'new' else 11),
+            user,
+            db,
+        )
+        assert result['success'] is True
+        await db.refresh(user)
+        assert user.balance_kopeks == 10000 - (1000 if kind == 'renew' else 3000)
+        transactions = (await db.scalars(select(Transaction))).all()
+        assert len(transactions) == 1
+        assert (await db.get(Subscription, 12)).tariff_id == 2
+
+
+@pytest.mark.parametrize('target', [2, 3])
+@pytest.mark.parametrize('daily', [False, True])
+@pytest.mark.parametrize('source_status', ['active', 'limited'])
+async def test_purchase_endpoint_never_discards_a_pinned_paid_subscription(
+    postgres_database, monkeypatch, target, daily, source_status
+):
+    async with switch_data(postgres_database, monkeypatch) as (db, user):
+        source = await db.get(Subscription, 11)
+        source.status = source_status
+        target_tariff = await db.get(Tariff, target)
+        target_tariff.is_daily = daily
+        target_tariff.daily_price_kopeks = 100
+        await db.commit()
+        panel = SimpleNamespace(create_remnawave_user=AsyncMock(), update_remnawave_user=AsyncMock())
+        monkeypatch.setattr(purchase, 'SubscriptionService', lambda: panel)
+        app = FastAPI()
+        app.include_router(purchase.router, prefix='/cabinet/subscription')
+        app.dependency_overrides[get_cabinet_db] = lambda: db
+        app.dependency_overrides[get_current_cabinet_user] = lambda: user
+        before = list((await db.execute(select(Subscription.id, Subscription.tariff_id, Subscription.end_date))).all())
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            response = await client.post(
+                '/cabinet/subscription/purchase-tariff',
+                json={'tariff_id': target, 'period_days': 30, 'subscription_id': 11},
+            )
+        assert response.status_code == 409, response.text
+        assert response.json()['detail']['code'] == 'subscription_tariff_mismatch'
+        await db.refresh(user)
+        assert user.balance_kopeks == 10000
+        assert (
+            list((await db.execute(select(Subscription.id, Subscription.tariff_id, Subscription.end_date))).all())
+            == before
+        )
+        assert (await db.scalars(select(Transaction))).all() == []
+        panel.create_remnawave_user.assert_not_awaited()
+        panel.update_remnawave_user.assert_not_awaited()
 
 
 @asynccontextmanager
