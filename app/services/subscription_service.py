@@ -168,7 +168,14 @@ class SubscriptionService:
         )
 
     async def _defer_device_limit_reconciliation(
-        self, db, subscription, user, *, action: Literal['create', 'update']
+        self,
+        db,
+        subscription,
+        user,
+        *,
+        action: Literal['create', 'update'],
+        reset_traffic: bool,
+        reset_reason: str | None,
     ) -> None:
         # Capture identity before rollback expires SQLAlchemy objects. The paid
         # purchase is already committed; retries only reconcile panel state.
@@ -176,7 +183,13 @@ class SubscriptionService:
         from app.services.remnawave_retry_queue import remnawave_retry_queue
 
         if not remnawave_retry_queue.is_processing(subscription_id):
-            remnawave_retry_queue.enqueue(subscription_id=subscription_id, user_id=user_id, action=action)
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription_id,
+                user_id=user_id,
+                action=action,
+                reset_traffic=reset_traffic,
+                reset_reason=reset_reason,
+            )
         await db.rollback()
         await db.refresh(subscription)
         if user is not None:
@@ -329,7 +342,9 @@ class SubscriptionService:
             raise
         except RemnaWaveAPIError as e:
             if isinstance(e, DeviceLimitReconciliationError):
-                await self._defer_device_limit_reconciliation(db, subscription, user, action='create')
+                await self._defer_device_limit_reconciliation(
+                    db, subscription, user, action='create', reset_traffic=reset_traffic, reset_reason=reset_reason
+                )
                 logger.error('HWID limit reconciliation deferred', error=e)
                 return None
             await db.rollback()
@@ -742,7 +757,9 @@ class SubscriptionService:
             raise
         except RemnaWaveAPIError as e:
             if isinstance(e, DeviceLimitReconciliationError):
-                await self._defer_device_limit_reconciliation(db, subscription, user, action='update')
+                await self._defer_device_limit_reconciliation(
+                    db, subscription, user, action='update', reset_traffic=reset_traffic, reset_reason=reset_reason
+                )
                 logger.error('HWID limit reconciliation deferred', error=e)
                 return None
             # Rollback ДО пересоздания: advisory-локи grace должны быть отпущены

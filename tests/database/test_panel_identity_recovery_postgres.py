@@ -60,7 +60,10 @@ class Panel:
 
     async def get_user_devices_all(self, panel_id):
         assert panel_id == 9001
-        return {'total': 1, 'devices': [{'hwid': 'test-phone', 'platform': 'iOS', 'deviceModel': 'Test'}]}
+        return {
+            'total': 1,
+            'devices': [{'userId': panel_id, 'hwid': 'test-phone', 'platform': 'iOS', 'deviceModel': 'Test'}],
+        }
 
 
 @pytest.mark.parametrize('multi', [False, True])

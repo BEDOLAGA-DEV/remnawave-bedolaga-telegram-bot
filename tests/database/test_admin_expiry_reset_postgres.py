@@ -27,6 +27,7 @@ class Panel(RemnaWaveAPI):
         self.expiry_error = expiry_error
         self.patches = []
         self.reads = []
+        self.device_reads = []
         self.echoes = []
         self.accounts = {
             key: dict(
@@ -50,6 +51,11 @@ class Panel(RemnaWaveAPI):
         return user
 
     async def _make_request(self, method, path, data=None, **kwargs):
+        if method == 'GET' and path.startswith('/api/hwid/devices/'):
+            key = int(path.rsplit('/', 1)[1])
+            assert key in self.accounts
+            self.device_reads.append(key)
+            return {'response': {'total': 0, 'devices': []}}
         if method == 'PATCH' and path == '/api/users':
             self.patches.append(data.copy())
             if self.expiry_error is True:
@@ -168,6 +174,7 @@ async def test_expired_update_sends_closing_date_in_first_patch(postgres_databas
         db.add(sub)
         await db.commit()
         assert await SubscriptionService().update_remnawave_user(db, sub)
+        assert panel.device_reads and set(panel.device_reads) == {9001}
         if live:
             assert panel.reads == []
             assert len(panel.patches) == 1

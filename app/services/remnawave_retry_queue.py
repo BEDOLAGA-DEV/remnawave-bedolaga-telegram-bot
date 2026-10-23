@@ -29,6 +29,8 @@ class RetryItem:
     attempts: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_error: str | None = None
+    reset_traffic: bool = False
+    reset_reason: str | None = None
 
 
 class RemnaWaveRetryQueue:
@@ -51,16 +53,25 @@ class RemnaWaveRetryQueue:
         subscription_id: int,
         user_id: int,
         action: Literal['create', 'update'] = 'create',
+        *,
+        reset_traffic: bool = False,
+        reset_reason: str | None = None,
     ) -> None:
         # Deduplicate by subscription_id
         for item in self._queue:
             if item.subscription_id == subscription_id:
+                # A prior ordinary sync must not swallow a paid traffic reset.
+                if reset_traffic:
+                    item.reset_traffic = True
+                    item.reset_reason = reset_reason
                 return
         self._queue.append(
             RetryItem(
                 subscription_id=subscription_id,
                 user_id=user_id,
                 action=action,
+                reset_traffic=reset_traffic,
+                reset_reason=reset_reason,
             )
         )
         logger.info(
@@ -100,9 +111,13 @@ class RemnaWaveRetryQueue:
                         continue
 
                     if item.action == 'create':
-                        result = await service.create_remnawave_user(db, sub)
+                        result = await service.create_remnawave_user(
+                            db, sub, reset_traffic=item.reset_traffic, reset_reason=item.reset_reason
+                        )
                     else:
-                        result = await service.update_remnawave_user(db, sub)
+                        result = await service.update_remnawave_user(
+                            db, sub, reset_traffic=item.reset_traffic, reset_reason=item.reset_reason
+                        )
 
                     # create_remnawave_user / update_remnawave_user проглатывают
                     # RemnaWaveAPIError внутри себя и возвращают None (не

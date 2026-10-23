@@ -11,6 +11,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.cabinet.routes.subscription_modules import purchase as cabinet
 from app.config import settings
@@ -31,8 +33,11 @@ class Panel(RemnaWaveAPI):
         super().__init__(base_url='https://panel.example', api_key='test')
         self.missing = missing
         self.patches = []
+        self.device_reads = []
         self.creates = 0
         self.traffic_used = 17
+        self.traffic_resets = 0
+        self.hwid_failures = 0
         self.account = dict(
             id=9001,
             shortUuid='test-short',
@@ -77,6 +82,13 @@ class Panel(RemnaWaveAPI):
         return user
 
     async def _make_request(self, method, path, data=None, **kwargs):
+        if (method, path) == ('GET', '/api/hwid/devices/9001'):
+            assert not self.missing
+            self.device_reads.append(9001)
+            if self.hwid_failures:
+                self.hwid_failures -= 1
+                raise RemnaWaveAPIError('test HWID service unavailable', 503)
+            return {'response': {'total': 1, 'devices': [{'userId': 9001, 'hwid': 'test-phone'}]}}
         if (method, path) == ('PATCH', '/api/users'):
             assert data['id'] == 9001
             if self.missing:
@@ -89,12 +101,15 @@ class Panel(RemnaWaveAPI):
             '/api/users/9003/actions/reset-traffic',
         ]
         self.traffic_used = 0
+        self.traffic_resets += 1
         return {'response': self.account if '9001' in path else self.new_account}
 
 
 @pytest.mark.parametrize('flow', ['auto', 'cabinet', 'telegram'])
 @pytest.mark.parametrize('daily', [False, True])
-async def test_expired_trial_purchase_preserves_identity(postgres_database, monkeypatch, flow, daily, missing=False):
+async def test_expired_trial_purchase_preserves_identity(
+    postgres_database, monkeypatch, flow, daily, missing=False, hwid_failure=False, prequeued=None
+):
     monkeypatch.setattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', True)
     monkeypatch.setattr(
         'app.bot_factory.create_bot', lambda: SimpleNamespace(session=SimpleNamespace(close=AsyncMock()))
@@ -117,6 +132,14 @@ async def test_expired_trial_purchase_preserves_identity(postgres_database, monk
     monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', notify)
     now = datetime.now(UTC)
     panel = Panel(now, missing=missing)
+    if hwid_failure:
+        from app.services import remnawave_retry_queue as retry_module
+
+        panel.hwid_failures = 2
+        queue = retry_module.RemnaWaveRetryQueue(max_retries=3)
+        monkeypatch.setattr(retry_module, 'remnawave_retry_queue', queue)
+        if prequeued:
+            queue.enqueue(subscription_id=10, user_id=1, action=prequeued)
 
     @asynccontextmanager
     async def client(self):
@@ -194,6 +217,21 @@ async def test_expired_trial_purchase_preserves_identity(postgres_database, monk
                 )
             handler = telegram.confirm_daily_tariff_purchase if daily else telegram.confirm_tariff_purchase
             await inspect.unwrap(handler)(callback, user, db, state)
+        if hwid_failure:
+            assert panel.traffic_used == 17 and panel.traffic_resets == 0
+            assert queue.pending_count == 1
+            engine = create_async_engine(postgres_database, poolclass=NullPool)
+            monkeypatch.setattr(retry_module, 'AsyncSessionLocal', async_sessionmaker(engine, expire_on_commit=False))
+            monkeypatch.setattr(SubscriptionService, 'is_configured', property(lambda _: True))
+            try:
+                await queue.process_pending()
+                assert queue.pending_count == 1 and panel.traffic_resets == 0
+                await queue.process_pending()
+                assert queue.pending_count == 0
+                await queue.process_pending()
+                assert panel.traffic_resets == 1, 'Successful HWID retry must complete the paid traffic reset once'
+            finally:
+                await engine.dispose()
         subs = (await db.scalars(select(Subscription).where(Subscription.user_id == 1))).all()
         assert len(subs) == 2, 'Expired trial was left behind and a second paid row was inserted'
         sub = await db.get(Subscription, 10)
@@ -212,10 +250,12 @@ async def test_expired_trial_purchase_preserves_identity(postgres_database, monk
         assert (await db.get(Subscription, 20)).end_date == now + timedelta(days=50)
         assert (await db.get(Subscription, 20)).traffic_used_gb == 7
         assert panel.traffic_used == 0
-        assert panel.creates == int(missing) and len(panel.patches) == (0 if missing else 1)
+        attempts = 3 if hwid_failure else 1
+        assert panel.creates == int(missing) and len(panel.patches) == (0 if missing else attempts)
         if missing:
             assert panel.create_kwargs['hwid_device_limit'] == 2
         else:
+            assert panel.device_reads == [9001] * attempts
             assert panel.patches[0]['hwidDeviceLimit'] == 2
         account = panel.new_account if missing else panel.account
         assert abs((datetime.fromisoformat(account['expireAt']) - sub.end_date).total_seconds()) < 1
@@ -223,6 +263,17 @@ async def test_expired_trial_purchase_preserves_identity(postgres_database, monk
         call = notification.await_args
         converted = call.kwargs.get('was_trial_conversion', call.args[5] if len(call.args) > 5 else None)
         assert converted is True
+
+
+@pytest.mark.parametrize('flow', ['auto', 'cabinet', 'telegram'])
+@pytest.mark.parametrize('daily', [False, True])
+@pytest.mark.parametrize('prequeued', [None, 'create', 'update'])
+async def test_hwid_retry_completes_trial_traffic_reset_without_recharging(
+    postgres_database, monkeypatch, flow, daily, prequeued
+):
+    await test_expired_trial_purchase_preserves_identity(
+        postgres_database, monkeypatch, flow, daily, hwid_failure=True, prequeued=prequeued
+    )
 
 
 @pytest.mark.parametrize('case', ['latest', 'live', 'same', 'revive', 'none'])
