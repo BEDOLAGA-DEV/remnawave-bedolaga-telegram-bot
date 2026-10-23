@@ -73,23 +73,6 @@ def _create_cors_response() -> Response:
     )
 
 
-def _resolve_proxied_client_ip(request: Request) -> str | None:
-    """Адрес отправителя вебхука без доверия к клиентским заголовкам.
-
-    Те же правила, что у ЮKassa (``resolve_webhook_client_ip``): публичный peer — он и
-    есть отправитель; за локальным/доверенным прокси читается только ``X-Forwarded-For``
-    справа налево, ``X-Real-IP`` — лишь когда ``X-Forwarded-For`` нет; ``Cf-Connecting-Ip``
-    — только от peer из сетей Cloudflare; неизвестный peer → ``None``.
-    """
-    client_ip = yookassa_webhook_module.resolve_webhook_client_ip(
-        request.client.host if request.client else None,
-        forwarded_for=request.headers.get('x-forwarded-for'),
-        real_ip=request.headers.get('x-real-ip'),
-        cf_connecting_ip=request.headers.get('cf-connecting-ip'),
-    )
-    return str(client_ip) if client_ip is not None else None
-
-
 def _verify_mulenpay_signature(request: Request, raw_body: bytes) -> bool:
     """Verify a body-level MulenPay signature when the callback carries one.
 
@@ -1512,56 +1495,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
-    # PayPear webhook
-    if settings.is_paypear_configured():
-
-        @router.get(settings.PAYPEAR_WEBHOOK_PATH)
-        async def paypear_health() -> JSONResponse:
-            return JSONResponse(
-                {
-                    'status': 'ok',
-                    'service': 'paypear_webhook',
-                    'enabled': settings.is_paypear_enabled(),
-                }
-            )
-
-        @router.post(settings.PAYPEAR_WEBHOOK_PATH)
-        async def paypear_webhook(request: Request) -> JSONResponse:
-            try:
-                raw_body = await request.body()
-                payload = json.loads(raw_body)
-            except Exception as parse_error:
-                logger.error('PayPear webhook: failed to parse JSON', parse_error=parse_error)
-                return JSONResponse({'status': False}, status_code=status.HTTP_400_BAD_REQUEST)
-
-            # Извлекаем подпись из тела webhook
-            received_signature = payload.get('signature', '')
-
-            from app.services.paypear_service import paypear_service
-
-            client_ip = _resolve_proxied_client_ip(request)
-            if not paypear_service.verify_webhook_signature(raw_body, received_signature, client_ip=client_ip):
-                logger.warning('PayPear webhook: invalid signature and IP', client_ip=client_ip)
-                return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)
-
-            try:
-                success = await _process_payment_service_callback(
-                    payment_service,
-                    payload,
-                    'process_paypear_webhook',
-                )
-                if not success:
-                    logger.error(
-                        'PayPear webhook processing failed',
-                        data=payload.get('object'),
-                    )
-            except Exception as e:
-                logger.exception('PayPear webhook processing error', error=e)
-            # Always return 200 — PayPear may retry on non-200
-            return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
-
-        routes_registered = True
-
     # RollyPay webhook
     if settings.is_rollypay_configured():
 
@@ -2247,7 +2180,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'kassa_ai_enabled': settings.is_kassa_ai_enabled(),
                     'riopay_enabled': settings.is_riopay_enabled(),
                     'severpay_enabled': settings.is_severpay_enabled(),
-                    'paypear_enabled': settings.is_paypear_enabled(),
                     'rollypay_enabled': settings.is_rollypay_enabled(),
                     'overpay_enabled': settings.is_overpay_enabled(),
                     'aurapay_enabled': settings.is_aurapay_enabled(),

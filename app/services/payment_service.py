@@ -44,7 +44,6 @@ from app.services.payment.lava import LavaPaymentMixin
 from app.services.payment.overpay import OverpayPaymentMixin
 from app.services.payment.paritypay import ParityPayPaymentMixin
 from app.services.payment.payer_identity import resolve_guest_payer
-from app.services.payment.paypear import PayPearPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
 from app.services.payment.rollypay import RollyPayPaymentMixin
 from app.services.payment.severpay import SeverPayPaymentMixin
@@ -344,41 +343,6 @@ async def update_severpay_payment_status(*args, **kwargs):
 async def link_severpay_payment_to_transaction(*args, **kwargs):
     severpay_crud = import_module('app.database.crud.severpay')
     return await severpay_crud.link_severpay_payment_to_transaction(*args, **kwargs)
-
-
-async def create_paypear_payment(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.create_paypear_payment(*args, **kwargs)
-
-
-async def get_paypear_payment_by_order_id(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_order_id(*args, **kwargs)
-
-
-async def get_paypear_payment_by_paypear_id(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_paypear_id(*args, **kwargs)
-
-
-async def get_paypear_payment_by_id(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_id(*args, **kwargs)
-
-
-async def get_paypear_payment_by_id_for_update(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_id_for_update(*args, **kwargs)
-
-
-async def update_paypear_payment_status(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.update_paypear_payment_status(*args, **kwargs)
-
-
-async def link_paypear_payment_to_transaction(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.link_paypear_payment_to_transaction(*args, **kwargs)
 
 
 # --- RollyPay CRUD wrappers ---
@@ -852,7 +816,6 @@ class PaymentService(
     KassaAiPaymentMixin,
     RioPayPaymentMixin,
     SeverPayPaymentMixin,
-    PayPearPaymentMixin,
     RollyPayPaymentMixin,
     OverpayPaymentMixin,
     AuraPayPaymentMixin,
@@ -1290,28 +1253,6 @@ class PaymentService(
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('severpay_id') or result.get('order_id'),
                     'provider': 'severpay',
-                }
-            return None
-
-        # --- PayPear ----------------------------------------------------------
-        if _base == 'paypear':
-            if not settings.is_paypear_enabled():
-                logger.warning('PayPear is not enabled, cannot create guest payment')
-                return None
-
-            result = await self.create_paypear_payment(
-                db=db,
-                user_id=None,
-                amount_kopeks=amount_kopeks,
-                description=description,
-                return_url=return_url,
-            )
-            if result:
-                await _patch_guest_metadata(result['local_payment_id'], 'paypear')
-                return {
-                    'payment_url': result.get('payment_url'),
-                    'payment_id': result.get('paypear_id') or result.get('order_id'),
-                    'provider': 'paypear',
                 }
             return None
 

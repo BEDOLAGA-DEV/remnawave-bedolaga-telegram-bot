@@ -41,7 +41,6 @@ PROVIDERS = [
     'overpay',
     'pal24',
     'paritypay',
-    'paypear',
     'platega',
     'riopay',
     'rollypay',

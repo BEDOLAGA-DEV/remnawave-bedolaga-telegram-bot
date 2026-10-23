@@ -33,7 +33,6 @@ from app.database.models import (
     Pal24Payment,
     ParityPayPayment,
     PaymentMethod,
-    PayPearPayment,
     PlategaPayment,
     RioPayPayment,
     RollyPayPayment,
@@ -696,39 +695,6 @@ async def _search_overpay(db: AsyncSession, params: SearchParams) -> list[Pendin
     return records
 
 
-async def _search_paypear(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
-    stmt = select(PayPearPayment).options(selectinload(PayPearPayment.user)).order_by(desc(PayPearPayment.created_at))
-    stmt = _apply_date_filter(stmt, PayPearPayment.created_at, params.cutoff, params.upper_bound)
-
-    if params.search:
-        kind = _detect_user_search_kind(params.search)
-        if kind == _UserSearchKind.INVOICE:
-            conditions = [
-                PayPearPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
-                PayPearPayment.paypear_id.ilike(f'%{_escape_like(params.search)}%'),
-            ]
-            stmt = stmt.where(or_(*conditions))
-        else:
-            stmt = _apply_user_join_filter(stmt, PayPearPayment, kind, params.search)
-
-    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
-    result = await db.execute(stmt)
-    records: list[PendingPayment] = []
-    for payment in result.scalars().all():
-        record = _build_record(
-            PaymentMethod.PAYPEAR,
-            payment,
-            identifier=payment.order_id,
-            amount_kopeks=payment.amount_kopeks,
-            status=payment.status or '',
-            is_paid=bool(payment.is_paid),
-            expires_at=getattr(payment, 'expires_at', None),
-        )
-        if record:
-            records.append(record)
-    return records
-
-
 async def _search_rollypay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
     stmt = (
         select(RollyPayPayment).options(selectinload(RollyPayPayment.user)).order_by(desc(RollyPayPayment.created_at))
@@ -1202,7 +1168,6 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.RIOPAY: _search_riopay,
     PaymentMethod.SEVERPAY: _search_severpay,
     PaymentMethod.OVERPAY: _search_overpay,
-    PaymentMethod.PAYPEAR: _search_paypear,
     PaymentMethod.ROLLYPAY: _search_rollypay,
     PaymentMethod.AURAPAY: _search_aurapay,
     PaymentMethod.ETOPLATEZHI: _search_etoplatezhi,

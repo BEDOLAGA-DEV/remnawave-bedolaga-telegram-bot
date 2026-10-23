@@ -7,7 +7,7 @@
 кроме MANUAL и BALANCE), поэтому новый шлюз попадает в статистику автоматически.
 """
 
-from app.database.crud.transaction import REAL_PAYMENT_METHODS
+from app.database.crud.transaction import REAL_PAYMENT_METHODS, RETIRED_GATEWAY_METHODS
 from app.database.models import PaymentMethod
 
 
@@ -29,6 +29,6 @@ def test_covers_every_gateway_in_enum():
         PaymentMethod.MANUAL.value,
         PaymentMethod.BALANCE.value,
     }
-    assert set(REAL_PAYMENT_METHODS) == expected
+    assert set(REAL_PAYMENT_METHODS) == expected | set(RETIRED_GATEWAY_METHODS)
     # на сегодня это 24 шлюза
-    assert len(REAL_PAYMENT_METHODS) == len(expected)
+    assert len(REAL_PAYMENT_METHODS) == len(expected) + len(RETIRED_GATEWAY_METHODS)

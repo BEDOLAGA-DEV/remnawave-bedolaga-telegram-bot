@@ -14,7 +14,6 @@ from .kassa_ai import KassaAiPaymentMixin
 from .mulenpay import MulenPayPaymentMixin
 from .overpay import OverpayPaymentMixin
 from .pal24 import Pal24PaymentMixin
-from .paypear import PayPearPaymentMixin
 from .platega import PlategaPaymentMixin
 from .riopay import RioPayPaymentMixin
 from .rollypay import RollyPayPaymentMixin
@@ -35,7 +34,6 @@ __all__ = [
     'MulenPayPaymentMixin',
     'OverpayPaymentMixin',
     'Pal24PaymentMixin',
-    'PayPearPaymentMixin',
     'PaymentCommonMixin',
     'PlategaPaymentMixin',
     'RioPayPaymentMixin',

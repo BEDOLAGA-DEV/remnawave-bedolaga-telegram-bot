@@ -1853,8 +1853,6 @@
   "ANTILOPAY_PAYMENT_CREATED": "💳 <b>通过 {name} 付款</b>\n\n金额：<b>{amount}₽</b>\n\n点击下方按钮进行付款。\n付款成功后余额将自动充值。",
   "ANTILOPAY_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低：{min_amount}₽\n最高：{max_amount}₽",
   "SUPPORT_TOPUP_DISABLED": "通过客服充值已关闭。请尝试其他支付方式。",
-  "PAYPEAR_PAYMENT_CREATED": "💳 <b>通过 {name} 付款</b>\n\n金额：<b>{amount}₽</b>\n\n点击下方按钮进行付款。\n付款成功后余额将自动充值。",
-  "PAYPEAR_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低：{min_amount}₽\n最高：{max_amount}₽",
   "FREEKASSA_PAYMENT_CREATED": "💳 <b>通过 {name} 付款</b>\n\n金额：<b>{amount}₽</b>\n\n点击下方按钮进行付款。\n付款成功后余额将自动充值。",
   "FREEKASSA_NOT_AVAILABLE": "Freekassa 暂时不可用",
   "GUIDE_CONFIG_NOT_SET": "⚠️ <b>尚未完成配置</b>\n\n管理员尚未配置应用设置。\n请联系管理员。",

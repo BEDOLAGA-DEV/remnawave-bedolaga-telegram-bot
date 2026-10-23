@@ -1962,8 +1962,6 @@
   "ANTILOPAY_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to pay.\nYour balance will be topped up automatically after a successful payment.",
   "ANTILOPAY_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽",
   "SUPPORT_TOPUP_DISABLED": "Top-up via support is disabled. Try another payment method.",
-  "PAYPEAR_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to pay.\nYour balance will be topped up automatically after a successful payment.",
-  "PAYPEAR_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽",
   "FREEKASSA_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to pay.\nYour balance will be topped up automatically after a successful payment.",
   "FREEKASSA_NOT_AVAILABLE": "Freekassa is temporarily unavailable",
   "GUIDE_CONFIG_NOT_SET": "⚠️ <b>Configuration not set up</b>\n\nThe administrator has not configured the app setup yet.\nPlease contact the administrator.",

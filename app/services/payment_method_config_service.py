@@ -181,18 +181,6 @@ def _get_method_defaults() -> dict:
             'default_max': settings.SEVERPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
-        'paypear': {
-            'default_display_name': settings.get_paypear_display_name(),
-            'is_configured': settings.is_paypear_enabled(),
-            'default_min': settings.PAYPEAR_MIN_AMOUNT_KOPEKS,
-            'default_max': settings.PAYPEAR_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': [
-                {'id': 'bank_card', 'name': 'Карта'},
-                {'id': 'sbp', 'name': 'СБП'},
-                {'id': 'sberpay', 'name': 'SberPay'},
-                {'id': 'tpay', 'name': 'T-Pay'},
-            ],
-        },
         'rollypay': {
             'default_display_name': settings.get_rollypay_display_name(),
             'is_configured': settings.is_rollypay_enabled(),
@@ -372,7 +360,6 @@ DEFAULT_METHOD_ORDER = [
     'kassa_ai',
     'riopay',
     'severpay',
-    'paypear',
     'rollypay',
     'overpay',
     'aurapay',
@@ -513,17 +500,20 @@ async def ensure_payment_method_configs(db: AsyncSession) -> None:
 
 
 async def get_all_configs(db: AsyncSession) -> list[PaymentMethodConfig]:
-    """Get all payment method configs ordered by sort_order."""
+    """Get supported payment method configs ordered by sort_order."""
     result = await db.execute(
         select(PaymentMethodConfig)
         .options(selectinload(PaymentMethodConfig.allowed_promo_groups))
+        .where(PaymentMethodConfig.method_id.in_(DEFAULT_METHOD_ORDER))
         .order_by(PaymentMethodConfig.sort_order)
     )
     return list(result.scalars().all())
 
 
 async def get_config_by_method_id(db: AsyncSession, method_id: str) -> PaymentMethodConfig | None:
-    """Get a single config by method_id."""
+    """Get a single config by method_id, ignoring retired backup entries."""
+    if method_id not in DEFAULT_METHOD_ORDER:
+        return None
     result = await db.execute(
         select(PaymentMethodConfig)
         .options(selectinload(PaymentMethodConfig.allowed_promo_groups))

@@ -35,7 +35,6 @@ from app.database.models import (
     Pal24Payment,
     ParityPayPayment,
     PaymentMethod,
-    PayPearPayment,
     PlategaPayment,
     RioPayPayment,
     RollyPayPayment,
@@ -90,7 +89,6 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.RIOPAY,
         PaymentMethod.SEVERPAY,
         PaymentMethod.OVERPAY,
-        PaymentMethod.PAYPEAR,
         PaymentMethod.ROLLYPAY,
         PaymentMethod.AURAPAY,
         PaymentMethod.CISPAY,
@@ -120,7 +118,6 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.RIOPAY,
         PaymentMethod.SEVERPAY,
         PaymentMethod.OVERPAY,
-        PaymentMethod.PAYPEAR,
         PaymentMethod.ROLLYPAY,
         PaymentMethod.AURAPAY,
         PaymentMethod.CISPAY,
@@ -160,8 +157,6 @@ def method_display_name(method: PaymentMethod) -> str:
         return settings.get_severpay_display_name()
     if method == PaymentMethod.OVERPAY:
         return settings.get_overpay_display_name()
-    if method == PaymentMethod.PAYPEAR:
-        return settings.get_paypear_display_name()
     if method == PaymentMethod.ROLLYPAY:
         return settings.get_rollypay_display_name()
     if method == PaymentMethod.AURAPAY:
@@ -216,8 +211,6 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_severpay_enabled()
     if method == PaymentMethod.OVERPAY:
         return settings.is_overpay_enabled()
-    if method == PaymentMethod.PAYPEAR:
-        return settings.is_paypear_enabled()
     if method == PaymentMethod.ROLLYPAY:
         return settings.is_rollypay_enabled()
     if method == PaymentMethod.AURAPAY:
@@ -487,13 +480,6 @@ def _is_riopay_pending(payment: RioPayPayment) -> bool:
         return False
     status = (payment.status or '').lower()
     return status == 'pending'
-
-
-def _is_paypear_pending(payment: PayPearPayment) -> bool:
-    if payment.is_paid:
-        return False
-    status = (payment.status or '').lower()
-    return status in {'pending', 'created', 'processing'}
 
 
 def _is_rollypay_pending(payment: RollyPayPayment) -> bool:
@@ -943,32 +929,6 @@ async def _fetch_severpay_payments(db: AsyncSession, cutoff: datetime) -> list[P
     return records
 
 
-async def _fetch_paypear_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
-    stmt = (
-        select(PayPearPayment)
-        .options(selectinload(PayPearPayment.user))
-        .where(PayPearPayment.created_at >= cutoff)
-        .order_by(desc(PayPearPayment.created_at))
-    )
-    result = await db.execute(stmt)
-    records: list[PendingPayment] = []
-    for payment in result.scalars().all():
-        if not _is_paypear_pending(payment):
-            continue
-        record = _build_record(
-            PaymentMethod.PAYPEAR,
-            payment,
-            identifier=payment.order_id,
-            amount_kopeks=payment.amount_kopeks,
-            status=payment.status or '',
-            is_paid=bool(payment.is_paid),
-            expires_at=getattr(payment, 'expires_at', None),
-        )
-        if record:
-            records.append(record)
-    return records
-
-
 async def _fetch_rollypay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(RollyPayPayment)
@@ -1343,7 +1303,6 @@ async def list_recent_pending_payments(
         await _fetch_kassa_ai_payments(db, cutoff),
         await _fetch_riopay_payments(db, cutoff),
         await _fetch_severpay_payments(db, cutoff),
-        await _fetch_paypear_payments(db, cutoff),
         await _fetch_rollypay_payments(db, cutoff),
         await _fetch_aurapay_payments(db, cutoff),
         await _fetch_etoplatezhi_payments(db, cutoff),
@@ -1554,21 +1513,6 @@ async def get_payment_record(
 
     if method == PaymentMethod.SEVERPAY:
         payment = await db.get(SeverPayPayment, local_payment_id)
-        if not payment:
-            return None
-        await db.refresh(payment, attribute_names=['user'])
-        return _build_record(
-            method,
-            payment,
-            identifier=payment.order_id,
-            amount_kopeks=payment.amount_kopeks,
-            status=payment.status or '',
-            is_paid=bool(payment.is_paid),
-            expires_at=getattr(payment, 'expires_at', None),
-        )
-
-    if method == PaymentMethod.PAYPEAR:
-        payment = await db.get(PayPearPayment, local_payment_id)
         if not payment:
             return None
         await db.refresh(payment, attribute_names=['user'])
@@ -1837,13 +1781,6 @@ async def run_manual_check(
             riopay_payment = await db.get(RioPayPayment, local_payment_id)
             if riopay_payment:
                 result = await payment_service.check_riopay_payment_status(db, riopay_payment.order_id)
-                payment = result.get('payment') if result else None
-            else:
-                payment = None
-        elif method == PaymentMethod.PAYPEAR:
-            paypear_payment = await db.get(PayPearPayment, local_payment_id)
-            if paypear_payment:
-                result = await payment_service.check_paypear_payment_status(db, paypear_payment.order_id)
                 payment = result.get('payment') if result else None
             else:
                 payment = None

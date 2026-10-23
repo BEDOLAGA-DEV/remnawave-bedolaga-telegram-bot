@@ -196,18 +196,6 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
-    if settings.is_paypear_enabled():
-        paypear_name = settings.get_paypear_display_name()
-        methods.append(
-            {
-                'id': 'paypear',
-                'name': paypear_name,
-                'icon': '💳',
-                'description': f'через {paypear_name}',
-                'callback': 'topup_paypear',
-            }
-        )
-
     if settings.is_rollypay_enabled():
         rollypay_name = settings.get_rollypay_display_name()
         methods.append(
@@ -672,8 +660,6 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_riopay_enabled()
     if method_id == 'severpay':
         return settings.is_severpay_enabled()
-    if method_id == 'paypear':
-        return settings.is_paypear_enabled()
     if method_id == 'rollypay':
         return settings.is_rollypay_enabled()
     if method_id == 'overpay':
@@ -752,7 +738,6 @@ def get_payment_method_status() -> dict[str, bool]:
         'kassa_ai': settings.is_kassa_ai_enabled(),
         'riopay': settings.is_riopay_enabled(),
         'severpay': settings.is_severpay_enabled(),
-        'paypear': settings.is_paypear_enabled(),
         'rollypay': settings.is_rollypay_enabled(),
         'overpay': settings.is_overpay_enabled(),
         'aurapay': settings.is_aurapay_enabled(),
@@ -804,8 +789,6 @@ def get_enabled_payment_methods_count() -> int:
     if settings.is_riopay_enabled():
         count += 1
     if settings.is_severpay_enabled():
-        count += 1
-    if settings.is_paypear_enabled():
         count += 1
     if settings.is_rollypay_enabled():
         count += 1
