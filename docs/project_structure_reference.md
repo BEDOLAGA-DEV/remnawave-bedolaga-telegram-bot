@@ -2366,6 +2366,9 @@
 - `app/utils/text_search.py` — Python-модуль
   Классы: нет
   Функции: `case_variants` — Регистровые варианты термина, по которым имеет смысл искать., `contains_patterns` — LIKE-шаблоны «содержит term» для всех регистровых вариантов., `contains_conditions` — ILIKE-условия «колонка содержит term» — по каждой колонке и каждому варианту., `contains_clause` — Готовое OR-условие «хотя бы одна колонка содержит term».
+- `app/utils/ticket_media.py` — Python-модуль
+  Классы: нет
+  Функции: `extract_ticket_media` — Тип, file_id и подпись вложения из сообщения Telegram; без вложения — три None., `has_ticket_media` — Есть ли у сообщения тикета вложение, которое бот умеет показать., `ticket_media_label` — Строка «📎 Вложение: …» для карточки тикета; пустая, если показывать нечего., `build_ticket_media_group` — Вложения тикета для send_media_group; фото и видео Telegram разрешает смешивать.
 - `app/utils/ticket_text.py` — Python-модуль
   Классы: нет
   Функции: `preview_text` — Короткое превью сообщения для уведомлений (полный текст — в карточке тикета)., `split_long_block` — Режет блок по границам строк/слов, не разрывая HTML-теги и сущности., `build_ticket_pages` — Собирает страницы «шапка + сообщения», не теряя ни одного символа.
@@ -4430,6 +4433,9 @@
 - `tests/handlers/test_ticket_notification_escaping.py` — Python-модуль
   Классы: нет
   Функции: `test_reply_preview_is_escaped`, `test_escaping_does_not_split_entities_on_the_cut` — Обрезка идёт до экранирования, поэтому `&quot;` не разрывается., `test_plain_reply_is_unchanged`
+- `tests/handlers/test_ticket_video_attachments.py` — Python-модуль
+  Классы: нет
+  Функции: `test_extract_video_with_caption`, `test_extract_video_without_caption`, `test_extract_photo_takes_largest_size`, `test_extract_plain_text_has_no_media`, `test_ticket_media_label`, `test_has_ticket_media_requires_known_type_and_flag`, `test_media_group_mixes_photos_and_videos_in_order`, `test_input_handlers_use_shared_media_extraction`, `test_user_reply_length_check_allows_media_without_caption`, `test_admin_topic_notification_sends_video`, `test_admin_topic_notification_long_text_goes_before_video`, `test_admin_topic_notification_still_sends_photo`
 - `tests/handlers/test_ticket_view_opens_last_page.py` — Python-модуль
   Классы: нет
   Функции: `test_opens_on_the_last_page_when_no_page_requested`, `test_explicit_page_from_pagination_button_wins`
