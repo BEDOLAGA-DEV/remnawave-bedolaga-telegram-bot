@@ -36,6 +36,7 @@ from app.database.crud.transaction import create_transaction, emit_transaction_s
 from app.database.crud.user import add_user_balance, get_user_by_id, subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
+from app.localization.texts import get_texts
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -250,7 +251,12 @@ async def _build_tariff_response(
 
             periods.append(period_data)
 
-    traffic_label = '♾️ Безлимит' if tariff.traffic_limit_gb == 0 else f'{tariff.traffic_limit_gb} ГБ'
+    texts = get_texts(language)
+    traffic_label = (
+        f'♾️ {texts.t("TRAFFIC_UNLIMITED_SHORT")}'
+        if tariff.traffic_limit_gb == 0
+        else texts.t('TARIFF_PURCHASE_TRAFFIC_GB').format(traffic=tariff.traffic_limit_gb)
+    )
 
     # Суточная цена — как и периоды, только со скидкой группы: промокод накладывает
     # кабинет для показа и сервер при списании (PricingEngine.daily_group_price).
