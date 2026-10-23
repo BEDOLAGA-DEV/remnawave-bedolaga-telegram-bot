@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 
 import structlog
 
@@ -36,6 +37,78 @@ from app.services.panel_sync.payload import PanelPayload, build_panel_payload
 
 
 logger = structlog.get_logger(__name__)
+
+
+class DeviceLimitReconciliationError(RemnaWaveAPIError):
+    """The panel cap was written, but registered devices still need reconciliation."""
+
+
+async def _enforce_registered_device_limit(api, panel_user_id: int, limit: int | None) -> None:
+    """A panel cap only rejects NEW HWIDs; reconcile old registrations as well.
+
+    Always recheck finite caps, even when PATCH repeats the same value: an earlier
+    PATCH may have succeeded while device deletion failed. Keep the most recently
+    active registrations; never touch unlimited accounts or another panel user.
+
+    This is a point-in-time reconciliation, not an atomic admission guarantee:
+    Remnawave 3.4.3 can recreate deleted HWIDs in delayed metadata upsert jobs.
+    See docs/hwid-limit-reconciliation.md for the reproduced upstream race.
+    """
+    if type(limit) is not int or limit <= 0:
+        return
+
+    async def devices():
+        result = await api.get_user_devices_all(panel_user_id)
+        rows = result.get('devices') if isinstance(result, dict) else None
+        if (
+            not isinstance(rows, list)
+            or result.get('total') != len(rows)
+            or any(
+                not isinstance(row, dict)
+                or row.get('userId') != panel_user_id
+                or not isinstance(row.get('hwid'), str)
+                or not row['hwid']
+                for row in rows
+            )
+            or len({row['hwid'] for row in rows}) != len(rows)
+        ):
+            raise DeviceLimitReconciliationError('Cannot safely reconcile HWID limit: invalid device list')
+        return rows
+
+    registered = await devices()
+    if len(registered) <= limit:
+        return
+
+    def last_activity(row):
+        for field in ('updatedAt', 'createdAt'):
+            try:
+                moment = datetime.fromisoformat(str(row.get(field)).replace('Z', '+00:00'))
+                return (moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment, row['hwid'])
+            except (ValueError, TypeError):
+                continue
+        return datetime.min.replace(tzinfo=UTC), row['hwid']
+
+    excess = sorted(registered, key=last_activity, reverse=True)[limit:]
+    for row in excess:
+        if not await api.remove_device(panel_user_id, row['hwid']):
+            raise DeviceLimitReconciliationError('HWID limit reconciliation failed: device removal not confirmed')
+    if len(await devices()) > limit:
+        raise DeviceLimitReconciliationError('HWID limit reconciliation incomplete; retry required')
+    logger.info(
+        'Reconciled registered HWID device limit', panel_user_id=panel_user_id, limit=limit, removed=len(excess)
+    )
+
+
+async def _update_with_device_limit(api, update, **kwargs):
+    panel_user = await update(**kwargs)
+    if panel_user is not None:
+        try:
+            await _enforce_registered_device_limit(api, kwargs['user_id'], kwargs.get('hwid_device_limit'))
+        except DeviceLimitReconciliationError:
+            raise
+        except Exception as error:
+            raise DeviceLimitReconciliationError('HWID limit reconciliation failed; retry required') from error
+    return panel_user
 
 
 @dataclass(frozen=True)
@@ -122,7 +195,7 @@ async def push_subscription(
 
     if reset_devices is None:
         reset_devices = settings.RESET_DEVICES_ON_RENEWAL
-    update = update_call or api.update_user
+    update = partial(_update_with_device_limit, api, update_call or api.update_user)
     create = create_call or api.create_user
 
     panel_user_id = identity.user_id
@@ -416,7 +489,7 @@ async def patch_panel_account(
     там, где подписки под рукой нет вовсе: обновление описания в мидлваре и
     перенос аккаунтов при слиянии.
     """
-    update = update_call or api.update_user
+    update = partial(_update_with_device_limit, api, update_call or api.update_user)
     kwargs: dict = {'user_id': user_id}
     if description is not None:
         kwargs['description'] = description
@@ -449,7 +522,7 @@ async def patch_panel_squads(
     ``external_squad_uuid=None`` отправляется как null намеренно: у тарифа сняли
     внешний сквад, и в панели он тоже должен исчезнуть.
     """
-    update = update_call or api.update_user
+    update = partial(_update_with_device_limit, api, update_call or api.update_user)
     return await update(
         user_id=user_id,
         active_internal_squads=squads,

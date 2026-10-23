@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 from sqlalchemy import select
@@ -32,6 +33,7 @@ from app.services.panel_sync import (
     push_subscription,
     resolve_panel_user_tag,
 )
+from app.services.panel_sync.writer import DeviceLimitReconciliationError
 from app.utils.subscription_utils import (
     resolve_hwid_device_limit_for_payload,
 )
@@ -164,6 +166,21 @@ class SubscriptionService:
         return await self.create_remnawave_user(
             db, subscription, reset_traffic=reset_traffic, reset_reason=reset_reason
         )
+
+    async def _defer_device_limit_reconciliation(
+        self, db, subscription, user, *, action: Literal['create', 'update']
+    ) -> None:
+        # Capture identity before rollback expires SQLAlchemy objects. The paid
+        # purchase is already committed; retries only reconcile panel state.
+        subscription_id, user_id = subscription.id, subscription.user_id
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        if not remnawave_retry_queue.is_processing(subscription_id):
+            remnawave_retry_queue.enqueue(subscription_id=subscription_id, user_id=user_id, action=action)
+        await db.rollback()
+        await db.refresh(subscription)
+        if user is not None:
+            await db.refresh(user)
 
     async def create_remnawave_user(
         self,
@@ -311,6 +328,10 @@ class SubscriptionService:
             await db.rollback()
             raise
         except RemnaWaveAPIError as e:
+            if isinstance(e, DeviceLimitReconciliationError):
+                await self._defer_device_limit_reconciliation(db, subscription, user, action='create')
+                logger.error('HWID limit reconciliation deferred', error=e)
+                return None
             await db.rollback()
             logger.error('Ошибка RemnaWave API', error=e)
             return None
@@ -720,6 +741,10 @@ class SubscriptionService:
             await db.rollback()
             raise
         except RemnaWaveAPIError as e:
+            if isinstance(e, DeviceLimitReconciliationError):
+                await self._defer_device_limit_reconciliation(db, subscription, user, action='update')
+                logger.error('HWID limit reconciliation deferred', error=e)
+                return None
             # Rollback ДО пересоздания: advisory-локи grace должны быть отпущены
             # прежде, чем recreate re-входит в create_remnawave_user со своим локом.
             await db.rollback()

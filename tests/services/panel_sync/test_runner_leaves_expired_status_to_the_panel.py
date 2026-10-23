@@ -64,6 +64,7 @@ def _expired_subscription() -> SimpleNamespace:
 async def test_bulk_pass_does_not_disable_an_expired_subscription(monkeypatch):
     subscription = _expired_subscription()
     api = AsyncMock()
+    api.get_user_devices_all.return_value = {'total': 0, 'devices': []}
     api.update_user.return_value = SimpleNamespace(
         id=PANEL_ID,
         short_uuid='aBcD12',

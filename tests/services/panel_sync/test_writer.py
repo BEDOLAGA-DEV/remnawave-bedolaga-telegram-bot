@@ -61,6 +61,7 @@ def _panel_user(user_id=42, expire_at=None):
 
 def _api(**overrides):
     api = AsyncMock()
+    api.get_user_devices_all.return_value = {'total': 0, 'devices': []}
     api.get_user_by_id.return_value = None
     api.get_user_by_short_uuid.return_value = None
     api.find_users_by_telegram_id.return_value = []

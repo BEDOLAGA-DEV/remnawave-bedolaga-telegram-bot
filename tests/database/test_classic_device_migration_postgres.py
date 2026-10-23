@@ -51,6 +51,8 @@ class Panel(RemnaWaveAPI):
         return user
 
     async def _make_request(self, method, path, data=None, **kwargs):
+        if (method, path) == ('GET', '/api/hwid/devices/9001'):
+            return {'response': {'total': 0, 'devices': []}}
         if (method, path) == ('PATCH', '/api/users'):
             assert data['id'] == 9001
             self.patches.append(data.copy())

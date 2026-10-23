@@ -63,6 +63,9 @@ def _panel_double(monkeypatch, *, panel_expire_at: datetime) -> list[dict]:
     updates: list[dict] = []
 
     class Api:
+        async def get_user_devices_all(self, panel_user_id):
+            return {'total': 0, 'devices': []}
+
         async def get_user_by_id(self, panel_user_id):
             return SimpleNamespace(id=panel_user_id, expire_at=panel_expire_at)
 

@@ -449,8 +449,8 @@ async def real_migration(postgres_database, monkeypatch, base, flow='cabinet'):
 async def test_purchase_price_and_cap_reach_real_panel(postgres_database, monkeypatch, base, flow):
     async with real_migration(postgres_database, monkeypatch, base, flow) as (_, old, request):
         devices = await request('GET', f'/api/hwid/devices/{old["id"]}')
-        # Observation only: this verifies persistence, NOT enforcement of five devices.
-        assert devices['total'] == 10
+        # A finite cap must reconcile existing registrations as well as the panel field.
+        assert devices['total'] == 5
 
 
 async def test_tariff_maximum_applies_to_previously_registered_hwids(postgres_database, monkeypatch):
@@ -473,3 +473,43 @@ async def test_tariff_maximum_applies_to_previously_registered_hwids(postgres_da
             else:
                 admitted += not denied
         assert admitted <= 5, f'After a real purchase, panel admitted {admitted} old HWIDs with tariff maximum=5'
+
+
+@pytest.mark.parametrize('flow', ['cabinet', 'telegram_period', 'wallet_topup', 'auto_daily'])
+async def test_failed_device_pruning_is_retried_without_recharging(postgres_database, monkeypatch, flow):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.services import remnawave_retry_queue as retry_module
+
+    queue = retry_module.RemnaWaveRetryQueue(max_retries=3)
+    monkeypatch.setattr(retry_module, 'remnawave_retry_queue', queue)
+    remove = RemnaWaveAPI.remove_device
+    failures = 2
+
+    async def fail_then_remove(api, user_id, hwid):
+        nonlocal failures
+        if failures:
+            failures -= 1
+            return False
+        return await remove(api, user_id, hwid)
+
+    monkeypatch.setattr(RemnaWaveAPI, 'remove_device', fail_then_remove)
+    async with real_migration(postgres_database, monkeypatch, 1, flow) as (_, old, request):
+        assert queue.pending_count == 1, 'Paid entitlement exists, but failed HWID reconciliation was lost'
+        engine = create_async_engine(postgres_database, poolclass=NullPool)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(retry_module, 'AsyncSessionLocal', maker)
+        monkeypatch.setattr(SubscriptionService, 'is_configured', property(lambda _: True))
+        try:
+            await queue.process_pending()
+            assert queue.pending_count == 1
+            assert queue._queue[0].attempts == 1, 'A worker failure must not reset the retry budget'
+            await queue.process_pending()
+            assert queue.pending_count == 0
+            assert (await request('GET', f'/api/hwid/devices/{old["id"]}'))['total'] == 5
+            async with maker() as db:
+                payments = (await db.scalars(select(Transaction).where(Transaction.amount_kopeks < 0))).all()
+                assert len(payments) == 1, 'Panel retry must not repeat the purchase/debit'
+        finally:
+            await engine.dispose()

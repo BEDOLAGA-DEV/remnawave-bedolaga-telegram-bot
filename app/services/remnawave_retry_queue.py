@@ -34,9 +34,13 @@ class RetryItem:
 class RemnaWaveRetryQueue:
     def __init__(self, max_retries: int = 5, interval_seconds: int = 120) -> None:
         self._queue: deque[RetryItem] = deque()
+        self._processing_subscription_ids: set[int] = set()
         self._max_retries = max_retries
         self._interval = interval_seconds
         self._task: asyncio.Task | None = None
+
+    def is_processing(self, subscription_id: int) -> bool:
+        return subscription_id in self._processing_subscription_ids
 
     @property
     def pending_count(self) -> int:
@@ -79,6 +83,7 @@ class RemnaWaveRetryQueue:
 
         for item in batch:
             item.attempts += 1
+            self._processing_subscription_ids.add(item.subscription_id)
             try:
                 async with AsyncSessionLocal() as db:
                     sub = await get_subscription_by_id(db, item.subscription_id)
@@ -116,6 +121,8 @@ class RemnaWaveRetryQueue:
 
             except Exception as error:
                 self._requeue(item, str(error))
+            finally:
+                self._processing_subscription_ids.discard(item.subscription_id)
 
     def _requeue(self, item: RetryItem, error: str) -> None:
         item.last_error = error
