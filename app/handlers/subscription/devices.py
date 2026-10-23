@@ -1993,7 +1993,14 @@ async def show_device_connection_help(
         await callback.answer('❌ Ссылка подписки недоступна', show_alert=True)
         return
 
-    help_text = f"""
+    if settings.should_hide_subscription_link():
+        texts = get_texts(db_user.language)
+        help_text = texts.t(
+            'SUBSCRIPTION_LINK_HIDDEN_NOTICE',
+            'ℹ️ Ссылка подписки доступна по кнопкам ниже или в разделе "Моя подписка".',
+        )
+    else:
+        help_text = f"""
 📱 <b>Как подключить устройство заново</b>
 
 После сброса устройства вам нужно:

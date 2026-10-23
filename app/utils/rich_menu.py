@@ -391,6 +391,9 @@ def _connect_url(subscription) -> str:
         redirect_link = get_happ_cryptolink_redirect_link(crypto_link) if crypto_link else None
         if redirect_link:
             return redirect_link
+        # Rich HTML cannot open happ:// directly. Never replace encrypted
+        # delivery with the original subscription URL when the wrapper is absent.
+        return ''
     if settings.should_hide_subscription_link():
         return ''
     return getattr(subscription, 'subscription_url', None) or ''
