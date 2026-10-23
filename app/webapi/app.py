@@ -25,6 +25,7 @@ from .routes import (
     miniapp,
     pages,
     partners,
+    payment_methods,
     pinned_messages,
     polls,
     promo_groups,
@@ -228,6 +229,7 @@ def create_web_api_app(lifespan: Any = None) -> FastAPI:
     app.include_router(subscriptions.router, prefix='/subscriptions', tags=['subscriptions'])
     app.include_router(tickets.router, prefix='/tickets', tags=['support'])
     app.include_router(transactions.router, prefix='/transactions', tags=['transactions'])
+    app.include_router(payment_methods.router, prefix='/payment-methods', tags=['payments'])
     app.include_router(promo_groups.router, prefix='/promo-groups', tags=['promo-groups'])
     app.include_router(promo_offers.router, prefix='/promo-offers', tags=['promo-offers'])
     app.include_router(servers.router, prefix='/servers', tags=['servers'])
