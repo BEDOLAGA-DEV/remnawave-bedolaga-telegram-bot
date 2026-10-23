@@ -3,7 +3,11 @@ Authentication provider implementation.
 Based on PHP library's Authenticator class.
 """
 
+import contextlib
 import json
+import logging
+import os
+import tempfile
 import uuid
 from http import HTTPStatus
 from pathlib import Path
@@ -14,6 +18,9 @@ import httpx
 from ._http import AuthProvider
 from .dto.device import DeviceInfo
 from .exceptions import raise_for_status
+
+
+logger = logging.getLogger(__name__)
 
 
 def generate_device_id() -> str:
@@ -80,20 +87,34 @@ class AuthProviderImpl(AuthProvider):
             pass
 
     def _save_token_to_storage(self) -> None:
-        """Save token to file storage."""
+        """Best-effort atomic persistence; create private temporary files from the start."""
         if not self.storage_path or not self._token_data:
             return
-
         storage_path = Path(self.storage_path)
+        temporary = None
         try:
-            # Ensure directory exists
             storage_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                encoding='utf-8',
+                dir=storage_path.parent,
+                prefix=f'.{storage_path.name}.',
+                suffix='.tmp',
+                delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
+                json.dump(self._token_data, stream, ensure_ascii=False, indent=2)
+            os.replace(temporary, storage_path)
+        except OSError as error:
+            logger.warning('Failed to persist NaloGO token file: %s', error)
+        finally:
+            if temporary is not None:
+                with contextlib.suppress(OSError):
+                    temporary.unlink(missing_ok=True)
 
-            with storage_path.open('w', encoding='utf-8') as f:
-                json.dump(self._token_data, f, ensure_ascii=False, indent=2)
-        except OSError:
-            # Ignore storage errors
-            pass
+    def reload_token_from_storage(self) -> None:
+        """Pick up token files written after this client was constructed."""
+        self._load_token_from_storage()
 
     async def get_token(self) -> dict[str, Any] | None:
         """Get current access token data."""
