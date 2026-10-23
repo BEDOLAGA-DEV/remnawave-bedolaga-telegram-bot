@@ -15,7 +15,6 @@
 - `.gitignore` — файл
 - `.python-version` — файл
 - `.release-please-manifest.json` — файл
-- `AGENTS.md` — файл
 - `CHANGELOG.md` — файл
 - `CONTRIBUTING.md` — файл
 - `Dockerfile` — файл
