@@ -1668,7 +1668,7 @@
 - `app/services/payment/`
 - `app/services/payment_method_config_service.py` — Python-модуль
   Классы: нет
-  Функции: `refresh_display_name_overrides` — Reload the method_id -> display_name override cache from the DB., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get all payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user.
+  Функции: `refresh_display_name_overrides` — Reload names and saved order for synchronous Telegram keyboards., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `get_display_sort_order`, `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get all payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user.
 - `app/services/payment_search_service.py` — Python-модуль
   Классы: `StatusFilter`, `PeriodPreset`, `SearchParams` (2 методов), `SearchStats`
   Функции: `search_payments` — Search payments across all (or filtered) providers., `search_payments_stats` — Compute aggregated statistics for the given search filters.
@@ -3883,6 +3883,9 @@
 - `tests/database/test_paritypay_payments_schema_parity.py` — Python-модуль
   Классы: нет
   Функции: `both`, `test_columns_match`, `test_indexes_match`, `test_column_types_match` — Integer вместо Boolean в рукописном DDL иначе не заметить., `test_order_id_is_unique` — Уникальность orderId не даёт двум записям претендовать на один вебхук., `test_downgrade_removes_the_table` — Откат обязан снимать таблицу, иначе повторный upgrade упрётся в неё.
+- `tests/database/test_payment_button_config_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_saved_names_order_and_reset_reach_telegram_without_restart`
 - `tests/database/test_payment_callback_concurrency_postgres.py` — Python-модуль
   Классы: `Gateway` (5 методов)
   Функции: `test_two_simultaneous_deliveries_credit_balance_once` — Провайдер доставил один вебхук дважды одновременно — баланс вырос один раз., `test_repeated_delivery_after_success_changes_nothing` — Обычный повтор доставки — не гонка, а частый случай: провайдер шлёт до семи раз., `test_late_payment_after_expiry_is_credited_once` — Поздняя оплата: сначала EXPIRED, следом настоящая оплата., `test_wrong_amount_never_credits_balance` — Сумма из уведомления не сошлась со счётом — баланс не трогаем., `test_webhook_and_api_reconciliation_do_not_double_credit` — Вебхук и фоновая сверка по API столкнулись на одном платеже.
@@ -5421,6 +5424,9 @@
 - `tests/utils/test_panel_node_usage.py` — Python-модуль
   Классы: нет
   Функции: `test_normalizes_the_production_shape` — ЕДИНСТВЕННАЯ форма, которая реально сюда приходит: {userId, nodeUuid, total}., `test_also_tolerates_the_raw_3_0_0_keys` — Сырые ключи панели {id, totalBytes} — запас на случай, если сюда однажды, `test_accepts_the_already_normalised_shape`, `test_falls_back_to_the_requested_node_uuid`, `test_skips_non_dict_entries_and_tolerates_missing_fields`, `test_non_numeric_totals_do_not_raise`, `test_empty_input`
+- `tests/utils/test_payment_button_config.py` — Python-модуль
+  Классы: нет
+  Функции: `display_cache`, `test_yookassa_override_keeps_card_and_sbp_distinguishable`, `test_saved_order_groups_yookassa_before_stars_without_changing_callbacks`
 - `tests/utils/test_pricing_utils.py` — Python-модуль
   Классы: `TestCalculatePricePerMonth` (4 методов), `TestBuildDynamicValues` (2 методов)
   Функции: нет

@@ -1335,6 +1335,8 @@
   "PAYMENT_CARD_PAL24": "🏦 СБП (PayPalych)",
   "PAYMENT_CARD_TRIBUTE": "💳 Банковская карта (Tribute)",
   "PAYMENT_CARD_WATA": "💳 Банковская карта (WATA)",
+  "PAYMENT_CARD_PROVIDER": "💳 Банковская карта ({provider})",
+  "PAYMENT_SBP_PROVIDER": "🏦 Оплата по СБП ({provider})",
   "PAYMENT_CARD_YOOKASSA": "💳 Банковская карта (YooKassa)",
   "PAYMENT_PLATEGA": "💳 Platega",
   "PAYMENT_CHARGE_ERROR": "⚠️ Ошибка списания средств",

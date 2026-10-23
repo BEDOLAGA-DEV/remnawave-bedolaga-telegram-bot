@@ -1208,6 +1208,8 @@
   "PAYMENT_CARD_PAL24": "🏦 SBP (PayPalych)",
   "PAYMENT_CARD_TRIBUTE": "💳 Bank card (Tribute)",
   "PAYMENT_CARD_WATA": "💳 Bank card (WATA)",
+  "PAYMENT_CARD_PROVIDER": "💳 Bank card ({provider})",
+  "PAYMENT_SBP_PROVIDER": "🏦 Pay via SBP ({provider})",
   "PAYMENT_CARD_YOOKASSA": "💳 Bank card (YooKassa)",
   "PAYMENT_PLATEGA": "💳 Platega",
   "PAYMENT_CHARGE_ERROR": "⚠️ Failed to charge the payment",

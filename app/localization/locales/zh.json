@@ -1145,6 +1145,8 @@
   "PAYMENT_CARD_PAL24": "🏦SBP(PayPalych)",
   "PAYMENT_CARD_TRIBUTE": "💳银行卡(Tribute)",
   "PAYMENT_CARD_WATA": "💳银行卡(WATA)",
+  "PAYMENT_CARD_PROVIDER": "💳 银行卡（{provider}）",
+  "PAYMENT_SBP_PROVIDER": "🏦 通过 SBP 支付（{provider}）",
   "PAYMENT_CARD_YOOKASSA": "💳银行卡(YooKassa)",
   "PAYMENT_PLATEGA": "💳Platega",
   "PAYMENT_CHARGE_ERROR": "⚠️扣款失败",

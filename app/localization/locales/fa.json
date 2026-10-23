@@ -1335,6 +1335,8 @@
   "PAYMENT_CARD_PAL24": "💳 کارت (Pal24)",
   "PAYMENT_CARD_TRIBUTE": "💳 کارت (Tribute)",
   "PAYMENT_CARD_WATA": "💳 کارت (WATA)",
+  "PAYMENT_CARD_PROVIDER": "💳 کارت بانکی ({provider})",
+  "PAYMENT_SBP_PROVIDER": "🏦 پرداخت سریع ({provider})",
   "PAYMENT_CARD_YOOKASSA": "💳 کارت (YooKassa)",
   "PAYMENT_PLATEGA": "💳 Platega",
   "PAYMENT_CHARGE_ERROR": "❌ خطا در کسر وجه",

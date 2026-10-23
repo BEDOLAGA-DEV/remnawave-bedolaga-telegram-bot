@@ -1638,30 +1638,50 @@ def get_balance_keyboard(language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def _apply_payment_name_overrides(keyboard: list[list[InlineKeyboardButton]]) -> None:
-    """Replace payment-method button labels with cabinet-set display names.
+def _payment_callback_method(data: str) -> str:
+    if data.startswith('topup_amount|'):
+        parts = data.split('|')
+        return parts[1] if len(parts) > 1 else ''
+    return data[len('topup_') :] if data.startswith('topup_') else ''
 
-    Bot keyboards build labels from locale strings / ``*_DISPLAY_NAME`` settings,
-    which ignore the per-method overrides operators set in the cabinet
-    (``PaymentMethodConfig.display_name``). Here we decode the method_id from each
-    ``topup_*`` callback and, when an override exists, show it — so bot button
-    labels stay in sync with the cabinet. No override -> the original label is kept.
-    """
+
+def _apply_payment_name_overrides(
+    keyboard: list[list[InlineKeyboardButton]],
+    language: str = DEFAULT_LANGUAGE,
+) -> None:
+    """Apply configured names without erasing the distinction between YooKassa rails."""
     from app.services.payment_method_config_service import get_display_name_override
 
+    texts = get_texts(language)
     for row in keyboard:
         for idx, button in enumerate(row):
-            data = button.callback_data or ''
-            if data.startswith('topup_amount|'):
-                parts = data.split('|')
-                method = parts[1] if len(parts) > 1 else ''
-            elif data.startswith('topup_'):
-                method = data[len('topup_') :]
-            else:
-                continue
+            method = _payment_callback_method(button.callback_data or '')
             override = get_display_name_override(method) if method else None
             if override:
+                if method == 'yookassa_sbp':
+                    override = texts.t('PAYMENT_SBP_PROVIDER').format(provider=override)
+                elif method == 'yookassa':
+                    override = texts.t('PAYMENT_CARD_PROVIDER').format(provider=override)
                 row[idx] = button.model_copy(update={'text': override})
+
+
+def _apply_payment_method_order(keyboard: list[list[InlineKeyboardButton]]) -> None:
+    """Use saved provider order, preserving sub-option order and non-payment controls."""
+    from app.services.payment_method_config_service import get_display_sort_order
+
+    rows = [
+        (index, row)
+        for index, row in enumerate(keyboard)
+        if len(row) == 1 and _payment_callback_method(row[0].callback_data or '') not in ('', 'support')
+    ]
+
+    def key(row):
+        order = get_display_sort_order(_payment_callback_method(row[0].callback_data or ''))
+        return order is None, order if order is not None else 0
+
+    ordered = sorted((row for _, row in rows), key=key)
+    for (index, _), row in zip(rows, ordered, strict=True):
+        keyboard[index] = row
 
 
 def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
@@ -2379,7 +2399,8 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
 
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
-    _apply_payment_name_overrides(keyboard)
+    _apply_payment_name_overrides(keyboard, language)
+    _apply_payment_method_order(keyboard)
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
