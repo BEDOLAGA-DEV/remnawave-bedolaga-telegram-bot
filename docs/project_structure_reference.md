@@ -1900,7 +1900,7 @@
   Классы: `DeliveryResult`, `WebhookService` (7 методов)
   Функции: нет
 - `app/services/wheel_service.py` — Python-модуль
-  Классы: `SpinResult`, `EligibleSubscription`, `SpinAvailability`, `FortuneWheelService` (14 методов)
+  Классы: `SpinResult`, `EligibleSubscription`, `SpinAvailability`, `FortuneWheelService` (15 методов)
   Функции: нет
 - `app/services/yandex_offline_conv_service.py` — Python-модуль
   Классы: нет
@@ -3997,6 +3997,9 @@
 - `tests/database/test_users_statistics_blocked_count.py` — Python-модуль
   Классы: нет
   Функции: `test_blocked_counts_only_the_blocked_status`
+- `tests/database/test_wheel_rtp_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_real_spin_uses_current_cost_and_persists_exact_prize`
 
 #### tests/database/crud
 
@@ -5162,6 +5165,9 @@
 - `tests/services/test_webhook_user_modified_fields.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_panel_date_wins_for_a_live_subscription`, `test_disabled_subscription_does_not_get_its_days_back` — Обнуление админом: старая дата из панели вернула бы списанные дни., `test_panel_disabled_disables_the_subscription`, `test_webhook_never_declares_a_subscription_expired` — Истечение объявляет мониторинг: у него буфер и уведомления., `test_traffic_limit_and_nested_usage_are_synced` — Расширенная схема панели прячет расход в userTraffic, плоского поля там нет., `test_device_limit_is_never_taken_from_a_webhook` — Лимит устройств задаёт тариф в боте., `test_a_link_that_fails_validation_is_not_stored`, `test_a_valid_link_replaces_the_stored_one`, `test_every_event_stamps_the_subscription` — Метка защищает свежие данные от затирания медленным полным проходом., `test_open_grace_freezes_the_billing_fields`
+- `tests/services/test_wheel_rtp.py` — Python-модуль
+  Классы: нет
+  Функции: `prize`, `distribution`, `test_auto_prize_expected_payout_matches_configured_budget`, `test_manual_probability_consumes_expected_payout_before_auto_prizes`, `test_infeasible_high_target_caps_probability_and_warns`, `test_no_zero_value_sector_warns_instead_of_claiming_target`, `test_manual_budget_excess_keeps_manual_chance_but_disables_auto_payout`, `test_multiple_zero_sectors_share_residual_probability`, `test_zero_probability_sector_cannot_win_at_random_zero`, `test_manual_only_tables_keep_relative_weights_and_report_normalization`, `test_valid_manual_override_is_unchanged`, `test_zero_only_table_reports_unreachable_positive_budget`
 - `tests/services/test_withdrawal_reminders.py` — Python-модуль
   Классы: нет
   Функции: `reminder_settings`, `sent`, `test_stale_pending_request_gets_reminder`, `test_fresh_request_waits_out_the_limit`, `test_decided_request_is_silent` — Любой статус, кроме pending, — решение принято, напоминать не о чем., `test_cooldown_gates_repeats`, `test_disabled_flag_silences_everything`, `test_failed_send_keeps_request_for_next_round` — Не ушло — отметку не ставим, следующий круг попробует снова., `plain_sender` — Rich-рендер выключен: проверяем классический send_message с thread_id., `test_reminder_goes_to_withdrawal_topic_when_configured`, `test_reminder_falls_back_to_partners_topic`, `test_reminder_buttons_match_the_original_notification`, `test_waiting_time_reads_naturally` — Двое суток ожидания — «2 д 1 ч», а не «49 ч 0 мин».

@@ -2,6 +2,7 @@
 Сервис колеса удачи (Fortune Wheel) с RTP алгоритмом.
 """
 
+import math
 import random
 import secrets
 from dataclasses import dataclass
@@ -200,60 +201,69 @@ class FortuneWheelService:
         Алгоритм:
         1. Целевая средняя выплата = spin_cost * (RTP / 100)
         2. Для призов с manual_probability - используем его напрямую
-        3. Для остальных - рассчитываем веса обратно пропорционально стоимости приза
-        4. "Nothing" сектор балансирует систему
+        3. Из остатка бюджета выводим вероятности обратно пропорционально стоимости приза
+        4. Нулевые призы делят оставшуюся вероятность; недостижимая цель логируется
         """
         if not prizes:
             return []
 
         target_payout = spin_cost_kopeks * (config.rtp_percent / 100)
-
-        # Разделяем призы с ручной вероятностью и автоматической
         manual_prizes = []
         auto_prizes = []
-        manual_prob_sum = 0.0
-
         for prize in prizes:
             if prize.manual_probability is not None and prize.manual_probability > 0:
                 manual_prizes.append((prize, prize.manual_probability))
-                manual_prob_sum += prize.manual_probability
             else:
                 auto_prizes.append(prize)
 
-        # Оставшаяся вероятность для авто-призов
-        remaining_prob = max(0, 1.0 - manual_prob_sum)
+        manual_prob_sum = math.fsum(prob for _, prob in manual_prizes)
+        manual_payout = math.fsum(prize.prize_value_kopeks * prob for prize, prob in manual_prizes)
+        remaining_prob = max(0.0, 1.0 - manual_prob_sum)
+        reasons = []
 
         if not auto_prizes or remaining_prob <= 0:
-            # Только ручные призы, нормализуем их
-            if manual_prizes:
-                total = sum(p[1] for p in manual_prizes)
-                return [(p[0], p[1] / total) for p in manual_prizes]
-            return []
-
-        # Рассчитываем веса для авто-призов
-        # Вес обратно пропорционален стоимости приза (более дорогие выпадают реже)
-        weights = []
-        for prize in auto_prizes:
-            if prize.prize_value_kopeks > 0:
-                # Чем дороже приз, тем меньше вес
-                weight = target_payout / prize.prize_value_kopeks
+            # Preserve the existing relative-weight policy for manual-only tables.
+            result = [(prize, prob / manual_prob_sum) for prize, prob in manual_prizes] if manual_prob_sum else []
+            if not math.isclose(manual_prob_sum, 1.0):
+                reasons.append('manual_probabilities_normalized')
+        else:
+            paid = [prize for prize in auto_prizes if prize.prize_value_kopeks > 0]
+            zero_count = len(auto_prizes) - len(paid)
+            inverse_sum = math.fsum(1.0 / prize.prize_value_kopeks for prize in paid)
+            if not zero_count:
+                # Without a zero-value outcome all probability must pay out.
+                # Keep inverse-value weighting, but report that RTP is not controllable.
+                reasons.append('no_zero_value_auto_prize')
+                result = manual_prizes + [
+                    (prize, remaining_prob / (prize.prize_value_kopeks * inverse_sum)) for prize in auto_prizes
+                ]
             else:
-                # "Nothing" или нулевой приз - даем базовый вес
-                weight = 1.0
-            weights.append((prize, max(weight, 0.01)))  # Минимальный вес 1%
+                budget = max(0.0, target_payout - manual_payout)
+                scale = budget / len(paid) if paid else 0.0
+                if inverse_sum and scale * inverse_sum > remaining_prob:
+                    scale = remaining_prob / inverse_sum
+                    reasons.append('insufficient_probability_for_target')
+                paid_probability = math.fsum(scale / prize.prize_value_kopeks for prize in paid)
+                zero_probability = max(0.0, remaining_prob - paid_probability) / zero_count
+                result = manual_prizes + [
+                    (prize, scale / prize.prize_value_kopeks if prize.prize_value_kopeks > 0 else zero_probability)
+                    for prize in auto_prizes
+                ]
+                if manual_payout > target_payout:
+                    reasons.append('manual_payout_exceeds_target')
 
-        # Нормализуем веса авто-призов до remaining_prob
-        total_weight = sum(w[1] for w in weights)
-        auto_probabilities = [(prize, (weight / total_weight) * remaining_prob) for prize, weight in weights]
-
-        # Объединяем
-        result = manual_prizes + auto_probabilities
-
-        # Финальная нормализация (на случай погрешностей)
-        total = sum(p[1] for p in result)
-        if total > 0:
-            result = [(p[0], p[1] / total) for p in result]
-
+        actual_payout = math.fsum(prize.prize_value_kopeks * prob for prize, prob in result)
+        if not math.isclose(actual_payout, target_payout, rel_tol=1e-9, abs_tol=1e-7):
+            reasons.append('target_unreachable')
+        if reasons:
+            logger.warning(
+                'Wheel RTP target unreachable for prize configuration',
+                config_id=getattr(config, 'id', None),
+                reasons=reasons,
+                target_payout_kopeks=target_payout,
+                expected_payout_kopeks=actual_payout,
+                spin_cost_kopeks=spin_cost_kopeks,
+            )
         return result
 
     def _select_prize(self, prizes_with_probabilities: list[tuple[WheelPrize, float]]) -> WheelPrize:
@@ -266,11 +276,14 @@ class FortuneWheelService:
 
         for prize, probability in prizes_with_probabilities:
             cumulative += probability
-            if rand <= cumulative:
+            if probability > 0 and rand < cumulative:
                 return prize
 
-        # Fallback на последний приз
-        return prizes_with_probabilities[-1][0]
+        # Floating-point accumulation may finish just below one; never select a zero-probability outcome.
+        for prize, probability in reversed(prizes_with_probabilities):
+            if probability > 0:
+                return prize
+        raise ValueError('No prizes with positive probability')
 
     def _calculate_rotation(self, prizes: list[WheelPrize], selected_prize: WheelPrize) -> float:
         """
@@ -360,18 +373,48 @@ class FortuneWheelService:
 
         logger.info('📅 Списано дней подписки у user_id', spin_cost_days=config.spin_cost_days, user_id=user.id)
 
-        # Синхронизируем с RemnaWave
-        try:
-            subscription_service = SubscriptionService()
-            result = await subscription_service.update_remnawave_user(db, subscription)
-            if result is not None:
-                logger.info('✅ Списание дней синхронизировано с RemnaWave для user_id', user_id=user.id)
-            else:
-                logger.error('⚠️ Не удалось синхронизировать списание дней с RemnaWave', user_id=user.id)
-        except Exception as e:
-            logger.error('⚠️ Ошибка синхронизации списания дней с RemnaWave', error=e, user_id=user.id)
-
         return kopeks
+
+    async def _sync_subscription_after_spin(
+        self,
+        user: User,
+        prize: WheelPrize,
+        subscription: Subscription | None = None,
+        *,
+        payment_type: str | None = None,
+    ) -> None:
+        """Sync committed entitlements in a separate session; panel rollback cannot expire spin results."""
+        spent_days = payment_type == WheelSpinPaymentType.SUBSCRIPTION_DAYS.value
+        prize_type = prize.prize_type
+        if not spent_days and prize_type not in (
+            WheelPrizeType.SUBSCRIPTION_DAYS.value,
+            WheelPrizeType.TRAFFIC_GB.value,
+        ):
+            return
+        user_id = user.id
+        subscription_id = subscription.id if subscription else None
+        if subscription_id is None and settings.is_multi_tariff_enabled():
+            return  # Untargeted multi-tariff prizes are converted to balance.
+        try:
+            from app.database.crud.subscription import get_subscription_by_id_for_user
+            from app.database.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as sync_db:
+                if subscription_id is not None:
+                    current = await get_subscription_by_id_for_user(sync_db, subscription_id, user_id)
+                else:
+                    current = await get_subscription_by_user_id(sync_db, user_id)
+                if current is None:
+                    return
+                daily = current.tariff and getattr(current.tariff, 'is_daily', False)
+                days_changed = prize_type == WheelPrizeType.SUBSCRIPTION_DAYS.value and not daily
+                traffic_changed = prize_type == WheelPrizeType.TRAFFIC_GB.value and current.traffic_limit_gb > 0
+                if spent_days or days_changed or traffic_changed:
+                    result = await SubscriptionService().update_remnawave_user(sync_db, current)
+                    if result is None:
+                        logger.warning('Wheel subscription panel sync did not complete', user_id=user_id)
+        except Exception as error:
+            logger.warning('Wheel subscription panel sync failed after committed spin', error=str(error))
 
     async def _apply_prize(
         self,
@@ -479,13 +522,6 @@ class FortuneWheelService:
                     await reconcile_tariff_traffic_limit(db, subscription)
                     logger.info('📅 Начислено дней подписки user_id', prize_value=prize.prize_value, user_id=user.id)
 
-                    # Синхронизируем с RemnaWave
-                    try:
-                        subscription_service = SubscriptionService()
-                        await subscription_service.update_remnawave_user(db, subscription)
-                        logger.info('✅ Синхронизировано с RemnaWave для user_id', user_id=user.id)
-                    except Exception as e:
-                        logger.error('⚠️ Ошибка синхронизации с RemnaWave', error=e)
             else:
                 # Если нет подписки - начисляем на баланс эквивалент
                 await add_user_balance(
@@ -524,13 +560,6 @@ class FortuneWheelService:
                 subscription.updated_at = datetime.now(UTC)
                 logger.info('📊 Начислено трафика user_id', prize_value=prize.prize_value, user_id=user.id)
 
-                # Синхронизируем с RemnaWave
-                try:
-                    subscription_service = SubscriptionService()
-                    await subscription_service.update_remnawave_user(db, subscription)
-                    logger.info('✅ Трафик синхронизирован с RemnaWave для user_id', user_id=user.id)
-                except Exception as e:
-                    logger.error('⚠️ Ошибка синхронизации трафика с RemnaWave', error=e)
             else:
                 # Если безлимит или нет подписки - на баланс
                 await add_user_balance(
@@ -689,6 +718,10 @@ class FortuneWheelService:
                     message='Неверный способ оплаты',
                 )
 
+            # Prize helpers reload locked user/subscription rows with populate_existing.
+            # Persist the debit inside this transaction before those reads can overwrite it.
+            await db.flush()
+
             # 3. Рассчитываем вероятности и выбираем приз
             prizes_with_probs = self.calculate_prize_probabilities(config, prizes, payment_value_kopeks)
             selected_prize = self._select_prize(prizes_with_probs)
@@ -727,6 +760,12 @@ class FortuneWheelService:
             )
 
             await db.commit()
+            await self._sync_subscription_after_spin(
+                user,
+                selected_prize,
+                target_subscription,
+                payment_type=payment_type,
+            )
 
             # 7. Формируем результат
             message = self._get_prize_message(selected_prize, generated_promocode)
