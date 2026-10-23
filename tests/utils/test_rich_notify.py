@@ -222,8 +222,10 @@ class TestLogoAndTimeout:
 
         await try_send_rich_notification(bot, 42, 'текст', with_logo=True)
 
-        html = bot.send_rich_message.await_args.kwargs['rich_message'].html
-        assert html.startswith('<img src="https://cdn.example/logo.png"/>')
+        message = bot.send_rich_message.await_args.kwargs['rich_message']
+        assert len(message.media) == 1
+        assert message.html.startswith(f'<img src="tg://photo?id={message.media[0].id}"/>')
+        assert message.media[0].media.media == 'https://cdn.example/logo.png'
 
     async def test_logo_absent_when_not_requested(self, monkeypatch):
         monkeypatch.setattr(rich_notify, '_resolve_rich_logo_url', lambda: 'https://cdn.example/logo.png')
