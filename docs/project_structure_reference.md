@@ -3812,6 +3812,9 @@
 - `tests/database/test_daily_promo_days_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_daily_promo_days_defer_charge_and_keep_access`, `test_parallel_daily_workers_charge_only_once`
+- `tests/database/test_daily_purchase_cleanup_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_daily_completion_preserves_new_checkout`, `test_daily_completion_does_not_consume_unrelated_cart`
 - `tests/database/test_daily_topup_resume_postgres.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `seed`, `payments`, `test_daily_topup_obeys_settings_and_repeat`, `test_daily_topup_preserves_eligibility_guards`, `test_payment_hook_keeps_topup_and_notification_when_daily_disabled`, `test_daily_topup_reads_database_setting_override`, `test_two_topups_charge_one_day`, `test_failed_resume_rolls_back_payment`

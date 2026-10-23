@@ -32,6 +32,7 @@ from app.services.tariff_switch_policy import remaining_days_for_switch, should_
 from app.services.user_cart_service import user_cart_service
 from app.utils.decorators import error_handler
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
+from app.utils.fsm_selection import mutate_fsm_if_current
 from app.utils.legacy_subscription import is_legacy_subscription as _legacy_subscription
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.subscription_time import local_days_until
@@ -776,13 +777,14 @@ def _calculate_custom_tariff_price(
     return period_price, traffic_price, total_price
 
 
-async def _resolve_purchase_subscription(db, db_user, tariff, state=None):
+async def _resolve_purchase_subscription(db, db_user, tariff, state=None, *, source_data=None):
     if not settings.is_multi_tariff_enabled():
         return await get_subscription_by_user_id(db, db_user.id)
 
     from app.database.crud.subscription import get_subscription_by_user_and_tariff
 
-    source_data = await state.get_data() if state else {}
+    if source_data is None:
+        source_data = await state.get_data() if state else {}
     source_id = source_data.get('target_subscription_id') or source_data.get('active_subscription_id')
     if source_id:
         selected = await get_subscription_by_id_for_user(db, int(source_id), db_user.id)
@@ -1915,8 +1917,12 @@ async def confirm_daily_tariff_purchase(
     if await _reject_unavailable_tariff(callback, tariff, db_user, texts):
         return
 
+    selection_state = await state.get_state()
+    selection_data = await state.get_data()
     try:
-        existing_subscription = await _resolve_purchase_subscription(db, db_user, tariff, state)
+        existing_subscription = await _resolve_purchase_subscription(
+            db, db_user, tariff, state, source_data=selection_data
+        )
     except LookupError:
         await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
         return
@@ -1950,6 +1956,28 @@ async def confirm_daily_tariff_purchase(
             show_alert=True,
         )
         return
+    # Capture the saved revision before payment/panel work. The subscription ID
+    # assigned to a fresh purchase is not the source ID of its saved cart.
+    checkout_cart = None
+    source_id = existing_subscription.id if existing_subscription else None
+    try:
+        candidate = (
+            await user_cart_service.get_subscription_cart(db_user.id, source_id)
+            if source_id and settings.is_multi_tariff_enabled()
+            else await user_cart_service.get_user_cart(db_user.id)
+        )
+        if (
+            isinstance(candidate, dict)
+            and candidate.get('cart_mode') == 'daily_tariff_purchase'
+            and candidate.get('tariff_id') == tariff.id
+            and candidate.get('subscription_id') == source_id
+            and await state.get_state() == selection_state
+            and await state.get_data() == selection_data
+        ):
+            checkout_cart = candidate
+    except Exception as error:
+        logger.warning('Cannot capture daily checkout cart for conditional cleanup', error=error)
+
     effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
 
     # Apply group + promo-offer discounts via PricingEngine (single source of truth)
@@ -2112,18 +2140,16 @@ async def confirm_daily_tariff_purchase(
     except Exception as e:
         logger.error('Ошибка отправки уведомления админу', error=e)
 
-    # Очищаем корзину после успешной покупки (per-subscription в multi-tariff)
+    # Remove only the original cart aliases/permission, preserving later saves.
     try:
-        _cart_sub_id = getattr(subscription, 'id', None) if subscription else None
-        if _cart_sub_id and settings.is_multi_tariff_enabled():
-            await user_cart_service.delete_subscription_cart(db_user.id, _cart_sub_id)
-        else:
-            await user_cart_service.delete_user_cart(db_user.id)
-        logger.info('Корзина очищена после покупки суточного тарифа для пользователя', telegram_id=db_user.telegram_id)
+        if checkout_cart is not None:
+            await user_cart_service.delete_processed_cart(db_user.id, checkout_cart)
     except Exception as e:
         logger.error('Ошибка очистки корзины', error=e)
 
-    await state.clear()
+    if not await mutate_fsm_if_current(state, selection_state, selection_data, clear=True):
+        # Payment is committed. Do not overwrite a newer dialog with its result.
+        return
 
     traffic = format_traffic(tariff.traffic_limit_gb)
 
