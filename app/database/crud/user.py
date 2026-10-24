@@ -1150,6 +1150,7 @@ def _users_list_conditions(
                             SubscriptionStatus.LIMITED.value,
                         )
                     ),
+                    Subscription.end_date > now,
                     Subscription.traffic_limit_gb > 0,
                     Subscription.traffic_used_gb >= Subscription.traffic_limit_gb * threshold,
                 )

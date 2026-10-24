@@ -188,7 +188,17 @@ def _row_subscription(subs: list[Subscription], highlight: str | None) -> Subscr
         return None
 
     if highlight == HIGHLIGHT_TRAFFIC:
-        with_limit = [s for s in subs if (s.traffic_limit_gb or 0) > 0]
+        # Те же кандидаты, что в traffic_low: старый/отключённый тариф с
+        # большим расходом не должен вытеснять подписку, по которой найден человек.
+        with_limit = [
+            s
+            for s in subs
+            if s.status
+            in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value, SubscriptionStatus.LIMITED.value)
+            and s.end_date is not None
+            and not s.is_expired
+            and (s.traffic_limit_gb or 0) > 0
+        ]
         if with_limit:
             return max(with_limit, key=lambda s: (s.traffic_used_gb or 0.0) / s.traffic_limit_gb)
     elif highlight and highlight.startswith(HIGHLIGHT_STATUS_PREFIX):
