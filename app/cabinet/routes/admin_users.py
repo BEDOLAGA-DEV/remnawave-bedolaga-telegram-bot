@@ -325,6 +325,7 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
 
     return UserSubscriptionInfo(
         id=subscription.id,
+        remnawave_id=subscription.remnawave_id,
         status=subscription.status,
         is_trial=subscription.is_trial,
         start_date=subscription.start_date,
