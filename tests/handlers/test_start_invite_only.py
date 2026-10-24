@@ -201,3 +201,36 @@ async def test_already_claimed_gift_is_reported_instead_of_ignored(monkeypatch):
     )
 
     assert 'уже был активирован' in answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_registration_denial_takes_texts_from_locales(monkeypatch):
+    """Отказ берёт тексты из локалей, а не из запасных значений в коде.
+
+    Загрузчик приводит ключи к одному виду, а поиск шёл по ключу как написан:
+    обращение строчными не совпадало никогда. Без запасного текста это роняло
+    шаг регистрации, с запасным — молча отдавало русский текст всем языкам.
+    Проверяем на английском: русский дефолт совпал бы со значением из ru.json
+    и промах остался бы незаметным.
+    """
+    from app.handlers import start
+    from app.localization.texts import get_texts
+
+    monkeypatch.setattr(type(start.settings), 'get_support_contact_url', lambda self: 'https://t.me/example')
+
+    sent = {}
+
+    async def answer(text, reply_markup=None):
+        sent['text'] = text
+        sent['markup'] = reply_markup
+
+    await start._answer_registration_denial(
+        answer,
+        get_texts('en'),
+        RegistrationAccessDecision(False, RegistrationAccessReason.INVITE_REQUIRED),
+    )
+
+    assert 'Registration is available by invitation only' in sent['text']
+    button = sent['markup'].inline_keyboard[0][0]
+    assert button.url == 'https://t.me/example'
+    assert button.text == '💬 Contact support'
