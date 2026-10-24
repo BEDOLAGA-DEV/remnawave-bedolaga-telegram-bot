@@ -56,6 +56,9 @@ def tracked_paths() -> list[Path]:
     --exclude-standard` добавляет ещё не добавленные в индекс файлы, не считая
     игнорируемых, — состояние индекса перестаёт влиять на результат, а мусор из
     рабочей копии по-прежнему отсекается через .gitignore.
+
+    Неотслеживаемые AGENTS.md — локальные инструкции, отсутствующие в чистом
+    checkout CI. Включаем их только после добавления в индекс.
     """
     git = shutil.which('git')
     if git is None:
@@ -64,13 +67,22 @@ def tracked_paths() -> list[Path]:
     # Аргументы фиксированы, путь к git взят из PATH через which — внешнего
     # ввода здесь нет.
     result = subprocess.run(  # noqa: S603
-        [git, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+        [git, 'ls-files', '-z', '-t', '--cached', '--others', '--exclude-standard'],
         cwd=ROOT,
         capture_output=True,
         check=True,
         text=True,
     )
-    return sorted({Path(name) for name in result.stdout.split('\0') if name}, key=_sort_key)
+    paths = set()
+    for entry in result.stdout.split('\0'):
+        if not entry:
+            continue
+        status, name = entry.split(' ', 1)
+        path = Path(name)
+        if status == '?' and path.name == 'AGENTS.md':
+            continue
+        paths.add(path)
+    return sorted(paths, key=_sort_key)
 
 
 def _first_docstring_line(node: ast.AST) -> str:

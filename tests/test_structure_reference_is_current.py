@@ -82,3 +82,31 @@ def test_order_does_not_depend_on_platform_case_folding() -> None:
     """
     lines = render_entries([PureWindowsPath('Zeta.md'), PureWindowsPath('alpha.md')], REPO_ROOT)
     assert lines == ['- `Zeta.md` — файл', '- `alpha.md` — файл']
+
+
+@pytest.mark.parametrize('tracked_instructions', [False, True])
+@pytest.mark.parametrize('relative_path', ['AGENTS.md', 'app/AGENTS.md'])
+def test_local_instructions_do_not_change_checkout_structure(
+    tmp_path, monkeypatch, tracked_instructions, relative_path
+):
+    """Local instructions stay local; new source files and committed instructions remain visible."""
+    import shutil
+    import subprocess
+
+    from scripts import generate_structure_reference as generator
+
+    git = shutil.which('git')
+    assert git is not None
+    subprocess.run([git, 'init', '-q', str(tmp_path)], check=True)  # noqa: S603 — isolated fixture
+    instructions = tmp_path / relative_path
+    instructions.parent.mkdir(parents=True, exist_ok=True)
+    instructions.write_text('Local instructions\n')
+    (tmp_path / 'new_module.py').write_text('def new_function(): pass\n')
+    if tracked_instructions:
+        subprocess.run([git, 'add', relative_path], cwd=tmp_path, check=True)  # noqa: S603 — fixed test paths
+    monkeypatch.setattr(generator, 'ROOT', tmp_path)
+
+    paths = {path.as_posix() for path in generator.tracked_paths()}
+
+    assert 'new_module.py' in paths
+    assert (relative_path in paths) == tracked_instructions
