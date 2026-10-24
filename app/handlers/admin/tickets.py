@@ -241,8 +241,8 @@ async def view_admin_ticket(
         for msg in ticket.messages:
             sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
             block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n{html.escape(msg.message_text or "")}\n\n'
-            if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                block += '📎 Вложение: фото\n\n'
+            if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) in {'photo', 'video'}:
+                block += f'📎 Вложение: {"видео" if msg.media_type == "video" else "фото"}\n\n'
             message_blocks.append(block)
 
     # Разбиваем на страницы
@@ -251,8 +251,9 @@ async def view_admin_ticket(
     page = total_pages if page is None else min(page, total_pages)
 
     # Формируем клавиатуру
-    has_photos = any(
-        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' for m in ticket.messages or []
+    has_attachments = any(
+        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) in {'photo', 'video'}
+        for m in ticket.messages or []
     )
     keyboard = get_admin_ticket_view_keyboard(
         ticket_id, ticket.is_closed, db_user.language, is_user_blocked=ticket.is_user_reply_blocked
@@ -283,7 +284,7 @@ async def view_admin_ticket(
         pass
 
     # Кнопка вложений
-    if has_photos:
+    if has_attachments:
         try:
             keyboard.inline_keyboard.insert(
                 0,
@@ -386,7 +387,7 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
         pass
 
     """Обработать ответ админа на тикет"""
-    # Поддержка фото вложений в ответе админа
+    # Фото и видео в ответе админа сохраняются даже без подписи.
     reply_text = (message.text or message.caption or '').strip()
     media_type = None
     media_file_id = None
@@ -394,6 +395,10 @@ async def handle_admin_ticket_reply(message: types.Message, state: FSMContext, d
     if message.photo:
         media_type = 'photo'
         media_file_id = message.photo[-1].file_id
+        media_caption = message.caption
+    elif message.video:
+        media_type = 'video'
+        media_file_id = message.video.file_id
         media_caption = message.caption
 
     if len(reply_text) < 1 and not media_file_id:
@@ -839,8 +844,8 @@ async def handle_admin_block_duration_input(message: types.Message, state: FSMCo
                     sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
                     ticket_text += f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n'
                     ticket_text += f'{html.escape(msg.message_text)}\n\n'
-                    if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) == 'photo':
-                        ticket_text += '📎 Вложение: фото\n\n'
+                    if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) in {'photo', 'video'}:
+                        ticket_text += f'📎 Вложение: {"видео" if msg.media_type == "video" else "фото"}\n\n'
 
             kb = get_admin_ticket_view_keyboard(
                 updated.id, updated.is_closed, db_user.language, is_user_blocked=updated.is_user_reply_blocked
@@ -868,11 +873,11 @@ async def handle_admin_block_duration_input(message: types.Message, state: FSMCo
                         kb.inline_keyboard.insert(0, buttons_row)
             except Exception:
                 pass
-            has_photos = any(
-                getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo'
+            has_attachments = any(
+                getattr(m, 'has_media', False) and getattr(m, 'media_type', None) in {'photo', 'video'}
                 for m in updated.messages or []
             )
-            if has_photos:
+            if has_attachments:
                 try:
                     kb.inline_keyboard.insert(
                         0,
@@ -1118,32 +1123,33 @@ async def notify_user_about_ticket_reply(bot: Bot, ticket: Ticket, reply_text: s
             ]
         )
 
-        # Если было фото в последнем ответе админа — отправим как фото
+        # Прикладываем фото или видео из последнего ответа админа.
         last_message = await TicketMessageCRUD.get_last_message(db, ticket.id)
         if (
             last_message
             and last_message.has_media
-            and last_message.media_type == 'photo'
+            and last_message.media_type in {'photo', 'video'}
             and last_message.is_from_admin
         ):
             caption = base_text
             try:
-                await bot.send_photo(
+                sender = bot.send_video if last_message.media_type == 'video' else bot.send_photo
+                await sender(
                     chat_id=chat_id,
-                    photo=last_message.media_file_id,
+                    **{last_message.media_type: last_message.media_file_id},
                     caption=caption,
                     reply_markup=keyboard,
                 )
                 return
-            except TelegramBadRequest as photo_error:
+            except TelegramBadRequest as media_error:
                 logger.error(
-                    'Не удалось отправить фото-уведомление пользователю для тикета',
+                    'Не удалось отправить медиа-уведомление пользователю для тикета',
                     chat_id=chat_id,
                     ticket_id=ticket.id,
-                    photo_error=photo_error,
+                    media_error=media_error,
                 )
             except Exception as e:
-                logger.error('Не удалось отправить фото-уведомление', error=e)
+                logger.error('Не удалось отправить медиа-уведомление', error=e)
         # Фоллбек: текстовое уведомление
         await bot.send_message(
             chat_id=chat_id,
@@ -1207,22 +1213,36 @@ def register_handlers(dp: Dispatcher):
         if not ticket:
             await callback.answer(texts.t('TICKET_NOT_FOUND', 'Тикет не найден.'), show_alert=True)
             return
-        photos = [
-            m.media_file_id
+        attachments = [
+            m
             for m in ticket.messages
-            if getattr(m, 'has_media', False) and getattr(m, 'media_type', None) == 'photo' and m.media_file_id
+            if getattr(m, 'has_media', False)
+            and getattr(m, 'media_type', None) in {'photo', 'video'}
+            and m.media_file_id
         ]
-        if not photos:
+        if not attachments:
             await callback.answer(texts.t('NO_ATTACHMENTS', 'Вложений нет.'), show_alert=True)
             return
-        from aiogram.types import InputMediaPhoto
+        from aiogram.types import InputMediaPhoto, InputMediaVideo
 
-        chunks = [photos[i : i + 10] for i in range(0, len(photos), 10)]
+        chunks = [attachments[i : i + 10] for i in range(0, len(attachments), 10)]
         last_group_message = None
         for chunk in chunks:
-            media = [InputMediaPhoto(media=pid) for pid in chunk]
+            media = [
+                InputMediaVideo(media=m.media_file_id)
+                if m.media_type == 'video'
+                else InputMediaPhoto(media=m.media_file_id)
+                for m in chunk
+            ]
             try:
-                messages = await callback.message.bot.send_media_group(chat_id=callback.from_user.id, media=media)
+                if len(media) == 1:
+                    item = media[0]
+                    sender = (
+                        callback.message.bot.send_video if item.type == 'video' else callback.message.bot.send_photo
+                    )
+                    messages = [await sender(chat_id=callback.from_user.id, **{item.type: item.media})]
+                else:
+                    messages = await callback.message.bot.send_media_group(chat_id=callback.from_user.id, media=media)
                 if messages:
                     last_group_message = messages[-1]
             except Exception:
