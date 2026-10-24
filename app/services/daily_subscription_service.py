@@ -461,13 +461,12 @@ class DailySubscriptionService:
                     for purchase in expired_purchases:
                         if purchase.subscription_id not in subscriptions_to_update:
                             subscriptions_to_update[purchase.subscription_id] = []
-                        subscriptions_to_update[purchase.subscription_id].append(purchase)
+                        subscriptions_to_update[purchase.subscription_id].append(purchase.id)
 
                     # Удаляем истекшие докупки и обновляем подписки
                     for subscription_id, purchases in subscriptions_to_update.items():
                         try:
-                            await self._reset_subscription_traffic(db, subscription_id, purchases)
-                            stats['reset'] += len(purchases)
+                            stats['reset'] += await self._reset_subscription_traffic(db, subscription_id, purchases)
                         except Exception as e:
                             logger.error(
                                 'Ошибка сброса трафика подписки',
@@ -485,20 +484,54 @@ class DailySubscriptionService:
 
         return stats
 
-    async def _reset_subscription_traffic(self, db: AsyncSession, subscription_id: int, expired_purchases: list):
-        """Сбрасывает истекшие докупки трафика у подписки."""
+    async def _reset_subscription_traffic(
+        self, db: AsyncSession, subscription_id: int, expired_purchase_ids: list[int]
+    ) -> int:
+        """Expire still-due packages and release locks on failure or cancellation."""
+        try:
+            return await self._expire_traffic_purchases(db, subscription_id, expired_purchase_ids)
+        finally:
+            # Candidate IDs survive rollback; ORM instances from the batch scan
+            # would expire and break processing of the next subscription.
+            await db.rollback()
+
+    async def _expire_traffic_purchases(
+        self, db: AsyncSession, subscription_id: int, expired_purchase_ids: list[int]
+    ) -> int:
         from app.database.models import TrafficPurchase
 
         # Получаем подписку вместе с тарифом — тариф нужен для определения
         # стратегии сброса панели (выравнивание докупки)
         subscription_query = (
-            select(Subscription).where(Subscription.id == subscription_id).options(selectinload(Subscription.tariff))
+            select(Subscription)
+            .where(Subscription.id == subscription_id)
+            .options(selectinload(Subscription.tariff))
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         subscription_result = await db.execute(subscription_query)
         subscription = subscription_result.scalar_one_or_none()
 
         if not subscription:
-            return
+            return 0
+
+        # The scan is only a candidate list. A purchase, renewal or another
+        # expiration worker may have changed both the totals and these rows.
+        # Serialize with add_subscription_traffic / renewal on Subscription,
+        # then recheck ownership, existence, expiry and amount under that lock.
+        expired_result = await db.execute(
+            select(TrafficPurchase)
+            .where(
+                TrafficPurchase.id.in_(expired_purchase_ids),
+                TrafficPurchase.subscription_id == subscription_id,
+                TrafficPurchase.expires_at <= datetime.now(UTC),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        expired_purchases = expired_result.scalars().all()
+        if not expired_purchases:
+            return 0
 
         # Считаем сколько ГБ нужно убрать
         total_expired_gb = sum(p.traffic_gb for p in expired_purchases)
@@ -571,7 +604,7 @@ class DailySubscriptionService:
                 new_limit_gb=new_limit,
                 current_limit_gb=old_limit,
             )
-            return
+            return 0
 
         # Удаляем истекшие записи
         for purchase in expired_purchases:
@@ -616,56 +649,64 @@ class DailySubscriptionService:
             expired_purchases_count=len(expired_purchases),
         )
 
-        # Синхронизируем с RemnaWave
+        # Expiry is already committed. Panel errors must retain a retry, even
+        # when the panel service returns None after rolling back the session.
+        owner_id = subscription.user_id
+        retry_needed = False
+        reset_required = False
+        reset_reason = 'истечение докупленного трафика'
         try:
             from app.services.subscription_service import SubscriptionService
 
             subscription_service = SubscriptionService()
             updated_user = await subscription_service.update_remnawave_user(db, subscription)
-
-            # Докупка истекла → лимит уронили к базовому. Но used в панели сам по себе
-            # не сбрасывается. Если used уже выше нового лимита, панель МГНОВЕННО
-            # зарежет активного юзера («вылет в лимит после истечения докупки»).
-            # В этом случае честно сбрасываем израсходованный трафик — ровно то, что
-            # обещает уведомление ниже. Сброс делаем только когда он реально нужен,
-            # чтобы не дарить бесплатный трафик тем, кто базу не исчерпал.
-            new_limit_gb = subscription.traffic_limit_gb or 0
-            if (
-                updated_user is not None
-                and new_limit_gb > 0
-                and updated_user.used_traffic_bytes > subscription_service._gb_to_bytes(new_limit_gb)
-            ):
-                logger.warning(
-                    '⚠️ После истечения докупки used превысил новый лимит — сбрасываем трафик, чтобы не зарезать активного юзера',
-                    subscription_id=subscription.id,
-                    user_id=subscription.user_id,
-                    used_bytes=updated_user.used_traffic_bytes,
-                    new_limit_gb=new_limit_gb,
-                )
-                await subscription_service.update_remnawave_user(
-                    db,
-                    subscription,
-                    reset_traffic=True,
-                    reset_reason='истечение докупленного трафика',
-                )
-                subscription.traffic_used_gb = 0.0
-                await db.commit()
+            await db.refresh(subscription)
+            if updated_user is None:
+                retry_needed = True
+            else:
+                # Preserve the existing NO_RESET / overdue-package clamp policy.
+                # Periodic resets still defer the limit drop above.
+                new_limit_gb = subscription.traffic_limit_gb or 0
+                if new_limit_gb > 0 and updated_user.used_traffic_bytes > subscription_service._gb_to_bytes(
+                    new_limit_gb
+                ):
+                    reset_required = True
+                    reset_result = await subscription_service.update_remnawave_user(
+                        db, subscription, reset_traffic=True, reset_reason=reset_reason
+                    )
+                    if reset_result is None:
+                        retry_needed = True
+                    else:
+                        # The panel confirmed the reset. A later local DB error
+                        # must not replay it and erase newly consumed traffic.
+                        reset_required = False
+                        subscription.traffic_used_gb = 0.0
+                        await db.commit()
         except Exception as e:
+            retry_needed = True
             logger.warning('Не удалось синхронизировать с RemnaWave после сброса трафика', error=e)
+
+        if retry_needed:
             from app.services.remnawave_retry_queue import remnawave_retry_queue
 
-            if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
-                remnawave_retry_queue.enqueue(
-                    subscription_id=subscription.id,
-                    user_id=subscription.user_id,
-                    action='update',
-                )
+            remnawave_retry_queue.enqueue(
+                subscription_id=subscription_id,
+                user_id=owner_id,
+                action='update',
+                reset_traffic=reset_required,
+                reset_reason=reset_reason if reset_required else None,
+            )
+            # Queue the scalar IDs before touching a possibly aborted session.
+            await db.rollback()
+        await db.refresh(subscription)
 
         # Уведомляем пользователя
         if self._bot and subscription.user_id:
             user = await get_user_by_id(db, subscription.user_id)
             if user:
                 await self._notify_traffic_reset(user, subscription, total_expired_gb)
+
+        return len(expired_purchases)
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:

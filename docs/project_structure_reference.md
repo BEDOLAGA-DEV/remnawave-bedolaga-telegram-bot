@@ -1525,7 +1525,7 @@
   Классы: `CouponRedemptionError` (1 методов), `CouponRedemptionResult`
   Функции: `is_coupon_token` — True if ``value`` has the exact coupon-token format (no DB hit)., `build_coupon_deeplink` — The single source of truth for the coupon activation deep link., `redeem_coupon` — Atomically redeem a one-time coupon for ``user``.
 - `app/services/daily_subscription_service.py` — Python-модуль
-  Классы: `DailySubscriptionService` (20 методов)
+  Классы: `DailySubscriptionService` (21 методов)
   Функции: нет
 - `app/services/disposable_email_service.py` — Python-модуль
   Классы: `DisposableEmailService` (7 методов)
@@ -2686,6 +2686,7 @@
 - `docs/postgresql-18-upgrade.md` — файл
 - `docs/project_structure_reference.md` — файл
 - `docs/referral_program_setting.md` — файл
+- `docs/traffic-package-expiry.md` — файл
 - `docs/web-admin-integration-guide.md` — файл
 - `docs/web-admin-integration.md` — файл
 - `docs/websocket-and-webhooks.md` — файл
@@ -3997,6 +3998,9 @@
 - `tests/database/test_topup_exact_amount_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_rejected_prefill_then_exact_retry_creates_exact_pending_invoice`
+- `tests/database/test_traffic_expiry_races_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `isolate_external_effects`, `seed`, `test_stale_second_worker_does_not_remove_active_package`, `test_expiration_cannot_overwrite_concurrent_topup`, `test_rescheduled_candidate_is_not_expired_from_stale_snapshot`, `test_deferred_expiration_releases_lock_without_changing_packages`, `test_cancelled_expiration_releases_lock`, `test_failed_subscription_does_not_abort_remaining_batch`, `test_expiration_refreshes_cached_totals_after_completed_topup`, `test_panel_rollback_keeps_expiry_and_enqueues_retry`
 - `tests/database/test_unpaid_trial_visibility_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_unpaid_trial_invoice_stays_hidden_after_back`
