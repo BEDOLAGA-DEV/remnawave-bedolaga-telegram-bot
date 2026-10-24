@@ -106,7 +106,7 @@ class AntilopayService:
             'project_identificator': self.project_id,
             'amount': amount_rubles,
             'order_id': order_id,
-            'currency': settings.ANTILOPAY_CURRENCY.lower(),
+            'currency': settings.ANTILOPAY_CURRENCY.upper(),
             'product_name': product_name,
             'product_type': product_type,
             'description': description,

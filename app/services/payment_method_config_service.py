@@ -676,7 +676,14 @@ async def get_enabled_methods_for_user(
         # Build options (filter by sub_options config)
         options = None
         available_sub_options = method_def.get('available_sub_options')
-        if available_sub_options and config.sub_options:
+        if method_id == 'antilopay' and available_sub_options:
+            # Preserve the distinction between default options and all disabled.
+            # Cabinet checkout must never fall back to the provider's unrestricted form.
+            configured_options = config.sub_options or {}
+            options = [opt for opt in available_sub_options if configured_options.get(opt['id'], True)]
+            if not options:
+                continue
+        elif available_sub_options and config.sub_options:
             enabled_options = []
             for opt in available_sub_options:
                 opt_id = opt['id']
