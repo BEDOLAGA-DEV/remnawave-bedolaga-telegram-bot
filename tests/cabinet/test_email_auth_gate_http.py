@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
@@ -15,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.auth import email_auth_gate as gate
-from app.cabinet.dependencies import get_cabinet_db
+from app.cabinet.dependencies import get_cabinet_db, get_current_cabinet_user
 from app.cabinet.routes.auth import router as auth_router
 from app.database.models import SystemSetting, User
 from tests.fixtures.sqlite_memory import memory_session
@@ -90,3 +92,68 @@ async def test_enabled_in_admin_lets_request_through_the_gate(monkeypatch):
 
         assert login.status_code == 401, login.text
         assert login.json()['detail'] == 'Invalid email or password'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('path', 'body'),
+    [
+        ('/email/register/standalone', REGISTER_BODY),
+        ('/email/register', LOGIN_BODY),
+        ('/email/login', LOGIN_BODY),
+        ('/email/verify', {'token': 'masked-1'}),
+        ('/email/merge/verify', {'code': '123456'}),
+        ('/email/resend', None),
+        ('/email/register/resend', {'email': LOGIN_BODY['email']}),
+        ('/password/forgot', {'email': LOGIN_BODY['email']}),
+        ('/password/reset', {'token': 'masked-2', 'password': LOGIN_BODY['password']}),
+    ],
+)
+async def test_db_disabled_blocks_all_email_routes_without_mutations_or_tokens(monkeypatch, path, body):
+    """Прямой HTTP-вызов, включая OTP, не обходит DB-запрет при включённом env."""
+    from app.cabinet.routes import auth
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        monkeypatch.setattr(gate.settings, 'CABINET_EMAIL_AUTH_ENABLED', True)
+        await _set_flag(db, 'false')
+        user = User(
+            email=LOGIN_BODY['email'],
+            password_hash=auth.hash_password(LOGIN_BODY['password']),
+            email_verified=False,
+            email_verification_token='masked-1',
+            email_verification_expires=datetime.now(UTC) + timedelta(hours=1),
+            password_reset_token='masked-2',
+            password_reset_expires=datetime.now(UTC) + timedelta(hours=1),
+        )
+        db.add(user)
+        await db.commit()
+        before = (await db.execute(select(User.__table__))).mappings().one()
+
+        # Даже уже существующие подтверждения и пароль не должны выдавать сессию.
+        token_factories = []
+        for name in (
+            'create_access_token',
+            'create_refresh_token',
+            'create_merge_token',
+            'generate_verification_token',
+            'generate_password_reset_token',
+            'generate_email_change_code',
+        ):
+            factory = Mock(side_effect=AssertionError('Disabled email auth must not issue tokens'))
+            monkeypatch.setattr(auth, name, factory)
+            token_factories.append(factory)
+
+        app = _app(db)
+        app.dependency_overrides[get_current_cabinet_user] = lambda: user
+        async with AsyncClient(transport=ASGITransport(app=app), base_url='http://cabinet') as client:
+            response = await client.post(f'/cabinet/auth{path}', json=body)
+
+        assert response.status_code == 403, response.text
+        assert response.json() == {
+            'detail': {'code': gate.EMAIL_AUTH_DISABLED_CODE, 'message': 'Email authentication is disabled'}
+        }
+        assert not db.new and not db.dirty and not db.deleted
+        assert await _users_count(db) == 1
+        assert (await db.execute(select(User.__table__))).mappings().one() == before
+        for factory in token_factories:
+            factory.assert_not_called()
