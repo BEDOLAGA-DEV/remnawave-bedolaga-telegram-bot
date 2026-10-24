@@ -3205,6 +3205,9 @@
 - `tests/test_no_undefined_names.py` — Python-модуль
   Классы: нет
   Функции: `test_no_new_undefined_names`, `test_baseline_does_not_rot` — Исправленное имя обязано выпадать из базы, иначе она копит ложь.
+- `tests/test_pg_upgrade_log_pipe.py` — Python-модуль
+  Классы: нет
+  Функции: `test_pg_readiness_large_log`
 - `tests/test_pg_upgrade_prompt.py` — Python-модуль
   Классы: нет
   Функции: `sandbox`, `test_y_with_crlf_enter_is_accepted`, `test_russian_da_is_accepted`, `test_no_cancels_without_touching_anything`, `test_without_terminal_requires_yes`
@@ -3423,7 +3426,7 @@
   Функции: `test_db_row_overrides_env`, `test_env_applies_when_no_db_row`, `test_require_raises_403_with_machine_code`, `test_handler_refuses_before_touching_anything`, `test_handler_proceeds_when_enabled`, `test_every_email_and_password_route_is_gated` — Новый /email/* или /password/* роут без гейта — красный тест, а не дыра в проде., `test_linked_providers_follow_the_same_switch` — Список способов входа в профиле читает тот же переключатель, что UI и роуты., `test_db_value_parsed_like_settings_editor` — Строку пишут и админский переключатель ('true'), и общий редактор настроек, и, `test_garbage_db_value_falls_back_to_env`
 - `tests/cabinet/test_email_auth_gate_http.py` — Python-модуль
   Классы: нет
-  Функции: `test_disabled_in_admin_refuses_register_and_login_over_http` — Админ выключил email-вход в кабинете (строка в БД), окружение говорит «включён»:, `test_enabled_in_admin_lets_request_through_the_gate` — Обратная сторона: строка 'true' в БД при выключенном окружении — запрос проходит гейт
+  Функции: `test_disabled_in_admin_refuses_register_and_login_over_http` — Админ выключил email-вход в кабинете (строка в БД), окружение говорит «включён»:, `test_enabled_in_admin_lets_request_through_the_gate` — Обратная сторона: строка 'true' в БД при выключенном окружении — запрос проходит гейт, `test_db_disabled_blocks_all_email_routes_without_mutations_or_tokens` — Прямой HTTP-вызов, включая OTP, не обходит DB-запрет при включённом env.
 - `tests/cabinet/test_email_broadcast_scoped_targets.py` — Python-модуль
   Классы: нет
   Функции: `test_parse_scoped_targets`, `test_promo_group_target_counts_and_fetches_the_same_people`, `test_single_user_target_reaches_exactly_that_user`, `test_send_rejects_targets_nobody_can_receive`, `test_email_filters_list_promo_groups_with_counts`, `test_multi_tariff_user_gets_one_email_not_one_per_subscription` — Мультитариф: JOIN по подпискам размножал человека — письмо уходило по разу на подписку.
@@ -3643,6 +3646,9 @@
 - `tests/cabinet/test_telegram_login_claims_phantom.py` — Python-модуль
   Классы: нет
   Функции: `test_phantom_is_claimed_instead_of_creating_a_second_account`, `test_without_phantom_user_is_created_as_before`, `test_without_username_phantom_is_not_even_looked_up`, `test_lost_claim_race_returns_the_existing_user` — claim_phantom вернул (False, existing): telegram_id уже завёл бот — берём его запись., `test_failed_claim_without_fallback_falls_through_to_create`
+- `tests/cabinet/test_telegram_ticket_media_flow.py` — Python-модуль
+  Классы: `LocalTelegramFiles` (6 методов)
+  Функции: `test_upload_create_reply_reload_download` — Both cabinet sides preserve IDs and bytes; downloads require file-bound tokens.
 - `tests/cabinet/test_telegram_widget_replay.py` — Python-модуль
   Классы: нет
   Функции: `test_widget_login_is_one_time_and_24h`, `test_widget_link_is_one_time_and_24h`
@@ -3788,12 +3794,18 @@
 ### tests/database
 
 - `tests/database/crud/`
+- `tests/database/test_addon_cart_purchase_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_saved_addon_cart_postgres`
 - `tests/database/test_admin_expiry_reset_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
   Функции: `test_reset_does_not_regain_paid_days_from_panel`, `test_expired_update_sends_closing_date_in_first_patch`, `test_reset_preserves_local_reset_when_expiry_patch_fails`
 - `tests/database/test_admin_landing_payments_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_paid_landing_purchase_visible_without_provider_user`, `test_landing_deduplicates_provider_and_transaction_but_preserves_other_payment`, `test_internal_and_unpaid_purchases_are_excluded`, `test_cryptobot_payload_does_not_duplicate_landing_purchase`, `test_confirmed_gift_replay_and_http_details_keep_source_identity`, `test_payment_confirmed_between_admin_queries_is_not_duplicated`
+- `tests/database/test_admin_notification_rollback_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_event_failure_logs_original_error_and_rolls_back`, `test_admin_event_does_not_repeat_cryptobot_credit`, `test_topup_reload_failure_does_not_read_expired_orm_in_error_log`, `test_rollback_failure_also_logs_scalar_identity`
 - `tests/database/test_admin_recurring_payments_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_real_recurring_callback_is_visible_once_after_replay`, `test_recurring_read_queries_exclude_wallet_deposits_and_old_charges`
@@ -3872,6 +3884,9 @@
 - `tests/database/test_migration_chain.py` — Python-модуль
   Классы: нет
   Функции: `test_single_head`, `test_revision_ids_are_unique`, `test_every_revision_reaches_base` — Разрыв в down_revision оставил бы часть миграций неприменёнными.
+- `tests/database/test_miniapp_purchase_atomic_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `isolated_purchase`, `test_failure_restores_balance_promo_rights_and_ledger`, `test_failed_purchase_preserves_new_or_trial_subscription`, `test_cancellation_rolls_back_checkout_and_releases_locks`, `test_in_flight_purchase_blocks_autopay_for_the_same_due_cycle`, `test_panel_rollback_keeps_committed_payment_and_rights`, `test_auxiliary_rollback_does_not_report_paid_purchase_as_failure`, `test_insufficient_cabinet_purchase_still_saves_cart_and_returns_402`, `test_panel_failure_keeps_server_counters_and_trial_decrements`
 - `tests/database/test_mode_switch_keeps_panel_account_postgres.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `test_account_created_in_single_mode_survives_switch_to_multi`, `test_account_created_in_multi_mode_survives_switch_to_single`, `test_old_multi_rows_without_user_account_still_resolve_in_single_mode` — Строки, созданные ДО правки: аккаунт только у подписки. Одиночный режим всё равно находит его.
@@ -3998,6 +4013,9 @@
 - `tests/database/test_tariff_target_collision_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_selected_classic_rejects_owned_alive_target_before_quote`, `test_inactive_or_foreign_target_does_not_block_selected_classic`
+- `tests/database/test_telegram_user_filters_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_traffic_filter_returns_exact_people_for_every_sort`, `test_api_total_matches_filters_and_ignores_pagination`, `test_empty_api_tables_have_zero_total`, `test_traffic_filter_excludes_overdue_subscription_before_status_update`, `test_traffic_row_ignores_stale_subscription_with_higher_usage`
 - `tests/database/test_topup_classic_cart_postgres.py` — Python-модуль
   Классы: `CartStorage` (6 методов)
   Функции: `cart_service`, `test_topup_finalizer_purchases_selected_classic`
@@ -4374,6 +4392,9 @@
 - `tests/handlers/test_my_subscriptions_delete_uses_shared_service.py` — Python-модуль
   Классы: нет
   Функции: `handler_env`, `test_delete_delegates_to_shared_service`, `test_open_grace_is_reported_not_swallowed`
+- `tests/handlers/test_nalogo_pending_callbacks.py` — Python-модуль
+  Классы: нет
+  Функции: `test_pending_receipt_button_roundtrip`, `test_legacy_truncated_callback_does_not_choose_a_receipt`, `test_ambiguous_pending_token_is_rejected`
 - `tests/handlers/test_no_undefined_texts_in_handlers.py` — Python-модуль
   Классы: нет
   Функции: `test_handlers_never_use_undefined_texts`
@@ -4458,6 +4479,9 @@
 - `tests/handlers/test_tariff_switch_subscription_resolution.py` — Python-модуль
   Классы: нет
   Функции: `test_switch_resolver_prefers_fsm_over_callback_trailing`, `test_switch_resolver_falls_back_to_single_active_when_no_fsm`, `test_switch_resolver_asks_to_choose_when_ambiguous`
+- `tests/handlers/test_telegram_ticket_video.py` — Python-модуль
+  Классы: `RecordingBot` (4 методов)
+  Функции: `test_ticket_handler_preserves_media`, `test_attachment_button_delivers_original_photo_and_video`, `test_video_ticket_view_exposes_attachments`, `test_user_notification_delivers_admin_attachment`, `test_admin_notification_delivers_attachment_to_ticket_topic`
 - `tests/handlers/test_ticket_group_card_refresh.py` — Python-модуль
   Классы: нет
   Функции: `admin_and_crud`, `test_close_in_group_redraws_the_group_card_without_fsm_buttons`, `test_permanent_block_in_group_redraws_the_card_and_skips_the_private_view`, `test_unblock_in_group_redraws_the_card`, `test_private_chat_keeps_the_admin_view` — В личке админа поведение прежнее: полный экран тикета с FSM-кнопками.
@@ -4856,7 +4880,7 @@
   Функции: `test_sends_to_user_and_duplicates_to_admin_topic`, `test_no_telegram_id_admin_only_with_guest_mark`, `test_user_send_failure_does_not_block_admin_duplicate` — Юзер заблокировал бота — админ-топик всё равно получает чек., `test_no_print_url_sends_nothing`, `test_no_admin_chat_user_only`, `test_get_receipt_print_url_builds_v1_link` — Ссылка обязана содержать /v1 — библиотечный print_url() строит без него, `test_receipt_delivered_as_photo_when_download_succeeds` — lknpd недоступен клиентам за VPN — при успешном серверном скачивании чек, `test_receipt_delivered_as_document_for_pdf`, `test_download_failure_falls_back_to_link` — Сбой скачивания (сеть/503 ФНС) не ломает доставку — уходит текст со ссылкой., `test_telegram_rejects_file_falls_back_to_link` — Telegram отверг сам файл — чек обязан дойти, поэтому уходит ссылкой., `test_blocked_user_is_not_retried_as_message` — Юзер заблокировал бота — это не проблема файла, повторять текстом бессмысленно., `test_download_rejects_html_error_page` — ФНС отдаёт HTML-заглушку с кодом 200 — её нельзя слать как «чек»., `test_download_accepts_image_and_pdf`, `test_download_reads_full_body_not_just_first_network_chunk` — Тело длиннее одной сетевой порции обязано склеиться целиком., `test_download_rejects_oversized_receipt` — Предохранитель от вычитывания мусора в память., `test_email_only_user_gets_receipt_by_email` — У покупателя нет Telegram (кабинет/лендинг) — чек уходит на почту файлом., `test_blocked_bot_falls_back_to_email_from_db` — Юзер заблокировал бота — почту берём из БД, чек уходит письмом., `test_telegram_rejected_file_falls_back_to_email_with_attachment` — Telegram отверг файл — ссылка в чате не считается доставкой чека., `test_delivered_to_telegram_skips_email` — Чек дошёл в Telegram — письмо не дублируем., `test_email_not_sent_when_smtp_unconfigured` — SMTP не настроен — не падаем, чек остаётся хотя бы в админ-топике., `test_routine_delivery_failures_are_warnings_not_errors` — «Чат не найден» и флуд-контроль — штатные исходы рассылки, не сбои кода., `test_receipt_email_is_branded_and_uses_admin_override` — Чек на почту раньше был зашит в код (по-русски, без обёртки) — теперь это, `test_receipt_filename_comes_from_setting` — Имя файла чека — настройка NALOGO_RECEIPT_FILENAME; битый шаблон не ломает отправку.
 - `tests/services/test_nalogo_token_reuse.py` — Python-модуль
   Классы: нет
-  Функции: `token`, `api`, `service`, `test_valid_saved_token_authenticates_without_password_login`, `test_receipts_use_live_in_memory_token_instead_of_password`, `test_expired_saved_token_refreshes_and_persists_new_token`, `test_revoked_token_and_dead_refresh_fall_back_to_password`, `test_no_usable_storage_retains_password_login`, `test_explicit_authentication_rereads_new_storage`, `test_token_file_is_private_after_atomic_save`, `test_revoked_in_memory_access_recovers_before_giving_up_receipt`, `receipt_cache`, `test_ambiguous_queued_receipt_stays_manual_without_repeated_post`, `test_manual_confirmation_without_uuid_blocks_receipt_and_stale_queue`, `test_failed_atomic_replace_preserves_previous_file_and_cleans_temp`, `test_concurrent_authentication_refreshes_expired_token_only_once`, `test_missing_invalid_or_near_expiry_refreshes_instead_of_password`
+  Функции: `token`, `api`, `service`, `test_valid_saved_token_authenticates_without_password_login`, `test_receipts_use_live_in_memory_token_instead_of_password`, `test_expired_saved_token_refreshes_and_persists_new_token`, `test_revoked_token_and_dead_refresh_fall_back_to_password`, `test_no_usable_storage_retains_password_login`, `test_explicit_authentication_rereads_new_storage`, `test_token_file_is_private_after_atomic_save`, `test_revoked_in_memory_access_recovers_before_giving_up_receipt`, `receipt_cache`, `test_ambiguous_queued_receipt_stays_manual_without_repeated_post`, `test_manual_confirmation_without_uuid_blocks_receipt_and_stale_queue`, `test_manual_retry_preserves_original_operation_time`, `test_failed_atomic_replace_preserves_previous_file_and_cleans_temp`, `test_concurrent_authentication_refreshes_expired_token_only_once`, `test_missing_invalid_or_near_expiry_refreshes_instead_of_password`
 - `tests/services/test_new_gateways_finalize.py` — Python-модуль
   Классы: `FakeSession` (4 методов), `FakeUser` (2 методов), `FakePayment` (1 методов), `FakeTransaction` (1 методов)
   Функции: `anyio_backend`, `wired` — Подменяет всё окружение зачисления и отдаёт наблюдаемые вызовы., `test_credits_exact_amount_and_creates_transaction`, `test_does_not_credit_twice_when_transaction_linked` — Платёж уже связан с транзакцией — выходим до всякого зачисления., `test_existing_transaction_with_credited_marker_does_not_double_credit` — Транзакция уже есть и баланс уже начислен — второй раз не начисляем., `test_repeated_finalize_credits_only_once` — Два прохода подряд (вебхук + сверка по API) дают одно зачисление., `test_guest_purchase_short_circuits_without_crediting_balance` — Покупка с лендинга выдаёт товар, а не пополняет баланс., `test_missing_user_refuses_to_credit`, `test_referral_failure_does_not_block_crediting` — Реферальная логика вторична: её падение не должно отменять пополнение., `test_tabpay_sandbox_payment_never_credits` — У TabPay есть песочница: такой платёж не должен доходить до зачисления.
