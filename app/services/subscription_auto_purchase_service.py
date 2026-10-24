@@ -22,6 +22,7 @@ from app.database.crud.user import subtract_user_balance
 from app.database.models import (
     GuestPurchase,
     GuestPurchaseStatus,
+    PaymentMethod,
     Subscription,
     SubscriptionStatus,
     TransactionType,
@@ -302,6 +303,21 @@ async def _prepare_auto_extend_context(
         )
         return None
 
+    from sqlalchemy.orm import selectinload
+
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(Subscription.id == subscription.id, Subscription.user_id == user.id)
+        .options(selectinload(Subscription.tariff))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if subscription is None or user.restriction_subscription:
+        return None
+
     # Block auto-renewal of classic subscriptions when tariff mode is enabled
     if settings.is_tariffs_mode() and not subscription.tariff_id:
         logger.info(
@@ -325,6 +341,9 @@ async def _prepare_auto_extend_context(
     tariff_id = cart_data.get('tariff_id')
     if tariff_id:
         tariff_id = _safe_int(tariff_id)
+        if subscription.tariff_id is not None and subscription.tariff_id != tariff_id:
+            logger.warning('Saved renewal tariff no longer matches subscription', subscription_id=subscription.id)
+            return None
 
     # Validate period_days against tariff or global renewal periods
     if tariff_id:
@@ -363,11 +382,8 @@ async def _prepare_auto_extend_context(
             )
             return None
 
-    from app.database.crud.user import lock_user_for_pricing
     from app.services.pricing_engine import pricing_engine as _pricing_engine
     from app.utils.promo_offer import get_user_active_promo_discount_percent
-
-    user = await lock_user_for_pricing(db, user.id)
 
     try:
         pricing = await _pricing_engine.calculate_renewal_price(
@@ -438,6 +454,11 @@ def _apply_extension_updates(context: AutoExtendContext) -> None:
     НЕ изменяет is_trial - это делается позже после успешного коммита продления.
     """
     subscription = context.subscription
+
+    # A saved renewal is priced from current paid tariff parameters under lock.
+    # Cart snapshots must not restore removed devices or overwrite later topups.
+    if not subscription.is_trial and subscription.tariff_id is not None:
+        return
 
     # НЕ обновляем tariff_id здесь — это делает extend_subscription(),
     # чтобы корректно определить is_tariff_change внутри CRUD
@@ -533,14 +554,12 @@ async def _auto_extend_subscription(
         )
         return False
 
-    # Save promo offer state before charge so we can restore on failure
-    saved_promo_percent = (
-        int(getattr(user, 'promo_offer_discount_percent', 0) or 0) if prepared.consume_promo_offer else 0
-    )
-    saved_promo_source = getattr(user, 'promo_offer_discount_source', None) if prepared.consume_promo_offer else None
-    saved_promo_expires = (
-        getattr(user, 'promo_offer_discount_expires_at', None) if prepared.consume_promo_offer else None
-    )
+    subscription = prepared.subscription
+    old_end_date = subscription.end_date
+    was_trial = subscription.is_trial
+    old_tariff_id = subscription.tariff_id
+    is_tariff_change = prepared.tariff_id is not None and old_tariff_id != prepared.tariff_id
+    user_id = user.id
 
     try:
         deducted = await subtract_user_balance(
@@ -550,126 +569,57 @@ async def _auto_extend_subscription(
             prepared.description,
             consume_promo_offer=prepared.consume_promo_offer,
             mark_as_paid_subscription=True,
+            commit=False,
         )
-    except Exception as error:  # pragma: no cover - defensive logging
-        logger.error(
-            '❌ Автопокупка: ошибка списания средств при продлении пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
+        if not deducted:
+            await db.rollback()
+            await db.refresh(user)
+            return False
+
+        _apply_extension_updates(prepared)
+        conversion_traffic_limit_gb = await _resolve_extend_traffic_limit_gb(
+            db, prepared, subscription, was_trial=was_trial
         )
-        return False
-
-    if not deducted:
-        logger.warning(
-            '❌ Автопокупка: списание средств для продления подписки пользователя не выполнено',
-            format_user_id=_format_user_id(user),
-        )
-        return False
-
-    subscription = prepared.subscription
-    old_end_date = subscription.end_date
-    was_trial = subscription.is_trial  # Запоминаем, была ли подписка триальной
-    old_tariff_id = subscription.tariff_id  # Запоминаем старый тариф для определения смены
-
-    _apply_extension_updates(prepared)
-
-    # Определяем, произошла ли смена тарифа
-    is_tariff_change = prepared.tariff_id is not None and old_tariff_id != prepared.tariff_id
-
-    # Триал→платная: применяем лимит трафика платного тарифа (см. репорт #654380).
-    conversion_traffic_limit_gb = await _resolve_extend_traffic_limit_gb(
-        db, prepared, subscription, was_trial=was_trial
-    )
-
-    # Применяем лимит трафика при смене тарифа ИЛИ при конвертации триала.
-    apply_traffic_limit = is_tariff_change or was_trial
-
-    try:
-        # При смене тарифа передаём traffic_limit_gb для сброса трафика в БД
         updated_subscription = await extend_subscription(
             db,
             subscription,
             prepared.period_days,
             tariff_id=prepared.tariff_id if is_tariff_change else None,
-            traffic_limit_gb=conversion_traffic_limit_gb if apply_traffic_limit else None,
+            traffic_limit_gb=conversion_traffic_limit_gb if is_tariff_change or was_trial else None,
             device_limit=prepared.device_limit if is_tariff_change else None,
+            commit=False,
         )
-
-        # Конвертируем триал в платную подписку ТОЛЬКО после успешного продления
         if was_trial and subscription.is_trial:
             subscription.is_trial = False
             subscription.status = 'active'
-            await db.commit()
-            logger.info(
-                '✅ Триал конвертирован в платную подписку для пользователя',
-                subscription_id=subscription.id,
-                format_user_id=_format_user_id(user),
-            )
-
-    except Exception as error:  # pragma: no cover - defensive logging
-        logger.error(
-            '❌ Автопокупка: не удалось продлить подписку пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            await add_user_balance(
-                db,
-                user,
-                prepared.price_kopeks,
-                'Возврат: ошибка автопродления подписки',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-            )
-
-            # Restore consumed promo offer fields
-            if prepared.consume_promo_offer and saved_promo_percent > 0:
-                user.promo_offer_discount_percent = saved_promo_percent
-                user.promo_offer_discount_source = saved_promo_source
-                user.promo_offer_discount_expires_at = saved_promo_expires
-                await db.commit()
-                logger.info(
-                    '💰 Автопокупка: восстановлен промо-оффер после ошибки продления',
-                    format_user_id=_format_user_id(user),
-                    restored_percent=saved_promo_percent,
-                )
-
-            logger.info(
-                '💰 Автопокупка: возврат средств после ошибки продления',
-                format_user_id=_format_user_id(user),
-                refund_kopeks=prepared.price_kopeks,
-            )
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: Автопокупка: не удалось вернуть средства после ошибки продления',
-                format_user_id=_format_user_id(user),
-                price_kopeks=prepared.price_kopeks,
-                refund_error=refund_error,
-            )
-        return False
-
-    transaction = None
-    try:
         transaction = await create_transaction(
             db=db,
-            user_id=user.id,
+            user_id=user_id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=prepared.price_kopeks,
             description=prepared.description,
+            commit=False,
         )
-    except Exception as error:  # pragma: no cover - defensive logging
-        logger.error(
-            '⚠️ Автопокупка: не удалось зафиксировать транзакцию продления для пользователя',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
+        await db.commit()
+    except BaseException as error:
+        await db.rollback()
+        if not isinstance(error, Exception):
+            raise
+        logger.error('Saved renewal failed before commit', user_id=user_id, error=error, exc_info=True)
+        await db.refresh(user)
+        return False
+
+    from app.database.crud.transaction import emit_transaction_side_effects
+
+    await emit_transaction_side_effects(
+        db,
+        transaction,
+        user_id=user_id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=prepared.price_kopeks,
+        description=prepared.description,
+        payment_method=PaymentMethod.BALANCE,
+    )
 
     subscription_service = SubscriptionService()
     # Сброс трафика: при смене тарифа — по RESET_TRAFFIC_ON_TARIFF_SWITCH, при оплате — по RESET_TRAFFIC_ON_PAYMENT

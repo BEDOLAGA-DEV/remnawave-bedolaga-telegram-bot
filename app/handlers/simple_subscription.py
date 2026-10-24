@@ -29,6 +29,14 @@ from app.utils.timezone import format_local_datetime
 logger = structlog.get_logger(__name__)
 
 
+async def _reject_classic_checkout_in_tariff_mode(callback: types.CallbackQuery) -> bool:
+    """Old simple-purchase buttons must not bypass the tariff renewal entry."""
+    if settings.is_tariffs_mode() or settings.is_multi_tariff_enabled():
+        await callback.answer('Откройте покупку или продление подписки и выберите тариф', show_alert=True)
+        return True
+    return False
+
+
 @error_handler
 async def start_simple_subscription_purchase(
     callback: types.CallbackQuery,
@@ -37,6 +45,8 @@ async def start_simple_subscription_purchase(
     db: AsyncSession,
 ):
     """Начинает процесс простой покупки подписки."""
+    if await _reject_classic_checkout_in_tariff_mode(callback):
+        return
     texts = get_texts(db_user.language)
 
     if not settings.SIMPLE_SUBSCRIPTION_ENABLED:
@@ -375,6 +385,8 @@ async def handle_simple_subscription_pay_with_balance(
     db: AsyncSession,
 ):
     """Обрабатывает оплату простой подписки с баланса."""
+    if await _reject_classic_checkout_in_tariff_mode(callback):
+        return
     texts = get_texts(db_user.language)
 
     data = await state.get_data()
@@ -831,6 +843,8 @@ async def handle_simple_subscription_payment_method(
     db: AsyncSession,
 ):
     """Обрабатывает выбор метода оплаты для простой подписки."""
+    if await _reject_classic_checkout_in_tariff_mode(callback):
+        return
     texts = get_texts(db_user.language)
 
     data = await state.get_data()
@@ -2141,6 +2155,8 @@ async def confirm_simple_subscription_purchase(
     db: AsyncSession,
 ):
     """Обрабатывает подтверждение простой покупки подписки при наличии активной платной подписки."""
+    if await _reject_classic_checkout_in_tariff_mode(callback):
+        return
     texts = get_texts(db_user.language)
 
     data = await state.get_data()

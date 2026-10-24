@@ -4386,6 +4386,16 @@ async def handle_simple_subscription_purchase(
         await callback.answer('❌ Простая покупка подписки временно недоступна', show_alert=True)
         return
 
+    # This callback carries no subscription id. Never choose an arbitrary
+    # primary subscription for a multi-subscription account.
+    if settings.is_multi_tariff_enabled():
+        await callback.answer('Выберите подписку через «Мои подписки»', show_alert=True)
+        return
+
+    if getattr(db_user, 'restriction_subscription', False):
+        await callback.answer('Покупка подписки ограничена администратором', show_alert=True)
+        return
+
     # Определяем ограничение по устройствам для текущего режима
     simple_device_limit = resolve_simple_subscription_device_limit()
 
@@ -4393,6 +4403,16 @@ async def handle_simple_subscription_purchase(
     from app.database.crud.subscription import get_subscription_by_user_id
 
     current_subscription = await get_subscription_by_user_id(db, db_user.id)
+
+    if current_subscription and current_subscription.tariff_id:
+        await _extend_simple_tariff_subscription(callback, db_user, db, current_subscription)
+        return
+
+    if settings.is_tariffs_mode():
+        from .tariff_purchase import show_tariffs_list
+
+        await show_tariffs_list(callback, db_user, db, state)
+        return
 
     # Если у пользователя уже есть активная подписка, продлеваем её
     if current_subscription and current_subscription.is_active:
@@ -4518,6 +4538,106 @@ async def handle_simple_subscription_purchase(
     await callback.message.edit_text(message_text, reply_markup=keyboard, parse_mode='HTML')
 
     await state.set_state(SubscriptionStates.waiting_for_simple_subscription_payment_method)
+    await callback.answer()
+
+
+async def _extend_simple_tariff_subscription(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    subscription: Subscription,
+):
+    """Renew the attached tariff without applying classic purchase defaults."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.database.crud.user import lock_user_for_pricing
+    from app.services.subscription_renewal_service import SubscriptionRenewalChargeError, SubscriptionRenewalService
+
+    subscription_id = subscription.id
+    db_user = await lock_user_for_pricing(db, db_user.id)
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(Subscription.id == subscription_id, Subscription.user_id == db_user.id)
+        .options(selectinload(Subscription.tariff))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    tariff = subscription.tariff if subscription else None
+    period_days = settings.SIMPLE_SUBSCRIPTION_PERIOD_DAYS
+    # Missing periods are not zero-priced periods. Trial conversion and daily
+    # billing use their own existing flows instead of classic defaults.
+    if (
+        not tariff
+        or not tariff.is_active
+        or tariff.is_daily
+        or subscription.is_trial
+        or subscription.status in (SubscriptionStatus.DISABLED.value, SubscriptionStatus.PENDING.value)
+        or db_user.restriction_subscription
+        or period_days <= 0
+        or (tariff.period_prices or {}).get(str(period_days)) is None
+    ):
+        await db.rollback()
+        await callback.answer('Откройте продление подписки и выберите доступный тариф и период', show_alert=True)
+        return
+
+    pricing = await pricing_engine.calculate_renewal_price(db, subscription, period_days, user=db_user)
+    texts = get_texts(db_user.language)
+    price = pricing.final_total
+    if price > db_user.balance_kopeks:
+        missing = price - db_user.balance_kopeks
+        user_id = db_user.id
+        language = db_user.language
+        balance = db_user.balance_kopeks
+        cart = {
+            'cart_mode': 'extend',
+            'subscription_id': subscription.id,
+            'tariff_id': tariff.id,
+            'period_days': period_days,
+            'total_price': price,
+            'user_id': user_id,
+            'saved_cart': True,
+            'missing_amount': missing,
+            'return_to_cart': True,
+            'device_limit': subscription.device_limit,
+            'devices': subscription.device_limit,
+            'traffic_limit_gb': subscription.traffic_limit_gb,
+            'traffic_gb': subscription.traffic_limit_gb,
+            'countries': list(subscription.connected_squads or []),
+            'consume_promo_offer': pricing.promo_offer_discount > 0,
+        }
+        # Do not hold financial locks while contacting Redis or Telegram.
+        await db.rollback()
+        await user_cart_service.save_user_cart(user_id, cart)
+        message = texts.t(
+            'ADDON_INSUFFICIENT_FUNDS_MESSAGE',
+            '⚠️ <b>Недостаточно средств</b>\n\nСтоимость услуги: {required}\n'
+            'На балансе: {balance}\nНе хватает: {missing}\n\nВыберите способ пополнения.',
+        ).format(
+            required=texts.format_price(price), balance=texts.format_price(balance), missing=texts.format_price(missing)
+        )
+        await callback.message.edit_text(
+            message,
+            reply_markup=get_insufficient_balance_keyboard(language, amount_kopeks=missing, has_saved_cart=True),
+            parse_mode='HTML',
+        )
+        await callback.answer()
+        return
+
+    try:
+        result = await SubscriptionRenewalService().finalize(
+            db, db_user, subscription, pricing, payment_method=PaymentMethod.BALANCE
+        )
+    except SubscriptionRenewalChargeError:
+        await callback.answer('⚠ Ошибка списания средств', show_alert=True)
+        return
+    await callback.message.edit_text(
+        '✅ Подписка успешно продлена!\n\n'
+        f'⏰ Добавлено: {period_days} дней\n'
+        f'Действует до: {format_local_datetime(result.subscription.end_date, "%d.%m.%Y %H:%M")}\n\n'
+        f'💰 Списано: {texts.format_price(price)}',
+        reply_markup=get_back_keyboard(db_user.language),
+    )
     await callback.answer()
 
 

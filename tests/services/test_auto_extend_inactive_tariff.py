@@ -173,6 +173,9 @@ async def test_prepare_auto_extend_context_skips_inactive_target_tariff(monkeypa
     user.id = 7
     db = AsyncMock()
     cart_data = {'period_days': 1, 'tariff_id': 99, 'subscription_id': 1}
+    user.restriction_subscription = False
+    db.scalar.return_value = subscription
+    monkeypatch.setattr('app.database.crud.user.lock_user_for_pricing', AsyncMock(return_value=user))
 
     ctx = await svc._prepare_auto_extend_context(db, user, cart_data)
 
