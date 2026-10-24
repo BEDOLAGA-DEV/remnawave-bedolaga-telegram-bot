@@ -1715,7 +1715,7 @@
   Классы: `PromoOfferService` (3 методов)
   Функции: нет
 - `app/services/promocode_service.py` — Python-модуль
-  Классы: `PromoCodeService` (7 методов)
+  Классы: `PromoCodeService` (8 методов)
   Функции: нет
 - `app/services/public_offer_service.py` — Python-модуль
   Классы: `PublicOfferService` (10 методов)
@@ -3926,6 +3926,9 @@
 - `tests/database/test_promo_group_recalculation_postgres.py` — Python-модуль
   Классы: нет
   Функции: `silence_per_user_admin_notifications` — Пересчёт не должен слать админам уведомление на каждого человека., `no_background_recalculation` — CRUD групп ставит пересчёт в фон — здесь пересчёт вызывается руками., `test_recalculation_moves_everyone_to_the_group_their_spending_earned`, `test_raised_threshold_moves_user_down_to_the_group_he_still_earns`, `test_without_auto_groups_nothing_is_checked`
+- `tests/database/test_promocode_panel_failure_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_trial_provisioning_failure_releases_usage_and_allows_retry`, `test_existing_subscription_promo_survives_panel_rollback`, `test_failed_trial_cleanup_waits_for_concurrent_paid_conversion`, `test_trial_compensation_preserves_another_users_committed_activation`
 - `tests/database/test_quick_tariff_renewal_postgres.py` — Python-модуль
   Классы: `QuickRenewalPanel` (1 методов)
   Функции: `checkout`, `test_quick_renewal_charges_tariff_and_preserves_paid_parameters`, `test_insufficient_balance_cart_retains_tariff_and_subscription`, `test_stale_simple_checkout_does_not_sell_classic_parameters_to_tariff`, `test_quick_tariff_renewal_price_variants`, `test_quick_tariff_renewal_rejects_unsupported_checkout_before_charge`, `test_quick_tariff_renewal_rolls_back_debit_and_discount_when_ledger_fails`, `test_saved_quick_renewal_cannot_switch_tariff_or_leave_unrecorded_charge`, `test_saved_tariff_renewal_preserves_addons_bought_after_cart`, `test_quick_renewal_reloads_devices_after_waiting_for_concurrent_change`, `test_registered_simple_callback_uses_tariff_renewal`
