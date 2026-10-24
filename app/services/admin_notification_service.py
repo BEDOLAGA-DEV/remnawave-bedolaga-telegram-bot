@@ -251,13 +251,14 @@ class AdminNotificationService:
         message: str | None = None,
         extra: dict[str, Any] | None = None,
         occurred_at: datetime | None = None,
-    ) -> None:
-        """Persist subscription-related event for external dashboards."""
+    ) -> bool:
+        """Persist an event; False means callers must reload ORM data after rollback."""
 
+        user_id = user.id
         try:
             await create_subscription_event(
                 db,
-                user_id=user.id,
+                user_id=user_id,
                 event_type=event_type,
                 subscription_id=subscription.id if subscription else None,
                 transaction_id=transaction.id if transaction else None,
@@ -267,11 +268,12 @@ class AdminNotificationService:
                 occurred_at=occurred_at,
                 extra=extra or None,
             )
+            return True
         except Exception:
             logger.error(
                 'Не удалось сохранить событие подписки для пользователя',
                 event_type=event_type,
-                getattr=getattr(user, 'id', 'unknown'),
+                user_id=user_id,
                 exc_info=True,
             )
 
@@ -280,9 +282,10 @@ class AdminNotificationService:
             except Exception:
                 logger.error(
                     'Не удалось выполнить rollback после ошибки события подписки пользователя',
-                    getattr=getattr(user, 'id', 'unknown'),
+                    user_id=user_id,
                     exc_info=True,
                 )
+            return False
 
     def _format_promo_group_discounts(self, promo_group: PromoGroup) -> list[str]:
         discount_lines: list[str] = []
@@ -875,8 +878,12 @@ class AdminNotificationService:
         logger.info('Начинаем отправку уведомления о пополнении баланса')
 
         if db:
+            # Failed flush expires even primary keys. Keep scalar identities for
+            # logging/reload before recording the optional notification event.
+            user_id = user.id
+            transaction_id = transaction.id
             try:
-                await self._record_subscription_event(
+                recorded = await self._record_subscription_event(
                     db,
                     event_type='balance_topup',
                     user=user,
@@ -897,9 +904,37 @@ class AdminNotificationService:
             except Exception:
                 logger.error(
                     'Не удалось сохранить событие пополнения баланса пользователя',
-                    getattr=getattr(user, 'id', 'unknown'),
+                    user_id=user_id,
                     exc_info=True,
                 )
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.error('Не удалось откатить сессию уведомления о пополнении', user_id=user_id, exc_info=True)
+                    return False
+                recorded = False
+
+            if recorded is False:
+                try:
+                    user = await get_user_by_id(db, user_id)
+                    transaction = await get_transaction_by_id(db, transaction_id)
+                    if user is None or transaction is None:
+                        logger.warning(
+                            'Данные уведомления о пополнении отсутствуют после rollback',
+                            user_id=user_id,
+                            transaction_id=transaction_id,
+                        )
+                        return False
+                    subscription = getattr(user, 'subscription', None)
+                    promo_group = await self._get_user_promo_group(db, user)
+                except Exception:
+                    logger.error(
+                        'Ошибка повторной загрузки данных уведомления после rollback',
+                        user_id=user_id,
+                        transaction_id=transaction_id,
+                        exc_info=True,
+                    )
+                    return False
 
         if not self._is_enabled():
             return False
