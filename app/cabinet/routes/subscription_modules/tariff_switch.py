@@ -247,6 +247,9 @@ async def switch_tariff(
                 detail='You already have an active subscription for the target tariff',
             )
 
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
     # Lock subscription row to prevent concurrent tariff switches
     locked_result = await db.execute(
         select(Subscription)
@@ -330,11 +333,6 @@ async def switch_tariff(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Tariff not available',
         )
-
-    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
-    from app.database.crud.user import lock_user_for_pricing
-
-    user = await lock_user_for_pricing(db, user.id)
 
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo

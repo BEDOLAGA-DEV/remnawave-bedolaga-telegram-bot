@@ -55,6 +55,7 @@ from app.external.remnawave_api import (
     is_user_not_found_error,
 )
 from app.localization.texts import get_texts
+from app.services.autopay_guard import lock_autopay_target
 from app.services.autopay_period import resolve_autopay_period_candidate
 from app.services.grace_access_runtime import update_panel_user_grace_safe
 from app.services.notification_delivery_service import (
@@ -1651,26 +1652,16 @@ class MonitoringService:
             # MissingGreenlet при sync-lazy-load, который SQLAlchemy 2.0 async
             # session не поддерживает (напр. lock_user_for_pricing c
             # populate_existing=True разгружает Subscription.user backref).
-            autopay_pairs: list[tuple[int, int]] = [(s.id, s.user_id) for s in autopay_subscriptions]
+            autopay_pairs = [(s.id, s.user_id, s.end_date) for s in autopay_subscriptions]
 
-            for sub_id_local, sub_user_id_local in autopay_pairs:
+            for sub_id_local, sub_user_id_local, expected_end_date in autopay_pairs:
                 try:
-                    # Refetch subscription с eager load user/tariff —
-                    # никаких lazy access по ходу итерации.
-                    refetch_result = await db.execute(
-                        select(Subscription)
-                        .options(
-                            selectinload(Subscription.user).options(
-                                selectinload(User.promo_group),
-                                selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
-                            ),
-                            selectinload(Subscription.tariff),
-                        )
-                        .where(Subscription.id == sub_id_local)
+                    target = await lock_autopay_target(
+                        db, sub_user_id_local, sub_id_local, expected_end_date=expected_end_date
                     )
-                    subscription = refetch_result.scalar_one_or_none()
-                    if subscription is None:
+                    if target is None:
                         continue
+                    user, subscription = target
 
                     from app.database.crud.subscription import is_recently_updated_by_webhook
 
@@ -1679,10 +1670,6 @@ class MonitoringService:
                             'Пропуск автоплатежа подписки : обновлена вебхуком недавно',
                             subscription_id=subscription.id,
                         )
-                        continue
-
-                    user = subscription.user
-                    if not user:
                         continue
 
                     user_identifier = user.telegram_id or f'email:{user.id}'
@@ -1705,10 +1692,7 @@ class MonitoringService:
                     )
 
                     try:
-                        from app.database.crud.user import lock_user_for_pricing
                         from app.services.pricing_engine import pricing_engine
-
-                        user = await lock_user_for_pricing(db, user.id)
 
                         pricing = await pricing_engine.calculate_renewal_price(
                             db,
@@ -1759,109 +1743,75 @@ class MonitoringService:
                             'Автопродление подписки',
                             consume_promo_offer=promo_discount_percent > 0,
                             mark_as_paid_subscription=True,
+                            commit=False,
                         )
 
                         if success:
-                            # subtract_user_balance мог оставить сессию в expired state
-                            # (напр. rollback внутри log_promo_offer_action при consume_promo_offer).
-                            # Перезагружаем subscription с eager-загрузкой user/tariff, чтобы
-                            # избежать MissingGreenlet на последующих обращениях к subscription.*
-                            refetch_result = await db.execute(
-                                select(Subscription)
-                                .options(
-                                    selectinload(Subscription.user),
-                                    selectinload(Subscription.tariff),
-                                )
-                                .where(Subscription.id == subscription.id)
-                            )
-                            refreshed_subscription = refetch_result.scalar_one_or_none()
-                            if refreshed_subscription is None:
-                                logger.warning(
-                                    'Подписка пропала после списания — пропускаем шаги продления',
-                                    subscription_id=subscription.id,
-                                    user_id=user.id,
-                                )
-                                processed_count += 1
-                                self._notified_users.add(autopay_key)
-                                continue
-                            subscription = refreshed_subscription
+                            from app.database.crud.transaction import create_transaction, emit_transaction_side_effects
+                            from app.database.models import PaymentMethod, TransactionType
 
-                            # extend_subscription сам обработает EXPIRED→ACTIVE переход
-                            # (проверяет status + end_date для определения was_expired)
-                            if subscription.status == SubscriptionStatus.EXPIRED.value:
-                                logger.info(
-                                    '🔄 Autopay: продление EXPIRED подписки (восстановление)',
-                                    subscription_id=subscription.id,
-                                    user_id=user.id,
-                                )
                             old_end_date = subscription.end_date
+                            await extend_subscription(db, subscription, autopay_period, commit=False)
+                            description = f'Автопродление подписки на {autopay_period} дней'
+                            transaction = await create_transaction(
+                                db=db,
+                                user_id=user.id,
+                                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                                amount_kopeks=charge_amount,
+                                description=description,
+                                payment_method=PaymentMethod.BALANCE,
+                                commit=False,
+                            )
+                            # Debit, expiry and ledger become durable together. No
+                            # other worker can charge this due cycle in between.
+                            await db.commit()
+                            await emit_transaction_side_effects(
+                                db,
+                                transaction,
+                                amount_kopeks=charge_amount,
+                                user_id=sub_user_id_local,
+                                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                                payment_method=PaymentMethod.BALANCE,
+                                description=description,
+                            )
                             try:
-                                await extend_subscription(db, subscription, autopay_period)
-                            except Exception as extend_exc:
-                                # Баланс уже списан и закоммичен в subtract_user_balance выше.
-                                # Само продление упало → компенсирующий возврат, иначе деньги
-                                # пропадают без продления (как и делает _auto_extend_subscription).
-                                logger.error(
-                                    '🔴 Автопродление: extend_subscription упал — возвращаю списанное',
-                                    user_id=user.id,
-                                    subscription_id=subscription.id,
-                                    exc=extend_exc,
-                                )
-                                try:
-                                    from app.database.crud.user import add_user_balance
-                                    from app.database.models import TransactionType as _TxType
+                                from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
 
-                                    await add_user_balance(
-                                        db,
-                                        user,
-                                        charge_amount,
-                                        'Возврат: автопродление не удалось',
-                                        transaction_type=_TxType.REFUND,
-                                        create_transaction=True,
-                                    )
-                                except Exception as refund_exc:
-                                    logger.critical(
-                                        '🔴🔴 Автопродление: НЕ УДАЛОСЬ вернуть списанное — нужно ручное вмешательство',
-                                        user_id=user.id,
-                                        charge_amount=charge_amount,
-                                        exc=refund_exc,
-                                    )
-                                failed_count += 1
-                                continue
+                                await shift_lava_next_charge_after_manual_extension(db, sub_id_local, autopay_period)
+                            except Exception as lava_error:
+                                logger.warning('Could not shift Lava charge after autopay', error=lava_error)
 
-                            # Синк панели — лучшее-усилие: продление уже в БД, при сбое не возвращаем,
-                            # а полагаемся на очередь повтора синка.
+                            await db.refresh(user)
+                            await db.refresh(subscription)
                             try:
-                                await self.subscription_service.update_remnawave_user(
+                                result = await self.subscription_service.update_remnawave_user(
                                     db,
                                     subscription,
                                     reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
                                     reset_reason='автопродление подписки',
                                 )
                             except Exception as sync_exc:
+                                result = None
                                 logger.error(
-                                    'Автопродление: ошибка синка RemnaWave (продление уже применено в БД)',
-                                    user_id=user.id,
-                                    subscription_id=subscription.id,
-                                    exc=sync_exc,
+                                    'Autopay panel sync failed after commit',
+                                    subscription_id=sub_id_local,
+                                    error=sync_exc,
                                 )
+                            # Panel service may rollback and expire ORM even when
+                            # returning None. Money and ledger were committed above.
+                            await db.refresh(user)
+                            await db.refresh(subscription)
+                            await db.refresh(transaction)
+                            if result is None:
+                                from app.services.remnawave_retry_queue import remnawave_retry_queue
 
-                            # Создаём транзакцию, чтобы автопродление было видно в статистике и карточке пользователя
-                            try:
-                                from app.database.crud.transaction import create_transaction
-                                from app.database.models import PaymentMethod, TransactionType
-
-                                transaction = await create_transaction(
-                                    db=db,
-                                    user_id=user.id,
-                                    type=TransactionType.SUBSCRIPTION_PAYMENT,
-                                    amount_kopeks=charge_amount,
-                                    description=f'Автопродление подписки на {autopay_period} дней',
-                                    payment_method=PaymentMethod.BALANCE,
+                                remnawave_retry_queue.enqueue(
+                                    subscription_id=sub_id_local,
+                                    user_id=sub_user_id_local,
+                                    action='update',
+                                    reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+                                    reset_reason='автопродление подписки',
                                 )
-                            except Exception as exc:
-                                logger.warning('Не удалось создать транзакцию автопродления', user_id=user.id, exc=exc)
-                                transaction = None
 
                             # Отправляем уведомление администраторам
                             try:
@@ -1947,6 +1897,9 @@ class MonitoringService:
                             rollback_error=rollback_error,
                         )
                     continue
+                finally:
+                    # Also release locks on eligibility/price/balance early exits.
+                    await db.rollback()
 
             if processed_count > 0 or failed_count > 0:
                 await self._log_monitoring_event(

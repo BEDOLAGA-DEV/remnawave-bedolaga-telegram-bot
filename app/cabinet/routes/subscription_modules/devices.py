@@ -94,6 +94,9 @@ async def purchase_devices_legacy(
     if not resolved:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No subscription found')
 
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
     result = await db.execute(
         select(Subscription)
         .where(and_(Subscription.id == resolved.id, Subscription.user_id == user.id))
@@ -161,11 +164,6 @@ async def purchase_devices_legacy(
     base_total_price = int(device_price * chargeable_devices * days_left / 30)
     if chargeable_devices > 0:
         base_total_price = max(100, base_total_price)  # Минимум 1 рубль
-
-    # Lock user row to prevent TOCTOU on promo-offer state
-    from app.database.crud.user import lock_user_for_pricing
-
-    user = await lock_user_for_pricing(db, user.id)
 
     # Apply discount from promo group
     discount_result = _apply_addon_discount(user, 'devices', base_total_price, days_left)
@@ -251,6 +249,7 @@ async def purchase_devices_legacy(
 
     # Re-lock subscription after subtract_user_balance committed (which released all locks).
     # Re-validate max device limit to prevent concurrent purchases exceeding the limit.
+    user = await lock_user_for_pricing(db, user.id)
     relock_result = await db.execute(
         select(Subscription)
         .where(Subscription.id == subscription.id)
@@ -360,6 +359,9 @@ async def purchase_devices(
         if not resolved:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='У вас нет активной подписки')
 
+        from app.database.crud.user import lock_user_for_pricing
+
+        user = await lock_user_for_pricing(db, user.id)
         result = await db.execute(
             select(Subscription)
             .where(and_(Subscription.id == resolved.id, Subscription.user_id == user.id))
@@ -446,11 +448,6 @@ async def purchase_devices(
         if chargeable_devices > 0:
             base_price_prorated = max(100, base_price_prorated)  # Minimum 1 ruble
 
-        # Lock user BEFORE discount computation to prevent TOCTOU on promo group
-        from app.database.crud.user import lock_user_for_pricing
-
-        user = await lock_user_for_pricing(db, user.id)
-
         # Apply discount from promo group
         period_hint_days = days_left
         discount_result = _apply_addon_discount(user, 'devices', base_price_prorated, period_hint_days)
@@ -528,6 +525,7 @@ async def purchase_devices(
 
         # Re-lock subscription after subtract_user_balance committed (which released all locks).
         # Re-validate max device limit to prevent concurrent purchases exceeding the limit.
+        user = await lock_user_for_pricing(db, user.id)
         relock_result = await db.execute(
             select(Subscription)
             .where(Subscription.id == subscription.id)

@@ -1652,6 +1652,8 @@ async def _auto_add_devices(
         )
         return False
 
+    user = await lock_user_for_pricing(db, user.id)
+
     # Проверяем подписку (with lock to prevent concurrent device modifications)
     _cart_sub_id_devices = _safe_int(cart_data.get('subscription_id'))
     if settings.is_multi_tariff_enabled() and _cart_sub_id_devices:
@@ -1724,9 +1726,6 @@ async def _auto_add_devices(
         await _delete_cart_for_subscription(user.id, cart_data)
         return False
 
-    # Lock user BEFORE price computation to prevent TOCTOU on promo-offer/group discount
-    user = await lock_user_for_pricing(db, user.id)
-
     # Recompute price fresh under lock (pricing config may have changed since cart was saved)
     devices_price_per_month = devices_to_add * tariff_device_price
     days_left = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
@@ -1789,6 +1788,7 @@ async def _auto_add_devices(
         return False
 
     # Re-lock subscription after subtract_user_balance committed (released locks)
+    user = await lock_user_for_pricing(db, user.id)
     relock_result = await db.execute(
         select(Subscription)
         .where(Subscription.id == subscription.id)
@@ -2320,6 +2320,22 @@ async def try_auto_extend_expired_after_topup(
     *,
     bot: Bot | None = None,
 ) -> bool:
+    """Renew an opted-in expired subscription; release billing locks on abort."""
+    try:
+        return await _try_auto_extend_expired_after_topup(db, user, bot=bot)
+    except BaseException:
+        # Cancellation is not Exception. An interrupted request must not leave
+        # a partial debit or locks in the caller's still-open session.
+        await db.rollback()
+        raise
+
+
+async def _try_auto_extend_expired_after_topup(
+    db: AsyncSession,
+    user: User,
+    *,
+    bot: Bot | None = None,
+) -> bool:
     """Try to auto-extend an expired subscription after balance top-up.
 
     Unlike cart-based auto-purchase, this works without a saved cart.
@@ -2409,15 +2425,25 @@ async def try_auto_extend_expired_after_topup(
             tariff_name=tariff_name_for_label,
         )
         return False
+    from app.services.autopay_guard import lock_autopay_target
+
+    target = await lock_autopay_target(
+        db,
+        user.id,
+        subscription.id,
+        expected_end_date=subscription.end_date,
+        expired_only=True,
+    )
+    if target is None:
+        return False
+    user, subscription = target
+
+    tariff = subscription.tariff
+    tariff_name_for_label = tariff.name if tariff else None
     if tariff:
         period_days = tariff.get_shortest_period() or 30
     else:
         period_days = 30
-
-    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
-    from app.database.crud.user import lock_user_for_pricing
-
-    user = await lock_user_for_pricing(db, user.id)
 
     # Calculate renewal price via PricingEngine
     subscription_service = SubscriptionService()
@@ -2436,6 +2462,7 @@ async def try_auto_extend_expired_after_topup(
             error=error,
             exc_info=True,
         )
+        await db.commit()
         return False
 
     logger.info(
@@ -2453,6 +2480,7 @@ async def try_auto_extend_expired_after_topup(
             format_user_id=_format_user_id(user),
             renewal_cost=renewal_cost,
         )
+        await db.commit()
         return False
 
     # Check balance (skip for 100% discount)
@@ -2463,37 +2491,15 @@ async def try_auto_extend_expired_after_topup(
             balance_kopeks=user.balance_kopeks,
             renewal_cost=renewal_cost,
         )
+        await db.commit()
         return False
-
-    # Race condition guard (per-subscription): skip if THIS subscription was
-    # modified in the last 60 seconds (indicates a concurrent renewal just landed).
-    try:
-        await db.refresh(subscription, attribute_names=['updated_at'])
-        if subscription.updated_at and (datetime.now(UTC) - subscription.updated_at) < timedelta(seconds=60):
-            logger.info(
-                '🔄 Автопродление expired: пропуск — подписка обновлена секунд назад',
-                format_user_id=_format_user_id(user),
-                subscription_id=subscription.id,
-                total_seconds=(datetime.now(UTC) - subscription.updated_at).total_seconds(),
-            )
-            return False
-    except Exception as check_error:
-        logger.warning(
-            '🔄 Автопродление expired: ошибка проверки updated_at подписки',
-            format_user_id=_format_user_id(user),
-            check_error=check_error,
-        )
 
     # Derive consume_promo_offer from PricingEngine result (user already locked above)
     consume_promo_offer = pricing.promo_offer_discount > 0
 
-    # Save promo offer state before deduction (for restore on failure)
-    saved_promo_percent = int(getattr(user, 'promo_offer_discount_percent', 0) or 0) if consume_promo_offer else 0
-    saved_promo_source = getattr(user, 'promo_offer_discount_source', None) if consume_promo_offer else None
-    saved_promo_expires = getattr(user, 'promo_offer_discount_expires_at', None) if consume_promo_offer else None
-
-    # Deduct balance
+    user_id, subscription_id = user.id, subscription.id
     description = f'Автопродление истёкшей подписки на {format_days_declension(period_days)}'
+    old_end_date = subscription.end_date
     try:
         deducted = await subtract_user_balance(
             db,
@@ -2502,120 +2508,75 @@ async def try_auto_extend_expired_after_topup(
             description,
             consume_promo_offer=consume_promo_offer,
             mark_as_paid_subscription=True,
+            commit=False,
         )
-    except Exception as error:
-        logger.error(
-            '❌ Автопродление expired: ошибка списания средств',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        return False
-
-    if not deducted:
-        logger.warning(
-            '❌ Автопродление expired: списание средств не выполнено',
-            format_user_id=_format_user_id(user),
-        )
-        return False
-
-    old_end_date = subscription.end_date
-    was_trial = subscription.is_trial
-
-    # Extend subscription
-    try:
-        updated_subscription = await extend_subscription(db, subscription, period_days)
-
-        # Convert trial to paid if needed
-        if was_trial and subscription.is_trial:
-            subscription.is_trial = False
-            subscription.status = 'active'
-            await db.commit()
-            logger.info(
-                '✅ Триал конвертирован в платную подписку (автопродление expired)',
-                subscription_id=subscription.id,
-                format_user_id=_format_user_id(user),
-            )
-    except Exception as error:
-        logger.error(
-            '❌ Автопродление expired: не удалось продлить подписку',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
-        )
-        await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            await add_user_balance(
-                db,
-                user,
-                renewal_cost,
-                'Возврат: ошибка автопродления истёкшей подписки',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-            )
-            # Restore promo offer if consumed
-            if consume_promo_offer and saved_promo_percent > 0:
-                user.promo_offer_discount_percent = saved_promo_percent
-                user.promo_offer_discount_source = saved_promo_source
-                user.promo_offer_discount_expires_at = saved_promo_expires
-                await db.commit()
-            logger.info(
-                '💰 Автопродление expired: возврат средств после ошибки продления',
-                format_user_id=_format_user_id(user),
-                refund_kopeks=renewal_cost,
-            )
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: Автопродление expired: не удалось вернуть средства',
-                format_user_id=_format_user_id(user),
-                price_kopeks=renewal_cost,
-                refund_error=refund_error,
-            )
-        return False
-
-    # Create transaction record
-    transaction = None
-    try:
+        if not deducted:
+            await db.rollback()
+            await db.refresh(user)
+            return False
+        updated_subscription = await extend_subscription(db, subscription, period_days, commit=False)
         transaction = await create_transaction(
             db=db,
-            user_id=user.id,
+            user_id=user_id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=renewal_cost,
             description=description,
+            commit=False,
         )
+        await db.commit()
     except Exception as error:
+        await db.rollback()
+        await db.refresh(user)
         logger.error(
-            '⚠️ Автопродление expired: не удалось зафиксировать транзакцию',
-            format_user_id=_format_user_id(user),
-            error=error,
-            exc_info=True,
+            'Expired autopay rolled back before commit', user_id=user_id, subscription_id=subscription_id, error=error
         )
+        return False
 
-    # Update RemnaWave
+    from app.database.crud.transaction import emit_transaction_side_effects
+    from app.database.models import PaymentMethod
+
+    await emit_transaction_side_effects(
+        db,
+        transaction,
+        user_id=user_id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=renewal_cost,
+        payment_method=PaymentMethod.BALANCE,
+        description=description,
+    )
     try:
-        await subscription_service.update_remnawave_user(
+        from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
+
+        await shift_lava_next_charge_after_manual_extension(db, subscription_id, period_days)
+    except Exception as error:
+        logger.warning('Could not shift Lava charge after expired autopay', error=error)
+    await db.refresh(user)
+    await db.refresh(updated_subscription)
+
+    # Panel failures cannot undo committed billing; pending expiry is durable.
+    try:
+        panel_result = await subscription_service.update_remnawave_user(
             db,
             updated_subscription,
             reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
             reset_reason='автопродление истёкшей подписки',
         )
     except Exception as error:
-        logger.error(
-            '⚠️ Автопродление expired: не удалось обновить RemnaWave',
-            format_user_id=_format_user_id(user),
-            error=error,
-        )
+        panel_result = None
+        logger.error('Expired autopay panel sync failed after commit', user_id=user_id, error=error)
+    await db.refresh(user)
+    await db.refresh(updated_subscription)
+    await db.refresh(transaction)
+    if panel_result is None:
         from app.services.remnawave_retry_queue import remnawave_retry_queue
 
-        if hasattr(updated_subscription, 'id') and hasattr(updated_subscription, 'user_id'):
-            remnawave_retry_queue.enqueue(
-                subscription_id=updated_subscription.id,
-                user_id=updated_subscription.user_id,
-                action='update',
-            )
+        remnawave_retry_queue.enqueue(
+            subscription_id=subscription_id,
+            user_id=user_id,
+            action='update',
+            reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+            reset_reason='автопродление истёкшей подписки',
+        )
 
     texts = get_texts(getattr(user, 'language', 'ru'))
     period_label = format_period_description(period_days, getattr(user, 'language', 'ru'))

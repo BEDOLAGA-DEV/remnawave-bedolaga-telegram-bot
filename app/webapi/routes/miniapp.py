@@ -6212,6 +6212,9 @@ async def update_subscription_devices_endpoint(
             },
         )
 
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
     # Re-read subscription under row lock to prevent concurrent device purchases exceeding limit
     locked_result = await db.execute(
         select(Subscription)
@@ -6244,11 +6247,6 @@ async def update_subscription_devices_endpoint(
         price_per_month = chargeable_diff * tariff_device_price
         days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
         period_hint_days = days_remaining
-
-        # Lock user BEFORE price computation to prevent TOCTOU on promo discount
-        from app.database.crud.user import lock_user_for_pricing
-
-        user = await lock_user_for_pricing(db, user.id)
 
         devices_discount = PricingEngine.get_addon_discount_percent(user, 'devices', period_hint_days)
 
@@ -6298,6 +6296,7 @@ async def update_subscription_devices_endpoint(
     if price_to_charge > 0:
         # Re-lock subscription after subtract_user_balance committed (which released all locks).
         # Re-validate to prevent concurrent device purchases from exceeding the limit or double-charging.
+        user = await lock_user_for_pricing(db, user.id)
         relock_result = await db.execute(
             select(Subscription)
             .where(Subscription.id == subscription.id)
@@ -7048,6 +7047,9 @@ async def switch_tariff_endpoint(
             detail={'code': 'no_subscription', 'message': 'No active subscription with tariff'},
         )
 
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
     # Lock subscription row to prevent concurrent switch race condition
     locked_result = await db.execute(
         select(Subscription)
@@ -7114,11 +7116,6 @@ async def switch_tariff_endpoint(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={'code': 'tariff_not_available', 'message': 'Tariff not available'},
         )
-
-    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
-    from app.database.crud.user import lock_user_for_pricing
-
-    user = await lock_user_for_pricing(db, user.id)
 
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo

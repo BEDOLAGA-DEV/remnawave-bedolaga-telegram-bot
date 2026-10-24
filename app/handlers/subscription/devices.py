@@ -654,6 +654,7 @@ async def execute_change_devices(
             )
 
         # Re-lock subscription after subtract_user_balance committed (released all locks)
+        db_user = await lock_user_for_pricing(db, db_user.id)
         relock_result = await db.execute(
             select(Subscription)
             .where(Subscription.id == subscription.id)
@@ -1653,6 +1654,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             return
 
         # Re-lock subscription after subtract_user_balance committed (released all locks)
+        db_user = await lock_user_for_pricing(db, db_user.id)
         relock_result = await db.execute(
             select(Subscription)
             .where(Subscription.id == subscription.id)
