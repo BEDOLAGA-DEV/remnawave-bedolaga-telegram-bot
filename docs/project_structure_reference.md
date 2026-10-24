@@ -15,6 +15,7 @@
 - `.gitignore` — файл
 - `.python-version` — файл
 - `.release-please-manifest.json` — файл
+- `AGENTS.md` — файл
 - `CHANGELOG.md` — файл
 - `CONTRIBUTING.md` — файл
 - `Dockerfile` — файл
@@ -3850,6 +3851,9 @@
 - `tests/database/test_local_day_groupings_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_sales_stats_route_groups_by_local_day`, `test_sales_stats_custom_period_groups_by_local_day`, `test_partner_and_menu_stats_group_by_local_day`, `test_landing_stats_group_by_local_day`
+- `tests/database/test_merge_deleted_webhook_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `panel`, `test_late_deleted_event_after_email_telegram_merge_preserves_paid_subscription`, `test_deleted_event_targets_only_current_identity`, `test_rotated_short_id_keeps_legacy_numeric_identity`, `test_deleted_event_resolved_before_merge_commit_cannot_clear_survivor_identity`, `test_multi_merge_keeps_both_identities_independent`
 - `tests/database/test_migration_chain.py` — Python-модуль
   Классы: нет
   Функции: `test_single_head`, `test_revision_ids_are_unique`, `test_every_revision_reaches_base` — Разрыв в down_revision оставил бы часть миграций неприменёнными.
