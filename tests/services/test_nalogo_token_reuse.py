@@ -226,6 +226,39 @@ async def test_manual_confirmation_without_uuid_blocks_receipt_and_stale_queue(a
     assert state.requests == []
 
 
+@pytest.mark.parametrize('queued', [False, 'legacy', 'current'])
+async def test_manual_retry_preserves_original_operation_time(api, tmp_path, receipt_cache, queued):
+    from app.services.nalogo_queue_service import NalogoQueueService
+
+    url, state = api
+    cache, payment_id = receipt_cache
+    storage = tmp_path / 'tokens.json'
+    storage.write_text(json.dumps(token()))
+    instance = service(url, storage)
+    state.income_status = 503
+    operation_time = datetime(2026, 9, 10, 12, 30, tzinfo=UTC)
+    if queued:
+        # Legacy queued records already have their original creation time.
+        await instance._queue_receipt('Local service', 1, 1, None, payment_id, None, 100, operation_time=operation_time)
+        from app.services.nalogo_service import NALOGO_QUEUE_KEY
+
+        entries = await cache.lrange(NALOGO_QUEUE_KEY)
+        entries[0]['created_at'] = operation_time.isoformat()
+        if queued == 'legacy':
+            entries[0].pop('operation_time', None)
+        await cache.delete(NALOGO_QUEUE_KEY)
+        await cache.lpush(NALOGO_QUEUE_KEY, entries[0])
+        await NalogoQueueService(instance)._process_pending_receipts()
+    else:
+        await instance.create_receipt('Local service', 1, payment_id=payment_id, operation_time=operation_time)
+    state.income_status = 200
+    assert await instance.retry_pending_receipt(payment_id) == 'local-receipt'
+    bodies = [body for path, _, body in state.requests if path.endswith('/income')]
+    assert len(bodies) == 2
+    assert datetime.fromisoformat(bodies[0]['operationTime']) == operation_time
+    assert datetime.fromisoformat(bodies[1]['operationTime']) == operation_time
+
+
 async def test_failed_atomic_replace_preserves_previous_file_and_cleans_temp(tmp_path, monkeypatch, caplog):
     from app.lib.nalogo import auth
 

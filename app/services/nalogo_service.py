@@ -104,6 +104,7 @@ class NaloGoService:
         telegram_user_id: int | None = None,
         amount_kopeks: int | None = None,
         user_email: str | None = None,
+        operation_time: datetime | None = None,
     ) -> bool:
         """Добавить чек в очередь для отложенной отправки."""
         if payment_id:
@@ -136,6 +137,7 @@ class NaloGoService:
             'amount_kopeks': amount_kopeks,
             'user_email': user_email,
             'created_at': datetime.now(UTC).isoformat(),
+            'operation_time': (operation_time or datetime.now(UTC)).isoformat(),
             'attempts': 0,
         }
         success = await cache.lpush(NALOGO_QUEUE_KEY, receipt_data)
@@ -164,6 +166,7 @@ class NaloGoService:
         amount_kopeks: int | None,
         error_message: str,
         user_email: str | None = None,
+        operation_time: datetime | None = None,
     ) -> bool:
         """Сохранить чек в очередь ожидающих проверки.
 
@@ -184,6 +187,7 @@ class NaloGoService:
             'amount_kopeks': amount_kopeks,
             'user_email': user_email,
             'created_at': datetime.now(UTC).isoformat(),
+            'operation_time': (operation_time or datetime.now(UTC)).isoformat(),
             'error': error_message,
             'status': 'pending_verification',
         }
@@ -274,6 +278,17 @@ class NaloGoService:
             logger.warning('Чек не найден в очереди проверки', payment_id=payment_id)
             return None
 
+        operation_time = None
+        stored_time = target_receipt.get('operation_time') or target_receipt.get('created_at')
+        if stored_time:
+            try:
+                operation_time = datetime.fromisoformat(stored_time)
+                if operation_time.tzinfo is None:
+                    operation_time = operation_time.replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                logger.error('Некорректное время операции в очереди проверки', payment_id=payment_id)
+                return None
+
         # Пытаемся создать чек
         receipt_uuid = await self.create_receipt(
             name=target_receipt.get('name', ''),
@@ -286,6 +301,7 @@ class NaloGoService:
             amount_kopeks=target_receipt.get('amount_kopeks'),
             user_email=target_receipt.get('user_email'),
             allow_pending_retry=True,
+            operation_time=operation_time,
         )
 
         if receipt_uuid:
@@ -432,6 +448,9 @@ class NaloGoService:
             logger.warning('NaloGO не настроен, чек не создан')
             return None
 
+        # Keep the first attempt's operation time through auth, queue and manual retry.
+        operation_time = operation_time or datetime.now(UTC)
+
         # Защита от дублей: проверяем не был ли уже создан чек для этого payment_id
         if payment_id:
             created_key = f'nalogo:created:{payment_id}'
@@ -464,6 +483,7 @@ class NaloGoService:
                             telegram_user_id,
                             amount_kopeks,
                             user_email=user_email,
+                            operation_time=operation_time,
                         )
                     return None
         except Exception as auth_error:
@@ -484,6 +504,7 @@ class NaloGoService:
                         telegram_user_id,
                         amount_kopeks,
                         user_email=user_email,
+                        operation_time=operation_time,
                     )
             else:
                 logger.error('Ошибка аутентификации NaloGO', auth_error=sanitize_proxy_error(auth_error))
@@ -529,6 +550,7 @@ class NaloGoService:
                                 telegram_user_id,
                                 amount_kopeks,
                                 user_email=user_email,
+                                operation_time=operation_time,
                             )
                         return None
 
@@ -566,6 +588,7 @@ class NaloGoService:
                     amount_kopeks=amount_kopeks,
                     error_message=error_msg,
                     user_email=user_email,
+                    operation_time=operation_time,
                 )
             else:
                 logger.error('Ошибка создания чека в NaloGO', error=sanitize_proxy_error(error))

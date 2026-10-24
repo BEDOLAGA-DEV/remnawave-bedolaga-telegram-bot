@@ -214,7 +214,7 @@ class NalogoQueueService:
 
                 # Извлекаем время оплаты из очереди (чтобы чек был с правильным временем)
                 operation_time = None
-                created_at_str = receipt_data.get('created_at')
+                created_at_str = receipt_data.get('operation_time') or receipt_data.get('created_at')
                 if created_at_str:
                     try:
                         operation_time = isoparse(created_at_str)
