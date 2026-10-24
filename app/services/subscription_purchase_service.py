@@ -999,150 +999,214 @@ class MiniAppSubscriptionPurchaseService:
         context: PurchaseOptionsContext,
         pricing: PurchasePricingResult,
     ) -> dict[str, Any]:
-        user = context.user
-        texts = get_texts(getattr(user, 'language', None))
+        from app.database.crud.transaction import emit_transaction_side_effects
+        from app.database.crud.user import lock_user_for_pricing
 
-        # Block only if pricing is genuinely invalid (no base price configured).
-        # final_total == 0 with base_original_total > 0 means a valid 100% discount.
-        if pricing.final_total <= 0 and pricing.base_original_total <= 0:
-            raise PurchaseValidationError('Invalid total amount', code='calculation_error')
+        # All local payment state stays under User -> Subscription until one
+        # commit. Neither a failed write nor task cancellation may keep a debit.
+        try:
+            user = await lock_user_for_pricing(db, context.user.id)
+            context.user = user
+            texts = get_texts(getattr(user, 'language', None))
 
-        if pricing.final_total > 0 and user.balance_kopeks < pricing.final_total:
-            raise PurchaseBalanceError(
-                texts.t(
-                    'MINIAPP_PURCHASE_STATUS_INSUFFICIENT',
-                    'Not enough funds on balance',
-                )
-            )
+            # Block only if pricing is genuinely invalid (no base price configured).
+            # final_total == 0 with base_original_total > 0 means a valid 100% discount.
+            if pricing.final_total <= 0 and pricing.base_original_total <= 0:
+                raise PurchaseValidationError('Invalid total amount', code='calculation_error')
 
-        description = f'Покупка подписки на {pricing.selection.period.days} дней'
-        success = await subtract_user_balance(
-            db,
-            user,
-            pricing.final_total,
-            description,
-            consume_promo_offer=pricing.promo_discount_value > 0,
-            mark_as_paid_subscription=True,
-        )
-        if not success:
-            raise PurchaseBalanceError(
-                texts.t(
-                    'MINIAPP_PURCHASE_STATUS_INSUFFICIENT',
-                    'Not enough funds on balance',
-                )
-            )
-
-        await db.refresh(user)
-
-        subscription = context.subscription
-        if subscription is not None and getattr(subscription, 'id', None):
-            # Lock subscription row to prevent concurrent extension race
-            result = await db.execute(
-                select(Subscription)
-                .where(Subscription.id == subscription.id, Subscription.user_id == user.id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-            locked_sub = result.scalar_one_or_none()
-            if locked_sub is not None:
-                subscription = locked_sub
-                context.subscription = locked_sub
-            else:
-                logger.warning(
-                    'Subscription from context not found after FOR UPDATE',
-                    subscription_id=getattr(subscription, 'id', None),
-                    user_id=user.id,
-                )
-                subscription = None
-                context.subscription = None
-        else:
-            context_subscription_id: int | None = context.payload.get('subscription_id')
-            if settings.is_multi_tariff_enabled() and context_subscription_id is not None:
-                result = await db.execute(
-                    select(Subscription)
-                    .where(
-                        Subscription.user_id == user.id,
-                        Subscription.id == context_subscription_id,
+            if pricing.final_total > 0 and user.balance_kopeks < pricing.final_total:
+                raise PurchaseBalanceError(
+                    texts.t(
+                        'MINIAPP_PURCHASE_STATUS_INSUFFICIENT',
+                        'Not enough funds on balance',
                     )
-                    .with_for_update()
-                    .execution_options(populate_existing=True)
                 )
-            else:
+
+            subscription = context.subscription
+            if subscription is not None and getattr(subscription, 'id', None):
+                # Lock subscription row to prevent concurrent extension race
                 result = await db.execute(
                     select(Subscription)
-                    .where(Subscription.user_id == user.id)
-                    .order_by(Subscription.created_at.desc())
-                    .limit(1)
+                    .where(Subscription.id == subscription.id, Subscription.user_id == user.id)
                     .with_for_update()
                     .execution_options(populate_existing=True)
                 )
-            subscription = result.scalar_one_or_none()
-            if subscription is not None:
-                context.subscription = subscription
-
-        was_trial_conversion = False
-        now = datetime.now(UTC)
-
-        if subscription:
-            # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
-            from app.services.grace_access_echo import undo_grace_overlay_echo
-
-            await undo_grace_overlay_echo(db, subscription)
-            bonus_period = timedelta()
-            if subscription.is_trial:
-                was_trial_conversion = True
-                trial_duration = (now - subscription.start_date).days
-                if should_carry_trial_remaining_days() and subscription.end_date:
-                    remaining = subscription.end_date - now
-                    if remaining.total_seconds() > 0:
-                        bonus_period = remaining
-                try:
-                    await create_subscription_conversion(
-                        db=db,
+                locked_sub = result.scalar_one_or_none()
+                if locked_sub is not None:
+                    subscription = locked_sub
+                    context.subscription = locked_sub
+                else:
+                    logger.warning(
+                        'Subscription from context not found after FOR UPDATE',
+                        subscription_id=getattr(subscription, 'id', None),
                         user_id=user.id,
-                        trial_duration_days=trial_duration,
-                        payment_method='balance',
-                        first_payment_amount_kopeks=pricing.final_total,
-                        first_paid_period_days=pricing.selection.period.days,
                     )
-                except Exception as conversion_error:  # pragma: no cover - defensive logging
-                    logger.error('Failed to create subscription conversion record', conversion_error=conversion_error)
-
-            subscription.is_trial = False
-            if was_trial_conversion:
-                # is_trial сбрасывается и для НЕ-триалов (обычное продление), поэтому
-                # дефолт автоплатежа вешаем на флаг конверсии, иначе продление платной
-                # подписки затирало бы выбор пользователя.
-                apply_trial_conversion_defaults(subscription)
-            subscription.status = SubscriptionStatus.ACTIVE.value
-            subscription.traffic_limit_gb = pricing.selection.traffic_value
-            subscription.device_limit = pricing.selection.devices
-            subscription.connected_squads = pricing.selection.servers
-
-            extension_base_date = now
-            if not was_trial_conversion and subscription.end_date and subscription.end_date > now:
-                extension_base_date = subscription.end_date
+                    subscription = None
+                    context.subscription = None
             else:
-                subscription.start_date = now
+                context_subscription_id: int | None = context.payload.get('subscription_id')
+                if settings.is_multi_tariff_enabled() and context_subscription_id is not None:
+                    result = await db.execute(
+                        select(Subscription)
+                        .where(
+                            Subscription.user_id == user.id,
+                            Subscription.id == context_subscription_id,
+                        )
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                else:
+                    result = await db.execute(
+                        select(Subscription)
+                        .where(Subscription.user_id == user.id)
+                        .order_by(Subscription.created_at.desc())
+                        .limit(1)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                subscription = result.scalar_one_or_none()
+                if subscription is not None:
+                    context.subscription = subscription
 
-            subscription.end_date = extension_base_date + timedelta(days=pricing.selection.period.days) + bonus_period
-            subscription.pending_panel_expire_at = subscription.end_date
-            subscription.updated_at = now
-            subscription.traffic_used_gb = 0.0
+            description = f'Покупка подписки на {pricing.selection.period.days} дней'
+            success = await subtract_user_balance(
+                db,
+                user,
+                pricing.final_total,
+                description,
+                consume_promo_offer=pricing.promo_discount_value > 0,
+                mark_as_paid_subscription=True,
+                commit=False,
+            )
+            if not success:
+                raise PurchaseBalanceError(
+                    texts.t(
+                        'MINIAPP_PURCHASE_STATUS_INSUFFICIENT',
+                        'Not enough funds on balance',
+                    )
+                )
 
-            await db.commit()
-            await db.refresh(subscription)
-        else:
-            subscription = await create_paid_subscription(
+            was_trial_conversion = False
+            conversion_details = None
+            now = datetime.now(UTC)
+
+            if subscription:
+                # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
+                from app.services.grace_access_echo import undo_grace_overlay_echo
+
+                await undo_grace_overlay_echo(db, subscription)
+                bonus_period = timedelta()
+                if subscription.is_trial:
+                    was_trial_conversion = True
+                    trial_duration = (now - subscription.start_date).days
+                    if should_carry_trial_remaining_days() and subscription.end_date:
+                        remaining = subscription.end_date - now
+                        if remaining.total_seconds() > 0:
+                            bonus_period = remaining
+                    conversion_details = {
+                        'trial_duration_days': trial_duration,
+                        'payment_method': 'balance',
+                        'first_payment_amount_kopeks': pricing.final_total,
+                        'first_paid_period_days': pricing.selection.period.days,
+                    }
+
+                subscription.is_trial = False
+                if was_trial_conversion:
+                    # is_trial сбрасывается и для НЕ-триалов (обычное продление), поэтому
+                    # дефолт автоплатежа вешаем на флаг конверсии, иначе продление платной
+                    # подписки затирало бы выбор пользователя.
+                    apply_trial_conversion_defaults(subscription)
+                subscription.status = SubscriptionStatus.ACTIVE.value
+                subscription.traffic_limit_gb = pricing.selection.traffic_value
+                subscription.device_limit = pricing.selection.devices
+                subscription.connected_squads = pricing.selection.servers
+
+                extension_base_date = now
+                if not was_trial_conversion and subscription.end_date and subscription.end_date > now:
+                    extension_base_date = subscription.end_date
+                else:
+                    subscription.start_date = now
+
+                subscription.end_date = (
+                    extension_base_date + timedelta(days=pricing.selection.period.days) + bonus_period
+                )
+                subscription.pending_panel_expire_at = subscription.end_date
+                subscription.updated_at = now
+                subscription.traffic_used_gb = 0.0
+
+                await db.flush()
+            else:
+                subscription = await create_paid_subscription(
+                    db=db,
+                    user_id=user.id,
+                    duration_days=pricing.selection.period.days,
+                    traffic_limit_gb=pricing.selection.traffic_value,
+                    device_limit=pricing.selection.devices,
+                    connected_squads=pricing.selection.servers,
+                    update_server_counters=False,
+                    commit=False,
+                )
+
+            # Kill remaining trial subscriptions (trial = probe, dies on any paid purchase)
+            from app.database.crud.subscription import (
+                deactivate_user_trial_subscriptions,
+                decrement_subscription_server_counts,
+            )
+
+            killed_trials = await deactivate_user_trial_subscriptions(
+                db, user.id, exclude_subscription_id=subscription.id
+            )
+
+            # Add remaining trial time from OTHER killed trials (current trial already handled above)
+            if settings.TRIAL_ADD_REMAINING_DAYS_TO_PAID and killed_trials:
+                extra_seconds = 0
+                for _kt in killed_trials:
+                    if _kt.end_date and _kt.end_date > now:
+                        extra_seconds += max(0, (_kt.end_date - now).total_seconds())
+                if extra_seconds > 0:
+                    subscription.end_date = subscription.end_date + timedelta(seconds=extra_seconds)
+                    subscription.pending_panel_expire_at = subscription.end_date
+
+            transaction = await create_transaction(
                 db=db,
                 user_id=user.id,
-                duration_days=pricing.selection.period.days,
-                traffic_limit_gb=pricing.selection.traffic_value,
-                device_limit=pricing.selection.devices,
-                connected_squads=pricing.selection.servers,
-                update_server_counters=False,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=pricing.final_total,
+                description=f'Подписка на {pricing.selection.period.days} дней ({pricing.months} мес)',
+                payment_method=PaymentMethod.BALANCE,
+                commit=False,
             )
 
+            await db.commit()
+        except BaseException as error:
+            await db.rollback()
+            if isinstance(error, Exception):
+                # Callers still need the user for 402/cart responses and error
+                # logging. Cancellation must leave no open transaction at all.
+                try:
+                    await db.refresh(context.user)
+                except Exception:
+                    await db.rollback()
+            raise
+
+        # Persisted identifiers survive rollback inside panel/auxiliary helpers.
+        user_id, subscription_id = user.id, subscription.id
+        killed_trial_refs = [(trial_sub.id, trial_sub.remnawave_id) for trial_sub in killed_trials]
+        await db.refresh(user)
+        await db.refresh(subscription)
+
+        # Conversion analytics and server counters have their own committing
+        # helpers; run them only after the payment and rights are durable.
+        if conversion_details is not None:
+            try:
+                await create_subscription_conversion(db=db, user_id=user_id, **conversion_details)
+            except Exception as conversion_error:  # pragma: no cover - defensive logging
+                await db.rollback()
+                await db.refresh(user)
+                await db.refresh(subscription)
+                logger.error('Failed to create subscription conversion record', conversion_error=conversion_error)
+
+        registered_servers = False
         if pricing.server_ids:
             try:
                 await add_subscription_servers(
@@ -1151,44 +1215,41 @@ class MiniAppSubscriptionPurchaseService:
                     pricing.server_ids,
                     pricing.server_prices_for_period,
                 )
-                await add_user_to_servers(db, pricing.server_ids)
+                registered_servers = True
             except Exception as error:  # pragma: no cover - defensive logging
+                await db.rollback()
+                await db.refresh(user)
+                await db.refresh(subscription)
                 logger.error('Failed to register subscription servers', error=error)
 
-        # Kill remaining trial subscriptions (trial = probe, dies on any paid purchase)
-        from app.database.crud.subscription import (
-            deactivate_user_trial_subscriptions,
-            decrement_subscription_server_counts,
-        )
-
-        killed_trials = await deactivate_user_trial_subscriptions(db, user.id, exclude_subscription_id=subscription.id)
-
-        # Add remaining trial time from OTHER killed trials (current trial already handled above)
-        if settings.TRIAL_ADD_REMAINING_DAYS_TO_PAID and killed_trials:
-            extra_seconds = 0
-            for _kt in killed_trials:
-                if _kt.end_date and _kt.end_date > now:
-                    extra_seconds += max(0, (_kt.end_date - now).total_seconds())
-            if extra_seconds > 0:
-                subscription.end_date = subscription.end_date + timedelta(seconds=extra_seconds)
-                subscription.pending_panel_expire_at = subscription.end_date
+        # Counter helpers only flush. Commit their local work before ANY panel
+        # call, whose rollback must not discard paid/trial server accounting.
+        if registered_servers or killed_trials:
+            try:
+                if registered_servers:
+                    await add_user_to_servers(db, pricing.server_ids)
+                for trial_sub in killed_trials:
+                    await decrement_subscription_server_counts(db, trial_sub)
                 await db.commit()
+            except Exception as counter_error:
+                await db.rollback()
+                await db.refresh(user)
                 await db.refresh(subscription)
+                logger.warning('Failed to update purchase server counters', error=counter_error)
 
         subscription_service = SubscriptionService()
 
         # Disable killed trials on RemnaWave panel
-        for trial_sub in killed_trials:
+        for trial_id, trial_panel_id in killed_trial_refs:
             try:
-                _trial_panel_id = trial_sub.remnawave_id
-                if _trial_panel_id is None and not settings.is_multi_tariff_enabled():
-                    _trial_panel_id = getattr(user, 'remnawave_id', None)
-                if _trial_panel_id is not None:
-                    await subscription_service.disable_remnawave_user(_trial_panel_id)
-                await decrement_subscription_server_counts(db, trial_sub)
+                if trial_panel_id is None and not settings.is_multi_tariff_enabled():
+                    trial_panel_id = getattr(user, 'remnawave_id', None)
+                if trial_panel_id is not None:
+                    await subscription_service.disable_remnawave_user(trial_panel_id)
             except Exception as trial_err:
-                logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_sub.id)
+                logger.warning('Failed to disable trial on RemnaWave', error=trial_err, trial_id=trial_id)
 
+        panel_action = 'update'
         try:
             # In multi-tariff mode, each subscription has its own panel user.
             # A new subscription has no remnawave_id yet, so always CREATE.
@@ -1197,41 +1258,54 @@ class MiniAppSubscriptionPurchaseService:
                 _should_create = subscription.remnawave_id is None
             else:
                 _should_create = getattr(user, 'remnawave_id', None) is None
+            panel_action = 'create' if _should_create else 'update'
 
             if _should_create:
-                await subscription_service.create_remnawave_user(
+                panel_user = await subscription_service.create_remnawave_user(
                     db,
                     subscription,
                     reset_traffic=True,
                     reset_reason='miniapp purchase',
                 )
             else:
-                await subscription_service.update_remnawave_user(
+                panel_user = await subscription_service.update_remnawave_user(
                     db,
                     subscription,
                     reset_traffic=True,
                     reset_reason='miniapp purchase',
                     sync_squads=True,
                 )
+            if panel_user is None:
+                raise RuntimeError('RemnaWave did not confirm the purchased subscription')
         except Exception as remnawave_error:  # pragma: no cover - defensive logging
             logger.error('Failed to sync subscription with RemnaWave', remnawave_error=remnawave_error)
+            await db.rollback()
             from app.services.remnawave_retry_queue import remnawave_retry_queue
 
             remnawave_retry_queue.enqueue(
-                subscription_id=subscription.id,
-                user_id=user.id,
-                action='create' if getattr(subscription, 'remnawave_id', None) is None else 'update',
+                subscription_id=subscription_id,
+                user_id=user_id,
+                action=panel_action,
+                reset_traffic=True,
+                reset_reason='miniapp purchase',
             )
 
-        transaction = await create_transaction(
-            db=db,
-            user_id=user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=pricing.final_total,
-            description=f'Подписка на {pricing.selection.period.days} дней ({pricing.months} мес)',
-            payment_method=PaymentMethod.BALANCE,
-        )
+        await db.refresh(transaction)
+        try:
+            await emit_transaction_side_effects(
+                db,
+                transaction,
+                user_id=user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=pricing.final_total,
+                description=f'Подписка на {pricing.selection.period.days} дней ({pricing.months} мес)',
+                payment_method=PaymentMethod.BALANCE,
+            )
+        except Exception as event_error:
+            await db.rollback()
+            logger.warning('Failed to emit purchase transaction side effects', error=event_error)
 
+        await db.refresh(transaction)
         await db.refresh(user)
         await db.refresh(subscription)
 

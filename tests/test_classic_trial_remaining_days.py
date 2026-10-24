@@ -74,12 +74,16 @@ async def test_classic_purchase_counts_trial_remainder_once(monkeypatch, flow, c
         monkeypatch.setattr(m, 'datetime', FrozenDateTime)
         monkeypatch.setattr(m, 'subtract_user_balance', AsyncMock(return_value=True))
         monkeypatch.setattr(m, 'create_subscription_conversion', AsyncMock())
-        db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: subscription)
+        monkeypatch.setattr(m, 'create_transaction', AsyncMock())
+        db.execute.return_value = SimpleNamespace(
+            scalar_one_or_none=lambda: subscription, scalars=lambda: SimpleNamespace(all=list)
+        )
         context = SimpleNamespace(user=user, subscription=subscription)
         pricing = SimpleNamespace(
             final_total=1000,
             base_original_total=1000,
             promo_discount_value=0,
+            months=1,
             selection=SimpleNamespace(
                 period=SimpleNamespace(days=30), traffic_value=100, devices=2, servers=['test-squad']
             ),
