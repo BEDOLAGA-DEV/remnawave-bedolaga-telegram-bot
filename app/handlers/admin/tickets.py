@@ -23,6 +23,7 @@ from app.states import AdminTicketStates
 from app.utils.cache import RateLimitCache
 from app.utils.chat_scope import callback_from_group
 from app.utils.photo_message import safe_edit_or_resend
+from app.utils.ticket_media import get_ticket_media, ticket_media_chunks
 from app.utils.ticket_text import (
     TICKET_MESSAGE_MAX_LENGTH,
     TICKET_PAGE_MAX_LEN,
@@ -241,8 +242,9 @@ async def view_admin_ticket(
         for msg in ticket.messages:
             sender = '👤 Пользователь' if msg.is_user_message else '🛠️ Поддержка'
             block = f'{sender} ({format_local_datetime(msg.created_at, "%d.%m %H:%M")}):\n{html.escape(msg.message_text or "")}\n\n'
-            if getattr(msg, 'has_media', False) and getattr(msg, 'media_type', None) in {'photo', 'video'}:
-                block += f'📎 Вложение: {"видео" if msg.media_type == "video" else "фото"}\n\n'
+            for item in get_ticket_media(msg):
+                label = {'photo': 'фото', 'video': 'видео', 'document': 'файл'}[item['type']]
+                block += f'📎 Вложение: {label}\n\n'
             message_blocks.append(block)
 
     # Разбиваем на страницы
@@ -251,10 +253,7 @@ async def view_admin_ticket(
     page = total_pages if page is None else min(page, total_pages)
 
     # Формируем клавиатуру
-    has_attachments = any(
-        getattr(m, 'has_media', False) and getattr(m, 'media_type', None) in {'photo', 'video'}
-        for m in ticket.messages or []
-    )
+    has_attachments = any(get_ticket_media(m) for m in ticket.messages or [])
     keyboard = get_admin_ticket_view_keyboard(
         ticket_id, ticket.is_closed, db_user.language, is_user_blocked=ticket.is_user_reply_blocked
     )
@@ -1213,33 +1212,25 @@ def register_handlers(dp: Dispatcher):
         if not ticket:
             await callback.answer(texts.t('TICKET_NOT_FOUND', 'Тикет не найден.'), show_alert=True)
             return
-        attachments = [
-            m
-            for m in ticket.messages
-            if getattr(m, 'has_media', False)
-            and getattr(m, 'media_type', None) in {'photo', 'video'}
-            and m.media_file_id
-        ]
+        attachments = [item for message in ticket.messages for item in get_ticket_media(message)]
         if not attachments:
             await callback.answer(texts.t('NO_ATTACHMENTS', 'Вложений нет.'), show_alert=True)
             return
-        from aiogram.types import InputMediaPhoto, InputMediaVideo
+        from aiogram.types import InputMediaDocument, InputMediaPhoto, InputMediaVideo
 
-        chunks = [attachments[i : i + 10] for i in range(0, len(attachments), 10)]
+        chunks = ticket_media_chunks(attachments)
         last_group_message = None
         for chunk in chunks:
             media = [
-                InputMediaVideo(media=m.media_file_id)
-                if m.media_type == 'video'
-                else InputMediaPhoto(media=m.media_file_id)
+                {'photo': InputMediaPhoto, 'video': InputMediaVideo, 'document': InputMediaDocument}[m['type']](
+                    media=m['file_id']
+                )
                 for m in chunk
             ]
             try:
                 if len(media) == 1:
                     item = media[0]
-                    sender = (
-                        callback.message.bot.send_video if item.type == 'video' else callback.message.bot.send_photo
-                    )
+                    sender = getattr(callback.message.bot, f'send_{item.type.value}')
                     messages = [await sender(chat_id=callback.from_user.id, **{item.type: item.media})]
                 else:
                     messages = await callback.message.bot.send_media_group(chat_id=callback.from_user.id, media=media)

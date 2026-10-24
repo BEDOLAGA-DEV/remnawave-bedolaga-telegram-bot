@@ -98,6 +98,10 @@ class RecordingBot:
         self.sent.append(('photo', kwargs))
         return SimpleNamespace(message_id=len(self.sent))
 
+    async def send_document(self, **kwargs):
+        self.sent.append(('document', kwargs))
+        return SimpleNamespace(message_id=len(self.sent))
+
     async def send_video(self, **kwargs):
         self.sent.append(('video', kwargs))
         return SimpleNamespace(message_id=len(self.sent))
@@ -140,10 +144,16 @@ def _ticket_with_media(kinds):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('side', ['user', 'admin'])
-@pytest.mark.parametrize('kinds', [('video',), ('photo',), ('photo', 'video'), ('video',) * 11])
-async def test_attachment_button_delivers_original_photo_and_video(monkeypatch, side, kinds):
+@pytest.mark.parametrize(
+    'kinds', [('video',), ('photo',), ('photo', 'video'), ('video',) * 11, ('photo', 'document', 'video')]
+)
+@pytest.mark.parametrize('gallery', [False, True])
+async def test_attachment_button_delivers_original_photo_and_video(monkeypatch, side, kinds, gallery):
     monkeypatch.setattr(Settings, 'is_admin', lambda self, user_id: True)
     ticket = _ticket_with_media(kinds)
+    if gallery:
+        ticket.messages[0].media_items = [{'type': m.media_type, 'file_id': m.media_file_id} for m in ticket.messages]
+        ticket.messages = ticket.messages[:1]
     monkeypatch.setattr(tickets.TicketCRUD, 'get_ticket_by_id', AsyncMock(return_value=ticket))
     bot = RecordingBot()
     prefix = 'admin_' if side == 'admin' else ''
@@ -171,9 +181,14 @@ async def test_attachment_button_delivers_original_photo_and_video(monkeypatch, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('side', ['user', 'admin'])
-async def test_video_ticket_view_exposes_attachments(monkeypatch, side):
+@pytest.mark.parametrize('gallery_only', [False, True])
+async def test_video_ticket_view_exposes_attachments(monkeypatch, side, gallery_only):
     monkeypatch.setattr(Settings, 'is_admin', lambda self, user_id: True)
     ticket = _ticket_with_media(['video'])
+    if gallery_only:
+        ticket.messages[0].media_items = [{'type': 'video', 'file_id': ticket.messages[0].media_file_id}]
+        ticket.messages[0].media_type = None
+        ticket.messages[0].media_file_id = None
     monkeypatch.setattr(tickets.TicketCRUD, 'get_ticket_by_id', AsyncMock(return_value=ticket))
     module = tickets if side == 'user' else admin_tickets
     sent = AsyncMock()

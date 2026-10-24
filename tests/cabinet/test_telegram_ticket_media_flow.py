@@ -30,13 +30,16 @@ class LocalTelegramFiles:
         file_id = f'masked_{kind}_{len(self.files):016d}'
         self.files[file_id] = (upload.filename, upload.data)
         item = SimpleNamespace(file_id=file_id, file_unique_id=f'unique_{file_id}')
-        return SimpleNamespace(message_id=len(self.files), photo=[item], video=item)
+        return SimpleNamespace(message_id=len(self.files), photo=[item], video=item, document=item)
 
     async def send_photo(self, *, photo, **kwargs):
         return self._store(photo, 'photo')
 
     async def send_video(self, *, video, **kwargs):
         return self._store(video, 'video')
+
+    async def send_document(self, *, document, **kwargs):
+        return self._store(document, 'document')
 
     async def get_file(self, file_id):
         filename, _ = self.files[file_id]
@@ -48,8 +51,9 @@ class LocalTelegramFiles:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['photo', 'video'])
-@pytest.mark.parametrize('gallery', [False, True], ids=['legacy', 'gallery'])
+@pytest.mark.parametrize(
+    ('kind', 'gallery'), [('photo', False), ('video', False), ('photo', True), ('video', True), ('mixed', True)]
+)
 async def test_upload_create_reply_reload_download(monkeypatch, kind, gallery):
     """Both cabinet sides preserve IDs and bytes; downloads require file-bound tokens."""
     bot = LocalTelegramFiles()
@@ -92,15 +96,21 @@ async def test_upload_create_reply_reload_download(monkeypatch, kind, gallery):
                 if dependency.name == 'admin':
                     app.dependency_overrides[dependency.call] = lambda: admin
 
-        filename, mime = ('masked.png', 'image/png') if kind == 'photo' else ('masked.mp4', 'video/mp4')
-        contents = [b'masked-content-one', b'masked-content-two'] if gallery else [b'masked-content-one']
+        kinds = ['photo', 'document', 'video'] if kind == 'mixed' else [kind] * (2 if gallery else 1)
+        kind = kinds[0]
+        contents = [f'masked-content-{i}'.encode() for i in range(len(kinds))]
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://cabinet') as client:
             uploads = []
-            for content in contents:
+            for item_kind, content in zip(kinds, contents, strict=True):
+                filename, mime = {
+                    'photo': ('masked.png', 'image/png'),
+                    'video': ('masked.mp4', 'video/mp4'),
+                    'document': ('masked.txt', 'text/plain'),
+                }[item_kind]
                 upload = await client.post(
                     '/cabinet/media/upload',
                     files={'file': (filename, content, mime)},
-                    data={'media_type': kind},
+                    data={'media_type': item_kind},
                 )
                 assert upload.status_code == 201, upload.text
                 uploads.append(upload.json())
@@ -109,7 +119,10 @@ async def test_upload_create_reply_reload_download(monkeypatch, kind, gallery):
 
             payload = {'media_type': kind, 'media_file_id': uploads[0]['file_id']}
             if gallery:
-                payload['media_items'] = [{'type': kind, 'file_id': item['file_id']} for item in uploads]
+                payload['media_items'] = [
+                    {'type': item_kind, 'file_id': item['file_id']}
+                    for item_kind, item in zip(kinds, uploads, strict=True)
+                ]
             created = await client.post(
                 '/cabinet/tickets', json={'title': 'Media check', 'message': 'Synthetic attachment', **payload}
             )
@@ -144,13 +157,15 @@ async def test_upload_create_reply_reload_download(monkeypatch, kind, gallery):
                         ]
                     )
                     assert len(items) == len(uploads)
+                    if gallery:
+                        assert [item['type'] for item in items] == kinds
                     for item, content in zip(items, contents, strict=True):
                         download = await client.get(
                             f'/cabinet/media/{item["file_id"]}', params={'token': item['token']}
                         )
                         assert download.status_code == 200 and download.content == content
                         assert download.headers['cache-control'] == 'private, no-store'
-                        expected_type = 'image/png' if kind == 'photo' else 'application/octet-stream'
+                        expected_type = 'image/png' if item.get('type', kind) == 'photo' else 'application/octet-stream'
                         assert download.headers['content-type'] == expected_type
                         unsigned = await client.get(f'/cabinet/media/{item["file_id"]}')
                         assert unsigned.status_code == 404
