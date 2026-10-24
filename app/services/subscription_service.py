@@ -294,6 +294,7 @@ class SubscriptionService:
                         api,
                         user,
                         subscription,
+                        db=db,
                         user_tag=user_tag,
                         hwid_limit=hwid_limit,
                         ext_squad_uuid=ext_squad_uuid,

@@ -1445,6 +1445,7 @@ async def _auto_purchase_daily_tariff(
             subscription.status = 'active'
             subscription.is_trial = False
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+            subscription.pending_panel_expire_at = subscription.end_date
         else:
             subscription = await create_paid_subscription(
                 db=db,

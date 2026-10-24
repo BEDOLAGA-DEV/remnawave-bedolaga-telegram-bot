@@ -123,6 +123,7 @@ async def test_classic_purchase_counts_trial_remainder_once(monkeypatch, flow, c
         max(remaining or timedelta(), timedelta()) if not trial or (carry and not reset) else timedelta()
     )
     assert subscription.end_date == NOW + timedelta(days=30) + expected_remaining
+    assert subscription.pending_panel_expire_at == subscription.end_date
     assert subscription.is_trial is False
 
 
@@ -174,6 +175,7 @@ async def test_classic_purchase_persists_expiry_balance_and_conversion(
         await db.refresh(user)
         expected_remaining = remaining if not trial or (carry and not reset) else timedelta()
         assert subscription.end_date == NOW + timedelta(days=30) + expected_remaining
+        assert subscription.pending_panel_expire_at == subscription.end_date
         assert subscription.is_trial is False
         assert user.balance_kopeks == 99000
         assert result['was_trial_conversion'] is trial

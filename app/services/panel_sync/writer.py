@@ -26,6 +26,7 @@ from app.external.remnawave_api import (
     is_user_not_found_error,
 )
 from app.services.panel_sync.expiry import SKEW_RETRY_MARGIN, stale_panel_expire_at
+from app.services.panel_sync.expiry_intent import acknowledge_pending_expiry
 from app.services.panel_sync.identity import (
     PanelIdentity,
     find_foreign_panel_owner,
@@ -465,6 +466,7 @@ async def _record_identity(
             subscription.remnawave_id = panel_user_id
         return
     await link_subscription_panel_identity(db, subscription, panel_user_id)
+    await acknowledge_pending_expiry(db, subscription, panel_user)
 
 
 async def patch_panel_account(

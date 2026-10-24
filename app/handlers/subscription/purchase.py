@@ -2545,6 +2545,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 existing_subscription.start_date = current_time
 
             existing_subscription.end_date = extension_base_date + timedelta(days=period_days) + bonus_period
+            existing_subscription.pending_panel_expire_at = existing_subscription.end_date
             existing_subscription.updated_at = current_time
 
             existing_subscription.traffic_used_gb = 0.0
@@ -4673,6 +4674,7 @@ async def _extend_existing_subscription(
         new_end_date = current_time + timedelta(days=period_days)
 
     current_subscription.end_date = new_end_date
+    current_subscription.pending_panel_expire_at = current_subscription.end_date
     current_subscription.updated_at = current_time
 
     # Сохраняем изменения

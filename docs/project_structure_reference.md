@@ -1761,7 +1761,7 @@
   Классы: нет
   Функции: `resync_user_subscriptions_with_panel` — Resync all active subscriptions for a user with the RemnaWave panel.
 - `app/services/remnawave_retry_queue.py` — Python-модуль
-  Классы: `RetryItem`, `RemnaWaveRetryQueue` (9 методов)
+  Классы: `RetryItem`, `RemnaWaveRetryQueue` (10 методов)
   Функции: нет
 - `app/services/remnawave_service.py` — Python-модуль
   Классы: `RemnaWaveConfigurationError`, `RemnaWaveService` (62 методов)
@@ -1980,6 +1980,9 @@
 - `app/services/panel_sync/expiry.py` — Python-модуль
   Классы: нет
   Функции: `panel_expire_at` — Что положить в ``expireAt`` панели. ``None`` — не отправлять поле вовсе., `stale_panel_expire_at` — Чем погасить дату подписки в панели. ``None`` — не трогать., `panel_date_is_closing` — Дата в панели уже прошла или это наше собственное гашение на несколько минут вперёд.
+- `app/services/panel_sync/expiry_intent.py` — Python-модуль
+  Классы: нет
+  Функции: `acknowledge_pending_expiry`
 - `app/services/panel_sync/fields.py` — Python-модуль
   Классы: нет
   Функции: `narrow_push_fields` — Поля для ``push_subscription(only_fields=...)`` по флагам админа.
@@ -1994,7 +1997,7 @@
   Функции: `resolve_panel_status` — Статус аккаунта в панели, каким его видит бот., `build_panel_payload` — Собрать поля запроса из пользователя, подписки и её тарифа.
 - `app/services/panel_sync/projection.py` — Python-модуль
   Классы: `ProjectionPolicy`, `PanelSnapshot`
-  Функции: `read_panel_user` — Разобрать ответ панели — словарь или объект клиента — в снимок., `panel_date_is_grace_tail` — Совпадает ли дата в панели с той, что грейс-доступ там оставил., `panel_date_is_grace_overlay` — Совпадает ли дата в панели с «концом грейса», который выставил оверлей., `panel_date_behind_paid_renewal` — Панель показывает срок короче оплаченного, а оплата была недавно., `project_onto_subscription` — Перенести состояние панели в подписку. Возвращает имена изменённых полей., `panel_status_for_new_subscription` — Статус подписки, которую бот заводит по уже существующему аккаунту панели.
+  Функции: `read_panel_user` — Разобрать ответ панели — словарь или объект клиента — в снимок., `panel_date_is_grace_tail` — Совпадает ли дата в панели с той, что грейс-доступ там оставил., `panel_date_is_grace_overlay` — Совпадает ли дата в панели с «концом грейса», который выставил оверлей., `panel_date_behind_paid_renewal` — Не принимать более короткий срок, пока локальное продление не подтверждено., `project_onto_subscription` — Перенести состояние панели в подписку. Возвращает имена изменённых полей., `panel_status_for_new_subscription` — Статус подписки, которую бот заводит по уже существующему аккаунту панели.
 - `app/services/panel_sync/runner.py` — Python-модуль
   Классы: `SyncStats` (1 методов)
   Функции: `push_all_subscriptions` — Отправить в панель все подписки бота.
@@ -2673,6 +2676,7 @@
 - `docs/menu_stats_api_usage.md` — файл
 - `docs/miniapp-setup.md` — файл
 - `docs/mobile-support-websocket-v1.md` — файл
+- `docs/panel-expiry-recovery.md` — файл
 - `docs/payments-payer-data.md` — файл
 - `docs/persistent_cart_system.md` — файл
 - `docs/postgresql-18-upgrade.md` — файл
@@ -3095,6 +3099,9 @@
   Классы: нет
   Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0132_retire_paypear.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0133_pending_panel_expiry.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 
@@ -3866,6 +3873,12 @@
 - `tests/database/test_multi_tariff_switch_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_purchase_guard_preserves_supported_purchase_flows`, `test_purchase_endpoint_never_discards_a_pinned_paid_subscription`, `switch_data`, `test_multi_switch_rejects_ambiguous_or_foreign_subscription`, `test_switch_updates_only_the_selected_subscription`, `test_concurrent_switch_of_selected_subscription_charges_once`
+- `tests/database/test_paid_expiry_live_panel.py` — Python-модуль
+  Классы: нет
+  Функции: `test_paid_expiry_recovers_against_real_panel`
+- `tests/database/test_paid_expiry_restart_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `isolated_renewal`, `test_paid_expiry_survives_restart_and_stale_event`, `test_restart_recovers_expiry_until_panel_confirms_without_charging_again`, `test_old_panel_ack_cannot_clear_newer_local_intent`, `test_recovery_does_not_revive_ineligible_subscriptions`, `test_bonus_extension_pending_vs_confirmed_panel_change`, `test_pending_intent_does_not_prevent_actual_expiry`, `test_trial_bonus_keeps_complete_expiry_pending`, `test_activation_and_daily_charge_persist_recoverable_expiry`, `test_daily_period_switch_keeps_new_expiry_recoverable`
 - `tests/database/test_panel_account_reuse_postgres.py` — Python-модуль
   Классы: нет
   Функции: `multi_tariff`, `single_tariff`, `test_multi_tariff_row_with_panel_id_is_updated`, `test_multi_tariff_row_without_id_adopts_free_user_account` — Старая подписка без id, аккаунт у человека есть и свободен — привязать и обновить, не создавать., `test_multi_tariff_row_without_id_creates_when_user_account_is_taken` — Аккаунт человека уже у другой подписки — новой строке нужен свой аккаунт., `test_multi_tariff_row_without_any_account_creates`, `test_single_tariff_follows_user_account_only`, `test_single_tariff_adopts_subscription_account_when_user_has_none` — Аккаунт создан в мультитарифе (записан у подписки), оператор вернулся в одиночный режим:, `test_single_tariff_does_not_steal_account_held_by_another_user`
@@ -3890,6 +3903,9 @@
 - `tests/database/test_payment_locking_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_for_update_blocks_second_session` — Вторая сессия обязана ЖДАТЬ строку, занятую первой., `test_plain_read_does_not_block` — Контроль к предыдущему тесту: ожидание вызвано именно блокировкой., `test_waiter_sees_committed_changes_after_lock_release` — Дождавшись блокировки, вторая сессия читает уже НОВОЕ значение., `test_duplicate_delivery_credits_exactly_once` — Два одновременных вебхука об одном событии — ровно одно зачисление., `test_duplicate_order_id_loses_race_on_unique_index` — Уникальность order_id обеспечивает БД, а не проверка перед вставкой., `test_order_id_longer_than_column_is_rejected` — VARCHAR(64) на order_id — не декорация: обрезка в клиенте обязательна., `test_payment_without_user_is_rejected` — Внешний ключ на users PostgreSQL проверяет, SQLite — нет., `test_timestamps_keep_the_same_instant_across_timezones` — TIMESTAMPTZ хранит момент времени, а не текст с числами., `test_json_columns_survive_round_trip` — JSON-колонки возвращаются ровно тем же деревом значений.
+- `tests/database/test_pending_expiry_migration_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_pending_expiry_migration_preserves_existing_rights`
 - `tests/database/test_pool_config.py` — Python-модуль
   Классы: нет
   Функции: `test_sqlite_uses_nullpool_without_kwargs` — Для SQLite пул не применяется — kwargs пустые (NullPool без пулинга)., `test_postgres_pool_kwargs_read_from_settings` — Настраиваемые знобы берутся из settings, безопасные дефолты — фиксированы., `test_pool_defaults_preserve_legacy_values` — Дефолты совпадают с прежними захардкоженными значениями (без регрессии)., `test_pool_size_clamped_to_at_least_one` — pool_size=0 у QueuePool означает «без лимита» — клампим к >= 1., `test_max_overflow_clamped_to_nonnegative`, `test_pool_timeout_clamped_to_at_least_one`, `test_invalid_values_fall_back_to_defaults` — Мусор в env не должен ронять старт — откатываемся к дефолтам., `test_custom_env_values_are_applied` — Числа из env (как строки) корректно парсятся., `test_live_engine_is_wired_with_pool_kwargs` — Боевой engine реально получает kwargs из хелпера — это и есть фикс #3000., `test_custom_pool_values_reach_a_real_engine` — End-to-end: настроенные значения долетают через create_async_engine в пул.

@@ -2544,6 +2544,12 @@ class User(Base):
 class Subscription(Base):
     __tablename__ = 'subscriptions'
     __table_args__ = (
+        Index(
+            'ix_subscriptions_pending_expiry',
+            'id',
+            postgresql_where=text('pending_panel_expire_at IS NOT NULL'),
+            sqlite_where=text('pending_panel_expire_at IS NOT NULL'),
+        ),
         Index('ix_subscriptions_status_trial', 'status', 'is_trial'),
         Index('ix_subscriptions_trial_created', 'is_trial', 'created_at'),
         Index('ix_subscriptions_user_id', 'user_id'),
@@ -2583,6 +2589,10 @@ class Subscription(Base):
 
     start_date = Column(AwareDateTime(), default=func.now())
     end_date = Column(AwareDateTime(), nullable=False)
+
+    # Local expiry committed before the panel write. Survives retry exhaustion
+    # and process restart; cleared only after a matching confirmed panel write.
+    pending_panel_expire_at = Column(AwareDateTime(), nullable=True)
 
     traffic_limit_gb = Column(Integer, default=0)
     traffic_used_gb = Column(Float, default=0.0)
@@ -2803,6 +2813,9 @@ class Subscription(Base):
             self.end_date = end + timedelta(days=days)
         else:
             self.end_date = datetime.now(UTC) + timedelta(days=days)
+
+        if days > 0:
+            self.pending_panel_expire_at = self.end_date
 
         if self.status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.LIMITED.value):
             self.status = SubscriptionStatus.ACTIVE.value

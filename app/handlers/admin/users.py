@@ -4608,6 +4608,7 @@ async def _activate_user_subscription(
         subscription.status = SubscriptionStatus.ACTIVE.value
         if subscription.end_date <= datetime.now(UTC):
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+            subscription.pending_panel_expire_at = subscription.end_date
         # Условия тарифа на новый срок: база тарифа + активные докупки.
         await reconcile_tariff_traffic_limit(db, subscription)
 
@@ -5098,6 +5099,7 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                 subscription.start_date = current_time
 
             subscription.end_date = extension_base_date + timedelta(days=period_days) + bonus_period
+            subscription.pending_panel_expire_at = subscription.end_date
             subscription.status = SubscriptionStatus.ACTIVE.value
             subscription.updated_at = current_time
 

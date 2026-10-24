@@ -1126,6 +1126,7 @@ class MiniAppSubscriptionPurchaseService:
                 subscription.start_date = now
 
             subscription.end_date = extension_base_date + timedelta(days=pricing.selection.period.days) + bonus_period
+            subscription.pending_panel_expire_at = subscription.end_date
             subscription.updated_at = now
             subscription.traffic_used_gb = 0.0
 
@@ -1170,6 +1171,7 @@ class MiniAppSubscriptionPurchaseService:
                     extra_seconds += max(0, (_kt.end_date - now).total_seconds())
             if extra_seconds > 0:
                 subscription.end_date = subscription.end_date + timedelta(seconds=extra_seconds)
+                subscription.pending_panel_expire_at = subscription.end_date
                 await db.commit()
                 await db.refresh(subscription)
 

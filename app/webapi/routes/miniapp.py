@@ -6831,6 +6831,7 @@ async def purchase_tariff_endpoint(
         subscription.last_daily_charge_at = datetime.now(UTC)
         # Для суточного тарифа end_date = сейчас + 1 день (первый день уже оплачен)
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.pending_panel_expire_at = subscription.end_date
         await db.commit()
         await db.refresh(subscription)
 
@@ -7235,6 +7236,7 @@ async def switch_tariff_endpoint(
         subscription.last_daily_charge_at = datetime.now(UTC)
         # Для суточного тарифа end_date = сейчас + 1 день
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.pending_panel_expire_at = subscription.end_date
         logger.info('🔄 Смена на суточный тариф: установлены daily поля, end_date', end_date=subscription.end_date)
     elif old_is_daily and not new_is_daily:
         # Переход с суточного на обычный тариф - очищаем daily поля
@@ -7243,6 +7245,7 @@ async def switch_tariff_endpoint(
         # Устанавливаем дату окончания для периодного тарифа
         if new_period_days > 0:
             subscription.end_date = datetime.now(UTC) + timedelta(days=new_period_days)
+            subscription.pending_panel_expire_at = subscription.end_date
             logger.info(
                 '🔄 Смена с суточного на периодный тариф: end_date= ( дней)',
                 end_date=subscription.end_date,
@@ -7658,6 +7661,7 @@ async def toggle_daily_subscription_pause_endpoint(
             subscription.status = SubscriptionStatus.ACTIVE.value
             subscription.last_daily_charge_at = now
             subscription.end_date = now + timedelta(days=1)
+            subscription.pending_panel_expire_at = subscription.end_date
 
             logger.info(
                 'Суточная подписка восстановлена в ACTIVE (miniapp)',

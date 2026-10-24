@@ -512,10 +512,12 @@ async def switch_tariff(
     if switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.pending_panel_expire_at = subscription.end_date
         subscription.last_daily_charge_at = datetime.now(UTC)
         subscription.is_daily_paused = False
     elif switching_from_daily:
         subscription.end_date = datetime.now(UTC) + timedelta(days=new_period_days)
+        subscription.pending_panel_expire_at = subscription.end_date
         subscription.is_daily_paused = False
 
     subscription.updated_at = datetime.now(UTC)

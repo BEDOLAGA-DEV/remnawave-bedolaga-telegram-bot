@@ -2,7 +2,9 @@
 
 When create_remnawave_user() fails during purchase, the subscription exists
 in the bot DB but not in the panel. This queue retries the operation
-periodically until it succeeds or max retries are exhausted.
+periodically until it succeeds or max retries are exhausted. Unconfirmed local
+expiry is also persisted on Subscription and recovered after memory retries are
+exhausted or the process restarts. Other retry intents remain memory-only.
 """
 
 from __future__ import annotations
@@ -14,8 +16,10 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
+from sqlalchemy import select
 
 from app.database.database import AsyncSessionLocal
+from app.database.models import Subscription, User
 
 
 logger = structlog.get_logger(__name__)
@@ -40,6 +44,7 @@ class RemnaWaveRetryQueue:
         self._max_retries = max_retries
         self._interval = interval_seconds
         self._task: asyncio.Task | None = None
+        self._expiry_cursor = 0
 
     def is_processing(self, subscription_id: int) -> bool:
         return subscription_id in self._processing_subscription_ids
@@ -82,7 +87,40 @@ class RemnaWaveRetryQueue:
             queue_size=len(self._queue),
         )
 
+    async def _recover_pending_expiries(self) -> None:
+        """Bounded, rotating scan: committed renewals survive memory queue loss."""
+        query = (
+            select(Subscription.id, Subscription.user_id)
+            .join(User, User.id == Subscription.user_id)
+            .where(
+                Subscription.pending_panel_expire_at.is_not(None),
+                Subscription.pending_panel_expire_at == Subscription.end_date,
+                Subscription.end_date > datetime.now(UTC),
+                Subscription.status.in_(('active', 'trial', 'limited')),
+                Subscription.is_daily_paused.is_(False),
+                Subscription.grace_session_open.is_(False),
+                User.status == 'active',
+            )
+            .order_by(Subscription.id)
+            .limit(100)
+        )
+        try:
+            async with AsyncSessionLocal() as db:
+                rows = (await db.execute(query.where(Subscription.id > self._expiry_cursor))).all()
+                if not rows and self._expiry_cursor:
+                    self._expiry_cursor = 0
+                    rows = (await db.execute(query)).all()
+            if rows:
+                self._expiry_cursor = rows[-1].id
+            for subscription_id, user_id in rows:
+                # create is an upsert through panel_sync: it reuses the current
+                # identity and also recovers a paid account never created yet.
+                self.enqueue(subscription_id, user_id, action='create')
+        except Exception:
+            logger.exception('Could not recover pending panel expiries; retrying next cycle')
+
     async def process_pending(self) -> None:
+        await self._recover_pending_expiries()
         if not self._queue:
             return
 

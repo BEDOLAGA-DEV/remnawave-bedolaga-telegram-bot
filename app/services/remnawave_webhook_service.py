@@ -1173,6 +1173,21 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.expired: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        from app.database.crud.transaction import get_last_subscription_payment_at
+
+        snapshot = read_panel_user(data)
+        if snapshot.expire_at is None:
+            snapshot = replace(snapshot, expire_at=datetime.now(UTC))
+        paid_at = await get_last_subscription_payment_at(db, user.id)
+        if subscription.end_date > datetime.now(UTC) and panel_date_behind_paid_renewal(
+            subscription, snapshot, paid_at=paid_at
+        ):
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(subscription_id=subscription.id, user_id=user.id, action='update')
+            logger.info('Ignoring stale panel expiry while local renewal is pending', subscription_id=subscription.id)
+            return
+
         # Суточные подписки управляются DailySubscriptionService.
         # Remnawave может прислать user.expired если sync не дошёл (старый end_date),
         # но локально подписка ещё жива — не экспайрим её.

@@ -70,6 +70,7 @@ async def test_daily_topup_obeys_settings_and_repeat(
         assert len(panel.calls) == int(expected)
         if expected:
             assert records[0].amount_kopeks == -DAILY_PRICE_KOPEKS
+            assert sub.pending_panel_expire_at == sub.end_date
             assert sub.status == 'active'
             assert sub.last_daily_charge_at > before[2]
             assert sub.end_date > before[1]

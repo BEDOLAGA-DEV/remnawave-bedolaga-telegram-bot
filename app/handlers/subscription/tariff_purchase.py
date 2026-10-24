@@ -2039,6 +2039,7 @@ async def confirm_daily_tariff_purchase(
             subscription.status = 'active'
             subscription.is_trial = False
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+            subscription.pending_panel_expire_at = subscription.end_date
             from sqlalchemy import delete as sql_delete
 
             from app.database.models import TrafficPurchase
@@ -3859,6 +3860,7 @@ async def confirm_daily_tariff_switch(
         subscription.last_daily_charge_at = datetime.now(UTC)
         # Для суточного тарифа ставим срок на 1 день
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.pending_panel_expire_at = subscription.end_date
 
         # Сбрасываем докупленный трафик при смене тарифа
         from sqlalchemy import delete as sql_delete
@@ -4885,6 +4887,7 @@ async def confirm_instant_switch(
                         logger.error('Ошибка отправки уведомления админу', error=e)
 
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+            subscription.pending_panel_expire_at = subscription.end_date
             subscription.is_trial = False
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = datetime.now(UTC)

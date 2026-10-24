@@ -96,6 +96,7 @@ async def test_simple_payment_resets_db_and_panel_together(postgres_database, mo
         assert sub.traffic_used_gb == (0 if reset or trial else 17.5)
         assert panel_call.await_args.kwargs.get('reset_traffic', False) is (reset or trial)
         assert user.balance_kopeks == 9700
+        assert sub.pending_panel_expire_at == sub.end_date
         assert sub.is_trial is False
         assert sub.traffic_limit_gb == 120
         assert await db.get(TrafficPurchase, 9) is not None

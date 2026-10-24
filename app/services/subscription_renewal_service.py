@@ -492,6 +492,8 @@ class SubscriptionRenewalService:
         reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT
         reset_devices = settings.RESET_DEVICES_ON_RENEWAL
         subscription_service = SubscriptionService()
+        renewal_subscription_id = subscription_after.id
+        panel_result = None
         try:
             await db.refresh(user)
             if settings.is_multi_tariff_enabled():
@@ -501,14 +503,14 @@ class SubscriptionRenewalService:
 
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
                 if _should_create:
-                    await subscription_service.create_remnawave_user(
+                    panel_result = await subscription_service.create_remnawave_user(
                         db,
                         subscription_after,
                         reset_traffic=reset_traffic,
                         reset_reason='subscription renewal',
                     )
                 else:
-                    await subscription_service.update_remnawave_user(
+                    panel_result = await subscription_service.update_remnawave_user(
                         db,
                         subscription_after,
                         reset_traffic=reset_traffic,
@@ -519,15 +521,23 @@ class SubscriptionRenewalService:
         except Exception as error:  # pragma: no cover - defensive logging
             logger.error(
                 'Failed to sync RemnaWave user for subscription',
-                subscription_after_id=subscription_after.id,
+                subscription_after_id=renewal_subscription_id,
                 error=error,
             )
+
+        # A failed panel write rolls the session back and expires ORM objects.
+        # Reload before ledger/notifications, including when the service returns None.
+        await db.refresh(subscription_after)
+        await db.refresh(user)
+        if panel_result is None:
             from app.services.remnawave_retry_queue import remnawave_retry_queue
 
             remnawave_retry_queue.enqueue(
                 subscription_id=subscription_after.id,
                 user_id=subscription_after.user_id,
                 action='create' if getattr(subscription_after, 'remnawave_id', None) is None else 'update',
+                reset_traffic=reset_traffic,
+                reset_reason='subscription renewal',
             )
 
         # Сброс привязанных устройств при продлении (если включено)

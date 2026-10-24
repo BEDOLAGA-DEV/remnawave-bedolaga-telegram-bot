@@ -380,6 +380,7 @@ async def _revive_paid_subscription(
         subscription.start_date = now
         subscription.traffic_used_gb = 0.0
     subscription.end_date = base_date + timedelta(days=duration_days)
+    subscription.pending_panel_expire_at = subscription.end_date
     subscription.updated_at = now
 
     if commit:
@@ -672,6 +673,7 @@ async def create_paid_subscription(
         traffic_limit_gb=traffic_limit_gb,
         device_limit=device_limit,
         connected_squads=final_squads,
+        pending_panel_expire_at=end_date,
         autopay_enabled=settings.is_autopay_enabled_by_default(),
         autopay_days_before=settings.DEFAULT_AUTOPAY_DAYS_BEFORE,
         tariff_id=tariff_id,
@@ -790,6 +792,7 @@ async def replace_subscription(
     subscription.is_trial = is_trial
     subscription.start_date = current_time
     subscription.end_date = current_time + timedelta(days=duration_days)
+    subscription.pending_panel_expire_at = subscription.end_date
     subscription.traffic_limit_gb = traffic_limit_gb
     subscription.traffic_used_gb = 0.0
 
@@ -1463,6 +1466,8 @@ async def extend_subscription(
     if days > 0 and not _housekeeping_done:
         await _housekeep_expired_purchases(db, subscription, now=current_time)
 
+    if days > 0:
+        subscription.pending_panel_expire_at = subscription.end_date
     subscription.updated_at = current_time
 
     if commit:
@@ -2836,6 +2841,7 @@ async def activate_pending_subscription(
     if not pending_subscription.start_date or pending_subscription.start_date < current_time:
         pending_subscription.start_date = current_time
 
+    pending_subscription.pending_panel_expire_at = pending_subscription.end_date
     await db.commit()
     await db.refresh(pending_subscription)
 
@@ -2901,6 +2907,7 @@ async def activate_pending_trial_subscription(
 
         pending_subscription.end_date = current_time + timedelta(days=settings.TRIAL_DURATION_DAYS)
 
+    pending_subscription.pending_panel_expire_at = pending_subscription.end_date
     await db.commit()
     await db.refresh(pending_subscription)
 
@@ -3152,6 +3159,7 @@ async def resume_daily_subscription(
         # Обновляем время последнего списания для корректного расчёта следующего
         subscription.last_daily_charge_at = datetime.now(UTC)
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.pending_panel_expire_at = subscription.end_date
         logger.info(
             '✅ Суточная подписка восстановлена из в ACTIVE',
             subscription_id=subscription.id,
@@ -3183,6 +3191,7 @@ async def update_daily_charge_time(
     new_end_date = now + timedelta(days=1)
     if subscription.end_date is None or subscription.end_date < new_end_date:
         subscription.end_date = new_end_date
+        subscription.pending_panel_expire_at = subscription.end_date
         logger.info('📅 Продлена подписка', subscription_id=subscription.id, new_end_date=new_end_date)
 
     if commit:

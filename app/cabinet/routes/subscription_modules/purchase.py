@@ -1299,6 +1299,7 @@ async def purchase_tariff(
         # Add remaining trial time to paid subscription
         if _bonus_seconds > 0 and subscription:
             subscription.end_date = subscription.end_date + timedelta(seconds=_bonus_seconds)
+            subscription.pending_panel_expire_at = subscription.end_date
             await db.commit()
             await db.refresh(subscription)
             logger.info(

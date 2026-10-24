@@ -153,6 +153,7 @@ async def toggle_subscription_pause(
             subscription.status = SubscriptionStatus.ACTIVE.value
             subscription.last_daily_charge_at = datetime.now(UTC)
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+            subscription.pending_panel_expire_at = subscription.end_date
 
     await db.commit()
     await db.refresh(subscription)
