@@ -444,6 +444,10 @@ class MonitoringService:
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
+                # Channel checks use their own batch sessions and may wait on
+                # Telegram for minutes. Release the completed outer transaction
+                # so PostgreSQL does not terminate it while it sits idle.
+                await db.commit()
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_traffic_warnings(db)
