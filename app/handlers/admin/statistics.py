@@ -1,3 +1,4 @@
+import html
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -141,13 +142,19 @@ async def show_revenue_statistics(callback: types.CallbackQuery, db_user: User, 
 
     month_stats = await get_transactions_statistics(db, month_start, now)
     all_time_stats = await get_transactions_statistics(db, start_date=datetime(2020, 1, 1, tzinfo=UTC), end_date=now)
+    from app.services.merchant_fees import get_merchant_revenue
+
+    merchant_month = await get_merchant_revenue(db, month_start, now)
+    merchant_total = await get_merchant_revenue(db, datetime(2020, 1, 1, tzinfo=UTC), now)
     current_time = format_datetime(datetime.now(UTC))
 
     text = f"""
 💰 <b>Статистика доходов</b>
 
 <b>За текущий месяц:</b>
-- Доходы: {settings.format_price(month_stats['totals']['income_kopeks'])}
+- До комиссии: {settings.format_price(month_stats['totals']['income_kopeks'])}
+- Комиссия продавца (расчёт): {settings.format_price(merchant_month['fee_kopeks'])}
+- После комиссии (расчёт): {settings.format_price(merchant_month['net_kopeks'])}
 - Расходы: {settings.format_price(month_stats['totals']['expenses_kopeks'])}
 - Прибыль: {settings.format_price(month_stats['totals']['profit_kopeks'])}
 - От подписок: {settings.format_price(abs(month_stats['totals']['subscription_income_kopeks']))}
@@ -157,16 +164,31 @@ async def show_revenue_statistics(callback: types.CallbackQuery, db_user: User, 
 - Доходы: {settings.format_price(month_stats['today']['income_kopeks'])}
 
 <b>За все время:</b>
-- Общий доход: {settings.format_price(all_time_stats['totals']['income_kopeks'])}
+- До комиссии: {settings.format_price(all_time_stats['totals']['income_kopeks'])}
+- Комиссия продавца (расчёт): {settings.format_price(merchant_total['fee_kopeks'])}
+- После комиссии (расчёт): {settings.format_price(merchant_total['net_kopeks'])}
 - Общая прибыль: {settings.format_price(all_time_stats['totals']['profit_kopeks'])}
 
 <b>Способы оплаты:</b>
 """
 
-    for method, data in month_stats['by_payment_method'].items():
-        if method and data['count'] > 0:
-            text += f'• {method}: {data["count"]} ({settings.format_price(data["amount"])})\n'
+    for data in merchant_month['by_method']:
+        method = html.escape(data['provider'])
+        sub_method = html.escape(data['sub_method'] or 'метод не определён')
+        text += (
+            f'• {method} / {sub_method}: {data["count"]}\n'
+            f'  До комиссии: {settings.format_price(data["gross_kopeks"])}; '
+            f'комиссия: {settings.format_price(data["fee_kopeks"])}; '
+            f'после: {settings.format_price(data["net_kopeks"])}\n'
+        )
 
+    if merchant_month['unconfigured_count']:
+        text += f'\n⚠️ Без настроенной комиссии: {merchant_month["unconfigured_count"]} платежей.\n'
+    if merchant_month['unknown_sub_method_count']:
+        text += (
+            f'\n⚠️ Метод не определён: {merchant_month["unknown_sub_method_count"]}. '
+            'Использована общая ставка провайдера, если настроена.\n'
+        )
     text += f'\n<b>Обновлено:</b> {current_time}'
 
     keyboard = types.InlineKeyboardMarkup(

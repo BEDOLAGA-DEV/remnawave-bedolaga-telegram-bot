@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User
+from app.services.merchant_fees import FeePolicy, normalize_policies
 from app.services.payment_method_config_service import (
     DEFAULT_QUICK_AMOUNTS,
     _get_method_defaults,
@@ -36,6 +37,7 @@ class SubOptionInfo(BaseModel):
 
 
 class PaymentMethodConfigResponse(BaseModel):
+    merchant_fee_policies: list[FeePolicy] = Field(default_factory=list)
     method_id: str
     sort_order: int
     is_enabled: bool
@@ -64,6 +66,15 @@ class PaymentMethodConfigResponse(BaseModel):
 
 
 class PaymentMethodConfigUpdateRequest(BaseModel):
+    merchant_fee_policies: list[FeePolicy] | None = Field(default=None, max_length=100)
+
+    @field_validator('merchant_fee_policies')
+    @classmethod
+    def validate_fee_policies(cls, value):
+        if value is not None:
+            normalize_policies([policy.model_dump(mode='json') for policy in value])
+        return value
+
     is_enabled: bool | None = None
     display_name: str | None = Field(default=None, description='Null to reset to default')
     sub_options: dict[str, bool] | None = None
@@ -128,6 +139,7 @@ def _enrich_config(config, defaults: dict) -> PaymentMethodConfigResponse:
         available_sub_options = [SubOptionInfo(**opt) for opt in raw_options]
 
     return PaymentMethodConfigResponse(
+        merchant_fee_policies=getattr(config, 'merchant_fee_policies', None) or [],
         method_id=config.method_id,
         sort_order=config.sort_order,
         is_enabled=config.is_enabled,
@@ -215,6 +227,8 @@ async def update_payment_method(
     """Update a payment method configuration."""
     # Build update data dict
     data = {}
+    if request.merchant_fee_policies is not None:
+        data['merchant_fee_policies'] = [policy.model_dump(mode='json') for policy in request.merchant_fee_policies]
 
     if request.is_enabled is not None:
         data['is_enabled'] = request.is_enabled

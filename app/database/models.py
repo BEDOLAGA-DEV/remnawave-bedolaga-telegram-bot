@@ -4628,6 +4628,8 @@ class PaymentMethodConfig(Base):
     # Под-опции включения/выключения (JSON): {"card": true, "sbp": false}
     # Для методов с вариантами: yookassa, pal24, platega
     sub_options = Column(JSON, nullable=True, default=None)
+    # Dated merchant fee policies (percent + fixed amount, optional sub-method overrides).
+    merchant_fee_policies = Column(JSON, nullable=True, default=None)
 
     quick_amounts = Column(JSON, nullable=True, default=None)
 

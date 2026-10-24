@@ -25,6 +25,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.services.merchant_fees import get_merchant_revenue
 from app.services.remnawave_service import RemnaWaveService
 from app.services.version_service import version_service
 from app.utils.timezone import local_day_start, local_month_start
@@ -104,6 +105,11 @@ class FinancialStats(BaseModel):
     income_total_rubles: float
     subscription_income_kopeks: int
     subscription_income_rubles: float
+    merchant_fee_month_kopeks: int = 0
+    income_month_after_fee_kopeks: int = 0
+    merchant_fee_total_kopeks: int = 0
+    income_total_after_fee_kopeks: int = 0
+    fee_unconfigured_transactions: int = 0
 
 
 class ServerStats(BaseModel):
@@ -246,6 +252,37 @@ class RecentPaymentsResponse(BaseModel):
 # ============ Routes ============
 
 
+class MerchantRevenueTotals(BaseModel):
+    count: int
+    gross_kopeks: int
+    fee_kopeks: int
+    net_kopeks: int
+    unconfigured_count: int
+    unknown_sub_method_count: int
+
+
+class MerchantRevenueMethod(MerchantRevenueTotals):
+    provider: str
+    sub_method: str | None
+
+
+class MerchantRevenueReport(MerchantRevenueTotals):
+    by_method: list[MerchantRevenueMethod]
+
+
+@router.get('/merchant-revenue', response_model=MerchantRevenueReport)
+async def merchant_revenue(
+    start: datetime,
+    end: datetime,
+    admin: User = Depends(require_permission('stats:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    """Gross receipts, estimated merchant fees and net receipts by gateway/sub-method."""
+    if start.tzinfo is None or end.tzinfo is None or start > end:
+        raise HTTPException(status_code=422, detail='Use timezone-aware start <= end')
+    return await get_merchant_revenue(db, start, end)
+
+
 @router.get('/dashboard', response_model=DashboardStats)
 async def get_dashboard_stats(
     admin: User = Depends(require_permission('stats:read')),
@@ -262,6 +299,8 @@ async def get_dashboard_stats(
         # Get financial statistics
         now = datetime.now(UTC)
         month_start = local_month_start(now)
+        merchant_month = await get_merchant_revenue(db, month_start, now)
+        merchant_total = await get_merchant_revenue(db, datetime(2020, 1, 1, tzinfo=UTC), now)
 
         trans_stats = await get_transactions_statistics(db, month_start, now)
         all_time_stats = await get_transactions_statistics(
@@ -296,6 +335,11 @@ async def get_dashboard_stats(
                 trial_to_paid_conversion=sub_stats.get('trial_to_paid_conversion', 0.0),
             ),
             financial=FinancialStats(
+                merchant_fee_month_kopeks=merchant_month['fee_kopeks'],
+                income_month_after_fee_kopeks=merchant_month['net_kopeks'],
+                merchant_fee_total_kopeks=merchant_total['fee_kopeks'],
+                income_total_after_fee_kopeks=merchant_total['net_kopeks'],
+                fee_unconfigured_transactions=merchant_total['unconfigured_count'],
                 income_today_kopeks=income_today_kopeks,
                 income_today_rubles=income_today_kopeks / 100,
                 income_month_kopeks=trans_stats.get('totals', {}).get('income_kopeks', 0),

@@ -75,6 +75,11 @@ async def test_dashboard_income_today_comes_from_statistics_not_from_chart(monke
     monkeypatch.setattr(admin_stats, '_get_tariff_stats', AsyncMock(return_value=None))
     monkeypatch.setattr(
         admin_stats,
+        'get_merchant_revenue',
+        AsyncMock(return_value={'fee_kopeks': 0, 'net_kopeks': 777, 'unconfigured_count': 0}),
+    )
+    monkeypatch.setattr(
+        admin_stats,
         'get_transactions_statistics',
         AsyncMock(return_value={'totals': {}, 'today': {'income_kopeks': 777, 'transactions_count': 1}}),
     )

@@ -529,6 +529,10 @@ async def update_config(
     promo_group_ids: list[int] | None = None,
 ) -> PaymentMethodConfig | None:
     """Update a payment method config."""
+    if 'merchant_fee_policies' in data:
+        from app.services.merchant_fees import normalize_policies
+
+        data = {**data, 'merchant_fee_policies': normalize_policies(data['merchant_fee_policies'])}
     config = await get_config_by_method_id(db, method_id)
     if not config:
         return None
@@ -538,6 +542,7 @@ async def update_config(
 
     # Update scalar fields
     updatable_fields = (
+        'merchant_fee_policies',
         'is_enabled',
         'display_name',
         'description',

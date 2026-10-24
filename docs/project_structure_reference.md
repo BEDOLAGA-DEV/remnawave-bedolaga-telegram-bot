@@ -256,7 +256,7 @@
   Классы: `PartnerSettingsResponse`, `PartnerSettingsUpdateRequest`
   Функции: `get_partner_settings` — Get partner system settings., `update_partner_settings` — Update partner system settings — в system_settings, с применением сразу., `list_applications` — List partner applications., `approve_application` — Approve a partner application., `reject_application` — Reject a partner application., `get_partner_stats` — Get overall partner statistics., `list_partners` — List approved partners., `list_referral_levels` — Список уровней реферальных наград и текущая схема., `upsert_referral_level` — Создать или обновить правило уровня., `remove_referral_level` — Удалить правило уровня., `update_referral_depth` — Сколько звеньев цепочки получают награду., `import_legacy_referral_settings` — Перенести действующие настройки ``REFERRAL_*`` в уровень 1., `update_referral_levels_mode` — Что означает номер уровня: глубина цепочки или ранг партнёра., `update_referral_scheme` — Переключить схему наград., `get_partner_detail` — Get detailed partner info., `update_commission` — Update partner commission percent., `revoke_partner` — Revoke partner status., `assign_campaign` — Assign a campaign to a partner., `unassign_campaign` — Unassign a campaign from a partner.
 - `app/cabinet/routes/admin_payment_methods.py` — Python-модуль
-  Классы: `SubOptionInfo`, `PaymentMethodConfigResponse`, `PaymentMethodConfigUpdateRequest` (2 методов), `SortOrderRequest`, `PromoGroupSimple`
+  Классы: `SubOptionInfo`, `PaymentMethodConfigResponse`, `PaymentMethodConfigUpdateRequest` (3 методов), `SortOrderRequest`, `PromoGroupSimple`
   Функции: `list_payment_methods` — List all payment method configurations., `list_promo_groups` — List all promo groups for filter selector., `get_payment_method` — Get a single payment method configuration., `update_payment_methods_order` — Batch update sort order for payment methods., `update_payment_method` — Update a payment method configuration.
 - `app/cabinet/routes/admin_payments.py` — Python-модуль
   Классы: `PendingPaymentResponse`, `PendingPaymentListResponse`, `ManualCheckResponse`, `PaymentsStatsResponse`, `SearchStatsResponse`
@@ -295,8 +295,8 @@
   Классы: `SettingCategoryRef`, `SettingCategorySummary`, `SettingChoice`, `SettingHint`, `SettingDefinition`, `SettingUpdateRequest`
   Функции: `list_categories` — Get list of setting categories., `list_settings` — Get list of all settings or settings for a specific category., `get_setting` — Get a specific setting by key., `update_setting` — Update a setting value., `reset_setting` — Reset a setting to its default value.
 - `app/cabinet/routes/admin_stats.py` — Python-модуль
-  Классы: `NodeStatus`, `NodesOverview`, `RevenueData`, `SubscriptionStats`, `FinancialStats`, `ServerStats`, `TariffStatItem`, `TariffStats`, `DashboardStats`, `SystemInfoResponse`, `TopReferrerItem`, `TopReferrersResponse`, `TopCampaignItem`, `TopCampaignsResponse`, `RecentPaymentItem`, `RecentPaymentsResponse`
-  Функции: `get_dashboard_stats` — Get complete dashboard statistics for admin panel., `get_system_info` — Get system information for admin dashboard., `get_nodes_status` — Get status of all nodes., `restart_node` — Restart a node., `toggle_node` — Enable or disable a node., `get_top_referrers` — Get top referrers with earnings breakdown by period., `get_top_campaigns` — Get top advertising campaigns with statistics., `get_recent_payments` — Get recent payments with user info.
+  Классы: `NodeStatus`, `NodesOverview`, `RevenueData`, `SubscriptionStats`, `FinancialStats`, `ServerStats`, `TariffStatItem`, `TariffStats`, `DashboardStats`, `SystemInfoResponse`, `TopReferrerItem`, `TopReferrersResponse`, `TopCampaignItem`, `TopCampaignsResponse`, `RecentPaymentItem`, `RecentPaymentsResponse`, `MerchantRevenueTotals`, `MerchantRevenueMethod`, `MerchantRevenueReport`
+  Функции: `merchant_revenue` — Gross receipts, estimated merchant fees and net receipts by gateway/sub-method., `get_dashboard_stats` — Get complete dashboard statistics for admin panel., `get_system_info` — Get system information for admin dashboard., `get_nodes_status` — Get status of all nodes., `restart_node` — Restart a node., `toggle_node` — Enable or disable a node., `get_top_referrers` — Get top referrers with earnings breakdown by period., `get_top_campaigns` — Get top advertising campaigns with statistics., `get_recent_payments` — Get recent payments with user info.
 - `app/cabinet/routes/admin_system_errors.py` — Python-модуль
   Классы: `SystemErrorListItem`, `SystemErrorDetail`, `SystemErrorListResponse`, `SystemErrorSummary`
   Функции: `system_errors_summary` — Сводка для бейджа в шапке и верхнего блока страницы., `list_system_errors` — Список ошибок с фильтрами по уровню, статусу доставки и периоду., `get_system_error` — Полная запись с трейсбеком и контекстом., `retry_system_error_delivery` — Повторно отправить сохранённую ошибку в админ-чат.
@@ -1615,6 +1615,9 @@
 - `app/services/menu_layout_service.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/services/merchant_fees.py` — Python-модуль
+  Классы: `FeeRate` (1 методов), `FeePolicy` (2 методов)
+  Функции: `normalize_policies`, `policy_at`, `get_merchant_revenue`
 - `app/services/monitoring_service.py` — Python-модуль
   Классы: `AutopayFailState` (2 методов), `MonitoringService` (52 методов)
   Функции: `decide_autopay_fail_notification` — Decide whether/what to send on a failed-autopay tick., `apply_autopay_fail_notification` — Mutate state to record that a notification with `reason` was just sent.
@@ -2680,6 +2683,7 @@
 - `docs/handoffs/`
 - `docs/hwid-limit-reconciliation.md` — файл
 - `docs/menu_stats_api_usage.md` — файл
+- `docs/merchant-fees.md` — файл
 - `docs/miniapp-setup.md` — файл
 - `docs/mobile-support-websocket-v1.md` — файл
 - `docs/panel-expiry-recovery.md` — файл
@@ -3111,6 +3115,9 @@
 - `migrations/alembic/versions/0133_pending_panel_expiry.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0134_merchant_fee_policies.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -3531,6 +3538,9 @@
 - `tests/cabinet/test_media_xss_hardening.py` — Python-модуль
   Классы: нет
   Функции: `test_raster_images_served_inline_with_their_type`, `test_non_raster_forced_to_download_as_octet_stream`, `test_html_is_never_text_html`, `test_svg_is_never_image_svg_xml`, `test_hardening_headers_always_present`, `test_filename_sanitized_against_header_injection`, `test_empty_filename_falls_back`, `test_blocked_upload_lists_cover_active_content`
+- `tests/cabinet/test_merchant_fee_api.py` — Python-модуль
+  Классы: нет
+  Функции: `test_fee_schema_keeps_independent_sbp_card_crypto_rates`, `test_duplicate_policy_dates_rejected_at_api_boundary`, `test_invalid_report_range_does_not_query_database`
 - `tests/cabinet/test_my_avatar.py` — Python-модуль
   Классы: нет
   Функции: `test_picks_the_smallest_size_that_is_still_sharp`, `test_falls_back_to_the_largest_when_all_are_small`, `test_no_photos_means_no_avatar`, `test_file_id_is_cached_including_the_absence_of_a_photo`, `test_telegram_error_does_not_break_the_cabinet`, `test_route_returns_signed_media_url`, `test_route_without_telegram_account_returns_nothing`
@@ -4589,6 +4599,9 @@
 - `tests/migrations/test_0128_dpichecker_actions.py` — Python-модуль
   Классы: нет
   Функции: `test_revision_chain`, `test_upgrade_matches_model_and_downgrade_drops`
+- `tests/migrations/test_merchant_fee_policies.py` — Python-модуль
+  Классы: нет
+  Функции: `test_upgrade_downgrade_preserves_existing_configuration`
 
 ### tests/services
 
@@ -4871,6 +4884,9 @@
 - `tests/services/test_menu_layout_service.py` — Python-модуль
   Классы: нет
   Функции: `test_build_button_connect_direct_mode_with_url` — Тест: кнопка connect с open_mode=direct и валидным URL должна создавать WebAppInfo., `test_build_button_connect_direct_mode_with_subscription_url` — Тест: кнопка connect с open_mode=direct должна получать URL из подписки., `test_build_button_connect_callback_mode` — Тест: кнопка connect с open_mode=callback должна создавать callback кнопку., `test_build_button_connect_direct_mode_fallback_to_callback` — Тест: кнопка connect с open_mode=direct без URL должна fallback на callback.
+- `tests/services/test_merchant_fees.py` — Python-модуль
+  Классы: нет
+  Функции: `test_rounding_and_fixed_fee`, `test_invalid_rate`, `test_policy_dates_are_aware_and_unique`, `test_policy_change_does_not_affect_earlier_receipts`, `test_revenue_per_sub_method_and_no_balance_double_count`
 - `tests/services/test_miniapp_action_log.py` — Python-модуль
   Классы: нет
   Функции: `test_every_miniapp_route_is_classified` — Каждый маршрут Mini App отнесён либо к действиям, либо к чтениям., `test_classification_has_no_stale_paths` — В списках нет путей, которых у роутера больше нет., `test_actions_are_logged_and_reads_are_not` — Покупка — действие, просмотр подписки — нет., `test_path_normalization_keeps_prefix`, `test_authorize_writes_action_for_mutating_request` — Авторизация запроса Mini App пишет действие в тот же журнал., `test_authorize_writes_screen_for_reads` — Просмотр экрана — тоже след: пишется как экран, а не как действие., `test_timeline_shows_miniapp_actions` — Записанное действие Mini App видно в «Активности» и не смешано с ботом.
