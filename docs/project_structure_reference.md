@@ -2372,6 +2372,9 @@
 - `app/utils/text_search.py` — Python-модуль
   Классы: нет
   Функции: `case_variants` — Регистровые варианты термина, по которым имеет смысл искать., `contains_patterns` — LIKE-шаблоны «содержит term» для всех регистровых вариантов., `contains_conditions` — ILIKE-условия «колонка содержит term» — по каждой колонке и каждому варианту., `contains_clause` — Готовое OR-условие «хотя бы одна колонка содержит term».
+- `app/utils/ticket_media.py` — Python-модуль
+  Классы: нет
+  Функции: `get_ticket_media`, `ticket_media_chunks`
 - `app/utils/ticket_text.py` — Python-модуль
   Классы: нет
   Функции: `preview_text` — Короткое превью сообщения для уведомлений (полный текст — в карточке тикета)., `split_long_block` — Режет блок по границам строк/слов, не разрывая HTML-теги и сущности., `build_ticket_pages` — Собирает страницы «шапка + сообщения», не теряя ни одного символа.
@@ -3339,6 +3342,9 @@
 - `tests/cabinet/test_admin_stats_today_local_day.py` — Python-модуль
   Классы: нет
   Функции: `test_recent_payments_today_total_uses_local_day`, `test_dashboard_income_today_comes_from_statistics_not_from_chart` — Дашборд не пересчитывает «сегодня» из графика по строке даты UTC.
+- `tests/cabinet/test_admin_subscription_panel_identity.py` — Python-модуль
+  Классы: нет
+  Функции: `test_admin_subscription_response_preserves_own_panel_identity`
 - `tests/cabinet/test_admin_sync_extinguishes_stale_panel_date.py` — Python-модуль
   Классы: нет
   Функции: `test_future_panel_date_of_an_expired_subscription_is_extinguished`, `test_past_panel_date_is_left_alone` — В панели уже прошлое: это настоящая дата окончания, её не трогаем., `test_live_subscription_pushes_its_own_date`, `test_sync_to_panel_endpoint_extinguishes_a_future_panel_date` — Та же кнопка в карточке пользователя — у неё своя копия сборки запроса.
@@ -3375,6 +3381,9 @@
 - `tests/cabinet/test_autopay_cancels_sbp.py` — Python-модуль
   Классы: нет
   Функции: `test_enable_autopay_cancels_active_sbp_recurring`, `test_disable_autopay_does_not_cancel_sbp` — Disabling balance-autopay must NOT touch SBP — only the enable path, `test_enable_autopay_rejected_for_trial_does_not_cancel_sbp` — A rejected enable (trial subscription -> 400) must not fire the
+- `tests/cabinet/test_balance_topup_provider_contract.py` — Python-модуль
+  Классы: нет
+  Функции: `anyio_backend`, `checkout`, `test_yookassa_one_ruble_uses_provider_minimum_and_cabinet_return`, `test_lower_schema_bound_does_not_bypass_provider_minimum`, `test_nonpositive_topup_remains_invalid`, `test_unavailable_method_rejected_before_payment_creation`, `test_antilopay_cabinet_creates_checkout_with_user_and_return_url`, `test_antilopay_unrecognized_submethod_is_rejected`, `test_antilopay_latest_and_details_respect_ownership`, `test_antilopay_disabled_after_listing_remains_unavailable`, `test_antilopay_provider_error_does_not_return_checkout`, `test_antilopay_respects_effective_database_options`
 - `tests/cabinet/test_best_value_reaches_every_showcase.py` — Python-модуль
   Классы: нет
   Функции: `test_gift_config_marks_the_highlighted_period`, `test_gift_config_marks_the_highlighted_tariff`, `test_gift_config_marks_nothing_without_a_highlight` — Без отметки оператора витрина остаётся ровной — как была., `test_landing_marks_the_highlighted_period_and_tariff`, `test_landing_marks_nothing_when_the_highlighted_period_is_not_offered` — Лендинг вправе сузить набор периодов: отметка на выброшенном периоде, `test_every_client_period_model_carries_the_best_value_flag`, `test_admin_only_exceptions_still_exist` — Список исключений не должен гнить: исчезнувшая модель прячет новую слепую., `test_the_guard_actually_sees_the_showcases` — Сторож бесполезен, если ничего не находит: три известные витрины обязаны
@@ -3516,6 +3525,9 @@
 - `tests/cabinet/test_media_token_security.py` — Python-модуль
   Классы: нет
   Функции: `test_token_roundtrip`, `test_token_is_bound_to_file_id`, `test_token_rejects_tampered_and_garbage`, `test_token_rejects_expired`, `test_download_rejects_missing_token`, `test_token_lifetime_can_be_shortened`, `test_signed_media_url_is_https_behind_proxy`
+- `tests/cabinet/test_media_upload_topic.py` — Python-модуль
+  Классы: нет
+  Функции: `test_upload_staging_respects_notification_destination`
 - `tests/cabinet/test_media_xss_hardening.py` — Python-модуль
   Классы: нет
   Функции: `test_raster_images_served_inline_with_their_type`, `test_non_raster_forced_to_download_as_octet_stream`, `test_html_is_never_text_html`, `test_svg_is_never_image_svg_xml`, `test_hardening_headers_always_present`, `test_filename_sanitized_against_header_injection`, `test_empty_filename_falls_back`, `test_blocked_upload_lists_cover_active_content`
@@ -3600,6 +3612,9 @@
 - `tests/cabinet/test_route_shadowing.py` — Python-модуль
   Классы: нет
   Функции: `cabinet_routes`, `test_no_literal_route_is_shadowed`, `test_guard_detects_shadowing` — Сама проверка обязана быть чувствительной, иначе она молча зелёная.
+- `tests/cabinet/test_rules_cache_updates.py` — Python-модуль
+  Классы: нет
+  Функции: `isolated_rules_cache`, `test_cabinet_save_updates_warm_bot_rules`, `test_restore_rules_updates_warm_cache`, `test_failed_rules_write_keeps_committed_cache`
 - `tests/cabinet/test_sales_stats_period_local_day.py` — Python-модуль
   Классы: нет
   Функции: `test_preset_days_start_at_local_midnight`, `test_custom_dates_without_zone_are_local_calendar_days`, `test_custom_dates_with_zone_are_kept_as_instants`
@@ -3646,7 +3661,7 @@
   Классы: нет
   Функции: `test_phantom_is_claimed_instead_of_creating_a_second_account`, `test_without_phantom_user_is_created_as_before`, `test_without_username_phantom_is_not_even_looked_up`, `test_lost_claim_race_returns_the_existing_user` — claim_phantom вернул (False, existing): telegram_id уже завёл бот — берём его запись., `test_failed_claim_without_fallback_falls_through_to_create`
 - `tests/cabinet/test_telegram_ticket_media_flow.py` — Python-модуль
-  Классы: `LocalTelegramFiles` (6 методов)
+  Классы: `LocalTelegramFiles` (7 методов)
   Функции: `test_upload_create_reply_reload_download` — Both cabinet sides preserve IDs and bytes; downloads require file-bound tokens.
 - `tests/cabinet/test_telegram_widget_replay.py` — Python-модуль
   Классы: нет
@@ -4351,7 +4366,7 @@
   Функции: `test_autopay_rerenders_without_mutation`
 - `tests/handlers/test_balance_quick_topup.py` — Python-модуль
   Классы: нет
-  Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`
+  Функции: `test_answers_the_tap_before_calling_the_provider`, `test_stale_query_is_not_reported_as_topup_error` — Устаревший запрос по дороге — предупреждение декоратора, а не отчёт об ошибке., `test_provider_failure_is_reported_once_without_second_answer`, `test_unknown_method_is_reported_with_a_message`, `test_tribute_flow_owns_the_answer` — Сценарии, которым передаётся сам callback, отвечают на нажатие сами — родитель не лезет., `test_invalid_amount_alerts_immediately`, `test_repeated_taps_are_acknowledged_while_provider_is_still_waiting`, `test_already_expired_tap_does_not_create_payment`
 - `tests/handlers/test_balance_topup_retry_hint.py` — Python-модуль
   Классы: нет
   Функции: `payment_environment`, `state`, `user`, `test_rejected_purchase_topup_keeps_input_open_until_user_retries`, `test_minimum_hint_only_suggests_an_accepted_whole_ruble_amount`, `test_retry_at_exact_fractional_minimum_does_not_lose_a_kopeck`, `test_manual_amount_reaches_other_payment_routes_without_float_truncation`, `test_nonfinite_amount_never_reaches_payment_provider`
@@ -4479,7 +4494,7 @@
   Классы: нет
   Функции: `test_switch_resolver_prefers_fsm_over_callback_trailing`, `test_switch_resolver_falls_back_to_single_active_when_no_fsm`, `test_switch_resolver_asks_to_choose_when_ambiguous`
 - `tests/handlers/test_telegram_ticket_video.py` — Python-модуль
-  Классы: `RecordingBot` (4 методов)
+  Классы: `RecordingBot` (5 методов)
   Функции: `test_ticket_handler_preserves_media`, `test_attachment_button_delivers_original_photo_and_video`, `test_video_ticket_view_exposes_attachments`, `test_user_notification_delivers_admin_attachment`, `test_admin_notification_delivers_attachment_to_ticket_topic`
 - `tests/handlers/test_ticket_group_card_refresh.py` — Python-модуль
   Классы: нет
@@ -4604,6 +4619,9 @@
 - `tests/services/test_admin_payments_platega_recurring.py` — Python-модуль
   Классы: нет
   Функции: `test_successful_recurring_charge_is_listed`, `test_balance_debit_is_not_shown_as_external_payment`, `test_ordinary_platega_topup_is_not_duplicated` — Пополнение через Platega уже видно по своей строке в platega_payments., `test_pending_platega_payment_still_listed` — Существующая логика pending-платежей не изменилась., `test_details_do_not_confuse_ids_between_tables` — Одинаковый номер в разных таблицах не должен открывать чужой платёж., `test_details_reject_foreign_transaction` — По номеру чужой транзакции автопродление не отдаётся., `test_recurring_charge_has_no_manual_check` — Проверять статус нечего: у списания нет счёта в platega_payments., `test_search_finds_recurring_charge_by_charge_id` — Поиск по номеру списания находит автопродление., `test_search_filter_by_method_returns_only_recurring`, `test_method_has_human_name_on_both_surfaces` — Название метода видно и в кабинете, и в админке бота.
+- `tests/services/test_antilopay_service_contract.py` — Python-модуль
+  Классы: нет
+  Функции: `transport`, `test_create_sends_signed_uppercase_currency`
 - `tests/services/test_apple_iap_reconciliation_service.py` — Python-модуль
   Классы: нет
   Функции: `anyio_backend`, `test_lookup_delegates_to_support_query`, `test_reconcile_recent_transactions_flags_drift_and_counts_backlog`
@@ -4733,6 +4751,9 @@
 - `tests/services/test_format_email_datetime.py` — Python-модуль
   Классы: нет
   Функции: `test_default_format_is_locale_independent` — The fallback shape must be ``DD.MM.YYYY, HH:MM`` — no month, `test_explicit_fmt_arg_overrides_settings` — Caller-provided ``fmt`` wins over the global setting — lets, `test_settings_override_takes_effect_without_restart` — An admin who updates ``EMAIL_DATE_FORMAT`` via system_settings, `test_empty_or_invalid_setting_falls_back_to_default` — Operator misconfiguration (empty / non-string) must not crash, `test_localizes_to_configured_timezone` — UTC datetime gets shifted to ``settings.TIMEZONE`` before formatting., `test_naive_datetime_is_treated_as_utc` — Some legacy paths still pass naive datetimes. Treat them as, `test_iso_string_is_parsed_and_reformatted` — Legacy callers that pre-isoformat'd their datetime get parsed, `test_unparseable_string_passes_through` — If the caller pre-formatted the string in some custom shape we, `test_empty_input_returns_placeholder` — ``None`` / empty must not render the literal Python repr or, `test_custom_placeholder_respected`, `test_non_datetime_non_string_input_returns_placeholder` — Garbage input (int, list, etc.) → placeholder. Defensive., `test_no_microseconds_in_output` — REGRESSION (2026-05-18): user saw, `test_no_offset_in_output` — Non-UTC TZ values also must not leak the offset into the email., `test_notification_delivery_service_uses_format_email_datetime` — ``notify_subscription_expiring`` and ``notify_autopay_success``, `test_auto_purchase_service_sends_machine_dates_to_the_cabinet` — Даты в WebSocket-событиях кабинета — не для человека., `test_helper_signature_is_stable` — The helper is called from 9+ production sites. Lock its
+- `tests/services/test_fsm_pool_redis.py` — Python-модуль
+  Классы: нет
+  Функции: `redis_url`, `test_fsm_burst_waits_for_real_pool_and_releases_connections`, `test_cancelled_pool_waiters_leave_connection_reusable`
 - `tests/services/test_full_sync_lock.py` — Python-модуль
   Классы: нет
   Функции: `test_second_full_sync_is_refused_while_first_runs`, `test_lock_is_released_after_a_failure`, `test_scheduler_sees_a_manual_full_sync_as_running`
@@ -4787,6 +4808,9 @@
 - `tests/services/test_grace_limited_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `test_usage_dropped_below_the_limit_means_the_incident_is_over`, `test_grace_traffic_being_spent_is_not_a_reset`, `test_unchanged_usage_is_not_a_reset`, `test_expired_reason_is_left_to_the_renewal_path`, `test_subscription_that_ran_out_of_time_is_not_reactivated`, `test_blocked_user_is_not_reactivated`, `test_overlay_date_imported_into_billing_is_not_a_reset`, `test_changed_limit_is_left_to_the_conflict_path`, `lab`, `test_scheduled_traffic_reset_closes_the_grace_and_restores_the_panel`, `test_grace_keeps_running_while_the_traffic_is_not_reset`
+- `tests/services/test_grace_oauth_eligibility.py` — Python-модуль
+  Классы: нет
+  Функции: `test_oauth_grace_is_discovered_and_persisted_without_telegram`
 - `tests/services/test_grace_reset_traffic_on_start.py` — Python-модуль
   Классы: `ResettingPanelGateway` (2 методов)
   Функции: `test_expired_unlimited_grace_resets_counter_and_limit_equals_quota`, `test_setting_off_keeps_usage_plus_quota`, `test_reset_is_limited_to_expired_unlimited_subscriptions`, `test_limited_grace_never_resets_even_with_setting_on`, `test_failed_reset_after_overlay_is_retried_instead_of_leaving_zero_traffic`, `test_gateway_resets_only_after_the_restricting_patch`, `test_gateway_fails_when_panel_did_not_reset`, `test_gateway_without_flag_never_resets`, `test_codec_round_trips_flag_and_reads_old_sessions_as_not_reset`, `test_traffic_reset_webhook_does_not_notify_during_expired_grace`
@@ -4822,7 +4846,7 @@
   Функции: `test_telegram_id_saved_before_commit` — Тест: проверяем что telegram_id сохраняется в локальную переменную ДО commit., `test_send_message_called_with_correct_params` — Тест: проверяем что bot.send_message вызывается с правильными параметрами., `test_no_send_when_no_telegram_id` — Тест: уведомление НЕ отправляется если нет telegram_id.
 - `tests/services/test_lava_recurrent.py` — Python-модуль
   Классы: нет
-  Функции: `test_order_id_roundtrip_marks_recurrent_charges` — Вебхук отличает списание по подписке от инвойса пополнения по префиксу., `test_resolve_product_charge_days`, `test_normalize_remote_status`, `test_reconcile_transport_failure_does_not_bury_pending` — Транспортный сбой (remote_missing=False) откладывает решение., `test_reconcile_status_rules`, `test_enable_creates_binding_and_disables_balance_autopay` — Рекуррент провайдера и balance-autopay взаимоисключающи., `test_enable_is_idempotent_and_restores_mutual_exclusion`, `test_enable_without_product_id_is_rejected` — У тарифа нет продукта Lava — понятная ошибка, а не молчаливый успех., `test_enable_rejects_zero_price_product` — Продукт без цены дал бы пустые регулярные «списания»., `test_cancel_marks_local_even_when_provider_fails` — Недоступность Lava не должна блокировать отмену навсегда., `test_charge_extends_subscription_without_touching_balance`, `test_repeated_charge_callback_does_not_extend_twice` — Ретрай вебхука Lava (до 5 раз) не должен продлевать дважды., `test_late_redelivery_of_older_charge_is_ignored` — last_charge_external_id хранит только последний id — сверяемся с транзакциями., `test_success_without_invoice_id_does_not_extend` — Без invoice_id идемпотентность не работает — продлевать нельзя., `test_charge_on_locally_cancelled_record_extends_but_keeps_cancelled` — Деньги взяты — продлеваем честно, но отмену пользователя не стираем., `test_failed_charge_moves_record_to_past_due`, `test_callback_for_unknown_order_is_reported`, `test_enabling_lava_cancels_live_platega_binding` — Два push-провайдера на одной подписке списывали бы дважды за цикл., `test_manual_extension_shifts_next_charge` — Ручное продление при живой привязке двигает автосписание Lava., `test_shift_next_charge_swallows_provider_errors` — Продление уже закоммичено — сбой Lava не должен всплывать., `test_zero_price_product_rejected_before_remote_subscribe` — Вся валидация — ДО subscribe: иначе остаётся живая привязка без локальной, `test_unavailable_product_list_does_not_guess_cadence` — Догадка «30 дней» навсегда исказила бы каденс годового продукта., `test_subscribe_without_subscription_id_is_cancelled_and_raises` — Без subscriptionId отключаются обе страховки — отменяем по orderId., `test_failed_charge_does_not_resurrect_cancelled_binding` — Протухший счёт по отменённой привязке не должен стирать отмену., `test_successful_charge_sets_next_charge_at` — Без этого колонка и строка «следующее списание» в кабинете мертвы., `test_charge_for_deleted_subscription_stops_further_charges` — Продлевать нечего и ретраев не будет — единственное полезное действие:, `test_real_lava_status_values_are_normalized` — Фактические значения Lava — activated/deactivated (примеры из спеки)., `test_purchase_rejects_trial_and_foreign_tariff` — Привязкой нельзя конвертировать триал и оплачивать чужой тариф., `test_charge_returns_a_zeroed_tariff_subscription_to_the_tariff_limit` — Продление Lava идёт мимо extend_subscription — условия тарифа обязаны примениться и здесь.
+  Функции: `test_order_id_roundtrip_marks_recurrent_charges` — Вебхук отличает списание по подписке от инвойса пополнения по префиксу., `test_resolve_product_charge_days`, `test_normalize_remote_status`, `test_reconcile_transport_failure_does_not_bury_pending` — Транспортный сбой (remote_missing=False) откладывает решение., `test_reconcile_status_rules`, `test_enable_creates_binding_and_disables_balance_autopay` — Рекуррент провайдера и balance-autopay взаимоисключающи., `test_enable_is_idempotent_and_restores_mutual_exclusion`, `test_enable_without_product_id_is_rejected` — У тарифа нет продукта Lava — понятная ошибка, а не молчаливый успех., `test_enable_rejects_zero_price_product` — Продукт без цены дал бы пустые регулярные «списания»., `test_cancel_marks_local_even_when_provider_fails` — Недоступность Lava не должна блокировать отмену навсегда., `test_charge_extends_subscription_without_touching_balance`, `test_repeated_charge_callback_does_not_extend_twice` — Ретрай вебхука Lava (до 5 раз) не должен продлевать дважды., `test_late_redelivery_of_older_charge_is_ignored` — last_charge_external_id хранит только последний id — сверяемся с транзакциями., `test_success_without_invoice_id_does_not_extend` — Без invoice_id идемпотентность не работает — продлевать нельзя., `test_charge_on_locally_cancelled_record_extends_but_keeps_cancelled` — Деньги взяты — продлеваем честно, но отмену пользователя не стираем., `test_failed_charge_moves_record_to_past_due`, `test_callback_for_unknown_order_is_reported`, `test_enabling_lava_cancels_live_platega_binding` — Два push-провайдера на одной подписке списывали бы дважды за цикл., `test_manual_extension_shifts_next_charge` — Ручное продление при живой привязке двигает автосписание Lava., `test_shift_next_charge_swallows_provider_errors` — Продление уже закоммичено — сбой Lava не должен всплывать., `test_zero_price_product_rejected_before_remote_subscribe` — Вся валидация — ДО subscribe: иначе остаётся живая привязка без локальной, `test_unavailable_product_list_does_not_guess_cadence` — Догадка «30 дней» навсегда исказила бы каденс годового продукта., `test_subscribe_without_subscription_id_is_cancelled_and_raises` — Без subscriptionId отключаются обе страховки — отменяем по orderId., `test_failed_charge_does_not_resurrect_cancelled_binding` — Протухший счёт по отменённой привязке не должен стирать отмену., `test_successful_charge_sets_next_charge_at` — Без этого колонка и строка «следующее списание» в кабинете мертвы., `test_charge_for_deleted_subscription_stops_further_charges` — Продлевать нечего и ретраев не будет — единственное полезное действие:, `test_real_lava_status_values_are_normalized` — Фактические значения Lava — activated/deactivated (примеры из спеки)., `test_purchase_rejects_trial_and_foreign_tariff` — Привязкой нельзя конвертировать триал и оплачивать чужой тариф., `test_charge_returns_a_zeroed_tariff_subscription_to_the_tariff_limit` — Продление Lava идёт мимо extend_subscription — условия тарифа обязаны примениться и здесь., `test_signed_webhook_lifecycle_and_invoice_ledger_are_separate` — TG-096: activated is lifecycle; only a confirmed invoice grants paid days.
 - `tests/services/test_lava_service.py` — Python-модуль
   Классы: нет
   Функции: `service` — LavaService with deterministic credentials., `test_outgoing_signature_is_in_header_not_body` — REGRESSION: signature must be in `Signature` HTTP header, NOT body field., `test_outgoing_signature_is_hmac_of_raw_body_bytes` — Signature header value = HMAC-SHA256(raw_body_bytes, LAVA_SECRET_KEY) hex., `test_outgoing_body_uses_payload_key_order_not_sorted` — We must NOT sort keys outgoing — sorted body + HMAC of raw would not match., `test_http_error_raises_lava_api_error` — 4xx/5xx must surface as LavaAPIError with status and message., `test_webhook_verify_accepts_raw_body_hmac` — Modern shops sign raw body — verify must accept., `test_webhook_verify_accepts_canonical_json_hmac` — Legacy PHP-SDK shops sign canonical (sorted-keys) JSON — verify must still accept., `test_webhook_verify_rejects_unknown_signature`, `test_webhook_verify_rejects_empty_signature`, `test_webhook_verify_rejects_missing_webhook_secret` — No webhook secret configured → fail closed, not open., `test_webhook_verify_handles_garbage_body` — Non-JSON body falls through to raw-only path, then mismatch → False (no crash)., `test_strip_url_query_removes_query_and_fragment` — Lava Business rejects success/fail URLs with a query string (HTTP 422 'ошибочный
@@ -4850,6 +4874,9 @@
 - `tests/services/test_miniapp_action_log.py` — Python-модуль
   Классы: нет
   Функции: `test_every_miniapp_route_is_classified` — Каждый маршрут Mini App отнесён либо к действиям, либо к чтениям., `test_classification_has_no_stale_paths` — В списках нет путей, которых у роутера больше нет., `test_actions_are_logged_and_reads_are_not` — Покупка — действие, просмотр подписки — нет., `test_path_normalization_keeps_prefix`, `test_authorize_writes_action_for_mutating_request` — Авторизация запроса Mini App пишет действие в тот же журнал., `test_authorize_writes_screen_for_reads` — Просмотр экрана — тоже след: пишется как экран, а не как действие., `test_timeline_shows_miniapp_actions` — Записанное действие Mini App видно в «Активности» и не смешано с ботом.
+- `tests/services/test_monitoring_cycle_connection_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_channel_checks_do_not_leave_outer_connection_idle_in_transaction`
 - `tests/services/test_monitoring_grace_race.py` — Python-модуль
   Классы: нет
   Функции: `test_grace_opened_while_monitoring_walked_its_list_is_not_imported`, `test_renewal_that_landed_while_monitoring_walked_its_list_is_not_expired` — Тот же устаревший список: подписку уже продлили — гасить её нельзя., `test_expiry_does_not_overwrite_a_renewal_committed_right_before_it` — Последнее окно: продление записано уже после перечитывания, но до гашения., `test_expiry_still_expires_a_subscription_that_is_due`, `test_grace_closed_early_between_snapshot_and_reread_is_not_imported` — Ревью 2026-09-15: снимок панели — ещё оверлей, а к перечитыванию грейс уже закрыт досрочно., `test_one_broken_subscription_does_not_stop_the_whole_pass` — Ревью: сбой на одной подписке (удалили во время прохода) прерывал гашение всех остальных.
@@ -5105,6 +5132,9 @@
 - `tests/services/test_retired_payment_provider.py` — Python-модуль
   Классы: нет
   Функции: `test_removed_provider_is_not_offered_even_with_old_settings`, `test_removed_provider_has_no_webhook_but_neighbor_still_does`, `test_old_backup_config_is_hidden_without_hiding_other_providers`, `test_retired_payments_still_count_as_revenue`, `test_old_telegram_selection_cannot_create_payment`, `test_old_landing_selection_cannot_create_payment`
+- `tests/services/test_runtime_settings_restart.py` — Python-модуль
+  Классы: нет
+  Функции: `test_cabinet_switches_remain_effective_after_loading_committed_db`, `test_disabling_smtp_closes_existing_queue_without_delivery`
 - `tests/services/test_settings_categories.py` — Python-модуль
   Классы: нет
   Функции: `test_setting_lands_in_expected_category`, `test_no_setting_falls_into_a_single_verb_category` — Категория из одного глагола — признак забытой привязки в CATEGORY_KEY_OVERRIDES., `test_every_setting_is_exposed_unless_explicitly_excluded` — Ни одна настройка не должна пропасть из админки молча.
