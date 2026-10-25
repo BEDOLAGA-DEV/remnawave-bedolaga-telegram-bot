@@ -101,6 +101,41 @@ def calc_device_limit_on_tariff_switch(
     return new_base
 
 
+def calc_device_limit_on_admin_tariff_change(
+    current_device_limit: int | None,
+    old_tariff_device_limit: int | None,
+    new_tariff_device_limit: int | None,
+    max_device_limit: int | None = None,
+) -> int:
+    """Calculate device_limit when an admin changes the tariff (one user or bulk action).
+
+    An admin change is a relabel, not a purchase: nothing is charged and the
+    extra devices are already paid until the end date. So the extra devices
+    (limit above the old tariff's base) are carried over onto the new base,
+    capped at max_device_limit. Without a known old base nothing is carried.
+    A new tariff with a zero base is unlimited and stays unlimited (0).
+
+    A switch made by the user still resets to the new base
+    (calc_device_limit_on_tariff_switch): that path prices the switch, and
+    carried-over devices kept the old per-device rate (aec01ce0).
+    """
+    extra_devices = 0
+    if old_tariff_device_limit:
+        current = current_device_limit or old_tariff_device_limit
+        extra_devices = max(0, current - old_tariff_device_limit)
+
+    new_base = new_tariff_device_limit if new_tariff_device_limit is not None else 1
+    if new_base == 0:
+        return 0
+    total = new_base + extra_devices
+
+    effective_max = max_device_limit or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
+    if effective_max and total > effective_max:
+        total = effective_max
+
+    return total
+
+
 def is_active_paid_subscription(subscription: Subscription | None) -> bool:
     """Return True if subscription is active, paid (non-trial), and not expired."""
     if not subscription:
