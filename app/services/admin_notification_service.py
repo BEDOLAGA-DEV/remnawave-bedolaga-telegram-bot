@@ -2241,6 +2241,55 @@ class AdminNotificationService:
             logger.error('Ошибка отправки уведомления об изменении подписки', error=e)
             return False
 
+    DEVICE_OVERFLOW_MAX_LINES = 25
+
+    async def send_device_limit_overflow_notification(self, overflows: list, *, total: int) -> bool:
+        """Сводка подписок, где устройств в панели больше лимита (app/services/device_limit_overflow.py).
+
+        ``overflows`` — новые и изменившиеся случаи, ``total`` — сколько превышений сейчас всего.
+        Строк не больше DEVICE_OVERFLOW_MAX_LINES, остальное — одной строкой «и ещё N»:
+        сообщение должно уложиться в лимит Telegram.
+        """
+        if not self._is_enabled() or not overflows:
+            return False
+
+        try:
+            from app.services.device_limit_overflow import DEVICE_OVERFLOW_ACTIVE_DAYS
+
+            message_lines = [
+                '<b>📱 ПРЕВЫШЕНИЕ ЛИМИТА УСТРОЙСТВ</b>',
+                '',
+                f'Подписок, где устройств больше лимита: <b>{total}</b>, новых или изменившихся: <b>{len(overflows)}</b>',
+                '',
+            ]
+            for overflow in overflows[: self.DEVICE_OVERFLOW_MAX_LINES]:
+                subscription = overflow.subscription
+                user = subscription.user
+                tariff = _loaded_relationship(subscription, 'tariff')
+                tariff_part = f' · {html.escape(tariff.name)}' if tariff is not None and tariff.name else ''
+                message_lines.append(
+                    f'• {self._get_user_display(user)} ({self._get_user_identifier_display(user)})'
+                    f' · #{subscription.id}{tariff_part}: '
+                    f'{overflow.devices} устр. при лимите {overflow.device_limit}, '
+                    f'за {DEVICE_OVERFLOW_ACTIVE_DAYS} дн. в работе {overflow.active_devices}'
+                )
+            hidden = len(overflows) - self.DEVICE_OVERFLOW_MAX_LINES
+            if hidden > 0:
+                message_lines.append(f'… и ещё {hidden}')
+
+            message_lines.extend(
+                [
+                    '',
+                    f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M")}</i>',
+                ]
+            )
+
+            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.ADDONS)
+
+        except Exception as e:
+            logger.error('Ошибка отправки уведомления о превышении лимита устройств', error=e)
+            return False
+
     async def _format_servers_detailed(self, server_uuids: list[str]) -> str:
         if not server_uuids:
             return 'Нет серверов'

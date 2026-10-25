@@ -193,6 +193,10 @@ def _expires_by_own_date(subscription: Subscription, *, now: datetime) -> bool:
     return end_date <= now
 
 
+DEVICE_OVERFLOW_FIRST_CHECK_DELAY_SECONDS = 10 * 60
+DEVICE_OVERFLOW_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+
+
 class MonitoringService:
     def __init__(self, bot=None):
         self.is_running = False
@@ -203,6 +207,7 @@ class MonitoringService:
         self._sla_task = None
         self._withdrawal_reminder_task = None
         self._user_reminder_task = None
+        self._device_overflow_task = None
         self._live_menu_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
@@ -361,6 +366,12 @@ class MonitoringService:
                 self._user_reminder_task = asyncio.create_task(self._user_reminder_loop())
         except Exception as e:
             logger.error('Не удалось запустить напоминания пользователям', error=e)
+        # Устройства сверх лимита подписки — раз в сутки, сводка админам
+        try:
+            if not self._device_overflow_task or self._device_overflow_task.done():
+                self._device_overflow_task = asyncio.create_task(self._device_overflow_loop())
+        except Exception as e:
+            logger.error('Не удалось запустить проверку превышения лимита устройств', error=e)
         try:
             if not self._live_menu_task or self._live_menu_task.done():
                 from app.services.live_menu_service import live_menu_loop
@@ -390,6 +401,8 @@ class MonitoringService:
             self._withdrawal_reminder_task.cancel()
         if self._user_reminder_task and not self._user_reminder_task.done():
             self._user_reminder_task.cancel()
+        if self._device_overflow_task and not self._device_overflow_task.done():
+            self._device_overflow_task.cancel()
         if self._live_menu_task and not self._live_menu_task.done():
             self._live_menu_task.cancel()
 
@@ -3431,6 +3444,26 @@ class MonitoringService:
             except Exception:
                 interval_seconds = 900
             await asyncio.sleep(interval_seconds)
+
+    async def _device_overflow_loop(self):
+        from app.services.device_limit_overflow import check_device_limit_overflows
+
+        # Первый проход не сразу после старта: бот поднимается вместе с остальными
+        # фоновыми задачами, а сутки ничего не решают.
+        await asyncio.sleep(DEVICE_OVERFLOW_FIRST_CHECK_DELAY_SECONDS)
+        while self.is_running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    try:
+                        await check_device_limit_overflows(db, self.bot)
+                    except Exception as e:
+                        logger.warning('Сбой проверки превышения лимита устройств', error=str(e))
+                        await db.rollback()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning('Ошибка в цикле проверки превышения лимита устройств', error=str(e))
+            await asyncio.sleep(DEVICE_OVERFLOW_CHECK_INTERVAL_SECONDS)
 
     async def _log_monitoring_event(
         self, db: AsyncSession, event_type: str, message: str, data: dict[str, Any] = None, is_success: bool = True
