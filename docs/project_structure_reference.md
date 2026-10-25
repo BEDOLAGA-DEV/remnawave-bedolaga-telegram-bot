@@ -5319,6 +5319,12 @@
 - `tests/services/panel_sync/test_blocked_user_stays_disabled.py` — Python-модуль
   Классы: нет
   Функции: `test_bulk_sync_does_not_reactivate_a_blocked_user`, `test_cabinet_sync_does_not_reactivate_a_blocked_user`
+- `tests/services/panel_sync/test_deleted_squads.py` — Python-модуль
+  Классы: `Panel` (4 методов)
+  Функции: `test_deleted_squad_recovery_preserves_only_assigned_live_servers`, `test_all_assigned_squads_deleted_does_not_grant_unrelated_access`, `test_other_errors_do_not_trigger_squad_recovery`, `test_catalog_outage_preserves_original_failure_without_retry`, `test_normal_write_does_not_fetch_catalog`, `test_invalid_catalog_cannot_authorize_a_retry`, `test_generic_error_with_unchanged_catalog_is_not_retried`, `test_second_failure_is_propagated_without_retry_loop`, `test_recovery_through_real_http_client_and_catalog_parser`
+- `tests/services/panel_sync/test_deleted_squads_live_panel.py` — Python-модуль
+  Классы: нет
+  Функции: `test_deleted_squads_against_real_panel`
 - `tests/services/panel_sync/test_device_limit_enforcement.py` — Python-модуль
   Классы: нет
   Функции: `api_with_devices`, `test_explicit_cap_keeps_most_recent_registrations_and_removes_only_excess`, `test_unlimited_or_omitted_cap_never_removes_devices`, `test_failed_removal_is_not_reported_as_success_and_next_sync_retries`, `test_same_cap_with_legal_device_count_preserves_registrations`, `test_invalid_or_foreign_device_list_never_deletes_anything`, `test_device_reappearing_after_removal_requires_retry`

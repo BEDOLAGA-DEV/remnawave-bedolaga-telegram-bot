@@ -100,8 +100,42 @@ async def _enforce_registered_device_limit(api, panel_user_id: int, limit: int |
     )
 
 
+async def _write_with_current_squads(api, write, **kwargs):
+    """Recover a rejected write only when a fresh catalog proves stale squads.
+
+    A018/A039 are generic failures, not evidence of a deleted squad. Never retry
+    unchanged, substitute unrelated servers, or turn an explicit set into an
+    empty one. Keep paid local intent intact; normal sync reconciles the catalog.
+    """
+    try:
+        return await write(**kwargs)
+    except RemnaWaveAPIError as error:
+        data = error.response_data if isinstance(error.response_data, dict) else {}
+        requested = kwargs.get('active_internal_squads')
+        if data.get('errorCode') not in {'A018', 'A039', 'A118'} or not requested:
+            raise
+        try:
+            catalog = await api.get_internal_squads()
+            if not isinstance(catalog, list) or any(
+                not isinstance(getattr(squad, 'uuid', None), str) or not squad.uuid for squad in catalog
+            ):
+                raise ValueError('Invalid internal squad catalog')
+            available = {squad.uuid for squad in catalog}
+        except Exception:
+            # A failed/invalid catalog must not be interpreted as mass deletion.
+            raise error from None
+        surviving = [squad for squad in requested if squad in available]
+        if not surviving or surviving == requested:
+            raise
+        logger.warning(
+            'Retrying panel write with surviving assigned internal squads',
+            removed_count=len(requested) - len(surviving),
+        )
+        return await write(**{**kwargs, 'active_internal_squads': surviving})
+
+
 async def _update_with_device_limit(api, update, **kwargs):
-    panel_user = await update(**kwargs)
+    panel_user = await _write_with_current_squads(api, update, **kwargs)
     if panel_user is not None:
         try:
             await _enforce_registered_device_limit(api, kwargs['user_id'], kwargs.get('hwid_device_limit'))
@@ -197,7 +231,7 @@ async def push_subscription(
     if reset_devices is None:
         reset_devices = settings.RESET_DEVICES_ON_RENEWAL
     update = partial(_update_with_device_limit, api, update_call or api.update_user)
-    create = create_call or api.create_user
+    create = partial(_write_with_current_squads, api, create_call or api.create_user)
 
     panel_user_id = identity.user_id
     if panel_user_id is not None:
