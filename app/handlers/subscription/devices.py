@@ -950,6 +950,8 @@ async def show_devices_page(
                 'DEVICE_MANAGEMENT_LIST_ITEM',
                 '• {device}\n',
             ).format(device=html_mod.escape(device_info))
+            if hwid := device.get('hwid'):
+                devices_text += f'  <code>{html_mod.escape(hwid)}</code>\n'
 
     devices_text += texts.t(
         'DEVICE_MANAGEMENT_ACTIONS',

@@ -111,7 +111,14 @@ async def test_classic_purchase_counts_trial_remainder_once(monkeypatch, flow, c
         operation = m.confirm_purchase(callback, state, user, db)
     else:
         m = admin_users
+        from app.database.crud import transaction as transaction_crud
 
+        monkeypatch.setattr(settings, 'SALES_MODE', 'classic')
+        monkeypatch.setattr(type(settings), 'get_available_subscription_periods', lambda self: [30])
+        subscription.tariff_id = None
+        db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: subscription)
+        # The financial commit now includes the ledger; keep stopping at that boundary.
+        monkeypatch.setattr(transaction_crud, 'create_transaction', AsyncMock())
         monkeypatch.setattr(m, 'datetime', FrozenDateTime)
         monkeypatch.setattr(
             m.UserService, 'get_user_profile', AsyncMock(return_value={'user': user, 'subscription': subscription})

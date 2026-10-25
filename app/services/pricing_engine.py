@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+class TariffSwitchPricingUnavailableError(ValueError):
+    """A periodic tariff has no configured price for switching."""
+
+
 @dataclass(frozen=True)
 class TariffBreakdown:
     """Typed breakdown for tariff mode pricing."""
@@ -228,14 +232,20 @@ class PricingEngine:
         гарантировать корректное сравнение дневных ставок при смене
         тарифов с разными наборами периодов.
         """
-        periods = tariff.get_available_periods()
-        if not periods:
+        if tariff is None:
             return 0, 1
-        best_period = min(periods)
-        price = tariff.get_price_for_period(best_period)
-        if not price or best_period <= 0:
-            return 0, 1
-        return price, best_period
+        configured = []
+        for period, price in (tariff.period_prices or {}).items():
+            try:
+                days = int(period)
+            except (TypeError, ValueError):
+                continue
+            if days > 0 and isinstance(price, int) and not isinstance(price, bool) and price >= 0:
+                configured.append((days, price))
+        if not configured:
+            raise TariffSwitchPricingUnavailableError('Tariff pricing is unavailable')
+        days, price = min(configured)
+        return price, days
 
     def calculate_tariff_switch_cost(
         self,
@@ -256,6 +266,12 @@ class PricingEngine:
         """
         current_is_daily = getattr(current_tariff, 'is_daily', False) if current_tariff else False
         new_is_daily = getattr(new_tariff, 'is_daily', False)
+
+        # Validate both sides before any free/expired or daily transition shortcut.
+        if not current_is_daily:
+            self.get_tariff_daily_rate_fraction(current_tariff)
+        if not new_is_daily:
+            self.get_tariff_daily_rate_fraction(new_tariff)
 
         # Daily tariff edge cases
         if not current_is_daily and new_is_daily:
@@ -314,7 +330,7 @@ class PricingEngine:
             promo_group = self.resolve_promo_group(user)
             if promo_group is not None:
                 best_period = min(
-                    current_tariff.get_available_periods() or [30],
+                    (current_tariff.get_available_periods() if current_tariff is not None else []) or [30],
                     key=lambda p: abs(p - remaining_days),
                 )
                 group_pct = promo_group.get_discount_percent('period', best_period)
@@ -385,11 +401,7 @@ class PricingEngine:
         user: User | None = None,
     ) -> TariffSwitchResult:
         """Daily → Periodic: оплата кратчайшего периода нового тарифа с group + offer discount."""
-        min_period_days = 30
-        min_period_price = 0
-        if new_tariff.period_prices:
-            min_period_days = min(int(k) for k in new_tariff.period_prices.keys())
-            min_period_price = new_tariff.period_prices.get(str(min_period_days), 0) or 0
+        min_period_price, min_period_days = self.get_tariff_daily_rate_fraction(new_tariff)
 
         if min_period_price <= 0:
             return TariffSwitchResult(

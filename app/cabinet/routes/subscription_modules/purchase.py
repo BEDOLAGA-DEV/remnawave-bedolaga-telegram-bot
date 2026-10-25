@@ -180,7 +180,7 @@ async def _build_tariff_response(
     periods = []
     if tariff.period_prices:
         for period_str, price_kopeks in sorted(tariff.period_prices.items(), key=lambda x: int(x[0])):
-            if int(price_kopeks) < 0:
+            if price_kopeks is None or int(price_kopeks) < 0:
                 continue  # Skip disabled periods (negative price)
             period_days = int(period_str)
             months = calculate_months_from_days(period_days)
@@ -1013,6 +1013,13 @@ async def purchase_tariff(
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
+        from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+        try:
+            await validate_checkout_squads(squads)
+        except CheckoutSquadsUnavailableError as error:
+            raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
+
         # Charge balance
         if is_daily_tariff:
             description = f"Активация суточного тарифа '{tariff.name}'"
@@ -1640,6 +1647,13 @@ async def activate_trial(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Trial already used',
         )
+
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_trial_checkout_squads
+
+    try:
+        await validate_trial_checkout_squads(db)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
 
     # Check if trial requires payment
     requires_payment = bool(settings.TRIAL_PAYMENT_ENABLED)

@@ -101,14 +101,21 @@ async def _enforce_registered_device_limit(api, panel_user_id: int, limit: int |
 
 
 async def _write_with_current_squads(api, write, **kwargs):
+    updated, _surviving = await write_panel_user_with_squad_recovery(api, write, **kwargs)
+    return updated
+
+
+async def write_panel_user_with_squad_recovery(api, write, **kwargs):
     """Recover a rejected write only when a fresh catalog proves stale squads.
 
     A018/A039 are generic failures, not evidence of a deleted squad. Never retry
     unchanged, substitute unrelated servers, or turn an explicit set into an
     empty one. Keep paid local intent intact; normal sync reconciles the catalog.
+    Return the panel response and the surviving selection only when narrowed;
+    otherwise the second element is None and the original target is unchanged.
     """
     try:
-        return await write(**kwargs)
+        return await write(**kwargs), None
     except RemnaWaveAPIError as error:
         data = error.response_data if isinstance(error.response_data, dict) else {}
         requested = kwargs.get('active_internal_squads')
@@ -131,7 +138,8 @@ async def _write_with_current_squads(api, write, **kwargs):
             'Retrying panel write with surviving assigned internal squads',
             removed_count=len(requested) - len(surviving),
         )
-        return await write(**{**kwargs, 'active_internal_squads': surviving})
+        updated = await write(**{**kwargs, 'active_internal_squads': surviving})
+        return updated, tuple(surviving)
 
 
 async def _update_with_device_limit(api, update, **kwargs):

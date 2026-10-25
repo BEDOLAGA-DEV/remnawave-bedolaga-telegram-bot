@@ -3007,6 +3007,50 @@ class Transaction(Base):
         return self.amount_kopeks / 100
 
 
+class PaidTrafficResetIntent(Base):
+    """A daily charge's destructive panel reset, acknowledged independently of expiry."""
+
+    __tablename__ = 'paid_traffic_reset_intents'
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'attempted', 'confirmed', 'blocked', 'superseded')", name='ck_paid_reset_state'
+        ),
+        CheckConstraint(
+            "state != 'attempted' OR (target_panel_id IS NOT NULL AND target_short_uuid IS NOT NULL AND attempted_at IS NOT NULL)",
+            name='ck_paid_reset_attempt_target',
+        ),
+        Index('ix_paid_traffic_reset_due', 'state', 'next_check_at', 'id'),
+        Index('ix_paid_traffic_reset_subscription', 'subscription_id', 'id'),
+        Index(
+            'uq_paid_traffic_reset_unresolved_target',
+            'target_panel_id',
+            unique=True,
+            postgresql_where=text("attempted_at IS NOT NULL AND state IN ('attempted', 'blocked')"),
+            sqlite_where=text("attempted_at IS NOT NULL AND state IN ('attempted', 'blocked')"),
+        ),
+    )
+    id = Column(Integer, primary_key=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    transaction_id = Column(Integer, ForeignKey('transactions.id', ondelete='SET NULL'), nullable=True, unique=True)
+    operation_key = Column(String(128), nullable=False, unique=True)
+    charge_at = Column(AwareDateTime(), nullable=False)
+    reason = Column(String(128), nullable=False)
+    state = Column(String(16), nullable=False, default='pending')
+    target_panel_id = Column(BigInteger, nullable=True)
+    target_short_uuid = Column(String(255), nullable=True)
+    baseline_observed = Column(Boolean, nullable=False, default=False)
+    baseline_last_reset_at = Column(AwareDateTime(), nullable=True)
+    attempted_at = Column(AwareDateTime(), nullable=True)
+    activation_pending = Column(Boolean, nullable=False, default=False)
+    confirmed_at = Column(AwareDateTime(), nullable=True)
+    confirmed_last_reset_at = Column(AwareDateTime(), nullable=True)
+    checks = Column(Integer, nullable=False, default=0)
+    next_check_at = Column(AwareDateTime(), nullable=True)
+    last_error = Column(String(128), nullable=True)
+    created_at = Column(AwareDateTime(), nullable=False, default=func.now())
+
+
 class SubscriptionConversion(Base):
     __tablename__ = 'subscription_conversions'
     __table_args__ = (

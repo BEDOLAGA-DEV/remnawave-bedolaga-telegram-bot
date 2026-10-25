@@ -90,6 +90,7 @@ class RemnaWaveUser:
     user_traffic: UserTraffic | None = None
     sub_revoked_at: datetime | None = None
     last_traffic_reset_at: datetime | None = None
+    last_traffic_reset_at_known: bool = False
     trojan_password: str | None = None
     vless_uuid: str | None = None
     ss_password: str | None = None
@@ -591,13 +592,19 @@ class RemnaWaveAPI:
             await self.session.close()
 
     async def _make_request(
-        self, method: str, endpoint: str, data: dict | None = None, params: dict | None = None
+        self,
+        method: str,
+        endpoint: str,
+        data: dict | None = None,
+        params: dict | None = None,
+        *,
+        retry_transient: bool = True,
     ) -> dict:
         if not self.session:
             raise RemnaWaveAPIError('Session not initialized. Use async context manager.')
 
         url = f'{self.base_url}{endpoint}'
-        max_retries = 3
+        max_retries = 3 if retry_transient else 0
         base_delay = 1.0
         attempt = 0  # транзиентные сбои: 502/503/504 и обрывы связи
         rate_limit_hits = 0  # 429: свой счётчик и своя, более терпеливая шкала
@@ -629,7 +636,7 @@ class RemnaWaveAPI:
                         rate_limit_hits += 1
                         # Пауза общая; ждёт её начало цикла — одна точка ожидания на всех.
                         RemnaWaveAPI._throttle(delay)
-                        if rate_limit_hits <= RATE_LIMIT_MAX_RETRIES:
+                        if retry_transient and rate_limit_hits <= RATE_LIMIT_MAX_RETRIES:
                             logger.warning(
                                 'Панель ограничила частоту запросов (429) — общая пауза',
                                 method=method,
@@ -1032,11 +1039,17 @@ class RemnaWaveAPI:
         user = self._parse_user(response['response'])
         return await self.enrich_user_with_happ_link(user)
 
-    async def reset_user_traffic(self, user_id: int) -> RemnaWaveUser:
+    async def reset_user_traffic(self, user_id: int, *, enrich: bool = True) -> RemnaWaveUser:
         panel_user_id = coerce_panel_user_id(user_id)
-        response = await self._make_request('POST', f'/api/users/{panel_user_id}/actions/reset-traffic')
+        # A lost response is ambiguous: repeating this mutation can erase new usage.
+        # Paid intent reconciliation owns acknowledgement and any later decision.
+        response = await self._make_request(
+            'POST', f'/api/users/{panel_user_id}/actions/reset-traffic', retry_transient=False
+        )
         user = self._parse_user(response['response'])
-        return await self.enrich_user_with_happ_link(user)
+        # Durable paid reset delivery must record this acknowledgement before any
+        # optional network enrichment can fail. Legacy callers keep their return shape.
+        return await self.enrich_user_with_happ_link(user) if enrich else user
 
     async def extend_user_expiration(self, user_id: int, days: int) -> RemnaWaveUser:
         """``POST /api/users/{userId}/actions/extend`` — новое в 3.0.0.
@@ -2091,6 +2104,13 @@ class RemnaWaveAPI:
             user_traffic=user_traffic,
             sub_revoked_at=self._parse_optional_datetime(user_data.get('subRevokedAt')),
             last_traffic_reset_at=self._parse_optional_datetime(user_data.get('lastTrafficResetAt')),
+            last_traffic_reset_at_known=(
+                'lastTrafficResetAt' in user_data
+                and (
+                    user_data['lastTrafficResetAt'] is None
+                    or (isinstance(user_data['lastTrafficResetAt'], str) and bool(user_data['lastTrafficResetAt']))
+                )
+            ),
             trojan_password=user_data.get('trojanPassword'),
             vless_uuid=user_data.get('vlessUuid'),
             ss_password=user_data.get('ssPassword'),

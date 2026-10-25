@@ -618,7 +618,7 @@ class RemnawaveGracePanelGateway:
                     current_user=current_user,
                 )
             else:
-                updated = await api.update_user(**_serialize_panel_target(billing.remnawave_id, target))
+                updated, target = await _write_recovered_billing_target(api, billing.remnawave_id, target)
         if updated is None or not _panel_user_matches_target(updated, target):
             if target.status is PanelUserStatus.LIMITED:
                 raise GracePanelTransitionConflict('Remnawave changed while canonical LIMITED state was being applied')
@@ -1256,13 +1256,9 @@ async def apply_recovered_grace_update_locked(
     target = _build_billing_target(billing, now=datetime.now(UTC))
     if target.status not in {PanelUserStatus.ACTIVE, PanelUserStatus.DISABLED}:
         raise GracePanelError(f'Canonical renewal unexpectedly resolved to derived panel status {target.status.value}')
-    canonical_kwargs = _serialize_panel_target(
-        billing.remnawave_id,
-        target,
-        base_kwargs=update_kwargs,
+    updated, target = await _write_recovered_billing_target(
+        api, billing.remnawave_id, target, base_kwargs=update_kwargs
     )
-
-    updated = await api.update_user(**canonical_kwargs)
     if updated is None or not _panel_user_matches_target(updated, target):
         raise GracePanelError('Remnawave did not confirm canonical billing state after renewal')
 
@@ -2021,6 +2017,20 @@ def _build_billing_target(
         external_squad_uuid=billing.external_squad_uuid,
         device_limit=billing.device_limit,
     )
+
+
+async def _write_recovered_billing_target(api, remnawave_id, target, *, base_kwargs=None):
+    from app.services.panel_sync.writer import write_panel_user_with_squad_recovery
+
+    updated, surviving = await write_panel_user_with_squad_recovery(
+        api, api.update_user, **_serialize_panel_target(remnawave_id, target, base_kwargs=base_kwargs)
+    )
+    if surviving is not None:
+        # Verify exactly the narrowed request authorized by a fresh catalog,
+        # never an arbitrary subset returned by the panel. Canonical DB rights
+        # remain untouched; only deleted squads are absent from this write.
+        target = replace(target, squad_uuids=surviving)
+    return updated, target
 
 
 def _serialize_panel_target(

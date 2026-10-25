@@ -1,3 +1,6 @@
+from app.services.pricing_engine import TariffSwitchPricingUnavailableError
+
+
 """Покупка подписки по тарифам."""
 
 import html
@@ -162,6 +165,21 @@ async def _reject_unavailable_tariff(callback: types.CallbackQuery, tariff: Tari
         return False
     await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
     return True
+
+
+async def _reject_unavailable_checkout_squads(callback, squads, texts: Texts) -> bool:
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+    try:
+        await validate_checkout_squads(squads)
+    except CheckoutSquadsUnavailableError as error:
+        message = texts.t('TARIFF_SERVERS_UNAVAILABLE', error.message)
+        try:
+            await callback.answer(message, show_alert=True)
+        except Exception:
+            await callback.message.edit_text(message)
+        return True
+    return False
 
 
 def _apply_promo_discount(price: int, group_pct: int, offer_pct: int = 0) -> int:
@@ -1475,6 +1493,9 @@ async def _confirm_tariff_checkout(callback, state, db_user, db, tariff, period)
                     show_alert=True,
                 )
                 return True
+    if await _reject_unavailable_checkout_squads(callback, tariff.allowed_squads, texts):
+        return True
+
     await callback.answer()
     await _auto_purchase_tariff(db, db_user, dict(cart), checkout_identity=identity)
     if (await state.get_data()).get('restored_tariff_checkout') != checkout:
@@ -2000,6 +2021,15 @@ async def confirm_daily_tariff_purchase(
         )
         return
 
+    squads = tariff.allowed_squads or []
+    if not squads:
+        from app.database.crud.server_squad import get_all_server_squads
+
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+    if await _reject_unavailable_checkout_squads(callback, squads, texts):
+        return
+
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
     try:
@@ -2007,12 +2037,6 @@ async def confirm_daily_tariff_purchase(
     except Exception:
         pass
 
-    squads = tariff.allowed_squads or []
-    if not squads:
-        from app.database.crud.server_squad import get_all_server_squads
-
-        all_servers, _ = await get_all_server_squads(db, available_only=True)
-        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
     purchase_user_id = db_user.id
     description = f'Покупка суточного тарифа {tariff.name} (первый день)'
     try:
@@ -2672,9 +2696,23 @@ async def confirm_tariff_extend(
         await callback.answer(texts.t('TARIFF_PURCHASE_PERIOD_UNAVAILABLE', 'Период недоступен'), show_alert=True)
         return
 
+    from sqlalchemy.orm import selectinload
+
+    from app.database.crud.user import lock_user_for_pricing
+    from app.database.models import Subscription
+
+    # Match autopay's User -> Subscription lock order and re-read paid state.
+    db_user = await lock_user_for_pricing(db, db_user.id)
+
     # Грузим подписку СТРОГО по id из callback + user_id (см. issue #3012: резолвер
     # по хвосту callback принимал период за id подписки и продлевал чужую).
-    subscription = await get_subscription_by_id_for_user(db, sub_id, db_user.id)
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(Subscription.id == sub_id, Subscription.user_id == db_user.id)
+        .options(selectinload(Subscription.tariff))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if not subscription:
         await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
         return
@@ -2697,10 +2735,6 @@ async def confirm_tariff_extend(
 
     actual_device_limit = subscription.device_limit or tariff.device_limit
 
-    from app.database.crud.user import lock_user_for_pricing
-
-    db_user = await lock_user_for_pricing(db, db_user.id)
-
     # Calculate price via PricingEngine (handles per-category discounts: period + devices)
     from app.services.pricing_engine import pricing_engine
 
@@ -2721,6 +2755,9 @@ async def confirm_tariff_extend(
         )
         return
 
+    if await _reject_unavailable_checkout_squads(callback, subscription.connected_squads, texts):
+        return
+
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
     try:
@@ -2729,33 +2766,73 @@ async def confirm_tariff_extend(
         pass
 
     try:
-        # Списываем баланс
-        success = await subtract_user_balance(
-            db,
-            db_user,
-            final_price,
-            f'Продление тарифа {tariff.name} на {period} дней',
-            consume_promo_offer=consume_promo,
-            mark_as_paid_subscription=True,
-        )
-        if not success:
+        try:
+            # Списываем баланс
+            success = await subtract_user_balance(
+                db,
+                db_user,
+                final_price,
+                f'Продление тарифа {tariff.name} на {period} дней',
+                consume_promo_offer=consume_promo,
+                mark_as_paid_subscription=True,
+                commit=False,
+            )
+            if not success:
+                await db.rollback()
+                try:
+                    await callback.message.edit_text(
+                        texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса')
+                    )
+                except Exception:
+                    pass
+                return
+
+            # Запоминаем, был ли триал ДО продления
+            was_trial = subscription.is_trial
+
+            # Продлеваем подписку; для триала передаём tariff_id чтобы сбросить is_trial
+            subscription = await extend_subscription(
+                db,
+                subscription,
+                days=period,
+                tariff_id=tariff.id if was_trial else None,
+                traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
+                device_limit=actual_device_limit if was_trial else None,
+                commit=False,
+            )
+
+            transaction = await create_transaction(
+                db,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=final_price,
+                description=f'Продление тарифа {tariff.name} на {period} дней',
+                commit=False,
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+
+        # commit=False defers the irreversible provider schedule update.
+        if period > 0:
             try:
-                await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
-            except Exception:
-                pass
-            return
+                from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
 
-        # Запоминаем, был ли триал ДО продления
-        was_trial = subscription.is_trial
+                await shift_lava_next_charge_after_manual_extension(db, subscription.id, period)
+            except Exception as shift_error:
+                logger.warning('Failed to shift Lava next charge after manual tariff payment', error=shift_error)
 
-        # Продлеваем подписку; для триала передаём tariff_id чтобы сбросить is_trial
-        subscription = await extend_subscription(
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
             db,
-            subscription,
-            days=period,
-            tariff_id=tariff.id if was_trial else None,
-            traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
-            device_limit=actual_device_limit if was_trial else None,
+            transaction,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_price,
+            description=f'Продление тарифа {tariff.name} на {period} дней',
+            payment_method=PaymentMethod.BALANCE,
         )
 
         # Обновляем пользователя в Remnawave
@@ -2786,15 +2863,6 @@ async def confirm_tariff_extend(
                 user_id=db_user.id,
                 action='create',
             )
-
-        # Создаем транзакцию
-        await create_transaction(
-            db,
-            user_id=db_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_price,
-            description=f'Продление тарифа {tariff.name} на {period} дней',
-        )
 
         # Отправляем уведомление админу
         try:
@@ -3195,7 +3263,11 @@ async def select_tariff_switch(
         cur_tariff_sw = await get_tariff_by_id(db, current_subscription_sw.tariff_id)
         if cur_tariff_sw:
             rem_days = remaining_days_for_switch(current_subscription_sw.end_date)
-            _, is_up = _calculate_instant_switch_cost(cur_tariff_sw, tariff, rem_days, db_user)
+            try:
+                _, is_up = _calculate_instant_switch_cost(cur_tariff_sw, tariff, rem_days, db_user)
+            except TariffSwitchPricingUnavailableError:
+                await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+                return
             if is_up and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
                 await callback.answer(
                     texts.t('TARIFF_SWITCH_UPGRADE_DISABLED', 'Повышение тарифа недоступно'), show_alert=True
@@ -3487,12 +3559,31 @@ async def confirm_tariff_switch(
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
+    from sqlalchemy.orm import selectinload
+
+    from app.database.models import Subscription
+
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(Subscription.id == subscription.id, Subscription.user_id == db_user.id)
+        .options(selectinload(Subscription.tariff))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if subscription is None:
+        await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+        return
+
     # Проверяем разрешение на смену в данном направлении
     if subscription.tariff_id and subscription.tariff_id != tariff_id:
         cur_tariff_obj = await get_tariff_by_id(db, subscription.tariff_id)
         if cur_tariff_obj:
             rem_days = remaining_days_for_switch(subscription.end_date)
-            _, is_up = _calculate_instant_switch_cost(cur_tariff_obj, tariff, rem_days, db_user)
+            try:
+                _, is_up = _calculate_instant_switch_cost(cur_tariff_obj, tariff, rem_days, db_user)
+            except TariffSwitchPricingUnavailableError:
+                await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+                return
             if is_up and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
                 await callback.answer(
                     texts.t('TARIFF_SWITCH_UPGRADE_DISABLED', 'Повышение тарифа недоступно'), show_alert=True
@@ -3526,6 +3617,19 @@ async def confirm_tariff_switch(
         )
         return
 
+    # Получаем список серверов из тарифа
+    squads = tariff.allowed_squads or []
+
+    # Если allowed_squads пустой - значит "все серверы", получаем их
+    if not squads:
+        from app.database.crud.server_squad import get_all_server_squads
+
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
+    if await _reject_unavailable_checkout_squads(callback, squads, texts):
+        return
+
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
     try:
@@ -3534,50 +3638,82 @@ async def confirm_tariff_switch(
         pass
 
     try:
-        # Списываем баланс
-        success = await subtract_user_balance(
-            db,
-            db_user,
-            final_price,
-            f'Смена тарифа на {tariff.name} ({period} дней)',
-            consume_promo_offer=consume_promo,
-            mark_as_paid_subscription=True,
-        )
-        if not success:
+        try:
+            # Списываем баланс
+            success = await subtract_user_balance(
+                db,
+                db_user,
+                final_price,
+                f'Смена тарифа на {tariff.name} ({period} дней)',
+                consume_promo_offer=consume_promo,
+                mark_as_paid_subscription=True,
+                commit=False,
+            )
+            if not success:
+                await db.rollback()
+                try:
+                    await callback.message.edit_text(
+                        texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса')
+                    )
+                except Exception:
+                    pass
+                return
+
+            # При смене тарифа пользователь получает оплаченный период + оставшиеся дни
+            # (остаток добавляется в extend_subscription автоматически)
+            days_for_new_tariff = period
+
+            # Обновляем подписку с новыми параметрами тарифа
+            # Сохраняем докупленные устройства при продлении того же тарифа
+            if subscription.tariff_id == tariff.id:
+                effective_device_limit = resolve_tariff_renewal_device_limit(
+                    tariff.device_limit, subscription.device_limit
+                )
+            else:
+                effective_device_limit = tariff.device_limit
+            subscription = await extend_subscription(
+                db,
+                subscription,
+                days=days_for_new_tariff,  # Даем ровно оплаченный период
+                tariff_id=tariff.id,
+                traffic_limit_gb=tariff.traffic_limit_gb,
+                device_limit=effective_device_limit,
+                connected_squads=squads,
+                commit=False,
+            )
+
+            transaction = await create_transaction(
+                db,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=final_price,
+                description=f'Смена тарифа на {tariff.name}',
+                commit=False,
+            )
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
+
+        # commit=False defers the irreversible provider schedule update.
+        if period > 0:
             try:
-                await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
-            except Exception:
-                pass
-            return
+                from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
 
-        # Получаем список серверов из тарифа
-        squads = tariff.allowed_squads or []
+                await shift_lava_next_charge_after_manual_extension(db, subscription.id, period)
+            except Exception as shift_error:
+                logger.warning('Failed to shift Lava next charge after manual tariff payment', error=shift_error)
 
-        # Если allowed_squads пустой - значит "все серверы", получаем их
-        if not squads:
-            from app.database.crud.server_squad import get_all_server_squads
+        from app.database.crud.transaction import emit_transaction_side_effects
 
-            all_servers, _ = await get_all_server_squads(db, available_only=True)
-            squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
-
-        # При смене тарифа пользователь получает оплаченный период + оставшиеся дни
-        # (остаток добавляется в extend_subscription автоматически)
-        days_for_new_tariff = period
-
-        # Обновляем подписку с новыми параметрами тарифа
-        # Сохраняем докупленные устройства при продлении того же тарифа
-        if subscription.tariff_id == tariff.id:
-            effective_device_limit = resolve_tariff_renewal_device_limit(tariff.device_limit, subscription.device_limit)
-        else:
-            effective_device_limit = tariff.device_limit
-        subscription = await extend_subscription(
+        await emit_transaction_side_effects(
             db,
-            subscription,
-            days=days_for_new_tariff,  # Даем ровно оплаченный период
-            tariff_id=tariff.id,
-            traffic_limit_gb=tariff.traffic_limit_gb,
-            device_limit=effective_device_limit,
-            connected_squads=squads,
+            transaction,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_price,
+            description=f'Смена тарифа на {tariff.name}',
+            payment_method=PaymentMethod.BALANCE,
         )
 
         # Обновляем пользователя в Remnawave
@@ -3638,15 +3774,6 @@ async def confirm_tariff_switch(
                         logger.error('Не удалось сбросить устройства при смене тарифа', db_user_id=db_user.id)
             except Exception as e:
                 logger.error('Ошибка сброса устройств при смене тарифа', error=e)
-
-        # Создаем транзакцию
-        await create_transaction(
-            db,
-            user_id=db_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_price,
-            description=f'Смена тарифа на {tariff.name}',
-        )
 
         # Отправляем уведомление админу
         try:
@@ -3794,7 +3921,11 @@ async def confirm_daily_tariff_switch(
         cur_tariff_daily = await get_tariff_by_id(db, subscription.tariff_id)
         if cur_tariff_daily:
             rem_days = remaining_days_for_switch(subscription.end_date)
-            _, is_up = _calculate_instant_switch_cost(cur_tariff_daily, tariff, rem_days, db_user)
+            try:
+                _, is_up = _calculate_instant_switch_cost(cur_tariff_daily, tariff, rem_days, db_user)
+            except TariffSwitchPricingUnavailableError:
+                await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+                return
             if is_up and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
                 await callback.answer(
                     texts.t('TARIFF_SWITCH_UPGRADE_DISABLED', 'Повышение тарифа недоступно'), show_alert=True
@@ -3805,6 +3936,19 @@ async def confirm_daily_tariff_switch(
                     texts.t('TARIFF_SWITCH_DOWNGRADE_DISABLED', 'Понижение тарифа недоступно'), show_alert=True
                 )
                 return
+
+    # Получаем список серверов из тарифа
+    squads = tariff.allowed_squads or []
+
+    # Если allowed_squads пустой - значит "все серверы", получаем их
+    if not squads:
+        from app.database.crud.server_squad import get_all_server_squads
+
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
+    if await _reject_unavailable_checkout_squads(callback, squads, texts):
+        return
 
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
     # иначе Telegram инвалидирует query через 30 сек → TelegramBadRequest
@@ -3829,16 +3973,6 @@ async def confirm_daily_tariff_switch(
             except Exception:
                 pass
             return
-
-        # Получаем список серверов из тарифа
-        squads = tariff.allowed_squads or []
-
-        # Если allowed_squads пустой - значит "все серверы", получаем их
-        if not squads:
-            from app.database.crud.server_squad import get_all_server_squads
-
-            all_servers, _ = await get_all_server_squads(db, available_only=True)
-            squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
         # Обновляем подписку на суточный тариф
         # Сбрасываем лимит устройств на базу нового тарифа (докупленные не переносятся)
@@ -4077,15 +4211,15 @@ def _filter_tariffs_by_switch_direction(
     upgrade_ok = settings.TARIFF_SWITCH_UPGRADE_ENABLED
     downgrade_ok = settings.TARIFF_SWITCH_DOWNGRADE_ENABLED
 
-    if upgrade_ok and downgrade_ok:
-        return tariffs
-
     filtered = []
     for tariff in tariffs:
         if tariff.id == current_tariff.id:
             filtered.append(tariff)
             continue
-        _, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        try:
+            _, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        except TariffSwitchPricingUnavailableError:
+            continue
         if (is_upgrade and upgrade_ok) or (not is_upgrade and downgrade_ok):
             filtered.append(tariff)
     return filtered
@@ -4127,7 +4261,10 @@ def format_instant_switch_list_text(
         )
 
         # Рассчитываем стоимость переключения
-        cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        try:
+            cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        except TariffSwitchPricingUnavailableError:
+            continue
 
         if is_upgrade:
             cost_text = f'⬆️ +{format_price_kopeks(cost, compact=True)}'
@@ -4160,7 +4297,10 @@ def get_instant_switch_keyboard(
             continue
 
         # Рассчитываем стоимость
-        cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        try:
+            cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, tariff, remaining_days, db_user)
+        except TariffSwitchPricingUnavailableError:
+            continue
 
         if is_upgrade:
             btn_text = f'{tariff.name} (+{format_price_kopeks(cost, compact=True)})'
@@ -4380,7 +4520,11 @@ async def preview_instant_switch(
         remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Рассчитываем стоимость переключения
-    upgrade_cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, new_tariff, remaining_days, db_user)
+    try:
+        upgrade_cost, is_upgrade = _calculate_instant_switch_cost(current_tariff, new_tariff, remaining_days, db_user)
+    except TariffSwitchPricingUnavailableError:
+        await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+        return
 
     # Проверяем разрешение на смену в данном направлении
     if is_upgrade and not settings.TARIFF_SWITCH_UPGRADE_ENABLED:
@@ -4724,6 +4868,19 @@ async def confirm_instant_switch(
         await show_tariff_switch_list(callback, db_user, db, state)
         return
 
+    # Получаем список серверов из нового тарифа
+    squads = new_tariff.allowed_squads or []
+
+    # Если allowed_squads пустой - значит "все серверы", получаем их
+    if not squads:
+        from app.database.crud.server_squad import get_all_server_squads
+
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+
+    if await _reject_unavailable_checkout_squads(callback, squads, texts):
+        return
+
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo
 
@@ -4733,12 +4890,16 @@ async def confirm_instant_switch(
     # Use full TariffSwitchResult to access offer_discount_pct for consume_promo_offer flag
     from app.services.pricing_engine import pricing_engine
 
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=db_user,
-    )
+    try:
+        switch_result = pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=db_user,
+        )
+    except TariffSwitchPricingUnavailableError:
+        await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
+        return
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
     consume_promo = switch_result.offer_discount_pct > 0
@@ -4788,16 +4949,6 @@ async def confirm_instant_switch(
                 except Exception:
                     pass
                 return
-
-        # Получаем список серверов из нового тарифа
-        squads = new_tariff.allowed_squads or []
-
-        # Если allowed_squads пустой - значит "все серверы", получаем их
-        if not squads:
-            from app.database.crud.server_squad import get_all_server_squads
-
-            all_servers, _ = await get_all_server_squads(db, available_only=True)
-            squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
         # Проверяем, суточный ли новый тариф
         is_new_daily = getattr(new_tariff, 'is_daily', False)

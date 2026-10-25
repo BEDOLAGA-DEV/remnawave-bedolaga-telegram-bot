@@ -3922,6 +3922,13 @@ async def activate_subscription_trial_endpoint(
         except Exception as e:
             logger.error('Ошибка получения триального тарифа', error=e)
 
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+    try:
+        await validate_checkout_squads(trial_squads)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
+
     try:
         subscription = await create_trial_subscription(
             db,
@@ -6399,6 +6406,8 @@ async def _build_tariff_model(
     periods: list[MiniAppTariffPeriod] = []
     if tariff.period_prices:
         for period_str, original_price_kopeks in sorted(tariff.period_prices.items(), key=lambda x: int(x[0])):
+            if original_price_kopeks is None or original_price_kopeks < 0:
+                continue
             period_days = int(period_str)
 
             # Применяем скидку промогруппы + promo-offer (stacked)
@@ -6446,11 +6455,15 @@ async def _build_tariff_model(
         and not (settings.TARIFF_SWITCH_RESET_FREE_DAYS and current_tariff.is_free)
     ):
         # PricingEngine обрабатывает все случаи: periodic↔periodic, daily→periodic, periodic→daily
-        result = _calculate_tariff_switch(current_tariff, tariff, remaining_days, user=user)
-        switch_cost_kopeks = result.upgrade_cost
-        switch_cost_label = settings.format_price(result.upgrade_cost) if result.upgrade_cost > 0 else None
-        is_upgrade = result.is_upgrade
-        is_switch_free = result.upgrade_cost == 0
+        try:
+            result = _calculate_tariff_switch(current_tariff, tariff, remaining_days, user=user)
+            switch_cost_kopeks = result.upgrade_cost
+            switch_cost_label = settings.format_price(result.upgrade_cost) if result.upgrade_cost > 0 else None
+            is_upgrade = result.is_upgrade
+            is_switch_free = result.upgrade_cost == 0
+        except HTTPException as error:
+            if error.status_code != 400:
+                raise
 
     # Суточный тариф
     is_daily = getattr(tariff, 'is_daily', False)
@@ -6723,6 +6736,13 @@ async def purchase_tariff_endpoint(
             },
         )
 
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+    try:
+        await validate_checkout_squads(tariff.allowed_squads)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
+
     # Списываем баланс
     if is_daily_tariff:
         description = f"Активация суточного тарифа '{tariff.name}' (первый день)"
@@ -6892,14 +6912,17 @@ def _calculate_tariff_switch(
     Returns:
         TariffSwitchResult
     """
-    from app.services.pricing_engine import pricing_engine
+    from app.services.pricing_engine import TariffSwitchPricingUnavailableError, pricing_engine
 
-    return pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        return pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except TariffSwitchPricingUnavailableError as error:
+        raise HTTPException(status_code=400, detail='Tariff pricing is unavailable') from error
 
 
 @router.post('/subscription/tariff/switch/preview')
@@ -7116,6 +7139,13 @@ async def switch_tariff_endpoint(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={'code': 'tariff_not_available', 'message': 'Tariff not available'},
         )
+
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+    try:
+        await validate_checkout_squads(new_tariff.allowed_squads)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
 
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo

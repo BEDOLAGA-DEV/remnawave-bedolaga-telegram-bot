@@ -31,6 +31,9 @@ def panel(monkeypatch):
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', True)
     fake = _FakePanelSync()
     monkeypatch.setattr(auto_purchase, 'SubscriptionService', lambda: fake)
+    import app.services.subscription_service as sync_module
+
+    monkeypatch.setattr(sync_module, 'SubscriptionService', lambda: fake)
     monkeypatch.setattr(renewal, 'with_admin_notification_service', AsyncMock())
     return fake
 

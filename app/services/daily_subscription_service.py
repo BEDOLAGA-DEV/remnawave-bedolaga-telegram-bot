@@ -198,6 +198,7 @@ class DailySubscriptionService:
 
         # Списываем средства
         description = f'Суточная оплата тарифа «{tariff.name}»'
+        charged_subscription_id, charged_user_id = subscription.id, user.id
 
         try:
             # commit=False для атомарности: баланс, транзакция и charge_time коммитятся вместе
@@ -230,7 +231,15 @@ class DailySubscriptionService:
             old_end_date = subscription.end_date
             subscription = await update_daily_charge_time(db, subscription, commit=False)
 
-            # Атомарный коммит: баланс + транзакция + charge_time
+            from app.services.paid_traffic_reset_service import stage_daily_reset
+
+            reset_traffic = should_reset_traffic_on_daily_charge(tariff)
+            reset_intent_id = (
+                await stage_daily_reset(db, subscription, transaction, reason='суточное списание')
+                if reset_traffic
+                else None
+            )
+            # Атомарный коммит: баланс + транзакция + charge_time + reset intent
             await db.commit()
             await db.refresh(user)
 
@@ -266,7 +275,6 @@ class DailySubscriptionService:
                 # Суточное списание — такая же оплата, как продление: обнуление
                 # счётчика решает общая политика, а не жёсткая константа. Раньше
                 # здесь стояло «никогда», и расход копился через все автосписания.
-                reset_traffic = should_reset_traffic_on_daily_charge(tariff)
                 reset_reason = 'суточное списание' if reset_traffic else None
 
                 subscription_service = SubscriptionService()
@@ -276,18 +284,18 @@ class DailySubscriptionService:
                     else getattr(user, 'remnawave_id', None)
                 ) is not None
                 if _has_panel_user:
-                    await subscription_service.update_remnawave_user(
+                    panel_result = await subscription_service.update_remnawave_user(
                         db,
                         subscription,
-                        reset_traffic=reset_traffic,
+                        reset_traffic=False,
                         reset_reason=reset_reason,
                         sync_squads=True,
                     )
                 else:
-                    await subscription_service.create_remnawave_user(
+                    panel_result = await subscription_service.create_remnawave_user(
                         db,
                         subscription,
-                        reset_traffic=reset_traffic,
+                        reset_traffic=False,
                         reset_reason=reset_reason,
                     )
                     # POST может игнорировать activeInternalSquads — отправляем PATCH
@@ -310,22 +318,26 @@ class DailySubscriptionService:
                         except Exception as patch_err:
                             logger.warning('Не удалось синхронизировать сквады после создания', error=patch_err)
 
-                if reset_traffic:
-                    # Счётчик бота ведут по данным панели, но до ближайшего прохода
-                    # мониторинга он показывал бы исчерпанный трафик — и блокировал
-                    # реактивацию подписки по своей же проверке лимита.
-                    subscription.traffic_used_gb = 0.0
-                    await db.commit()
+                if panel_result is None:
+                    raise RuntimeError('Daily canonical panel synchronization was not acknowledged')
+                if reset_intent_id is not None:
+                    from app.services.paid_traffic_reset_service import deliver_daily_reset
+
+                    await deliver_daily_reset(db, reset_intent_id)
+                    await db.refresh(subscription)
+                    await db.refresh(user)
             except Exception as e:
                 logger.warning('Не удалось обновить Remnawave', error=e)
                 from app.services.remnawave_retry_queue import remnawave_retry_queue
 
-                if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
-                    remnawave_retry_queue.enqueue(
-                        subscription_id=subscription.id,
-                        user_id=subscription.user_id,
-                        action='update' if _has_panel_user else 'create',
-                    )
+                await db.rollback()
+                remnawave_retry_queue.enqueue(
+                    subscription_id=charged_subscription_id,
+                    user_id=charged_user_id,
+                    action='update',
+                )
+                await db.refresh(subscription)
+                await db.refresh(user)
 
             # Отправляем уведомление администраторам
             try:
@@ -352,10 +364,15 @@ class DailySubscriptionService:
 
             return 'charged'
 
-        except Exception as e:
+        except BaseException as e:
             await db.rollback()
+            if not isinstance(e, Exception):
+                raise
             logger.error(
-                'Ошибка при списании средств для подписки', subscription_id=subscription.id, error=e, exc_info=True
+                'Ошибка при списании средств для подписки',
+                subscription_id=charged_subscription_id,
+                error=e,
+                exc_info=True,
             )
             return 'error'
 
@@ -933,7 +950,8 @@ class DailySubscriptionService:
 
                             charge_result = await self._process_single_charge(db, subscription)
                             if charge_result == 'charged':
-                                await self._lift_panel_traffic_limit(db, subscription)
+                                # Durable reset delivery also retries LIMITED activation
+                                # after its ACK; an ambiguous reset must not be enabled here.
                                 stats['limit_recovered'] += 1
                             elif charge_result == 'error':
                                 stats['errors'] += 1

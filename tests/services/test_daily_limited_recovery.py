@@ -20,14 +20,17 @@ import pytest
 
 from app.config import settings
 from app.database.models import Base, Subscription, SubscriptionStatus, Tariff, User
+from tests.fixtures.paid_reset_panel import PaidResetPanelMixin
 from tests.fixtures.sqlite_memory import memory_session
 
 
 TABLES = list(Base.metadata.sorted_tables)
 
 
-class _FakePanelSync:
+class _FakePanelSync(PaidResetPanelMixin):
     def __init__(self) -> None:
+        self.init_reset_panel()
+        self.reset_panel_user.status = 'LIMITED'
         self.calls: list[dict] = []
         self.enabled: list[int] = []
 
@@ -138,7 +141,8 @@ async def test_limited_subscription_is_charged_and_restored(monkeypatch):
     assert subscription.status == SubscriptionStatus.ACTIVE.value
     assert subscription.traffic_used_gb == 0.0
     assert user.balance_kopeks == 99_000
-    assert panel.calls[0]['reset_traffic'] is True
+    assert panel.calls[0]['reset_traffic'] is False
+    assert panel.reset_calls == [9001]
     # Панель снимает LIMITED не всегда сама — возврат просит её об этом явно.
     assert panel.enabled == [9001]
 

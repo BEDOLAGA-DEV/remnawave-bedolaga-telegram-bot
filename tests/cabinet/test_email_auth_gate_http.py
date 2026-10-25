@@ -157,3 +157,20 @@ async def test_db_disabled_blocks_all_email_routes_without_mutations_or_tokens(m
         assert (await db.execute(select(User.__table__))).mappings().one() == before
         for factory in token_factories:
             factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enabled', [True, False])
+async def test_public_email_config_matches_db_override_over_http(monkeypatch, enabled):
+    """TG-079: the login page sees the effective toggle, not SMTP/env alone."""
+    from app.cabinet.routes.branding import router as branding_router
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        monkeypatch.setattr(gate.settings, 'CABINET_EMAIL_AUTH_ENABLED', not enabled)
+        await _set_flag(db, str(enabled).lower())
+        app = _app(db)
+        app.include_router(branding_router, prefix='/cabinet')
+        async with AsyncClient(transport=ASGITransport(app=app), base_url='http://cabinet') as client:
+            response = await client.get('/cabinet/branding/email-auth')
+        assert response.status_code == 200
+        assert response.json()['enabled'] is enabled

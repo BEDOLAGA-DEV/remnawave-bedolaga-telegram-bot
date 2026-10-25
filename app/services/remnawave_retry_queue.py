@@ -23,6 +23,7 @@ from app.database.models import Subscription, User
 
 
 logger = structlog.get_logger(__name__)
+PAID_RESET_RECOVERY_BUDGET_SECONDS = 20
 
 
 @dataclass
@@ -120,6 +121,15 @@ class RemnaWaveRetryQueue:
             logger.exception('Could not recover pending panel expiries; retrying next cycle')
 
     async def process_pending(self) -> None:
+        from app.services.paid_traffic_reset_service import process_pending_daily_resets
+
+        try:
+            async with asyncio.timeout(PAID_RESET_RECOVERY_BUDGET_SECONDS):
+                await process_pending_daily_resets(AsyncSessionLocal, limit=5)
+        except TimeoutError:
+            logger.warning('Paid traffic reset recovery reached its time budget; continuing expiry delivery')
+        except Exception:
+            logger.exception('Could not recover paid daily traffic resets; retrying next cycle')
         await self._recover_pending_expiries()
         if not self._queue:
             return

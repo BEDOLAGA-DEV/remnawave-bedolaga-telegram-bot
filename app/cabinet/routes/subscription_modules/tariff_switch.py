@@ -19,7 +19,7 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, TransactionType, User
-from app.services.pricing_engine import pricing_engine
+from app.services.pricing_engine import TariffSwitchPricingUnavailableError, pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
@@ -158,12 +158,15 @@ async def preview_tariff_switch(
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate switch cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        switch_result = pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except TariffSwitchPricingUnavailableError as error:
+        raise HTTPException(status_code=400, detail='Tariff pricing is unavailable') from error
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
 
@@ -334,6 +337,13 @@ async def switch_tariff(
             detail='Tariff not available',
         )
 
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+    try:
+        await validate_checkout_squads(new_tariff.allowed_squads)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
+
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo
 
@@ -341,12 +351,15 @@ async def switch_tariff(
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        switch_result = pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except TariffSwitchPricingUnavailableError as error:
+        raise HTTPException(status_code=400, detail='Tariff pricing is unavailable') from error
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
     base_upgrade_cost = switch_result.raw_cost

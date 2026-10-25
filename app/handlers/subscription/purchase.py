@@ -928,6 +928,15 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
             trial_squad_uuid = await get_random_trial_squad_uuid(db)
             trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
 
+        from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+        try:
+            await validate_checkout_squads(trial_squads)
+        except CheckoutSquadsUnavailableError as error:
+            await callback.message.edit_text(texts.t('TARIFF_SERVERS_UNAVAILABLE', error.message))
+            await callback.answer()
+            return
+
         subscription = await create_trial_subscription(
             db,
             db_user.id,
@@ -3310,6 +3319,18 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
         )
         return
 
+    if settings.is_tariffs_mode():
+        from app.services.checkout_squad_validation import (
+            CheckoutSquadsUnavailableError,
+            validate_trial_checkout_squads,
+        )
+
+        try:
+            await validate_trial_checkout_squads(db)
+        except CheckoutSquadsUnavailableError as error:
+            await callback.answer(texts.t('TARIFF_SERVERS_UNAVAILABLE', error.message), show_alert=True)
+            return
+
     # Списываем с баланса
     success = await subtract_user_balance(
         db,
@@ -3748,6 +3769,15 @@ async def handle_trial_payment_method(callback: types.CallbackQuery, db_user: Us
 
             trial_squad_uuid = await get_random_trial_squad_uuid(db)
             trial_squads_list = [trial_squad_uuid] if trial_squad_uuid else []
+
+        from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+        try:
+            await validate_checkout_squads(trial_squads_list)
+        except CheckoutSquadsUnavailableError as error:
+            await callback.message.edit_text(texts.t('TARIFF_SERVERS_UNAVAILABLE', error.message))
+            await callback.answer()
+            return
 
         # Создаем pending триальную подписку
         pending_subscription = await create_pending_trial_subscription(

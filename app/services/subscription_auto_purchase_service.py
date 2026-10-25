@@ -58,7 +58,6 @@ from app.services.subscription_purchase_service import (
 )
 from app.services.subscription_service import SubscriptionService
 from app.services.traffic_reset_policy import (
-    lift_panel_traffic_limit,
     should_reset_traffic_on_daily_charge,
     should_reset_traffic_on_tariff_purchase,
 )
@@ -521,6 +520,27 @@ async def _resolve_extend_traffic_limit_gb(
     return traffic_limit_gb
 
 
+async def _reject_unavailable_saved_squads(user: User, squads, bot: Bot | None) -> bool:
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+    try:
+        await validate_checkout_squads(squads)
+    except CheckoutSquadsUnavailableError as error:
+        logger.warning('Saved checkout refused because all assigned squads were deleted', user_id=user.id)
+        if bot and user.telegram_id:
+            try:
+                await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=get_texts(user.language).t('TARIFF_SERVERS_UNAVAILABLE', error.message),
+                )
+            except Exception as notification_error:
+                logger.warning(
+                    'Cannot notify about unavailable checkout squads', error_type=type(notification_error).__name__
+                )
+        return True
+    return False
+
+
 async def _auto_extend_subscription(
     db: AsyncSession,
     user: User,
@@ -555,6 +575,10 @@ async def _auto_extend_subscription(
         return False
 
     subscription = prepared.subscription
+    effective_squads = prepared.allowed_squads if prepared.allowed_squads is not None else subscription.connected_squads
+    if await _reject_unavailable_saved_squads(user, effective_squads, bot):
+        return False
+
     old_end_date = subscription.end_date
     was_trial = subscription.is_trial
     old_tariff_id = subscription.tariff_id
@@ -966,6 +990,9 @@ async def _auto_purchase_tariff(
         paid_kopeks=final_price,
     )
 
+    if await _reject_unavailable_saved_squads(user, squads, bot):
+        return False
+
     # Списываем баланс
     try:
         description = f'Покупка тарифа {tariff.name} на {format_days_declension(period_days)}'
@@ -1371,6 +1398,9 @@ async def _auto_purchase_daily_tariff(
     if not squads:
         all_servers, _ = await get_all_server_squads(db, available_only=True)
         squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
+    if await _reject_unavailable_saved_squads(user, squads, bot):
+        return False
+
     purchase_user_id = user.id
     description = f'Активация суточного тарифа {tariff.name}'
     try:
@@ -2767,7 +2797,6 @@ async def try_resume_disabled_daily_after_topup(
 
     # Charge, activate and record the paid day in one transaction. No committed
     # debit can escape on activation/ledger failure or expose a second callback.
-    previous_status = subscription.status
     old_end_date = subscription.end_date
     description = f'Суточная оплата тарифа «{tariff.name}» (авто-возобновление)'
     try:
@@ -2793,8 +2822,19 @@ async def try_resume_disabled_daily_after_topup(
             commit=False,
         )
         subscription = await update_daily_charge_time(db, subscription, commit=False)
+        from app.services.paid_traffic_reset_service import stage_daily_reset
+
+        reset_intent_id = (
+            await stage_daily_reset(db, subscription, transaction, reason='суточное списание (авто-возобновление)')
+            if reset_traffic
+            else None
+        )
+        charged_subscription_id, charged_user_id = subscription.id, user.id
         await db.commit()
-    except Exception as error:
+    except BaseException as error:
+        await db.rollback()
+        if not isinstance(error, Exception):
+            raise
         logger.error(
             '❌ Авто-возобновление daily: ошибка оплаты и активации подписки',
             error=error,
@@ -2851,18 +2891,18 @@ async def try_resume_disabled_daily_after_topup(
             else getattr(user, 'remnawave_id', None)
         ) is not None
         if _has_panel_user:
-            await subscription_service.update_remnawave_user(
+            panel_result = await subscription_service.update_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=reset_traffic,
+                reset_traffic=False,
                 reset_reason=reset_reason,
                 sync_squads=True,
             )
         else:
-            await subscription_service.create_remnawave_user(
+            panel_result = await subscription_service.create_remnawave_user(
                 db,
                 subscription,
-                reset_traffic=reset_traffic,
+                reset_traffic=False,
                 reset_reason=reset_reason,
             )
             # POST may ignore activeInternalSquads — follow up with PATCH
@@ -2889,28 +2929,30 @@ async def try_resume_disabled_daily_after_topup(
                         error=patch_err,
                     )
 
-        if reset_traffic:
-            # Счётчик бота ведут по данным панели, но до ближайшего прохода
-            # мониторинга он показывал бы исчерпанный трафик — и блокировал
-            # реактивацию подписки по своей же проверке лимита.
-            subscription.traffic_used_gb = 0.0
-            await db.commit()
-            if previous_status == SubscriptionStatus.LIMITED.value:
-                await lift_panel_traffic_limit(db, subscription, service=subscription_service)
+        if panel_result is None:
+            raise RuntimeError('Daily canonical panel synchronization was not acknowledged')
+        if reset_intent_id is not None:
+            from app.services.paid_traffic_reset_service import deliver_daily_reset
+
+            await deliver_daily_reset(db, reset_intent_id)
+            await db.refresh(subscription)
+            await db.refresh(user)
     except Exception as error:
         logger.error(
             '⚠️ Авто-возобновление daily: не удалось обновить RemnaWave',
-            format_user_id=_format_user_id(user),
+            user_id=charged_user_id,
             error=error,
         )
         from app.services.remnawave_retry_queue import remnawave_retry_queue
 
-        if hasattr(subscription, 'id') and hasattr(subscription, 'user_id'):
-            remnawave_retry_queue.enqueue(
-                subscription_id=subscription.id,
-                user_id=subscription.user_id,
-                action='update',
-            )
+        await db.rollback()
+        remnawave_retry_queue.enqueue(
+            subscription_id=charged_subscription_id,
+            user_id=charged_user_id,
+            action='update',
+        )
+        await db.refresh(subscription)
+        await db.refresh(user)
 
     # Admin notification
     try:
