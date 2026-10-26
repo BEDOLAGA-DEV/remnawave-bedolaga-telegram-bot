@@ -2016,6 +2016,7 @@ async def _find_succeeded_provider_payment(
 
     from app.database.models import (
         AnorePayment,
+        CisPayPayment,
         CloudPaymentsPayment,
         CryptoBotPayment,
         FreekassaPayment,
@@ -2075,6 +2076,10 @@ async def _find_succeeded_provider_payment(
         model = Pal24Payment
         payment_id_attr = 'bill_id'
         extra_conditions = [Pal24Payment.is_paid.is_(True)]
+    elif base_method == 'cispay':
+        model = CisPayPayment
+        payment_id_attr = 'order_id'
+        extra_conditions = [CisPayPayment.is_paid.is_(True), CisPayPayment.is_sandbox.is_(False)]
     elif base_method == 'anore':
         model = AnorePayment
         # Guest creation and callbacks identify Anore purchases by local order.

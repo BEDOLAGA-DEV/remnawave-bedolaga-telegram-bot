@@ -77,6 +77,9 @@ def _status_info(
     if record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False)):
         return '🧪', texts.t('ADMIN_ANORE_SANDBOX', 'Тестовый платёж — баланс не пополнен')
 
+    if record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False)):
+        return '🧪', 'Тестовый платёж — баланс не пополнен'
+
     if record.is_paid:
         return '✅', texts.t('ADMIN_PAYMENT_STATUS_PAID', '✅ Paid')
 

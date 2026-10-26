@@ -113,7 +113,9 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
     """Get status emoji and text for a pending payment."""
     status_str = (record.status or '').lower()
 
-    if record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False)):
+    if (record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False))) or (
+        record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False))
+    ):
         return '🧪', 'Тестовый платёж — баланс не пополнен'
 
     if record.is_paid:
@@ -312,6 +314,7 @@ def _extract_decline_reason(record: PendingPayment) -> str | None:
 
 def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
     """Convert PendingPayment to API response."""
+    sandbox = record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False))
     status_emoji, status_text = _get_status_info(record)
     return PendingPaymentResponse(
         id=record.local_id,
@@ -321,11 +324,11 @@ def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
         identifier=record.identifier,
         amount_kopeks=record.amount_kopeks,
         amount_rubles=record.amount_kopeks / 100,
-        status=record.status or '',
+        status='test_paid' if sandbox and record.is_paid else record.status or '',
         status_emoji=status_emoji,
         status_text=status_text,
-        is_paid=record.is_paid,
-        is_checkable=_is_checkable(record),
+        is_paid=record.is_paid and not sandbox,
+        is_checkable=_is_checkable(record) and not sandbox,
         created_at=record.created_at,
         expires_at=record.expires_at,
         payment_url=_get_payment_url(record),

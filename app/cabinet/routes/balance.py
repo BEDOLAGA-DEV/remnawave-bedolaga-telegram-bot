@@ -1003,7 +1003,14 @@ async def create_topup(
                 )
 
             payment_service = PaymentService()
-            payment_method_type = request.payment_option or None
+            from app.services.payment_method_config_service import get_cispay_checkout_policy
+
+            policy = await get_cispay_checkout_policy(db, user, request.payment_option or None)
+            if policy is None or policy['selected_method'] is None:
+                raise HTTPException(status_code=400, detail='Unavailable CisPay payment option')
+            if not policy['min_amount_kopeks'] <= request.amount_kopeks <= policy['max_amount_kopeks']:
+                raise HTTPException(status_code=400, detail='Amount outside CisPay payment limits')
+            payment_method_type = policy['selected_method'].lower()
             result = await payment_service.create_cispay_payment(
                 db=db,
                 user_id=user.id,
@@ -1243,7 +1250,9 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
     """Get status emoji and text for a pending payment."""
     status = (record.status or '').lower()
 
-    if record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False)):
+    if (record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False))) or (
+        record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False))
+    ):
         return '🧪', 'Тестовый платёж — баланс не пополнен'
 
     if record.is_paid:
@@ -1548,7 +1557,9 @@ def _get_payment_url(record: PendingPayment) -> str | None:
 
 def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
     """Convert PendingPayment to API response."""
-    sandbox = record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False))
+    sandbox = (record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False))) or (
+        record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False))
+    )
     status_emoji, status_text = ('🧪', 'Тестовый платёж — баланс не пополнен') if sandbox else _get_status_info(record)
     return PendingPaymentResponse(
         id=record.local_id,
@@ -1625,6 +1636,7 @@ async def get_latest_payment_by_method(
         AnorePayment,
         AntilopayPayment,
         AuraPayPayment,
+        CisPayPayment,
         CloudPaymentsPayment,
         CryptoBotPayment,
         FreekassaPayment,
@@ -1642,6 +1654,7 @@ async def get_latest_payment_by_method(
     )
 
     model_map: dict[PaymentMethod, type] = {
+        PaymentMethod.CISPAY: CisPayPayment,
         PaymentMethod.ANORE: AnorePayment,
         PaymentMethod.ANTILOPAY: AntilopayPayment,
         PaymentMethod.YOOKASSA: YooKassaPayment,

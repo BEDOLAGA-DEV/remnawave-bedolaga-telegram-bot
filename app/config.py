@@ -1109,13 +1109,15 @@ class Settings(BaseSettings):
     CISPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
     CISPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
     CISPAY_WEBHOOK_PATH: str = '/cispay-webhook'
-    # Счёт cisPay живёт 30 минут, после чего переходит в EXPIRED на стороне провайдера
+    # Legacy setting retained for compatibility; expiration comes from provider response.
     CISPAY_PAYMENT_LIFETIME_MINUTES: int = 30
     # Sub-методы cisPay (payment_method в запросе создания платежа)
     CISPAY_CARD_ENABLED: bool = False
     CISPAY_CARD_DISPLAY_NAME: str = 'Карта (CisPay)'
     CISPAY_SBP_ENABLED: bool = False
     CISPAY_SBP_DISPLAY_NAME: str = 'СБП (CisPay)'
+    CISPAY_CRYPTO_ENABLED: bool = False
+    CISPAY_CRYPTO_DISPLAY_NAME: str = 'Криптовалюта (CisPay)'
 
     # Cashera (api.cashera.cash, server-to-server; расчёты мерчанту в USDT, приём — только RUB)
     CASHERA_ENABLED: bool = False
@@ -3265,7 +3267,12 @@ class Settings(BaseSettings):
     def is_cispay_enabled(self) -> bool:
         # Пустая строка так же непригодна, как None: с пустым ключом HMAC вебхука
         # тривиально подделывается, поэтому включаем только при непустых значениях.
-        return bool(self.CISPAY_ENABLED and self.CISPAY_SHOP_ID and self.CISPAY_API_KEY)
+        return bool(
+            self.CISPAY_ENABLED
+            and self.CISPAY_SHOP_ID
+            and self.CISPAY_API_KEY
+            and self.CISPAY_CURRENCY.upper() == 'RUB'
+        )
 
     def get_cispay_display_name(self) -> str:
         name = (self.CISPAY_DISPLAY_NAME or '').strip()
@@ -3273,6 +3280,25 @@ class Settings(BaseSettings):
 
     def get_cispay_display_name_html(self) -> str:
         return html.escape(self.get_cispay_display_name())
+
+    def get_cispay_methods(self) -> list[str]:
+        # Legacy generic setup permits fiat only; crypto always requires opt-in.
+        methods = []
+        if self.CISPAY_CARD_ENABLED:
+            methods.append('card')
+        if self.CISPAY_SBP_ENABLED:
+            methods.append('sbp')
+        if not methods:
+            methods = ['card', 'sbp']
+        if self.CISPAY_CRYPTO_ENABLED:
+            methods.append('crypto')
+        return methods
+
+    def is_cispay_crypto_enabled(self) -> bool:
+        return self.CISPAY_CRYPTO_ENABLED and self.is_cispay_enabled()
+
+    def get_cispay_crypto_display_name(self) -> str:
+        return (self.CISPAY_CRYPTO_DISPLAY_NAME or '').strip() or 'Криптовалюта (CisPay)'
 
     def is_cispay_card_enabled(self) -> bool:
         return self.CISPAY_CARD_ENABLED and self.is_cispay_enabled()

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+from contextlib import aclosing
 from decimal import Decimal, InvalidOperation
 
 import structlog
@@ -1899,43 +1900,45 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         @router.post(settings.CISPAY_WEBHOOK_PATH)
         async def cispay_webhook(request: Request) -> JSONResponse:
-            raw_body = await request.body()
-
             from app.services.cispay_service import cispay_service
+            from app.services.payment.cispay import CisPayValidationError
 
-            # X-Signature — HMAC-SHA256 от сырого тела запроса, ключ — X-Api-Key магазина
-            received_signature = request.headers.get('X-Signature')
-            if not cispay_service.verify_webhook_signature(raw_body, received_signature):
-                logger.warning('cisPay webhook: invalid signature')
-                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
+            raw_body = bytearray()
+            async with aclosing(request.stream()) as stream:
+                async for chunk in stream:
+                    raw_body.extend(chunk)
+                    if len(raw_body) > 65536:
+                        return JSONResponse({'status': 'error'}, status_code=413)
+            if not cispay_service.verify_webhook_signature(bytes(raw_body), request.headers.get('X-Signature')):
+                return JSONResponse({'status': 'error'}, status_code=400)
+
+            def reject_constant(_value):
+                raise ValueError('Invalid JSON number')
 
             try:
-                payload = json.loads(raw_body)
-            except Exception as parse_error:
-                logger.error('cisPay webhook: failed to parse JSON', parse_error=parse_error)
-                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
-
+                payload = json.loads(raw_body, parse_float=str, parse_constant=reject_constant)
+            except (ValueError, UnicodeDecodeError, RecursionError):
+                return JSONResponse({'status': 'error'}, status_code=400)
+            if not isinstance(payload, dict):
+                return JSONResponse({'status': 'error'}, status_code=400)
+            # Lifecycle events are not monetary transaction notifications.
+            event = payload.get('event')
+            event_header = request.headers.get('X-CISPay-Event')
+            if event is not None and (payload.get('object') != 'subscription' or event != event_header):
+                return JSONResponse({'status': 'error'}, status_code=400)
+            if event is None and event_header:
+                return JSONResponse({'status': 'error'}, status_code=400)
+            payload['_event_header'] = event_header
             try:
-                success = await _process_payment_service_callback(
-                    payment_service,
-                    payload,
-                    'process_cispay_callback',
-                )
-            except Exception as e:
-                logger.exception('cisPay webhook processing error', error=e)
+                success = await _process_payment_service_callback(payment_service, payload, 'process_cispay_callback')
+            except CisPayValidationError:
+                return JSONResponse({'status': 'error'}, status_code=400)
+            except Exception:
+                logger.warning('cisPay webhook processing unavailable')
                 success = False
-
             if not success:
-                logger.error(
-                    'cisPay webhook processing failed',
-                    order_id=payload.get('order_id'),
-                    payment_id=payload.get('id'),
-                )
-                # Не-2xx заставит cisPay повторить вебхук по расписанию
-                # (через 1 мин, 5 мин, 15 мин, 1 час — всего 5 попыток)
-                return JSONResponse({'status': 'error'}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-            return JSONResponse({'status': 'ok'}, status_code=status.HTTP_200_OK)
+                return JSONResponse({'status': 'error'}, status_code=500)
+            return JSONResponse({'status': 'ok'}, status_code=200)
 
         routes_registered = True
 

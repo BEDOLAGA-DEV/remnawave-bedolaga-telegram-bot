@@ -13,6 +13,7 @@ from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
 from app.localization.texts import get_texts
+from app.services.payment_method_config_service import get_cispay_checkout_policy
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
@@ -22,12 +23,13 @@ from app.utils.topup_retry import format_topup_amount_retry
 logger = structlog.get_logger(__name__)
 
 
-CISPAY_PAYMENT_METHODS = {'cispay', 'cispay_card', 'cispay_sbp'}
+CISPAY_PAYMENT_METHODS = {'cispay', 'cispay_card', 'cispay_sbp', 'cispay_crypto'}
 
 CISPAY_SERVICE_MAP: dict[str, str | None] = {
     'cispay': None,
     'cispay_card': 'card',
     'cispay_sbp': 'sbp',
+    'cispay_crypto': 'crypto',
 }
 
 
@@ -49,6 +51,8 @@ def _check_topup_restriction(db_user: User, texts) -> InlineKeyboardMarkup | Non
 
 
 def _display_name_for_method(payment_method: str) -> str:
+    if payment_method == 'cispay_crypto':
+        return settings.get_cispay_crypto_display_name()
     if payment_method == 'cispay_sbp':
         return settings.get_cispay_sbp_display_name()
     if payment_method == 'cispay_card':
@@ -100,10 +104,10 @@ async def _create_cispay_payment_and_respond(
         return
 
     payment_url = result.get('payment_url')
-    display_name = settings.get_cispay_display_name()
+    display_name = settings.get_cispay_display_name_html()
 
     pay_button_text = texts.t('PAY_BUTTON', '\U0001f4b3 Оплатить {amount}₽').format(
-        amount=f'{amount_rub:.0f}',
+        amount=f'{amount_rub:.2f}',
     )
 
     keyboard_buttons: list[list[InlineKeyboardButton]] = []
@@ -125,7 +129,6 @@ async def _create_cispay_payment_and_respond(
             '\U0001f4b3 <b>Оплата через {name}</b>\n\n'
             'Сумма: <b>{amount}₽</b>\n\n'
             'Нажмите кнопку ниже, чтобы перейти на страницу оплаты.\n'
-            'Счёт действителен 30 минут.\n'
             'Баланс будет пополнен автоматически после подтверждения платежа.',
         ).format(name=display_name, amount=f'{amount_rub:.2f}')
     else:
@@ -166,8 +169,15 @@ async def process_cispay_payment_amount(
         await state.clear()
         return
 
-    min_amount = settings.CISPAY_MIN_AMOUNT_KOPEKS
-    max_amount = settings.CISPAY_MAX_AMOUNT_KOPEKS
+    data = await state.get_data()
+    payment_method = data.get('payment_method', 'cispay')
+    policy = await get_cispay_checkout_policy(db, db_user, _extract_service_type(payment_method))
+    if policy is None or policy['selected_method'] is None:
+        await message.answer(texts.t('PAYMENT_UNAVAILABLE', 'Способ оплаты недоступен'))
+        await state.clear()
+        return
+    min_amount = policy['min_amount_kopeks']
+    max_amount = policy['max_amount_kopeks']
 
     if amount_kopeks < min_amount:
         await message.answer(
@@ -204,9 +214,14 @@ async def _start_cispay_topup_impl(
     db_user: User,
     state: FSMContext,
     payment_method: str,
+    db: AsyncSession,
 ):
     """Стартует FSM ввода суммы для cisPay."""
     texts = get_texts(db_user.language)
+    policy = await get_cispay_checkout_policy(db, db_user, _extract_service_type(payment_method))
+    if policy is None or policy['selected_method'] is None:
+        await callback.answer(texts.t('PAYMENT_UNAVAILABLE', 'Способ оплаты недоступен'), show_alert=True)
+        return
 
     restriction_kb = _check_topup_restriction(db_user, texts)
     if restriction_kb:
@@ -221,12 +236,14 @@ async def _start_cispay_topup_impl(
     await state.set_state(BalanceStates.waiting_for_amount)
     await state.update_data(payment_method=payment_method)
 
-    min_amount = settings.CISPAY_MIN_AMOUNT_KOPEKS // 100
-    max_amount = settings.CISPAY_MAX_AMOUNT_KOPEKS // 100
+    min_amount = policy['min_amount_kopeks'] / 100
+    max_amount = policy['max_amount_kopeks'] / 100
 
-    display_name = _display_name_for_method(payment_method)
+    display_name = html.escape(_display_name_for_method(payment_method))
 
-    keyboard = await get_topup_amount_keyboard(payment_method, db_user.language)
+    keyboard = await get_topup_amount_keyboard(
+        payment_method, db_user.language, db, min_amount_kopeks=policy['min_amount_kopeks']
+    )
 
     await callback.message.edit_text(
         texts.t(
@@ -252,7 +269,7 @@ async def start_cispay_topup(
     db: AsyncSession,
     state: FSMContext,
 ):
-    await _start_cispay_topup_impl(callback, db_user, state, 'cispay')
+    await _start_cispay_topup_impl(callback, db_user, state, 'cispay', db)
 
 
 @error_handler
@@ -262,7 +279,7 @@ async def start_cispay_card_topup(
     db: AsyncSession,
     state: FSMContext,
 ):
-    await _start_cispay_topup_impl(callback, db_user, state, 'cispay_card')
+    await _start_cispay_topup_impl(callback, db_user, state, 'cispay_card', db)
 
 
 @error_handler
@@ -272,4 +289,9 @@ async def start_cispay_sbp_topup(
     db: AsyncSession,
     state: FSMContext,
 ):
-    await _start_cispay_topup_impl(callback, db_user, state, 'cispay_sbp')
+    await _start_cispay_topup_impl(callback, db_user, state, 'cispay_sbp', db)
+
+
+@error_handler
+async def start_cispay_crypto_topup(callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext):
+    await _start_cispay_topup_impl(callback, db_user, state, 'cispay_crypto', db)

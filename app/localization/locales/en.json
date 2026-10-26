@@ -1941,7 +1941,7 @@
   "JUPITER_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to open the SBP QR code and pay.\nYour balance will be topped up automatically after the payment is confirmed.",
   "JUPITER_PAYMENT_PROCESSING": "💳 <b>Payment created via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nThe payment is being processed. The payment details will be sent in a separate message.",
   "JUPITER_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽",
-  "CISPAY_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to open the payment page.\nThe invoice is valid for 30 minutes.\nYour balance will be topped up automatically after the payment is confirmed.",
+  "CISPAY_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to open the payment page.\nYour balance will be topped up automatically after the payment is confirmed.",
   "CISPAY_PAYMENT_PROCESSING": "💳 <b>Payment created via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nThe payment is being processed. The payment link will be sent in a separate message.",
   "CISPAY_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽",
   "ANORE_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to open the payment page.\nYour balance will be topped up automatically after the payment is confirmed.",

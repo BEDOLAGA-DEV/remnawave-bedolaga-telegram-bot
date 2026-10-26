@@ -1457,9 +1457,9 @@ class PaymentService(
                 description=description,
                 return_url=return_url,
                 payment_method_type=_option,
+                metadata=guest_metadata,
             )
             if result:
-                await _patch_guest_metadata(result['local_payment_id'], 'cispay')
                 return {
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),

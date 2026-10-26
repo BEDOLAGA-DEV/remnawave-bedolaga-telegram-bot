@@ -231,7 +231,7 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
     if method == PaymentMethod.LAVA:
         return settings.is_lava_enabled()
     if method == PaymentMethod.CISPAY:
-        return settings.is_cispay_enabled()
+        return settings.is_cispay_configured()
     if method == PaymentMethod.CASHERA:
         return settings.is_cashera_enabled()
     if method == PaymentMethod.ANORE:
@@ -539,7 +539,7 @@ def _is_lava_pending(payment: LavaPayment) -> bool:
 
 
 def _is_cispay_pending(payment: CisPayPayment) -> bool:
-    if payment.is_paid:
+    if payment.is_paid or getattr(payment, 'is_sandbox', False):
         return False
     status = (payment.status or '').lower()
     return status == 'pending'

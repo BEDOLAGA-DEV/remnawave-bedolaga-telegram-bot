@@ -70,7 +70,7 @@ _GATEWAY_REGISTRY: list[tuple[str, type, object]] = [
     (PaymentMethod.JUPITER.value, JupiterPayment, JupiterPayment.is_paid.is_(True)),
     (PaymentMethod.DONUT.value, DonutPayment, DonutPayment.is_paid.is_(True)),
     (PaymentMethod.LAVA.value, LavaPayment, LavaPayment.is_paid.is_(True)),
-    (PaymentMethod.CISPAY.value, CisPayPayment, CisPayPayment.is_paid.is_(True)),
+    (PaymentMethod.CISPAY.value, CisPayPayment, CisPayPayment.is_paid.is_(True) & CisPayPayment.is_sandbox.is_(False)),
     (PaymentMethod.CASHERA.value, CasheraPayment, CasheraPayment.is_paid.is_(True)),
     (PaymentMethod.ANORE.value, AnorePayment, AnorePayment.is_paid.is_(True) & AnorePayment.is_test.is_(False)),
     (PaymentMethod.TABPAY.value, TabPayPayment, TabPayPayment.is_paid.is_(True)),
@@ -99,6 +99,7 @@ async def get_gateway_success_rates(
                     model.created_at >= period_start,
                     model.created_at <= period_end,
                     AnorePayment.is_test.is_(False) if model is AnorePayment else True,
+                    CisPayPayment.is_sandbox.is_(False) if model is CisPayPayment else True,
                 )
             )
         )

@@ -266,8 +266,12 @@ def _get_method_defaults() -> dict:
             'default_min': settings.CISPAY_MIN_AMOUNT_KOPEKS,
             'default_max': settings.CISPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': [
-                {'id': 'card', 'name': 'Карта'},
-                {'id': 'sbp', 'name': 'СБП'},
+                {
+                    'id': method,
+                    'name': {'card': 'Карта', 'sbp': 'СБП', 'crypto': 'Криптовалюта'}[method],
+                    **({'min_amount_kopeks': 5000} if method == 'card' else {}),
+                }
+                for method in settings.get_cispay_methods()
             ],
         },
         'paritypay': {
@@ -690,7 +694,7 @@ async def get_enabled_methods_for_user(
         # Build options (filter by sub_options config)
         options = None
         available_sub_options = method_def.get('available_sub_options')
-        if method_id in {'antilopay', 'anore'} and available_sub_options:
+        if method_id in {'antilopay', 'anore', 'cispay'} and available_sub_options:
             # Preserve the distinction between default options and all disabled.
             # Cabinet checkout must never fall back to the provider's unrestricted form.
             configured_options = config.sub_options or {}
@@ -743,3 +747,46 @@ async def get_anore_checkout_policy(db: AsyncSession, user) -> dict | None:
         'max_amount_kopeks': default['default_max'],
         'options': default['available_sub_options'],
     }
+
+
+async def get_cispay_checkout_policy(db: AsyncSession, user, payment_method_type: str | None = None) -> dict | None:
+    """Shared effective checkout policy; generic checkout selects an explicit fiat method."""
+    if not settings.is_cispay_enabled():
+        return None
+    config = await get_config_by_method_id(db, 'cispay')
+    if config is not None:
+        if user is None and (
+            config.user_type_filter != 'all'
+            or config.first_topup_filter != 'any'
+            or config.promo_group_filter_mode == 'selected'
+        ):
+            return None
+        methods = await get_enabled_methods_for_user(
+            db, user, is_first_topup=not getattr(user, 'has_made_first_topup', False) if user else None
+        )
+        policy = next((method for method in methods if method['id'] == 'cispay'), None)
+        if policy is None:
+            return None
+        policy = dict(policy)
+    else:
+        default = _get_method_defaults()['cispay']
+        policy = {
+            'id': 'cispay',
+            'name': default['default_display_name'],
+            'min_amount_kopeks': default['default_min'],
+            'max_amount_kopeks': default['default_max'],
+            'options': default['available_sub_options'],
+        }
+    enabled = set(settings.get_cispay_methods())
+    policy['options'] = [option for option in (policy.get('options') or []) if option['id'] in enabled]
+    allowed = {option['id'] for option in policy['options']}
+    if not allowed:
+        return None
+    requested = payment_method_type.lower() if isinstance(payment_method_type, str) else payment_method_type
+    if requested is not None and requested not in allowed:
+        return None
+    selected = requested or next((method for method in ('card', 'sbp') if method in allowed), None)
+    policy['selected_method'] = selected.upper() if selected else None
+    if selected == 'card':
+        policy['min_amount_kopeks'] = max(policy['min_amount_kopeks'], 5000)
+    return policy

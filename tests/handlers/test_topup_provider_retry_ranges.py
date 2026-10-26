@@ -71,6 +71,18 @@ async def test_rejection_keeps_selection_and_shows_exact_enterable_range(
     monkeypatch.setattr(module, 'settings', ProviderSettings())
     factory = MagicMock()
     monkeypatch.setattr(module, 'PaymentService', factory)
+    if module_name == 'cispay':
+        monkeypatch.setattr(
+            module,
+            'get_cispay_checkout_policy',
+            AsyncMock(
+                return_value={
+                    'selected_method': 'CARD',
+                    'min_amount_kopeks': 5055,
+                    'max_amount_kopeks': 5099,
+                }
+            ),
+        )
     if module_name in {'platega', 'cashera'}:
         monkeypatch.setattr(module, '_get_active_methods', lambda: [2, 'sbp'])
     state = FSMContext(MemoryStorage(), StorageKey(bot_id=1, chat_id=1, user_id=1))

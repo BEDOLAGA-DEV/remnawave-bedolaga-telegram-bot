@@ -236,7 +236,7 @@ async def route_payment_by_method(
             await process_cashera_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method in ('cispay', 'cispay_card', 'cispay_sbp'):
+    if payment_method in ('cispay', 'cispay_card', 'cispay_sbp', 'cispay_crypto'):
         from .cispay import process_cispay_payment_amount
 
         async with AsyncSessionLocal() as db:
@@ -938,8 +938,9 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_cashera_method_selection, F.data.startswith('cashera_method_'))
     dp.callback_query.register(start_cashera_direct_method, F.data.startswith('topup_cashera_m_'))
 
-    from .cispay import start_cispay_card_topup, start_cispay_sbp_topup, start_cispay_topup
+    from .cispay import start_cispay_card_topup, start_cispay_crypto_topup, start_cispay_sbp_topup, start_cispay_topup
 
+    dp.callback_query.register(start_cispay_crypto_topup, F.data == 'topup_cispay_crypto')
     dp.callback_query.register(start_cispay_topup, F.data == 'topup_cispay')
     dp.callback_query.register(start_cispay_card_topup, F.data == 'topup_cispay_card')
     dp.callback_query.register(start_cispay_sbp_topup, F.data == 'topup_cispay_sbp')

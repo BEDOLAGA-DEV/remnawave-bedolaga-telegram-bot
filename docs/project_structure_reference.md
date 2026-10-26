@@ -89,7 +89,7 @@
   Функции: `create_bot` — Create a Bot instance with SOCKS5 proxy and/or custom Telegram API server.
 - `app/cabinet/`
 - `app/config.py` — Python-модуль
-  Классы: `Settings` (415 методов)
+  Классы: `Settings` (418 методов)
   Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
 - `app/database/`
 - `app/external/`
@@ -1162,7 +1162,7 @@
   Функции: `start_cashera_payment`, `handle_cashera_method_selection`, `start_cashera_direct_method` — Метод выбран прямо на экране способов пополнения (CASHERA_INLINE_METHODS)., `process_cashera_payment_amount`, `check_cashera_payment_status`
 - `app/handlers/balance/cispay.py` — Python-модуль
   Классы: нет
-  Функции: `process_cispay_payment_amount` — Обрабатывает сумму, введённую пользователем для cisPay., `start_cispay_topup`, `start_cispay_card_topup`, `start_cispay_sbp_topup`
+  Функции: `process_cispay_payment_amount` — Обрабатывает сумму, введённую пользователем для cisPay., `start_cispay_topup`, `start_cispay_card_topup`, `start_cispay_sbp_topup`, `start_cispay_crypto_topup`
 - `app/handlers/balance/cloudpayments.py` — Python-модуль
   Классы: нет
   Функции: `process_cloudpayments_payment_amount` — Process payment amount directly., `start_cloudpayments_payment` — Start CloudPayments payment flow., `process_cloudpayments_amount` — Process entered amount and create CloudPayments payment.
@@ -1520,7 +1520,7 @@
   Классы: `CheckoutSquadsUnavailableError` (1 методов)
   Функции: `validate_checkout_squads` — Do not charge when every explicitly selected squad has been deleted., `validate_trial_checkout_squads` — Check a configured trial tariff before legacy paths debit its activation.
 - `app/services/cispay_service.py` — Python-модуль
-  Классы: `CisPayAPIError` (1 методов), `CisPayService` (13 методов)
+  Классы: `CisPayConfig`, `CisPayAPIError` (1 методов), `CisPayService` (11 методов)
   Функции: нет
 - `app/services/cloudpayments_service.py` — Python-модуль
   Классы: `CloudPaymentsAPIError` (1 методов), `CloudPaymentsService` (16 методов)
@@ -1679,7 +1679,7 @@
 - `app/services/payment/`
 - `app/services/payment_method_config_service.py` — Python-модуль
   Классы: нет
-  Функции: `refresh_display_name_overrides` — Reload names and saved order for synchronous Telegram keyboards., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `get_display_sort_order`, `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get supported payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id, ignoring retired backup entries., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user., `get_anore_checkout_policy` — Effective policy shared by checkout prompts and creation entry points.
+  Функции: `refresh_display_name_overrides` — Reload names and saved order for synchronous Telegram keyboards., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `get_display_sort_order`, `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get supported payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id, ignoring retired backup entries., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user., `get_anore_checkout_policy` — Effective policy shared by checkout prompts and creation entry points., `get_cispay_checkout_policy` — Shared effective checkout policy; generic checkout selects an explicit fiat method.
 - `app/services/payment_search_service.py` — Python-модуль
   Классы: `StatusFilter`, `PeriodPreset`, `SearchParams` (2 методов), `SearchStats`
   Функции: `search_payments` — Search payments across all (or filtered) providers., `search_payments_stats` — Compute aggregated statistics for the given search filters.
@@ -2046,8 +2046,8 @@
   Классы: `CasheraPaymentMixin` (17 методов)
   Функции: `enable_cashera_recurring` — Включить автопродление Cashera: {local_id, cashera_subscription_uuid, redirect_url, status}., `purchase_tariff_with_cashera_recurring` — Покупка тарифа оплатой через автопродление Cashera.
 - `app/services/payment/cispay.py` — Python-модуль
-  Классы: `CisPayPaymentMixin` (4 методов)
-  Функции: `resolve_cispay_method` — Определяет payment_method для API cisPay.
+  Классы: `CisPayValidationError`, `CisPayPaymentMixin` (6 методов)
+  Функции: `resolve_cispay_method`
 - `app/services/payment/cloudpayments.py` — Python-модуль
   Классы: `CloudPaymentsPaymentMixin` (6 методов)
   Функции: нет
@@ -2697,6 +2697,7 @@
 - `docs/apple-iap-ios-requirements.md` — файл
 - `docs/autopay-concurrency.md` — файл
 - `docs/broadcast_audiences.md` — файл
+- `docs/cispay.md` — файл
 - `docs/contests-api.md` — файл
 - `docs/grace-access.md` — файл
 - `docs/handoffs/`
@@ -3138,6 +3139,9 @@
   Классы: нет
   Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0135_create_anore_payments.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0136_cispay_sandbox_and_polling.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 
@@ -3894,6 +3898,12 @@
 - `tests/database/test_checkout_squad_preflight_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_tariff_checkout_checks_live_squads_before_debit`, `test_bot_and_saved_checkout_refuse_all_deleted_squads`, `test_paid_trial_refuses_before_charge_and_trial_creation`, `test_classic_cabinet_trial_still_uses_configured_inactive_tariff` — A stored trial tariff is also used by cabinet classic provisioning, unlike Telegram.
+- `tests/database/test_cispay_lifecycle_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_real_create_early_signed_callback_and_replay`
+- `tests/database/test_cispay_payments_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `payload`, `seed`, `service`, `test_concurrent_callback_and_status_credit_once`, `test_invalid_identity_or_amount_cannot_credit`, `test_sandbox_and_blocked_never_credit`, `configured_store`, `test_crypto_callback_uses_verified_ruble_source`, `test_polling_cannot_credit_a_different_order`, `test_polling_failure_reserves_rate_gate`, `test_failed_commit_then_retry_is_atomic`, `test_early_guest_callback_is_durable_before_create_returns`, `test_expired_or_refunded_does_not_undo_credit`, `test_uncredited_refunded_invoice_cannot_later_credit`, `test_crypto_duplicate_reuses_accepted_source_without_polling`, `test_guest_missing_or_sandbox_never_issues_purchase`, `test_create_timeout_keeps_order_for_late_callback`, `test_status_provider_expiration_replaces_no_default_ttl`, `test_migration_upgrade_preserves_historical_payment`, `test_unpaid_crypto_terminal_webhook_needs_no_conversion_query`
 - `tests/database/test_classic_device_migration_live_panel.py` — Python-модуль
   Классы: нет
   Функции: `real_migration`, `test_purchase_price_and_cap_reach_real_panel`, `test_tariff_maximum_applies_to_previously_registered_hwids` — Known RED acceptance criterion; do not replace with HTTP200 assertions or xfail., `test_failed_device_pruning_is_retried_without_recharging`
@@ -4816,6 +4826,12 @@
 - `tests/services/test_checkout_squad_validation.py` — Python-модуль
   Классы: нет
   Функции: `test_only_fresh_valid_catalog_can_block_checkout`, `test_catalog_failure_preserves_existing_outage_checkout_semantics`, `test_preflight_is_bounded`, `test_cancellation_propagates`
+- `tests/services/test_cispay_http_contract.py` — Python-модуль
+  Классы: нет
+  Функции: `cispay_http`, `test_hosted_request_preserves_minor_units_and_metadata`, `test_invalid_local_money_never_hits_provider`, `test_card_minimum_and_customer_required_for_sbp_and_chooser`, `test_errors_are_safe_and_post_is_never_retried`, `test_malformed_response_fails_closed`, `test_status_preserves_fractional_minor_units_for_strict_validator`, `test_signature_uses_exact_body_and_missing_key_fails`, `test_timeout_does_not_retry_creating_invoice`, `test_chunked_response_is_fully_read`, `test_oversized_response_is_rejected`
+- `tests/services/test_cispay_wiring.py` — Python-модуль
+  Классы: нет
+  Функции: `configured`, `test_crypto_is_optin_and_not_in_default_options`, `test_explicit_methods_limit_options`, `test_effective_policy_respects_database_options_and_limits`, `test_default_is_explicit_fiat_and_card_minimum`, `test_guest_metadata_exists_before_create`, `test_telegram_accepts_effective_sbp_minimum`, `test_crypto_disabled_rejected_even_if_requested`, `test_guest_recovery_excludes_sandbox`, `test_sandbox_does_not_appear_as_credited_in_cabinet`, `test_non_ruble_config_cannot_create_new_payments`, `test_guest_cannot_bypass_database_group_restriction`, `test_crypto_only_configuration_requires_explicit_selection`
 - `tests/services/test_combo_promocode.py` — Python-модуль
   Классы: нет
   Функции: `test_combo_applies_both_days_and_balance` — Оба эффекта применяются: подписка продлена И баланс пополнен., `test_combo_days_failure_prevents_balance_credit` — Нет подписки → блок дней падает ДО начисления баланса: add_user_balance, `test_single_balance_type_untouched` — Одиночный BALANCE-код по-прежнему только пополняет баланс., `test_cabinet_bonus_set_requires_at_least_one_component` — Кабинетная валидация: в наборе должна быть хотя бы одна составляющая., `test_webapi_bonus_set_requires_at_least_one_component`, `test_combo_grants_traffic` — Трафик из набора начисляется той же подписке, что и дни., `test_combo_without_traffic_does_not_touch_it` — traffic_gb=0 — начисления нет, старые коды ведут себя как прежде., `test_traffic_reactivates_limited_subscription` — Трафик чаще всего дарят тому, у кого он кончился, — подписка в LIMITED., `test_traffic_not_granted_on_unlimited_subscription` — Безлимит: Subscription.add_traffic ничего не делает — и обещать нечего., `test_target_subscription_picked_once_per_activation` — Дни и трафик обязаны попасть в ОДНУ подписку — выбор делается один раз., `test_traffic_only_applies_to_the_bonus_set_type` — Трафик — составляющая набора. Код другого типа его не раздаёт., `test_traffic_only_on_unlimited_does_not_burn_the_code` — Трафик — единственная составляющая, а подписка безлимитная: попытка не сгорает., `test_unlimited_subscription_keeps_other_bonuses` — Если в наборе есть что-то ещё — оно начисляется, а код не откатывается.
@@ -5090,8 +5106,8 @@
   Классы: `StubCashera` (4 методов)
   Функции: `test_create_sends_spec_payload_and_stores_payment`, `test_create_rejects_disabled_method_and_limits`, `test_blank_secret_means_disabled` — С пустым секретом вебхук подделал бы кто угодно — шлюз считается выключенным., `test_unknown_method_codes_are_dropped`, `test_paid_webhook_credits_once_and_replay_is_ignored`, `test_amount_or_currency_mismatch_is_not_credited`, `test_wrong_currency_is_mismatch`, `test_paid_without_amount_asks_for_retry` — Без подтверждённой суммы не зачисляем и отвечаем 5xx — Cashera повторит., `test_failed_status_is_final`, `test_refund_after_credit_debits_balance_once`, `test_chargeback_after_balance_was_spent_records_shortfall` — Отрицательного баланса нет: списываем сколько есть, недостачу — в платёж и тревогу., `test_foreign_and_test_events_are_acknowledged`, `test_api_check_credits_when_webhook_was_lost`, `test_normalize_payment_url`, `test_verify_webhook`, `test_verify_webhook_fails_closed_without_secret`, `test_client_retries_5xx_and_429_then_succeeds`, `test_client_does_not_retry_validation_errors`, `test_h2h_retries_until_requisites_are_ready`, `test_h2h_not_requested_when_off_or_unsupported` — mastercard и cryptobot у Cashera только ссылкой; при выключенной настройке — тоже., `test_h2h_failure_falls_back_to_link`
 - `tests/services/test_payment_service_cispay.py` — Python-модуль
-  Классы: `DummySession` (3 методов), `DummyLocalPayment` (1 методов), `FakeCisPayPayment` (1 методов), `StubCisPayService` (2 методов)
-  Функции: `anyio_backend`, `test_create_cispay_payment_success`, `test_create_cispay_payment_sbp_sub_method`, `test_create_cispay_payment_respects_amount_limits`, `test_create_cispay_payment_disabled`, `test_process_cispay_callback_paid_finalizes`, `test_process_cispay_callback_amount_mismatch`, `test_process_cispay_callback_already_paid_is_idempotent`, `test_process_cispay_callback_sticky_terminal_status` — Провайдер не может «починить» отклонённый платёж повторным вебхуком., `test_process_cispay_callback_missing_amount_does_not_credit` — PAID без amount: зачислять нечего сверять — платёж остаётся pending под ретрай., `test_process_cispay_callback_unparseable_amount_is_mismatch`, `test_process_cispay_callback_missing_fields`, `test_process_cispay_callback_non_paid_status_updates`, `test_generic_method_falls_back_to_sbp_when_card_disabled` — SBP-only магазин: генерик-метод обязан слать SBP, иначе cisPay отклонит платёж., `test_is_cispay_enabled_rejects_blank_credentials` — Пустая строка ключа не должна включать шлюз — иначе HMAC вебхука подделывается., `test_verify_webhook_signature_blank_key_fails_closed`, `test_verify_webhook_signature_valid`, `test_verify_webhook_signature_invalid`, `test_verify_webhook_signature_tampered_body`
+  Классы: `Session` (3 методов)
+  Функции: `payment`, `payload`, `service`, `creation`, `test_create_cispay_payment_success`, `test_create_cispay_payment_sbp_sub_method`, `test_create_cispay_payment_respects_amount_limits`, `test_create_cispay_payment_disabled`, `test_process_cispay_callback_paid_finalizes`, `test_process_cispay_callback_bad_amount_does_not_credit`, `test_process_cispay_callback_already_paid_is_idempotent`, `test_process_cispay_callback_terminal_cannot_bypass_validation`, `test_process_cispay_callback_missing_fields`, `test_process_cispay_callback_non_paid_status_updates`, `test_generic_method_falls_back_to_sbp_when_card_disabled`, `test_is_cispay_enabled_rejects_blank_credentials` — Пустая строка ключа не должна включать шлюз — иначе HMAC вебхука подделывается., `test_verify_webhook_signature_blank_key_fails_closed`, `test_verify_webhook_signature_valid`, `test_verify_webhook_signature_invalid`, `test_verify_webhook_signature_tampered_body`, `test_valid_late_payment_can_settle_unpaid_invoice`, `test_unpaid_refunded_invoice_cannot_be_credited_by_late_paid`, `test_capabilities_disable_creation_before_post`, `test_generic_method_uses_active_sbp_capability`, `test_email_only_customer_uses_stable_database_identity`, `test_generic_sbp_fallback_uses_sbp_minimum`
 - `tests/services/test_payment_service_cryptobot.py` — Python-модуль
   Классы: `DummySession` (4 методов), `DummyLocalPayment` (1 методов), `StubCryptoBotService` (2 методов)
   Функции: `anyio_backend`, `test_create_cryptobot_payment_success`, `test_create_cryptobot_payment_returns_none_when_service_missing`, `test_create_cryptobot_payment_handles_empty_response`
@@ -5771,6 +5787,9 @@
 - `tests/webserver/test_cashera_webhook.py` — Python-модуль
   Классы: `DummyBot`
   Функции: `test_foreign_credentials_get_401_and_are_not_processed`, `test_processed_event_gets_200`, `test_retryable_failure_gets_500`, `test_route_is_not_registered_without_credentials`
+- `tests/webserver/test_cispay_current_webhook.py` — Python-модуль
+  Классы: нет
+  Функции: `test_current_webhook_envelope`
 - `tests/webserver/test_dpichecker_webhook.py` — Python-модуль
   Классы: `FakeService` (3 методов)
   Функции: `test_good_signature_dispatches_event`, `test_bad_signature_rejected_after_one_secret_refresh`, `test_rotated_secret_accepted_after_refresh`, `test_missing_signature_401`, `test_empty_body_400`, `test_oversized_body_413`

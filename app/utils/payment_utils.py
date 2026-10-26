@@ -301,6 +301,18 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_cispay_crypto_enabled():
+        name = settings.get_cispay_crypto_display_name()
+        methods.append(
+            {
+                'id': 'cispay_crypto',
+                'name': name,
+                'icon': '🪙',
+                'description': f'через {name}',
+                'callback': 'topup_cispay_crypto',
+            }
+        )
+
     if settings.is_cispay_sbp_enabled():
         sbp_name = settings.get_cispay_sbp_display_name()
         methods.append(
@@ -699,6 +711,8 @@ def is_payment_method_available(method_id: str) -> bool:
         )
     if method_id == 'cispay_sbp':
         return settings.is_cispay_sbp_enabled()
+    if method_id == 'cispay_crypto':
+        return settings.is_cispay_crypto_enabled()
     if method_id == 'cispay_card':
         return settings.is_cispay_card_enabled()
     if method_id == 'anore':

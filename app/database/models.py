@@ -1690,10 +1690,11 @@ class CisPayPayment(Base):
     # Статусы
     status = Column(String(32), nullable=False, default='pending')
     is_paid = Column(Boolean, default=False)
+    is_sandbox = Column(Boolean, nullable=False, default=False, server_default='false')
 
     # Данные платежа
     payment_url = Column(Text, nullable=True)
-    payment_method = Column(String(32), nullable=True)  # 'CARD' / 'SBP'
+    payment_method = Column(String(32), nullable=True)  # 'CARD' / 'SBP' / 'CRYPTO'
 
     # Метаданные
     metadata_json = Column(JSON, nullable=True)
@@ -1702,6 +1703,7 @@ class CisPayPayment(Base):
     # Временные метки
     paid_at = Column(AwareDateTime(), nullable=True)
     expires_at = Column(AwareDateTime(), nullable=True)
+    next_check_at = Column(AwareDateTime(), nullable=True)
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 
@@ -1722,7 +1724,7 @@ class CisPayPayment(Base):
 
     @property
     def is_success(self) -> bool:
-        return self.status == 'success' and self.is_paid
+        return self.status == 'success' and self.is_paid and not self.is_sandbox
 
     @property
     def is_failed(self) -> bool:
