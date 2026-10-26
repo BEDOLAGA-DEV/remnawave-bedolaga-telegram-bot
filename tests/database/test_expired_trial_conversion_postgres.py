@@ -57,13 +57,13 @@ class Panel(RemnaWaveAPI):
         assert user_id == 9001
         return None if self.missing else self._parse_user(self.account)
 
-    async def create_user(self, **kwargs):
+    async def create_user(self, username, expire_at, *args, **kwargs):
         self.creates += 1
-        self.create_kwargs = kwargs.copy()
+        self.create_kwargs = dict(kwargs, username=username, expire_at=expire_at)
         self.new_account = dict(
             self.account,
             id=9003,
-            expireAt=kwargs['expire_at'].isoformat(),
+            expireAt=expire_at.isoformat(),
             subscriptionUrl='https://vpn.example/sub/recreated',
             status='ACTIVE',
         )

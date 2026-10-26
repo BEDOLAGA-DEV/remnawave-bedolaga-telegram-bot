@@ -39,7 +39,7 @@ class Panel(RemnaWaveAPI):
         assert user_id == 9001
         return self.account
 
-    async def update_user(self, *, user_id, **kwargs):
+    async def update_user(self, user_id, *args, **kwargs):
         assert user_id == 9001
         self.updated.append(kwargs)
         self.account.expire_at = kwargs.get('expire_at', self.account.expire_at)

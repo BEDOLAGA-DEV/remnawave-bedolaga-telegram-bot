@@ -139,3 +139,76 @@ def test_text_only_and_escaped_image_text_stay_unchanged():
     assert message.html == content
     assert not message.media
     assert message.is_rtl is True
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        '<img' + '\t' * 30_000 + '>',
+        '<img ' + 'src= ' * 30_000 + '>',
+        '<img ' * 30_000,
+    ],
+    ids=['whitespace', 'missing-quoted-values', 'unclosed-tags'],
+)
+def test_pathological_image_markup_stays_fast(content):
+    import time
+
+    from app.utils.rich_media import prepare_rich_message
+
+    start = time.perf_counter()
+    message = prepare_rich_message(content)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 1.0, f'image parsing took {elapsed:.3f}s'
+    assert message.html == content
+    assert not message.media
+
+
+@pytest.mark.parametrize(
+    ('content', 'expected'),
+    [
+        (
+            '<IMG alt="a > b" SRC = \'https://logo.example/a.png\' width="2" />',
+            '<IMG alt="a > b" SRC = \'tg://photo?id=photo_0\' width="2" />',
+        ),
+        (
+            '<img alt=\' src="https://logo.example/fake.png"\' src="https://logo.example/a.png">',
+            '<img alt=\' src="https://logo.example/fake.png"\' src="tg://photo?id=photo_0">',
+        ),
+        (
+            '<img data-src="https://logo.example/fake.png" src="https://logo.example/a.png">',
+            '<img data-src="https://logo.example/fake.png" src="tg://photo?id=photo_0">',
+        ),
+    ],
+)
+def test_image_sources_preserve_attribute_boundaries_and_markup(content, expected):
+    from app.utils.rich_media import prepare_rich_message
+
+    message = prepare_rich_message(content)
+
+    assert message.html == expected
+    assert message.media and len(message.media) == 1
+    assert message.media[0].media.media == 'https://logo.example/a.png'
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        '<!-- <img src="https://logo.example/a.png"> -->',
+        '<span title=\'<img src="https://logo.example/a.png">\'>text</span>',
+        '<img src="tg://photo?id=existing" src="https://logo.example/a.png">',
+        '<img src="data:image/png;base64,AAAA">',
+        '<img src="/local.png">',
+        '<img src=https://logo.example/a.png>',
+        '<image src="https://logo.example/a.png">',
+        '<img.custom src="https://logo.example/a.png">',
+        '<img src="https://logo.example/unclosed.png>',
+    ],
+)
+def test_non_external_sources_and_image_text_are_preserved(content):
+    from app.utils.rich_media import prepare_rich_message
+
+    message = prepare_rich_message(content)
+
+    assert message.html == content
+    assert not message.media

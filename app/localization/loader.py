@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from functools import cache
@@ -36,17 +37,32 @@ def _resolve_user_locales_dir() -> Path:
     return path
 
 
+def _locale_path(directory: Path, language: str, extension: str) -> Path | None:
+    """Resolve a locale file without allowing names or symlinks to escape its directory."""
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+', language):
+        return None
+    root = directory.resolve()
+    candidate = (root / f'{language}{extension}').resolve()
+    if not candidate.is_relative_to(root):
+        return None
+    return candidate
+
+
 def _locale_file_exists(language: str) -> bool:
     code = _normalize_language_code(language)
     if not code:
         return False
 
-    default_candidate = _DEFAULT_LOCALES_DIR / f'{code}.json'
-    if default_candidate.exists():
+    default_candidate = _locale_path(_DEFAULT_LOCALES_DIR, code, '.json')
+    if default_candidate is not None and default_candidate.exists():
         return True
 
     user_dir = _resolve_user_locales_dir()
-    return any((user_dir / f'{code}{extension}').exists() for extension in ('.json', '.yml', '.yaml'))
+    return any(
+        candidate is not None and candidate.exists()
+        for extension in ('.json', '.yml', '.yaml')
+        for candidate in [_locale_path(user_dir, code, extension)]
+    )
 
 
 def _select_fallback_language(available_map: dict[str, str]) -> str:
@@ -239,8 +255,8 @@ def ensure_locale_templates() -> None:
 
 
 def _load_default_locale(language: str) -> dict[str, Any]:
-    default_path = _DEFAULT_LOCALES_DIR / f'{language}.json'
-    if not default_path.exists():
+    default_path = _locale_path(_DEFAULT_LOCALES_DIR, language, '.json')
+    if default_path is None or not default_path.exists():
         return {}
     return _normalize_locale_dict(_load_locale_file(default_path))
 
@@ -248,8 +264,8 @@ def _load_default_locale(language: str) -> dict[str, Any]:
 def _load_user_locale(language: str) -> dict[str, Any]:
     user_dir = _resolve_user_locales_dir()
     for extension in ('.json', '.yml', '.yaml'):
-        candidate = user_dir / f'{language}{extension}'
-        if candidate.exists():
+        candidate = _locale_path(user_dir, language, extension)
+        if candidate is not None and candidate.exists():
             return _normalize_locale_dict(_load_locale_file(candidate))
     return {}
 

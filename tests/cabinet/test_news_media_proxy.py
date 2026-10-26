@@ -102,4 +102,5 @@ async def test_news_upload_save_reload_through_api_proxy(postgres_database, tmp_
             fetched = await client.get(reloaded.json()['featured_image_url'])
             assert fetched.status_code == 200
             assert fetched.headers['content-type'] == 'image/jpeg'
-            assert Image.open(BytesIO(fetched.content)).size == (24, 16)
+            with Image.open(BytesIO(fetched.content)) as fetched_image:
+                assert fetched_image.size == (24, 16)

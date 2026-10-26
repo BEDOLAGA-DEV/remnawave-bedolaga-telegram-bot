@@ -1,6 +1,9 @@
 name: Build and Publish Docker Image
 
 on:
+  # Release Please tags use GITHUB_TOKEN and do not trigger push workflows.
+  # Dispatch explicitly on the published tag to build its immutable revision.
+  workflow_dispatch:
   push:
     branches:
       - main
