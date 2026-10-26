@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.database.crud.user import get_user_by_id
 from app.database.crud.yookassa import create_yookassa_payment
-from app.database.models import Base, Subscription, Tariff, User
+from app.database.models import Base, Subscription, Tariff, Transaction, TransactionType, User
 from app.external.remnawave_api import RemnaWaveAPI
 from app.services import subscription_auto_purchase_service as auto
 from app.services.payment import common
@@ -29,10 +29,14 @@ from tests.services.test_cart_cleanup_redis import carts  # noqa: F401 - shared 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 
+@pytest.mark.parametrize(
+    'guard',
+    ['eligible', 'auto_disabled', 'db_auto_disabled', 'no_intent', 'insufficient', 'inactive_tariff', 'invalid_period'],
+)
 @pytest.mark.parametrize('seed_trial', [False, True])
 @pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('telegram', [False, True])
-async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, telegram, seed_trial, carts):
+async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, telegram, seed_trial, carts, guard):
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
     monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
@@ -46,7 +50,7 @@ async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, t
     monkeypatch.setattr(settings, 'REMNAWAVE_API_URL', url)
     monkeypatch.setattr(settings, 'REMNAWAVE_API_KEY', token)
     monkeypatch.setattr(settings, 'HAPP_CRYPTOLINK_API_FALLBACK_ENABLED', False)
-    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', guard != 'auto_disabled')
     monkeypatch.setattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False)
     monkeypatch.setattr('app.services.referral_service.process_referral_topup', AsyncMock())
     monkeypatch.setattr('app.services.payment.common.notify_email_user_topup', AsyncMock())
@@ -57,6 +61,15 @@ async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, t
     panel_ids = []
     try:
         async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
+            if guard == 'db_auto_disabled':
+                from app.services.settings_store import store_setting
+                from app.services.system_settings_service import bot_configuration_service as configuration
+
+                configuration.initialize_definitions()
+                monkeypatch.setattr(configuration, '_env_override_keys', set())
+                monkeypatch.setattr(configuration, '_overrides_raw', {})
+                await store_setting(db, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', False)
+                assert settings.is_auto_purchase_after_topup_enabled() is False
             db.add(
                 User(
                     id=user_id,
@@ -71,7 +84,7 @@ async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, t
                 Tariff(
                     id=1,
                     name='Test',
-                    is_active=True,
+                    is_active=guard != 'inactive_tariff',
                     period_prices={'30': 14900},
                     traffic_limit_gb=100,
                     device_limit=2,
@@ -98,16 +111,17 @@ async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, t
                 {
                     'cart_mode': 'tariff_purchase',
                     'tariff_id': 1,
-                    'period_days': 30,
+                    'period_days': 31 if guard == 'invalid_period' else 30,
                     'total_price': 14900,
-                    'return_to_cart': True,
+                    'return_to_cart': guard != 'no_intent',
                 },
             )
+            topup = 14899 if guard == 'insufficient' else 14900
             await create_yookassa_payment(
                 db,
                 user_id=user_id,
                 yookassa_payment_id='masked-payment',
-                amount_kopeks=14900,
+                amount_kopeks=topup,
                 currency='RUB',
                 description='Test',
                 status='pending',
@@ -121,7 +135,7 @@ async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, t
                         'id': 'masked-payment',
                         'status': 'succeeded',
                         'paid': True,
-                        'amount_value': 149,
+                        'amount_value': topup / 100,
                         'amount_currency': 'RUB',
                     }
                 )
@@ -132,8 +146,40 @@ async def test_first_paid_without_trial(postgres_database, monkeypatch, multi, t
             }
             assert await service.process_yookassa_webhook(db, event)
             assert await service.process_yookassa_webhook(db, event)
+            deposits = list(
+                (
+                    await db.scalars(
+                        select(Transaction).where(
+                            Transaction.user_id == user_id,
+                            Transaction.type == TransactionType.DEPOSIT.value,
+                        )
+                    )
+                ).all()
+            )
+            assert len(deposits) == 1
+            assert deposits[0].amount_kopeks == topup
             rows = list((await db.scalars(select(Subscription).where(Subscription.is_trial.is_(False)))).all())
             panel_ids = [row.remnawave_id for row in rows if row.remnawave_id is not None]
+            payments = list(
+                (
+                    await db.scalars(
+                        select(Transaction).where(
+                            Transaction.user_id == user_id,
+                            Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+                        )
+                    )
+                ).all()
+            )
+            await db.refresh(user)
+            if guard != 'eligible':
+                assert rows == []
+                assert payments == []
+                assert user.balance_kopeks == topup
+                if seed_trial:
+                    trial = await db.scalar(select(Subscription).where(Subscription.user_id == user_id))
+                    assert trial.is_trial and trial.status == 'pending'
+                return
+            assert len(payments) == 1
             assert len(rows) == 1
             assert rows[0].status == 'active' and not rows[0].is_trial
             assert rows[0].remnawave_id is not None
