@@ -59,6 +59,7 @@ from app.database.models import (
 )
 from app.services.faq_service import FaqService
 from app.services.maintenance_service import maintenance_service
+from app.services.payment_method_config_service import get_anore_checkout_policy
 from app.services.payment_service import PaymentService, get_wata_payment_by_link_id
 from app.services.pricing_engine import PricingEngine
 from app.services.privacy_policy_service import PrivacyPolicyService
@@ -682,7 +683,7 @@ async def get_payment_methods(
     payload: MiniAppPaymentMethodsRequest,
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppPaymentMethodsResponse:
-    _, _ = await _resolve_user_from_init_data(db, payload.init_data)
+    user, _ = await _resolve_user_from_init_data(db, payload.init_data)
 
     methods: list[MiniAppPaymentMethod] = []
 
@@ -776,6 +777,22 @@ async def get_payment_methods(
             )
         )
 
+    anore_policy = await get_anore_checkout_policy(db, user)
+    if anore_policy:
+        methods.append(
+            MiniAppPaymentMethod(
+                id='anore',
+                icon='💳',
+                requires_amount=True,
+                currency='RUB',
+                min_amount_kopeks=anore_policy['min_amount_kopeks'],
+                max_amount_kopeks=anore_policy['max_amount_kopeks'],
+                integration_type=MiniAppPaymentIntegrationType.REDIRECT,
+                options=[
+                    MiniAppPaymentOption(id=option['id'], title=option['name']) for option in anore_policy['options']
+                ],
+            )
+        )
     if settings.is_wata_enabled():
         methods.append(
             MiniAppPaymentMethod(
@@ -895,6 +912,7 @@ async def get_payment_methods(
         'pal24': 7,
         'platega': 8,
         'wata': 9,
+        'anore': 10,
         'cryptobot': 10,
         'heleket': 11,
         'tribute': 12,
@@ -1134,6 +1152,50 @@ async def create_payment_link(
                 'correlation_id': result.get('correlation_id'),
                 'selected_option': str(method_code),
                 'payload': result.get('payload'),
+                'requested_at': _current_request_timestamp(),
+            },
+        )
+
+    if method == 'anore':
+        anore_policy = await get_anore_checkout_policy(db, user)
+        if anore_policy is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment method is unavailable')
+        if amount_kopeks is None or amount_kopeks <= 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount must be positive')
+        if amount_kopeks < anore_policy['min_amount_kopeks']:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount is below minimum')
+        if amount_kopeks > anore_policy['max_amount_kopeks']:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Amount exceeds maximum')
+
+        if payload.payment_option and payload.payment_option not in {
+            option['id'] for option in anore_policy['options']
+        }:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment option is unavailable')
+        payment_service = PaymentService()
+        result = await payment_service.create_anore_payment(
+            db=db,
+            user_id=user.id,
+            amount_kopeks=amount_kopeks,
+            description=settings.get_balance_payment_description(
+                amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+            ),
+            language=user.language,
+            payment_method_type=payload.payment_option,
+        )
+        payment_url = result.get('payment_url') if result else None
+        if not result or not payment_url:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail='Failed to create payment')
+
+        return MiniAppPaymentCreateResponse(
+            method=method,
+            payment_url=payment_url,
+            amount_kopeks=amount_kopeks,
+            extra={
+                'local_payment_id': result.get('local_payment_id'),
+                'invoice_id': result.get('payment_id'),
+                'payment_id': result.get('payment_id'),
+                'status': result.get('status'),
+                'order_id': result.get('order_id'),
                 'requested_at': _current_request_timestamp(),
             },
         )
@@ -1532,6 +1594,8 @@ async def _resolve_payment_status_entry(
         return await _resolve_mulenpay_payment_status(payment_service, db, user, query)
     if method == 'platega':
         return await _resolve_platega_payment_status(payment_service, db, user, query)
+    if method == 'anore':
+        return await _resolve_anore_payment_status(payment_service, db, user, query)
     if method == 'wata':
         return await _resolve_wata_payment_status(payment_service, db, user, query)
     if method == 'pal24':
@@ -4576,6 +4640,7 @@ def _format_payment_method_title(method: str) -> str:
         'mulenpay': 'MulenPay',
         'pal24': 'Pal24',
         'wata': 'WataPay',
+        'anore': settings.get_anore_display_name(),
         'heleket': 'Heleket',
         'tribute': 'Tribute',
         'stars': 'Telegram Stars',
@@ -7849,4 +7914,37 @@ async def toggle_daily_subscription_pause_endpoint(
         is_paused=new_paused_state,
         balance_kopeks=user.balance_kopeks,
         balance_label=settings.format_price(user.balance_kopeks),
+    )
+
+
+async def _resolve_anore_payment_status(
+    payment_service: PaymentService,
+    db: AsyncSession,
+    user: User,
+    query: MiniAppPaymentStatusQuery,
+) -> MiniAppPaymentStatusResult:
+    from app.database.crud.anore import get_anore_payment_by_id, get_anore_payment_by_invoice_id
+
+    payment = None
+    if query.local_payment_id:
+        payment = await get_anore_payment_by_id(db, query.local_payment_id)
+    elif query.payment_id or query.invoice_id:
+        payment = await get_anore_payment_by_invoice_id(db, query.payment_id or query.invoice_id)
+    # Ownership is checked before contacting the provider or changing accounting.
+    if payment is None or payment.user_id != user.id:
+        return MiniAppPaymentStatusResult(method='anore', status='pending', is_paid=False, message='Payment not found')
+    result = await payment_service.check_anore_payment_status(db, payment.order_id)
+    paid = bool((result or {}).get('is_paid')) and not payment.is_test
+    state = 'pending' if payment.is_test else _classify_status((result or {}).get('status') or payment.status, paid)
+    return MiniAppPaymentStatusResult(
+        method='anore',
+        status=state,
+        is_paid=paid,
+        amount_kopeks=payment.amount_kopeks,
+        currency=payment.currency,
+        completed_at=payment.paid_at,
+        transaction_id=payment.transaction_id,
+        external_id=payment.anore_payment_id,
+        message='Sandbox payment: no funds credited' if payment.is_test else None,
+        extra={'local_payment_id': payment.id, 'payment_id': payment.anore_payment_id, 'order_id': payment.order_id},
     )

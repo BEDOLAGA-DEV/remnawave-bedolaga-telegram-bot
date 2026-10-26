@@ -14,6 +14,7 @@ from app.config import settings
 from app.external.cryptobot import CryptoBotService
 from app.external.heleket import HeleketService
 from app.external.telegram_stars import TelegramStarsService
+from app.services.anore_service import anore_service
 from app.services.cloudpayments_service import CloudPaymentsService
 from app.services.mulenpay_service import MulenPayService
 from app.services.nalogo_service import NaloGoService
@@ -30,6 +31,7 @@ from app.services.payment import (
     WataPaymentMixin,
     YooKassaPaymentMixin,
 )
+from app.services.payment.anore import AnorePaymentMixin
 from app.services.payment.antilopay import AntilopayPaymentMixin
 from app.services.payment.aurapay import AuraPayPaymentMixin
 from app.services.payment.cashera import CasheraPaymentMixin
@@ -826,6 +828,7 @@ class PaymentService(
     LavaPaymentMixin,
     CisPayPaymentMixin,
     TabPayPaymentMixin,
+    AnorePaymentMixin,
     ParityPayPaymentMixin,
     CasheraPaymentMixin,
 ):
@@ -834,6 +837,7 @@ class PaymentService(
     def __init__(self, bot: Bot | None = None) -> None:
         # Бот нужен для отправки уведомлений и создания звёздных инвойсов.
         self.bot = bot
+        self.anore_service = anore_service
         # Ниже инициализируем службы-обёртки только если соответствующий провайдер включён.
         self.yookassa_service = YooKassaService() if settings.is_yookassa_enabled() else None
         self.stars_service = TelegramStarsService(bot) if bot else None
@@ -1485,6 +1489,26 @@ class PaymentService(
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),
                     'provider': 'cashera',
+                }
+            return None
+
+        if _base == 'anore':
+            if not settings.is_anore_enabled():
+                return None
+            result = await self.create_anore_payment(
+                db=db,
+                user_id=None,
+                amount_kopeks=amount_kopeks,
+                description=description,
+                return_url=return_url,
+                payment_method_type=_option,
+                metadata=guest_metadata,
+            )
+            if result:
+                return {
+                    'payment_url': result.get('payment_url'),
+                    'payment_id': result.get('order_id'),
+                    'provider': 'anore',
                 }
             return None
 

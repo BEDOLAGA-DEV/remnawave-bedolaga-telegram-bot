@@ -280,6 +280,19 @@ def _get_method_defaults() -> dict:
                 {'id': 'sbp', 'name': 'СБП'},
             ],
         },
+        'anore': {
+            'default_display_name': settings.get_anore_display_name(),
+            'is_configured': settings.is_anore_enabled(),
+            'default_min': settings.ANORE_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ANORE_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {
+                    'id': method,
+                    'name': {'sbp': 'СБП', 'card': 'Карта', 'yoomoney': 'ЮMoney', 'crypto': 'Криптовалюта'}[method],
+                }
+                for method in settings.get_anore_methods()
+            ],
+        },
         'tabpay': {
             'default_display_name': settings.get_tabpay_display_name(),
             'is_configured': settings.is_tabpay_enabled(),
@@ -369,6 +382,7 @@ DEFAULT_METHOD_ORDER = [
     'donut',
     'lava',
     'cispay',
+    'anore',
     'tabpay',
     'paritypay',
     'cashera',
@@ -676,7 +690,7 @@ async def get_enabled_methods_for_user(
         # Build options (filter by sub_options config)
         options = None
         available_sub_options = method_def.get('available_sub_options')
-        if method_id == 'antilopay' and available_sub_options:
+        if method_id in {'antilopay', 'anore'} and available_sub_options:
             # Preserve the distinction between default options and all disabled.
             # Cabinet checkout must never fall back to the provider's unrestricted form.
             configured_options = config.sub_options or {}
@@ -709,3 +723,23 @@ async def get_enabled_methods_for_user(
         )
 
     return result
+
+
+async def get_anore_checkout_policy(db: AsyncSession, user) -> dict | None:
+    """Effective policy shared by checkout prompts and creation entry points."""
+    if not settings.is_anore_enabled():
+        return None
+    config = await get_config_by_method_id(db, 'anore')
+    if config is not None:
+        methods = await get_enabled_methods_for_user(
+            db, user, is_first_topup=not getattr(user, 'has_made_first_topup', False) if user else None
+        )
+        return next((method for method in methods if method['id'] == 'anore'), None)
+    default = _get_method_defaults()['anore']
+    return {
+        'id': 'anore',
+        'name': default['default_display_name'],
+        'min_amount_kopeks': default['default_min'],
+        'max_amount_kopeks': default['default_max'],
+        'options': default['available_sub_options'],
+    }

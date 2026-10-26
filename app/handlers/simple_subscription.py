@@ -313,6 +313,15 @@ def _get_simple_subscription_payment_keyboard(language: str) -> types.InlineKeyb
     if settings.is_pal24_enabled():
         keyboard.append([types.InlineKeyboardButton(text='💳 PayPalych', callback_data='simple_subscription_pal24')])
 
+    if settings.is_anore_enabled():
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f'💳 Пополнить баланс: {settings.get_anore_display_name()}', callback_data='topup_anore'
+                )
+            ]
+        )
+
     if settings.is_wata_enabled():
         keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='simple_subscription_wata')])
 

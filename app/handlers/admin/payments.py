@@ -58,6 +58,8 @@ def _method_display(method: PaymentMethod) -> str:
         return settings.get_cispay_display_name()
     if method == PaymentMethod.CASHERA:
         return settings.get_cashera_display_name()
+    if method == PaymentMethod.ANORE:
+        return settings.get_anore_display_name()
     if method == PaymentMethod.TABPAY:
         return settings.get_tabpay_display_name()
     if method == PaymentMethod.PARITYPAY:
@@ -71,6 +73,9 @@ def _status_info(
     texts,
 ) -> tuple[str, str]:
     status = (record.status or '').lower()
+
+    if record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False)):
+        return '🧪', texts.t('ADMIN_ANORE_SANDBOX', 'Тестовый платёж — баланс не пополнен')
 
     if record.is_paid:
         return '✅', texts.t('ADMIN_PAYMENT_STATUS_PAID', '✅ Paid')

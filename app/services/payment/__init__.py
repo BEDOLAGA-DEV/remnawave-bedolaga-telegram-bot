@@ -4,6 +4,7 @@
 оставался компактным и импортировал только нужные компоненты.
 """
 
+from .anore import AnorePaymentMixin
 from .aurapay import AuraPayPaymentMixin
 from .cloudpayments import CloudPaymentsPaymentMixin
 from .common import PaymentCommonMixin
@@ -25,6 +26,7 @@ from .yookassa import YooKassaPaymentMixin
 
 
 __all__ = [
+    'AnorePaymentMixin',
     'AuraPayPaymentMixin',
     'CloudPaymentsPaymentMixin',
     'CryptoBotPaymentMixin',

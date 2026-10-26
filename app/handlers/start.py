@@ -1670,6 +1670,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             from sqlalchemy import delete, update as sa_update
 
             from app.database.models import (
+                AnorePayment,
                 CloudPaymentsPayment,
                 CryptoBotPayment,
                 FreekassaPayment,
@@ -1718,6 +1719,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 HeleketPayment,
                 MulenPayPayment,
                 Pal24Payment,
+                AnorePayment,
                 WataPayment,
                 PlategaPayment,
                 CloudPaymentsPayment,

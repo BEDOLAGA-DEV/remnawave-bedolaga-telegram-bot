@@ -16,6 +16,7 @@ from app.database.models import (
     AdminRole,
     AdvertisingCampaign,
     AdvertisingCampaignRegistration,
+    AnorePayment,
     BroadcastHistory,
     ButtonClickLog,
     CabinetRefreshToken,
@@ -89,6 +90,7 @@ _PAYMENT_MODELS: tuple[type, ...] = (
     PlategaPayment,
     RioPayPayment,
     SeverPayPayment,
+    AnorePayment,
     WataPayment,
     YooKassaPayment,
 )

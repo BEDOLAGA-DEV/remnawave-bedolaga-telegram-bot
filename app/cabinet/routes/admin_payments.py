@@ -113,6 +113,9 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
     """Get status emoji and text for a pending payment."""
     status_str = (record.status or '').lower()
 
+    if record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False)):
+        return '🧪', 'Тестовый платёж — баланс не пополнен'
+
     if record.is_paid:
         return '✅', 'Оплачено'
 
@@ -136,6 +139,13 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
             'error': ('❌', 'Ошибка'),
         }
         return mapping.get(status_str, ('❓', 'Неизвестно'))
+
+    if record.method == PaymentMethod.ANORE:
+        return {
+            'new': ('⏳', 'Ожидает оплаты'),
+            'paid': ('✅', 'Оплачено'),
+            'expired': ('⌛', 'Истёк'),
+        }.get(status_str, ('❓', 'Неизвестно'))
 
     if record.method == PaymentMethod.WATA:
         mapping = {
@@ -220,6 +230,8 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status_str in {'new', 'process'}
     if record.method == PaymentMethod.MULENPAY:
         return status_str in {'created', 'processing', 'hold'}
+    if record.method == PaymentMethod.ANORE:
+        return not record.is_paid and status_str == 'new'
     if record.method == PaymentMethod.WATA:
         return status_str in {'opened', 'pending', 'processing', 'inprogress', 'in_progress'}
     if record.method == PaymentMethod.PLATEGA:

@@ -2015,6 +2015,7 @@ async def _find_succeeded_provider_payment(
     from sqlalchemy.types import JSON as SA_JSON
 
     from app.database.models import (
+        AnorePayment,
         CloudPaymentsPayment,
         CryptoBotPayment,
         FreekassaPayment,
@@ -2074,6 +2075,15 @@ async def _find_succeeded_provider_payment(
         model = Pal24Payment
         payment_id_attr = 'bill_id'
         extra_conditions = [Pal24Payment.is_paid.is_(True)]
+    elif base_method == 'anore':
+        model = AnorePayment
+        # Guest creation and callbacks identify Anore purchases by local order.
+        payment_id_attr = 'order_id'
+        extra_conditions = [
+            AnorePayment.is_paid.is_(True),
+            AnorePayment.is_test.is_(False),
+            AnorePayment.anore_payment_id.is_not(None),
+        ]
     elif base_method == 'wata':
         model = WataPayment
         payment_id_attr = 'payment_link_id'

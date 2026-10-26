@@ -89,7 +89,7 @@
   Функции: `create_bot` — Create a Bot instance with SOCKS5 proxy and/or custom Telegram API server.
 - `app/cabinet/`
 - `app/config.py` — Python-модуль
-  Классы: `Settings` (410 методов)
+  Классы: `Settings` (415 методов)
   Функции: `transliterate_cyrillic` — Заменяет кириллические буквы латинскими, сохраняя регистр («Шмель» → «Shmel»)., `set_period_prices_from_db` — Устанавливает периоды/цены из БД., `get_db_period_prices` — Возвращает периоды/цены из БД если они загружены., `clear_db_period_prices` — Очищает кеш цен из тарифов (при переключении в classic mode)., `refresh_period_prices` — Rebuild cached period price mapping., `refresh_classic_period_prices` — Rebuild CLASSIC_PERIOD_PRICES from current settings., `get_traffic_prices`, `refresh_traffic_prices`
 - `app/database/`
 - `app/external/`
@@ -642,11 +642,14 @@
   Классы: нет
   Функции: `run_alembic_upgrade` — Run ``alembic upgrade head``, handling fresh and legacy databases., `stamp_alembic_head` — Stamp the DB as being at head without running migrations (for existing DBs).
 - `app/database/models.py` — Python-модуль
-  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `CasheraPayment` (5 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `PaidTrafficResetIntent`, `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
+  Классы: `AwareDateTime` (2 методов), `UserStatus`, `SubscriptionStatus`, `TransactionType`, `PromoCodeType`, `PaymentMethod`, `MainMenuButtonActionType`, `MainMenuButtonVisibility`, `WheelPrizeType`, `WheelSpinPaymentType`, `YooKassaPayment` (6 методов), `SavedPaymentMethod` (1 методов), `CryptoBotPayment` (5 методов), `AppleTransaction` (2 методов), `AppleIAPAccount` (1 методов), `AppleNotification` (1 методов), `AppleIAPAbuseEvent` (1 методов), `HeleketPayment` (5 методов), `MulenPayPayment` (2 методов), `Pal24Payment` (3 методов), `WataPayment` (2 методов), `PlategaPayment` (2 методов), `PlategaSubscription` (1 методов), `LavaSubscription` (1 методов), `CasheraSubscription` (1 методов), `CloudPaymentsPayment` (5 методов), `FreekassaPayment` (5 методов), `KassaAiPayment` (5 методов), `RioPayPayment` (5 методов), `SeverPayPayment` (5 методов), `RollyPayPayment` (5 методов), `OverpayPayment` (5 методов), `AuraPayPayment` (5 методов), `EtoplatezhiPayment` (5 методов), `AntilopayPayment` (5 методов), `JupiterPayment` (5 методов), `DonutPayment` (5 методов), `LavaPayment` (5 методов), `CisPayPayment` (5 методов), `CasheraPayment` (5 методов), `AnorePayment` (4 методов), `TabPayPayment` (5 методов), `ParityPayPayment` (5 методов), `PromoGroup` (3 методов), `UserPromoGroup` (1 методов), `Tariff` (21 методов), `PartnerStatus`, `User` (12 методов), `Subscription` (15 методов), `GraceAccessSessionModel`, `TrafficPurchase` (1 методов), `Transaction` (1 методов), `PaidTrafficResetIntent`, `SubscriptionConversion` (2 методов), `PromoCode` (2 методов), `PromoCodeUse`, `CouponStatus`, `CouponBatch` (2 методов), `Coupon` (1 методов), `ReferralRewardType`, `ReferralRewardTrigger`, `ReferralRewardMode`, `ReferralRewardLevel` (1 методов), `ReferralEarning` (1 методов), `WithdrawalRequestStatus`, `WithdrawalRequest` (1 методов), `PartnerApplication`, `ReferralContest` (1 методов), `ReferralContestEvent` (1 методов), `ReferralContestVirtualParticipant` (1 методов), `ContestTemplate`, `ContestRound`, `ContestAttempt`, `Squad` (1 методов), `ServiceRule`, `PrivacyPolicy`, `PublicOffer`, `LegalConsent`, `RecurrentPayments`, `FaqSetting`, `FaqPage`, `SystemSetting`, `EmailTemplate`, `MonitoringLog`, `SentNotification`, `SubscriptionEvent`, `DiscountOffer`, `PromoOfferTemplate`, `SubscriptionTemporaryAccess`, `PromoOfferLog`, `BroadcastHistory`, `Poll`, `PollQuestion`, `PollOption`, `PollResponse`, `PollAnswer`, `ServerSquad` (3 методов), `SubscriptionServer`, `SupportAuditLog`, `UserMessage` (1 методов), `WelcomeText`, `PinnedMessage`, `AdvertisingCampaign` (4 методов), `AdvertisingCampaignRegistration` (1 методов), `TicketStatus`, `Ticket` (8 методов), `TicketMessage` (3 методов), `WebApiToken` (1 методов), `MainMenuButton` (3 методов), `MenuLayoutHistory` (1 методов), `ButtonClickLog` (1 методов), `Webhook` (1 методов), `WebhookDelivery` (1 методов), `CabinetRefreshToken` (4 методов), `WheelConfig` (1 методов), `WheelPrize` (1 методов), `WheelSpin` (3 методов), `TicketNotification` (1 методов), `PaymentMethodConfig` (1 методов), `RequiredChannel` (1 методов), `UserChannelSubscription` (1 методов), `AdminRole` (1 методов), `UserRole` (1 методов), `AccessPolicy` (1 методов), `AdminAuditLog` (1 методов), `LandingPage` (1 методов), `GuestPurchaseStatus`, `GuestPurchase` (1 методов), `NewsArticle` (1 методов), `NewsCategory` (1 методов), `NewsTag` (1 методов), `YandexClientIdMap`, `InfoPage`, `UserDeviceAlias`, `SystemErrorEvent`, `EmailQueueItem`, `ReachabilityBatch`, `ReachabilityJob`, `ReachabilityLeg`, `ReachabilityTargetPref`, `DpiCheckerAction`, `UserReminder` (1 методов), `UserReminderState`
   Функции: нет
 
 #### app/database/crud
 
+- `app/database/crud/anore.py` — Python-модуль
+  Классы: нет
+  Функции: `create_anore_payment`, `get_anore_payment_by_order_id`, `get_anore_payment_by_invoice_id`, `get_anore_payment_by_id`, `get_anore_payment_by_id_for_update`
 - `app/database/crud/antilopay.py` — Python-модуль
   Классы: нет
   Функции: `create_antilopay_payment` — Создает запись о платеже Antilopay., `get_antilopay_payment_by_order_id` — Получает платеж по order_id (internal)., `get_antilopay_payment_by_invoice_id` — Получает платеж по ID от Antilopay., `get_antilopay_payment_by_id` — Получает платеж по ID., `get_antilopay_payment_by_id_for_update` — Получает платеж по ID с блокировкой FOR UPDATE., `update_antilopay_payment_status` — Обновляет статус платежа., `get_pending_antilopay_payments` — Получает незавершенные платежи пользователя., `get_expired_pending_antilopay_payments` — Получает просроченные платежи в статусе pending., `link_antilopay_payment_to_transaction` — Связывает платеж с транзакцией.
@@ -1145,6 +1148,9 @@
 - `app/handlers/balance/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/handlers/balance/anore.py` — Python-модуль
+  Классы: нет
+  Функции: `process_anore_payment_amount` — Обрабатывает сумму, введённую пользователем для Anore., `start_anore_topup`, `start_anore_card_topup`, `start_anore_sbp_topup`, `start_anore_selected_topup`
 - `app/handlers/balance/antilopay.py` — Python-модуль
   Классы: нет
   Функции: `process_antilopay_payment_amount` — Process payment amount directly., `start_antilopay_topup`, `start_antilopay_sbp_topup`, `start_antilopay_card_topup`, `start_antilopay_sberpay_topup`
@@ -1453,6 +1459,9 @@
 - `app/services/admin_notification_service.py` — Python-модуль
   Классы: `NotificationCategory`, `AdminNotificationService` (50 методов)
   Функции: нет
+- `app/services/anore_service.py` — Python-модуль
+  Классы: `AnoreAPIError` (1 методов), `AnoreConfig` (1 методов), `AnoreService` (5 методов)
+  Функции: `parse_rubles_to_kopeks` — Reject non-money, non-finite values and fractions of a kopek; never round.
 - `app/services/antilopay_service.py` — Python-модуль
   Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
   Функции: нет
@@ -1670,7 +1679,7 @@
 - `app/services/payment/`
 - `app/services/payment_method_config_service.py` — Python-модуль
   Классы: нет
-  Функции: `refresh_display_name_overrides` — Reload names and saved order for synchronous Telegram keyboards., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `get_display_sort_order`, `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get supported payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id, ignoring retired backup entries., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user.
+  Функции: `refresh_display_name_overrides` — Reload names and saved order for synchronous Telegram keyboards., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `get_display_sort_order`, `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get supported payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id, ignoring retired backup entries., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user., `get_anore_checkout_policy` — Effective policy shared by checkout prompts and creation entry points.
 - `app/services/payment_search_service.py` — Python-модуль
   Классы: `StatusFilter`, `PeriodPreset`, `SearchParams` (2 методов), `SearchStats`
   Функции: `search_payments` — Search payments across all (or filtered) providers., `search_payments_stats` — Compute aggregated statistics for the given search filters.
@@ -2023,6 +2032,9 @@
 
 - `app/services/payment/__init__.py` — Python-модуль
   Классы: нет
+  Функции: нет
+- `app/services/payment/anore.py` — Python-модуль
+  Классы: `AnoreValidationError`, `AnorePaymentMixin` (5 методов)
   Функции: нет
 - `app/services/payment/antilopay.py` — Python-модуль
   Классы: `AntilopayPaymentMixin` (4 методов)
@@ -2642,6 +2654,9 @@
 - `app/webserver/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `app/webserver/anore.py` — Python-модуль
+  Классы: нет
+  Функции: `register_anore_webhook`
 - `app/webserver/apple_iap.py` — Python-модуль
   Классы: нет
   Функции: `create_apple_iap_router`
@@ -2677,6 +2692,7 @@
 ## docs
 
 - `docs/abuse-api.md` — файл
+- `docs/anore.md` — файл
 - `docs/apple-iap-consumable-topups.md` — файл
 - `docs/apple-iap-ios-requirements.md` — файл
 - `docs/autopay-concurrency.md` — файл
@@ -3119,6 +3135,9 @@
   Классы: нет
   Функции: `upgrade`, `downgrade`
 - `migrations/alembic/versions/0134_paid_traffic_reset_intents.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0135_create_anore_payments.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
 
@@ -3851,6 +3870,21 @@
 - `tests/database/test_admin_trial_device_cap_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
   Функции: `test_admin_trial_conversion_sends_selected_cap`, `test_explicit_foreign_or_missing_subscription_never_falls_back`, `test_explicit_multi_callback_after_mode_change_is_rejected`
+- `tests/database/test_anore_cart_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_anore_callback_purchases_only_confirmed_selected_cart`
+- `tests/database/test_anore_lifecycle_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_real_signed_early_payment_and_replay`
+- `tests/database/test_anore_merge_race_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_acceptance_and_merge_converge_without_losing_money`
+- `tests/database/test_anore_migration_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_anore_upgrade_bootstrap_and_downgrade_guard`
+- `tests/database/test_anore_payments_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `payload`, `seed`, `service`, `test_concurrent_callbacks_credit_once`, `test_invalid_callback_cannot_credit`, `test_paid_never_reversed_and_sandbox_never_credits`, `test_financial_commit_failure_rolls_back_then_retry`, `test_guest_accepted_atomically_without_balance`, `test_missing_guest_never_falls_back_to_topup`, `test_status_failure_preserves_polling_gate`, `test_early_callback_sees_committed_guest_and_is_not_overwritten`, `test_real_postcommit_orchestration_continues_after_notification_failure`, `test_callback_races_polling_without_double_deposit`, `test_guest_replay_never_rewinds_status_or_paid_at`, `test_soft_deleted_user_is_not_credited`, `test_retry_after_starts_at_response_receipt`, `test_pending_invoice_follows_actual_account_merge`, `test_db_policy_rejects_before_remote_creation`, `test_enabled_submethods_are_sent_as_restricted_list`, `test_restricted_topup_rejected_in_core`, `test_guest_delivery_failure_preserves_durable_payment`, `test_sandbox_excluded_from_gateway_conversion_statistics`
 - `tests/database/test_autopay_races_postgres.py` — Python-модуль
   Классы: нет
   Функции: `quiet_settings`, `worker`, `test_candidate_is_revalidated_before_charge`, `test_two_workers_cannot_charge_the_same_due_cycle`, `test_imported_subscription_with_autopay_off_never_charges`, `test_failed_renewal_rolls_back_money_days_and_promo`, `test_panel_rollback_does_not_lose_committed_ledger`, `test_manual_charge_in_flight_blocks_autopay_for_same_cycle`, `test_recurring_ledger_fk_does_not_deadlock_with_autopay`, `test_tariff_switch_does_not_deadlock_with_autopay`, `test_cancellation_rolls_back_uncommitted_autopay`
@@ -4695,6 +4729,15 @@
 - `tests/services/test_admin_payments_platega_recurring.py` — Python-модуль
   Классы: нет
   Функции: `test_successful_recurring_charge_is_listed`, `test_balance_debit_is_not_shown_as_external_payment`, `test_ordinary_platega_topup_is_not_duplicated` — Пополнение через Platega уже видно по своей строке в platega_payments., `test_pending_platega_payment_still_listed` — Существующая логика pending-платежей не изменилась., `test_details_do_not_confuse_ids_between_tables` — Одинаковый номер в разных таблицах не должен открывать чужой платёж., `test_details_reject_foreign_transaction` — По номеру чужой транзакции автопродление не отдаётся., `test_recurring_charge_has_no_manual_check` — Проверять статус нечего: у списания нет счёта в platega_payments., `test_search_finds_recurring_charge_by_charge_id` — Поиск по номеру списания находит автопродление., `test_search_filter_by_method_returns_only_recurring`, `test_method_has_human_name_on_both_surfaces` — Название метода видно и в кабинете, и в админке бота.
+- `tests/services/test_anore_maintenance.py` — Python-модуль
+  Классы: нет
+  Функции: `test_guest_recovery_requires_live_payment_and_matching_purchase`, `test_guest_recovery_preserves_canonical_order_id_and_exact_kopeks`, `test_auto_check_skips_terminal_and_sandbox`, `test_disabled_provider_still_checks_existing_payments`, `test_manual_check_uses_local_order_identity`, `test_search_uses_both_order_and_provider_ids`, `test_admin_surfaces_label_sandbox_without_claiming_real_credit`
+- `tests/services/test_anore_service.py` — Python-модуль
+  Классы: нет
+  Функции: `anore_http`, `test_create_signs_exact_wire_bytes_and_uses_ruble_units`, `test_get_uses_saved_id_and_snapshot_credentials`, `test_errors_are_safe_and_creation_is_never_retried`, `test_invalid_responses_are_rejected`, `test_exact_ruble_conversion`, `test_invalid_money_rejected`, `test_invalid_local_amount_does_not_send`, `test_signature_is_over_raw_bytes_and_missing_secret_fails_closed`, `test_snapshot_does_not_expose_secrets_and_test_mode_is_explicit`, `test_chunked_json_is_read_completely`, `test_timeout_does_not_retry_create`, `test_response_preserves_fractional_kopeks_before_validation`
+- `tests/services/test_anore_wiring.py` — Python-модуль
+  Классы: нет
+  Функции: `test_anore_public_options_follow_live_settings`, `test_anore_disabled_hides_all_topup_methods`, `test_guest_invoice_receives_metadata_before_provider_request`, `test_telegram_anore_amount_route_uses_its_database_session`, `test_cabinet_anore_rejects_hidden_option_before_provider`, `test_miniapp_status_checks_ownership_before_provider`, `test_anore_webhook_registered_when_configured_but_disabled`, `test_database_suboptions_all_disabled_hides_anore`, `test_telegram_uses_effective_minimum_for_amount`, `test_miniapp_lists_and_creates_effective_anore_options`, `test_miniapp_sandbox_paid_never_displays_paid`, `test_cabinet_latest_anore_queries_owner_scoped_model`, `test_cabinet_sandbox_status_never_claims_credit`
 - `tests/services/test_antilopay_service_contract.py` — Python-модуль
   Классы: нет
   Функции: `transport`, `test_create_sends_signed_uppercase_currency`
@@ -5719,6 +5762,9 @@
 
 ### tests/webserver
 
+- `tests/webserver/test_anore_webhook.py` — Python-модуль
+  Классы: нет
+  Функции: `signed`, `test_webhook_contract`
 - `tests/webserver/test_apple_iap_webhook.py` — Python-модуль
   Классы: нет
   Функции: `test_apple_iap_webhook_rejects_unsupported_media_type`, `test_apple_iap_webhook_rejects_body_larger_than_256kb`, `test_apple_iap_webhook_maps_invalid_signature_to_403`, `test_apple_iap_webhook_maps_configuration_error_to_503`, `test_apple_iap_webhook_returns_ok_for_processed_notification`

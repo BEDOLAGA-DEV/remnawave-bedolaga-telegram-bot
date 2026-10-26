@@ -34,6 +34,7 @@ METHOD_CONFIG_IDS = {
     'lava_sbp': 'lava',
     'cispay_card': 'cispay',
     'cispay_sbp': 'cispay',
+    **{f'anore_{method}': 'anore' for method in ('sbp', 'card', 'yoomoney', 'crypto')},
     'tabpay_card': 'tabpay',
     'tabpay_sbp': 'tabpay',
     'paritypay_card': 'paritypay',

@@ -215,6 +215,13 @@ async def route_payment_by_method(
             await process_paritypay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method in ('anore', 'anore_sbp', 'anore_card', 'anore_yoomoney', 'anore_crypto'):
+        from .anore import process_anore_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_anore_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     if payment_method in ('tabpay', 'tabpay_card', 'tabpay_sbp'):
         from .tabpay import process_tabpay_payment_amount
 
@@ -936,6 +943,15 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_cispay_topup, F.data == 'topup_cispay')
     dp.callback_query.register(start_cispay_card_topup, F.data == 'topup_cispay_card')
     dp.callback_query.register(start_cispay_sbp_topup, F.data == 'topup_cispay_sbp')
+
+    from .anore import start_anore_selected_topup
+
+    dp.callback_query.register(
+        start_anore_selected_topup,
+        F.data.in_(
+            {'topup_anore', 'topup_anore_sbp', 'topup_anore_card', 'topup_anore_yoomoney', 'topup_anore_crypto'}
+        ),
+    )
 
     from .tabpay import start_tabpay_card_topup, start_tabpay_sbp_topup, start_tabpay_topup
 

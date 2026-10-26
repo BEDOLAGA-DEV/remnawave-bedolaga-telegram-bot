@@ -755,6 +755,15 @@ def _get_trial_payment_keyboard(language: str, can_pay_from_balance: bool = Fals
     if settings.is_pal24_enabled():
         keyboard.append([types.InlineKeyboardButton(text='💳 PayPalych', callback_data='trial_payment_pal24')])
 
+    if settings.is_anore_enabled():
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=f'💳 Пополнить баланс: {settings.get_anore_display_name()}', callback_data='topup_anore'
+                )
+            ]
+        )
+
     if settings.is_wata_enabled():
         keyboard.append([types.InlineKeyboardButton(text='💳 WATA', callback_data='trial_payment_wata')])
 

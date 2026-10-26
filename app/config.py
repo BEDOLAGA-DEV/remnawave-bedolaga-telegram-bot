@@ -812,6 +812,21 @@ class Settings(BaseSettings):
     PLATEGA_WEBHOOK_PORT: int = 8086
     PLATEGA_RECURRENT_ENABLED: bool = False  # Рекуррентные СБП-подписки Platega (автопродление)
 
+    # Anore hosted checkout (RUB). Limits below are local operator policy.
+    ANORE_ENABLED: bool = False
+    ANORE_DISPLAY_NAME: str = 'Anore'
+    ANORE_API_URL: str = 'https://api.anore.cc/v1'
+    ANORE_API_KEY: str | None = None
+    ANORE_SECRET_KEY: str | None = None
+    ANORE_SHOP_ID: int | None = None
+    ANORE_PAYMENT_METHODS: str = 'sbp,card,yoomoney,crypto'
+    ANORE_MIN_AMOUNT_KOPEKS: int = 10000
+    ANORE_MAX_AMOUNT_KOPEKS: int = 100000000
+    ANORE_REQUEST_TIMEOUT: int = 30
+    ANORE_WEBHOOK_PATH: str = '/anore-webhook'
+    ANORE_SUCCESS_URL: str | None = None
+    ANORE_FAIL_URL: str | None = None
+
     WATA_ENABLED: bool = False
     WATA_DISPLAY_NAME: str = 'Wata'
     WATA_BASE_URL: str = 'https://api.wata.pro/api/h2h'
@@ -3353,6 +3368,35 @@ class Settings(BaseSettings):
         if not self.WEBHOOK_URL:
             return None
         return f'{self.WEBHOOK_URL.rstrip("/")}{self.CASHERA_WEBHOOK_PATH}'
+
+    def is_anore_configured(self) -> bool:
+        account_key = (self.ANORE_API_KEY or '').startswith('an_')
+        return bool(
+            self.ANORE_API_KEY
+            and self.ANORE_SECRET_KEY
+            and (not account_key or (self.ANORE_SHOP_ID is not None and self.ANORE_SHOP_ID > 0))
+        )
+
+    def is_anore_enabled(self) -> bool:
+        return self.ANORE_ENABLED and self.is_anore_configured() and bool(self.get_anore_methods())
+
+    def get_anore_methods(self) -> list[str]:
+        allowed = {'sbp', 'card', 'yoomoney', 'crypto'}
+        return list(
+            dict.fromkeys(
+                method.strip().lower()
+                for method in self.ANORE_PAYMENT_METHODS.split(',')
+                if method.strip().lower() in allowed
+            )
+        )
+
+    def get_anore_display_name(self) -> str:
+        from app.services.payment_method_config_service import get_display_name_override
+
+        return get_display_name_override('anore') or (self.ANORE_DISPLAY_NAME or '').strip() or 'Anore'
+
+    def get_anore_display_name_html(self) -> str:
+        return html.escape(self.get_anore_display_name())
 
     def is_tabpay_configured(self) -> bool:
         """Есть ли учётные данные провайдера — без учёта флага включения."""

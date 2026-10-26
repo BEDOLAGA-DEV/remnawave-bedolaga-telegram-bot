@@ -2280,6 +2280,19 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
             )
         has_direct_payment_methods = True
 
+    if settings.is_anore_enabled():
+        for method in settings.get_anore_methods():
+            label = {'sbp': 'СБП', 'card': 'Карта', 'yoomoney': 'ЮMoney', 'crypto': 'Криптовалюта'}[method]
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        text=f'💳 {settings.get_anore_display_name()} — {label}',
+                        callback_data=_build_callback(f'anore_{method}'),
+                    )
+                ]
+            )
+        has_direct_payment_methods = True
+
     if settings.is_tabpay_card_enabled():
         tabpay_card_name = settings.get_tabpay_card_display_name()
         keyboard.append(

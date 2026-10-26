@@ -179,6 +179,7 @@ class PaymentMethod(Enum):
     JUPITER = 'jupiter'
     CISPAY = 'cispay'
     TABPAY = 'tabpay'
+    ANORE = 'anore'
     PARITYPAY = 'paritypay'
     DONUT = 'donut'
     LAVA = 'lava'
@@ -1798,6 +1799,53 @@ class CasheraPayment(Base):
             f'<CasheraPayment(id={self.id}, order_id={self.order_id}, '
             f'amount={self.amount_rubles}₽, status={self.status})>'
         )
+
+
+class AnorePayment(Base):
+    """Hosted Anore invoices; acceptance and money share one transaction."""
+
+    __tablename__ = 'anore_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    order_id = Column(String(64), unique=True, nullable=False, index=True)
+    anore_payment_id = Column(String(128), unique=True, nullable=True, index=True)
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+    description = Column(Text, nullable=True)
+    status = Column(String(32), nullable=False, default='new')
+    is_paid = Column(Boolean, nullable=False, default=False)
+    is_test = Column(Boolean, nullable=False, default=False)
+    payment_url = Column(Text, nullable=True)
+    payment_method = Column(String(32), nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+    processed_events = Column(JSON, nullable=True)
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    last_checked_at = Column(AwareDateTime(), nullable=True)
+    next_check_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+    user = relationship('User', backref='anore_payments')
+    transaction = relationship('Transaction', backref='anore_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return not self.is_paid and self.status == 'new'
+
+    @property
+    def is_success(self) -> bool:
+        return self.is_paid and self.status == 'paid'
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status == 'expired'
 
 
 class TabPayPayment(Base):

@@ -362,6 +362,19 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                 }
             )
 
+    if settings.is_anore_enabled():
+        for method in settings.get_anore_methods():
+            name = f'{settings.get_anore_display_name()} — { {"sbp": "СБП", "card": "Карта", "yoomoney": "ЮMoney", "crypto": "Криптовалюта"}[method] }'
+            methods.append(
+                {
+                    'id': f'anore_{method}',
+                    'name': name,
+                    'icon': '💳',
+                    'description': f'через {name}',
+                    'callback': f'topup_anore_{method}',
+                }
+            )
+
     if settings.is_tabpay_sbp_enabled():
         sbp_name = settings.get_tabpay_sbp_display_name()
         methods.append(
@@ -688,6 +701,10 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_cispay_sbp_enabled()
     if method_id == 'cispay_card':
         return settings.is_cispay_card_enabled()
+    if method_id == 'anore':
+        return settings.is_anore_enabled()
+    if method_id.startswith('anore_'):
+        return settings.is_anore_enabled() and method_id[6:] in settings.get_anore_methods()
     if method_id == 'tabpay':
         return settings.is_tabpay_enabled()
     if method_id == 'tabpay_sbp':

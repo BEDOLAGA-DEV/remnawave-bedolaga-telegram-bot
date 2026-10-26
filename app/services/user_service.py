@@ -1227,6 +1227,7 @@ class UserService:
             # но раньше не очищались в этом блоке. Без них DELETE FROM transactions падал с
             # ForeignKeyViolationError (например, rollypay_payments_transaction_id_fkey).
             from app.database.models import (
+                AnorePayment,
                 AntilopayPayment,
                 AppleTransaction,
                 AuraPayPayment,
@@ -1256,6 +1257,7 @@ class UserService:
                 DonutPayment,
                 LavaPayment,
                 CisPayPayment,
+                AnorePayment,
                 TabPayPayment,
                 ParityPayPayment,
                 CasheraPayment,
