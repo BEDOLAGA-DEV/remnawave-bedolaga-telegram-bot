@@ -20,6 +20,11 @@ def calculate_months_from_days(days: int) -> int:
     return max(1, round(days / 30))
 
 
+def calculate_period_device_cost(monthly_price: int, extra_devices: int, period_days: int) -> int:
+    """Cost in kopeks for a periodic tariff's devices; one priced month is 30 days."""
+    return max(0, monthly_price) * max(0, extra_devices) * max(0, period_days) // 30
+
+
 def calculate_price_per_month(price_kopeks: int, period_days: int) -> int:
     """Месячная ставка для периода длиной period_days дней (месяц = 30 дней).
 

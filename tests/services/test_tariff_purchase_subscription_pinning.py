@@ -125,7 +125,8 @@ async def test_purchase_keeps_preview_source_after_status_and_current_selection_
         await inspect.unwrap(handler)(callback, user, db, state)
         await db.refresh(user)
         await db.refresh(selected)
-        assert user.balance_kopeks == 10000 - (1150 if custom else 500)
+        # 75 days: base 750 + two devices at 100/month * 75/30 = 1250.
+        assert user.balance_kopeks == 10000 - (1250 if custom else 500)
         assert selected.tariff_id == 1 and selected.device_limit == 3 and selected.status == 'active'
         assert (await db.get(Subscription, 20)).device_limit == 7
         assert (await db.get(Subscription, 20)).tariff_id == 2

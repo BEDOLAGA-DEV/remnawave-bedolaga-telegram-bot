@@ -132,7 +132,8 @@ async def test_quick_renewal_charges_tariff_and_preserves_paid_parameters(
         await handle_simple_subscription_purchase(c.callback, c.state, c.user, c.db)
         await c.db.refresh(c.user)
         await c.db.refresh(c.sub)
-        expected_price = {14: 20000, 30: 30000, 365: 320000}[period]
+        # Two extra devices at 5000/month, billed for the exact renewal days.
+        expected_price = {14: 14666, 30: 30000, 365: 321666}[period]
         assert c.user.balance_kopeks == 400000 - expected_price
         transactions = (await c.db.scalars(select(Transaction))).all()
         assert len(transactions) == 1 and transactions[0].amount_kopeks == -expected_price

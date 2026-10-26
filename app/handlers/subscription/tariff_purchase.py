@@ -37,6 +37,7 @@ from app.utils.decorators import error_handler
 from app.utils.formatting import format_period, format_price_kopeks, format_traffic
 from app.utils.fsm_selection import mutate_fsm_if_current
 from app.utils.legacy_subscription import is_legacy_subscription as _legacy_subscription
+from app.utils.pricing_utils import calculate_period_device_cost
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import (
@@ -2217,14 +2218,18 @@ async def confirm_daily_tariff_purchase(
 
 def _calc_extra_devices_cost(tariff: Tariff, subscription_device_limit: int, period_days: int) -> int:
     """Рассчитывает стоимость дополнительных устройств сверх тарифа для периода."""
+    if tariff.device_limit == 0:
+        return 0
     additional = max(0, subscription_device_limit - (tariff.device_limit or 1))
     if additional <= 0:
         return 0
-    device_price = getattr(tariff, 'device_price_kopeks', None) or 0
+    configured_device_price = getattr(tariff, 'device_price_kopeks', None)
+    device_price = settings.PRICE_PER_DEVICE if configured_device_price is None else configured_device_price
     if device_price <= 0:
         return 0
-    months = max(1, round(period_days / 30))
-    return additional * device_price * months
+    if tariff.is_daily and period_days <= 1:
+        return additional * device_price
+    return calculate_period_device_cost(device_price, additional, period_days)
 
 
 def get_tariff_extend_keyboard(

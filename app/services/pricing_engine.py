@@ -7,7 +7,7 @@ import structlog
 
 from app.config import CLASSIC_PERIOD_PRICES, PERIOD_PRICES, settings
 from app.database.crud.server_squad import get_server_squads_by_uuids
-from app.utils.pricing_utils import calculate_months_from_days
+from app.utils.pricing_utils import calculate_months_from_days, calculate_period_device_cost
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 
 
@@ -592,7 +592,7 @@ class PricingEngine:
         - 'period' → base tariff price
         - 'devices' → extra device cost
         Promo-offer discount applied on the discounted subtotal.
-        Device cost is monthly × months_in_period.
+        Periodic device cost follows exact days at a 30-day monthly rate.
         """
         months = calculate_months_from_days(period_days)
 
@@ -609,7 +609,7 @@ class PricingEngine:
                     if custom_price is not None:
                         base_price = int(custom_price)
 
-        # --- Extra devices (monthly × months) ---
+        # --- Extra devices (monthly rate prorated to exact days) ---
         device_price_per_unit = (
             tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
         )
@@ -618,7 +618,7 @@ class PricingEngine:
         if is_daily and period_days <= 1:
             devices_price = extra_devices * device_price_per_unit
         else:
-            devices_price = extra_devices * device_price_per_unit * months
+            devices_price = calculate_period_device_cost(device_price_per_unit, extra_devices, period_days)
 
         # --- Custom traffic (tariff add-on, uses addon discount path) ---
         traffic_price = 0

@@ -51,7 +51,12 @@ from app.services.subscription_purchase_service import (
 from app.services.subscription_service import SubscriptionService
 from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.services.user_cart_service import user_cart_service
-from app.utils.pricing_utils import calculate_months_from_days, calculate_price_per_month, format_period_description
+from app.utils.pricing_utils import (
+    calculate_months_from_days,
+    calculate_period_device_cost,
+    calculate_price_per_month,
+    format_period_description,
+)
 from app.utils.subscription_utils import resolve_tariff_purchase_device_limit
 from app.utils.timezone import format_local_datetime
 
@@ -189,7 +194,9 @@ async def _build_tariff_response(
             base_tariff_price = int(price_kopeks)
 
             # Стоимость доп. устройств за этот период
-            extra_devices_cost = extra_devices_count * extra_device_price_per_month * months
+            extra_devices_cost = calculate_period_device_cost(
+                extra_device_price_per_month, extra_devices_count, period_days
+            )
 
             # Apply per-category promo group discounts
             original_price = base_tariff_price + extra_devices_cost
