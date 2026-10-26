@@ -4,9 +4,17 @@ on:
   # Release Please tags use GITHUB_TOKEN and do not trigger push workflows.
   # Dispatch explicitly on the published tag to build its immutable revision.
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag (leave empty when dispatching on a tag)
+        required: false
+        type: string
   push:
     tags:
       - 'v*'
+
+env:
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -14,9 +22,11 @@ permissions:
 jobs:
   lint:
     uses: ./.github/workflows/lint.yml
+    with:
+      ref: ${{ inputs.release_tag || github.ref }}
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -24,17 +34,23 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Verify immutable release tag
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
 
       - name: Get previous tag
         id: prev_tag
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 ${{ github.ref_name }}^ 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --tags --abbrev=0 "${RELEASE_TAG}^" 2>/dev/null || echo "")
           echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
 
       - name: Generate changelog
         id: changelog
         run: |
-          TAG="${{ github.ref_name }}"
+          TAG="$RELEASE_TAG"
           PREV_TAG="${{ steps.prev_tag.outputs.tag }}"
 
           if [ -z "$PREV_TAG" ]; then
@@ -140,7 +156,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           body: |
             ## What's Changed
 
@@ -152,10 +169,10 @@ jobs:
 
             ```bash
             # Docker Hub
-            docker pull fr1ngg/remnawave-bedolaga-telegram-bot:${{ github.ref_name }}
+            docker pull fr1ngg/remnawave-bedolaga-telegram-bot:${{ env.RELEASE_TAG }}
 
             # GitHub Container Registry
-            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker pull ghcr.io/${{ github.repository }}:${{ env.RELEASE_TAG }}
             ```
 
             ### Update
@@ -168,5 +185,5 @@ jobs:
             make reload
             ```
           draft: false
-          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'dev') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, 'beta') || contains(env.RELEASE_TAG, 'alpha') || contains(env.RELEASE_TAG, 'rc') || contains(env.RELEASE_TAG, 'dev') }}
           generate_release_notes: false

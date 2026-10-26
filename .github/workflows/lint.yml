@@ -1,6 +1,12 @@
 name: Lint
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit or tag to validate
+        required: false
+        type: string
   push:
     branches: ['**']
   pull_request:
@@ -11,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: astral-sh/setup-uv@v10.0.1
 
