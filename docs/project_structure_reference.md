@@ -3881,6 +3881,9 @@
 - `tests/database/test_device_cart_target_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_device_topup_keeps_selected_subscription`
+- `tests/database/test_device_quote_proration_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_actual_cabinet_device_quote_prorates_remaining_days`
 - `tests/database/test_dpichecker_actions_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_new_action_gets_unique_key_and_submitting`, `test_found_by_kind_and_remote_id`, `test_delivery_is_claimed_once`, `test_counts_per_filter_follow_mine` — Счётчики у фильтров истории — по видам и типам проверок, с учётом «только мои»., `test_admin_names_for_history`, `test_list_filters_by_kind_type_and_admin`, `test_same_remote_id_allowed_across_kinds_but_not_within`
@@ -4040,6 +4043,9 @@
 - `tests/database/test_saved_tariff_source_change_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_saved_source_change_respects_multi_selection_and_single_switch_policy`
+- `tests/database/test_saved_traffic_cart_policy_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_saved_traffic_respects_selection_and_tariff`
 - `tests/database/test_simple_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: `PanelBoundary`
   Функции: `test_simple_payment_resets_db_and_panel_together`

@@ -2007,28 +2007,9 @@ async def _auto_add_traffic(
             if len(active_subs) == 1:
                 subscription = active_subs[0]
             elif len(active_subs) > 1:
-                # Multi-tariff: pick the subscription with autopay enabled for add-traffic.
-                # The calling code iterates per-subscription, so this fallback handles
-                # contexts where no explicit subscription_id was provided.
-                autopay_subs = [s for s in active_subs if getattr(s, 'autopay_enabled', False)]
-                if len(autopay_subs) == 1:
-                    subscription = autopay_subs[0]
-                elif autopay_subs:
-                    # Multiple with autopay — pick most urgent (fewest days left)
-                    subscription = min(autopay_subs, key=lambda s: s.days_left)
-                    logger.info(
-                        'Multi-tariff: multiple autopay subscriptions for add-traffic, processing most urgent',
-                        user_id=user.id,
-                        selected_sub_id=subscription.id,
-                        days_left=subscription.days_left,
-                    )
-                else:
-                    logger.warning(
-                        'Multi-tariff: multiple active subscriptions but none with autopay enabled for add-traffic',
-                        user_id=user.id,
-                        count=len(active_subs),
-                    )
-                    return False
+                # Autopay preference does not identify the user's traffic checkout.
+                logger.warning('Saved traffic cart has no unambiguous subscription', user_id=user.id)
+                return False
             else:
                 subscription = None
     else:
@@ -2069,7 +2050,10 @@ async def _auto_add_traffic(
 
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
 
-    if tariff and tariff.can_topup_traffic():
+    if settings.is_tariffs_mode() and subscription.tariff_id:
+        if tariff is None or not tariff.can_topup_traffic():
+            await _delete_cart_for_subscription(user.id, cart_data)
+            return False
         base_price = tariff.get_traffic_topup_price(traffic_gb) or 0
     else:
         base_price = settings.get_traffic_topup_price(traffic_gb)
