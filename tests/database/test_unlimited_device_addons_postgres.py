@@ -24,7 +24,7 @@ pytestmark = pytest.mark.postgres
 @pytest.mark.parametrize('mode', ['classic', 'tariff', 'multi'])
 @pytest.mark.parametrize('entry', ['price', 'cart', 'purchase', 'legacy', 'auto'])
 async def test_unlimited_devices_cannot_be_sold_additional_slots(
-    postgres_database, monkeypatch, mode, entry, race=False
+    postgres_database, monkeypatch, mode, entry, race=False, concurrent_limit=0
 ):
     monkeypatch.setattr(settings, 'SALES_MODE', 'classic' if mode == 'classic' else 'tariffs')
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', mode == 'multi')
@@ -66,7 +66,7 @@ async def test_unlimited_devices_cannot_be_sold_additional_slots(
 
             async def change_to_unlimited_after_debit(*args, **kwargs):
                 result = await original_debit(*args, **kwargs)
-                sub.device_limit = 0
+                sub.device_limit = concurrent_limit
                 await db.commit()
                 return result
 
@@ -97,7 +97,7 @@ async def test_unlimited_devices_cannot_be_sold_additional_slots(
         await db.refresh(user)
         await db.refresh(sub)
         assert user.balance_kopeks == 100000
-        assert sub.device_limit == 0
+        assert sub.device_limit == (concurrent_limit if race else 0)
         transactions = list(await db.scalars(select(Transaction)))
         if race:
             assert len(transactions) == 2
@@ -112,3 +112,11 @@ async def test_unlimited_devices_cannot_be_sold_additional_slots(
 @pytest.mark.parametrize('entry', ['purchase', 'legacy', 'auto', 'telegram_change'])
 async def test_unlimited_granted_after_debit_refunds_and_preserves_limit(postgres_database, monkeypatch, mode, entry):
     await test_unlimited_devices_cannot_be_sold_additional_slots(postgres_database, monkeypatch, mode, entry, race=True)
+
+
+@pytest.mark.parametrize('mode', ['classic', 'tariff', 'multi'])
+@pytest.mark.parametrize('entry', ['purchase', 'legacy', 'auto', 'telegram_change'])
+async def test_concurrent_device_increase_refunds_with_balanced_ledger(postgres_database, monkeypatch, mode, entry):
+    await test_unlimited_devices_cannot_be_sold_additional_slots(
+        postgres_database, monkeypatch, mode, entry, race=True, concurrent_limit=10
+    )

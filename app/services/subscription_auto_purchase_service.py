@@ -1791,18 +1791,17 @@ async def _auto_add_devices(
         )
         refund_user = user_refund.scalar_one()
         refund_user.balance_kopeks += price_kopeks
-        if subscription.device_limit == 0:
-            from app.database.crud.transaction import create_transaction
+        from app.database.crud.transaction import create_transaction
 
-            await create_transaction(
-                db,
-                user.id,
-                TransactionType.REFUND,
-                price_kopeks,
-                'Возврат докупки устройств: подписка стала безлимитной',
-                payment_method=PaymentMethod.BALANCE,
-                commit=False,
-            )
+        await create_transaction(
+            db,
+            user.id,
+            TransactionType.REFUND,
+            price_kopeks,
+            'Возврат отменённой докупки устройств: условия подписки изменились',
+            payment_method=PaymentMethod.BALANCE,
+            commit=False,
+        )
         await db.commit()
         logger.warning(
             '🔁 Автопокупка устройств: лимит превышен после оплаты, баланс возвращён',

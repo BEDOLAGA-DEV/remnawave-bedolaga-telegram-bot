@@ -715,6 +715,14 @@ async def execute_change_devices(
                     )
                     refund_user = user_refund.scalar_one()
                     refund_user.balance_kopeks += price
+                    await create_transaction(
+                        db=db,
+                        user_id=db_user.id,
+                        type=TransactionType.REFUND,
+                        amount_kopeks=price,
+                        description='Возврат отменённого изменения устройств',
+                        commit=False,
+                    )
                     await db.commit()
                 await callback.answer(
                     (
@@ -735,6 +743,14 @@ async def execute_change_devices(
                 )
                 refund_user = user_refund.scalar_one()
                 refund_user.balance_kopeks += price
+                await create_transaction(
+                    db=db,
+                    user_id=db_user.id,
+                    type=TransactionType.REFUND,
+                    amount_kopeks=price,
+                    description='Возврат отменённого изменения устройств',
+                    commit=False,
+                )
                 await db.commit()
                 await callback.answer(
                     '⚠️ Изменение уже применено. Баланс возвращён.',
