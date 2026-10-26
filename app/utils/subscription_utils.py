@@ -11,6 +11,25 @@ from app.database.models import Subscription
 logger = structlog.get_logger(__name__)
 
 
+def resolve_tariff_cart_traffic(tariff, cart_data: dict) -> tuple[int | None, int]:
+    """Resolve explicit custom traffic; reject ambiguous legacy or stale selections."""
+    if 'custom_traffic_gb' not in cart_data:
+        legacy = cart_data.get('traffic_limit_gb')
+        if legacy is not None and legacy != tariff.traffic_limit_gb:
+            raise ValueError('Legacy cart traffic selection must be recreated')
+    custom = cart_data.get('custom_traffic_gb')
+    if custom is None:
+        return None, tariff.traffic_limit_gb
+    if (
+        isinstance(custom, bool)
+        or not isinstance(custom, int)
+        or not tariff.can_purchase_custom_traffic()
+        or tariff.get_price_for_custom_traffic(custom) is None
+    ):
+        raise ValueError('Custom traffic selection is unavailable')
+    return custom, custom
+
+
 async def cleanup_duplicate_subscriptions(db: AsyncSession) -> int:
     # В multi-tariff режиме несколько подписок у пользователя — это нормально
     if settings.is_multi_tariff_enabled():
@@ -130,6 +149,27 @@ def coerce_panel_device_limit(value: object, default: int = 1) -> int:
     return default
 
 
+def resolve_tariff_renewal_device_limit(base_limit: int | None, current_limit: int | None) -> int:
+    """Продление сохраняет докупки лимитного тарифа; ноль у тарифа — безлимит."""
+    if base_limit == 0:
+        return 0
+    return max(base_limit or 0, current_limit or 0)
+
+
+def resolve_tariff_purchase_device_limit(tariff, subscription: Subscription | None = None) -> int:
+    """Price and provision the same device limit when a paid classic row gets its first tariff."""
+    base = tariff.device_limit
+    if subscription is not None and subscription.tariff_id == tariff.id:
+        return resolve_tariff_renewal_device_limit(base, subscription.device_limit)
+    if base == 0:
+        return 0
+    if subscription is not None and subscription.tariff_id is None and not subscription.is_trial:
+        limit = max(base or 1, subscription.device_limit or 0)
+        maximum = tariff.max_device_limit or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
+        return min(limit, maximum) if maximum else limit
+    return base if base is not None else 1
+
+
 def resolve_min_device_limit(tariff: object | None = None) -> int:
     """Нижняя граница, до которой пользователь может уменьшить лимит устройств.
 
@@ -154,11 +194,11 @@ def resolve_min_device_limit(tariff: object | None = None) -> int:
 
 
 def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
-    """Return a device limit value for RemnaWave payloads when selection is enabled.
+    """Return a positive effective device limit, or None for no finite limit.
 
     Ноль или пусто в ``device_limit`` — «без ограничения» (HWID выключен): это
-    штатное состояние подписки, а не ошибка, поэтому в панель поле не шлём и
-    пишем об этом только в debug. Полная синхронизация прогоняет через эту
+    штатное состояние подписки, а не ошибка, поэтому пишем об этом только
+    в debug. Payload resolver отдельно передаёт явный ноль. Синхронизация прогоняет через эту
     функцию каждую подписку — warning здесь превращался в шум на всю базу.
     """
     import structlog
@@ -184,7 +224,7 @@ def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
     limit = getattr(subscription, 'device_limit', None)
     if limit is None or limit <= 0:
         _logger.debug(
-            'device_limit не задан (без ограничения) — hwidDeviceLimit в панель не шлём',
+            'device_limit не задаёт положительного ограничения HWID',
             device_limit=limit,
             subscription_id=getattr(subscription, 'id', None),
         )
@@ -202,14 +242,18 @@ def resolve_hwid_device_limit_for_payload(
     RemnaWave should continue receiving the subscription's stored limit so the
     external panel stays aligned with the bot configuration.
 
-    Раньше здесь был «запасной» путь, читавший тот же ``device_limit`` ещё раз
-    и писавший второй warning на ту же подписку; значения он дать не мог.
+    Explicit zero must be sent on updates too: omitting it would preserve an
+    old finite panel limit. Missing/invalid limits still omit the field, and a
+    positive forced override retains precedence.
     """
     import structlog
 
     _logger = structlog.get_logger('resolve_hwid_device_limit')
 
     resolved_limit = resolve_hwid_device_limit(subscription)
+    stored_limit = getattr(subscription, 'device_limit', None)
+    if resolved_limit is None and type(stored_limit) is int and stored_limit == 0:
+        return 0
     if resolved_limit is not None:
         _logger.info(
             'hwid_device_limit resolved',

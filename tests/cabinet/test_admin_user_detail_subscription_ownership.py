@@ -391,6 +391,9 @@ async def test_selected_sync_uses_only_selected_panel_id_when_legacy_mode_is_ena
     updated: list[int] = []
 
     class Api:
+        async def get_user_devices_all(self, panel_user_id):
+            return {'total': 0, 'devices': []}
+
         async def get_user_by_id(self, panel_user_id):
             looked_up.append(panel_user_id)
             return SimpleNamespace(id=panel_user_id)

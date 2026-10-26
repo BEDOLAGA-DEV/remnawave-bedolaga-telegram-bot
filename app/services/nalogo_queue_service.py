@@ -182,6 +182,14 @@ class NalogoQueueService:
             payment_id = receipt_data.get('payment_id', 'unknown')
             amount = receipt_data.get('amount', 0)
 
+            # Ambiguous requests and manual confirmations must never be sent automatically.
+            if payment_id and payment_id != 'unknown':
+                confirmed = await cache.get(f'nalogo:created:{payment_id}')
+                if confirmed is True or await self._nalogo_service.is_pending_verification(payment_id):
+                    await cache.delete(f'nalogo:queued:{payment_id}')
+                    skipped += 1
+                    continue
+
             # Проверяем лимит попыток
             if attempts >= self._max_attempts:
                 logger.error(
@@ -206,7 +214,7 @@ class NalogoQueueService:
 
                 # Извлекаем время оплаты из очереди (чтобы чек был с правильным временем)
                 operation_time = None
-                created_at_str = receipt_data.get('created_at')
+                created_at_str = receipt_data.get('operation_time') or receipt_data.get('created_at')
                 if created_at_str:
                     try:
                         operation_time = isoparse(created_at_str)
@@ -239,6 +247,7 @@ class NalogoQueueService:
                     telegram_user_id=telegram_user_id,
                     amount_kopeks=amount_kopeks,
                     operation_time=operation_time,  # Время оплаты, а не отправки
+                    user_email=user_email,
                 )
 
                 if receipt_uuid:
@@ -266,6 +275,11 @@ class NalogoQueueService:
                             user_email=user_email,
                         )
                 else:
+                    if await self._nalogo_service.is_pending_verification(payment_id):
+                        await cache.delete(f'nalogo:queued:{payment_id}')
+                        skipped += 1
+                        service_unavailable = True
+                        break
                     # Вернуть в очередь с увеличенным счетчиком попыток
                     await self._nalogo_service.requeue_receipt(receipt_data)
                     failed += 1

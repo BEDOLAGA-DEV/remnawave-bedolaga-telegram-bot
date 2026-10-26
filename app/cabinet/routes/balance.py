@@ -799,35 +799,6 @@ async def create_topup(
                     detail='Failed to create SeverPay payment',
                 )
 
-        elif request.payment_method == 'paypear':
-            if not settings.is_paypear_enabled():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail='PayPear payment method is unavailable',
-                )
-
-            payment_service = PaymentService()
-            result = await payment_service.create_paypear_payment(
-                db=db,
-                user_id=user.id,
-                amount_kopeks=request.amount_kopeks,
-                description=settings.get_balance_payment_description(
-                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
-                ),
-                email=getattr(user, 'email', None),
-                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
-                return_url=cabinet_success_url,
-            )
-
-            if result and result.get('payment_url'):
-                payment_url = result.get('payment_url')
-                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail='Failed to create PayPear payment',
-                )
-
         elif request.payment_method == 'rollypay':
             if not settings.is_rollypay_enabled():
                 raise HTTPException(
@@ -1032,7 +1003,14 @@ async def create_topup(
                 )
 
             payment_service = PaymentService()
-            payment_method_type = request.payment_option or None
+            from app.services.payment_method_config_service import get_cispay_checkout_policy
+
+            policy = await get_cispay_checkout_policy(db, user, request.payment_option or None)
+            if policy is None or policy['selected_method'] is None:
+                raise HTTPException(status_code=400, detail='Unavailable CisPay payment option')
+            if not policy['min_amount_kopeks'] <= request.amount_kopeks <= policy['max_amount_kopeks']:
+                raise HTTPException(status_code=400, detail='Amount outside CisPay payment limits')
+            payment_method_type = policy['selected_method'].lower()
             result = await payment_service.create_cispay_payment(
                 db=db,
                 user_id=user.id,
@@ -1097,6 +1075,41 @@ async def create_topup(
                     detail='Failed to create Cashera payment',
                 )
 
+        elif request.payment_method == 'anore':
+            if not settings.is_anore_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Anore payment method is unavailable',
+                )
+
+            payment_service = PaymentService()
+            payment_method_type = request.payment_option or None
+            allowed_options = {option['id'] for option in method.options or []}
+            if payment_method_type and payment_method_type not in allowed_options:
+                raise HTTPException(status_code=400, detail='Unavailable Anore payment option')
+            result = await payment_service.create_anore_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
+                email=getattr(user, 'email', None),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_method_type=payment_method_type,
+                return_url=cabinet_success_url,
+                fail_url=cabinet_failed_url,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create Anore payment',
+                )
+
         elif request.payment_method == 'tabpay':
             if not settings.is_tabpay_enabled():
                 raise HTTPException(
@@ -1127,6 +1140,45 @@ async def create_topup(
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail='Failed to create TabPay payment',
+                )
+
+        elif request.payment_method == 'antilopay':
+            if not settings.is_antilopay_enabled():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Antilopay payment method is unavailable',
+                )
+
+            payment_method_type = (request.payment_option or '').strip().lower() or None
+            allowed_options = {opt['id'] for opt in method.options or []} & {'card', 'sbp', 'sberpay'}
+            if payment_method_type is None and len(allowed_options) == 1:
+                payment_method_type = next(iter(allowed_options))
+            if payment_method_type not in allowed_options:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail='Select an available Antilopay payment_option',
+                )
+            payment_service = PaymentService()
+            result = await payment_service.create_antilopay_payment(
+                db=db,
+                user_id=user.id,
+                amount_kopeks=request.amount_kopeks,
+                description=settings.get_balance_payment_description(
+                    request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
+                ),
+                email=getattr(user, 'email', None),
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
+                payment_method_type=payment_method_type,
+                return_url=cabinet_return_url,
+            )
+
+            if result and result.get('payment_url'):
+                payment_url = result.get('payment_url')
+                payment_id = str(result.get('local_payment_id') or result.get('order_id') or 'pending')
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Failed to create Antilopay payment',
                 )
 
         elif request.payment_method == 'paritypay':
@@ -1197,6 +1249,11 @@ async def create_topup(
 def _get_status_info(record: PendingPayment) -> tuple[str, str]:
     """Get status emoji and text for a pending payment."""
     status = (record.status or '').lower()
+
+    if (record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False))) or (
+        record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False))
+    ):
+        return '🧪', 'Тестовый платёж — баланс не пополнен'
 
     if record.is_paid:
         return '✅', 'Оплачено'
@@ -1389,6 +1446,24 @@ def _get_status_info(record: PendingPayment) -> tuple[str, str]:
         }
         return mapping.get(status, ('❓', 'Неизвестно'))
 
+    if record.method == PaymentMethod.ANTILOPAY:
+        mapping = {
+            'pending': ('⏳', 'Ожидает оплаты'),
+            'success': ('✅', 'Оплачено'),
+            'failed': ('❌', 'Ошибка оплаты'),
+            'cancelled': ('❌', 'Отменено'),
+            'expired': ('⌛', 'Истёк'),
+            'chargeback': ('↩️', 'Возвращён'),
+            'reversed': ('↩️', 'Возвращён'),
+            'amount_mismatch': ('⚠️', 'Несовпадение суммы'),
+        }
+        return mapping.get(status, ('❓', 'Неизвестно'))
+
+    if record.method == PaymentMethod.ANORE:
+        return {'new': ('⏳', 'Ожидает оплаты'), 'paid': ('✅', 'Оплачено'), 'expired': ('⌛', 'Истёк')}.get(
+            status, ('⏳', 'Ожидает проверки')
+        )
+
     if record.method == PaymentMethod.TABPAY:
         mapping = {
             'pending': ('⏳', 'Ожидает оплаты'),
@@ -1439,6 +1514,8 @@ def _is_checkable(record: PendingPayment) -> bool:
         return status == 'pending'
     if record.method == PaymentMethod.CASHERA:
         return status == 'pending'
+    if record.method == PaymentMethod.ANORE:
+        return status in {'new', 'creating', 'create_unknown'}
     if record.method == PaymentMethod.TABPAY:
         # PENDING держится 20 минут после начала оплаты, поэтому проверяем и его.
         return status in {'pending', 'processing'}
@@ -1480,7 +1557,10 @@ def _get_payment_url(record: PendingPayment) -> str | None:
 
 def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
     """Convert PendingPayment to API response."""
-    status_emoji, status_text = _get_status_info(record)
+    sandbox = (record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False))) or (
+        record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False))
+    )
+    status_emoji, status_text = ('🧪', 'Тестовый платёж — баланс не пополнен') if sandbox else _get_status_info(record)
     return PendingPaymentResponse(
         id=record.local_id,
         method=record.method.value,
@@ -1488,11 +1568,11 @@ def _record_to_response(record: PendingPayment) -> PendingPaymentResponse:
         identifier=record.identifier,
         amount_kopeks=record.amount_kopeks,
         amount_rubles=record.amount_kopeks / 100,
-        status=record.status or '',
+        status='test_paid' if sandbox and record.is_paid else record.status or '',
         status_emoji=status_emoji,
         status_text=status_text,
-        is_paid=record.is_paid,
-        is_checkable=_is_checkable(record),
+        is_paid=record.is_paid and not sandbox,
+        is_checkable=_is_checkable(record) and not sandbox,
         created_at=record.created_at,
         expires_at=record.expires_at,
         payment_url=_get_payment_url(record),
@@ -1553,7 +1633,10 @@ async def get_latest_payment_by_method(
     from sqlalchemy.orm import selectinload
 
     from app.database.models import (
+        AnorePayment,
+        AntilopayPayment,
         AuraPayPayment,
+        CisPayPayment,
         CloudPaymentsPayment,
         CryptoBotPayment,
         FreekassaPayment,
@@ -1562,7 +1645,6 @@ async def get_latest_payment_by_method(
         MulenPayPayment,
         OverpayPayment,
         Pal24Payment,
-        PayPearPayment,
         PlategaPayment,
         RioPayPayment,
         RollyPayPayment,
@@ -1572,6 +1654,9 @@ async def get_latest_payment_by_method(
     )
 
     model_map: dict[PaymentMethod, type] = {
+        PaymentMethod.CISPAY: CisPayPayment,
+        PaymentMethod.ANORE: AnorePayment,
+        PaymentMethod.ANTILOPAY: AntilopayPayment,
         PaymentMethod.YOOKASSA: YooKassaPayment,
         PaymentMethod.CRYPTOBOT: CryptoBotPayment,
         PaymentMethod.HELEKET: HeleketPayment,
@@ -1585,7 +1670,6 @@ async def get_latest_payment_by_method(
         PaymentMethod.RIOPAY: RioPayPayment,
         PaymentMethod.SEVERPAY: SeverPayPayment,
         PaymentMethod.ROLLYPAY: RollyPayPayment,
-        PaymentMethod.PAYPEAR: PayPearPayment,
         PaymentMethod.OVERPAY: OverpayPayment,
         PaymentMethod.AURAPAY: AuraPayPayment,
     }

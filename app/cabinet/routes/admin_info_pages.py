@@ -2,9 +2,11 @@
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database.crud.faq import get_faq_page_by_id
 from app.database.crud.info_pages import (
     clear_replaces_tab,
     create_info_page,
@@ -14,7 +16,8 @@ from app.database.crud.info_pages import (
     reorder_info_pages,
     update_info_page,
 )
-from app.database.models import User
+from app.database.models import FaqPage, FaqSetting, User
+from app.services.faq_service import FaqService
 
 from ..dependencies import get_cabinet_db, require_permission
 from ..schemas.info_pages import (
@@ -22,6 +25,8 @@ from ..schemas.info_pages import (
     InfoPageListItem,
     InfoPageResponse,
     InfoPageUpdateRequest,
+    LegacyFaqResponse,
+    LegacyFaqUpdateRequest,
     ReorderRequest,
 )
 
@@ -49,6 +54,41 @@ async def list_all_info_pages(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to load info pages',
         )
+
+
+@router.get('/legacy-faq', response_model=list[LegacyFaqResponse])
+async def list_legacy_faq(
+    admin: User = Depends(require_permission('info_pages:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> list[LegacyFaqResponse]:
+    """Include existing bot FAQ in the cabinet editor without copying its data."""
+    pages = (
+        (await db.execute(select(FaqPage).order_by(FaqPage.language, FaqPage.display_order, FaqPage.id)))
+        .scalars()
+        .all()
+    )
+    settings = {item.language: item.is_enabled for item in (await db.execute(select(FaqSetting))).scalars()}
+    return [
+        LegacyFaqResponse.model_validate(page).model_copy(update={'is_enabled': settings.get(page.language, True)})
+        for page in pages
+    ]
+
+
+@router.put('/legacy-faq/{page_id}', response_model=LegacyFaqResponse)
+async def update_legacy_faq(
+    page_id: int,
+    request: LegacyFaqUpdateRequest,
+    admin: User = Depends(require_permission('info_pages:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> LegacyFaqResponse:
+    page = await get_faq_page_by_id(db, page_id)
+    if page is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='FAQ page not found')
+    page = await FaqService.update_page(db, page, **request.model_dump())
+    setting = await FaqService.get_setting(db, page.language, fallback=False)
+    return LegacyFaqResponse.model_validate(page).model_copy(
+        update={'is_enabled': setting.is_enabled if setting else True}
+    )
 
 
 @router.get('/{page_id}', response_model=InfoPageResponse)

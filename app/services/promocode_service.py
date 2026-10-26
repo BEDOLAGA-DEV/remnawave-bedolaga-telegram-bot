@@ -15,7 +15,7 @@ from app.database.crud.promocode import (
 from app.database.crud.subscription import extend_subscription, get_subscription_by_user_id
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.crud.user_promo_group import add_user_to_promo_group, has_user_promo_group
-from app.database.models import PromoCode, PromoCodeType, Subscription, SubscriptionStatus, User
+from app.database.models import PromoCode, PromoCodeType, PromoCodeUse, Subscription, SubscriptionStatus, User
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 
@@ -63,6 +63,30 @@ class PromoCodeService:
         except Exception as refresh_error:
             # Best-effort: недоступная БД не должна маскировать исходную ошибку активации
             logger.warning('Не удалось перечитать пользователя после rollback', error=refresh_error)
+
+    @staticmethod
+    async def _refresh_after_panel_call(
+        db: AsyncSession,
+        user: User,
+        promocode: PromoCode,
+        subscription: Subscription,
+        panel_result: Any,
+        *,
+        retry_update: bool = True,
+    ) -> None:
+        # Panel services can roll back the shared session and return None.
+        # Promo effects have already committed: reload before reading columns
+        # or continuing a combined grant, including the tariff label.
+        if panel_result is None:
+            await db.rollback()
+        await db.refresh(user)
+        await db.refresh(promocode)
+        await db.refresh(subscription)
+        await db.refresh(subscription, attribute_names=['tariff'])
+        if panel_result is None and retry_update:
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(subscription_id=subscription.id, user_id=user.id, action='update')
 
     async def activate_promocode(
         self, db: AsyncSession, user_id: int, code: str, *, subscription_id: int | None = None
@@ -117,6 +141,8 @@ class PromoCodeService:
             promo_use = await create_promocode_use(db, promocode.id, user_id)
             if promo_use is None:
                 return {'success': False, 'error': 'already_used_by_user'}
+            promo_use_id = promo_use.id
+            promocode_id = promocode.id
 
             # Atomically CLAIM a usage slot before applying any effect. The conditional
             # UPDATE (current_uses < max_uses) takes a row lock, so concurrent activations
@@ -151,11 +177,30 @@ class PromoCodeService:
                     'code': e.code,
                 }
             except ValueError as e:
-                # Эффект не применён — откатываем резерв использования И claim инкремента.
-                # (trial_provisioning_failed уже сделал свою компенсацию + commit до raise,
-                # поэтому здесь rollback для него — no-op, что и требуется.)
-                await self._rollback_keeping_user_usable(db, user)
                 error_key = str(e)
+                if error_key == 'trial_provisioning_failed':
+                    from sqlalchemy import delete as sql_delete
+
+                    # Trial creation committed the reservation and counter before
+                    # provisioning. Commit its staged deletion together with an
+                    # exact compensation, preserving other users' claimed slots.
+                    released = await db.execute(
+                        sql_delete(PromoCodeUse).where(
+                            PromoCodeUse.id == promo_use_id,
+                            PromoCodeUse.promocode_id == promocode_id,
+                            PromoCodeUse.user_id == user_id,
+                        )
+                    )
+                    if released.rowcount:
+                        await db.execute(
+                            sql_update(PromoCode)
+                            .where(PromoCode.id == promocode_id, PromoCode.current_uses > 0)
+                            .values(current_uses=PromoCode.current_uses - 1)
+                        )
+                    await db.commit()
+                    await db.refresh(user)
+                else:
+                    await self._rollback_keeping_user_usable(db, user)
                 if error_key in (
                     'active_discount_exists',
                     'no_subscription_for_days',
@@ -237,13 +282,14 @@ class PromoCodeService:
 
             logger.info('✅ Пользователь активировал промокод', _format_user_log=self._format_user_log(user), code=code)
 
+            await db.refresh(promocode)
             promocode_data = {
                 'code': promocode.code,
                 'type': promocode.type,
                 'balance_bonus_kopeks': promocode.balance_bonus_kopeks,
                 'subscription_days': promocode.subscription_days,
                 'max_uses': promocode.max_uses,
-                'current_uses': promocode.current_uses + 1,  # +1 because we just incremented atomically
+                'current_uses': promocode.current_uses,
                 'valid_until': promocode.valid_until,
                 'promo_group_id': promocode.promo_group_id,
             }
@@ -419,7 +465,8 @@ class PromoCodeService:
             # tariff_id), so the promo days still apply while the subscription
             # correctly stays a trial and remains gated out of auto-renewal.
             await extend_subscription(db, target_sub, promocode.subscription_days)
-            await self.subscription_service.update_remnawave_user(db, target_sub)
+            panel_result = await self.subscription_service.update_remnawave_user(db, target_sub)
+            await self._refresh_after_panel_call(db, user, promocode, target_sub, panel_result)
 
             tariff_label = ''
             if settings.is_multi_tariff_enabled() and getattr(target_sub, 'tariff', None):
@@ -466,7 +513,8 @@ class PromoCodeService:
                 # остальных начислениях трафика (handlers/subscription/traffic.py,
                 # handlers/admin/users.py, cabinet/routes/admin_users.py).
                 await reactivate_subscription(db, target_sub)
-                await self.subscription_service.update_remnawave_user(db, target_sub)
+                panel_result = await self.subscription_service.update_remnawave_user(db, target_sub)
+                await self._refresh_after_panel_call(db, user, promocode, target_sub, panel_result)
 
                 # PATCH не всегда снимает LIMITED — включаем явно.
                 panel_user_id = (
@@ -578,7 +626,8 @@ class PromoCodeService:
             if existing_same_tariff_sub:
                 # User already has this tariff — extend it
                 await extend_subscription(db, existing_same_tariff_sub, trial_days)
-                await self.subscription_service.update_remnawave_user(db, existing_same_tariff_sub)
+                panel_result = await self.subscription_service.update_remnawave_user(db, existing_same_tariff_sub)
+                await self._refresh_after_panel_call(db, user, promocode, existing_same_tariff_sub, panel_result)
 
                 effects.append(
                     f'⏰ Подписка «{trial_tariff.name if trial_tariff else ""}» продлена на {trial_days} дней'
@@ -604,20 +653,34 @@ class PromoCodeService:
                 )
 
                 remnawave_user = await self.subscription_service.create_remnawave_user(db, trial_subscription)
+                await self._refresh_after_panel_call(
+                    db, user, promocode, trial_subscription, remnawave_user, retry_update=False
+                )
                 if remnawave_user is None:
-                    # Provisioning failed (create_remnawave_user swallows errors and
-                    # returns None). Don't report a fake success that grants a subscription
-                    # with no working config — delete the just-created orphan row and raise
-                    # so the user gets an honest, mapped error instead.
-                    logger.error(
-                        '❌ Триал промокод: не удалось создать пользователя в RemnaWave — откатываем подписку',
-                        _format_user_log=self._format_user_log(user),
-                        subscription_id=trial_subscription.id,
-                        code=promocode.code,
+                    from app.database.crud.user import lock_user_for_pricing
+
+                    # The trial row was committed before the panel call. Another
+                    # purchase may already have converted it: cleanup must not
+                    # delete paid access or a successfully bound panel account.
+                    user = await lock_user_for_pricing(db, user.id)
+                    await db.refresh(trial_subscription, with_for_update=True)
+                    if not trial_subscription.is_trial:
+                        raise ValueError('trial_provisioning_failed')
+                    if trial_subscription.remnawave_id is None:
+                        logger.error(
+                            '❌ Триал промокод: не удалось создать пользователя в RemnaWave — откатываем подписку',
+                            _format_user_log=self._format_user_log(user),
+                            subscription_id=trial_subscription.id,
+                            code=promocode.code,
+                        )
+                        await db.delete(trial_subscription)
+                        raise ValueError('trial_provisioning_failed')
+
+                    from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                    remnawave_retry_queue.enqueue(
+                        subscription_id=trial_subscription.id, user_id=user.id, action='update'
                     )
-                    await db.delete(trial_subscription)
-                    await db.commit()
-                    raise ValueError('trial_provisioning_failed')
 
                 effects.append(f'🎁 Активирована тестовая подписка на {trial_days} дней')
                 logger.info(

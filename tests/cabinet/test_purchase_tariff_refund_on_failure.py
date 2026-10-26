@@ -170,10 +170,9 @@ def test_refund_helper_uses_fresh_user_and_refund_transaction() -> None:
     assert isinstance(tx_type, ast.Attribute) and tx_type.attr == 'REFUND', (
         'refund must be recorded as TransactionType.REFUND'
     )
-    create_tx = keywords.get('create_transaction')
-    assert isinstance(create_tx, ast.Constant) and create_tx.value is True, (
-        'refund must create a transaction record (create_transaction=True)'
-    )
+    # Keyed checkouts stage the refund ledger explicitly in the same transaction
+    # as releasing their reservation. Its persistence (including failed refunds)
+    # is exercised against PostgreSQL in test_saved_tariff_cart_idempotency_postgres.
 
 
 def test_refund_helper_records_failed_refund_when_credit_fails() -> None:
@@ -247,10 +246,10 @@ def test_extend_subscription_post_commit_cleanup_is_best_effort() -> None:
 
 
 def test_charge_precedes_guard_and_delivery_steps_stay_outside() -> None:
-    """REGRESSION: the guard must start AFTER the committed charge (so it covers
-    everything that can lose it) and must end BEFORE the daily-charge marker —
-    once the subscription is committed the product is delivered, and a failure
-    in post-persist bookkeeping must NOT refund a delivered subscription.
+    """Keep period compensation after charging; daily staging is atomic instead.
+
+    A daily stamp belongs to the same commit as its activation and debit. Its
+    rollback/retry behavior is verified with actual PostgreSQL transactions.
     """
     tree = ast.parse(PURCHASE_PATH.read_text(encoding='utf-8'))
     func = _find_async_function(tree, 'purchase_tariff')
@@ -274,12 +273,10 @@ def test_charge_precedes_guard_and_delivery_steps_stay_outside() -> None:
         and any(isinstance(t, ast.Attribute) and t.attr == 'last_daily_charge_at' for t in n.targets)
     ]
     assert daily_marker_assigns, 'daily tariffs must still set last_daily_charge_at after purchase'
-    guard_end = guard.end_lineno or guard.lineno
-    assert all(a.lineno > guard_end for a in daily_marker_assigns), (
-        'post-persist bookkeeping (last_daily_charge_at) must stay OUTSIDE the '
-        'refund guard: the subscription is already committed at that point, '
-        'refunding there would hand back money for a delivered product'
-    )
+    # Daily activation now stages its charge, ledger and daily stamp together
+    # inside this guard. PostgreSQL money tests exercise rollback/retry there;
+    # the old requirement that the stamp must follow a committed debit would
+    # reintroduce the concurrent first-day double charge.
 
 
 def test_trial_conversion_stays_enabled_in_extend_branch() -> None:

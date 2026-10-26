@@ -67,7 +67,8 @@ class PaymentMethodResponse(BaseModel):
 class TopUpRequest(BaseModel):
     """Request to create payment for balance top-up."""
 
-    amount_kopeks: int = Field(..., ge=1000, le=2_000_000_000, description='Amount in kopeks (min 10 rubles)')
+    # The selected provider supplies its effective minimum (including DB overrides).
+    amount_kopeks: int = Field(..., ge=1, le=2_000_000_000, description='Amount in kopeks')
     payment_method: str = Field(..., description='Payment method ID')
     payment_option: str | None = Field(None, description='Payment option (e.g. Platega method code)')
 

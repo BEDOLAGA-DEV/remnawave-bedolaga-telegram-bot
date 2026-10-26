@@ -251,13 +251,14 @@ class AdminNotificationService:
         message: str | None = None,
         extra: dict[str, Any] | None = None,
         occurred_at: datetime | None = None,
-    ) -> None:
-        """Persist subscription-related event for external dashboards."""
+    ) -> bool:
+        """Persist an event; False means callers must reload ORM data after rollback."""
 
+        user_id = user.id
         try:
             await create_subscription_event(
                 db,
-                user_id=user.id,
+                user_id=user_id,
                 event_type=event_type,
                 subscription_id=subscription.id if subscription else None,
                 transaction_id=transaction.id if transaction else None,
@@ -267,11 +268,12 @@ class AdminNotificationService:
                 occurred_at=occurred_at,
                 extra=extra or None,
             )
+            return True
         except Exception:
             logger.error(
                 'Не удалось сохранить событие подписки для пользователя',
                 event_type=event_type,
-                getattr=getattr(user, 'id', 'unknown'),
+                user_id=user_id,
                 exc_info=True,
             )
 
@@ -280,9 +282,10 @@ class AdminNotificationService:
             except Exception:
                 logger.error(
                     'Не удалось выполнить rollback после ошибки события подписки пользователя',
-                    getattr=getattr(user, 'id', 'unknown'),
+                    user_id=user_id,
                     exc_info=True,
                 )
+            return False
 
     def _format_promo_group_discounts(self, promo_group: PromoGroup) -> list[str]:
         discount_lines: list[str] = []
@@ -875,8 +878,12 @@ class AdminNotificationService:
         logger.info('Начинаем отправку уведомления о пополнении баланса')
 
         if db:
+            # Failed flush expires even primary keys. Keep scalar identities for
+            # logging/reload before recording the optional notification event.
+            user_id = user.id
+            transaction_id = transaction.id
             try:
-                await self._record_subscription_event(
+                recorded = await self._record_subscription_event(
                     db,
                     event_type='balance_topup',
                     user=user,
@@ -897,9 +904,37 @@ class AdminNotificationService:
             except Exception:
                 logger.error(
                     'Не удалось сохранить событие пополнения баланса пользователя',
-                    getattr=getattr(user, 'id', 'unknown'),
+                    user_id=user_id,
                     exc_info=True,
                 )
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.error('Не удалось откатить сессию уведомления о пополнении', user_id=user_id, exc_info=True)
+                    return False
+                recorded = False
+
+            if recorded is False:
+                try:
+                    user = await get_user_by_id(db, user_id)
+                    transaction = await get_transaction_by_id(db, transaction_id)
+                    if user is None or transaction is None:
+                        logger.warning(
+                            'Данные уведомления о пополнении отсутствуют после rollback',
+                            user_id=user_id,
+                            transaction_id=transaction_id,
+                        )
+                        return False
+                    subscription = getattr(user, 'subscription', None)
+                    promo_group = await self._get_user_promo_group(db, user)
+                except Exception:
+                    logger.error(
+                        'Ошибка повторной загрузки данных уведомления после rollback',
+                        user_id=user_id,
+                        transaction_id=transaction_id,
+                        exc_info=True,
+                    )
+                    return False
 
         if not self._is_enabled():
             return False
@@ -1853,6 +1888,7 @@ class AdminNotificationService:
             'kassa_ai': f'💳 {settings.get_kassa_ai_display_name()}',
             'cispay': f'💳 {settings.get_cispay_display_name()}',
             'cashera': f'💳 {settings.get_cashera_display_name()}',
+            'anore': f'💳 {settings.get_anore_display_name()}',
             'tabpay': f'💳 {settings.get_tabpay_display_name()}',
             'paritypay': f'💳 {settings.get_paritypay_display_name()}',
             'manual': '🛠️ Вручную (админ)',
@@ -2492,55 +2528,57 @@ class AdminNotificationService:
             )
             return False
 
-        # Если есть медиа, отправляем фото с текстом как caption (если влезает) или текст + фото
-        if media_file_id and media_type == 'photo':
-            return await self._send_ticket_photo_notification(text, media_file_id, keyboard)
+        # Сохраняем тип вложения; длинное уведомление отправляется отдельно.
+        if media_file_id and media_type in {'photo', 'video'}:
+            return await self._send_ticket_media_notification(text, media_file_id, media_type, keyboard)
 
         return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
 
-    async def _send_ticket_photo_notification(
+    async def _send_ticket_media_notification(
         self,
         text: str,
-        photo_file_id: str,
+        media_file_id: str,
+        media_type: str,
         keyboard: types.InlineKeyboardMarkup | None = None,
     ) -> bool:
-        """Отправить фото с текстом в тикет-топик.
-        Если текст помещается в caption (≤1024 символов после парсинга HTML) — фото с caption.
-        Иначе — сначала текст, потом фото в тот же топик.
+        """Отправить фото или видео с текстом в тикет-топик.
+        Если текст помещается в caption (≤1024 символов после парсинга HTML) — медиа с caption.
+        Иначе — сначала текст, потом медиа в тот же топик.
         """
         if not self.chat_id:
             return False
 
         thread_id = self._resolve_topic_id(category=NotificationCategory.TICKETS)
+        sender = self.bot.send_video if media_type == 'video' else self.bot.send_photo
 
         try:
             if not caption_exceeds_telegram_limit(text):
-                # Фото с caption — всё в одном сообщении
-                photo_kwargs: dict = {
+                # Медиа с caption — всё в одном сообщении
+                media_kwargs: dict = {
                     'chat_id': self.chat_id,
-                    'photo': photo_file_id,
+                    media_type: media_file_id,
                     'caption': text,
                     'parse_mode': 'HTML',
                 }
                 if thread_id:
-                    photo_kwargs['message_thread_id'] = thread_id
+                    media_kwargs['message_thread_id'] = thread_id
                 if keyboard:
-                    photo_kwargs['reply_markup'] = keyboard
-                await self.bot.send_photo(**photo_kwargs)
+                    media_kwargs['reply_markup'] = keyboard
+                await sender(**media_kwargs)
             else:
-                # Текст отдельно, фото следом в тот же топик
+                # Текст отдельно, медиа следом в тот же топик
                 await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
-                photo_kwargs = {
+                media_kwargs = {
                     'chat_id': self.chat_id,
-                    'photo': photo_file_id,
+                    media_type: media_file_id,
                 }
                 if thread_id:
-                    photo_kwargs['message_thread_id'] = thread_id
-                await self.bot.send_photo(**photo_kwargs)
+                    media_kwargs['message_thread_id'] = thread_id
+                await sender(**media_kwargs)
 
             return True
         except Exception as e:
-            logger.error('Ошибка отправки фото-уведомления тикета', error=e)
+            logger.error('Ошибка отправки медиа-уведомления тикета', error=e)
             # Fallback: отправляем хотя бы текст
             return await self._send_message(text, reply_markup=keyboard, category=NotificationCategory.TICKETS)
 

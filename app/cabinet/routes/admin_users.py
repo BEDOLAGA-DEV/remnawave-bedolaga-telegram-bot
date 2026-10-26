@@ -188,7 +188,17 @@ def _row_subscription(subs: list[Subscription], highlight: str | None) -> Subscr
         return None
 
     if highlight == HIGHLIGHT_TRAFFIC:
-        with_limit = [s for s in subs if (s.traffic_limit_gb or 0) > 0]
+        # Те же кандидаты, что в traffic_low: старый/отключённый тариф с
+        # большим расходом не должен вытеснять подписку, по которой найден человек.
+        with_limit = [
+            s
+            for s in subs
+            if s.status
+            in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value, SubscriptionStatus.LIMITED.value)
+            and s.end_date is not None
+            and not s.is_expired
+            and (s.traffic_limit_gb or 0) > 0
+        ]
         if with_limit:
             return max(with_limit, key=lambda s: (s.traffic_used_gb or 0.0) / s.traffic_limit_gb)
     elif highlight and highlight.startswith(HIGHLIGHT_STATUS_PREFIX):
@@ -315,6 +325,7 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
 
     return UserSubscriptionInfo(
         id=subscription.id,
+        remnawave_id=subscription.remnawave_id,
         status=subscription.status,
         is_trial=subscription.is_trial,
         start_date=subscription.start_date,
@@ -1691,7 +1702,10 @@ async def update_user_subscription(
                     )
 
             await reset_subscription(db, subscription)
-            result = {'panel_disabled': panel_disabled}
+            expiry_extinguished = await SubscriptionService().extinguish_remnawave_expiry(
+                db, user, subscription, panel_user_id
+            )
+            result = {'panel_disabled': panel_disabled, 'panel_expiry_extinguished': expiry_extinguished}
         else:
             from app.services.subscription_service import reset_subscription_with_panel
 
@@ -1703,6 +1717,7 @@ async def update_user_subscription(
             user_id=user_id,
             subscription_id=subscription.id,
             panel_disabled=result.get('panel_disabled'),
+            panel_expiry_extinguished=result.get('panel_expiry_extinguished'),
         )
 
         return UpdateSubscriptionResponse(

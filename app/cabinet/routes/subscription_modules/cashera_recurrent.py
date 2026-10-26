@@ -87,6 +87,7 @@ async def enable_cashera_recurrent(
 @router.post('/cashera-recurrent/purchase')
 async def purchase_with_cashera_recurrent(
     tariff_id: int = Query(..., description='Tariff to subscribe to'),
+    subscription_id: int | None = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -110,7 +111,12 @@ async def purchase_with_cashera_recurrent(
     from app.services.payment.cashera import purchase_tariff_with_cashera_recurring
 
     try:
-        result = await purchase_tariff_with_cashera_recurring(db, user=user, tariff=tariff)
+        result = await purchase_tariff_with_cashera_recurring(
+            db,
+            user=user,
+            tariff=tariff,
+            **({'subscription_id': subscription_id} if subscription_id is not None else {}),
+        )
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     except Exception as error:

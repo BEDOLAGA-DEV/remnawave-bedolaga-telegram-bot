@@ -54,6 +54,15 @@ def test_gigabytes_become_bytes():
     assert payload.traffic_limit_bytes == 50 * 1024**3
 
 
+def test_unlimited_devices_are_explicit_in_create_and_update(monkeypatch):
+    from app.utils import subscription_utils
+
+    monkeypatch.setattr(subscription_utils, 'settings', SimpleNamespace(is_devices_selection_enabled=lambda: True))
+    payload = build_panel_payload(_user(), _sub(device_limit=0), multi_tariff=False, now=NOW)
+    assert payload.create_kwargs(now=NOW)['hwid_device_limit'] == 0
+    assert payload.update_kwargs(user_id=123, now=NOW)['hwid_device_limit'] == 0
+
+
 def test_zero_gigabytes_mean_unlimited():
     payload = build_panel_payload(_user(), _sub(traffic_limit_gb=0), multi_tariff=False, now=NOW)
 

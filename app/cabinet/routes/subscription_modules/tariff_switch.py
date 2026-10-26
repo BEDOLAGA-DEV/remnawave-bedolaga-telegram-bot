@@ -19,7 +19,7 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, TransactionType, User
-from app.services.pricing_engine import pricing_engine
+from app.services.pricing_engine import TariffSwitchPricingUnavailableError, pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
@@ -32,6 +32,28 @@ from .helpers import _subscription_to_response, resolve_subscription
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+
+async def _resolve_switch_subscription(
+    db: AsyncSession, user: User, subscription_id: int | None
+) -> Subscription | None:
+    """Never guess which subscription a multi-subscription switch will charge."""
+    if subscription_id is not None and subscription_id <= 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Subscription not found')
+    if settings.is_multi_tariff_enabled() and subscription_id is None:
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        subscriptions = await get_active_subscriptions_by_user_id(db, user.id)
+        if len(subscriptions) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    'code': 'subscription_selection_required',
+                    'message': 'Select the subscription to switch',
+                },
+            )
+        return subscriptions[0] if subscriptions else None
+    return await resolve_subscription(db, user, subscription_id)
 
 
 @router.post('/tariff/switch/preview')
@@ -48,7 +70,7 @@ async def preview_tariff_switch(
             detail='Tariffs mode is not enabled',
         )
 
-    subscription = await resolve_subscription(db, user, subscription_id)
+    subscription = await _resolve_switch_subscription(db, user, subscription_id)
 
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
@@ -136,12 +158,15 @@ async def preview_tariff_switch(
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate switch cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        switch_result = pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except TariffSwitchPricingUnavailableError as error:
+        raise HTTPException(status_code=400, detail='Tariff pricing is unavailable') from error
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
 
@@ -206,7 +231,7 @@ async def switch_tariff(
             detail='Tariffs mode is not enabled',
         )
 
-    resolved = await resolve_subscription(db, user, subscription_id)
+    resolved = await _resolve_switch_subscription(db, user, subscription_id)
 
     if not resolved or not resolved.tariff_id:
         raise HTTPException(
@@ -225,6 +250,9 @@ async def switch_tariff(
                 detail='You already have an active subscription for the target tariff',
             )
 
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
     # Lock subscription row to prevent concurrent tariff switches
     locked_result = await db.execute(
         select(Subscription)
@@ -309,10 +337,12 @@ async def switch_tariff(
             detail='Tariff not available',
         )
 
-    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
-    from app.database.crud.user import lock_user_for_pricing
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
 
-    user = await lock_user_for_pricing(db, user.id)
+    try:
+        await validate_checkout_squads(new_tariff.allowed_squads)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
 
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo
@@ -321,12 +351,15 @@ async def switch_tariff(
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        switch_result = pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except TariffSwitchPricingUnavailableError as error:
+        raise HTTPException(status_code=400, detail='Tariff pricing is unavailable') from error
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
     base_upgrade_cost = switch_result.raw_cost
@@ -490,10 +523,12 @@ async def switch_tariff(
     if switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.pending_panel_expire_at = subscription.end_date
         subscription.last_daily_charge_at = datetime.now(UTC)
         subscription.is_daily_paused = False
     elif switching_from_daily:
         subscription.end_date = datetime.now(UTC) + timedelta(days=new_period_days)
+        subscription.pending_panel_expire_at = subscription.end_date
         subscription.is_daily_paused = False
 
     subscription.updated_at = datetime.now(UTC)

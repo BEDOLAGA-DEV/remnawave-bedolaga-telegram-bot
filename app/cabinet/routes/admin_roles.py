@@ -379,12 +379,17 @@ async def update_role(
 
     # System roles: only permissions can be extended, block is_active/level changes
     if role.is_system:
-        blocked = {'is_active', 'level'} & update_data.keys()
+        protected = {'is_active', 'level'} & update_data.keys()
+        blocked = {field for field in protected if update_data[field] != getattr(role, field)}
         if blocked:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f'Cannot change {", ".join(sorted(blocked))} on a system role',
             )
+        # Older clients send unchanged fields with every save. Accept them,
+        # but never include protected fields in the system-role write.
+        for field in protected:
+            update_data.pop(field)
 
     # Validate level change
     if 'level' in update_data and update_data['level'] >= admin_level:

@@ -297,21 +297,27 @@ def panel_date_behind_paid_renewal(
     paid_at: datetime | None,
     now: datetime | None = None,
 ) -> bool:
-    """Панель показывает срок короче оплаченного, а оплата была недавно.
+    """Не принимать более короткий срок, пока локальное продление не подтверждено.
 
-    Панель — истина, но её снимок устаревает ровно тогда, когда запись нового
-    срока из бота в панель не прошла: панель хранит старую дату, бот —
-    оплаченную. Вебхук или сверка тогда откатывали оплату, а автопродление
-    списывало второй раз (15.09, подписка #3639). Пока с оплаты не прошло
-    ``PAID_DATE_HOLD``, более ранняя дата панели не принимается; более поздняя
-    (продлили ещё и в панели) — принимается как раньше.
+    Намерение хранится с end_date в БД и переживает рестарт/исчерпание повторов.
+    Более позднее локальное изменение даты заменяет прежнее намерение.
+    Без действующего намерения сохраняется прежняя защита PAID_DATE_HOLD
+    после оплаты, в том числе после подтверждения. За пределами этого окна
+    ручные изменения панели принимаются как раньше.
     """
-    if paid_at is None or snapshot.expire_at is None or getattr(subscription, 'end_date', None) is None:
+    if snapshot.expire_at is None or getattr(subscription, 'end_date', None) is None:
+        return False
+    end_date = panel_datetime_to_utc(subscription.end_date)
+    pending = getattr(subscription, 'pending_panel_expire_at', None)
+    # A committed local renewal is not a time-limited guess. Keep its expiry
+    # until the writer confirms it. A later local date change supersedes it.
+    if isinstance(pending, datetime) and panel_datetime_to_utc(pending) == end_date:
+        return (end_date - snapshot.expire_at).total_seconds() > _DATE_TOLERANCE_SECONDS
+    if paid_at is None:
         return False
     moment = now or datetime.now(UTC)
     if moment - panel_datetime_to_utc(paid_at) > PAID_DATE_HOLD:
         return False
-    end_date = panel_datetime_to_utc(subscription.end_date)
     return (end_date - snapshot.expire_at).total_seconds() > _DATE_TOLERANCE_SECONDS
 
 
@@ -328,8 +334,8 @@ def project_onto_subscription(
 ) -> set[str]:
     """Перенести состояние панели в подписку. Возвращает имена изменённых полей.
 
-    ``paid_at`` — когда человек последний раз платил за подписку: пока с оплаты
-    не прошло ``PAID_DATE_HOLD``, более ранняя дата из панели не переносится
+    Неподтверждённое локальное продление удерживает свой срок без таймера.
+    ``paid_at`` сохраняет прежний ``PAID_DATE_HOLD`` для записей без намерения: ранняя дата не переносится
     (см. ``panel_date_behind_paid_renewal``).
 
     ``policy`` — насколько доверять панели (см. ROUTINE / BULK_SNAPSHOT /
@@ -377,6 +383,11 @@ def project_onto_subscription(
     if snapshot.subscription_url and subscription.subscription_url != snapshot.subscription_url:
         subscription.subscription_url = snapshot.subscription_url
         changed.add('subscription_url')
+        # A cached encrypted link encodes the previous URL. Leave it missing so
+        # connection consumers can generate one for the new URL.
+        if not snapshot.crypto_link and subscription.subscription_crypto_link:
+            subscription.subscription_crypto_link = None
+            changed.add('subscription_crypto_link')
     if snapshot.crypto_link and subscription.subscription_crypto_link != snapshot.crypto_link:
         subscription.subscription_crypto_link = snapshot.crypto_link
         changed.add('subscription_crypto_link')
@@ -447,7 +458,12 @@ def project_onto_subscription(
         new_status = subscription.status
     else:
         new_status = status_rules[policy.status_mode](subscription, snapshot, now=moment)
-    if paid_date_held and new_status == SubscriptionStatus.EXPIRED.value and snapshot.status in ('ACTIVE', 'EXPIRED'):
+    if (
+        paid_date_held
+        and panel_datetime_to_utc(subscription.end_date) > moment
+        and new_status == SubscriptionStatus.EXPIRED.value
+        and snapshot.status in ('ACTIVE', 'EXPIRED')
+    ):
         # «Истекла» здесь выведено из той же старой даты, которую мы только что
         # не приняли: ACTIVE с прошедшим сроком или EXPIRED, выставленный панелью
         # по нему. Иначе оплаченная подписка на всё окно удержания показывалась

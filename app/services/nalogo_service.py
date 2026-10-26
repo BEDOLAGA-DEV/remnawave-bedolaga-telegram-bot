@@ -1,3 +1,5 @@
+import asyncio
+import json
 import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -10,6 +12,7 @@ from app.config import settings
 # Используем локальную исправленную версию библиотеки
 from app.lib.nalogo import Client
 from app.lib.nalogo.dto.income import IncomeClient, IncomeType
+from app.lib.nalogo.exceptions import UnauthorizedException
 from app.utils.cache import cache
 from app.utils.proxy import mask_proxy_url, sanitize_proxy_error
 
@@ -33,7 +36,7 @@ class NaloGoService:
         inn = inn or getattr(settings, 'NALOGO_INN', None)
         password = password or getattr(settings, 'NALOGO_PASSWORD', None)
         device_id = device_id or getattr(settings, 'NALOGO_DEVICE_ID', None)
-        storage_path = storage_path or getattr(settings, 'NALOGO_STORAGE_PATH', './nalogo_tokens.json')
+        storage_path = storage_path or getattr(settings, 'NALOGO_STORAGE_PATH', './data/nalogo_tokens.json')
 
         self.configured = False
 
@@ -67,6 +70,10 @@ class NaloGoService:
     @staticmethod
     def _is_service_unavailable(error: Exception) -> bool:
         """Проверяет, является ли ошибка временной недоступностью сервиса."""
+        response = getattr(error, 'response', None)
+        status = getattr(response, 'status_code', None)
+        if isinstance(status, int) and 500 <= status < 600:
+            return True
         error_str = str(error).lower()
         error_type = type(error).__name__.lower()
         return (
@@ -97,6 +104,7 @@ class NaloGoService:
         telegram_user_id: int | None = None,
         amount_kopeks: int | None = None,
         user_email: str | None = None,
+        operation_time: datetime | None = None,
     ) -> bool:
         """Добавить чек в очередь для отложенной отправки."""
         if payment_id:
@@ -129,6 +137,7 @@ class NaloGoService:
             'amount_kopeks': amount_kopeks,
             'user_email': user_email,
             'created_at': datetime.now(UTC).isoformat(),
+            'operation_time': (operation_time or datetime.now(UTC)).isoformat(),
             'attempts': 0,
         }
         success = await cache.lpush(NALOGO_QUEUE_KEY, receipt_data)
@@ -157,6 +166,7 @@ class NaloGoService:
         amount_kopeks: int | None,
         error_message: str,
         user_email: str | None = None,
+        operation_time: datetime | None = None,
     ) -> bool:
         """Сохранить чек в очередь ожидающих проверки.
 
@@ -177,6 +187,7 @@ class NaloGoService:
             'amount_kopeks': amount_kopeks,
             'user_email': user_email,
             'created_at': datetime.now(UTC).isoformat(),
+            'operation_time': (operation_time or datetime.now(UTC)).isoformat(),
             'error': error_message,
             'status': 'pending_verification',
         }
@@ -198,6 +209,9 @@ class NaloGoService:
     async def get_pending_verification_receipts(self) -> list:
         """Получить список чеков ожидающих проверки."""
         return await cache.lrange(NALOGO_PENDING_VERIFICATION_KEY)
+
+    async def is_pending_verification(self, payment_id: str) -> bool:
+        return any(r.get('payment_id') == payment_id for r in await self.get_pending_verification_receipts())
 
     async def mark_pending_as_verified(
         self,
@@ -222,10 +236,10 @@ class NaloGoService:
         for receipt in receipts:
             if receipt.get('payment_id') == payment_id:
                 removed_receipt = receipt
-                if was_created and receipt_uuid:
+                if was_created:
                     # Сохраняем что чек создан
                     created_key = f'nalogo:created:{payment_id}'
-                    await cache.set(created_key, receipt_uuid, expire=30 * 24 * 3600)
+                    await cache.set(created_key, receipt_uuid or True, expire=30 * 24 * 3600)
                     logger.info('Чек помечен как созданный', payment_id=payment_id, receipt_uuid=receipt_uuid)
             else:
                 updated_receipts.append(receipt)
@@ -264,6 +278,17 @@ class NaloGoService:
             logger.warning('Чек не найден в очереди проверки', payment_id=payment_id)
             return None
 
+        operation_time = None
+        stored_time = target_receipt.get('operation_time') or target_receipt.get('created_at')
+        if stored_time:
+            try:
+                operation_time = datetime.fromisoformat(stored_time)
+                if operation_time.tzinfo is None:
+                    operation_time = operation_time.replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                logger.error('Некорректное время операции в очереди проверки', payment_id=payment_id)
+                return None
+
         # Пытаемся создать чек
         receipt_uuid = await self.create_receipt(
             name=target_receipt.get('name', ''),
@@ -275,6 +300,8 @@ class NaloGoService:
             telegram_user_id=target_receipt.get('telegram_user_id'),
             amount_kopeks=target_receipt.get('amount_kopeks'),
             user_email=target_receipt.get('user_email'),
+            allow_pending_retry=True,
+            operation_time=operation_time,
         )
 
         if receipt_uuid:
@@ -321,11 +348,18 @@ class NaloGoService:
         return count
 
     async def authenticate(self) -> bool:
-        """Аутентификация в сервисе NaloGO."""
+        """Serialize token refresh/login for this long-lived receipt service."""
         if not self.configured:
             return False
+        if not hasattr(self, '_auth_lock'):
+            self._auth_lock = asyncio.Lock()
+        async with self._auth_lock:
+            return await self._authenticate_locked()
 
+    async def _authenticate_locked(self) -> bool:
         try:
+            if await self._authenticate_with_saved_token():
+                return True
             token = await self.client.create_new_access_token(self.inn, self.password)
             await self.client.authenticate(token)
             logger.info('Успешная аутентификация в NaloGO')
@@ -336,6 +370,46 @@ class NaloGoService:
             else:
                 logger.error('Ошибка аутентификации в NaloGO', error=sanitize_proxy_error(error))
             return False
+
+    @staticmethod
+    def _token_expires_soon(token_data: dict[str, Any]) -> bool:
+        raw = token_data.get('tokenExpireIn') or token_data.get('tokenExpiresIn')
+        if not raw:
+            return True
+        try:
+            expires = datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=UTC)
+            return expires - datetime.now(UTC) <= timedelta(minutes=5)
+        except (ValueError, TypeError):
+            return True
+
+    async def _has_usable_token(self) -> bool:
+        try:
+            data = await self.client.auth_provider.get_token()
+            return isinstance(data, dict) and bool(data.get('token')) and not self._token_expires_soon(data)
+        except Exception:
+            return False
+
+    async def _authenticate_with_saved_token(self) -> bool:
+        self.client.auth_provider.reload_token_from_storage()
+        data = await self.client.auth_provider.get_token()
+        if not isinstance(data, dict) or not data.get('token'):
+            return False
+        if self._token_expires_soon(data):
+            refresh = data.get('refreshToken')
+            if not refresh:
+                return False
+            data = await self.client.auth_provider.refresh(refresh)
+            if not data or not data.get('token'):
+                return False
+        await self.client.authenticate(json.dumps(data))
+        try:
+            await self.client.user().get()
+        except UnauthorizedException:
+            return False
+        logger.info('Авторизация в NaloGO по сохранённому токену')
+        return True
 
     async def create_receipt(
         self,
@@ -349,6 +423,8 @@ class NaloGoService:
         amount_kopeks: int | None = None,
         operation_time: datetime | None = None,
         user_email: str | None = None,
+        *,
+        allow_pending_retry: bool = False,
     ) -> str | None:
         """Создание чека о доходе.
 
@@ -372,6 +448,9 @@ class NaloGoService:
             logger.warning('NaloGO не настроен, чек не создан')
             return None
 
+        # Keep the first attempt's operation time through auth, queue and manual retry.
+        operation_time = operation_time or datetime.now(UTC)
+
         # Защита от дублей: проверяем не был ли уже создан чек для этого payment_id
         if payment_id:
             created_key = f'nalogo:created:{payment_id}'
@@ -382,12 +461,15 @@ class NaloGoService:
                     payment_id=payment_id,
                     already_created=already_created,
                 )
-                return already_created  # Возвращаем ранее созданный uuid
+                return already_created if isinstance(already_created, str) else None
+            if not allow_pending_retry and await self.is_pending_verification(payment_id):
+                logger.warning('Чек ожидает ручной проверки, повтор запрещён', payment_id=payment_id)
+                return None
 
         # ЭТАП 1: Аутентификация
         # Если не прошла — чек точно не создавался, безопасно добавить в очередь
         try:
-            if not hasattr(self.client, '_access_token') or not self.client._access_token:
+            if not await self._has_usable_token():
                 auth_success = await self.authenticate()
                 if not auth_success:
                     # Аутентификация не прошла — чек не создавался, безопасно в очередь
@@ -401,6 +483,7 @@ class NaloGoService:
                             telegram_user_id,
                             amount_kopeks,
                             user_email=user_email,
+                            operation_time=operation_time,
                         )
                     return None
         except Exception as auth_error:
@@ -421,6 +504,7 @@ class NaloGoService:
                         telegram_user_id,
                         amount_kopeks,
                         user_email=user_email,
+                        operation_time=operation_time,
                     )
             else:
                 logger.error('Ошибка аутентификации NaloGO', auth_error=sanitize_proxy_error(auth_error))
@@ -443,13 +527,32 @@ class NaloGoService:
                 )
 
             # Используем переданное время операции или текущее
-            result = await income_api.create(
-                name=name,
-                amount=Decimal(str(amount)),
-                quantity=quantity,
-                operation_time=operation_time,
-                client=income_client,
-            )
+            for attempt in range(2):
+                try:
+                    result = await income_api.create(
+                        name=name,
+                        amount=Decimal(str(amount)),
+                        quantity=quantity,
+                        operation_time=operation_time,
+                        client=income_client,
+                    )
+                    break
+                except UnauthorizedException:
+                    # An explicit 401 cannot have created a receipt; never retry ambiguous failures here.
+                    if attempt or not await self.authenticate():
+                        if queue_on_failure:
+                            await self._queue_receipt(
+                                name,
+                                amount,
+                                quantity,
+                                client_info,
+                                payment_id,
+                                telegram_user_id,
+                                amount_kopeks,
+                                user_email=user_email,
+                                operation_time=operation_time,
+                            )
+                        return None
 
             receipt_uuid = result.get('approvedReceiptUuid')
             if receipt_uuid:
@@ -485,6 +588,7 @@ class NaloGoService:
                     amount_kopeks=amount_kopeks,
                     error_message=error_msg,
                     user_email=user_email,
+                    operation_time=operation_time,
                 )
             else:
                 logger.error('Ошибка создания чека в NaloGO', error=sanitize_proxy_error(error))
@@ -625,7 +729,7 @@ class NaloGoService:
 
         try:
             # Аутентифицируемся если нужно
-            if not hasattr(self.client, '_access_token') or not self.client._access_token:
+            if not await self._has_usable_token():
                 auth_success = await self.authenticate()
                 if not auth_success:
                     return []

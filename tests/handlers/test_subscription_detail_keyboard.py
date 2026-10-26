@@ -117,6 +117,7 @@ async def test_show_subscription_detail_writes_active_subscription_id_to_fsm(
     sub_id = 77
     subscription = SimpleNamespace(
         id=sub_id,
+        is_pending_trial=False,
         actual_status='active',
         tariff=SimpleNamespace(name='X'),
         traffic_limit_gb=10,

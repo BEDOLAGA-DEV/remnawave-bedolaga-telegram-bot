@@ -200,6 +200,7 @@ async def _handle_wheel_spin_payment(
 
         # Ensure all changes are committed (subscription days, traffic GB, etc.)
         await db.commit()
+        await wheel_service._sync_subscription_after_spin(user, selected_prize)
 
         # Отправляем результат
         prize_message = wheel_service._get_prize_message(selected_prize, generated_promocode)

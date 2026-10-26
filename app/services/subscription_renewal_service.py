@@ -5,7 +5,7 @@ import base64
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -387,90 +387,69 @@ class SubscriptionRenewalService:
 
         description_text = description or f'Продление подписки на {period_days} дней'
 
-        # Save promo offer state before charge so we can restore on failure
-        saved_promo_percent = int(getattr(user, 'promo_offer_discount_percent', 0) or 0) if consume_promo_offer else 0
-        saved_promo_source = getattr(user, 'promo_offer_discount_source', None) if consume_promo_offer else None
-        saved_promo_expires = getattr(user, 'promo_offer_discount_expires_at', None) if consume_promo_offer else None
-
-        if charge_from_balance > 0 or consume_promo_offer:
-            success = await subtract_user_balance(
-                db,
-                user,
-                charge_from_balance,
-                description_text,
-                consume_promo_offer=consume_promo_offer,
-                mark_as_paid_subscription=True,
-            )
-            if not success:
-                raise SubscriptionRenewalChargeError('Failed to charge balance')
-            await db.refresh(user)
-
-        # Lock subscription row to prevent double-extension race
         from sqlalchemy import select as sa_select
 
-        from app.database.models import Subscription as SubscriptionModel
+        from app.database.crud.transaction import emit_transaction_side_effects
+        from app.database.crud.user import lock_user_for_pricing
 
-        locked_result = await db.execute(
-            sa_select(SubscriptionModel)
-            .where(SubscriptionModel.id == subscription.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        subscription_before = locked_result.scalar_one()
-        old_end_date = subscription_before.end_date
-
-        # Determine expired state BEFORE extend_subscription mutates the object
-        now = datetime.now(UTC)
-        was_expired = subscription_before.status in ('expired', 'disabled', 'limited') or (
-            subscription_before.end_date is not None and subscription_before.end_date <= now
-        )
-
+        # Use the same lock order as automatic renewal. Debit and expiry must
+        # not be visible separately to a worker selecting due subscriptions.
+        subscription_id = subscription.id
+        user = await lock_user_for_pricing(db, user.id)
         try:
-            subscription_after = await extend_subscription(db, subscription_before, period_days)
-        except Exception:
-            # Session may be in a failed state after a broken commit — rollback first
+            subscription_before = (
+                await db.execute(
+                    sa_select(Subscription)
+                    .where(Subscription.id == subscription_id, Subscription.user_id == user.id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one()
+            old_end_date = subscription_before.end_date
+            if charge_from_balance > 0 or consume_promo_offer:
+                success = await subtract_user_balance(
+                    db,
+                    user,
+                    charge_from_balance,
+                    description_text,
+                    consume_promo_offer=consume_promo_offer,
+                    mark_as_paid_subscription=True,
+                    commit=False,
+                )
+                if not success:
+                    raise SubscriptionRenewalChargeError('Failed to charge balance')
+            subscription_after = await extend_subscription(db, subscription_before, period_days, commit=False)
+            transaction = await create_transaction(
+                db=db,
+                user_id=user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=final_total,
+                description=description_text,
+                payment_method=payment_method,
+                commit=False,
+            )
+            await db.commit()
+        except BaseException:
             await db.rollback()
-
-            # Compensate: refund the charged balance since extension failed
-            if charge_from_balance > 0 or (consume_promo_offer and saved_promo_percent > 0):
-                try:
-                    from app.database.crud.user import add_user_balance
-
-                    if charge_from_balance > 0:
-                        refunded = await add_user_balance(
-                            db,
-                            user,
-                            charge_from_balance,
-                            'Возврат: ошибка продления подписки',
-                            create_transaction=True,
-                            transaction_type=TransactionType.REFUND,
-                        )
-                        if not refunded:
-                            logger.critical(
-                                'CRITICAL: add_user_balance returned False during refund',
-                                charge_from_balance=charge_from_balance,
-                                user_id=user.id,
-                            )
-
-                    # Restore consumed promo offer fields
-                    if consume_promo_offer and saved_promo_percent > 0:
-                        user.promo_offer_discount_percent = saved_promo_percent
-                        user.promo_offer_discount_source = saved_promo_source
-                        user.promo_offer_discount_expires_at = saved_promo_expires
-                        await db.commit()
-                        logger.info(
-                            'Restored promo offer after failed extension',
-                            user_id=user.id,
-                            restored_percent=saved_promo_percent,
-                        )
-                except Exception as refund_error:
-                    logger.critical(
-                        'CRITICAL: Failed to refund kopeks to user after extension failure',
-                        charge_from_balance=charge_from_balance,
-                        user_id=user.id,
-                        refund_error=refund_error,
-                    )
             raise
+
+        await emit_transaction_side_effects(
+            db,
+            transaction,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_total,
+            description=description_text,
+            payment_method=payment_method or PaymentMethod.BALANCE,
+        )
+        try:
+            from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
+
+            await shift_lava_next_charge_after_manual_extension(db, subscription_id, period_days)
+        except Exception as lava_error:
+            logger.warning('Failed to shift Lava next charge after renewal', error=lava_error)
+        await db.refresh(subscription_after)
+        await db.refresh(user)
 
         # Support both SubscriptionRenewalPricing (server_ids, details) and RenewalPricing (breakdown)
         if isinstance(pricing, SubscriptionRenewalPricing):
@@ -495,9 +474,11 @@ class SubscriptionRenewalService:
                     error=error,
                 )
 
-        reset_traffic = was_expired and settings.RESET_TRAFFIC_ON_PAYMENT
+        reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT
         reset_devices = settings.RESET_DEVICES_ON_RENEWAL
         subscription_service = SubscriptionService()
+        renewal_subscription_id = subscription_after.id
+        panel_result = None
         try:
             await db.refresh(user)
             if settings.is_multi_tariff_enabled():
@@ -507,14 +488,14 @@ class SubscriptionRenewalService:
 
             async with asyncio.timeout(REMNAWAVE_SYNC_TIMEOUT):
                 if _should_create:
-                    await subscription_service.create_remnawave_user(
+                    panel_result = await subscription_service.create_remnawave_user(
                         db,
                         subscription_after,
                         reset_traffic=reset_traffic,
                         reset_reason='subscription renewal',
                     )
                 else:
-                    await subscription_service.update_remnawave_user(
+                    panel_result = await subscription_service.update_remnawave_user(
                         db,
                         subscription_after,
                         reset_traffic=reset_traffic,
@@ -525,15 +506,23 @@ class SubscriptionRenewalService:
         except Exception as error:  # pragma: no cover - defensive logging
             logger.error(
                 'Failed to sync RemnaWave user for subscription',
-                subscription_after_id=subscription_after.id,
+                subscription_after_id=renewal_subscription_id,
                 error=error,
             )
+
+        # A failed panel write rolls the session back and expires ORM objects.
+        # Reload before ledger/notifications, including when the service returns None.
+        await db.refresh(subscription_after)
+        await db.refresh(user)
+        if panel_result is None:
             from app.services.remnawave_retry_queue import remnawave_retry_queue
 
             remnawave_retry_queue.enqueue(
                 subscription_id=subscription_after.id,
                 user_id=subscription_after.user_id,
                 action='create' if getattr(subscription_after, 'remnawave_id', None) is None else 'update',
+                reset_traffic=reset_traffic,
+                reset_reason='subscription renewal',
             )
 
         # Сброс привязанных устройств при продлении (если включено)
@@ -570,24 +559,7 @@ class SubscriptionRenewalService:
             except Exception as error:
                 logger.warning('Failed to reset devices on renewal', error=error, exc_info=True)
 
-        transaction: Transaction | None = None
-        try:
-            transaction = await create_transaction(
-                db=db,
-                user_id=user.id,
-                type=TransactionType.SUBSCRIPTION_PAYMENT,
-                amount_kopeks=final_total,
-                description=description_text,
-                payment_method=payment_method,
-            )
-        except Exception as error:  # pragma: no cover - defensive logging
-            logger.warning(
-                'Failed to create renewal transaction for subscription',
-                subscription_after_id=subscription_after.id,
-                error=error,
-            )
-
-        await db.refresh(user)
+        await db.refresh(transaction)
         await db.refresh(subscription_after)
 
         if transaction and old_end_date and subscription_after.end_date:

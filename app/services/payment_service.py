@@ -14,6 +14,7 @@ from app.config import settings
 from app.external.cryptobot import CryptoBotService
 from app.external.heleket import HeleketService
 from app.external.telegram_stars import TelegramStarsService
+from app.services.anore_service import anore_service
 from app.services.cloudpayments_service import CloudPaymentsService
 from app.services.mulenpay_service import MulenPayService
 from app.services.nalogo_service import NaloGoService
@@ -30,6 +31,7 @@ from app.services.payment import (
     WataPaymentMixin,
     YooKassaPaymentMixin,
 )
+from app.services.payment.anore import AnorePaymentMixin
 from app.services.payment.antilopay import AntilopayPaymentMixin
 from app.services.payment.aurapay import AuraPayPaymentMixin
 from app.services.payment.cashera import CasheraPaymentMixin
@@ -44,7 +46,6 @@ from app.services.payment.lava import LavaPaymentMixin
 from app.services.payment.overpay import OverpayPaymentMixin
 from app.services.payment.paritypay import ParityPayPaymentMixin
 from app.services.payment.payer_identity import resolve_guest_payer
-from app.services.payment.paypear import PayPearPaymentMixin
 from app.services.payment.riopay import RioPayPaymentMixin
 from app.services.payment.rollypay import RollyPayPaymentMixin
 from app.services.payment.severpay import SeverPayPaymentMixin
@@ -344,41 +345,6 @@ async def update_severpay_payment_status(*args, **kwargs):
 async def link_severpay_payment_to_transaction(*args, **kwargs):
     severpay_crud = import_module('app.database.crud.severpay')
     return await severpay_crud.link_severpay_payment_to_transaction(*args, **kwargs)
-
-
-async def create_paypear_payment(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.create_paypear_payment(*args, **kwargs)
-
-
-async def get_paypear_payment_by_order_id(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_order_id(*args, **kwargs)
-
-
-async def get_paypear_payment_by_paypear_id(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_paypear_id(*args, **kwargs)
-
-
-async def get_paypear_payment_by_id(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_id(*args, **kwargs)
-
-
-async def get_paypear_payment_by_id_for_update(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.get_paypear_payment_by_id_for_update(*args, **kwargs)
-
-
-async def update_paypear_payment_status(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.update_paypear_payment_status(*args, **kwargs)
-
-
-async def link_paypear_payment_to_transaction(*args, **kwargs):
-    paypear_crud = import_module('app.database.crud.paypear')
-    return await paypear_crud.link_paypear_payment_to_transaction(*args, **kwargs)
 
 
 # --- RollyPay CRUD wrappers ---
@@ -852,7 +818,6 @@ class PaymentService(
     KassaAiPaymentMixin,
     RioPayPaymentMixin,
     SeverPayPaymentMixin,
-    PayPearPaymentMixin,
     RollyPayPaymentMixin,
     OverpayPaymentMixin,
     AuraPayPaymentMixin,
@@ -863,6 +828,7 @@ class PaymentService(
     LavaPaymentMixin,
     CisPayPaymentMixin,
     TabPayPaymentMixin,
+    AnorePaymentMixin,
     ParityPayPaymentMixin,
     CasheraPaymentMixin,
 ):
@@ -871,6 +837,7 @@ class PaymentService(
     def __init__(self, bot: Bot | None = None) -> None:
         # Бот нужен для отправки уведомлений и создания звёздных инвойсов.
         self.bot = bot
+        self.anore_service = anore_service
         # Ниже инициализируем службы-обёртки только если соответствующий провайдер включён.
         self.yookassa_service = YooKassaService() if settings.is_yookassa_enabled() else None
         self.stars_service = TelegramStarsService(bot) if bot else None
@@ -1293,28 +1260,6 @@ class PaymentService(
                 }
             return None
 
-        # --- PayPear ----------------------------------------------------------
-        if _base == 'paypear':
-            if not settings.is_paypear_enabled():
-                logger.warning('PayPear is not enabled, cannot create guest payment')
-                return None
-
-            result = await self.create_paypear_payment(
-                db=db,
-                user_id=None,
-                amount_kopeks=amount_kopeks,
-                description=description,
-                return_url=return_url,
-            )
-            if result:
-                await _patch_guest_metadata(result['local_payment_id'], 'paypear')
-                return {
-                    'payment_url': result.get('payment_url'),
-                    'payment_id': result.get('paypear_id') or result.get('order_id'),
-                    'provider': 'paypear',
-                }
-            return None
-
         # --- RollyPay ---------------------------------------------------------
         if _base == 'rollypay':
             if not settings.is_rollypay_enabled():
@@ -1512,9 +1457,9 @@ class PaymentService(
                 description=description,
                 return_url=return_url,
                 payment_method_type=_option,
+                metadata=guest_metadata,
             )
             if result:
-                await _patch_guest_metadata(result['local_payment_id'], 'cispay')
                 return {
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),
@@ -1544,6 +1489,26 @@ class PaymentService(
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),
                     'provider': 'cashera',
+                }
+            return None
+
+        if _base == 'anore':
+            if not settings.is_anore_enabled():
+                return None
+            result = await self.create_anore_payment(
+                db=db,
+                user_id=None,
+                amount_kopeks=amount_kopeks,
+                description=description,
+                return_url=return_url,
+                payment_method_type=_option,
+                metadata=guest_metadata,
+            )
+            if result:
+                return {
+                    'payment_url': result.get('payment_url'),
+                    'payment_id': result.get('order_id'),
+                    'provider': 'anore',
                 }
             return None
 

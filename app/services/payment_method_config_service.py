@@ -19,23 +19,32 @@ logger = structlog.get_logger(__name__)
 # and refreshed whenever the cabinet edits a method, keeping bot button labels in sync
 # with the cabinet. Bot and cabinet run in the same process, so refresh is immediate.
 _display_name_overrides: dict[str, str] = {}
+_display_sort_orders: dict[str, int] = {}
+
+
+def _config_method_id(method_id: str) -> str:
+    return {'stars': 'telegram_stars', 'yookassa_sbp': 'yookassa'}.get(method_id, method_id)
 
 
 async def refresh_display_name_overrides(db: AsyncSession) -> None:
-    """Reload the method_id -> display_name override cache from the DB."""
-    global _display_name_overrides
+    """Reload names and saved order for synchronous Telegram keyboards."""
+    global _display_name_overrides, _display_sort_orders
     result = await db.execute(
-        select(PaymentMethodConfig.method_id, PaymentMethodConfig.display_name).where(
-            PaymentMethodConfig.display_name.isnot(None)
-        )
+        select(PaymentMethodConfig.method_id, PaymentMethodConfig.display_name, PaymentMethodConfig.sort_order)
     )
-    _display_name_overrides = {method_id: name for method_id, name in result.all() if name and name.strip()}
+    rows = result.all()
+    _display_name_overrides = {method_id: name for method_id, name, _ in rows if name and name.strip()}
+    _display_sort_orders = {method_id: order for method_id, _, order in rows}
     logger.debug('Кэш имён платёжных методов обновлён', count=len(_display_name_overrides))
 
 
 def get_display_name_override(method_id: str) -> str | None:
     """Sync read of a cabinet-set display name for a method, or None if not set."""
-    return _display_name_overrides.get(method_id)
+    return _display_name_overrides.get(_config_method_id(method_id))
+
+
+def get_display_sort_order(method_id: str) -> int | None:
+    return _display_sort_orders.get(_config_method_id(method_id))
 
 
 # ============ Default method definitions ============
@@ -172,18 +181,6 @@ def _get_method_defaults() -> dict:
             'default_max': settings.SEVERPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': None,
         },
-        'paypear': {
-            'default_display_name': settings.get_paypear_display_name(),
-            'is_configured': settings.is_paypear_enabled(),
-            'default_min': settings.PAYPEAR_MIN_AMOUNT_KOPEKS,
-            'default_max': settings.PAYPEAR_MAX_AMOUNT_KOPEKS,
-            'available_sub_options': [
-                {'id': 'bank_card', 'name': 'Карта'},
-                {'id': 'sbp', 'name': 'СБП'},
-                {'id': 'sberpay', 'name': 'SberPay'},
-                {'id': 'tpay', 'name': 'T-Pay'},
-            ],
-        },
         'rollypay': {
             'default_display_name': settings.get_rollypay_display_name(),
             'is_configured': settings.is_rollypay_enabled(),
@@ -269,8 +266,12 @@ def _get_method_defaults() -> dict:
             'default_min': settings.CISPAY_MIN_AMOUNT_KOPEKS,
             'default_max': settings.CISPAY_MAX_AMOUNT_KOPEKS,
             'available_sub_options': [
-                {'id': 'card', 'name': 'Карта'},
-                {'id': 'sbp', 'name': 'СБП'},
+                {
+                    'id': method,
+                    'name': {'card': 'Карта', 'sbp': 'СБП', 'crypto': 'Криптовалюта'}[method],
+                    **({'min_amount_kopeks': 5000} if method == 'card' else {}),
+                }
+                for method in settings.get_cispay_methods()
             ],
         },
         'paritypay': {
@@ -281,6 +282,19 @@ def _get_method_defaults() -> dict:
             'available_sub_options': [
                 {'id': 'card', 'name': 'Карта'},
                 {'id': 'sbp', 'name': 'СБП'},
+            ],
+        },
+        'anore': {
+            'default_display_name': settings.get_anore_display_name(),
+            'is_configured': settings.is_anore_enabled(),
+            'default_min': settings.ANORE_MIN_AMOUNT_KOPEKS,
+            'default_max': settings.ANORE_MAX_AMOUNT_KOPEKS,
+            'available_sub_options': [
+                {
+                    'id': method,
+                    'name': {'sbp': 'СБП', 'card': 'Карта', 'yoomoney': 'ЮMoney', 'crypto': 'Криптовалюта'}[method],
+                }
+                for method in settings.get_anore_methods()
             ],
         },
         'tabpay': {
@@ -363,7 +377,6 @@ DEFAULT_METHOD_ORDER = [
     'kassa_ai',
     'riopay',
     'severpay',
-    'paypear',
     'rollypay',
     'overpay',
     'aurapay',
@@ -373,6 +386,7 @@ DEFAULT_METHOD_ORDER = [
     'donut',
     'lava',
     'cispay',
+    'anore',
     'tabpay',
     'paritypay',
     'cashera',
@@ -504,17 +518,20 @@ async def ensure_payment_method_configs(db: AsyncSession) -> None:
 
 
 async def get_all_configs(db: AsyncSession) -> list[PaymentMethodConfig]:
-    """Get all payment method configs ordered by sort_order."""
+    """Get supported payment method configs ordered by sort_order."""
     result = await db.execute(
         select(PaymentMethodConfig)
         .options(selectinload(PaymentMethodConfig.allowed_promo_groups))
+        .where(PaymentMethodConfig.method_id.in_(DEFAULT_METHOD_ORDER))
         .order_by(PaymentMethodConfig.sort_order)
     )
     return list(result.scalars().all())
 
 
 async def get_config_by_method_id(db: AsyncSession, method_id: str) -> PaymentMethodConfig | None:
-    """Get a single config by method_id."""
+    """Get a single config by method_id, ignoring retired backup entries."""
+    if method_id not in DEFAULT_METHOD_ORDER:
+        return None
     result = await db.execute(
         select(PaymentMethodConfig)
         .options(selectinload(PaymentMethodConfig.allowed_promo_groups))
@@ -579,6 +596,7 @@ async def update_sort_order(db: AsyncSession, ordered_method_ids: list[str]) -> 
             config.sort_order = index
 
     await db.commit()
+    await refresh_display_name_overrides(db)
 
 
 async def get_all_promo_groups(db: AsyncSession) -> list[PromoGroup]:
@@ -676,7 +694,14 @@ async def get_enabled_methods_for_user(
         # Build options (filter by sub_options config)
         options = None
         available_sub_options = method_def.get('available_sub_options')
-        if available_sub_options and config.sub_options:
+        if method_id in {'antilopay', 'anore', 'cispay'} and available_sub_options:
+            # Preserve the distinction between default options and all disabled.
+            # Cabinet checkout must never fall back to the provider's unrestricted form.
+            configured_options = config.sub_options or {}
+            options = [opt for opt in available_sub_options if configured_options.get(opt['id'], True)]
+            if not options:
+                continue
+        elif available_sub_options and config.sub_options:
             enabled_options = []
             for opt in available_sub_options:
                 opt_id = opt['id']
@@ -702,3 +727,66 @@ async def get_enabled_methods_for_user(
         )
 
     return result
+
+
+async def get_anore_checkout_policy(db: AsyncSession, user) -> dict | None:
+    """Effective policy shared by checkout prompts and creation entry points."""
+    if not settings.is_anore_enabled():
+        return None
+    config = await get_config_by_method_id(db, 'anore')
+    if config is not None:
+        methods = await get_enabled_methods_for_user(
+            db, user, is_first_topup=not getattr(user, 'has_made_first_topup', False) if user else None
+        )
+        return next((method for method in methods if method['id'] == 'anore'), None)
+    default = _get_method_defaults()['anore']
+    return {
+        'id': 'anore',
+        'name': default['default_display_name'],
+        'min_amount_kopeks': default['default_min'],
+        'max_amount_kopeks': default['default_max'],
+        'options': default['available_sub_options'],
+    }
+
+
+async def get_cispay_checkout_policy(db: AsyncSession, user, payment_method_type: str | None = None) -> dict | None:
+    """Shared effective checkout policy; generic checkout selects an explicit fiat method."""
+    if not settings.is_cispay_enabled():
+        return None
+    config = await get_config_by_method_id(db, 'cispay')
+    if config is not None:
+        if user is None and (
+            config.user_type_filter != 'all'
+            or config.first_topup_filter != 'any'
+            or config.promo_group_filter_mode == 'selected'
+        ):
+            return None
+        methods = await get_enabled_methods_for_user(
+            db, user, is_first_topup=not getattr(user, 'has_made_first_topup', False) if user else None
+        )
+        policy = next((method for method in methods if method['id'] == 'cispay'), None)
+        if policy is None:
+            return None
+        policy = dict(policy)
+    else:
+        default = _get_method_defaults()['cispay']
+        policy = {
+            'id': 'cispay',
+            'name': default['default_display_name'],
+            'min_amount_kopeks': default['default_min'],
+            'max_amount_kopeks': default['default_max'],
+            'options': default['available_sub_options'],
+        }
+    enabled = set(settings.get_cispay_methods())
+    policy['options'] = [option for option in (policy.get('options') or []) if option['id'] in enabled]
+    allowed = {option['id'] for option in policy['options']}
+    if not allowed:
+        return None
+    requested = payment_method_type.lower() if isinstance(payment_method_type, str) else payment_method_type
+    if requested is not None and requested not in allowed:
+        return None
+    selected = requested or next((method for method in ('card', 'sbp') if method in allowed), None)
+    policy['selected_method'] = selected.upper() if selected else None
+    if selected == 'card':
+        policy['min_amount_kopeks'] = max(policy['min_amount_kopeks'], 5000)
+    return policy

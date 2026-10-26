@@ -1,4 +1,5 @@
 import html
+from decimal import Decimal, InvalidOperation
 
 import structlog
 from aiogram import Dispatcher, F, types
@@ -21,6 +22,7 @@ from app.localization.texts import get_texts
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 from app.utils.timezone import format_local_datetime
+from app.utils.topup_retry import MAX_MANUAL_TOPUP_RUBLES, MIN_MANUAL_TOPUP_RUBLES, format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -150,13 +152,6 @@ async def route_payment_by_method(
             await process_severpay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method == 'paypear':
-        from .paypear import process_paypear_payment_amount
-
-        async with AsyncSessionLocal() as db:
-            await process_paypear_payment_amount(message, db_user, db, amount_kopeks, state)
-        return True
-
     if payment_method == 'rollypay':
         from .rollypay import process_rollypay_payment_amount
 
@@ -220,6 +215,13 @@ async def route_payment_by_method(
             await process_paritypay_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
+    if payment_method in ('anore', 'anore_sbp', 'anore_card', 'anore_yoomoney', 'anore_crypto'):
+        from .anore import process_anore_payment_amount
+
+        async with AsyncSessionLocal() as db:
+            await process_anore_payment_amount(message, db_user, db, amount_kopeks, state)
+        return True
+
     if payment_method in ('tabpay', 'tabpay_card', 'tabpay_sbp'):
         from .tabpay import process_tabpay_payment_amount
 
@@ -234,7 +236,7 @@ async def route_payment_by_method(
             await process_cashera_payment_amount(message, db_user, db, amount_kopeks, state)
         return True
 
-    if payment_method in ('cispay', 'cispay_card', 'cispay_sbp'):
+    if payment_method in ('cispay', 'cispay_card', 'cispay_sbp', 'cispay_crypto'):
         from .cispay import process_cispay_payment_amount
 
         async with AsyncSessionLocal() as db:
@@ -560,18 +562,25 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
             await message.answer(texts.INVALID_AMOUNT, reply_markup=get_back_keyboard(db_user.language))
             return
 
-        amount_rubles = float(amount_text.replace(',', '.'))
+        amount_rubles = Decimal(amount_text.replace(',', '.'))
+        if not amount_rubles.is_finite():
+            await message.answer(texts.INVALID_AMOUNT, reply_markup=get_back_keyboard(db_user.language))
+            return
 
-        if amount_rubles < 1:
+        if amount_rubles < MIN_MANUAL_TOPUP_RUBLES:
             await message.answer(
-                'Минимальная сумма пополнения: 1 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
+                format_topup_amount_retry(
+                    db_user.language, MIN_MANUAL_TOPUP_RUBLES * 100, MAX_MANUAL_TOPUP_RUBLES * 100, too_low=True
+                ),
                 reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
 
-        if amount_rubles > 50000:
+        if amount_rubles > MAX_MANUAL_TOPUP_RUBLES:
             await message.answer(
-                'Максимальная сумма пополнения: 50,000 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
+                format_topup_amount_retry(
+                    db_user.language, MIN_MANUAL_TOPUP_RUBLES * 100, MAX_MANUAL_TOPUP_RUBLES * 100, too_low=False
+                ),
                 reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
             )
             return
@@ -582,22 +591,25 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
 
         if payment_method in ['yookassa', 'yookassa_sbp']:
             if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-                min_rubles = f'{settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
-                example_rubles = max(1, (settings.YOOKASSA_MIN_AMOUNT_KOPEKS + 99) // 100)
-                retry_hint = f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {min_rubles} ₽.'
-                if example_rubles <= 50000 and example_rubles * 100 <= settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-                    retry_hint += f'\n\nНапример, отправьте: {example_rubles}'
                 await message.answer(
-                    f'❌ Минимальная сумма пополнения через YooKassa — {min_rubles} ₽.\n\n{retry_hint}',
+                    format_topup_amount_retry(
+                        db_user.language,
+                        settings.YOOKASSA_MIN_AMOUNT_KOPEKS,
+                        settings.YOOKASSA_MAX_AMOUNT_KOPEKS,
+                        too_low=True,
+                    ),
                     reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
                 )
                 return
 
             if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-                max_rubles = f'{settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
                 await message.answer(
-                    f'❌ Максимальная сумма пополнения через YooKassa — {max_rubles} ₽.\n\n'
-                    f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не больше {max_rubles} ₽.',
+                    format_topup_amount_retry(
+                        db_user.language,
+                        settings.YOOKASSA_MIN_AMOUNT_KOPEKS,
+                        settings.YOOKASSA_MAX_AMOUNT_KOPEKS,
+                        too_low=False,
+                    ),
                     reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
                 )
                 return
@@ -605,7 +617,7 @@ async def process_topup_amount(message: types.Message, db_user: User, state: FSM
         if not await route_payment_by_method(message, db_user, amount_kopeks, state, payment_method):
             await message.answer('Неизвестный способ оплаты')
 
-    except ValueError:
+    except (ValueError, InvalidOperation):
         await message.answer(texts.INVALID_AMOUNT, reply_markup=get_back_keyboard(db_user.language))
 
 
@@ -857,10 +869,6 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(start_severpay_topup, F.data == 'topup_severpay')
 
-    from .paypear import start_paypear_topup
-
-    dp.callback_query.register(start_paypear_topup, F.data == 'topup_paypear')
-
     from .rollypay import start_rollypay_topup
 
     dp.callback_query.register(start_rollypay_topup, F.data == 'topup_rollypay')
@@ -930,11 +938,21 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_cashera_method_selection, F.data.startswith('cashera_method_'))
     dp.callback_query.register(start_cashera_direct_method, F.data.startswith('topup_cashera_m_'))
 
-    from .cispay import start_cispay_card_topup, start_cispay_sbp_topup, start_cispay_topup
+    from .cispay import start_cispay_card_topup, start_cispay_crypto_topup, start_cispay_sbp_topup, start_cispay_topup
 
+    dp.callback_query.register(start_cispay_crypto_topup, F.data == 'topup_cispay_crypto')
     dp.callback_query.register(start_cispay_topup, F.data == 'topup_cispay')
     dp.callback_query.register(start_cispay_card_topup, F.data == 'topup_cispay_card')
     dp.callback_query.register(start_cispay_sbp_topup, F.data == 'topup_cispay_sbp')
+
+    from .anore import start_anore_selected_topup
+
+    dp.callback_query.register(
+        start_anore_selected_topup,
+        F.data.in_(
+            {'topup_anore', 'topup_anore_sbp', 'topup_anore_card', 'topup_anore_yoomoney', 'topup_anore_crypto'}
+        ),
+    )
 
     from .tabpay import start_tabpay_card_topup, start_tabpay_sbp_topup, start_tabpay_topup
 

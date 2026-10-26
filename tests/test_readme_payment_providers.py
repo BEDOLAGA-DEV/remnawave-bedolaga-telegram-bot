@@ -1,21 +1,14 @@
-"""README обязан перечислять все платёжные шлюзы, которые умеет бот.
+"""README может содержать выборочный обзор провайдеров.
 
-Подключение нового шлюза задевает около двадцати мест, и таблица в README —
-единственное из них, которое ничего не ломает, если про него забыть. Ровно так
-и вышло с CisPay: код, миграция, локали и кабинет на месте, а в списке
-провайдеров строки нет. Заметить это глазами нельзя — в таблице почти три
-десятка строк.
-
-Здесь же проверяется заявленное в тексте количество: «24+ провайдера» пережило
-три интеграции подряд.
+Каждый перечисленный шлюз должен существовать в коде, но таблица не обязана
+воспроизводить весь enum, а обзорный текст — точное количество интеграций.
+Полнота подключения проверяется контрактами платёжных модулей.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-
-import pytest
 
 from app.database.models import PaymentMethod
 
@@ -58,18 +51,9 @@ def _squash(value: str) -> str:
     return re.sub(r'[^a-z0-9]', '', value.lower())
 
 
-@pytest.mark.parametrize('gateway', _gateways())
-def test_every_gateway_is_listed_in_readme(gateway: str) -> None:
-    expected = _squash(DISPLAY_NAMES.get(gateway, gateway))
-    assert expected in _squash(_provider_table()), (
-        f'шлюз {gateway} есть в PaymentMethod, но его нет в таблице провайдеров README'
-    )
-
-
 def test_table_has_no_rows_for_unknown_providers() -> None:
     """Каждая строка таблицы указывает на существующий шлюз.
 
-    Обратная сторона предыдущей проверки: та ловит пропажу, эта — лишнее.
     Строка про выпиленного провайдера вводит в заблуждение так же, как и
     отсутствие строки про настоящего.
 
@@ -90,13 +74,3 @@ def test_table_has_no_rows_for_unknown_providers() -> None:
             unknown.append(title)
 
     assert not unknown, f'в таблице есть строки без соответствующего шлюза в PaymentMethod: {unknown}'
-
-
-def test_claimed_provider_count_matches_reality() -> None:
-    """Число провайдеров в тексте не должно отставать от кода."""
-    claims = re.findall(r'(\d+)\+?\s+(?:платёжных\s+)?провайдер\w*', _readme())
-    assert claims, 'в README не нашлось ни одного упоминания количества провайдеров'
-
-    expected = str(len(_gateways()))
-    wrong = sorted({claim for claim in claims if claim != expected})
-    assert not wrong, f'в README заявлено провайдеров: {wrong}, а на деле {expected}'

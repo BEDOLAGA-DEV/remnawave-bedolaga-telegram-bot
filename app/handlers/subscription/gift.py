@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import uuid
 from pathlib import Path
 
@@ -58,10 +59,42 @@ from app.services.gift_purchase_service import (
 from app.services.guest_purchase_service import GuestPurchaseError
 from app.services.user_cart_service import user_cart_service
 from app.states import GiftActivationStates, GiftPurchaseStates
+from app.utils.fsm_selection import mutate_fsm_if_current
 from app.utils.gift_links import build_gift_claim_artifacts
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _gift_action_callback(action: str, data: dict, selection_state: str | None) -> str:
+    """Bind destructive actions to the displayed checkout, selection and price."""
+    fields = [
+        data.get(key)
+        for key in (
+            'gift_checkout_id',
+            'gift_tariff_id',
+            'gift_period_days',
+            'gift_expected_price_kopeks',
+            'gift_origin_callback',
+        )
+    ]
+    encoded = json.dumps([*fields, selection_state], ensure_ascii=False, separators=(',', ':'))
+    return f'{action}:{hashlib.sha256(encoded.encode()).hexdigest()[:24]}'
+
+
+def _bind_gift_actions(
+    keyboard: InlineKeyboardMarkup | None,
+    data: dict,
+    selection_state: str | None,
+) -> InlineKeyboardMarkup | None:
+    if keyboard is None:
+        return None
+    bound = keyboard.model_copy(deep=True)
+    for row in bound.inline_keyboard:
+        for button in row:
+            if button.callback_data in ('gift_confirm', 'gift_cancel'):
+                button.callback_data = _gift_action_callback(button.callback_data, data, selection_state)
+    return bound
 
 
 # ── Render Helpers ──────────────────────────────────────────────────────────
@@ -309,6 +342,9 @@ async def handle_gift_catalog(
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
+    *,
+    expected_data: dict | None = None,
+    expected_state: str | None = None,
 ) -> None:
     """Entry point for native gift catalog and history hub."""
     if isinstance(callback.message, InaccessibleMessage):
@@ -316,8 +352,13 @@ async def handle_gift_catalog(
         return
 
     texts = get_texts(db_user.language)
+    entry_data = await state.get_data() if expected_data is None else expected_data
+    entry_state = await state.get_state() if expected_data is None else expected_state
     sales_enabled = await is_gift_enabled(db)
     has_history = await has_sender_gifts(db, db_user.id)
+    if await state.get_data() != entry_data or await state.get_state() != entry_state:
+        await callback.answer()
+        return
 
     if not sales_enabled:
         if has_history:
@@ -347,7 +388,9 @@ async def handle_gift_catalog(
                     ],
                 ]
             )
-            await callback.message.edit_text(text, reply_markup=back_kb, parse_mode='HTML')
+            await callback.message.edit_text(
+                text, reply_markup=_bind_gift_actions(back_kb, entry_data, entry_state), parse_mode='HTML'
+            )
             await callback.answer()
             return
 
@@ -371,11 +414,16 @@ async def handle_gift_catalog(
                 ],
             ]
         )
-        await callback.message.edit_text(text, reply_markup=back_kb, parse_mode='HTML')
+        await callback.message.edit_text(
+            text, reply_markup=_bind_gift_actions(back_kb, entry_data, entry_state), parse_mode='HTML'
+        )
         await callback.answer()
         return
 
     offers = await list_gift_offers(db, buyer=db_user)
+    if await state.get_data() != entry_data or await state.get_state() != entry_state:
+        await callback.answer()
+        return
     if not offers:
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -401,25 +449,30 @@ async def handle_gift_catalog(
         )
         await callback.message.edit_text(
             texts.t('GIFT_NO_TARIFFS_AVAILABLE', 'В данный момент нет доступных тарифов для подарка.'),
-            reply_markup=back_kb,
+            reply_markup=_bind_gift_actions(back_kb, entry_data, entry_state),
             parse_mode='HTML',
         )
         await callback.answer()
         return
 
-    data = await state.get_data()
-    checkout_id = data.get('gift_checkout_id') or uuid.uuid4().hex
-    origin = data.get('gift_origin_callback') or (
+    checkout_id = entry_data.get('gift_checkout_id') or uuid.uuid4().hex
+    origin = entry_data.get('gift_origin_callback') or (
         callback.data if callback.data != 'subscription_gift' else 'menu_subscription'
     )
-
-    await state.set_state(GiftPurchaseStates.selecting_tariff)
-    await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_origin_callback=origin,
-    )
+    updates = {'gift_checkout_id': checkout_id, 'gift_origin_callback': origin}
+    if not await mutate_fsm_if_current(
+        state,
+        entry_state,
+        entry_data,
+        new_state=GiftPurchaseStates.selecting_tariff,
+        updates=updates,
+    ):
+        await callback.answer()
+        return
+    data = {**entry_data, **updates}
 
     text, keyboard = _render_tariff_catalog(db_user, offers)
+    keyboard = _bind_gift_actions(keyboard, data, GiftPurchaseStates.selecting_tariff.state)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
     await callback.answer()
 
@@ -430,6 +483,9 @@ async def _render_and_show_periods(
     db_user: User,
     db: AsyncSession,
     state: FSMContext,
+    *,
+    expected_data: dict | None = None,
+    expected_state: str | None = None,
 ) -> None:
     """Render and display periods for a selected tariff without mutating callback data."""
     if isinstance(callback.message, InaccessibleMessage):
@@ -437,6 +493,8 @@ async def _render_and_show_periods(
         return
 
     texts = get_texts(db_user.language)
+    entry_data = await state.get_data() if expected_data is None else expected_data
+    entry_state = await state.get_state() if expected_data is None else expected_state
     if not await is_gift_enabled(db):
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
@@ -445,6 +503,9 @@ async def _render_and_show_periods(
         return
 
     offers = await list_gift_offers(db, buyer=db_user)
+    if await state.get_data() != entry_data or await state.get_state() != entry_state:
+        await callback.answer()
+        return
     offer = next((o for o in offers if o.tariff_id == tariff_id), None)
     if offer is None or not offer.quotes:
         back_kb = InlineKeyboardMarkup(
@@ -464,15 +525,21 @@ async def _render_and_show_periods(
         await callback.answer()
         return
 
-    data = await state.get_data()
-    checkout_id = data.get('gift_checkout_id') or uuid.uuid4().hex
-    await state.set_state(GiftPurchaseStates.selecting_period)
-    await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_tariff_id=tariff_id,
-    )
+    checkout_id = entry_data.get('gift_checkout_id') or uuid.uuid4().hex
+    updates = {'gift_checkout_id': checkout_id, 'gift_tariff_id': tariff_id}
+    if not await mutate_fsm_if_current(
+        state,
+        entry_state,
+        entry_data,
+        new_state=GiftPurchaseStates.selecting_period,
+        updates=updates,
+    ):
+        await callback.answer()
+        return
+    data = {**entry_data, **updates}
 
     text, keyboard = _render_period_selection(db_user, offer)
+    keyboard = _bind_gift_actions(keyboard, data, GiftPurchaseStates.selecting_period.state)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
     await callback.answer()
 
@@ -535,6 +602,17 @@ async def handle_gift_period_select(
         await callback.answer(texts.t('GIFT_INVALID_SELECTION', 'Некорректные параметры выбора.'), show_alert=True)
         return
 
+    data = await state.get_data()
+    selection_state = await state.get_state()
+    saved_cart = await user_cart_service.get_user_cart(db_user.id)
+    original_checkout = data.get('gift_checkout_id')
+    matching_cart = bool(
+        original_checkout
+        and saved_cart
+        and saved_cart.get('cart_mode') == 'gift_purchase'
+        and (saved_cart.get('gift_checkout_id') or saved_cart.get('idempotency_key')) == original_checkout
+    )
+
     try:
         quote = await quote_gift_purchase(db, buyer=db_user, tariff_id=tariff_id, period_days=period_days)
     except GiftFeatureDisabledError:
@@ -584,18 +662,62 @@ async def handle_gift_period_select(
         )
         return
 
-    data = await state.get_data()
-    checkout_id = data.get('gift_checkout_id') or uuid.uuid4().hex
-
-    await state.set_state(GiftPurchaseStates.confirming_purchase)
-    await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_tariff_id=tariff_id,
-        gift_period_days=period_days,
-        gift_expected_price_kopeks=quote.final_price_kopeks,
+    if await state.get_data() != data or await state.get_state() != selection_state:
+        await callback.answer()
+        return
+    previous_selection = data.get('gift_checkout_selection')
+    if previous_selection is None and matching_cart:
+        previous_selection = [saved_cart.get('tariff_id'), saved_cart.get('period_days')]
+    chosen_selection = [tariff_id, period_days]
+    unused_checkout = (
+        previous_selection is None
+        and not data.get('gift_period_days')
+        and data.get('gift_expected_price_kopeks') is None
+    )
+    checkout_id = (
+        original_checkout
+        if original_checkout and (previous_selection == chosen_selection or unused_checkout)
+        else uuid.uuid4().hex
     )
 
+    if matching_cart and (
+        checkout_id != original_checkout or quote.final_price_kopeks != saved_cart.get('total_price')
+    ):
+        # Retire the replaced selection, or require renewed consent to a fresh
+        # price of the same gift. Never touch a newer saved revision.
+        if checkout_id != original_checkout:
+            retired = await user_cart_service.delete_processed_cart(db_user.id, saved_cart)
+        else:
+            retired = await user_cart_service.update_processed_global_cart(
+                db_user.id, saved_cart, {}, revoke_intent=True
+            )
+        if not retired:
+            await callback.answer(
+                texts.t('GIFT_SELECTION_EXPIRED', '❌ Этот выбор устарел. Откройте подарок заново.'),
+                show_alert=True,
+            )
+            return
+
+    updates = {
+        'gift_checkout_id': checkout_id,
+        'gift_checkout_selection': chosen_selection,
+        'gift_tariff_id': tariff_id,
+        'gift_period_days': period_days,
+        'gift_expected_price_kopeks': quote.final_price_kopeks,
+    }
+    if not await mutate_fsm_if_current(
+        state,
+        selection_state,
+        data,
+        new_state=GiftPurchaseStates.confirming_purchase,
+        updates=updates,
+    ):
+        await callback.answer()
+        return
+    data = {**data, **updates}
+
     text, keyboard = _render_confirmation_summary(db_user, quote)
+    keyboard = _bind_gift_actions(keyboard, data, GiftPurchaseStates.confirming_purchase.state)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
     await callback.answer()
 
@@ -618,12 +740,28 @@ async def handle_gift_back_periods(
 ) -> None:
     """Navigate back to period selection for current tariff."""
     data = await state.get_data()
+    selection_state = await state.get_state()
     tariff_id = data.get('gift_tariff_id')
     if tariff_id is None:
-        await handle_gift_catalog(callback, db_user, db, state)
+        await handle_gift_catalog(
+            callback,
+            db_user,
+            db,
+            state,
+            expected_data=data,
+            expected_state=selection_state,
+        )
         return
 
-    await _render_and_show_periods(callback, tariff_id, db_user, db, state)
+    await _render_and_show_periods(
+        callback,
+        tariff_id,
+        db_user,
+        db,
+        state,
+        expected_data=data,
+        expected_state=selection_state,
+    )
 
 
 async def handle_gift_cancel(
@@ -637,15 +775,27 @@ async def handle_gift_cancel(
         await callback.answer()
         return
 
-    # If user has a saved gift cart, clear it and top-up intent
-    cart_data = await user_cart_service.get_user_cart(db_user.id)
-    if cart_data and cart_data.get('cart_mode') == 'gift_purchase':
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
-
     data = await state.get_data()
+    selection_state = await state.get_state()
+    if callback.data != _gift_action_callback('gift_cancel', data, selection_state):
+        await callback.answer(
+            get_texts(db_user.language).t('GIFT_SELECTION_EXPIRED', '❌ Этот выбор устарел. Откройте подарок заново.'),
+            show_alert=True,
+        )
+        return
+    cart_data = await user_cart_service.get_user_cart(db_user.id)
+    if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
+        await callback.answer()
+        return
+    checkout_id = data.get('gift_checkout_id')
+    if (
+        checkout_id
+        and cart_data
+        and cart_data.get('cart_mode') == 'gift_purchase'
+        and (cart_data.get('gift_checkout_id') or cart_data.get('idempotency_key')) == checkout_id
+    ):
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
     origin = data.get('gift_origin_callback', 'menu_subscription')
-    await state.clear()
 
     if origin == 'my_subscriptions' and settings.is_multi_tariff_enabled():
         from app.handlers.subscription.my_subscriptions import show_my_subscriptions
@@ -668,6 +818,13 @@ async def handle_gift_confirm(
 
     texts = get_texts(db_user.language)
     data = await state.get_data()
+    selection_state = await state.get_state()
+    if callback.data != _gift_action_callback('gift_confirm', data, selection_state):
+        await callback.answer(
+            texts.t('GIFT_SELECTION_EXPIRED', '❌ Этот выбор устарел. Откройте подарок заново.'),
+            show_alert=True,
+        )
+        return
     tariff_id = data.get('gift_tariff_id')
     period_days = data.get('gift_period_days')
     expected_price_kopeks = data.get('gift_expected_price_kopeks')
@@ -682,7 +839,19 @@ async def handle_gift_confirm(
     checkout_id = data.get('gift_checkout_id')
     if not checkout_id:
         checkout_id = uuid.uuid4().hex
-        await state.update_data(gift_checkout_id=checkout_id)
+        if not await mutate_fsm_if_current(state, selection_state, data, updates={'gift_checkout_id': checkout_id}):
+            await callback.answer()
+            return
+        data = {**data, 'gift_checkout_id': checkout_id}
+
+    original_cart = await user_cart_service.get_user_cart(db_user.id)
+    saved_cart = original_cart
+    if not (
+        saved_cart
+        and saved_cart.get('cart_mode') == 'gift_purchase'
+        and (saved_cart.get('gift_checkout_id') or saved_cart.get('idempotency_key')) == checkout_id
+    ):
+        saved_cart = None
 
     # Preflight claim channels before debiting
     bot_username, cabinet_url = await resolve_gift_claim_channel(bot=callback.bot)
@@ -707,11 +876,21 @@ async def handle_gift_confirm(
             source='bot',
         )
     except GiftPriceChangedError as err:
-        # Update FSM with fresh price, retain checkout for re-confirmation
-        await state.update_data(
-            gift_expected_price_kopeks=err.fresh_quote.final_price_kopeks,
-        )
+        # A completed old request must not change a newer selection.
+        if not await mutate_fsm_if_current(
+            state,
+            selection_state,
+            data,
+            updates={'gift_expected_price_kopeks': err.fresh_quote.final_price_kopeks},
+        ):
+            await callback.answer()
+            return
         text, keyboard = _render_confirmation_summary(db_user, err.fresh_quote)
+        keyboard = _bind_gift_actions(
+            keyboard,
+            {**data, 'gift_expected_price_kopeks': err.fresh_quote.final_price_kopeks},
+            selection_state,
+        )
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
         await callback.answer(
             texts.t(
@@ -734,7 +913,10 @@ async def handle_gift_confirm(
             'return_to_cart': True,
             'user_id': db_user.id,
         }
-        saved = await user_cart_service.save_user_cart(db_user.id, cart_data)
+        if await state.get_data() != data or await state.get_state() != selection_state:
+            await callback.answer()
+            return
+        saved = await user_cart_service.save_gift_cart_if_current(db_user.id, cart_data, original_cart)
         if not saved:
             req_str = texts.format_price(err.required_kopeks)
             avail_str = texts.format_price(err.available_kopeks)
@@ -773,21 +955,27 @@ async def handle_gift_confirm(
         await callback.answer()
         return
     except GiftPurchaseRestrictedError:
-        await state.clear()
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
+            await callback.answer()
+            return
         await callback.answer(
             texts.t('GIFT_PURCHASE_RESTRICTED_ERROR', '❌ Покупка подписок недоступна для вашего аккаунта.'),
             show_alert=True,
         )
         return
     except GiftFeatureDisabledError:
-        await state.clear()
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
+            await callback.answer()
+            return
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
             show_alert=True,
         )
         return
     except GiftTariffUnavailableError:
-        await state.clear()
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
+            await callback.answer()
+            return
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -800,12 +988,14 @@ async def handle_gift_confirm(
         )
         await callback.message.edit_text(
             texts.t('GIFT_TARIFF_UNAVAILABLE', 'Выбранный тариф недоступен для подарка.'),
-            reply_markup=back_kb,
+            reply_markup=_bind_gift_actions(back_kb, {}, None),
         )
         await callback.answer()
         return
     except GiftPeriodUnavailableError:
-        await state.clear()
+        if not await mutate_fsm_if_current(state, selection_state, data, clear=True):
+            await callback.answer()
+            return
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -818,7 +1008,7 @@ async def handle_gift_confirm(
         )
         await callback.message.edit_text(
             texts.t('GIFT_PERIOD_UNAVAILABLE', 'Выбранный период недоступен.'),
-            reply_markup=back_kb,
+            reply_markup=_bind_gift_actions(back_kb, {}, None),
         )
         await callback.answer()
         return
@@ -837,12 +1027,13 @@ async def handle_gift_confirm(
         )
         return
 
-    # Clear gift cart and intent if present
-    cart_data = await user_cart_service.get_user_cart(db_user.id)
-    if cart_data and cart_data.get('cart_mode') == 'gift_purchase':
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+    # Clear only the saved checkout read before purchasing, never a newer gift.
+    if saved_cart:
+        await user_cart_service.delete_processed_cart(db_user.id, saved_cart)
 
+    if await state.get_data() != data or await state.get_state() != selection_state:
+        await callback.answer()
+        return
     text, keyboard = build_gift_result_presentation(
         language=db_user.language,
         purchase_result=result,
@@ -851,7 +1042,9 @@ async def handle_gift_confirm(
     )
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
     await callback.answer()
-    await state.clear()
+    # Preserve retry data if delivery fails, and a new selection if delivery
+    # yields to another callback before the completed checkout is cleared.
+    await mutate_fsm_if_current(state, selection_state, data, clear=True)
 
 
 async def handle_return_to_gift_cart(
@@ -866,6 +1059,8 @@ async def handle_return_to_gift_cart(
         return
 
     texts = get_texts(db_user.language)
+    selection_before_quote = await state.get_data()
+    state_before_quote = await state.get_state()
     cart_data = await user_cart_service.get_user_cart(db_user.id)
     if not cart_data:
         await callback.answer(
@@ -875,8 +1070,10 @@ async def handle_return_to_gift_cart(
         return
 
     if cart_data.get('cart_mode') != 'gift_purchase' or cart_data.get('user_id') != db_user.id:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        # A subscription cart is valid in its own flow; an old gift button must
+        # not erase it. Only malformed gift data itself is eligible for cleanup.
+        if cart_data.get('cart_mode') == 'gift_purchase':
+            await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await callback.answer(
             texts.t('GIFT_CART_INVALID', '❌ Сохраненный подарок недоступен или некорректен.'),
             show_alert=True,
@@ -889,8 +1086,7 @@ async def handle_return_to_gift_cart(
     saved_total_price = cart_data.get('total_price')
 
     if not tariff_id or not period_days:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
         await callback.answer(
             texts.t('GIFT_CART_INVALID', '❌ Сохраненный подарок недоступен или некорректен.'),
             show_alert=True,
@@ -926,27 +1122,30 @@ async def handle_return_to_gift_cart(
             cabinet_url=cabinet_url,
         )
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
-        await state.clear()
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         await callback.answer()
         return
 
     try:
         quote = await quote_gift_purchase(db, buyer=db_user, tariff_id=tariff_id, period_days=period_days)
     except GiftFeatureDisabledError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
-        await state.clear()
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         await callback.answer(
             texts.t('GIFT_FEATURE_DISABLED', 'Покупка подарков временно недоступна.'),
             show_alert=True,
         )
         return
     except GiftTariffUnavailableError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
-        await state.clear()
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -959,14 +1158,15 @@ async def handle_return_to_gift_cart(
         )
         await callback.message.edit_text(
             texts.t('GIFT_TARIFF_UNAVAILABLE', 'Выбранный тариф недоступен для подарка.'),
-            reply_markup=back_kb,
+            reply_markup=_bind_gift_actions(back_kb, {}, None),
         )
         await callback.answer()
         return
     except GiftPeriodUnavailableError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
-        await state.clear()
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         back_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -979,14 +1179,15 @@ async def handle_return_to_gift_cart(
         )
         await callback.message.edit_text(
             texts.t('GIFT_PERIOD_UNAVAILABLE', 'Выбранный период недоступен.'),
-            reply_markup=back_kb,
+            reply_markup=_bind_gift_actions(back_kb, {}, None),
         )
         await callback.answer()
         return
     except GiftPurchaseRestrictedError:
-        await user_cart_service.delete_user_cart(db_user.id)
-        await user_cart_service.clear_topup_intent(db_user.id)
-        await state.clear()
+        await user_cart_service.delete_processed_cart(db_user.id, cart_data)
+        if not await mutate_fsm_if_current(state, state_before_quote, selection_before_quote, clear=True):
+            await callback.answer()
+            return
         await callback.answer(
             texts.t('GIFT_PURCHASE_RESTRICTED_ERROR', '❌ Покупка подписок недоступна для вашего аккаунта.'),
             show_alert=True,
@@ -1000,20 +1201,71 @@ async def handle_return_to_gift_cart(
         )
         return
 
-    # Check if balance is still insufficient
-    if db_user.balance_kopeks < quote.final_price_kopeks:
-        new_missing = quote.final_price_kopeks - db_user.balance_kopeks
-        cart_data['total_price'] = quote.final_price_kopeks
-        cart_data['missing_amount'] = new_missing
-        await user_cart_service.save_user_cart(db_user.id, cart_data)
-
-        await state.set_state(GiftPurchaseStates.confirming_purchase)
-        await state.update_data(
-            gift_checkout_id=checkout_id,
-            gift_tariff_id=tariff_id,
-            gift_period_days=period_days,
-            gift_expected_price_kopeks=quote.final_price_kopeks,
+    # A refreshed quote is not consent to spend at its new price. This also
+    # covers carts already repriced/revoked by the automatic purchase path.
+    price_changed = quote.final_price_kopeks != saved_total_price
+    requires_confirmation = price_changed or not cart_data.get('return_to_cart')
+    if db_user.balance_kopeks < quote.final_price_kopeks or requires_confirmation:
+        new_missing = max(0, quote.final_price_kopeks - db_user.balance_kopeks)
+        # Requoting may yield while another callback selects a new checkout.
+        # Do not restore the old FSM selection or republish its topup permission.
+        if await state.get_data() != selection_before_quote or await state.get_state() != state_before_quote:
+            await callback.answer()
+            return
+        updated = await user_cart_service.update_processed_global_cart(
+            db_user.id,
+            cart_data,
+            {'total_price': quote.final_price_kopeks, 'missing_amount': new_missing},
+            revoke_intent=requires_confirmation,
         )
+        if not updated:
+            await callback.answer(
+                texts.t('GIFT_CART_EXPIRED', '❌ Срок действия сохраненной корзины подарка истек.'),
+                show_alert=True,
+            )
+            return
+
+        if not await mutate_fsm_if_current(
+            state,
+            state_before_quote,
+            selection_before_quote,
+            new_state=GiftPurchaseStates.confirming_purchase,
+            updates={
+                'gift_checkout_id': checkout_id,
+                'gift_checkout_selection': [tariff_id, period_days],
+                'gift_tariff_id': tariff_id,
+                'gift_period_days': period_days,
+                'gift_expected_price_kopeks': quote.final_price_kopeks,
+            },
+        ):
+            await callback.answer()
+            return
+
+        if requires_confirmation:
+            text, keyboard = _render_confirmation_summary(db_user, quote)
+            keyboard = _bind_gift_actions(
+                keyboard,
+                {
+                    **selection_before_quote,
+                    'gift_checkout_id': checkout_id,
+                    'gift_tariff_id': tariff_id,
+                    'gift_period_days': period_days,
+                    'gift_expected_price_kopeks': quote.final_price_kopeks,
+                },
+                GiftPurchaseStates.confirming_purchase.state,
+            )
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
+            if price_changed:
+                await callback.answer(
+                    texts.t(
+                        'GIFT_PRICE_CHANGED_ERROR',
+                        '⚠️ Цена на выбранный тариф изменилась. Пожалуйста, подтвердите покупку заново.',
+                    ),
+                    show_alert=True,
+                )
+            else:
+                await callback.answer()
+            return
 
         req_str = texts.format_price(quote.final_price_kopeks)
         bal_str = texts.format_price(db_user.balance_kopeks)
@@ -1043,16 +1295,42 @@ async def handle_return_to_gift_cart(
         await callback.answer()
         return
 
-    # Balance is sufficient -> render confirmation summary
-    await state.set_state(GiftPurchaseStates.confirming_purchase)
-    await state.update_data(
-        gift_checkout_id=checkout_id,
-        gift_tariff_id=tariff_id,
-        gift_period_days=period_days,
-        gift_expected_price_kopeks=quote.final_price_kopeks,
-    )
+    # Balance is sufficient -> render confirmation summary only for the cart
+    # that was read before the quote, not a checkout replaced while awaiting it.
+    if await user_cart_service.get_user_cart(db_user.id) != cart_data:
+        await callback.answer(
+            texts.t('GIFT_CART_EXPIRED', '❌ Срок действия сохраненной корзины подарка истек.'),
+            show_alert=True,
+        )
+        return
+    if not await mutate_fsm_if_current(
+        state,
+        state_before_quote,
+        selection_before_quote,
+        new_state=GiftPurchaseStates.confirming_purchase,
+        updates={
+            'gift_checkout_id': checkout_id,
+            'gift_checkout_selection': [tariff_id, period_days],
+            'gift_tariff_id': tariff_id,
+            'gift_period_days': period_days,
+            'gift_expected_price_kopeks': quote.final_price_kopeks,
+        },
+    ):
+        await callback.answer()
+        return
 
     text, keyboard = _render_confirmation_summary(db_user, quote)
+    keyboard = _bind_gift_actions(
+        keyboard,
+        {
+            **selection_before_quote,
+            'gift_checkout_id': checkout_id,
+            'gift_tariff_id': tariff_id,
+            'gift_period_days': period_days,
+            'gift_expected_price_kopeks': quote.final_price_kopeks,
+        },
+        GiftPurchaseStates.confirming_purchase.state,
+    )
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')
 
     if saved_total_price is not None and quote.final_price_kopeks != saved_total_price:
@@ -1575,7 +1853,7 @@ def register_gift_handlers(dp: Dispatcher) -> None:
     dp.callback_query.register(handle_gift_period_select, F.data.startswith('gift_period:'))
     dp.callback_query.register(handle_gift_back_tariffs, F.data == 'gift_back_tariffs')
     dp.callback_query.register(handle_gift_back_periods, F.data == 'gift_back_periods')
-    dp.callback_query.register(handle_gift_cancel, F.data == 'gift_cancel')
-    dp.callback_query.register(handle_gift_confirm, F.data == 'gift_confirm')
+    dp.callback_query.register(handle_gift_cancel, (F.data == 'gift_cancel') | F.data.startswith('gift_cancel:'))
+    dp.callback_query.register(handle_gift_confirm, (F.data == 'gift_confirm') | F.data.startswith('gift_confirm:'))
     dp.callback_query.register(handle_return_to_gift_cart, F.data == 'return_to_gift_cart')
     dp.message.register(handle_gift_code_input, GiftActivationStates.waiting_for_code)

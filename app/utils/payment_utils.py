@@ -196,18 +196,6 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
-    if settings.is_paypear_enabled():
-        paypear_name = settings.get_paypear_display_name()
-        methods.append(
-            {
-                'id': 'paypear',
-                'name': paypear_name,
-                'icon': '💳',
-                'description': f'через {paypear_name}',
-                'callback': 'topup_paypear',
-            }
-        )
-
     if settings.is_rollypay_enabled():
         rollypay_name = settings.get_rollypay_display_name()
         methods.append(
@@ -313,6 +301,18 @@ def get_available_payment_methods() -> list[dict[str, str]]:
             }
         )
 
+    if settings.is_cispay_crypto_enabled():
+        name = settings.get_cispay_crypto_display_name()
+        methods.append(
+            {
+                'id': 'cispay_crypto',
+                'name': name,
+                'icon': '🪙',
+                'description': f'через {name}',
+                'callback': 'topup_cispay_crypto',
+            }
+        )
+
     if settings.is_cispay_sbp_enabled():
         sbp_name = settings.get_cispay_sbp_display_name()
         methods.append(
@@ -371,6 +371,19 @@ def get_available_payment_methods() -> list[dict[str, str]]:
                     'icon': '💳',
                     'description': f'через {cashera_name}',
                     'callback': 'topup_cashera',
+                }
+            )
+
+    if settings.is_anore_enabled():
+        for method in settings.get_anore_methods():
+            name = f'{settings.get_anore_display_name()} — { {"sbp": "СБП", "card": "Карта", "yoomoney": "ЮMoney", "crypto": "Криптовалюта"}[method] }'
+            methods.append(
+                {
+                    'id': f'anore_{method}',
+                    'name': name,
+                    'icon': '💳',
+                    'description': f'через {name}',
+                    'callback': f'topup_anore_{method}',
                 }
             )
 
@@ -672,8 +685,6 @@ def is_payment_method_available(method_id: str) -> bool:
         return settings.is_riopay_enabled()
     if method_id == 'severpay':
         return settings.is_severpay_enabled()
-    if method_id == 'paypear':
-        return settings.is_paypear_enabled()
     if method_id == 'rollypay':
         return settings.is_rollypay_enabled()
     if method_id == 'overpay':
@@ -700,8 +711,14 @@ def is_payment_method_available(method_id: str) -> bool:
         )
     if method_id == 'cispay_sbp':
         return settings.is_cispay_sbp_enabled()
+    if method_id == 'cispay_crypto':
+        return settings.is_cispay_crypto_enabled()
     if method_id == 'cispay_card':
         return settings.is_cispay_card_enabled()
+    if method_id == 'anore':
+        return settings.is_anore_enabled()
+    if method_id.startswith('anore_'):
+        return settings.is_anore_enabled() and method_id[6:] in settings.get_anore_methods()
     if method_id == 'tabpay':
         return settings.is_tabpay_enabled()
     if method_id == 'tabpay_sbp':
@@ -752,7 +769,6 @@ def get_payment_method_status() -> dict[str, bool]:
         'kassa_ai': settings.is_kassa_ai_enabled(),
         'riopay': settings.is_riopay_enabled(),
         'severpay': settings.is_severpay_enabled(),
-        'paypear': settings.is_paypear_enabled(),
         'rollypay': settings.is_rollypay_enabled(),
         'overpay': settings.is_overpay_enabled(),
         'aurapay': settings.is_aurapay_enabled(),
@@ -804,8 +820,6 @@ def get_enabled_payment_methods_count() -> int:
     if settings.is_riopay_enabled():
         count += 1
     if settings.is_severpay_enabled():
-        count += 1
-    if settings.is_paypear_enabled():
         count += 1
     if settings.is_rollypay_enabled():
         count += 1

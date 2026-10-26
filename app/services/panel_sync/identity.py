@@ -260,7 +260,7 @@ async def resolve_panel_identity(
         # отсутствие аккаунта, и уход в создание плодил бы дубли.
         panel_user = await api.get_user_by_id(panel_user_id)
         if panel_user is not None:
-            return PanelIdentity(panel_user=panel_user, source=source)
+            return PanelIdentity(panel_user=panel_user, source=source, dead_recorded_ids=tuple(dead_recorded))
         logger.warning(
             '⚠️ Записанный панельный id не найден в панели — ищем другими ключами',
             subscription_id=getattr(subscription, 'id', None),

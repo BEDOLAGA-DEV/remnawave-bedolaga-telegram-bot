@@ -680,3 +680,126 @@ async def test_charge_returns_a_zeroed_tariff_subscription_to_the_tariff_limit(m
 
         await db.refresh(subscription)
         assert subscription.traffic_limit_gb == 50
+
+
+async def test_signed_webhook_lifecycle_and_invoice_ledger_are_separate(monkeypatch):
+    """TG-096: activated is lifecycle; only a confirmed invoice grants paid days.
+
+    Official SDK README documents type=4 as lifecycle, type=1 success is
+    demonstrated in its WebhookTest. No invoice is invented for activation.
+    Exercise the mounted HTTP route, signature, dispatch, real CRUD and ledger.
+    """
+    import hashlib
+    import hmac
+    import json
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import select
+
+    from app.database.crud import transaction as transaction_crud
+    from app.services.subscription_service import SubscriptionService
+    from app.webserver import payments
+
+    # Isolate network/notifications; retain payment validation, locks and ledger.
+    monkeypatch.setattr(SubscriptionService, 'update_remnawave_user', AsyncMock())
+    monkeypatch.setattr(transaction_crud, 'emit_transaction_side_effects', AsyncMock())
+    monkeypatch.setattr(lava_module.LavaPaymentMixin, '_notify_lava_recurring', AsyncMock())
+    for name in dir(type(settings)):
+        if name.startswith('is_') and name.endswith('_configured'):
+            monkeypatch.setattr(type(settings), name, lambda self: False)
+    monkeypatch.setattr(type(settings), 'is_lava_configured', lambda self: True)
+    monkeypatch.setattr(settings, 'LAVA_WEBHOOK_SECRET', 'synthetic-webhook-secret')
+    monkeypatch.setattr(settings, 'LAVA_WEBHOOK_PATH', '/lava-webhook')
+    monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', False)
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        user, tariff, subscription = await _seed(db)
+        agent, service = _agent(monkeypatch)
+        created = await agent.create_lava_recurrent_subscription(
+            db, user_id=user.id, subscription=subscription, tariff=tariff
+        )
+        record = await db.get(LavaSubscription, created['local_id'])
+        order_id = record.order_id
+        await db.refresh(subscription)
+        original_end = subscription.end_date
+
+        async def get_db():
+            yield db
+
+        monkeypatch.setattr(payments, 'get_db', get_db)
+        application = FastAPI()
+        application.include_router(payments.create_payment_router(SimpleNamespace(), agent))
+        async with AsyncClient(transport=ASGITransport(app=application), base_url='https://bot.example') as client:
+
+            async def send(payload, *, valid_signature=True):
+                body = json.dumps(payload).encode()
+                signature = hmac.new(b'synthetic-webhook-secret', body, hashlib.sha256).hexdigest()
+                response = await client.post(
+                    '/lava-webhook',
+                    content=body,
+                    headers={'Authorization': signature if valid_signature else 'invalid-signature'},
+                )
+                assert response.status_code == (200 if valid_signature else 400)
+                await db.refresh(subscription)
+                await db.refresh(record)
+                await db.refresh(user)
+
+            activation = {'type': 4, 'status': 'activated', 'order_id': order_id}
+            charge = {
+                'type': 1,
+                'invoice_id': 'masked-charge-1',
+                'status': 'success',
+                'order_id': order_id,
+                'amount': '100.00',
+                'credited': '97.00',
+                'pay_time': '2026-10-24 12:00:00',
+                'pay_service': 'card',
+                'payer_details': None,
+                'custom_fields': None,
+            }
+            await send(activation)
+            await send(activation)
+            # Even an invoice-shaped lifecycle event is not payment evidence.
+            await send({**charge, **activation})
+            await send(charge, valid_signature=False)
+            await send({**charge, 'invoice_id': None})
+            assert subscription.end_date == original_end
+            assert record.charges_success == 0
+            assert list((await db.scalars(select(Transaction))).all()) == []
+
+            await send(charge)
+            await send(charge)
+            await send(activation)
+            assert subscription.end_date == original_end + timedelta(days=30)
+            assert record.status == 'ACTIVE'
+            assert record.charges_success == 1
+            rows = list((await db.scalars(select(Transaction))).all())
+            assert [(row.external_id, row.amount_kopeks) for row in rows] == [('masked-charge-1', -10000)]
+
+            # A later charge has its own invoice and may have a changed price.
+            await send({**charge, 'invoice_id': 'masked-charge-2', 'amount': '125.00'})
+            await send(charge)  # late redelivery must consult the entire ledger
+            assert subscription.end_date == original_end + timedelta(days=60)
+            assert record.charges_success == 2
+            assert record.amount_kopeks == 12500
+            rows = list((await db.scalars(select(Transaction).order_by(Transaction.id))).all())
+            assert [(row.external_id, row.amount_kopeks) for row in rows] == [
+                ('masked-charge-1', -10000),
+                ('masked-charge-2', -12500),
+            ]
+
+            await agent.cancel_lava_recurrent_subscription(db, local_id=record.id)
+            await send(activation)
+            await send({**charge, 'invoice_id': 'masked-charge-3'})
+            await send({**charge, 'invoice_id': 'masked-charge-3'})
+            assert record.status == 'CANCELLED'
+            assert record.charges_success == 3
+            assert subscription.end_date == original_end + timedelta(days=90)
+            assert user.balance_kopeks == 0
+            rows = list((await db.scalars(select(Transaction).order_by(Transaction.id))).all())
+            assert [(row.external_id, row.amount_kopeks) for row in rows] == [
+                ('masked-charge-1', -10000),
+                ('masked-charge-2', -12500),
+                ('masked-charge-3', -10000),
+            ]

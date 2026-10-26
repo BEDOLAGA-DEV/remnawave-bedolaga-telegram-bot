@@ -85,7 +85,7 @@ async def list_subscriptions(
 ) -> SubscriptionsListResponse:
     """List all user subscriptions. Returns all subscriptions regardless of multi-tariff mode."""
     subscriptions = await get_all_subscriptions_by_user_id(db, user.id)
-    items = [_subscription_to_list_item(sub) for sub in subscriptions]
+    items = [_subscription_to_list_item(sub) for sub in subscriptions if not sub.is_pending_trial]
     return SubscriptionsListResponse(
         subscriptions=items,
         multi_tariff_enabled=settings.is_multi_tariff_enabled(),
@@ -100,7 +100,7 @@ async def get_subscription_detail(
 ) -> SubscriptionListItem:
     """Get specific subscription details with ownership check."""
     subscription = await get_subscription_by_id_for_user(db, subscription_id, user.id)
-    if not subscription:
+    if not subscription or subscription.is_pending_trial:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Subscription not found',

@@ -22,6 +22,7 @@ from app.database.models import Base, Subscription, TrafficPurchase, Transaction
 from app.services import subscription_auto_purchase_service as auto_service
 from app.services.user_cart_service import UserCartService
 from app.utils.pricing_utils import calculate_prorated_price
+from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 from tests.fixtures.sqlite_memory import memory_session
 
 
@@ -32,7 +33,7 @@ DEVICE_PRICE = 1000
 BALANCE = 100_000
 
 
-class _MockRedis:
+class _MockRedis(SequentialPipelineMixin):
     def __init__(self):
         self.storage: dict[str, str] = {}
 
@@ -76,6 +77,15 @@ def cart_service(monkeypatch):
     service = UserCartService()
     service._redis_client = _MockRedis()
     service._initialized = True
+
+    # This suite tests purchase/dispatch, with a sequential Redis boundary.
+    # Atomic Lua semantics and replacement races run against real Valkey in
+    # test_cart_cleanup_redis.py; do not emulate the script in this fake.
+    async def completed_cart_cleanup(user_id, processed):
+        assert await service.get_user_cart(user_id) == processed
+        return await service.delete_user_cart(user_id)
+
+    service.delete_processed_cart = AsyncMock(side_effect=completed_cart_cleanup)
     monkeypatch.setattr(auto_service, 'user_cart_service', service)
     return service
 

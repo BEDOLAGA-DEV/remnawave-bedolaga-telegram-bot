@@ -153,10 +153,11 @@ async def test_back_target_survives_a_redraw_of_the_custom_screen(monkeypatch):
     возвращал на ТОТ ЖЕ экран, попутно сбрасывая уже выбранные дни.
     """
     captured = {}
+    keyboard = m.get_custom_tariff_keyboard
 
     def _fake_keyboard(**kwargs):
         captured.update(kwargs)
-        return 'KB'
+        return keyboard(**kwargs)
 
     tariff = _period_tariff()
     tariff.can_purchase_custom_days = MagicMock(return_value=True)
@@ -166,6 +167,7 @@ async def test_back_target_survives_a_redraw_of_the_custom_screen(monkeypatch):
     monkeypatch.setattr(m, 'get_tariff_by_id', AsyncMock(return_value=tariff))
     monkeypatch.setattr(m, 'get_custom_tariff_keyboard', _fake_keyboard)
     monkeypatch.setattr(m, 'format_custom_tariff_preview', AsyncMock(return_value='PREVIEW'))
+    monkeypatch.setattr(m, '_resolve_purchase_subscription', AsyncMock(return_value=None))
     # Скидки к сути теста не относятся, а на MagicMock-юзере они лезут в даты.
     monkeypatch.setattr(m, '_get_user_period_discount', MagicMock(return_value=(0, 0, 0)))
 

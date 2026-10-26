@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+from contextlib import aclosing
 from decimal import Decimal, InvalidOperation
 
 import structlog
@@ -73,31 +74,15 @@ def _create_cors_response() -> Response:
     )
 
 
-def _resolve_proxied_client_ip(request: Request) -> str | None:
-    """Адрес отправителя вебхука без доверия к клиентским заголовкам.
-
-    Те же правила, что у ЮKassa (``resolve_webhook_client_ip``): публичный peer — он и
-    есть отправитель; за локальным/доверенным прокси читается только ``X-Forwarded-For``
-    справа налево, ``X-Real-IP`` — лишь когда ``X-Forwarded-For`` нет; ``Cf-Connecting-Ip``
-    — только от peer из сетей Cloudflare; неизвестный peer → ``None``.
-    """
-    client_ip = yookassa_webhook_module.resolve_webhook_client_ip(
-        request.client.host if request.client else None,
-        forwarded_for=request.headers.get('x-forwarded-for'),
-        real_ip=request.headers.get('x-real-ip'),
-        cf_connecting_ip=request.headers.get('cf-connecting-ip'),
-    )
-    return str(client_ip) if client_ip is not None else None
-
-
 def _verify_mulenpay_signature(request: Request, raw_body: bytes) -> bool:
     """Verify a body-level MulenPay signature when the callback carries one.
 
     MulenPay payment creation and some callback variants use a SHA1 ``sign``
     field computed over the JSON values plus the secret key.  A callback with a
     present but invalid ``sign`` must stay fail-closed.  A callback without
-    ``sign`` returns ``False`` here; the route may only accept it after a
-    separate API-key-authenticated provider re-check.
+    ``sign`` returns ``False`` here. This legacy checksum never authorizes
+    credit: both signed and unsigned callbacks require a separate
+    API-key-authenticated provider re-check.
 
     ``request`` is accepted (and unused) to keep the call-site stable.
     """
@@ -254,7 +239,7 @@ def _looks_like_unsigned_mulenpay_callback(payload: object) -> bool:
 
 
 async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, payload: dict) -> str:
-    """Treat an unsigned callback only as a trigger for authenticated API verification."""
+    """Treat any callback only as a trigger for authenticated API verification."""
     try:
         provider_id = int(payload.get('id'))
     except (TypeError, ValueError):
@@ -274,7 +259,7 @@ async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, p
                 local_payment = await get_mulenpay_payment_by_mulen_id(db, provider_id)
             except Exception as error:
                 logger.warning(
-                    'MulenPay webhook без sign: не удалось проверить локальный платёж',
+                    'MulenPay webhook: не удалось проверить локальный платёж',
                     error_type=type(error).__name__,
                 )
                 return _MULENPAY_UNSIGNED_RETRY
@@ -296,7 +281,7 @@ async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, p
                 response = await provider.get_payment(provider_id)
             except Exception as error:
                 logger.warning(
-                    'MulenPay webhook без sign: API-проверка временно недоступна',
+                    'MulenPay webhook: API-проверка временно недоступна',
                     error_type=type(error).__name__,
                 )
                 return _MULENPAY_UNSIGNED_RETRY
@@ -311,14 +296,14 @@ async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, p
                 remote_payment,
             )
             if verified_payload is None:
-                logger.warning('MulenPay webhook без sign не прошёл проверку id/суммы/валюты через API')
+                logger.warning('MulenPay webhook не прошёл проверку id/суммы/валюты через API')
                 return _MULENPAY_UNSIGNED_REJECTED
 
             try:
                 success = await payment_service.process_mulenpay_callback(db, verified_payload)
             except Exception as error:
                 logger.exception(
-                    'MulenPay webhook без sign: ошибка обработки подтверждённого платежа',
+                    'MulenPay webhook: ошибка обработки подтверждённого платежа',
                     error_type=type(error).__name__,
                 )
                 return _MULENPAY_UNSIGNED_FAILED
@@ -375,6 +360,12 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
     """
     router = APIRouter()
     routes_registered = False
+
+    if settings.is_anore_configured():
+        from app.webserver.anore import register_anore_webhook
+
+        register_anore_webhook(router, payment_service)
+        routes_registered = True
 
     if settings.is_apple_iap_configured():
         from app.webserver.apple_iap import create_apple_iap_router
@@ -463,78 +454,45 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     {'status': 'error', 'reason': 'empty_body'}, status_code=status.HTTP_400_BAD_REQUEST
                 )
 
-            signed = _verify_mulenpay_signature(request, raw_body)
-            if not signed:
-                try:
-                    unsigned_payload = json.loads(raw_body.decode('utf-8'))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'invalid_signature'},
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                    )
-
-                # A present-but-invalid sign is never downgraded to the unsigned
-                # compatibility path.  Only the observed callback shape without
-                # sign may trigger a provider API re-check.
-                # Тело — любой валидный JSON, не обязательно объект: ``'sign' in 5``
-                # роняло бы роут TypeError'ом на запросе без всякой авторизации.
-                if (
-                    not isinstance(unsigned_payload, dict)
-                    or 'sign' in unsigned_payload
-                    or not _looks_like_unsigned_mulenpay_callback(unsigned_payload)
-                ):
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'invalid_signature'},
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                    )
-
-                outcome = await _process_unsigned_mulenpay_callback(payment_service, unsigned_payload)
-                if outcome == _MULENPAY_UNSIGNED_PROCESSED:
-                    logger.info('MulenPay webhook без sign подтверждён через API')
-                    return JSONResponse({'status': 'ok'})
-                if outcome == _MULENPAY_UNSIGNED_RETRY:
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'verification_unavailable'},
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    )
-                if outcome == _MULENPAY_UNSIGNED_FAILED:
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'processing_failed'},
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
+            try:
+                payload = json.loads(raw_body.decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 return JSONResponse(
-                    {'status': 'error', 'reason': 'verification_failed'},
+                    {'status': 'error', 'reason': 'invalid_signature'},
                     status_code=status.HTTP_401_UNAUTHORIZED,
                 )
 
-            try:
-                payload = json.loads(raw_body.decode('utf-8'))
-            except json.JSONDecodeError:
+            # SHA-1 is required by the provider's wire protocol, but cannot
+            # authorize credit. All callbacks must use the authenticated API
+            # response; a present invalid sign still fails before any API call.
+            if (
+                not isinstance(payload, dict)
+                or ('sign' in payload and not _verify_mulenpay_signature(request, raw_body))
+                or not _looks_like_unsigned_mulenpay_callback(payload)
+            ):
                 return JSONResponse(
-                    {'status': 'error', 'reason': 'invalid_json'},
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    {'status': 'error', 'reason': 'invalid_signature'},
+                    status_code=status.HTTP_401_UNAUTHORIZED,
                 )
 
-            try:
-                success = await _process_payment_service_callback(
-                    payment_service,
-                    payload,
-                    'process_mulenpay_callback',
+            outcome = await _process_unsigned_mulenpay_callback(payment_service, payload)
+            if outcome == _MULENPAY_UNSIGNED_PROCESSED:
+                logger.info('MulenPay webhook подтверждён через API')
+                return JSONResponse({'status': 'ok'})
+            if outcome == _MULENPAY_UNSIGNED_RETRY:
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'verification_unavailable'},
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
-                if success:
-                    return JSONResponse({'status': 'ok'})
-
-                logger.error('MulenPay webhook processing failed', payload=payload)
+            if outcome == _MULENPAY_UNSIGNED_FAILED:
                 return JSONResponse(
                     {'status': 'error', 'reason': 'processing_failed'},
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
-            except Exception as e:
-                logger.exception('MulenPay webhook processing error', e=e)
-                return JSONResponse(
-                    {'status': 'error', 'reason': 'processing_failed'},
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
+            return JSONResponse(
+                {'status': 'error', 'reason': 'verification_failed'},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
 
         routes_registered = True
 
@@ -893,9 +851,9 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
             try:
                 parsed_payload = pal24_service.parse_callback(payload)
-            except Pal24APIError as error:
+            except Pal24APIError:
                 return JSONResponse(
-                    {'status': 'error', 'reason': str(error)},
+                    {'status': 'error', 'reason': 'invalid_payload'},
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -1512,56 +1470,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         routes_registered = True
 
-    # PayPear webhook
-    if settings.is_paypear_configured():
-
-        @router.get(settings.PAYPEAR_WEBHOOK_PATH)
-        async def paypear_health() -> JSONResponse:
-            return JSONResponse(
-                {
-                    'status': 'ok',
-                    'service': 'paypear_webhook',
-                    'enabled': settings.is_paypear_enabled(),
-                }
-            )
-
-        @router.post(settings.PAYPEAR_WEBHOOK_PATH)
-        async def paypear_webhook(request: Request) -> JSONResponse:
-            try:
-                raw_body = await request.body()
-                payload = json.loads(raw_body)
-            except Exception as parse_error:
-                logger.error('PayPear webhook: failed to parse JSON', parse_error=parse_error)
-                return JSONResponse({'status': False}, status_code=status.HTTP_400_BAD_REQUEST)
-
-            # Извлекаем подпись из тела webhook
-            received_signature = payload.get('signature', '')
-
-            from app.services.paypear_service import paypear_service
-
-            client_ip = _resolve_proxied_client_ip(request)
-            if not paypear_service.verify_webhook_signature(raw_body, received_signature, client_ip=client_ip):
-                logger.warning('PayPear webhook: invalid signature and IP', client_ip=client_ip)
-                return JSONResponse({'status': False}, status_code=status.HTTP_403_FORBIDDEN)
-
-            try:
-                success = await _process_payment_service_callback(
-                    payment_service,
-                    payload,
-                    'process_paypear_webhook',
-                )
-                if not success:
-                    logger.error(
-                        'PayPear webhook processing failed',
-                        data=payload.get('object'),
-                    )
-            except Exception as e:
-                logger.exception('PayPear webhook processing error', error=e)
-            # Always return 200 — PayPear may retry on non-200
-            return JSONResponse({'status': True}, status_code=status.HTTP_200_OK)
-
-        routes_registered = True
-
     # RollyPay webhook
     if settings.is_rollypay_configured():
 
@@ -1960,43 +1868,45 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
 
         @router.post(settings.CISPAY_WEBHOOK_PATH)
         async def cispay_webhook(request: Request) -> JSONResponse:
-            raw_body = await request.body()
-
             from app.services.cispay_service import cispay_service
+            from app.services.payment.cispay import CisPayValidationError
 
-            # X-Signature — HMAC-SHA256 от сырого тела запроса, ключ — X-Api-Key магазина
-            received_signature = request.headers.get('X-Signature')
-            if not cispay_service.verify_webhook_signature(raw_body, received_signature):
-                logger.warning('cisPay webhook: invalid signature')
-                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
+            raw_body = bytearray()
+            async with aclosing(request.stream()) as stream:
+                async for chunk in stream:
+                    raw_body.extend(chunk)
+                    if len(raw_body) > 65536:
+                        return JSONResponse({'status': 'error'}, status_code=413)
+            if not cispay_service.verify_webhook_signature(bytes(raw_body), request.headers.get('X-Signature')):
+                return JSONResponse({'status': 'error'}, status_code=400)
+
+            def reject_constant(_value):
+                raise ValueError('Invalid JSON number')
 
             try:
-                payload = json.loads(raw_body)
-            except Exception as parse_error:
-                logger.error('cisPay webhook: failed to parse JSON', parse_error=parse_error)
-                return JSONResponse({'status': 'error'}, status_code=status.HTTP_400_BAD_REQUEST)
-
+                payload = json.loads(raw_body, parse_float=str, parse_constant=reject_constant)
+            except (ValueError, UnicodeDecodeError, RecursionError):
+                return JSONResponse({'status': 'error'}, status_code=400)
+            if not isinstance(payload, dict):
+                return JSONResponse({'status': 'error'}, status_code=400)
+            # Lifecycle events are not monetary transaction notifications.
+            event = payload.get('event')
+            event_header = request.headers.get('X-CISPay-Event')
+            if event is not None and (payload.get('object') != 'subscription' or event != event_header):
+                return JSONResponse({'status': 'error'}, status_code=400)
+            if event is None and event_header:
+                return JSONResponse({'status': 'error'}, status_code=400)
+            payload['_event_header'] = event_header
             try:
-                success = await _process_payment_service_callback(
-                    payment_service,
-                    payload,
-                    'process_cispay_callback',
-                )
-            except Exception as e:
-                logger.exception('cisPay webhook processing error', error=e)
+                success = await _process_payment_service_callback(payment_service, payload, 'process_cispay_callback')
+            except CisPayValidationError:
+                return JSONResponse({'status': 'error'}, status_code=400)
+            except Exception:
+                logger.warning('cisPay webhook processing unavailable')
                 success = False
-
             if not success:
-                logger.error(
-                    'cisPay webhook processing failed',
-                    order_id=payload.get('order_id'),
-                    payment_id=payload.get('id'),
-                )
-                # Не-2xx заставит cisPay повторить вебхук по расписанию
-                # (через 1 мин, 5 мин, 15 мин, 1 час — всего 5 попыток)
-                return JSONResponse({'status': 'error'}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-            return JSONResponse({'status': 'ok'}, status_code=status.HTTP_200_OK)
+                return JSONResponse({'status': 'error'}, status_code=500)
+            return JSONResponse({'status': 'ok'}, status_code=200)
 
         routes_registered = True
 
@@ -2247,7 +2157,6 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'kassa_ai_enabled': settings.is_kassa_ai_enabled(),
                     'riopay_enabled': settings.is_riopay_enabled(),
                     'severpay_enabled': settings.is_severpay_enabled(),
-                    'paypear_enabled': settings.is_paypear_enabled(),
                     'rollypay_enabled': settings.is_rollypay_enabled(),
                     'overpay_enabled': settings.is_overpay_enabled(),
                     'aurapay_enabled': settings.is_aurapay_enabled(),
@@ -2258,6 +2167,7 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     'lava_enabled': settings.is_lava_enabled(),
                     'cispay_enabled': settings.is_cispay_enabled(),
                     'cashera_enabled': settings.is_cashera_enabled(),
+                    'anore_enabled': settings.is_anore_enabled(),
                     'tabpay_enabled': settings.is_tabpay_enabled(),
                     'paritypay_enabled': settings.is_paritypay_enabled(),
                 }

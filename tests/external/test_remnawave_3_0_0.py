@@ -457,7 +457,7 @@ async def test_reset_user_devices_uses_single_delete_all_call():
     """Раньше это был цикл из N удалений с эвристикой «успех, если упало меньше
     половины»; 3.0.0 делает то же атомарно одним запросом."""
     api = _api()
-    api._make_request = AsyncMock(return_value={'response': {}})
+    api._make_request = AsyncMock(return_value={'response': {'total': 0, 'devices': []}})
 
     assert await api.reset_user_devices(42) is True
 

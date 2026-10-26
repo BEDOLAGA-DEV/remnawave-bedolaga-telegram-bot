@@ -216,6 +216,13 @@ async def upload_media(
         )
 
     target_chat_id = _resolve_target_chat_id()
+    # Staging uses the notification destination too: General may be closed.
+    # Never carry a group's topic over to the private-admin fallback.
+    target_topic_id = (
+        settings.ADMIN_NOTIFICATIONS_TOPIC_ID
+        if target_chat_id < 0 and target_chat_id == settings.get_admin_notifications_chat_id()
+        else None
+    )
     upload = BufferedInputFile(file_bytes, filename=file.filename or 'upload')
 
     bot = create_bot()
@@ -225,6 +232,7 @@ async def upload_media(
         if media_type_normalized == 'photo':
             message = await bot.send_photo(
                 chat_id=target_chat_id,
+                message_thread_id=target_topic_id,
                 photo=upload,
                 disable_notification=True,
             )
@@ -232,6 +240,7 @@ async def upload_media(
         elif media_type_normalized == 'video':
             message = await bot.send_video(
                 chat_id=target_chat_id,
+                message_thread_id=target_topic_id,
                 video=upload,
                 disable_notification=True,
             )
@@ -239,6 +248,7 @@ async def upload_media(
         else:
             message = await bot.send_document(
                 chat_id=target_chat_id,
+                message_thread_id=target_topic_id,
                 document=upload,
                 disable_notification=True,
             )

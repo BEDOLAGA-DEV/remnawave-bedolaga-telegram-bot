@@ -7,7 +7,7 @@ import structlog
 
 from app.config import CLASSIC_PERIOD_PRICES, PERIOD_PRICES, settings
 from app.database.crud.server_squad import get_server_squads_by_uuids
-from app.utils.pricing_utils import calculate_months_from_days
+from app.utils.pricing_utils import calculate_months_from_days, calculate_period_device_cost
 from app.utils.promo_offer import get_user_active_promo_discount_percent
 
 
@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
+
+
+class TariffSwitchPricingUnavailableError(ValueError):
+    """A periodic tariff has no configured price for switching."""
 
 
 @dataclass(frozen=True)
@@ -228,14 +232,20 @@ class PricingEngine:
         гарантировать корректное сравнение дневных ставок при смене
         тарифов с разными наборами периодов.
         """
-        periods = tariff.get_available_periods()
-        if not periods:
+        if tariff is None:
             return 0, 1
-        best_period = min(periods)
-        price = tariff.get_price_for_period(best_period)
-        if not price or best_period <= 0:
-            return 0, 1
-        return price, best_period
+        configured = []
+        for period, price in (tariff.period_prices or {}).items():
+            try:
+                days = int(period)
+            except (TypeError, ValueError):
+                continue
+            if days > 0 and isinstance(price, int) and not isinstance(price, bool) and price >= 0:
+                configured.append((days, price))
+        if not configured:
+            raise TariffSwitchPricingUnavailableError('Tariff pricing is unavailable')
+        days, price = min(configured)
+        return price, days
 
     def calculate_tariff_switch_cost(
         self,
@@ -256,6 +266,12 @@ class PricingEngine:
         """
         current_is_daily = getattr(current_tariff, 'is_daily', False) if current_tariff else False
         new_is_daily = getattr(new_tariff, 'is_daily', False)
+
+        # Validate both sides before any free/expired or daily transition shortcut.
+        if not current_is_daily:
+            self.get_tariff_daily_rate_fraction(current_tariff)
+        if not new_is_daily:
+            self.get_tariff_daily_rate_fraction(new_tariff)
 
         # Daily tariff edge cases
         if not current_is_daily and new_is_daily:
@@ -314,7 +330,7 @@ class PricingEngine:
             promo_group = self.resolve_promo_group(user)
             if promo_group is not None:
                 best_period = min(
-                    current_tariff.get_available_periods() or [30],
+                    (current_tariff.get_available_periods() if current_tariff is not None else []) or [30],
                     key=lambda p: abs(p - remaining_days),
                 )
                 group_pct = promo_group.get_discount_percent('period', best_period)
@@ -385,11 +401,7 @@ class PricingEngine:
         user: User | None = None,
     ) -> TariffSwitchResult:
         """Daily → Periodic: оплата кратчайшего периода нового тарифа с group + offer discount."""
-        min_period_days = 30
-        min_period_price = 0
-        if new_tariff.period_prices:
-            min_period_days = min(int(k) for k in new_tariff.period_prices.keys())
-            min_period_price = new_tariff.period_prices.get(str(min_period_days), 0) or 0
+        min_period_price, min_period_days = self.get_tariff_daily_rate_fraction(new_tariff)
 
         if min_period_price <= 0:
             return TariffSwitchResult(
@@ -580,7 +592,7 @@ class PricingEngine:
         - 'period' → base tariff price
         - 'devices' → extra device cost
         Promo-offer discount applied on the discounted subtotal.
-        Device cost is monthly × months_in_period.
+        Periodic device cost follows exact days at a 30-day monthly rate.
         """
         months = calculate_months_from_days(period_days)
 
@@ -597,16 +609,16 @@ class PricingEngine:
                     if custom_price is not None:
                         base_price = int(custom_price)
 
-        # --- Extra devices (monthly × months) ---
+        # --- Extra devices (monthly rate prorated to exact days) ---
         device_price_per_unit = (
             tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
         )
         tariff_device_limit = tariff.device_limit or 0
-        extra_devices = max(0, (device_limit or 0) - tariff_device_limit)
+        extra_devices = 0 if tariff.device_limit == 0 else max(0, (device_limit or 0) - tariff_device_limit)
         if is_daily and period_days <= 1:
             devices_price = extra_devices * device_price_per_unit
         else:
-            devices_price = extra_devices * device_price_per_unit * months
+            devices_price = calculate_period_device_cost(device_price_per_unit, extra_devices, period_days)
 
         # --- Custom traffic (tariff add-on, uses addon discount path) ---
         traffic_price = 0

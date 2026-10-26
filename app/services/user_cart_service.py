@@ -1,5 +1,6 @@
 import json
 from typing import Any
+from uuid import uuid4
 
 import redis.asyncio as redis
 import structlog
@@ -64,56 +65,105 @@ class UserCartService:
             return False
 
         try:
-            key = f'user_cart:{user_id}'
-            json_data = json.dumps(cart_data, ensure_ascii=False)
             effective_ttl = ttl if ttl is not None else settings.CART_TTL_SECONDS
-            await client.setex(key, effective_ttl, json_data)
-            cart_mode = cart_data.get('cart_mode', 'unknown')
-            logger.info(
-                '🛒 Корзина пользователя сохранена в Redis',
-                user_id=user_id,
-                cart_mode=cart_mode,
-                effective_ttl=effective_ttl,
-            )
-
-            # Dual-write to per-subscription key when subscription_id is known.
-            # This ensures multi-subscription users don't lose carts when a
-            # second subscription's cart overwrites the global key.
+            intent_ttl = settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS
+            if effective_ttl <= 0 or (cart_data.get('return_to_cart') and intent_ttl <= 0):
+                raise ValueError('Cart TTL must be positive')
+            if cart_data.get('cart_mode') == 'tariff_purchase':
+                cart_data.setdefault('tariff_checkout_id', uuid4().hex)
+            cart_data['_cart_revision'] = uuid4().hex
+            json_data = json.dumps(cart_data, ensure_ascii=False)
+            # MULTI/EXEC publishes aliases and the intent in one server operation.
+            # Separate SETEX calls could interleave two saves of the same source.
+            pipeline = client.pipeline(transaction=True)
+            pipeline.setex(f'user_cart:{user_id}', effective_ttl, json_data)
             subscription_id = cart_data.get('subscription_id')
+            sub_id = None
             if subscription_id is not None:
                 try:
                     sub_id = int(subscription_id)
-                    sub_key = self._subscription_cart_key(user_id, sub_id)
-                    await client.setex(sub_key, effective_ttl, json_data)
-                    logger.debug(
-                        'Корзина также сохранена по per-subscription ключу',
-                        user_id=user_id,
-                        subscription_id=sub_id,
-                    )
                 except (TypeError, ValueError):
-                    pass  # Non-integer subscription_id -- skip per-sub key
-
-            # «Свежее намерение»: корзина сохранена именно для пополнения и
-            # завершения покупки (поток «недостаточно средств → выбрать оплату»).
-            # Только при наличии этой метки тихая авто-покупка после пополнения
-            # имеет право списать баланс — обычное пополнение просто денег без
-            # сохранённой корзины такой метки не ставит, а для подарков выполняется
-            # только соответствующая явная подарочная корзина (gift_purchase).
+                    pass  # Preserve legacy global-only storage for invalid IDs.
+                else:
+                    pipeline.setex(self._subscription_cart_key(user_id, sub_id), effective_ttl, json_data)
             if cart_data.get('return_to_cart'):
-                try:
-                    await client.setex(
-                        self._topup_intent_key(user_id),
-                        settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS,
-                        '1',
+                pipeline.setex(self._topup_intent_key(user_id), intent_ttl, cart_data['_cart_revision'])
+                if sub_id is not None:
+                    pipeline.setex(
+                        self._subscription_topup_intent_key(user_id, sub_id), intent_ttl, cart_data['_cart_revision']
                     )
-                except Exception as intent_error:
-                    logger.warning(
-                        '🛒 Не удалось поставить метку намерения пополнения', user_id=user_id, error=intent_error
-                    )
-
+            await pipeline.execute()
+            logger.info(
+                '🛒 Корзина пользователя сохранена в Redis',
+                user_id=user_id,
+                cart_mode=cart_data.get('cart_mode', 'unknown'),
+                effective_ttl=effective_ttl,
+            )
             return True
         except Exception as e:
             logger.error('🛒 Ошибка сохранения корзины пользователя', user_id=user_id, error=e)
+            return False
+
+    async def save_gift_cart_if_current(
+        self, user_id: int, cart_data: dict[str, Any], original: dict[str, Any] | None
+    ) -> bool:
+        """Publish a confirmed gift and its intent only over the captured global snapshot.
+
+        A fresh explicit gift confirmation may replace the original global cart;
+        independent subscription aliases and permissions are never changed.
+        """
+        client = self._get_redis_client()
+        if (
+            client is None
+            or cart_data.get('cart_mode') != 'gift_purchase'
+            or cart_data.get('subscription_id') is not None
+        ):
+            return False
+        try:
+            cart_ttl = settings.CART_TTL_SECONDS
+            intent_ttl = settings.CART_AUTOPURCHASE_INTENT_TTL_SECONDS
+            if cart_ttl <= 0 or intent_ttl <= 0 or not cart_data.get('return_to_cart'):
+                return False
+            replacement = {**cart_data, '_cart_revision': uuid4().hex}
+            script = """
+                local raw = redis.call('GET', KEYS[1])
+                if ARGV[1] == 'absent' then
+                    if raw then return 0 end
+                else
+                    if not raw then return 0 end
+                    if ARGV[3] == '' then
+                        if raw ~= ARGV[2] then return 0 end
+                    else
+                        local ok, data = pcall(cjson.decode, raw)
+                        if not ok or type(data) ~= 'table' or data['_cart_revision'] ~= ARGV[3] then
+                            return 0
+                        end
+                    end
+                end
+                redis.call('SET', KEYS[1], ARGV[4], 'EX', ARGV[5])
+                redis.call('SET', KEYS[2], ARGV[6], 'EX', ARGV[7])
+                return 1
+            """
+            saved = bool(
+                await client.eval(
+                    script,
+                    2,
+                    f'user_cart:{user_id}',
+                    self._topup_intent_key(user_id),
+                    'absent' if original is None else 'present',
+                    json.dumps(original, ensure_ascii=False),
+                    (original or {}).get('_cart_revision') or '',
+                    json.dumps(replacement, ensure_ascii=False),
+                    cart_ttl,
+                    replacement['_cart_revision'],
+                    intent_ttl,
+                )
+            )
+            if saved:
+                cart_data.update(replacement)
+            return saved
+        except Exception as error:
+            logger.error('Ошибка условного сохранения подарочной корзины', user_id=user_id, error=error)
             return False
 
     async def get_user_cart(self, user_id: int) -> dict[str, Any] | None:
@@ -180,6 +230,7 @@ class UserCartService:
             if subscription_id is not None:
                 sub_key = self._subscription_cart_key(user_id, subscription_id)
                 await client.delete(sub_key)
+                await client.delete(self._subscription_topup_intent_key(user_id, subscription_id))
 
             # Удаляем метку намерения пополнения вместе с корзиной, чтобы она не
             # «висела» после очистки и не давала повода для авто-покупки.
@@ -190,6 +241,126 @@ class UserCartService:
             return bool(result)
         except Exception as e:
             logger.error('Ошибка удаления корзины пользователя', user_id=user_id, error=e)
+            return False
+
+    async def delete_processed_cart(self, user_id: int, cart_data: dict[str, Any]) -> bool:
+        """Atomically delete only aliases and intent belonging to this saved revision.
+
+        Old carts without a revision use exact serialized-payload comparison;
+        changed legacy payloads are retained rather than risking another intent.
+        """
+        client = self._get_redis_client()
+        if client is None:
+            return False
+        try:
+            sub_id = int(cart_data.get('subscription_id') or 0)
+            script = """
+                local function matches(key)
+                    local raw = redis.call('GET', key)
+                    if not raw then return false end
+                    if ARGV[2] == '' then return raw == ARGV[1] end
+                    local ok, data = pcall(cjson.decode, raw)
+                    return ok and type(data) == 'table' and data['_cart_revision'] == ARGV[2]
+                end
+                local removed = 0
+                local global_matches = matches(KEYS[1])
+                if global_matches then
+                    removed = removed + redis.call('DEL', KEYS[1])
+                end
+                local intent = redis.call('GET', KEYS[3])
+                if (ARGV[2] ~= '' and intent == ARGV[2]) or
+                   (global_matches and ARGV[2] == '' and intent == '1') then
+                    redis.call('DEL', KEYS[3])
+                end
+                if ARGV[3] == '1' then
+                    if matches(KEYS[2]) then
+                        removed = removed + redis.call('DEL', KEYS[2])
+                    end
+                    if ARGV[2] ~= '' and redis.call('GET', KEYS[4]) == ARGV[2] then
+                        redis.call('DEL', KEYS[4])
+                    end
+                end
+                return removed
+            """
+            result = await client.eval(
+                script,
+                4,
+                f'user_cart:{user_id}',
+                self._subscription_cart_key(user_id, sub_id),
+                self._topup_intent_key(user_id),
+                self._subscription_topup_intent_key(user_id, sub_id),
+                json.dumps(cart_data, ensure_ascii=False),
+                cart_data.get('_cart_revision') or '',
+                '1' if sub_id else '0',
+            )
+            return bool(result)
+        except Exception as error:
+            logger.error('Ошибка условной очистки обработанной корзины', user_id=user_id, error=error)
+            return False
+
+    async def update_processed_global_cart(
+        self,
+        user_id: int,
+        cart_data: dict[str, Any],
+        updates: dict[str, Any],
+        *,
+        revoke_intent: bool = False,
+    ) -> bool:
+        """Update global checkout metadata only while its saved revision matches.
+
+        Keep the existing cart/intent TTL for partial topups. A changed quote
+        gets a new revision and revokes only its original global permission.
+        """
+        client = self._get_redis_client()
+        if client is None or cart_data.get('subscription_id') is not None:
+            return False
+        if not updates.keys() <= {'total_price', 'missing_amount', 'return_to_cart'}:
+            return False
+        try:
+            # A revision's permission applies only to its confirmed price.
+            # Enforce this here as well as in callers: quote metadata must
+            # never silently carry an old approval over to a different sum.
+            revoke_intent = revoke_intent or updates.get('total_price', cart_data.get('total_price')) != cart_data.get(
+                'total_price'
+            )
+            replacement = {**cart_data, **updates}
+            if revoke_intent:
+                replacement['return_to_cart'] = False
+                replacement['_cart_revision'] = uuid4().hex
+            script = """
+                local raw = redis.call('GET', KEYS[1])
+                if not raw then return 0 end
+                if ARGV[2] == '' then
+                    if raw ~= ARGV[1] then return 0 end
+                else
+                    local ok, data = pcall(cjson.decode, raw)
+                    if not ok or type(data) ~= 'table' or data['_cart_revision'] ~= ARGV[2] then
+                        return 0
+                    end
+                end
+                redis.call('SET', KEYS[1], ARGV[3], 'KEEPTTL')
+                if ARGV[4] == '1' then
+                    local intent = redis.call('GET', KEYS[2])
+                    if (ARGV[2] ~= '' and intent == ARGV[2]) or (ARGV[2] == '' and intent == '1') then
+                        redis.call('DEL', KEYS[2])
+                    end
+                end
+                return 1
+            """
+            return bool(
+                await client.eval(
+                    script,
+                    2,
+                    f'user_cart:{user_id}',
+                    self._topup_intent_key(user_id),
+                    json.dumps(cart_data, ensure_ascii=False),
+                    cart_data.get('_cart_revision') or '',
+                    json.dumps(replacement, ensure_ascii=False),
+                    '1' if revoke_intent else '0',
+                )
+            )
+        except Exception as error:
+            logger.error('Ошибка условного обновления корзины', user_id=user_id, error=error)
             return False
 
     async def delete_global_cart_only(self, user_id: int) -> bool:
@@ -259,17 +430,58 @@ class UserCartService:
         """
         return f'cart_topup_intent:{user_id}'
 
-    async def has_topup_intent(self, user_id: int) -> bool:
-        """Есть ли свежая метка намерения пополнить ради корзины (без удаления).
+    @staticmethod
+    def _subscription_topup_intent_key(user_id: int, subscription_id: int) -> str:
+        return f'cart_topup_intent:{user_id}:sub:{subscription_id}'
 
-        Если Redis недоступен — считаем намерение отсутствующим (безопасно: не
-        списываем баланс молча).
+    async def has_topup_intent(self, user_id: int, cart_data: dict[str, Any] | None = None) -> bool:
+        """Check presence, or authorize a specific currently saved cart revision.
+
+        Presence alone is a compatibility hint, never permission to debit a
+        collected cart. Per-source markers retain independent confirmed carts.
         """
         client = self._get_redis_client()
         if client is None:
             return False
         try:
-            return bool(await client.exists(self._topup_intent_key(user_id)))
+            if cart_data is None:
+                if await client.exists(self._topup_intent_key(user_id)):
+                    return True
+                cursor = 0
+                while True:
+                    cursor, keys = await client.scan(
+                        cursor=cursor, match=f'cart_topup_intent:{user_id}:sub:*', count=50
+                    )
+                    if keys:
+                        return True
+                    if not cursor or cursor == b'0':
+                        return False
+            revision = cart_data.get('_cart_revision')
+            sub_id = int(cart_data.get('subscription_id') or 0)
+            global_intent = await client.get(self._topup_intent_key(user_id))
+            if isinstance(global_intent, bytes):
+                global_intent = global_intent.decode()
+            if not revision:
+                # An old unbound marker cannot authorize arbitrary per-source carts.
+                raw = await client.get(f'user_cart:{user_id}')
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+                return (
+                    bool(cart_data.get('return_to_cart'))
+                    and global_intent == '1'
+                    and raw == json.dumps(cart_data, ensure_ascii=False)
+                )
+            source_intent = await client.get(self._subscription_topup_intent_key(user_id, sub_id)) if sub_id else None
+            if isinstance(source_intent, bytes):
+                source_intent = source_intent.decode()
+            if revision not in (source_intent, global_intent):
+                return False
+            key = self._subscription_cart_key(user_id, sub_id) if sub_id else f'user_cart:{user_id}'
+            raw = await client.get(key)
+            # Compatibility with legacy global-only storage of an explicit source.
+            if raw is None and sub_id:
+                raw = await client.get(f'user_cart:{user_id}')
+            return bool(raw and json.loads(raw).get('_cart_revision') == revision)
         except Exception as e:
             logger.error('🛒 Ошибка чтения метки намерения пополнения', user_id=user_id, error=e)
             return False
@@ -281,6 +493,13 @@ class UserCartService:
             return
         try:
             await client.delete(self._topup_intent_key(user_id))
+            cursor = 0
+            while True:
+                cursor, keys = await client.scan(cursor=cursor, match=f'cart_topup_intent:{user_id}:sub:*', count=50)
+                if keys:
+                    await client.delete(*keys)
+                if not cursor or cursor == b'0':
+                    break
         except Exception as e:
             logger.error('🛒 Ошибка удаления метки намерения пополнения', user_id=user_id, error=e)
 
@@ -307,6 +526,7 @@ class UserCartService:
             return False
 
         try:
+            cart_data['_cart_revision'] = uuid4().hex
             key = self._subscription_cart_key(user_id, subscription_id)
             json_data = json.dumps(cart_data, ensure_ascii=False)
             effective_ttl = ttl if ttl is not None else settings.CART_TTL_SECONDS
@@ -365,6 +585,7 @@ class UserCartService:
         try:
             key = self._subscription_cart_key(user_id, subscription_id)
             result = await client.delete(key)
+            await client.delete(self._subscription_topup_intent_key(user_id, subscription_id))
             if result:
                 logger.debug(
                     'Корзина подписки удалена из Redis',

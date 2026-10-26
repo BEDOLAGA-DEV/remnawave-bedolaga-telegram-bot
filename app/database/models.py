@@ -171,7 +171,6 @@ class PaymentMethod(Enum):
     RIOPAY = 'riopay'
     SEVERPAY = 'severpay'
     APPLE_IAP = 'apple_iap'
-    PAYPEAR = 'paypear'
     ROLLYPAY = 'rollypay'
     OVERPAY = 'overpay'
     AURAPAY = 'aurapay'
@@ -180,6 +179,7 @@ class PaymentMethod(Enum):
     JUPITER = 'jupiter'
     CISPAY = 'cispay'
     TABPAY = 'tabpay'
+    ANORE = 'anore'
     PARITYPAY = 'paritypay'
     DONUT = 'donut'
     LAVA = 'lava'
@@ -1170,68 +1170,6 @@ class SeverPayPayment(Base):
         return f'<SeverPayPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
 
 
-class PayPearPayment(Base):
-    """Платежи через PayPear (paypear.ru)."""
-
-    __tablename__ = 'paypear_payments'
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
-
-    # Идентификаторы
-    order_id = Column(String(64), unique=True, nullable=False, index=True)  # Наш internal ID
-    paypear_id = Column(String(64), unique=True, nullable=True, index=True)  # ID от PayPear
-
-    # Суммы
-    amount_kopeks = Column(Integer, nullable=False)
-    currency = Column(String(10), nullable=False, default='RUB')
-    description = Column(Text, nullable=True)
-
-    # Статусы
-    status = Column(String(32), nullable=False, default='pending')
-    is_paid = Column(Boolean, default=False)
-
-    # Данные платежа
-    payment_url = Column(Text, nullable=True)
-    payment_method = Column(String(32), nullable=True)
-
-    # Метаданные
-    metadata_json = Column(JSON, nullable=True)
-    callback_payload = Column(JSON, nullable=True)
-
-    # Временные метки
-    paid_at = Column(AwareDateTime(), nullable=True)
-    expires_at = Column(AwareDateTime(), nullable=True)
-    created_at = Column(AwareDateTime(), default=func.now())
-    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
-
-    # Связь с транзакцией
-    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
-
-    # Relationships
-    user = relationship('User', backref='paypear_payments')
-    transaction = relationship('Transaction', backref='paypear_payment')
-
-    @property
-    def amount_rubles(self) -> float:
-        return self.amount_kopeks / 100
-
-    @property
-    def is_pending(self) -> bool:
-        return self.status == 'pending'
-
-    @property
-    def is_success(self) -> bool:
-        return self.status == 'success' and self.is_paid
-
-    @property
-    def is_failed(self) -> bool:
-        return self.status in ['failed', 'expired', 'canceled', 'amount_mismatch']
-
-    def __repr__(self) -> str:  # pragma: no cover - debug helper
-        return f'<PayPearPayment(id={self.id}, order_id={self.order_id}, amount={self.amount_rubles}₽, status={self.status})>'
-
-
 class RollyPayPayment(Base):
     """Платежи через RollyPay (rollypay.io)."""
 
@@ -1752,10 +1690,11 @@ class CisPayPayment(Base):
     # Статусы
     status = Column(String(32), nullable=False, default='pending')
     is_paid = Column(Boolean, default=False)
+    is_sandbox = Column(Boolean, nullable=False, default=False, server_default='false')
 
     # Данные платежа
     payment_url = Column(Text, nullable=True)
-    payment_method = Column(String(32), nullable=True)  # 'CARD' / 'SBP'
+    payment_method = Column(String(32), nullable=True)  # 'CARD' / 'SBP' / 'CRYPTO'
 
     # Метаданные
     metadata_json = Column(JSON, nullable=True)
@@ -1764,6 +1703,7 @@ class CisPayPayment(Base):
     # Временные метки
     paid_at = Column(AwareDateTime(), nullable=True)
     expires_at = Column(AwareDateTime(), nullable=True)
+    next_check_at = Column(AwareDateTime(), nullable=True)
     created_at = Column(AwareDateTime(), default=func.now())
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
 
@@ -1784,7 +1724,7 @@ class CisPayPayment(Base):
 
     @property
     def is_success(self) -> bool:
-        return self.status == 'success' and self.is_paid
+        return self.status == 'success' and self.is_paid and not self.is_sandbox
 
     @property
     def is_failed(self) -> bool:
@@ -1861,6 +1801,53 @@ class CasheraPayment(Base):
             f'<CasheraPayment(id={self.id}, order_id={self.order_id}, '
             f'amount={self.amount_rubles}₽, status={self.status})>'
         )
+
+
+class AnorePayment(Base):
+    """Hosted Anore invoices; acceptance and money share one transaction."""
+
+    __tablename__ = 'anore_payments'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True, index=True)
+    order_id = Column(String(64), unique=True, nullable=False, index=True)
+    anore_payment_id = Column(String(128), unique=True, nullable=True, index=True)
+    amount_kopeks = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default='RUB')
+    description = Column(Text, nullable=True)
+    status = Column(String(32), nullable=False, default='new')
+    is_paid = Column(Boolean, nullable=False, default=False)
+    is_test = Column(Boolean, nullable=False, default=False)
+    payment_url = Column(Text, nullable=True)
+    payment_method = Column(String(32), nullable=True)
+    metadata_json = Column(JSON, nullable=True)
+    callback_payload = Column(JSON, nullable=True)
+    processed_events = Column(JSON, nullable=True)
+    paid_at = Column(AwareDateTime(), nullable=True)
+    expires_at = Column(AwareDateTime(), nullable=True)
+    last_checked_at = Column(AwareDateTime(), nullable=True)
+    next_check_at = Column(AwareDateTime(), nullable=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    transaction_id = Column(Integer, ForeignKey('transactions.id'), nullable=True)
+    user = relationship('User', backref='anore_payments')
+    transaction = relationship('Transaction', backref='anore_payment')
+
+    @property
+    def amount_rubles(self) -> float:
+        return self.amount_kopeks / 100
+
+    @property
+    def is_pending(self) -> bool:
+        return not self.is_paid and self.status == 'new'
+
+    @property
+    def is_success(self) -> bool:
+        return self.is_paid and self.status == 'paid'
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status == 'expired'
 
 
 class TabPayPayment(Base):
@@ -2316,7 +2303,7 @@ class Tariff(Base):
         if not self.allowed_promo_groups:
             return True  # Если нет ограничений - доступен всем
         if promo_group_id is None:
-            return True  # Если у пользователя нет группы - доступен
+            return False  # Ограниченный тариф недоступен без подходящей группы
         return any(pg.id == promo_group_id for pg in self.allowed_promo_groups)
 
     def get_traffic_topup_packages(self) -> dict[int, int]:
@@ -2607,6 +2594,12 @@ class User(Base):
 class Subscription(Base):
     __tablename__ = 'subscriptions'
     __table_args__ = (
+        Index(
+            'ix_subscriptions_pending_expiry',
+            'id',
+            postgresql_where=text('pending_panel_expire_at IS NOT NULL'),
+            sqlite_where=text('pending_panel_expire_at IS NOT NULL'),
+        ),
         Index('ix_subscriptions_status_trial', 'status', 'is_trial'),
         Index('ix_subscriptions_trial_created', 'is_trial', 'created_at'),
         Index('ix_subscriptions_user_id', 'user_id'),
@@ -2646,6 +2639,10 @@ class Subscription(Base):
 
     start_date = Column(AwareDateTime(), default=func.now())
     end_date = Column(AwareDateTime(), nullable=False)
+
+    # Local expiry committed before the panel write. Survives retry exhaustion
+    # and process restart; cleared only after a matching confirmed panel write.
+    pending_panel_expire_at = Column(AwareDateTime(), nullable=True)
 
     traffic_limit_gb = Column(Integer, default=0)
     traffic_used_gb = Column(Float, default=0.0)
@@ -2867,6 +2864,9 @@ class Subscription(Base):
         else:
             self.end_date = datetime.now(UTC) + timedelta(days=days)
 
+        if days > 0:
+            self.pending_panel_expire_at = self.end_date
+
         if self.status in (SubscriptionStatus.EXPIRED.value, SubscriptionStatus.LIMITED.value):
             self.status = SubscriptionStatus.ACTIVE.value
 
@@ -3055,6 +3055,50 @@ class Transaction(Base):
     @property
     def amount_rubles(self) -> float:
         return self.amount_kopeks / 100
+
+
+class PaidTrafficResetIntent(Base):
+    """A daily charge's destructive panel reset, acknowledged independently of expiry."""
+
+    __tablename__ = 'paid_traffic_reset_intents'
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'attempted', 'confirmed', 'blocked', 'superseded')", name='ck_paid_reset_state'
+        ),
+        CheckConstraint(
+            "state != 'attempted' OR (target_panel_id IS NOT NULL AND target_short_uuid IS NOT NULL AND attempted_at IS NOT NULL)",
+            name='ck_paid_reset_attempt_target',
+        ),
+        Index('ix_paid_traffic_reset_due', 'state', 'next_check_at', 'id'),
+        Index('ix_paid_traffic_reset_subscription', 'subscription_id', 'id'),
+        Index(
+            'uq_paid_traffic_reset_unresolved_target',
+            'target_panel_id',
+            unique=True,
+            postgresql_where=text("attempted_at IS NOT NULL AND state IN ('attempted', 'blocked')"),
+            sqlite_where=text("attempted_at IS NOT NULL AND state IN ('attempted', 'blocked')"),
+        ),
+    )
+    id = Column(Integer, primary_key=True)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    transaction_id = Column(Integer, ForeignKey('transactions.id', ondelete='SET NULL'), nullable=True, unique=True)
+    operation_key = Column(String(128), nullable=False, unique=True)
+    charge_at = Column(AwareDateTime(), nullable=False)
+    reason = Column(String(128), nullable=False)
+    state = Column(String(16), nullable=False, default='pending')
+    target_panel_id = Column(BigInteger, nullable=True)
+    target_short_uuid = Column(String(255), nullable=True)
+    baseline_observed = Column(Boolean, nullable=False, default=False)
+    baseline_last_reset_at = Column(AwareDateTime(), nullable=True)
+    attempted_at = Column(AwareDateTime(), nullable=True)
+    activation_pending = Column(Boolean, nullable=False, default=False)
+    confirmed_at = Column(AwareDateTime(), nullable=True)
+    confirmed_last_reset_at = Column(AwareDateTime(), nullable=True)
+    checks = Column(Integer, nullable=False, default=0)
+    next_check_at = Column(AwareDateTime(), nullable=True)
+    last_error = Column(String(128), nullable=True)
+    created_at = Column(AwareDateTime(), nullable=False, default=func.now())
 
 
 class SubscriptionConversion(Base):

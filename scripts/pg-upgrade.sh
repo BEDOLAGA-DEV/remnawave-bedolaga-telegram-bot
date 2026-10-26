@@ -234,7 +234,9 @@ wait_ready() {
 			docker logs --tail 50 "$container" >&2 2>&1 || true
 			die "Временный PostgreSQL (${container}) остановился."
 		fi
-		if [ "$need_init" -eq 0 ] || docker logs "$container" 2>&1 | grep -q 'PostgreSQL init process complete'; then
+		# Drain the log: grep -q exits early and can give docker SIGPIPE,
+		# turning a matching log into failure under pipefail.
+		if [ "$need_init" -eq 0 ] || docker logs "$container" 2>&1 | grep 'PostgreSQL init process complete' >/dev/null; then
 			if docker exec "$container" psql -U "$POSTGRES_USER" -d postgres -Atqc 'select 1' >/dev/null 2>&1; then
 				return 0
 			fi
