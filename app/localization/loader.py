@@ -39,7 +39,7 @@ def _resolve_user_locales_dir() -> Path:
 
 def _locale_path(directory: Path, language: str, extension: str) -> Path | None:
     """Resolve a locale file without allowing names or symlinks to escape its directory."""
-    if not re.fullmatch(r'[a-zA-Z0-9_-]+', language):
+    if not isinstance(language, str) or not re.fullmatch(r'[a-zA-Z0-9_-]+', language):
         return None
     root = directory.resolve()
     candidate = os.path.realpath(root / f'{language}{extension}')
