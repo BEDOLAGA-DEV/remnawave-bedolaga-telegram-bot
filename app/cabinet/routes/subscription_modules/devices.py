@@ -195,6 +195,7 @@ async def purchase_devices_legacy(
         try:
             cart_data = {
                 'cart_mode': 'add_devices',
+                'subscription_id': subscription.id,
                 # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                 # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                 'return_to_cart': True,
@@ -488,6 +489,7 @@ async def purchase_devices(
             try:
                 cart_data = {
                     'cart_mode': 'add_devices',
+                    'subscription_id': subscription.id,
                     # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                     # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                     'return_to_cart': True,
@@ -790,6 +792,7 @@ async def save_devices_cart(
     # Save cart for auto-purchase after balance top-up
     cart_data = {
         'cart_mode': 'add_devices',
+        'subscription_id': subscription.id,
         # Намерение пополнить ради этой корзины: без него тихая автопокупка после
         # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
         'return_to_cart': True,

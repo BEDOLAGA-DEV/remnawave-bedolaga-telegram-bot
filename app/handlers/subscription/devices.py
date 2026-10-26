@@ -436,6 +436,7 @@ async def confirm_change_devices(
                 user_id=db_user.id,
                 cart_data={
                     'cart_mode': 'add_devices',
+                    'subscription_id': subscription.id,
                     # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                     # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                     'return_to_cart': True,
@@ -1682,6 +1683,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             user_id=db_user.id,
             cart_data={
                 'cart_mode': 'add_devices',
+                'subscription_id': subscription.id,
                 # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                 # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                 'return_to_cart': True,

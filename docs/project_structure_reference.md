@@ -3878,6 +3878,9 @@
 - `tests/database/test_daily_topup_resume_postgres.py` — Python-модуль
   Классы: нет
   Функции: `panel`, `seed`, `payments`, `test_daily_topup_obeys_settings_and_repeat`, `test_daily_topup_preserves_eligibility_guards`, `test_payment_hook_keeps_topup_and_notification_when_daily_disabled`, `test_daily_topup_reads_database_setting_override`, `test_two_topups_charge_one_day`, `test_failed_resume_rolls_back_payment`
+- `tests/database/test_device_cart_target_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_device_topup_keeps_selected_subscription`
 - `tests/database/test_dpichecker_actions_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_new_action_gets_unique_key_and_submitting`, `test_found_by_kind_and_remote_id`, `test_delivery_is_claimed_once`, `test_counts_per_filter_follow_mine` — Счётчики у фильтров истории — по видам и типам проверок, с учётом «только мои»., `test_admin_names_for_history`, `test_list_filters_by_kind_type_and_admin`, `test_same_remote_id_allowed_across_kinds_but_not_within`

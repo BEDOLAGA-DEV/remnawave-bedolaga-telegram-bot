@@ -1636,6 +1636,10 @@ async def _auto_add_devices(
 
     # Проверяем подписку (with lock to prevent concurrent device modifications)
     _cart_sub_id_devices = _safe_int(cart_data.get('subscription_id'))
+    if settings.is_multi_tariff_enabled() and not _cart_sub_id_devices:
+        # Legacy carts cannot identify which paid subscription should receive slots.
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
     if settings.is_multi_tariff_enabled() and _cart_sub_id_devices:
         locked_result = await db.execute(
             select(Subscription)
