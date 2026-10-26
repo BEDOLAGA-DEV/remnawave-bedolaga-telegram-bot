@@ -117,6 +117,9 @@ async def purchase_devices_legacy(
             detail='Ваша подписка неактивна',
         )
 
+    if subscription.device_limit == 0:
+        raise HTTPException(status_code=400, detail='Докупка устройств недоступна: у подписки безлимит')
+
     # Get tariff for device price (if exists)
     tariff = None
     if subscription.tariff_id:
@@ -260,17 +263,33 @@ async def purchase_devices_legacy(
 
     actual_current = subscription.device_limit or 1
     actual_new = actual_current + request.devices
-    if max_device_limit and actual_new > max_device_limit:
+    if subscription.device_limit == 0 or (max_device_limit and actual_new > max_device_limit):
         # Concurrent purchase already exceeded limit — refund balance
         user_refund = await db.execute(
             select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
         )
         refund_user = user_refund.scalar_one()
         refund_user.balance_kopeks += total_price
+        if subscription.device_limit == 0:
+            from app.database.crud.transaction import create_transaction
+
+            await create_transaction(
+                db,
+                user.id,
+                TransactionType.REFUND,
+                total_price,
+                'Возврат докупки устройств: подписка стала безлимитной',
+                payment_method=PaymentMethod.BALANCE,
+                commit=False,
+            )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.',
+            detail=(
+                'У подписки теперь безлимит устройств. Баланс возвращён.'
+                if subscription.device_limit == 0
+                else f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.'
+            ),
         )
 
     # Add devices (under lock)
@@ -381,6 +400,9 @@ async def purchase_devices(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail='Ваша подписка неактивна',
             )
+
+        if subscription.device_limit == 0:
+            raise HTTPException(status_code=400, detail='Докупка устройств недоступна: у подписки безлимит')
 
         # Get tariff for device price (if exists)
         tariff = None
@@ -536,17 +558,33 @@ async def purchase_devices(
 
         actual_current = subscription.device_limit or 1
         actual_new = actual_current + request.devices
-        if max_device_limit and actual_new > max_device_limit:
+        if subscription.device_limit == 0 or (max_device_limit and actual_new > max_device_limit):
             # Concurrent purchase already exceeded limit — refund balance
             user_refund = await db.execute(
                 select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
             )
             refund_user = user_refund.scalar_one()
             refund_user.balance_kopeks += price_kopeks
+            if subscription.device_limit == 0:
+                from app.database.crud.transaction import create_transaction
+
+                await create_transaction(
+                    db,
+                    user.id,
+                    TransactionType.REFUND,
+                    price_kopeks,
+                    'Возврат докупки устройств: подписка стала безлимитной',
+                    payment_method=PaymentMethod.BALANCE,
+                    commit=False,
+                )
             await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.',
+                detail=(
+                    'У подписки теперь безлимит устройств. Баланс возвращён.'
+                    if subscription.device_limit == 0
+                    else f'Максимальное количество устройств: {max_device_limit}. Баланс возвращён.'
+                ),
             )
 
         # Increase device limit (under lock)
@@ -678,6 +716,9 @@ async def save_devices_cart(
             detail='Ваша подписка неактивна',
         )
 
+    if subscription.device_limit == 0:
+        raise HTTPException(status_code=400, detail='Докупка устройств недоступна: у подписки безлимит')
+
     # Get tariff for device price (if exists)
     tariff = None
     if subscription.tariff_id:
@@ -786,6 +827,13 @@ async def get_device_price(
             'available': False,
             'reason': 'Нет активной подписки',
             'reason_code': 'no_active_subscription',
+        }
+
+    if subscription.device_limit == 0:
+        return {
+            'available': False,
+            'reason': 'У подписки уже безлимит устройств',
+            'reason_code': 'devices_unavailable',
         }
 
     tariff = None

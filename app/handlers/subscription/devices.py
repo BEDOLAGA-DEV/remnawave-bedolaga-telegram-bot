@@ -199,6 +199,13 @@ async def handle_change_devices(
         )
         return
 
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
+        return
+
     # Проверяем тариф подписки
     tariff = None
     if subscription.tariff_id:
@@ -290,6 +297,13 @@ async def confirm_change_devices(
         return
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
         return
 
     # Проверяем тариф подписки
@@ -556,6 +570,13 @@ async def execute_change_devices(
             show_alert=True,
         )
         return
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
+        return
+
     current_devices = subscription.device_limit
 
     # Проверяем тариф подписки
@@ -663,6 +684,21 @@ async def execute_change_devices(
         )
         subscription = relock_result.scalar_one()
 
+        if subscription.device_limit == 0:
+            if price > 0:
+                db_user.balance_kopeks += price
+                await create_transaction(
+                    db=db,
+                    user_id=db_user.id,
+                    type=TransactionType.REFUND,
+                    amount_kopeks=price,
+                    description='Возврат докупки устройств: подписка стала безлимитной',
+                    commit=False,
+                )
+                await db.commit()
+            await callback.answer('⚠️ У подписки теперь безлимит устройств. Баланс возвращён.', show_alert=True)
+            return
+
         # Re-validate: prevent double-charge and max-limit violation
         if new_devices_count > current_devices:
             tariff_max_recheck = getattr(tariff, 'max_device_limit', None) if tariff else None
@@ -681,7 +717,11 @@ async def execute_change_devices(
                     refund_user.balance_kopeks += price
                     await db.commit()
                 await callback.answer(
-                    f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.',
+                    (
+                        '⚠️ У подписки теперь безлимит устройств. Баланс возвращён.'
+                        if subscription.device_limit == 0
+                        else f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.'
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1482,6 +1522,13 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     if subscription is None:
         return
 
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
+        return
+
     # Проверяем тариф подписки
     tariff = None
     if subscription.tariff_id:
@@ -1670,7 +1717,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         actual_new = actual_current + devices_count
         tariff_max_recheck = getattr(tariff, 'max_device_limit', None) if tariff else None
         max_devices = tariff_max_recheck or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
-        if max_devices and actual_new > max_devices:
+        if subscription.device_limit == 0 or (max_devices and actual_new > max_devices):
             # Concurrent purchase exceeded limit — refund
             user_refund = await db.execute(
                 select(User).where(User.id == db_user.id).with_for_update().execution_options(populate_existing=True)
@@ -1679,7 +1726,11 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             refund_user.balance_kopeks += price
             await db.commit()
             await callback.answer(
-                f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.',
+                (
+                    '⚠️ У подписки теперь безлимит устройств. Баланс возвращён.'
+                    if subscription.device_limit == 0
+                    else f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.'
+                ),
                 show_alert=True,
             )
             return

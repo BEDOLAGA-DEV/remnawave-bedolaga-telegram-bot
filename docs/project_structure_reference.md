@@ -4085,6 +4085,9 @@
 - `tests/database/test_traffic_expiry_races_postgres.py` — Python-модуль
   Классы: нет
   Функции: `isolate_external_effects`, `seed`, `test_stale_second_worker_does_not_remove_active_package`, `test_expiration_cannot_overwrite_concurrent_topup`, `test_rescheduled_candidate_is_not_expired_from_stale_snapshot`, `test_deferred_expiration_releases_lock_without_changing_packages`, `test_cancelled_expiration_releases_lock`, `test_failed_subscription_does_not_abort_remaining_batch`, `test_expiration_refreshes_cached_totals_after_completed_topup`, `test_panel_rollback_keeps_expiry_and_enqueues_retry`
+- `tests/database/test_unlimited_device_addons_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_unlimited_devices_cannot_be_sold_additional_slots`, `test_unlimited_granted_after_debit_refunds_and_preserves_limit`
 - `tests/database/test_unpaid_trial_visibility_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_unpaid_trial_invoice_stays_hidden_after_back`
@@ -4575,6 +4578,9 @@
 - `tests/handlers/test_trial_deeplink_duration.py` — Python-модуль
   Классы: нет
   Функции: `free_trial`, `activate`, `test_deeplink_trial_matches_tariff_and_cabinet_preview`, `test_deeplink_trial_duration_persisted_on_postgres`, `test_deeplink_trial_keeps_activation_gates`
+- `tests/handlers/test_unlimited_device_callbacks.py` — Python-модуль
+  Классы: нет
+  Функции: `test_unlimited_callbacks_stop_before_pricing_or_debit`
 - `tests/handlers/test_user_messages_list_refresh.py` — Python-модуль
   Классы: нет
   Функции: `test_render_list_edits_message_and_never_answers`, `test_delete_confirm_renders_via_helper_and_answers_once`

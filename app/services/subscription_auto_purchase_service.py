@@ -1658,6 +1658,10 @@ async def _auto_add_devices(
         await _delete_cart_for_subscription(user.id, cart_data)
         return False
 
+    if subscription.device_limit == 0:
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return False
+
     if subscription.status not in ('active', 'trial', 'disabled', 'limited', 'ACTIVE', 'TRIAL', 'DISABLED', 'LIMITED'):
         logger.warning(
             '🔁 Автопокупка устройств: подписка пользователя не активна',
@@ -1780,13 +1784,25 @@ async def _auto_add_devices(
     old_device_limit = subscription.device_limit or 1
     new_device_limit = old_device_limit + devices_to_add
 
-    if tariff_max_device_limit and new_device_limit > tariff_max_device_limit:
+    if subscription.device_limit == 0 or (tariff_max_device_limit and new_device_limit > tariff_max_device_limit):
         # Concurrent modification exceeded limit — refund
         user_refund = await db.execute(
             select(User).where(User.id == user.id).with_for_update().execution_options(populate_existing=True)
         )
         refund_user = user_refund.scalar_one()
         refund_user.balance_kopeks += price_kopeks
+        if subscription.device_limit == 0:
+            from app.database.crud.transaction import create_transaction
+
+            await create_transaction(
+                db,
+                user.id,
+                TransactionType.REFUND,
+                price_kopeks,
+                'Возврат докупки устройств: подписка стала безлимитной',
+                payment_method=PaymentMethod.BALANCE,
+                commit=False,
+            )
         await db.commit()
         logger.warning(
             '🔁 Автопокупка устройств: лимит превышен после оплаты, баланс возвращён',
