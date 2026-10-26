@@ -549,7 +549,7 @@ async def main():
             for method in SUPPORTED_MANUAL_CHECK_METHODS:
                 if method == PaymentMethod.YOOKASSA and settings.is_yookassa_enabled():
                     verification_providers.append('YooKassa')
-                elif method == PaymentMethod.MULENPAY and settings.is_mulenpay_enabled():
+                elif method == PaymentMethod.MULENPAY and settings.is_mulenpay_configured():
                     verification_providers.append(settings.get_mulenpay_display_name())
                 elif method == PaymentMethod.PAL24 and settings.is_pal24_enabled():
                     verification_providers.append('PayPalych')
@@ -613,7 +613,7 @@ async def main():
             [
                 settings.TRIBUTE_ENABLED,
                 settings.is_cryptobot_enabled(),
-                settings.is_mulenpay_enabled(),
+                settings.is_mulenpay_configured(),
                 settings.is_yookassa_enabled(),
                 settings.is_pal24_enabled(),
                 settings.is_wata_enabled(),
@@ -804,7 +804,7 @@ async def main():
             webhook_lines.append(f'Telegram: {telegram_webhook_url}')
         if settings.TRIBUTE_ENABLED:
             webhook_lines.append(f'Tribute: {_fmt(settings.TRIBUTE_WEBHOOK_PATH)}')
-        if settings.is_mulenpay_enabled():
+        if settings.is_mulenpay_configured():
             webhook_lines.append(f'{settings.get_mulenpay_display_name()}: {_fmt(settings.MULENPAY_WEBHOOK_PATH)}')
         if settings.is_cryptobot_enabled():
             webhook_lines.append(f'CryptoBot: {_fmt(settings.CRYPTOBOT_WEBHOOK_PATH)}')
