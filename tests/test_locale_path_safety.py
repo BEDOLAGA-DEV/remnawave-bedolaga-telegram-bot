@@ -46,3 +46,18 @@ def test_invalid_language_uses_default_locale(tmp_path, monkeypatch):
         assert loader.load_locale('../masked') == {'MASKED': 'fallback translation'}
     finally:
         loader.clear_locale_cache()
+
+
+def test_locale_symlink_cannot_escape_to_directory_with_same_prefix(tmp_path, monkeypatch):
+    locales = tmp_path / 'locales'
+    sibling = tmp_path / 'locales-backup'
+    locales.mkdir()
+    sibling.mkdir()
+    external = sibling / 'masked.json'
+    external.write_text(json.dumps({'MASKED': 'outside locale directory'}))
+    (locales / 'masked.json').symlink_to(external)
+    monkeypatch.setattr(loader, '_DEFAULT_LOCALES_DIR', locales)
+    monkeypatch.setattr(loader.settings, 'LOCALES_PATH', str(locales))
+    assert loader._load_default_locale('masked') == {}
+    assert loader._load_user_locale('masked') == {}
+    assert not loader._locale_file_exists('masked')

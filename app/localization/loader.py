@@ -42,10 +42,11 @@ def _locale_path(directory: Path, language: str, extension: str) -> Path | None:
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', language):
         return None
     root = directory.resolve()
-    candidate = (root / f'{language}{extension}').resolve()
-    if not candidate.is_relative_to(root):
+    candidate = os.path.realpath(root / f'{language}{extension}')
+    # Include the separator so a sibling like locales-backup is never accepted.
+    if not candidate.startswith(str(root).rstrip(os.sep) + os.sep):
         return None
-    return candidate
+    return Path(candidate)
 
 
 def _locale_file_exists(language: str) -> bool:

@@ -80,8 +80,9 @@ def _verify_mulenpay_signature(request: Request, raw_body: bytes) -> bool:
     MulenPay payment creation and some callback variants use a SHA1 ``sign``
     field computed over the JSON values plus the secret key.  A callback with a
     present but invalid ``sign`` must stay fail-closed.  A callback without
-    ``sign`` returns ``False`` here; the route may only accept it after a
-    separate API-key-authenticated provider re-check.
+    ``sign`` returns ``False`` here. This legacy checksum never authorizes
+    credit: both signed and unsigned callbacks require a separate
+    API-key-authenticated provider re-check.
 
     ``request`` is accepted (and unused) to keep the call-site stable.
     """
@@ -238,7 +239,7 @@ def _looks_like_unsigned_mulenpay_callback(payload: object) -> bool:
 
 
 async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, payload: dict) -> str:
-    """Treat an unsigned callback only as a trigger for authenticated API verification."""
+    """Treat any callback only as a trigger for authenticated API verification."""
     try:
         provider_id = int(payload.get('id'))
     except (TypeError, ValueError):
@@ -258,7 +259,7 @@ async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, p
                 local_payment = await get_mulenpay_payment_by_mulen_id(db, provider_id)
             except Exception as error:
                 logger.warning(
-                    'MulenPay webhook без sign: не удалось проверить локальный платёж',
+                    'MulenPay webhook: не удалось проверить локальный платёж',
                     error_type=type(error).__name__,
                 )
                 return _MULENPAY_UNSIGNED_RETRY
@@ -280,7 +281,7 @@ async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, p
                 response = await provider.get_payment(provider_id)
             except Exception as error:
                 logger.warning(
-                    'MulenPay webhook без sign: API-проверка временно недоступна',
+                    'MulenPay webhook: API-проверка временно недоступна',
                     error_type=type(error).__name__,
                 )
                 return _MULENPAY_UNSIGNED_RETRY
@@ -295,14 +296,14 @@ async def _process_unsigned_mulenpay_callback(payment_service: PaymentService, p
                 remote_payment,
             )
             if verified_payload is None:
-                logger.warning('MulenPay webhook без sign не прошёл проверку id/суммы/валюты через API')
+                logger.warning('MulenPay webhook не прошёл проверку id/суммы/валюты через API')
                 return _MULENPAY_UNSIGNED_REJECTED
 
             try:
                 success = await payment_service.process_mulenpay_callback(db, verified_payload)
             except Exception as error:
                 logger.exception(
-                    'MulenPay webhook без sign: ошибка обработки подтверждённого платежа',
+                    'MulenPay webhook: ошибка обработки подтверждённого платежа',
                     error_type=type(error).__name__,
                 )
                 return _MULENPAY_UNSIGNED_FAILED
@@ -453,78 +454,45 @@ def create_payment_router(bot: Bot, payment_service: PaymentService) -> APIRoute
                     {'status': 'error', 'reason': 'empty_body'}, status_code=status.HTTP_400_BAD_REQUEST
                 )
 
-            signed = _verify_mulenpay_signature(request, raw_body)
-            if not signed:
-                try:
-                    unsigned_payload = json.loads(raw_body.decode('utf-8'))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'invalid_signature'},
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                    )
-
-                # A present-but-invalid sign is never downgraded to the unsigned
-                # compatibility path.  Only the observed callback shape without
-                # sign may trigger a provider API re-check.
-                # Тело — любой валидный JSON, не обязательно объект: ``'sign' in 5``
-                # роняло бы роут TypeError'ом на запросе без всякой авторизации.
-                if (
-                    not isinstance(unsigned_payload, dict)
-                    or 'sign' in unsigned_payload
-                    or not _looks_like_unsigned_mulenpay_callback(unsigned_payload)
-                ):
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'invalid_signature'},
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                    )
-
-                outcome = await _process_unsigned_mulenpay_callback(payment_service, unsigned_payload)
-                if outcome == _MULENPAY_UNSIGNED_PROCESSED:
-                    logger.info('MulenPay webhook без sign подтверждён через API')
-                    return JSONResponse({'status': 'ok'})
-                if outcome == _MULENPAY_UNSIGNED_RETRY:
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'verification_unavailable'},
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    )
-                if outcome == _MULENPAY_UNSIGNED_FAILED:
-                    return JSONResponse(
-                        {'status': 'error', 'reason': 'processing_failed'},
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    )
+            try:
+                payload = json.loads(raw_body.decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 return JSONResponse(
-                    {'status': 'error', 'reason': 'verification_failed'},
+                    {'status': 'error', 'reason': 'invalid_signature'},
                     status_code=status.HTTP_401_UNAUTHORIZED,
                 )
 
-            try:
-                payload = json.loads(raw_body.decode('utf-8'))
-            except json.JSONDecodeError:
+            # SHA-1 is required by the provider's wire protocol, but cannot
+            # authorize credit. All callbacks must use the authenticated API
+            # response; a present invalid sign still fails before any API call.
+            if (
+                not isinstance(payload, dict)
+                or ('sign' in payload and not _verify_mulenpay_signature(request, raw_body))
+                or not _looks_like_unsigned_mulenpay_callback(payload)
+            ):
                 return JSONResponse(
-                    {'status': 'error', 'reason': 'invalid_json'},
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    {'status': 'error', 'reason': 'invalid_signature'},
+                    status_code=status.HTTP_401_UNAUTHORIZED,
                 )
 
-            try:
-                success = await _process_payment_service_callback(
-                    payment_service,
-                    payload,
-                    'process_mulenpay_callback',
+            outcome = await _process_unsigned_mulenpay_callback(payment_service, payload)
+            if outcome == _MULENPAY_UNSIGNED_PROCESSED:
+                logger.info('MulenPay webhook подтверждён через API')
+                return JSONResponse({'status': 'ok'})
+            if outcome == _MULENPAY_UNSIGNED_RETRY:
+                return JSONResponse(
+                    {'status': 'error', 'reason': 'verification_unavailable'},
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
-                if success:
-                    return JSONResponse({'status': 'ok'})
-
-                logger.error('MulenPay webhook processing failed', payload=payload)
+            if outcome == _MULENPAY_UNSIGNED_FAILED:
                 return JSONResponse(
                     {'status': 'error', 'reason': 'processing_failed'},
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
-            except Exception as e:
-                logger.exception('MulenPay webhook processing error', e=e)
-                return JSONResponse(
-                    {'status': 'error', 'reason': 'processing_failed'},
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                )
+            return JSONResponse(
+                {'status': 'error', 'reason': 'verification_failed'},
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
 
         routes_registered = True
 
