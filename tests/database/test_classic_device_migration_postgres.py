@@ -162,7 +162,9 @@ async def test_selected_classic_devices_are_priced_and_preserved(
         user = await get_user_by_id(db, 1)
         sub = await db.get(Subscription, 10)
         expected_extra = 0 if base == 0 else max(0, expected - base)
-        expected_price = (100 if daily else days * 10) + expected_extra * 100 * max(1, round(days / 30))
+        expected_price = (100 if daily else days * 10) + (
+            expected_extra * 100 if daily else expected_extra * 100 * days // 30
+        )
         expected_price += (custom_traffic or 0) * 2
         saved_cart = None
         if flow in ('auto_cabinet_cart', 'telegram_cabinet_cart'):

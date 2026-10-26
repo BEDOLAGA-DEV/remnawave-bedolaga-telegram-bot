@@ -313,7 +313,7 @@ async def test_saved_cart_only_charged_once(
             user = await get_user_by_id(db, 1)
             sub = await db.get(Subscription, 10)
             payments = (await db.scalars(select(Transaction))).all()
-            base_price = days * 10 + 200 * max(1, round(days / 30))
+            base_price = days * 10 + 200 * days // 30
             price = base_price - base_price * promo // 100
             if failure == 'stale_source':
                 assert user.balance_kopeks == 10000 and not payments

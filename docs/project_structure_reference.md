@@ -2320,7 +2320,7 @@
   Функции: `calculate_user_price` — Calculate final price for a user with all applicable discounts., `format_price_button` — Format a price button text with unified discount display., `format_price_text` — Format a price for message text (not button) with unified discount display.
 - `app/utils/pricing_utils.py` — Python-модуль
   Классы: нет
-  Функции: `calculate_months_from_days`, `calculate_price_per_month` — Месячная ставка для периода длиной period_days дней (месяц = 30 дней)., `calculate_prorated_price` — Calculate prorated price based on remaining days., `apply_percentage_discount` — Apply percentage discount using PricingEngine's floor division., `resolve_discount_percent` — Определяет размер скидки для указанной категории., `compute_simple_subscription_price` — Вычисляет стоимость простой подписки с учетом всех доплат и скидок., `format_period_description`, `validate_pricing_calculation`
+  Функции: `calculate_months_from_days`, `calculate_period_device_cost` — Cost in kopeks for a periodic tariff's devices; one priced month is 30 days., `calculate_price_per_month` — Месячная ставка для периода длиной period_days дней (месяц = 30 дней)., `calculate_prorated_price` — Calculate prorated price based on remaining days., `apply_percentage_discount` — Apply percentage discount using PricingEngine's floor division., `resolve_discount_percent` — Определяет размер скидки для указанной категории., `compute_simple_subscription_price` — Вычисляет стоимость простой подписки с учетом всех доплат и скидок., `format_period_description`, `validate_pricing_calculation`
 - `app/utils/promo_offer.py` — Python-модуль
   Классы: нет
   Функции: `get_user_active_promo_discount_percent`, `consume_user_promo_offer` — Consume the user's one-shot promo-offer discount (zeroes out the fields)., `build_promo_offer_timer_line`, `build_promo_offer_hint`, `build_test_access_hint`
@@ -5289,6 +5289,9 @@
 - `tests/services/test_tariff_custom_traffic.py` — Python-модуль
   Классы: нет
   Функции: `test_parse_positive_rubles_to_kopeks`, `test_parse_positive_rubles_to_kopeks_rejects_invalid_values`, `test_parse_positive_gb`, `test_parse_positive_gb_rejects_invalid_values`, `test_valid_custom_traffic_configuration_has_no_errors`, `test_invalid_custom_traffic_configuration_reports_specific_error`, `test_invalid_configuration_reports_all_independent_missing_fields`
+- `tests/services/test_tariff_device_arbitrary_periods.py` — Python-модуль
+  Классы: нет
+  Функции: `test_device_price_follows_arbitrary_tariff_days`, `test_daily_rate_and_unlimited_devices_are_preserved`, `test_telegram_preview_uses_configured_fallback_device_rate`
 - `tests/services/test_tariff_purchase_subscription_pinning.py` — Python-модуль
   Классы: нет
   Функции: `purchase_context`, `confirmation`, `test_purchase_keeps_preview_source_after_status_and_current_selection_change`, `test_foreign_or_missing_preview_source_never_reaches_pricing`, `test_fixed_purchase_preserves_max_active_subscriptions_before_debit`, `test_unbound_legacy_confirmation_requires_reselection`, `test_custom_preview_buttons_bind_options_and_reject_previous_selection`

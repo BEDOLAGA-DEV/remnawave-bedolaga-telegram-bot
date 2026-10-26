@@ -45,7 +45,7 @@ async def test_custom_days_metadata_matches_exact_period_quote(monkeypatch, defa
     assert metadata['period_prices'] == {'45': 999}
     rates = metadata['discounts_by_days'].get(str(days), {})
     base = metadata['period_prices'].get(str(days), days * metadata['price_per_day_kopeks'])
-    devices = 2 * metadata['device_price_kopeks'] * max(1, round(days / 30))
+    devices = 2 * metadata['device_price_kopeks'] * days // 30
     quoted = pricing_engine.apply_discount(base, rates.get('period', 0)) + pricing_engine.apply_discount(
         devices, rates.get('devices', metadata['default_device_discount_percent'])
     )
