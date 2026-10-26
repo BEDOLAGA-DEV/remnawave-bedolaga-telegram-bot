@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## [5.1.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.0.0...v5.1.0) (2026-10-26)
+
+
+### New Features
+
+* **payments:** add Anore hosted checkout and update CisPay merchant integration ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+
 
 ### Bug Fixes
 
@@ -8,6 +14,17 @@
 * **devices:** при синхронизации конечного HWID-лимита удаляются лишние регистрации, сохраняются наиболее недавно активные устройства. Безлимит и регистрации в пределах лимита сохраняются. Ошибка очистки после оплаты отправляет синхронизацию на повтор без нового списания. Ограничение: отложенные операции Remnawave 3.4.3 могут восстановить удалённые HWID после проверки; строгий предел при конкурентных запросах пока не гарантирован. Подробности — [HWID-лимиты](docs/hwid-limit-reconciliation.md).
 * **wheel:** автоматические вероятности призов теперь рассчитываются из бюджета RTP с учётом стоимости спина и ручных выплат. Удалён минимальный вес, завышавший шанс дорогих призов; недостижимый RTP отмечается в логах. Это исправление меняет фактические выплаты существующих колёс: перед обновлением проверьте стоимость призов и ручные вероятности. RTP — математическое ожидание, а не гарантия выплаты на короткой серии спинов.
 * **wheel:** списание за спин сохраняется до повторной загрузки пользователя при выдаче приза. Синхронизация панели выполняется после сохранения спина в отдельной сессии, чтобы её commit/rollback не нарушал оплату, начисление приза и ответ пользователю.
+
+* **billing:** make checkout charges atomic and prevent duplicate cart and payment processing ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **cabinet:** restore authorization, support attachments and configurable payment behavior ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **deps:** update vulnerable Python dependencies ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **panel:** recover pending expiry, device and traffic operations without losing subscription identity ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **subscriptions:** preserve selected subscription, exact-day prices and paid limits across purchases and renewals ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+
+
+### Refactoring
+
+* **payments:** remove retired PayPear integration ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
 
 ## [5.0.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.16.0...v5.0.0) (2026-09-29)
 
