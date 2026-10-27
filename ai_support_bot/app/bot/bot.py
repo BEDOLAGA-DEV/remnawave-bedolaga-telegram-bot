@@ -21,6 +21,7 @@ from aiogram.types import (
     ReplyParameters,
 )
 
+from ai_support_bot.app.bot.message_queue import MessageQueue
 from ai_support_bot.app.core.config import settings
 from ai_support_bot.app.db import crud
 from ai_support_bot.app.db.database import AsyncSessionLocal
@@ -40,12 +41,10 @@ _WELCOME = (
 # (telegram_id, YYYY-MM-DD) — уже отправили пользователю ответ про лимит сегодня
 _limit_user_notified: set[tuple[int, str]] = set()
 
-_last_message_at: dict[int, float] = {}
-_throttle_warned: set[int] = set()
-
 _processed_updates: dict[tuple[str | None, int, int], float] = {}
 _PROCESSED_TTL = 300
 _business_turn: ContextVar[tuple[int, int] | None] = ContextVar('business_turn', default=None)
+_message_queue = MessageQueue()
 
 
 async def _turn_active() -> bool:
@@ -72,23 +71,6 @@ def _is_duplicate_update(message: Message) -> bool:
     if key in _processed_updates and now - _processed_updates[key] < _PROCESSED_TTL:
         return True
     _processed_updates[key] = now
-    return False
-
-
-def _throttle_hit(telegram_id: int) -> bool:
-    window = settings_store.get_int('THROTTLE_SECONDS')
-    if window <= 0:
-        return False
-    now = time.time()
-    last = _last_message_at.get(telegram_id, 0.0)
-    if now - last < window:
-        return True
-    _last_message_at[telegram_id] = now
-    _throttle_warned.discard(telegram_id)
-    if len(_last_message_at) > 10000:
-        for stale in [k for k, ts in _last_message_at.items() if now - ts > 3600]:
-            _last_message_at.pop(stale, None)
-            _throttle_warned.discard(stale)
     return False
 
 
@@ -167,7 +149,8 @@ def _admin_recipients(exclude_telegram_id: int | None = None) -> list[int]:
     return recipients
 
 
-async def _notify_admins(bot: Bot, text: str, exclude_telegram_id: int | None = None, photo: str | None = None) -> None:
+async def _notify_admins(bot: Bot, text: str, exclude_telegram_id: int | None = None, photo: str | None = None,
+                         photos: list[str] | None = None) -> None:
     recipients = set(_admin_recipients(exclude_telegram_id))
     options = {}
     turn = _business_turn.get()
@@ -181,9 +164,9 @@ async def _notify_admins(bot: Bot, text: str, exclude_telegram_id: int | None = 
     for admin_id in sorted(recipients):
         try:
             notification = await bot.send_message(admin_id, text, parse_mode='HTML', **options)
-            if photo:
+            for attachment in photos or ([photo] if photo else []):
                 await bot.send_photo(
-                    admin_id, photo, caption=f'Вложение к обращению пользователя {exclude_telegram_id}',
+                    admin_id, attachment, caption=f'Вложение к обращению пользователя {exclude_telegram_id}',
                     reply_parameters=ReplyParameters(message_id=notification.message_id),
                 )
         except Exception as err:
@@ -210,6 +193,7 @@ async def _handle_daily_limit(
     question: str,
     used_today: int,
     limit: int,
+    photos: list[str] | None = None,
 ) -> None:
     """Save the message and notify admins quietly without answering the user."""
     bot = message.bot
@@ -222,8 +206,10 @@ async def _handle_daily_limit(
             telegram_id=telegram_id,
             role='user',
             content=question or '[изображение]',
-            has_media=bool(message.photo),
-            media_type='photo' if message.photo else None,
+            has_media=bool(photos or message.photo),
+            media_type='photo' if photos or message.photo else None,
+            media_file_id=photos[0] if photos else None,
+            media_file_ids=photos,
         )
         await db.commit()
 
@@ -235,29 +221,56 @@ async def _handle_daily_limit(
         f'<b>Сообщений сегодня:</b> {used_today + 1} / {limit}\n'
         f'<b>Вопрос:</b> {escape(question or "[изображение]")}'
     )
-    await _notify_admins(bot, notify_text, exclude_telegram_id=telegram_id)
+    await _notify_admins(bot, notify_text, exclude_telegram_id=telegram_id, photos=photos)
     logger.info('Daily AI support limit reached', telegram_id=telegram_id, used=used_today, limit=limit)
 
 
-async def handle_message(message: Message, business_connection: BusinessConnection | None = None) -> None:
+async def queue_message(message: Message, business_connection: BusinessConnection | None = None) -> None:
+    if message.from_user is None or _is_duplicate_update(message):
+        return
+    await settings_store.load()
+    key = (getattr(message.bot, 'id', 0), getattr(message, 'business_connection_id', None),
+           message.chat.id, message.from_user.id, _business_turn.get())
+
+    async def process(batch):
+        if await _turn_active():
+            ordered = sorted(batch, key=lambda item: item.message_id)
+            await handle_message(ordered[-1], business_connection, message_batch=ordered)
+
+    try:
+        await _message_queue.submit(key, message, process, interval=settings_store.get_int('THROTTLE_SECONDS'))
+    except OverflowError:
+        await _answer_safely(message, 'Слишком много сообщений подряд. Дождитесь ответа на уже отправленные.')
+
+
+async def handle_message(message: Message, business_connection: BusinessConnection | None = None,
+                         message_batch: list[Message] | None = None) -> None:
     if message.from_user is None:
         return
     bot = message.bot
     telegram_id = message.from_user.id
 
-    if _is_duplicate_update(message):
+    if message_batch is None and _is_duplicate_update(message):
         logger.info('Duplicate update skipped', telegram_id=telegram_id)
         return
 
     await settings_store.load()
 
-    question = (message.text or message.caption or '').strip()
-    image_url: str | None = None
+    batch = message_batch or [message]
+    question = '\n'.join(text for item in batch if (text := (item.text or item.caption or '').strip()))
+    photo_messages = [item for item in batch if item.photo]
+    image_urls = []
 
-    if message.photo and settings_store.get_bool('VISION_ENABLED'):
-        image_url = await _download_image_data_url(bot, message.photo[-1].file_id)
+    if settings_store.get_bool('VISION_ENABLED'):
+        for item in photo_messages:
+            url = await _download_image_data_url(bot, item.photo[-1].file_id)
+            if url is None:
+                await _answer_safely(message, 'Не удалось загрузить скриншот. Пришлите его ещё раз.')
+                return
+            image_urls.append(url)
+    image_url = image_urls[0] if len(image_urls) == 1 else image_urls or None
 
-    if message.photo and not settings_store.get_bool('VISION_ENABLED') and not question:
+    if photo_messages and not settings_store.get_bool('VISION_ENABLED') and not question:
         await _answer_safely(message, 'Анализ изображений сейчас отключён. Опишите вопрос текстом.')
         return
 
@@ -265,25 +278,20 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
         await _answer_safely(message, 'Пожалуйста, опишите вопрос текстом или пришлите скриншот.')
         return
 
-    if _throttle_hit(telegram_id):
-        if telegram_id not in _throttle_warned:
-            _throttle_warned.add(telegram_id)
-            await _answer_safely(message, 'Секунду, я ещё обрабатываю предыдущее сообщение — напишите чуть медленнее. 🙂')
-        logger.info('Throttled message', telegram_id=telegram_id)
-        return
-
     daily_limit = settings_store.get_int('DAILY_MESSAGE_LIMIT')
     if daily_limit > 0:
         async with AsyncSessionLocal() as db:
             used_today = await crud.count_user_messages_today(db, telegram_id)
         if used_today >= daily_limit:
-            await _handle_daily_limit(message, telegram_id, question, used_today, daily_limit)
+            await _handle_daily_limit(message, telegram_id, question, used_today, daily_limit,
+                                      photos=[item.photo[-1].file_id for item in photo_messages])
             return
 
     try:
         async with typing_action(bot, message.chat.id, getattr(message, 'business_connection_id', None)):
             async with AsyncSessionLocal() as db:
-                options = {'media_file_id': message.photo[-1].file_id} if message.photo else {}
+                file_ids = [item.photo[-1].file_id for item in photo_messages]
+                options = {'media_file_id': file_ids[0] if len(file_ids) == 1 else file_ids} if file_ids else {}
                 result = await support_agent.generate_answer(db, telegram_id, question, image_url=image_url, **options)
     except OpenAIError as error:
         logger.error('Generation failed', error=str(error), telegram_id=telegram_id)
@@ -341,7 +349,8 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
         )
         if result.get('support_context'):
             notify_text += '\n\n' + escape(result['support_context'])
-        await _notify_admins(bot, notify_text, exclude_telegram_id=telegram_id, photo=result.get('support_photo'))
+        await _notify_admins(bot, notify_text, exclude_telegram_id=telegram_id, photo=result.get('support_photo'),
+                             photos=result.get('support_photos'))
 
 
 async def handle_business_connection(connection: BusinessConnection) -> None:
@@ -390,7 +399,7 @@ async def handle_business_message(message: Message) -> None:
         return
     token = _business_turn.set((control.id, control.revision))
     try:
-        await handle_message(message, business_connection=connection)
+        await queue_message(message, business_connection=connection)
     finally:
         _business_turn.reset(token)
 
@@ -412,10 +421,11 @@ async def handle_control_callback(query: CallbackQuery) -> None:
 def build_dispatcher() -> Dispatcher:
     dp = Dispatcher()
     dp.message.register(cmd_start, Command('start'))
-    dp.message.register(handle_message, F.text | F.photo | F.caption)
+    dp.message.register(queue_message, F.text | F.photo | F.caption)
     dp.business_connection.register(handle_business_connection)
     dp.business_message.register(handle_business_message)
     dp.callback_query.register(handle_control_callback, F.data.startswith('aisup:'))
+    dp.shutdown.register(_message_queue.close)
     return dp
 
 

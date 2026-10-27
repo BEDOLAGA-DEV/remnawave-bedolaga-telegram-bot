@@ -116,6 +116,20 @@ async def get_support_photo(db: AsyncSession, conversation_id: int, telegram_id:
     return await db.scalar(query.order_by(Message.id.desc()).limit(1))
 
 
+async def get_support_photos(db: AsyncSession, conversation_id: int, telegram_id: int, state: dict) -> list[str]:
+    primary = await get_support_photo(db, conversation_id, telegram_id, state)
+    if primary is None:
+        return []
+    query = select(Message).where(
+        Message.conversation_id == conversation_id, Message.telegram_id == telegram_id,
+        Message.role == 'user', Message.media_type == 'photo', Message.media_file_id == primary,
+    )
+    if isinstance(state.get('attachment_message_id'), int):
+        query = query.where(Message.id == state['attachment_message_id'])
+    message = await db.scalar(query.order_by(Message.id.desc()).limit(1))
+    return list(dict.fromkeys([primary] + (message.media_file_ids or []))) if message is not None else [primary]
+
+
 async def add_message(
     db: AsyncSession,
     conversation_id: int,
@@ -129,6 +143,7 @@ async def add_message(
     tokens_prompt: int | None = None,
     tokens_completion: int | None = None,
     used_context: list | None = None,
+    media_file_ids: list[str] | None = None,
 ) -> Message:
     message = Message(
         conversation_id=conversation_id,
@@ -138,6 +153,7 @@ async def add_message(
         has_media=has_media,
         media_type=media_type,
         media_file_id=media_file_id,
+        media_file_ids=media_file_ids,
         model=model,
         tokens_prompt=tokens_prompt,
         tokens_completion=tokens_completion,

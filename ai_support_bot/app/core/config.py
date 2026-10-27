@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     CONTEXT_MESSAGES: int = 8
     HISTORY_LIMIT: int = 100
     DAILY_MESSAGE_LIMIT: int = 0  # 0 = без лимита; лимит сообщений пользователя в сутки
-    THROTTLE_SECONDS: int = 4  # 0 = без троттлинга; минимальный интервал между сообщениями пользователя
+    THROTTLE_SECONDS: int = 4  # 0 = без задержки; минимальный интервал между запросами ИИ одного чата
     RESPONSE_CACHE_TTL: int = 900
     EMBEDDING_CACHE_TTL: int = 3600
 

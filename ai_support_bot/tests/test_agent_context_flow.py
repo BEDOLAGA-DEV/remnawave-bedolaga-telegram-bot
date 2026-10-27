@@ -866,3 +866,36 @@ async def test_reported_subscription_restriction_skips_generic_diagnostics(flow)
     assert result['escalate']
     assert result['escalation_reason'] == 'subscription_restricted'
     assert not captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_multiple_screenshots_reach_vision_and_operator_as_one_turn(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Передаю обращение оператору.\n[[ESCALATE]]'
+    images = ['data:image/png;base64,AA==', 'data:image/png;base64,AQ==']
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(
+            db, 4242, 'Incy на iPhone. Не работает', image_url=images, media_file_id=['first-photo', 'second-photo'],
+        )
+        assert await agent_mod.crud.count_user_messages_today(db, 4242) == 1
+    content = captured['messages'][-1]['content']
+    assert [part['image_url']['url'] for part in content if part['type'] == 'image_url'] == images
+    assert result['support_photos'] == ['first-photo', 'second-photo']
+    assert result['support_photo'] == 'first-photo'
+
+
+@pytest.mark.asyncio
+async def test_existing_database_adds_multiple_attachment_column_on_startup(flow):
+    _, agent_mod, Session = flow
+    from ai_support_bot.app.db import database
+    async with database.engine.begin() as conn:
+        await conn.execute(text('ALTER TABLE messages DROP COLUMN media_file_ids'))
+    await database.init_db()
+    async with Session() as db:
+        conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        message = await agent_mod.crud.add_message(
+            db, conversation.id, 4242, 'user', 'Фото', has_media=True, media_type='photo',
+            media_file_id='one', media_file_ids=['one', 'two'],
+        )
+        assert await agent_mod.crud.get_support_photos(db, conversation.id, 4242, {'attachment_message_id': message.id}) == ['one', 'two']
+        assert await agent_mod.crud.get_support_photos(db, conversation.id, 9999, {'attachment_message_id': message.id}) == []

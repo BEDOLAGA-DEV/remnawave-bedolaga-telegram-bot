@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ai_support_bot.app.core.config import settings
@@ -76,6 +76,9 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_conversation_columns(conn)
+        columns = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_columns('messages'))
+        if not any(column['name'] == 'media_file_ids' for column in columns):
+            await conn.execute(text('ALTER TABLE messages ADD COLUMN media_file_ids JSON'))
 
     _initialized = True
 

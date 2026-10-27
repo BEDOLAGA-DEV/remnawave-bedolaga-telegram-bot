@@ -23,8 +23,7 @@ from ai_support_bot.app.services.openai_client import OpenAIError
 @pytest.fixture
 def service(monkeypatch):
     bot_mod._processed_updates.clear()
-    bot_mod._last_message_at.clear()
-    bot_mod._throttle_warned.clear()
+    monkeypatch.setattr(bot_mod, '_message_queue', bot_mod.MessageQueue(quiet_seconds=0, max_wait=0))
     bot = Bot('123456:TEST_TOKEN')
     connection = BusinessConnection(
         id='business-1',
@@ -107,8 +106,6 @@ def service(monkeypatch):
     monkeypatch.setattr(bot_mod.settings, 'ADMIN_IDS', '999')
     yield bot, connection, requests, agent
     bot_mod._processed_updates.clear()
-    bot_mod._last_message_at.clear()
-    bot_mod._throttle_warned.clear()
 
 
 def message(**changes):
@@ -210,7 +207,7 @@ async def test_business_escalation_admin_notification_uses_regular_bot(service):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('case', ['photo_disabled', 'generation_error', 'throttle'])
+@pytest.mark.parametrize('case', ['photo_disabled', 'generation_error'])
 async def test_business_validation_and_error_replies_keep_connection(service, monkeypatch, case):
     bot, _, requests, agent = service
     msg = message()
@@ -218,8 +215,6 @@ async def test_business_validation_and_error_replies_keep_connection(service, mo
         msg = message(text=None, photo=[{'file_id': 'photo', 'file_unique_id': 'unique', 'width': 10, 'height': 10}])
     elif case == 'generation_error':
         agent.side_effect = OpenAIError('Unavailable')
-    else:
-        monkeypatch.setattr(bot_mod, '_throttle_hit', lambda user_id: True)
     await dispatch(bot, msg)
     sent = [r for r in requests if isinstance(r, SendMessage)]
     assert len(sent) == 1
@@ -453,3 +448,15 @@ async def test_native_send_rejection_does_not_retry_or_mark_read(service, monkey
         await dispatch(bot, message())
     assert len([r for r in requests if isinstance(r, SendMessage)]) == 1
     assert not any(isinstance(r, ReadBusinessMessage) for r in requests)
+
+
+@pytest.mark.asyncio
+async def test_operator_takeover_while_collecting_messages_suppresses_batch(service, monkeypatch):
+    bot, connection, requests, agent = service
+    monkeypatch.setattr(bot_mod, '_message_queue', bot_mod.MessageQueue(quiet_seconds=0.03, max_wait=0.06))
+    pending = asyncio.create_task(dispatch(bot, message()))
+    await asyncio.sleep(0.01)
+    await dispatch(bot, message(from_user=connection.user, message_id=2))
+    await pending
+    agent.assert_not_called()
+    assert not any(isinstance(r, (SendMessage, ReadBusinessMessage)) for r in requests)

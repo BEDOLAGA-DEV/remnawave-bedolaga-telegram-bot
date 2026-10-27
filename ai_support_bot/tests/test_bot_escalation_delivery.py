@@ -58,12 +58,8 @@ class FakeMessage:
 
 @pytest.fixture(autouse=True)
 def _reset_bot_state():
-    bot_mod._last_message_at.clear()
-    bot_mod._throttle_warned.clear()
     bot_mod._processed_updates.clear()
     yield
-    bot_mod._last_message_at.clear()
-    bot_mod._throttle_warned.clear()
     bot_mod._processed_updates.clear()
 
 
@@ -175,32 +171,6 @@ async def test_non_escalated_answer_sends_nothing_to_admins(monkeypatch):
 
     assert message.bot.sent == []
     assert message.answers == ['Ваша подписка активна до 12.09.2026.']
-
-
-@pytest.mark.asyncio
-async def test_throttle_blocks_flood_and_warns_once(monkeypatch):
-    _patch_settings(monkeypatch, {'THROTTLE_SECONDS': 60, 'DAILY_MESSAGE_LIMIT': 0})
-    calls = {'n': 0}
-
-    async def fake_generate_answer(db, telegram_id, question, image_url=None):
-        calls['n'] += 1
-        return {'answer': 'ok', 'escalate': False, 'hedged': False, 'knowledge_used': 0, 'model': 'm'}
-
-    monkeypatch.setattr(bot_mod.support_agent, 'generate_answer', fake_generate_answer)
-    monkeypatch.setattr(bot_mod.settings, 'ADMIN_IDS', '')
-
-    first = FakeMessage(user_id=42, text='не работает подключение впн', message_id=1)
-    await bot_mod.handle_message(first)
-    assert calls['n'] == 1
-
-    warnings: list[str] = []
-    for index in range(2, 12):
-        flood = FakeMessage(user_id=42, text=f'ещё вопрос про впн {index}', message_id=index)
-        await bot_mod.handle_message(flood)
-        warnings.extend(flood.answers)
-
-    assert calls['n'] == 1
-    assert len(warnings) == 1
 
 
 @pytest.mark.asyncio

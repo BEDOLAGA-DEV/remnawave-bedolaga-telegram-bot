@@ -340,8 +340,8 @@ class SupportAgent:
         )
 
     async def generate_answer(
-        self, db: AsyncSession, telegram_id: int, question: str, image_url: str | None = None,
-        media_file_id: str | None = None,
+        self, db: AsyncSession, telegram_id: int, question: str, image_url: str | list[str] | None = None,
+        media_file_id: str | list[str] | None = None,
     ) -> dict:
         lock = self._turn_locks.setdefault(telegram_id, asyncio.Lock())
         async with lock:
@@ -350,10 +350,13 @@ class SupportAgent:
             return await self._generate_answer(db, telegram_id, question, image_url)
 
     async def _generate_answer(
-        self, db: AsyncSession, telegram_id: int, question: str, image_url: str | None = None,
-        media_file_id: str | None = None,
+        self, db: AsyncSession, telegram_id: int, question: str, image_url: str | list[str] | None = None,
+        media_file_id: str | list[str] | None = None,
     ) -> dict:
         await settings_store.load()
+        media_file_ids = [media_file_id] if isinstance(media_file_id, str) else media_file_id or []
+        media_file_id = media_file_ids[0] if media_file_ids else None
+        image_urls = [image_url] if isinstance(image_url, str) else image_url or []
 
         max_question_chars = settings_store.get_int('MAX_QUESTION_CHARS') or 1500
         if len(question) > max_question_chars:
@@ -482,7 +485,7 @@ class SupportAgent:
                             'type': 'text',
                             'text': question or 'Проанализируй изображение и помоги пользователю.',
                         },
-                        {'type': 'image_url', 'image_url': {'url': image_url}},
+                        *[{'type': 'image_url', 'image_url': {'url': url}} for url in image_urls],
                     ],
                 }
             )
@@ -571,12 +574,14 @@ class SupportAgent:
             has_media=bool(image_url or media_file_id),
             media_type='photo' if image_url or media_file_id else None,
             media_file_id=media_file_id,
+            media_file_ids=media_file_ids or None,
         )
         if media_file_id:
             support_state['attachment_message_id'] = user_message.id
             support_state.pop('attachment_file_id', None)
         conversation.support_state = dict(support_state)
         support_photo = await crud.get_support_photo(db, conversation.id, telegram_id, support_state) if escalate else None
+        support_photos = await crud.get_support_photos(db, conversation.id, telegram_id, support_state) if escalate else []
         await crud.add_message(
             db,
             conversation_id=conversation.id,
@@ -611,6 +616,7 @@ class SupportAgent:
             'support_context': support_details_for_admin(support_state),
             'answer_source': 'rules' if model_used == 'rules' else 'model',
             'support_photo': support_photo,
+            'support_photos': support_photos,
         }
 
 

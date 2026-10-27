@@ -92,6 +92,7 @@ class Message(Base):
     has_media: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     media_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     media_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    media_file_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tokens_prompt: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tokens_completion: Mapped[int | None] = mapped_column(Integer, nullable=True)
