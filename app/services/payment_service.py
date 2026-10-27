@@ -1358,16 +1358,24 @@ class PaymentService(
                 logger.warning('Antilopay is not enabled, cannot create guest payment')
                 return None
 
+            from app.database.crud.landing import get_purchase_by_token
+
+            purchase = await get_purchase_by_token(db, purchase_token)
+            customer_email = purchase.contact_value if purchase and purchase.contact_type == 'email' else None
+            if not customer_email and purchase and purchase.buyer_user_id:
+                buyer = await get_user_by_id(db, purchase.buyer_user_id)
+                customer_email = buyer.email if buyer else None
             result = await self.create_antilopay_payment(
                 db=db,
                 user_id=None,
+                email=customer_email,
+                metadata=guest_metadata,
                 amount_kopeks=amount_kopeks,
                 description=description,
                 return_url=return_url,
                 payment_method_type=_option,
             )
             if result:
-                await _patch_guest_metadata(result['local_payment_id'], 'antilopay')
                 return {
                     'payment_url': result.get('payment_url'),
                     'payment_id': result.get('order_id'),

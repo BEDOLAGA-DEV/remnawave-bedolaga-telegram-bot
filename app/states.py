@@ -47,6 +47,7 @@ class GiftActivationStates(StatesGroup):
 
 
 class BalanceStates(StatesGroup):
+    waiting_for_antilopay_email = State()
     waiting_for_amount = State()
     waiting_for_pal24_method = State()
     waiting_for_platega_method = State()

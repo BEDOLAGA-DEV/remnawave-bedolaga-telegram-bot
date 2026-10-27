@@ -749,11 +749,20 @@ async def get_anore_checkout_policy(db: AsyncSession, user) -> dict | None:
     }
 
 
-async def get_cispay_checkout_policy(db: AsyncSession, user, payment_method_type: str | None = None) -> dict | None:
-    """Shared effective checkout policy; generic checkout selects an explicit fiat method."""
+async def get_cispay_checkout_policy(
+    db: AsyncSession, user, payment_method_type: str | None = None, *, telegram_checkout: bool = False
+) -> dict | None:
+    """Use bot settings for Telegram, cabinet configuration for cabinet/guest checkout.
+
+    PaymentMethodConfig historically controls the cabinet only. Applying its old
+    seeded disables to Telegram broke working ENV-configured bots in v5.1.0.
+    The channel is set by trusted handlers, never inferred from a linked account.
+    """
     if not settings.is_cispay_enabled():
         return None
-    config = await get_config_by_method_id(db, 'cispay')
+    if telegram_checkout and not getattr(user, 'telegram_id', None):
+        return None
+    config = None if telegram_checkout else await get_config_by_method_id(db, 'cispay')
     if config is not None:
         if user is None and (
             config.user_type_filter != 'all'

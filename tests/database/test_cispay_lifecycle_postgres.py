@@ -13,7 +13,8 @@ from fastapi import FastAPI
 from sqlalchemy import select
 
 from app.config import settings
-from app.database.models import Base, CisPayPayment, Transaction, User
+from app.database.models import Base, CisPayPayment, PaymentMethodConfig, Transaction, User
+from app.handlers.balance import cispay as telegram_cispay
 from app.services.payment_service import PaymentService
 from app.webserver import payments
 from tests.fixtures.postgres_db import postgres_sessions
@@ -22,10 +23,11 @@ from tests.fixtures.postgres_db import postgres_sessions
 pytestmark = pytest.mark.postgres
 
 
-@pytest.mark.parametrize('method', ['CARD', 'CRYPTO'])
+@pytest.mark.parametrize('method', ['CARD', 'SBP', 'CRYPTO'])
 @pytest.mark.parametrize('sandbox', [False, True])
+@pytest.mark.parametrize('telegram_checkout', [False, True])
 async def test_real_create_early_signed_callback_and_replay(
-    postgres_database, monkeypatch, unused_tcp_port, method, sandbox
+    postgres_database, monkeypatch, unused_tcp_port, method, sandbox, telegram_checkout
 ):
     monkeypatch.setattr(settings, 'CISPAY_ENABLED', True)
     monkeypatch.setattr(settings, 'CISPAY_SHOP_ID', 'masked-shop')
@@ -38,6 +40,9 @@ async def test_real_create_early_signed_callback_and_replay(
     callback_app.include_router(payments.create_payment_router(SimpleNamespace(), service))
     async with postgres_sessions(postgres_database, list(Base.metadata.sorted_tables)) as (db, callback_db):
         db.add(User(id=1, telegram_id=1, balance_kopeks=100))
+        if telegram_checkout:
+            # Existing installation: bot ENV enabled, old cabinet record disabled.
+            db.add(PaymentMethodConfig(method_id='cispay', is_enabled=False, sub_options={'card': True, 'sbp': True}))
         await db.commit()
 
         async def get_db():
@@ -127,10 +132,35 @@ async def test_real_create_early_signed_callback_and_replay(
             await runner.setup()
             await web.TCPSite(runner, '127.0.0.1', unused_tcp_port).start()
             try:
-                result = await service.create_cispay_payment(
-                    db, user_id=1, amount_kopeks=10001, payment_method_type=method.lower()
-                )
-                assert result
+                if telegram_checkout:
+                    # Same user in the cabinet cannot bypass the saved disable.
+                    assert (
+                        await service.create_cispay_payment(
+                            db, user_id=1, amount_kopeks=10001, payment_method_type=method.lower()
+                        )
+                        is None
+                    )
+                    monkeypatch.setattr(telegram_cispay, 'PaymentService', lambda: service)
+                    user = await db.get(User, 1)
+                    fsm = AsyncMock()
+                    fsm.get_data.return_value = {'payment_method': f'cispay_{method.lower()}'}
+                    telegram_callback = AsyncMock()
+                    await telegram_cispay._start_cispay_topup_impl(
+                        telegram_callback, user, fsm, f'cispay_{method.lower()}', db
+                    )
+                    fsm.set_state.assert_awaited_once()
+                    message = AsyncMock()
+                    await telegram_cispay.process_cispay_payment_amount(message, user, db, 10001, fsm)
+                    buttons = message.answer.await_args.kwargs['reply_markup'].inline_keyboard
+                    assert buttons[0][0].url == 'https://pay.example/invoice'
+                    saved = (await db.scalars(select(PaymentMethodConfig))).one()
+                    assert saved.is_enabled is False
+                    assert saved.sub_options == {'card': True, 'sbp': True}
+                else:
+                    result = await service.create_cispay_payment(
+                        db, user_id=1, amount_kopeks=10001, payment_method_type=method.lower()
+                    )
+                    assert result
                 assert (await send(state['event'])).status_code == 200
                 assert (await send(state['event'])).status_code == 200
                 payment = (await db.scalars(select(CisPayPayment))).one()

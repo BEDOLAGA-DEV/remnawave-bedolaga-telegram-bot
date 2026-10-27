@@ -1153,7 +1153,7 @@
   Функции: `process_anore_payment_amount` — Обрабатывает сумму, введённую пользователем для Anore., `start_anore_topup`, `start_anore_card_topup`, `start_anore_sbp_topup`, `start_anore_selected_topup`
 - `app/handlers/balance/antilopay.py` — Python-модуль
   Классы: нет
-  Функции: `process_antilopay_payment_amount` — Process payment amount directly., `start_antilopay_topup`, `start_antilopay_sbp_topup`, `start_antilopay_card_topup`, `start_antilopay_sberpay_topup`
+  Функции: `process_antilopay_payment_amount` — Process payment amount directly., `process_antilopay_email`, `start_antilopay_topup`, `start_antilopay_sbp_topup`, `start_antilopay_card_topup`, `start_antilopay_sberpay_topup`
 - `app/handlers/balance/aurapay.py` — Python-модуль
   Классы: нет
   Функции: `process_aurapay_payment_amount` — Process payment amount directly., `start_aurapay_topup`, `start_aurapay_sbp_topup`, `start_aurapay_card_topup`
@@ -1464,7 +1464,7 @@
   Функции: `parse_rubles_to_kopeks` — Reject non-money, non-finite values and fractions of a kopek; never round.
 - `app/services/antilopay_service.py` — Python-модуль
   Классы: `AntilopayAPIError` (1 методов), `AntilopayService` (12 методов)
-  Функции: нет
+  Функции: `validate_amount` — Convert a finite, positive RUB amount into exact kopeks; never round.
 - `app/services/apple_iap.py` — Python-модуль
   Классы: `AppleFulfillmentResult`, `AppleIAPFulfillmentService` (6 методов), `AppleIAPNotificationService` (9 методов)
   Функции: нет
@@ -1679,7 +1679,7 @@
 - `app/services/payment/`
 - `app/services/payment_method_config_service.py` — Python-модуль
   Классы: нет
-  Функции: `refresh_display_name_overrides` — Reload names and saved order for synchronous Telegram keyboards., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `get_display_sort_order`, `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get supported payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id, ignoring retired backup entries., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user., `get_anore_checkout_policy` — Effective policy shared by checkout prompts and creation entry points., `get_cispay_checkout_policy` — Shared effective checkout policy; generic checkout selects an explicit fiat method.
+  Функции: `refresh_display_name_overrides` — Reload names and saved order for synchronous Telegram keyboards., `get_display_name_override` — Sync read of a cabinet-set display name for a method, or None if not set., `get_display_sort_order`, `normalize_quick_amounts`, `get_effective_quick_amounts`, `ensure_payment_method_configs` — Initialize payment method configs if they don't exist yet., `get_all_configs` — Get supported payment method configs ordered by sort_order., `get_config_by_method_id` — Get a single config by method_id, ignoring retired backup entries., `update_config` — Update a payment method config., `update_sort_order` — Batch update sort order for all methods., `get_all_promo_groups` — Get all promo groups for the filter selector., `get_enabled_methods_for_user` — Get payment methods available for a specific user., `get_anore_checkout_policy` — Effective policy shared by checkout prompts and creation entry points., `get_cispay_checkout_policy` — Use bot settings for Telegram, cabinet configuration for cabinet/guest checkout.
 - `app/services/payment_search_service.py` — Python-модуль
   Классы: `StatusFilter`, `PeriodPreset`, `SearchParams` (2 методов), `SearchStats`
   Функции: `search_payments` — Search payments across all (or filtered) providers., `search_payments_stats` — Compute aggregated statistics for the given search filters.
@@ -3419,7 +3419,7 @@
   Функции: `test_enable_autopay_cancels_active_sbp_recurring`, `test_disable_autopay_does_not_cancel_sbp` — Disabling balance-autopay must NOT touch SBP — only the enable path, `test_enable_autopay_rejected_for_trial_does_not_cancel_sbp` — A rejected enable (trial subscription -> 400) must not fire the
 - `tests/cabinet/test_balance_topup_provider_contract.py` — Python-модуль
   Классы: нет
-  Функции: `anyio_backend`, `checkout`, `test_yookassa_one_ruble_uses_provider_minimum_and_cabinet_return`, `test_lower_schema_bound_does_not_bypass_provider_minimum`, `test_nonpositive_topup_remains_invalid`, `test_unavailable_method_rejected_before_payment_creation`, `test_antilopay_cabinet_creates_checkout_with_user_and_return_url`, `test_antilopay_unrecognized_submethod_is_rejected`, `test_antilopay_latest_and_details_respect_ownership`, `test_antilopay_disabled_after_listing_remains_unavailable`, `test_antilopay_provider_error_does_not_return_checkout`, `test_antilopay_respects_effective_database_options`
+  Функции: `anyio_backend`, `checkout`, `test_yookassa_one_ruble_uses_provider_minimum_and_cabinet_return`, `test_lower_schema_bound_does_not_bypass_provider_minimum`, `test_nonpositive_topup_remains_invalid`, `test_unavailable_method_rejected_before_payment_creation`, `test_antilopay_cabinet_creates_checkout_with_user_and_return_url`, `test_antilopay_unrecognized_submethod_is_rejected`, `test_antilopay_latest_and_details_respect_ownership`, `test_antilopay_disabled_after_listing_remains_unavailable`, `test_antilopay_provider_error_does_not_return_checkout`, `test_antilopay_respects_effective_database_options`, `test_antilopay_checkout_accepts_payment_contact`
 - `tests/cabinet/test_best_value_reaches_every_showcase.py` — Python-модуль
   Классы: нет
   Функции: `test_gift_config_marks_the_highlighted_period`, `test_gift_config_marks_the_highlighted_tariff`, `test_gift_config_marks_nothing_without_a_highlight` — Без отметки оператора витрина остаётся ровной — как была., `test_landing_marks_the_highlighted_period_and_tariff`, `test_landing_marks_nothing_when_the_highlighted_period_is_not_offered` — Лендинг вправе сузить набор периодов: отметка на выброшенном периоде, `test_every_client_period_model_carries_the_best_value_flag`, `test_admin_only_exceptions_still_exist` — Список исключений не должен гнить: исчезнувшая модель прячет новую слепую., `test_the_guard_actually_sees_the_showcases` — Сторож бесполезен, если ничего не находит: три известные витрины обязаны
@@ -3892,6 +3892,9 @@
 - `tests/database/test_anore_payments_postgres.py` — Python-модуль
   Классы: нет
   Функции: `payload`, `seed`, `service`, `test_concurrent_callbacks_credit_once`, `test_invalid_callback_cannot_credit`, `test_paid_never_reversed_and_sandbox_never_credits`, `test_financial_commit_failure_rolls_back_then_retry`, `test_guest_accepted_atomically_without_balance`, `test_missing_guest_never_falls_back_to_topup`, `test_status_failure_preserves_polling_gate`, `test_early_callback_sees_committed_guest_and_is_not_overwritten`, `test_real_postcommit_orchestration_continues_after_notification_failure`, `test_callback_races_polling_without_double_deposit`, `test_guest_replay_never_rewinds_status_or_paid_at`, `test_soft_deleted_user_is_not_credited`, `test_retry_after_starts_at_response_receipt`, `test_pending_invoice_follows_actual_account_merge`, `test_db_policy_rejects_before_remote_creation`, `test_enabled_submethods_are_sent_as_restricted_list`, `test_restricted_topup_rejected_in_core`, `test_guest_delivery_failure_preserves_durable_payment`, `test_sandbox_excluded_from_gateway_conversion_statistics`
+- `tests/database/test_antilopay_lifecycle_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_checkout_callback_and_recovery`
 - `tests/database/test_autopay_races_postgres.py` — Python-модуль
   Классы: нет
   Функции: `quiet_settings`, `worker`, `test_candidate_is_revalidated_before_charge`, `test_two_workers_cannot_charge_the_same_due_cycle`, `test_imported_subscription_with_autopay_off_never_charges`, `test_failed_renewal_rolls_back_money_days_and_promo`, `test_panel_rollback_does_not_lose_committed_ledger`, `test_manual_charge_in_flight_blocks_autopay_for_same_cycle`, `test_recurring_ledger_fk_does_not_deadlock_with_autopay`, `test_tariff_switch_does_not_deadlock_with_autopay`, `test_cancellation_rolls_back_uncommitted_autopay`
@@ -4751,9 +4754,15 @@
 - `tests/services/test_anore_wiring.py` — Python-модуль
   Классы: нет
   Функции: `test_anore_public_options_follow_live_settings`, `test_anore_disabled_hides_all_topup_methods`, `test_guest_invoice_receives_metadata_before_provider_request`, `test_telegram_anore_amount_route_uses_its_database_session`, `test_cabinet_anore_rejects_hidden_option_before_provider`, `test_miniapp_status_checks_ownership_before_provider`, `test_anore_webhook_registered_when_configured_but_disabled`, `test_database_suboptions_all_disabled_hides_anore`, `test_telegram_uses_effective_minimum_for_amount`, `test_miniapp_lists_and_creates_effective_anore_options`, `test_miniapp_sandbox_paid_never_displays_paid`, `test_cabinet_latest_anore_queries_owner_scoped_model`, `test_cabinet_sandbox_status_never_claims_credit`
+- `tests/services/test_antilopay_callback_contract.py` — Python-модуль
+  Классы: нет
+  Функции: `test_invalid_settlement_never_credits`
+- `tests/services/test_antilopay_contact.py` — Python-модуль
+  Классы: нет
+  Функции: `test_bot_requests_contact_before_creating_payment`, `test_bot_invalid_contact_stays_in_prompt`, `test_bot_contact_resumes_original_amount_and_method`, `test_guest_contact_and_metadata_are_bound_before_create`
 - `tests/services/test_antilopay_service_contract.py` — Python-модуль
   Классы: нет
-  Функции: `transport`, `test_create_sends_signed_uppercase_currency`
+  Функции: `transport`, `test_create_sends_signed_uppercase_currency`, `test_payment_api_uses_documented_v1`, `test_invalid_amount_never_creates_invoice`, `test_customer_contact_is_not_fabricated`, `test_invalid_create_response_rejected`, `test_status_nonzero_code_is_not_success`
 - `tests/services/test_apple_iap_reconciliation_service.py` — Python-модуль
   Классы: нет
   Функции: `anyio_backend`, `test_lookup_delegates_to_support_query`, `test_reconcile_recent_transactions_flags_drift_and_counts_backlog`
@@ -4829,6 +4838,9 @@
 - `tests/services/test_checkout_squad_validation.py` — Python-модуль
   Классы: нет
   Функции: `test_only_fresh_valid_catalog_can_block_checkout`, `test_catalog_failure_preserves_existing_outage_checkout_semantics`, `test_preflight_is_bounded`, `test_cancellation_propagates`
+- `tests/services/test_cispay_channel_policy.py` — Python-модуль
+  Классы: нет
+  Функции: `test_telegram_env_is_not_disabled_by_legacy_cabinet_row`, `test_telegram_still_obeys_env_disabled_methods`, `test_telegram_policy_cannot_be_used_for_guests`
 - `tests/services/test_cispay_http_contract.py` — Python-модуль
   Классы: нет
   Функции: `cispay_http`, `test_hosted_request_preserves_minor_units_and_metadata`, `test_invalid_local_money_never_hits_provider`, `test_card_minimum_and_customer_required_for_sbp_and_chooser`, `test_errors_are_safe_and_post_is_never_retried`, `test_malformed_response_fails_closed`, `test_status_preserves_fractional_minor_units_for_strict_validator`, `test_signature_uses_exact_body_and_missing_key_fails`, `test_timeout_does_not_retry_creating_invoice`, `test_chunked_response_is_fully_read`, `test_oversized_response_is_rejected`

@@ -247,3 +247,19 @@ async def test_antilopay_respects_effective_database_options(
         assert service.create_antilopay_payment.await_args.kwargs['payment_method_type'] == expected_option
     else:
         service.create_antilopay_payment.assert_not_awaited()
+
+
+async def test_antilopay_checkout_accepts_payment_contact(checkout):
+    client, methods, service = checkout
+    methods.append(_method('antilopay', minimum=1000))
+    response = await client.post(
+        '/balance/topup',
+        json={
+            'amount_kopeks': 1000,
+            'payment_method': 'antilopay',
+            'payment_option': 'card',
+            'customer_email': 'buyer@example.com',
+        },
+    )
+    assert response.status_code == 200
+    assert service.create_antilopay_payment.await_args.kwargs['email'] == 'buyer@example.com'

@@ -1158,6 +1158,9 @@ async def create_topup(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail='Select an available Antilopay payment_option',
                 )
+            customer_email = request.customer_email or getattr(user, 'email', None)
+            if not customer_email:
+                raise HTTPException(status_code=422, detail='Укажите email для оплаты через Antilopay')
             payment_service = PaymentService()
             result = await payment_service.create_antilopay_payment(
                 db=db,
@@ -1166,7 +1169,7 @@ async def create_topup(
                 description=settings.get_balance_payment_description(
                     request.amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id
                 ),
-                email=getattr(user, 'email', None),
+                email=customer_email,
                 language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 payment_method_type=payment_method_type,
                 return_url=cabinet_return_url,

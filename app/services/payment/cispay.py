@@ -123,6 +123,7 @@ class CisPayPaymentMixin:
         return_url: str | None = None,
         fail_url: str | None = None,
         metadata: dict | None = None,
+        telegram_checkout: bool = False,
     ) -> dict | None:
         if not settings.is_cispay_enabled() or type(amount_kopeks) is not int or amount_kopeks <= 0:
             return None
@@ -132,7 +133,8 @@ class CisPayPaymentMixin:
         user = await db.get(User, user_id) if user_id is not None else None
         if user_id is not None and (user is None or user.status == 'deleted' or user.restriction_topup):
             return None
-        policy = await get_cispay_checkout_policy(db, user, payment_method_type)
+        policy_context = {'telegram_checkout': True} if telegram_checkout else {}
+        policy = await get_cispay_checkout_policy(db, user, payment_method_type, **policy_context)
         if not policy or not policy['selected_method']:
             return None
         method = policy['selected_method']
@@ -154,7 +156,7 @@ class CisPayPaymentMixin:
                 )
                 if method is None:
                     return None
-                policy = await get_cispay_checkout_policy(db, user, method.lower())
+                policy = await get_cispay_checkout_policy(db, user, method.lower(), **policy_context)
                 if not policy or not policy['min_amount_kopeks'] <= amount_kopeks <= min(
                     policy['max_amount_kopeks'], 2_147_483_647
                 ):
