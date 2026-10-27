@@ -102,14 +102,23 @@ def test_users_search_filter_adds_internal_id_for_int32() -> None:
     query = users._apply_search_filter(select(User), '123')
     where_expr = query._where_criteria[0]
 
-    assert len(list(where_expr.clauses)) == 6
+    assert len(list(where_expr.clauses)) == 7
 
 
 def test_users_search_filter_skips_internal_id_for_out_of_int32() -> None:
     query = users._apply_search_filter(select(User), str(2**40))
     where_expr = query._where_criteria[0]
 
-    assert len(list(where_expr.clauses)) == 5
+    assert len(list(where_expr.clauses)) == 6
+
+
+def test_users_search_filter_matches_email() -> None:
+    """Клиента без Telegram находят по почте одним запросом, а не перебором страниц."""
+    query = users._apply_search_filter(select(User), 'person@example.com')
+    # Только WHERE: в SELECT колонка email есть всегда
+    where_sql = str(query._where_criteria[0].compile(compile_kwargs={'literal_binds': True})).lower()
+
+    assert 'users.email' in where_sql
 
 
 @pytest.mark.anyio('asyncio')
