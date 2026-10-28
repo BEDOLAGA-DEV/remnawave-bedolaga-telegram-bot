@@ -3527,16 +3527,7 @@ async def get_subscription_details(
             is_daily_tariff = True
             is_daily_paused = getattr(subscription, 'is_daily_paused', False)
             daily_tariff_name = tariff.name
-            daily_price_kopeks = getattr(tariff, 'daily_price_kopeks', 0)
-            # Применяем скидку промогруппы + promo-offer для отображения
-            if daily_price_kopeks > 0:
-                _promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
-                _group_pct = _promo_group.get_discount_percent('period', 1) if _promo_group else 0
-                _offer_pct = get_user_active_promo_discount_percent(user) if user else 0
-                if _group_pct > 0 or _offer_pct > 0:
-                    daily_price_kopeks, _, _ = PricingEngine.apply_stacked_discounts(
-                        daily_price_kopeks, _group_pct, _offer_pct
-                    )
+            daily_price_kopeks = PricingEngine.daily_subscription_price(subscription, tariff, user)
             daily_price_label = settings.format_price(daily_price_kopeks) + '/день' if daily_price_kopeks > 0 else None
             # Оставшееся время подписки (показываем даже при паузе)
             if subscription.end_date:
@@ -7295,6 +7286,7 @@ async def switch_tariff_endpoint(
     # Обновляем подписку - меняем тариф без изменения даты
     from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
+    subscription.daily_devices_billing_version = 0
     subscription.tariff_id = new_tariff.id
     subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
     subscription.device_limit = calc_device_limit_on_tariff_switch(
@@ -7654,8 +7646,6 @@ async def toggle_daily_subscription_pause_endpoint(
             detail={'code': 'not_daily_tariff', 'message': 'Subscription is not on a daily tariff'},
         )
 
-    raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
-
     # Lock user BEFORE reading state and mutating to prevent TOCTOU on promo group
     # and to ensure is_daily_paused mutation is not overwritten by populate_existing
     from app.database.crud.user import lock_user_for_pricing
@@ -7691,11 +7681,7 @@ async def toggle_daily_subscription_pause_endpoint(
     # Apply group discount to daily price (consistent with DailySubscriptionService and resume-after-topup)
     from app.services.pricing_engine import PricingEngine
 
-    promo_group = PricingEngine.resolve_promo_group(user)
-    daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-    daily_price = (
-        PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
-    )
+    daily_price = PricingEngine.daily_subscription_price(subscription, tariff, user)
 
     resume_transaction = None
 

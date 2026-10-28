@@ -69,7 +69,6 @@ async def toggle_subscription_pause(
     new_paused_state = paused if paused is not None else (False if was_disabled else not is_currently_paused)
     if not new_paused_state and user.restriction_subscription:
         raise HTTPException(status_code=403, detail='Subscription renewal is restricted for this account')
-    raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
     transaction = None
 
     subscription.is_daily_paused = new_paused_state
@@ -77,11 +76,7 @@ async def toggle_subscription_pause(
     # Apply group discount to daily price (consistent with DailySubscriptionService and miniapp resume)
     from app.services.pricing_engine import PricingEngine
 
-    promo_group = PricingEngine.resolve_promo_group(user)
-    daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-    daily_price = (
-        PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
-    )
+    daily_price = PricingEngine.daily_subscription_price(subscription, tariff, user)
 
     # If resuming, check balance and charge
     if not new_paused_state:

@@ -144,6 +144,42 @@ class PricingEngine:
         return PricingEngine.apply_discount(daily_price_kopeks, group_pct), group_pct
 
     @staticmethod
+    def tariff_group_discounts(tariff: Tariff, user: User | None, period_days: int) -> tuple[int, int]:
+        """Shared tariff eligibility and category discounts for initial and later charges."""
+        group = PricingEngine.resolve_promo_group(user)
+        if group is None or not tariff.is_available_for_promo_group(group.id):
+            return 0, 0
+        return group.get_discount_percent('period', period_days), group.get_discount_percent('devices', period_days)
+
+    @staticmethod
+    def tariff_device_price(
+        tariff: Tariff, device_limit: int, period_days: int, *, daily_devices_billing_version: int = 0
+    ) -> int:
+        unit = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
+        extra = 0 if tariff.device_limit == 0 else max(0, (device_limit or 0) - (tariff.device_limit or 0))
+        if getattr(tariff, 'is_daily', False) and period_days <= 1:
+            # The admin tariff price is monthly; only legacy daily checkout used
+            # a full monthly unit per day. Preserve that path for version zero.
+            return extra * unit // 30 if daily_devices_billing_version == 1 else extra * unit
+        return calculate_period_device_cost(unit, extra, period_days)
+
+    @staticmethod
+    def daily_subscription_price(subscription: Subscription, tariff: Tariff, user: User | None) -> int:
+        """Recurring daily balance charge; legacy subscriptions retain base-only billing.
+
+        Selected-device policy uses the saved limit and the same daily device unit
+        and category discounts as checkout, without repeating its one-off offer.
+        """
+        base = int(tariff.daily_price_kopeks or 0)
+        if getattr(subscription, 'daily_devices_billing_version', 0) != 1:
+            return PricingEngine.daily_group_price(base, user)[0]
+        period_pct, devices_pct = PricingEngine.tariff_group_discounts(tariff, user, 1)
+        devices = PricingEngine.tariff_device_price(
+            tariff, subscription.device_limit, 1, daily_devices_billing_version=1
+        )
+        return PricingEngine.apply_discount(base, period_pct) + PricingEngine.apply_discount(devices, devices_pct)
+
+    @staticmethod
     def resolve_promo_group(user: User | None):
         """Resolve primary promo group: get_primary_promo_group() first, fallback to user.promo_group."""
         if not user:
@@ -575,6 +611,7 @@ class PricingEngine:
             period_days,
             device_limit,
             user=user,
+            daily_devices_billing_version=getattr(subscription, 'daily_devices_billing_version', 0) or 0,
         )
 
     async def _calculate_tariff_core(
@@ -585,6 +622,7 @@ class PricingEngine:
         *,
         custom_traffic_gb: int | None = None,
         user: User | None = None,
+        daily_devices_billing_version: int = 0,
     ) -> RenewalPricing:
         """Core tariff pricing logic (raw params, no Subscription needed).
 
@@ -610,15 +648,10 @@ class PricingEngine:
                         base_price = int(custom_price)
 
         # --- Extra devices (monthly rate prorated to exact days) ---
-        device_price_per_unit = (
-            tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
+        extra_devices = 0 if tariff.device_limit == 0 else max(0, (device_limit or 0) - (tariff.device_limit or 0))
+        devices_price = self.tariff_device_price(
+            tariff, device_limit, period_days, daily_devices_billing_version=daily_devices_billing_version
         )
-        tariff_device_limit = tariff.device_limit or 0
-        extra_devices = 0 if tariff.device_limit == 0 else max(0, (device_limit or 0) - tariff_device_limit)
-        if is_daily and period_days <= 1:
-            devices_price = extra_devices * device_price_per_unit
-        else:
-            devices_price = calculate_period_device_cost(device_price_per_unit, extra_devices, period_days)
 
         # --- Custom traffic (tariff add-on, uses addon discount path) ---
         traffic_price = 0
@@ -628,15 +661,10 @@ class PricingEngine:
                 traffic_price = int(raw_traffic)
 
         # --- Per-category group discounts ---
-        period_pct = 0
-        devices_pct = 0
+        period_pct, devices_pct = self.tariff_group_discounts(tariff, user, period_days)
         promo_group = self.resolve_promo_group(user)
-        # Only apply promo group discount if the tariff is available for this group
         if promo_group is not None and not tariff.is_available_for_promo_group(promo_group.id):
             promo_group = None
-        if promo_group is not None:
-            period_pct = promo_group.get_discount_percent('period', period_days)
-            devices_pct = promo_group.get_discount_percent('devices', period_days)
 
         offer_pct = get_user_active_promo_discount_percent(user) if user else 0
 
@@ -699,6 +727,7 @@ class PricingEngine:
         device_limit: int | None = None,
         custom_traffic_gb: int | None = None,
         user: User | None = None,
+        daily_devices_billing_version: int = 0,
     ) -> RenewalPricing:
         """Calculate price for a tariff purchase (new or renewal).
 
@@ -712,6 +741,7 @@ class PricingEngine:
             effective_device_limit,
             custom_traffic_gb=custom_traffic_gb,
             user=user,
+            daily_devices_billing_version=daily_devices_billing_version,
         )
 
     # ------------------------------------------------------------------

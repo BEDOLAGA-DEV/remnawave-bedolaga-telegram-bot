@@ -2333,5 +2333,7 @@
   "TARIFF_PURCHASE_DEVICES_BALANCE_ONLY": "برای دستگاه‌های اضافی از موجودی حساب پرداخت کنید. در صورت نیاز ابتدا حساب را شارژ کنید.",
   "TARIFF_PURCHASE_DEVICE_INPUT": "تعداد دستگاه‌ها را به صورت عدد صحیح از {min} تا {max} وارد کنید.",
   "TARIFF_PURCHASE_DEVICE_INTEGER": "تعداد دستگاه‌ها را به صورت عدد صحیح مثبت وارد کنید.",
-  "TARIFF_PURCHASE_CART_UNAVAILABLE": "ذخیره سفارش ممکن نشد. به انتخاب طرح برگردید و دوباره تلاش کنید."
+  "TARIFF_PURCHASE_CART_UNAVAILABLE": "ذخیره سفارش ممکن نشد. به انتخاب طرح برگردید و دوباره تلاش کنید.",
+  "TARIFF_PURCHASE_NEXT_DAILY_CHARGE": "\nاز روز بعد: روزانه {price}.",
+  "TARIFF_PURCHASE_RECURRENT_DEVICE_REVIEW": "پرداخت خودکار\n\nتعداد دستگاه‌ها: {devices}\nمبلغ برداشت: {amount}\nدوره: {days} روز\n\nپیش از پرداخت، مبلغ و دوره را بررسی کنید."
 }

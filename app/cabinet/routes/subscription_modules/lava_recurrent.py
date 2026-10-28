@@ -12,6 +12,8 @@ POST /subscription/lava-recurrent/cancel
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,6 +91,9 @@ async def enable_lava_recurrent(
 async def purchase_with_lava_recurrent(
     tariff_id: int = Query(..., description='Tariff to subscribe to'),
     subscription_id: int | None = None,
+    selected_device_limit: int | None = None,
+    quote_id: UUID | None = None,
+    checkout_id: UUID | None = None,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ):
@@ -117,6 +122,11 @@ async def purchase_with_lava_recurrent(
             user=user,
             tariff=tariff,
             **({'subscription_id': subscription_id} if subscription_id is not None else {}),
+            **(
+                {'selected_device_limit': selected_device_limit, 'quote_id': quote_id, 'checkout_id': checkout_id}
+                if any(value is not None for value in (selected_device_limit, quote_id, checkout_id))
+                else {}
+            ),
         )
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
@@ -184,3 +194,33 @@ async def cancel_lava_recurrent(
     await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
 
     return {'status': 'cancelled'}
+
+
+@router.get('/lava-recurrent/purchase-preview')
+async def preview_lava_recurrent_purchase(
+    tariff_id: int,
+    selected_device_limit: int = Query(..., ge=1, le=2_147_483_647),
+    subscription_id: int | None = None,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    from app.config import settings
+    from app.database.crud.tariff import get_tariff_by_id
+    from app.services.recurrent_purchase_selection import preview_recurrent_purchase
+
+    if not settings.is_lava_recurrent_enabled():
+        raise HTTPException(status_code=403, detail='lava recurrent disabled')
+    tariff = await get_tariff_by_id(db, tariff_id)
+    if tariff is None:
+        raise HTTPException(status_code=400, detail='Tariff not found')
+    try:
+        return await preview_recurrent_purchase(
+            db,
+            user=user,
+            tariff=tariff,
+            provider='lava',
+            selected_device_limit=selected_device_limit,
+            subscription_id=subscription_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error

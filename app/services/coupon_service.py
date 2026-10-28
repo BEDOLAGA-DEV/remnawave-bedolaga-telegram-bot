@@ -257,6 +257,8 @@ async def _grant_subscription_days(
             update_server_counters=True,
             commit=False,
         )
+        if subscription.tariff_id != tariff.id:
+            subscription.daily_devices_billing_version = 0
         subscription.tariff_id = tariff.id
         return subscription, False
 

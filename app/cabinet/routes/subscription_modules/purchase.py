@@ -312,7 +312,7 @@ async def _build_tariff_response(
         'traffic_limit_label': traffic_label,
         'is_unlimited_traffic': tariff.traffic_limit_gb == 0,
         'device_limit': actual_device_limit,
-        'purchase_device_selection_supported': not tariff.is_daily,
+        'purchase_device_selection_supported': True,
         'base_device_limit': tariff.device_limit,
         'extra_devices_count': extra_devices_count,
         'device_price_kopeks': device_price,
@@ -835,7 +835,11 @@ async def preview_tariff_purchase(
         raise HTTPException(
             status_code=503 if error.code == 'quote_unavailable' else 409, detail={'code': error.code}
         ) from error
+    from app.services.recurrent_purchase_selection import find_recurrent_pending_intent
+
+    recurrent_pending = await find_recurrent_pending_intent(db, target) if target is not None else None
     return {
+        'recurrent_checkout_pending': recurrent_pending is not None,
         'quote_id': str(quote_id),
         'expires_at': expires_at,
         'tariff_id': tariff.id,
@@ -849,6 +853,7 @@ async def preview_tariff_purchase(
         'traffic_cost_kopeks': quote.pricing.traffic_price,
         'discount_kopeks': quote.pricing.promo_group_discount + quote.pricing.promo_offer_discount,
         'total_kopeks': quote.pricing.final_total,
+        'next_daily_charge_kopeks': quote.next_daily_charge_kopeks,
         'balance_kopeks': user.balance_kopeks,
         'missing_kopeks': max(0, quote.pricing.final_total - user.balance_kopeks),
         'billing_mode': 'daily' if tariff.is_daily else 'period',
@@ -922,7 +927,7 @@ async def purchase_tariff(
             if not tariff.is_active or getattr(user, 'restriction_subscription', False):
                 raise HTTPException(status_code=409, detail={'code': 'quote_changed'})
 
-        if request.checkout_id is not None and not tariff.is_daily:
+        if request.checkout_id is not None and (not tariff.is_daily or device_checkout):
             from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id
 
             checkout_external_id = _saved_tariff_checkout_external_id(
@@ -1064,6 +1069,11 @@ async def purchase_tariff(
                 device_limit=device_limit,
                 custom_traffic_gb=custom_traffic_gb,
                 user=user,
+                **(
+                    {'daily_devices_billing_version': 1}
+                    if getattr(existing_subscription, 'daily_devices_billing_version', 0) == 1
+                    else {}
+                ),
             )
         price_kopeks = result.final_total
         original_price = result.original_total
@@ -1101,6 +1111,7 @@ async def purchase_tariff(
             if is_daily_tariff:
                 cart_data = {
                     'cart_mode': 'daily_tariff_purchase',
+                    'period_days': 1,
                     'tariff_id': tariff.id,
                     'is_daily': True,
                     'daily_price_kopeks': price_kopeks,
@@ -1428,9 +1439,12 @@ async def purchase_tariff(
                     )
             if is_daily_tariff:
                 subscription.last_daily_charge_at = datetime.now(UTC)
+                if device_checkout:
+                    subscription.daily_devices_billing_version = 1
                 subscription.is_daily_paused = False
-                await db.commit()
-                await db.refresh(subscription)
+                if not device_checkout:
+                    await db.commit()
+                    await db.refresh(subscription)
         except HTTPException:
             # 409-ветка выше уже вернула средства; повторная компенсация здесь
             # превратила бы одиночный возврат в двойной.

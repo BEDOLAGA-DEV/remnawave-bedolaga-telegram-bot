@@ -2333,5 +2333,7 @@
   "TARIFF_PURCHASE_DEVICES_BALANCE_ONLY": "З додатковими пристроями оплачуйте з балансу. За потреби спочатку поповніть його.",
   "TARIFF_PURCHASE_DEVICE_INPUT": "Введіть кількість пристроїв цілим числом від {min} до {max}.",
   "TARIFF_PURCHASE_DEVICE_INTEGER": "Введіть додатне ціле число пристроїв.",
-  "TARIFF_PURCHASE_CART_UNAVAILABLE": "Не вдалося зберегти замовлення. Поверніться до вибору тарифу та повторіть покупку."
+  "TARIFF_PURCHASE_CART_UNAVAILABLE": "Не вдалося зберегти замовлення. Поверніться до вибору тарифу та повторіть покупку.",
+  "TARIFF_PURCHASE_NEXT_DAILY_CHARGE": "\nЗ наступної доби: {price}/день.",
+  "TARIFF_PURCHASE_RECURRENT_DEVICE_REVIEW": "Автоматична оплата\n\nПристроїв: {devices}\nСписання: {amount}\nПеріод: {days} дн.\n\nПеревірте суму та період перед переходом до оплати."
 }

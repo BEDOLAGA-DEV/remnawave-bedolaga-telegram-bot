@@ -585,6 +585,8 @@ async def fulfill_purchase(
             )
         elif existing_subscription is not None:
             # A different tariff keeps the existing replacement policy.
+            if existing_subscription.tariff_id != tariff.id:
+                existing_subscription.daily_devices_billing_version = 0
             existing_subscription.tariff_id = tariff.id
             subscription = await replace_subscription(
                 db,

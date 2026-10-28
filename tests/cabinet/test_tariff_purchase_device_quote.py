@@ -89,7 +89,9 @@ async def test_preview_rejects_unavailable_tariff(context):
 
 
 async def test_preview_rejects_renewal_device_override(context, monkeypatch):
-    subscription = SimpleNamespace(id=8, tariff_id=7, device_limit=2, is_trial=False, end_date=None)
+    subscription = SimpleNamespace(
+        id=8, user_id=1, status='active', tariff_id=7, device_limit=2, is_trial=False, end_date=None
+    )
     monkeypatch.setattr(
         'app.database.crud.subscription.get_subscription_by_user_and_tariff', AsyncMock(return_value=subscription)
     )
@@ -118,7 +120,9 @@ async def test_preview_cache_outage_does_not_allow_checkout(context, monkeypatch
 
 async def test_single_mode_returns_existing_paid_limit(context, monkeypatch):
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', False)
-    target = SimpleNamespace(id=8, tariff_id=7, device_limit=4, is_trial=False, end_date=None)
+    target = SimpleNamespace(
+        id=8, user_id=1, status='active', tariff_id=7, device_limit=4, is_trial=False, end_date=None
+    )
     monkeypatch.setattr(purchase, 'get_subscription_by_user_id', AsyncMock(return_value=target))
     response = await post(context, selected_device_limit=None)
     assert response.status_code == 200

@@ -385,3 +385,126 @@ async def test_cart_storage_failure_does_not_claim_order_saved(postgres_database
         response = await checkout.send('/purchase-tariff', body)
         assert response.status_code == 503
         assert response.json()['detail']['code'] == 'cart_unavailable'
+
+
+@pytest.mark.parametrize('multi', [False, True])
+@pytest.mark.parametrize('topup', [False, True])
+@pytest.mark.parametrize('trial', [False, True])
+async def test_daily_selected_devices_persist_with_charge_policy(postgres_database, monkeypatch, multi, topup, trial):
+    from app.services import subscription_auto_purchase_service as auto
+    from app.services.pricing_engine import PricingEngine
+
+    monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
+    monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
+    monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
+        async with checkout.maker() as db:
+            tariff = await db.get(Tariff, 7)
+            tariff.is_daily = True
+            tariff.daily_price_kopeks = 1000
+            tariff.device_price_kopeks = 3000
+            (await db.get(User, 1)).balance_kopeks = 0 if topup else 100000
+            if trial:
+                from datetime import UTC, datetime, timedelta
+
+                db.add(
+                    Subscription(
+                        id=10,
+                        user_id=1,
+                        tariff_id=7,
+                        is_trial=True,
+                        status='active',
+                        device_limit=1,
+                        end_date=datetime.now(UTC) + timedelta(days=1),
+                    )
+                )
+            await db.commit()
+        parameters = {'tariff_id': 7, 'period_days': 1, 'selected_device_limit': 3}
+        preview = await checkout.send('/purchase-tariff/preview', parameters)
+        assert preview.status_code == 200, preview.text
+        body = parameters | {'quote_id': preview.json()['quote_id'], 'checkout_id': str(uuid4())}
+        if topup:
+            response = await checkout.send('/purchase-tariff', body)
+            assert response.status_code == 402, response.text
+            cart = purchase.user_cart_service.save_user_cart.await_args.args[1]
+            assert cart['period_days'] == 1
+            async with checkout.maker() as db:
+                user = await get_user_by_id(db, 1)
+                user.balance_kopeks = 100000
+                await db.commit()
+                assert await auto._process_single_cart(db, user, cart)
+        else:
+            responses = await asyncio.gather(*(checkout.send('/purchase-tariff', body) for _ in range(2)))
+            assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+        async with checkout.maker() as db:
+            user = await get_user_by_id(db, 1)
+            assert user.balance_kopeks == 98800
+            sub = (await db.scalars(select(Subscription))).one()
+            tariff = await db.get(Tariff, 7)
+            assert sub.device_limit == 3
+            assert sub.daily_devices_billing_version == 1
+            assert sub.last_daily_charge_at is not None
+            assert not sub.is_daily_paused
+            assert PricingEngine.daily_subscription_price(sub, tariff, user) == 1200
+        assert (await checkout.send('/purchase-tariff', body)).status_code == 200
+
+
+async def test_daily_selected_intent_failure_rolls_back_wallet_and_product(postgres_database, monkeypatch):
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        async with checkout.maker() as db:
+            tariff = await db.get(Tariff, 7)
+            tariff.is_daily = True
+            tariff.daily_price_kopeks = 1000
+            tariff.device_price_kopeks = 3000
+            await db.commit()
+        parameters = {'tariff_id': 7, 'period_days': 1, 'selected_device_limit': 3}
+        preview = await checkout.send('/purchase-tariff/preview', parameters)
+        assert preview.status_code == 200, preview.text
+        body = parameters | {'quote_id': preview.json()['quote_id'], 'checkout_id': str(uuid4())}
+        from sqlalchemy import event
+
+        from app.database.models import TariffPurchaseIntent
+
+        def fail_intent(*args):
+            raise RuntimeError('synthetic intent insert failure')
+
+        event.listen(TariffPurchaseIntent, 'before_insert', fail_intent)
+        try:
+            response = await checkout.send('/purchase-tariff', body)
+            assert response.status_code == 500, response.text
+        finally:
+            event.remove(TariffPurchaseIntent, 'before_insert', fail_intent)
+        async with checkout.maker() as db:
+            assert (await db.get(User, 1)).balance_kopeks == 100000
+            assert (await db.scalars(select(Subscription))).all() == []
+            assert (await db.scalars(select(Transaction))).all() == []
+
+
+async def test_existing_versioned_daily_legacy_purchase_keeps_monthly_proration(postgres_database, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        async with checkout.maker() as db:
+            tariff = await db.get(Tariff, 7)
+            tariff.is_daily = True
+            tariff.daily_price_kopeks = 1000
+            tariff.device_price_kopeks = 3000
+            db.add(
+                Subscription(
+                    id=10,
+                    user_id=1,
+                    tariff_id=7,
+                    is_trial=False,
+                    status='active',
+                    device_limit=3,
+                    daily_devices_billing_version=1,
+                    is_daily_paused=True,
+                    end_date=datetime.now(UTC) - timedelta(hours=1),
+                )
+            )
+            await db.commit()
+        response = await checkout.send('/purchase-tariff', {'tariff_id': 7, 'period_days': 1, 'subscription_id': 10})
+        assert response.status_code == 200, response.text
+        async with checkout.maker() as db:
+            assert (await db.get(User, 1)).balance_kopeks == 98800

@@ -78,11 +78,10 @@ def test_classic_conversion_keeps_legacy_resolution():
         resolve_purchase_device_selection(tariff(), subscription, 2)
 
 
-def test_daily_selection_is_not_enabled_before_recurring_billing_support():
+def test_daily_new_purchase_selects_devices():
     daily = make_tariff(is_daily=True)
-    assert not resolve_purchase_device_selection(daily, None, None).selectable
-    with pytest.raises(DeviceSelectionError):
-        resolve_purchase_device_selection(daily, None, 3)
+    assert resolve_purchase_device_selection(daily, None, None).selectable
+    assert resolve_purchase_device_selection(daily, None, 3).effective_limit == 3
 
 
 def test_global_max_is_fallback_and_no_artificial_100_limit(monkeypatch):

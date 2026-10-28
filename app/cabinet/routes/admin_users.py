@@ -1511,6 +1511,8 @@ async def update_user_subscription(
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
 
+        if subscription.tariff_id != request.tariff_id:
+            subscription.daily_devices_billing_version = 0
         subscription.tariff_id = request.tariff_id
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
         subscription.device_limit = calc_device_limit_on_admin_tariff_change(

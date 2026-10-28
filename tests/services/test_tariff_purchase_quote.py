@@ -114,12 +114,10 @@ async def test_purchase_kind_depends_on_resolved_subscription(is_trial, tariff_i
 
 
 @pytest.mark.asyncio
-async def test_daily_quote_does_not_silently_sell_selected_devices():
-    from app.services.tariff_purchase_devices import DeviceSelectionError
-
-    with pytest.raises(DeviceSelectionError):
+async def test_daily_quote_rejects_multiple_days():
+    with pytest.raises(PurchaseQuoteError, match='invalid_period'):
         await calculate_purchase_quote(
-            make_tariff(is_daily=True, daily_price_kopeks=1000), None, None, period_days=1, selected_device_limit=3
+            make_tariff(is_daily=True, daily_price_kopeks=1000), None, None, period_days=2, selected_device_limit=3
         )
 
 
@@ -159,3 +157,37 @@ async def test_overflow_of_original_price_cannot_hide_behind_full_discount():
         await calculate_purchase_quote(
             make_tariff(period_prices={'30': 2147483647}), user, None, period_days=30, selected_device_limit=3
         )
+
+
+@pytest.mark.asyncio
+async def test_daily_quote_includes_selected_devices_for_one_day():
+    quote = await calculate_purchase_quote(
+        make_tariff(is_daily=True, daily_price_kopeks=1000, device_price_kopeks=3000),
+        None,
+        None,
+        period_days=1,
+        selected_device_limit=3,
+    )
+    assert quote.pricing.final_total == 1200
+    assert quote.devices.effective_limit == 3
+
+
+@pytest.mark.asyncio
+async def test_daily_quote_distinguishes_oneoff_offer_from_next_charge():
+    from datetime import timedelta
+
+    user = SimpleNamespace(
+        promo_group=None,
+        get_primary_promo_group=lambda: None,
+        promo_offer_discount_percent=50,
+        promo_offer_discount_expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    quote = await calculate_purchase_quote(
+        make_tariff(is_daily=True, daily_price_kopeks=1000, device_price_kopeks=3000),
+        user,
+        None,
+        period_days=1,
+        selected_device_limit=3,
+    )
+    assert quote.pricing.final_total == 600
+    assert quote.next_daily_charge_kopeks == 1200

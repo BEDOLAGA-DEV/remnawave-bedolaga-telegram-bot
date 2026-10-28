@@ -59,6 +59,7 @@ class PurchaseQuote:
     purchase_kind: str
     traffic_limit_gb: int
     custom_traffic_gb: int | None
+    next_daily_charge_kopeks: int | None = None
 
 
 def purchase_parameters(request) -> dict[str, Any]:
@@ -81,6 +82,7 @@ def purchase_quote_terms(request, target, quote: PurchaseQuote) -> dict[str, Any
         'device_selection': asdict(quote.devices),
         'traffic_limit_gb': quote.traffic_limit_gb,
         'pricing': asdict(quote.pricing),
+        'next_daily_charge_kopeks': quote.next_daily_charge_kopeks,
     }
 
 
@@ -137,7 +139,14 @@ async def calculate_purchase_quote(
         custom_traffic = traffic_limit = traffic_gb
 
     pricing = await pricing_engine.calculate_tariff_purchase_price(
-        tariff, period_days, device_limit=devices.effective_limit, custom_traffic_gb=custom_traffic, user=user
+        tariff,
+        period_days,
+        device_limit=devices.effective_limit,
+        custom_traffic_gb=custom_traffic,
+        user=user,
+        daily_devices_billing_version=1
+        if tariff.is_daily and devices.selectable
+        else getattr(subscription, 'daily_devices_billing_version', 0),
     )
     for amount in (
         pricing.base_price,
@@ -159,4 +168,22 @@ async def calculate_purchase_quote(
         kind = 'classic_conversion'
     else:
         kind = 'paid_renewal'
-    return PurchaseQuote(devices, pricing, kind, traffic_limit, custom_traffic)
+    next_daily = None
+    if tariff.is_daily:
+        from types import SimpleNamespace
+
+        from app.services.pricing_engine import PricingEngine
+
+        next_daily = PricingEngine.daily_subscription_price(
+            SimpleNamespace(
+                device_limit=devices.effective_limit,
+                daily_devices_billing_version=1
+                if devices.selectable
+                else getattr(subscription, 'daily_devices_billing_version', 0),
+            ),
+            tariff,
+            user,
+        )
+        if not 0 <= next_daily <= MAX_PRICE_KOPEKS:
+            raise PurchaseQuoteError('price_out_of_range')
+    return PurchaseQuote(devices, pricing, kind, traffic_limit, custom_traffic, next_daily)

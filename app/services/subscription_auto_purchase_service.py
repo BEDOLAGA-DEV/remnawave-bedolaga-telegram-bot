@@ -1011,6 +1011,11 @@ async def _auto_purchase_tariff(
             device_limit=device_limit,
             custom_traffic_gb=custom_traffic_gb,
             user=user,
+            **(
+                {'daily_devices_billing_version': 1}
+                if getattr(existing_subscription, 'daily_devices_billing_version', 0) == 1
+                else {}
+            ),
         )
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
@@ -1177,6 +1182,10 @@ async def _auto_purchase_tariff(
     from app.database.crud.transaction import emit_transaction_side_effects
 
     if device_checkout:
+        if tariff.is_daily:
+            subscription.daily_devices_billing_version = 1
+            subscription.last_daily_charge_at = datetime.now(UTC)
+            subscription.is_daily_paused = False
         db.add(
             TariffPurchaseIntent(
                 user_id=purchase_user_id,
@@ -1449,6 +1458,11 @@ async def _auto_purchase_daily_tariff(
         period_days=1,
         device_limit=effective_device_limit,
         user=user,
+        **(
+            {'daily_devices_billing_version': 1}
+            if getattr(existing_subscription, 'daily_devices_billing_version', 0) == 1
+            else {}
+        ),
     )
     final_price = pricing_result.final_total
     consume_promo = pricing_result.promo_offer_discount > 0
@@ -2833,11 +2847,7 @@ async def try_resume_disabled_daily_after_topup(
     # Apply group discount to daily price (consistent with PricingEngine._calculate_switch_to_daily)
     from app.services.pricing_engine import PricingEngine
 
-    promo_group = PricingEngine.resolve_promo_group(user)
-    daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-    daily_price = (
-        PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
-    )
+    daily_price = PricingEngine.daily_subscription_price(subscription, tariff, user)
 
     # Check balance (при 100% скидке — пропускаем)
     if daily_price > 0 and user.balance_kopeks < daily_price:
@@ -3175,7 +3185,7 @@ async def _process_single_cart(
     cart_mode = cart_data.get('cart_mode') or cart_data.get('mode')
     cart_sub_id = _safe_int(cart_data.get('subscription_id'))
 
-    if cart_mode == 'tariff_purchase' and cart_data.get('selected_device_limit') is not None:
+    if cart_mode in ('tariff_purchase', 'daily_tariff_purchase') and cart_data.get('selected_device_limit') is not None:
         # This contract validates the exact target and consent under the wallet
         # lock, with a durable checkout identity. Legacy time/status heuristics
         # would incorrectly discard an explicitly purchased trial conversion.

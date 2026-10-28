@@ -118,7 +118,8 @@ async def test_failure_does_not_take_money(postgres_database, monkeypatch):
         assert (await db.get(Subscription, 10, populate_existing=True)).actual_status == 'expired'
 
 
-async def test_concurrent_resume_charges_once(postgres_database, monkeypatch):
+@pytest.mark.parametrize('version,charge', [(0, 1000), (1, 1020)])
+async def test_concurrent_resume_charges_once(postgres_database, monkeypatch, version, charge):
     import asyncio
 
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -127,7 +128,11 @@ async def test_concurrent_resume_charges_once(postgres_database, monkeypatch):
     monkeypatch.setattr(daily, 'SubscriptionService', lambda: _FakePanelSync())
     monkeypatch.setattr('app.database.crud.transaction.emit_transaction_side_effects', AsyncMock())
     async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
-        db.add_all(_rows('NO_RESET', status='expired'))
+        rows = _rows('NO_RESET', status='expired')
+        rows[1].device_price_kopeks = 300
+        rows[2].device_limit = 3
+        rows[2].daily_devices_billing_version = version
+        db.add_all(rows)
         await db.commit()
         factory = async_sessionmaker(db.bind, expire_on_commit=False)
 
@@ -138,7 +143,7 @@ async def test_concurrent_resume_charges_once(postgres_database, monkeypatch):
 
         results = await asyncio.gather(resume(), resume())
         assert all(result['is_paused'] is False for result in results)
-        assert (await db.get(User, 1, populate_existing=True)).balance_kopeks == 99000
+        assert (await db.get(User, 1, populate_existing=True)).balance_kopeks == 100000 - charge
         assert len((await db.scalars(select(Transaction))).all()) == 1
         assert (await db.get(Subscription, 10, populate_existing=True)).is_daily_paused is False
 

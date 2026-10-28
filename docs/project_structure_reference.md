@@ -423,7 +423,7 @@
   Функции: `update_autopay` — Update autopay settings.
 - `app/cabinet/routes/subscription_modules/cashera_recurrent.py` — Python-модуль
   Классы: нет
-  Функции: `enable_cashera_recurrent` — Включает автопродление Cashera для выбранной подписки., `purchase_with_cashera_recurrent` — Оформление подписки на тариф оплатой привязкой Cashera., `get_cashera_recurrent` — Текущее состояние автопродления Cashera для подписки., `cancel_cashera_recurrent` — Отменяет автопродление Cashera (best-effort).
+  Функции: `enable_cashera_recurrent` — Включает автопродление Cashera для выбранной подписки., `purchase_with_cashera_recurrent` — Оформление подписки на тариф оплатой привязкой Cashera., `get_cashera_recurrent` — Текущее состояние автопродления Cashera для подписки., `cancel_cashera_recurrent` — Отменяет автопродление Cashera (best-effort)., `preview_cashera_recurrent_purchase`
 - `app/cabinet/routes/subscription_modules/daily.py` — Python-модуль
   Классы: нет
   Функции: `toggle_subscription_pause` — Toggle pause/resume for daily subscription.
@@ -435,13 +435,13 @@
   Функции: `resolve_subscription` — Resolve target subscription: by ID in multi-tariff mode, or legacy fallback., `ensure_subscription_has_tariff` — Докупки старой подписке не продаются — сперва переход на тариф.
 - `app/cabinet/routes/subscription_modules/lava_recurrent.py` — Python-модуль
   Классы: нет
-  Функции: `enable_lava_recurrent` — Включает автопродление Lava для выбранной подписки., `purchase_with_lava_recurrent` — Оформление подписки на тариф оплатой привязкой Lava., `get_lava_recurrent` — Текущее состояние автопродления Lava для подписки., `cancel_lava_recurrent` — Отменяет автопродление Lava (best-effort).
+  Функции: `enable_lava_recurrent` — Включает автопродление Lava для выбранной подписки., `purchase_with_lava_recurrent` — Оформление подписки на тариф оплатой привязкой Lava., `get_lava_recurrent` — Текущее состояние автопродления Lava для подписки., `cancel_lava_recurrent` — Отменяет автопродление Lava (best-effort)., `preview_lava_recurrent_purchase`
 - `app/cabinet/routes/subscription_modules/multi_tariff.py` — Python-модуль
   Классы: `SubscriptionListItem`, `SubscriptionsListResponse`
   Функции: `list_subscriptions` — List all user subscriptions. Returns all subscriptions regardless of multi-tariff mode., `get_subscription_detail` — Get specific subscription details with ownership check., `delete_subscription` — Delete an expired/disabled subscription. Active subscriptions cannot be deleted.
 - `app/cabinet/routes/subscription_modules/platega_recurrent.py` — Python-модуль
   Классы: нет
-  Функции: `enable_platega_recurrent` — Enable Platega SBP auto-renewal for the resolved subscription., `purchase_with_platega_recurrent` — Оформление подписки на тариф через СБП-автопродление (оплата привязкой)., `get_platega_recurrent` — Return the current Platega SBP auto-renewal state for the subscription., `cancel_platega_recurrent` — Cancel Platega SBP auto-renewal for the resolved subscription (best-effort).
+  Функции: `enable_platega_recurrent` — Enable Platega SBP auto-renewal for the resolved subscription., `purchase_with_platega_recurrent` — Оформление подписки на тариф через СБП-автопродление (оплата привязкой)., `get_platega_recurrent` — Return the current Platega SBP auto-renewal state for the subscription., `cancel_platega_recurrent` — Cancel Platega SBP auto-renewal for the resolved subscription (best-effort)., `preview_platega_recurrent_purchase`
 - `app/cabinet/routes/subscription_modules/purchase.py` — Python-модуль
   Классы: нет
   Функции: `get_purchase_options` — Get all subscription purchase options (periods, servers, traffic, devices)., `preview_purchase` — Calculate and preview the total price for selected options (classic mode only)., `submit_purchase` — Submit subscription purchase (deduct from balance, classic mode only)., `preview_tariff_purchase`, `purchase_tariff` — Purchase a tariff (for tariffs mode)., `get_trial_info` — Get trial subscription info and availability., `activate_trial` — Activate trial subscription.
@@ -1708,7 +1708,7 @@
   Классы: нет
   Функции: `build_start_keyboard`, `send_poll_to_users`, `reward_user_for_poll`, `get_next_question`, `get_question_option`
 - `app/services/pricing_engine.py` — Python-модуль
-  Классы: `TariffSwitchPricingUnavailableError`, `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (20 методов)
+  Классы: `TariffSwitchPricingUnavailableError`, `TariffBreakdown`, `ClassicBreakdown`, `RenewalPricing` (1 методов), `TariffSwitchResult` (2 методов), `PricingEngine` (23 методов)
   Функции: нет
 - `app/services/privacy_policy_service.py` — Python-модуль
   Классы: `PrivacyPolicyService` (9 методов)
@@ -1749,7 +1749,7 @@
   Функции: нет
 - `app/services/recurrent_purchase_selection.py` — Python-модуль
   Классы: нет
-  Функции: `resolve_recurrent_purchase_selection`
+  Функции: `resolve_recurrent_purchase_selection`, `resolve_lava_purchase_product`, `calculate_recurrent_purchase_terms` — The provider's real cadence and recurring price, without temporary discounts., `validate_recurrent_setup_terms` — Fail closed if provider setup no longer matches the buyer's consent., `preview_recurrent_purchase`, `prepare_recurrent_device_purchase` — Atomically bind one checkout to its new unpaid row, never rewrite paid limits., `recoverable_recurrent_checkout` — Return durable proof of an untouched owned pending checkout, never a paid row., `find_recurrent_pending_intent`
 - `app/services/referral_contest_service.py` — Python-модуль
   Классы: `ReferralContestService` (23 методов)
   Функции: нет
@@ -3155,6 +3155,9 @@
 - `migrations/alembic/versions/0137_tariff_purchase_intents.py` — Python-модуль
   Классы: нет
   Функции: `upgrade`, `downgrade`
+- `migrations/alembic/versions/0138_daily_selected_devices_billing.py` — Python-модуль
+  Классы: нет
+  Функции: `upgrade`, `downgrade`
 
 ## scripts
 
@@ -3951,6 +3954,9 @@
 - `tests/database/test_daily_auto_purchase_atomic_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_daily_auto_activation_is_atomic`, `test_daily_activation_mixed_entries_debit_once`, `test_daily_manual_failure_rolls_back_before_retry`, `test_daily_trial_conversion_and_auto_overlap`, `test_daily_single_subscription_manual_and_auto_overlap`
+- `tests/database/test_daily_devices_billing_migration_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_daily_billing_migration_preserves_legacy_and_protects_new_policy`
 - `tests/database/test_daily_promo_days_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_daily_promo_days_defer_charge_and_keep_access`, `test_parallel_daily_workers_charge_only_once`
@@ -4092,6 +4098,9 @@
 - `tests/database/test_reachability_crud.py` — Python-модуль
   Классы: нет
   Функции: `test_create_get_and_update_job`, `test_idempotency_key_is_unique`, `test_active_job_is_found_per_kind_only_while_running`, `test_list_jobs_filters_and_counts`, `test_latest_legs_returns_newest_per_target_and_unit`, `test_replace_legs_drops_previous_legs_of_the_job`, `test_prefs_upsert_and_list`, `test_last_vless_leg_price_uses_latest_done_vless_job`
+- `tests/database/test_recurrent_devices_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_selected_device_checkout`, `test_concurrent_recurrent_checkout_creates_one_bound_row`, `test_real_provider_setup_stores_selected_device_amount`
 - `tests/database/test_recurrent_purchase_selected_subscription_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_selected_row_validated_before_provider`, `test_http_query_reaches_owned_selected_row`
@@ -4151,7 +4160,7 @@
   Функции: `test_model_declares_both_columns`, `test_migration_adds_the_same_columns_as_the_model`, `test_migration_is_idempotent_on_a_table_that_already_has_the_columns`
 - `tests/database/test_tariff_purchase_devices_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `checkout_context`, `order`, `test_checkout_prices_and_provisions_once`, `test_quote_changed_before_debit`, `test_reused_checkout_with_different_devices_rejected`, `test_provision_failure_rolls_back_debit_and_allows_retry`, `test_selected_devices_require_quote_and_checkout_id`, `test_topup_preserves_devices_and_agreed_price`, `test_trial_conversion_receives_selected_limit`, `test_manual_and_topup_race_charge_once`, `test_preview_resolves_trial_of_another_tariff_before_consent`, `test_completed_retry_survives_later_availability_change`, `test_telegram_trial_other_tariff_cart_reaches_real_topup_dispatcher`, `test_legacy_request_rejects_date_overflow_before_any_ledger_write`, `test_cart_storage_failure_does_not_claim_order_saved`
+  Функции: `checkout_context`, `order`, `test_checkout_prices_and_provisions_once`, `test_quote_changed_before_debit`, `test_reused_checkout_with_different_devices_rejected`, `test_provision_failure_rolls_back_debit_and_allows_retry`, `test_selected_devices_require_quote_and_checkout_id`, `test_topup_preserves_devices_and_agreed_price`, `test_trial_conversion_receives_selected_limit`, `test_manual_and_topup_race_charge_once`, `test_preview_resolves_trial_of_another_tariff_before_consent`, `test_completed_retry_survives_later_availability_change`, `test_telegram_trial_other_tariff_cart_reaches_real_topup_dispatcher`, `test_legacy_request_rejects_date_overflow_before_any_ledger_write`, `test_cart_storage_failure_does_not_claim_order_saved`, `test_daily_selected_devices_persist_with_charge_policy`, `test_daily_selected_intent_failure_rolls_back_wallet_and_product`, `test_existing_versioned_daily_legacy_purchase_keeps_monthly_proration`
 - `tests/database/test_tariff_purchase_intent_migration_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_intent_migration_preserves_completed_checkout_identity`
@@ -4653,7 +4662,7 @@
   Функции: `test_preview_uses_engine_price_with_extra_devices`
 - `tests/handlers/test_tariff_purchase_device_selection.py` — Python-модуль
   Классы: нет
-  Функции: `no_conversion_candidate`, `context`, `user`, `bind`, `test_new_purchase_keyboard_offers_device_selection`, `test_selected_devices_bound_to_exact_cart_terms`, `test_selection_does_not_leak_into_another_tariff`, `test_paid_renewal_has_no_device_selector`, `test_selected_extra_devices_do_not_expose_incompatible_recurring_checkout`, `test_custom_preview_includes_selected_devices_in_price`, `test_device_callback_is_bound_to_current_attempt`, `test_manual_input_rejects_noninteger_without_dispatch`, `test_manual_input_accepts_large_integer_and_reuses_validated_callback`
+  Функции: `no_conversion_candidate`, `context`, `user`, `bind`, `test_new_purchase_keyboard_offers_device_selection`, `test_selected_devices_bound_to_exact_cart_terms`, `test_selection_does_not_leak_into_another_tariff`, `test_paid_renewal_has_no_device_selector`, `test_selected_extra_devices_expose_token_bound_recurring_review`, `test_custom_preview_includes_selected_devices_in_price`, `test_device_callback_is_bound_to_current_attempt`, `test_manual_input_rejects_noninteger_without_dispatch`, `test_manual_input_accepts_large_integer_and_reuses_validated_callback`, `test_daily_selected_keyboard_has_bound_one_day_checkout`, `test_recurrent_selected_devices_require_actual_price_review`
 - `tests/handlers/test_tariff_switch_subscription_resolution.py` — Python-модуль
   Классы: нет
   Функции: `test_switch_resolver_prefers_fsm_over_callback_trailing`, `test_switch_resolver_falls_back_to_single_active_when_no_fsm`, `test_switch_resolver_asks_to_choose_when_ambiguous`
@@ -4912,6 +4921,9 @@
 - `tests/services/test_daily_resume_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `test_cabinet_resume_resets_traffic` — Возобновление с оплатой обнуляет счётчик, когда выключатель включён., `test_cabinet_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем., `test_cabinet_resume_leaves_daily_reset_to_panel` — Панель обнуляет сама раз в сутки — свой сброс не добавляем., `test_cabinet_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно., `test_miniapp_resume_resets_traffic` — Кнопка «возобновить» в Mini App живёт по той же политике, что и планировщик., `test_miniapp_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем., `test_miniapp_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно., `test_cabinet_overdue_active_resumes_instead_of_pausing`
+- `tests/services/test_daily_selected_devices_pricing.py` — Python-модуль
+  Классы: нет
+  Функции: `test_daily_saved_device_price`, `test_daily_first_and_later_charge_agree_without_offer`, `test_daily_wallet_charge_uses_saved_policy`, `test_other_daily_resume_entrypoints_charge_saved_devices`, `test_offer_applies_only_to_initial_daily_charge`, `test_daily_checkout_and_later_charge_reject_ineligible_group_discount`, `test_selected_daily_public_checkout_prorates_monthly_unit_with_floor`
 - `tests/services/test_daily_subscription_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `test_defers_drop_when_panel_resets_and_user_over_limit` — MONTH + used 130 > нового лимита 100 → понижение ОТКЛАДЫВАЕТСЯ до сброса панели., `test_applies_drop_cleanly_when_user_under_limit` — MONTH + used 40 <= нового лимита 100 → лимит понижается, сброса used нет., `test_no_reset_tariff_resets_used_when_over_limit` — NO_RESET (панель сама не сбрасывает) + used 130 > 100 → лимит вниз + сброс used (clamp)., `test_forces_drop_after_grace_even_if_panel_resets` — MONTH, но докупка просрочена >40д → не ждём вечно: понижаем + добиваем used., `test_traffic_reset_only_loop_runs_processor` — #630055: с ВЫКЛЮЧЕННЫМИ суточными тарифами джоба сброса докупок всё равно
@@ -5260,6 +5272,9 @@
 - `tests/services/test_recurrent_amount_sync.py` — Python-модуль
   Классы: нет
   Функции: `test_true_amount_includes_extra_devices` — Цена продления учитывает доп. устройства — это и есть «правильная» сумма., `test_matching_amount_keeps_bindings` — Совпадающая сумма — привязки не трогаем., `test_stale_bindings_of_both_providers_are_cancelled` — Подписка подорожала (докуплены устройства) — обе привязки гасятся., `test_sync_never_raises_on_missing_subscription` — Best-effort: докупка уже оплачена и не должна падать из-за рекуррента., `test_device_purchase_triggers_sync` — Докупка устройств вызывает согласование сумм из CRUD.
+- `tests/services/test_recurrent_device_checkout.py` — Python-модуль
+  Классы: нет
+  Функции: `test_provider_terms_use_selected_devices_and_actual_cadence`, `test_lava_product_cannot_undercharge_selected_devices`, `test_provider_setup_rejects_changed_consent`, `test_cabinet_forwards_device_consent`, `test_lava_rejects_invoice_amount_changed_after_consent`
 - `tests/services/test_referral_days_target_choice.py` — Python-модуль
   Классы: нет
   Функции: `choice_on`, `test_chosen_subscription_wins_over_the_automatic_pick` — Автоподбор взял бы подписку с самым поздним сроком — выбор важнее., `test_without_the_setting_the_choice_is_ignored` — Выключенная настройка возвращает прежний автоподбор — целиком., `test_a_foreign_subscription_is_never_used` — Ссылка живёт в строке пользователя и переживает что угодно., `test_a_stale_choice_falls_back_instead_of_refusing` — Удалённая подписка не должна отменять награду., `test_the_rule_tariff_still_wins_over_the_choice` — Тариф в правиле — указание админа, куда дни обязаны лечь., `test_days_actually_land_in_the_chosen_subscription` — Сквозная проверка: не только выбор цели, но и само продление.
@@ -5409,10 +5424,10 @@
   Функции: `test_device_price_follows_arbitrary_tariff_days`, `test_daily_rate_and_unlimited_devices_are_preserved`, `test_telegram_preview_uses_configured_fallback_device_rate`
 - `tests/services/test_tariff_purchase_devices.py` — Python-модуль
   Классы: нет
-  Функции: `tariff`, `make_tariff`, `test_new_tariff_accepts_total_devices`, `test_invalid_selection_is_rejected`, `test_tariff_without_extra_price_remains_fixed`, `test_global_classic_toggle_does_not_control_tariff_selection`, `test_unlimited_tariff_cannot_be_overridden`, `test_existing_paid_subscription_does_not_get_purchase_selector`, `test_trial_conversion_can_select_devices`, `test_classic_conversion_keeps_legacy_resolution`, `test_daily_selection_is_not_enabled_before_recurring_billing_support`, `test_global_max_is_fallback_and_no_artificial_100_limit`, `test_bad_max_keeps_base_purchase_without_enabling_selector`, `test_missing_selection_preserves_default_purchase`
+  Функции: `tariff`, `make_tariff`, `test_new_tariff_accepts_total_devices`, `test_invalid_selection_is_rejected`, `test_tariff_without_extra_price_remains_fixed`, `test_global_classic_toggle_does_not_control_tariff_selection`, `test_unlimited_tariff_cannot_be_overridden`, `test_existing_paid_subscription_does_not_get_purchase_selector`, `test_trial_conversion_can_select_devices`, `test_classic_conversion_keeps_legacy_resolution`, `test_daily_new_purchase_selects_devices`, `test_global_max_is_fallback_and_no_artificial_100_limit`, `test_bad_max_keeps_base_purchase_without_enabling_selector`, `test_missing_selection_preserves_default_purchase`
 - `tests/services/test_tariff_purchase_quote.py` — Python-модуль
   Классы: нет
-  Функции: `make_tariff`, `test_period_price_uses_existing_exact_day_pricing`, `test_invalid_or_unconfigured_period_rejected`, `test_date_overflow_rejected_before_pricing`, `test_money_overflow_rejected_even_when_discount_could_hide_it`, `test_free_base_still_charges_devices`, `test_custom_traffic_outside_config_rejected`, `test_custom_days_traffic_and_devices_share_one_quote`, `test_fixed_traffic_rejects_override_in_new_contract`, `test_purchase_kind_depends_on_resolved_subscription`, `test_daily_quote_does_not_silently_sell_selected_devices`, `test_category_discounts_and_offer_applied_once`, `test_negative_configured_price_rejected_before_engine_can_clamp_it`, `test_overflow_of_original_price_cannot_hide_behind_full_discount`
+  Функции: `make_tariff`, `test_period_price_uses_existing_exact_day_pricing`, `test_invalid_or_unconfigured_period_rejected`, `test_date_overflow_rejected_before_pricing`, `test_money_overflow_rejected_even_when_discount_could_hide_it`, `test_free_base_still_charges_devices`, `test_custom_traffic_outside_config_rejected`, `test_custom_days_traffic_and_devices_share_one_quote`, `test_fixed_traffic_rejects_override_in_new_contract`, `test_purchase_kind_depends_on_resolved_subscription`, `test_daily_quote_rejects_multiple_days`, `test_category_discounts_and_offer_applied_once`, `test_negative_configured_price_rejected_before_engine_can_clamp_it`, `test_overflow_of_original_price_cannot_hide_behind_full_discount`, `test_daily_quote_includes_selected_devices_for_one_day`, `test_daily_quote_distinguishes_oneoff_offer_from_next_charge`
 - `tests/services/test_tariff_purchase_quote_cache.py` — Python-модуль
   Классы: нет
   Функции: `quote_cache`, `test_quote_bound_to_owner_and_channel`, `test_cache_failure_does_not_issue_unverifiable_quote`, `test_expiry_checked_even_if_cache_retains_old_value`, `test_unknown_quote_is_not_a_purchase_authorization`, `test_malformed_cache_fails_closed`

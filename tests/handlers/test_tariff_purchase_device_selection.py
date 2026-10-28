@@ -72,12 +72,12 @@ async def test_paid_renewal_has_no_device_selector():
     )
 
 
-async def test_selected_extra_devices_do_not_expose_incompatible_recurring_checkout(monkeypatch):
+async def test_selected_extra_devices_expose_token_bound_recurring_review(monkeypatch):
     monkeypatch.setattr(type(telegram.settings), 'is_platega_recurrent_enabled', lambda self: True)
     state = context()
     await state.update_data(tariff_device_selection={'tariff_id': 7, 'limit': 3})
     keyboard = await bind(state)
-    assert not any(
+    assert any(
         (button.callback_data or '').startswith(('tariff_sbp:', 'tariff_lava:', 'tariff_cashera:'))
         for row in keyboard.inline_keyboard
         for button in row
@@ -148,3 +148,76 @@ async def test_manual_input_accepts_large_integer_and_reuses_validated_callback(
     message = SimpleNamespace(text='150', answer=AsyncMock(), bot=None, from_user=None)
     await telegram.receive_tariff_device_limit(message, user(), AsyncMock(), state)
     assert apply.await_args.args[0].data == 'tariff_devices:7:150:token'
+
+
+async def test_daily_selected_keyboard_has_bound_one_day_checkout():
+    state = context()
+    await state.update_data(tariff_device_selection={'tariff_id': 7, 'limit': 3})
+    tariff = make_tariff(is_daily=True, daily_price_kopeks=1000, device_price_kopeks=3000)
+    keyboard = await telegram._bind_tariff_purchase_keyboard(
+        telegram.get_daily_tariff_confirm_keyboard(7, 'ru'),
+        tariff=tariff,
+        period=1,
+        db_user=user(),
+        db=AsyncMock(),
+        state=state,
+        fixed=True,
+    )
+    cart = (await state.get_data())['restored_tariff_checkout']['cart']
+    assert cart['cart_mode'] == 'daily_tariff_purchase'
+    assert cart['device_quote_terms']['pricing']['final_total'] == 1200
+    button = next(
+        b
+        for row in keyboard.inline_keyboard
+        for b in row
+        if (b.callback_data or '').startswith('daily_tariff_confirm:')
+    )
+    assert len(button.callback_data.split(':')) == 3
+
+
+@pytest.mark.parametrize(
+    'provider,prefix', [('platega', 'tariff_sbp'), ('lava', 'tariff_lava'), ('cashera', 'tariff_cashera')]
+)
+async def test_recurrent_selected_devices_require_actual_price_review(monkeypatch, provider, prefix):
+    state = context()
+    await state.update_data(tariff_device_selection={'tariff_id': 7, 'limit': 3})
+    await bind(state)
+    data = await state.get_data()
+    from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id
+
+    token = _saved_tariff_checkout_external_id(1, data['restored_tariff_checkout']['identity']).rsplit(':', 1)[-1][:24]
+    preview = AsyncMock(return_value={'quote_id': 'test-quote', 'amount_kopeks': 15000, 'charge_days': 7})
+    monkeypatch.setattr('app.services.recurrent_purchase_selection.preview_recurrent_purchase', preview)
+    callback = SimpleNamespace(
+        data=f'{prefix}:7:{token}', answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock())
+    )
+    assert (
+        await telegram._prepare_telegram_recurrent_devices(
+            callback, user(), AsyncMock(), state, make_tariff(), provider
+        )
+        is None
+    )
+    assert '150' in callback.message.edit_text.await_args.args[0]
+    consent = (await state.get_data())['recurrent_device_checkout']
+    callback.data = f'{prefix}:7:confirm:{consent["token"]}'
+    result = await telegram._prepare_telegram_recurrent_devices(
+        callback, user(), AsyncMock(), state, make_tariff(), provider
+    )
+    assert result['selected_device_limit'] == 3
+    assert result['quote_id'] == 'test-quote'
+    assert result['channel'] == 'telegram'
+    assert preview.await_count == 1
+    # Repeat keeps durable identity; changing choice invalidates the old button.
+    assert (
+        await telegram._prepare_telegram_recurrent_devices(
+            callback, user(), AsyncMock(), state, make_tariff(), provider
+        )
+        == result
+    )
+    await state.update_data(tariff_device_selection={'tariff_id': 7, 'limit': 4})
+    assert (
+        await telegram._prepare_telegram_recurrent_devices(
+            callback, user(), AsyncMock(), state, make_tariff(), provider
+        )
+        is None
+    )

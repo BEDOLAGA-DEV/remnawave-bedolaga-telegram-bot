@@ -161,10 +161,10 @@ class DailySubscriptionService:
             if end_date > datetime.now(UTC):
                 return 'skipped'
 
-        # Только скидка группы — тот же расчёт, что показывает кабинет (PricingEngine.daily_group_price).
+        # Только скидка группы — тот же расчёт, что показывает кабинет (PricingEngine.daily_subscription_price).
         from app.services.pricing_engine import PricingEngine
 
-        daily_price, _ = PricingEngine.daily_group_price(raw_daily_price, user)
+        daily_price = PricingEngine.daily_subscription_price(subscription, tariff, user)
 
         # Проверяем баланс (при 100% скидке — пропускаем)
         if daily_price > 0 and user.balance_kopeks < daily_price:

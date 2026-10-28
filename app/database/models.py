@@ -2710,6 +2710,7 @@ class Subscription(Base):
     tariff_id = Column(Integer, ForeignKey('tariffs.id', ondelete='RESTRICT'), nullable=True, index=True)
 
     # Суточная подписка
+    daily_devices_billing_version = Column(Integer, nullable=False, default=0, server_default='0')
     is_daily_paused = Column(
         Boolean, default=False, nullable=False
     )  # Приостановлена ли суточная подписка пользователем

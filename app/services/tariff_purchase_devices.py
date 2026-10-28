@@ -49,8 +49,6 @@ def resolve_purchase_device_selection(
         reason = 'unlimited_devices'
     elif subscription is not None and not subscription.is_trial:
         reason = 'existing_paid_subscription'
-    elif tariff.is_daily:
-        reason = 'daily_device_selection_not_available'
     elif tariff.device_price_kopeks is None or tariff.device_price_kopeks <= 0:
         reason = 'extra_devices_not_available'
     elif maximum == included:

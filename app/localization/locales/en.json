@@ -2333,5 +2333,7 @@
   "TARIFF_PURCHASE_DEVICES_BALANCE_ONLY": "Pay from your balance when adding devices. Top up first if needed.",
   "TARIFF_PURCHASE_DEVICE_INPUT": "Enter a whole number of devices from {min} to {max}.",
   "TARIFF_PURCHASE_DEVICE_INTEGER": "Enter a positive whole number of devices.",
-  "TARIFF_PURCHASE_CART_UNAVAILABLE": "Could not save the order. Return to plan selection and try again."
+  "TARIFF_PURCHASE_CART_UNAVAILABLE": "Could not save the order. Return to plan selection and try again.",
+  "TARIFF_PURCHASE_NEXT_DAILY_CHARGE": "\nFrom the next day: {price}/day.",
+  "TARIFF_PURCHASE_RECURRENT_DEVICE_REVIEW": "Automatic payment\n\nDevices: {devices}\nCharge: {amount}\nPeriod: {days} days\n\nCheck the amount and interval before continuing to payment."
 }

@@ -353,26 +353,13 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
                     f'<b>📦 {html.escape(tariff.name)}</b>',
                     f'Тип: {tariff_type_str}',
                     f'Трафик: {tariff.traffic_limit_gb} ГБ' if tariff.traffic_limit_gb > 0 else 'Трафик: ∞ Безлимит',
-                    f'Устройства: {Texts.format_device_limit(tariff.device_limit)}',
+                    f'Устройства: {Texts.format_device_limit(subscription.device_limit)}',
                 ]
 
                 if is_daily:
-                    # Для суточного тарифа показываем цену с учётом скидки промогруппы + promo-offer
-                    raw_daily_kopeks = getattr(tariff, 'daily_price_kopeks', 0)
-                    promo_group = (
-                        db_user.get_primary_promo_group() if hasattr(db_user, 'get_primary_promo_group') else None
-                    )
-                    daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
                     from app.services.pricing_engine import PricingEngine
-                    from app.utils.promo_offer import get_user_active_promo_discount_percent
 
-                    daily_offer_pct = get_user_active_promo_discount_percent(db_user)
-                    if daily_group_pct > 0 or daily_offer_pct > 0:
-                        daily_kopeks, _, _ = PricingEngine.apply_stacked_discounts(
-                            raw_daily_kopeks, daily_group_pct, daily_offer_pct
-                        )
-                    else:
-                        daily_kopeks = raw_daily_kopeks
+                    daily_kopeks = PricingEngine.daily_subscription_price(subscription, tariff, db_user)
                     daily_price = daily_kopeks / 100
                     tariff_info_lines.append(f'Цена: {daily_price:.2f} ₽/день')
 
@@ -3106,16 +3093,11 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
 
     # При возобновлении проверяем баланс
     if needs_resume:
-        raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
         from app.database.crud.user import lock_user_for_pricing
         from app.services.pricing_engine import PricingEngine
 
         db_user = await lock_user_for_pricing(db, db_user.id)
-        promo_group = PricingEngine.resolve_promo_group(db_user)
-        daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-        daily_price = (
-            PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
-        )
+        daily_price = PricingEngine.daily_subscription_price(subscription, tariff, db_user)
         if daily_price > 0 and db_user.balance_kopeks < daily_price:
             await callback.answer(
                 texts.t(

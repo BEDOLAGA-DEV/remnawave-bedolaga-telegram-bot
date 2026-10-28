@@ -2333,5 +2333,7 @@
   "TARIFF_PURCHASE_DEVICES_BALANCE_ONLY": "С дополнительными устройствами оплатите с баланса. При необходимости сначала пополните его.",
   "TARIFF_PURCHASE_DEVICE_INPUT": "Введите количество устройств целым числом от {min} до {max}.",
   "TARIFF_PURCHASE_DEVICE_INTEGER": "Введите целое положительное число устройств.",
-  "TARIFF_PURCHASE_CART_UNAVAILABLE": "Не удалось сохранить заказ. Вернитесь к выбору тарифа и повторите покупку."
+  "TARIFF_PURCHASE_CART_UNAVAILABLE": "Не удалось сохранить заказ. Вернитесь к выбору тарифа и повторите покупку.",
+  "TARIFF_PURCHASE_NEXT_DAILY_CHARGE": "\nСо следующих суток: {price}/день.",
+  "TARIFF_PURCHASE_RECURRENT_DEVICE_REVIEW": "Автоматическая оплата\n\nУстройств: {devices}\nСписание: {amount}\nПериод: {days} дн.\n\nПроверьте сумму и период перед переходом к оплате."
 }

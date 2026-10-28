@@ -274,6 +274,8 @@ async def create_trial_subscription(
         existing.traffic_limit_gb = traffic_limit_gb
         existing.device_limit = device_limit
         existing.connected_squads = final_squads
+        if existing.tariff_id != tariff_id:
+            existing.daily_devices_billing_version = 0
         existing.tariff_id = tariff_id
         if not existing.remnawave_short_id:
             existing.remnawave_short_id = await generate_unique_short_id(db)
@@ -822,6 +824,8 @@ async def replace_subscription(
     new_autopay_days_before = subscription.autopay_days_before if autopay_days_before is None else autopay_days_before
 
     if tariff_id is not None:
+        if subscription.tariff_id != tariff_id:
+            subscription.daily_devices_billing_version = 0
         subscription.tariff_id = tariff_id
     subscription.status = SubscriptionStatus.ACTIVE.value
     subscription.is_trial = is_trial
@@ -1341,6 +1345,8 @@ async def extend_subscription(
     # Обновляем параметры тарифа, если переданы
     if tariff_id is not None:
         old_tariff_id = subscription.tariff_id
+        if subscription.tariff_id != tariff_id:
+            subscription.daily_devices_billing_version = 0
         subscription.tariff_id = tariff_id
         logger.info('📦 Обновлен тариф подписки', old_tariff_id=old_tariff_id, tariff_id=tariff_id)
 
@@ -2699,6 +2705,8 @@ async def create_pending_subscription(
         existing_subscription.traffic_used_gb = 0.0
         existing_subscription.updated_at = current_time
         if tariff_id is not None:
+            if existing_subscription.tariff_id != tariff_id:
+                existing_subscription.daily_devices_billing_version = 0
             existing_subscription.tariff_id = tariff_id
 
         await db.commit()
@@ -2748,6 +2756,9 @@ async def create_sbp_pending_subscription(
     db: AsyncSession,
     user_id: int,
     tariff: Tariff,
+    *,
+    device_limit: int | None = None,
+    commit: bool = True,
 ) -> Subscription:
     """Заготовка подписки под СБП-оформление (покупка через Platega-рекуррент).
 
@@ -2776,7 +2787,7 @@ async def create_sbp_pending_subscription(
         start_date=now,
         end_date=now,
         traffic_limit_gb=tariff.traffic_limit_gb,
-        device_limit=tariff.device_limit,
+        device_limit=tariff.device_limit if device_limit is None else device_limit,
         connected_squads=squads,
         tariff_id=tariff.id,
         autopay_enabled=False,
@@ -2785,8 +2796,11 @@ async def create_sbp_pending_subscription(
     )
 
     db.add(subscription)
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
+    else:
+        await db.flush()
 
     logger.info(
         '⚡ Создана СБП-заготовка подписки (активируется первым списанием)',

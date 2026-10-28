@@ -703,6 +703,12 @@ class CasheraPaymentMixin:
 
         existing = await sub_crud.get_active_cashera_subscription_by_subscription(db, subscription.id)
         if existing:
+            from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+            if getattr(subscription, '_recurrent_purchase_terms', None) is not None:
+                validate_recurrent_setup_terms(
+                    subscription, 'cashera', existing.amount_kopeks, existing.charge_days, existing.interval
+                )
             # Идемпотентный повтор тоже восстанавливает взаимоисключение движков продления.
             if getattr(subscription, 'autopay_enabled', False):
                 subscription.autopay_enabled = False
@@ -730,6 +736,7 @@ class CasheraPaymentMixin:
                 tariff,
                 charge_days,
                 device_limit=getattr(subscription, 'device_limit', None),
+                daily_devices_billing_version=getattr(subscription, 'daily_devices_billing_version', 0),
             )
             amount_kopeks = int(pricing_result.final_total or 0)
         except Exception as pricing_error:  # pragma: no cover - defensive
@@ -741,6 +748,10 @@ class CasheraPaymentMixin:
         # raise после неё оставил бы привязку, которую нечем отменить.
         if amount_kopeks < 100:
             raise ValueError(f'Тариф не имеет цены за период {charge_days} дн. — автопродление Cashera недоступно')
+
+        from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+        validate_recurrent_setup_terms(subscription, 'cashera', amount_kopeks, charge_days, interval)
 
         external_id = cr.build_subscription_external_id(subscription.id, uuid.uuid4().hex[:12])
         response = await cashera_service.create_subscription(
@@ -1125,7 +1136,15 @@ async def enable_cashera_recurring(
 
 
 async def purchase_tariff_with_cashera_recurring(
-    db: AsyncSession, *, user: Any, tariff: Any, subscription_id: int | None = None
+    db: AsyncSession,
+    *,
+    user: Any,
+    tariff: Any,
+    subscription_id: int | None = None,
+    selected_device_limit: int | None = None,
+    quote_id=None,
+    checkout_id=None,
+    channel: str = 'cabinet',
 ) -> dict[str, Any]:
     """Покупка тарифа оплатой через автопродление Cashera.
 
@@ -1135,6 +1154,23 @@ async def purchase_tariff_with_cashera_recurring(
     """
     if not settings.is_cashera_recurrent_enabled():
         raise RuntimeError('Cashera recurrent is disabled')
+
+    if any(value is not None for value in (selected_device_limit, quote_id, checkout_id)):
+        from app.services.recurrent_purchase_selection import prepare_recurrent_device_purchase
+
+        subscription = await prepare_recurrent_device_purchase(
+            db,
+            user=user,
+            tariff=tariff,
+            provider='cashera',
+            selected_device_limit=selected_device_limit,
+            quote_id=quote_id,
+            checkout_id=checkout_id,
+            subscription_id=subscription_id,
+            channel=channel,
+        )
+        result = await enable_cashera_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
+        return {**result, 'subscription_id': subscription.id}
 
     from app.database.crud.subscription import (
         create_sbp_pending_subscription,

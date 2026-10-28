@@ -2333,5 +2333,7 @@
   "TARIFF_PURCHASE_DEVICES_BALANCE_ONLY": "添加额外设备时请使用余额付款。如有需要，请先充值。",
   "TARIFF_PURCHASE_DEVICE_INPUT": "请输入 {min} 到 {max} 之间的整数设备数量。",
   "TARIFF_PURCHASE_DEVICE_INTEGER": "请输入正整数设备数量。",
-  "TARIFF_PURCHASE_CART_UNAVAILABLE": "无法保存订单。请返回套餐选择页面并重试。"
+  "TARIFF_PURCHASE_CART_UNAVAILABLE": "无法保存订单。请返回套餐选择页面并重试。",
+  "TARIFF_PURCHASE_NEXT_DAILY_CHARGE": "\n次日起：{price}/天。",
+  "TARIFF_PURCHASE_RECURRENT_DEVICE_REVIEW": "自动付款\n\n设备数：{devices}\n扣款金额：{amount}\n周期：{days} 天\n\n付款前请确认金额和周期。"
 }

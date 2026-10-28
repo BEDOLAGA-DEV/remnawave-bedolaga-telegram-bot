@@ -6026,6 +6026,8 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
 
+        if subscription.tariff_id != tariff.id:
+            subscription.daily_devices_billing_version = 0
         subscription.tariff_id = tariff.id
         subscription.device_limit = calc_device_limit_on_admin_tariff_change(
             current_device_limit=subscription.device_limit,

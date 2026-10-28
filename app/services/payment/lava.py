@@ -718,6 +718,16 @@ class LavaPaymentMixin:
 
         existing = await sub_crud.get_active_lava_subscription_by_subscription(db, subscription.id)
         if existing:
+            from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+            if getattr(subscription, '_recurrent_purchase_terms', None) is not None:
+                validate_recurrent_setup_terms(
+                    subscription,
+                    'lava',
+                    existing.amount_kopeks,
+                    existing.charge_days,
+                    getattr(subscription, '_recurrent_purchase_terms', {}).get('interval'),
+                )
             # Идемпотентный повтор обязан ТОЖЕ восстановить взаимоисключение.
             if getattr(subscription, 'autopay_enabled', False):
                 subscription.autopay_enabled = False
@@ -766,6 +776,12 @@ class LavaPaymentMixin:
                 f'Продукт Lava стоит {amount_kopeks / 100:.2f} ₽, а продление подписки — '
                 f'{true_amount / 100:.2f} ₽ за {charge_days} дн. Заведите продукт с актуальной ценой.'
             )
+
+        from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+        validate_recurrent_setup_terms(
+            subscription, 'lava', amount_kopeks, charge_days, str(product.get('period') or f'{charge_days}_days')
+        )
 
         consumer_id = self._lava_consumer_id(user)
         try:
@@ -851,6 +867,13 @@ class LavaPaymentMixin:
                 'redirect_url': winner.redirect_url,
                 'status': winner.status,
             }
+
+        expected_terms = getattr(subscription, '_recurrent_purchase_terms', None)
+        if expected_terms is not None and amount_kopeks != expected_terms['amount_kopeks']:
+            # Persist before cancellation so the normal reconciler can retry
+            # a failed remote cancel; never expose a differently priced invoice.
+            await self.cancel_lava_recurrent_subscription(db, local_id=record.id)
+            raise ValueError('quote_changed')
 
         # Взаимоисключение движков продления — ПОСЛЕ успешного создания записи:
         # раньше отмена Platega шла до subscribe, и любой сбой оформления Lava
@@ -1214,6 +1237,10 @@ async def purchase_tariff_with_lava_recurring(
     user: Any,
     tariff: Any,
     subscription_id: int | None = None,
+    selected_device_limit: int | None = None,
+    quote_id=None,
+    checkout_id=None,
+    channel: str = 'cabinet',
 ) -> dict[str, Any]:
     """Оформление подписки на тариф оплатой через автопродление Lava.
 
@@ -1233,6 +1260,23 @@ async def purchase_tariff_with_lava_recurring(
     """
     if not settings.is_lava_recurrent_enabled():
         raise RuntimeError('Lava recurrent is disabled')
+
+    if any(value is not None for value in (selected_device_limit, quote_id, checkout_id)):
+        from app.services.recurrent_purchase_selection import prepare_recurrent_device_purchase
+
+        subscription = await prepare_recurrent_device_purchase(
+            db,
+            user=user,
+            tariff=tariff,
+            provider='lava',
+            selected_device_limit=selected_device_limit,
+            quote_id=quote_id,
+            checkout_id=checkout_id,
+            subscription_id=subscription_id,
+            channel=channel,
+        )
+        result = await enable_lava_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
+        return {**result, 'subscription_id': subscription.id}
 
     from app.database.crud.subscription import (
         create_sbp_pending_subscription,
