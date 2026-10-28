@@ -3155,6 +3155,9 @@
   Классы: нет
   Функции: `main`
 - `scripts/check_release_pr_override.mjs` — файл
+- `scripts/check_release_versions.py` — Python-модуль
+  Классы: нет
+  Функции: `check_versions`, `main`
 - `scripts/generate_structure_reference.py` — Python-модуль
   Классы: нет
   Функции: `tracked_paths` — Файлы проекта: отслеживаемые плюс новые, которые git не игнорирует., `describe_module` — Строки «Классы:» и «Функции:» для модуля., `render_entries`, `render`, `build`, `main`
@@ -3745,6 +3748,9 @@
 - `tests/ci/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/ci/test_release_versions.py` — Python-модуль
+  Классы: нет
+  Функции: `test_repository_versions_match`, `test_release_metadata_mismatch_is_rejected`
 - `tests/ci/test_workflow_versions.py` — Python-модуль
   Классы: нет
   Функции: `test_every_action_is_pinned_to_a_single_version` — Одно действие — одна версия во всём репозитории., `test_all_actions_are_pinned` — Плавающих ссылок вроде @main или @master быть не должно., `test_python_version_is_the_same_everywhere` — Тесты, линтер и аудит обязаны идти на одной версии Python., `test_python_version_matches_pyproject` — CI не должен проверять код на версии, которую проект не поддерживает., `test_postgres_image_matches_production_compose` — Тестовая база должна быть той же версии, что и боевая.

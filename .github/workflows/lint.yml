@@ -26,6 +26,9 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Check release versions before dependency installation
+        run: python scripts/check_release_versions.py
+
       - run: uv sync --frozen --group dev
 
       - name: Check formatting
