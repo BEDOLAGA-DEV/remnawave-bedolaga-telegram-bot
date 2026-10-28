@@ -2091,6 +2091,8 @@
   "ETOPLATEZHI_ENTER_AMOUNT": "💳 <b>شارژ از طریق {name}</b>\n\nمبلغ شارژ را به روبل وارد کنید.\n\nحداقل: {min_amount}₽\nحداکثر: {max_amount}₽",
   "OVERPAY_PAYMENT_CREATED": "💳 <b>پرداخت از طریق {name}</b>\n\nمبلغ: <b>{amount}₽</b>\n\nبرای پرداخت روی دکمه زیر بزنید.\nپس از پرداخت موفق، موجودی به‌طور خودکار شارژ می‌شود.",
   "OVERPAY_ENTER_AMOUNT": "💳 <b>شارژ از طریق {name}</b>\n\nمبلغ شارژ را به روبل وارد کنید.\n\nحداقل: {min_amount}₽\nحداکثر: {max_amount}₽",
+  "ANTILOPAY_CONTACT_REQUIRED": "ایمیل خود را برای پرداخت با Antilopay وارد کنید. این ایمیل فقط برای پرداخت استفاده می‌شود و حساب شما را تغییر نمی‌دهد.",
+  "ANTILOPAY_INVALID_EMAIL": "یک ایمیل معتبر وارد کنید، مانند name@example.com.",
   "ANTILOPAY_PAYMENT_CREATED": "💳 <b>پرداخت از طریق {name}</b>\n\nمبلغ: <b>{amount}₽</b>\n\nبرای پرداخت روی دکمه زیر بزنید.\nپس از پرداخت موفق، موجودی به‌طور خودکار شارژ می‌شود.",
   "ANTILOPAY_ENTER_AMOUNT": "💳 <b>شارژ از طریق {name}</b>\n\nمبلغ شارژ را به روبل وارد کنید.\n\nحداقل: {min_amount}₽\nحداکثر: {max_amount}₽",
   "SUPPORT_TOPUP_DISABLED": "شارژ از طریق پشتیبانی غیرفعال است. روش پرداخت دیگری را امتحان کنید.",

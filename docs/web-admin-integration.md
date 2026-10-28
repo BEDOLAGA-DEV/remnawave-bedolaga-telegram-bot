@@ -19,6 +19,7 @@ API разворачивается вместе с ботом, использу�
 | `WEB_API_ENABLED` | Включает веб-API. | `true`
 | `WEB_API_HOST` | IP/hostname, на котором слушает API. | `0.0.0.0`
 | `WEB_API_PORT` | Порт веб-API. | `8080`
+| `WEB_API_BIND` | Адрес хоста, на котором docker-compose публикует порт. `0.0.0.0` открывает API в интернет (ufw его не закроет). | `127.0.0.1`
 | `WEB_API_ALLOWED_ORIGINS` | Список доменов для CORS, через запятую. `*` разрешит всё. | `https://admin.example.com`
 | `WEB_API_DOCS_ENABLED` | Включить `/docs`, `/doc` (редирект), `/redoc` и `/openapi.json`. В проде лучше `false`. | `false`
 | `WEB_API_WORKERS` | Количество воркеров uvicorn. В embed-режиме всегда приводится к `1`. | `1`
@@ -63,7 +64,7 @@ uv sync
 uv run python main.py
 ```
 
-В Docker достаточно пробросить порт `WEB_API_PORT` из контейнера бота. После запуска API будет доступно по адресу `http://<WEB_API_HOST>:<WEB_API_PORT>`.
+В Docker порт `WEB_API_PORT` публикуется на адресе `WEB_API_BIND` (по умолчанию `127.0.0.1`): API доступно с самого сервера по `http://127.0.0.1:<WEB_API_PORT>`, а reverse-proxy в docker-сети бота — по `http://bot:<WEB_API_PORT>`. Для доступа с других машин ставьте API за reverse-proxy с TLS. `WEB_API_BIND=0.0.0.0` открывает порт в интернет без TLS; ufw такой порт не закрывает (см. `SECURITY.md`).
 
 ## 5. Аутентификация и токены
 

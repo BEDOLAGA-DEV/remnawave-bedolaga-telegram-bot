@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class BalanceResponse(BaseModel):
@@ -70,6 +70,7 @@ class TopUpRequest(BaseModel):
     # The selected provider supplies its effective minimum (including DB overrides).
     amount_kopeks: int = Field(..., ge=1, le=2_000_000_000, description='Amount in kopeks')
     payment_method: str = Field(..., description='Payment method ID')
+    customer_email: EmailStr | None = None
     payment_option: str | None = Field(None, description='Payment option (e.g. Platega method code)')
 
 

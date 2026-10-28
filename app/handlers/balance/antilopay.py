@@ -17,6 +17,7 @@ from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 from app.utils.topup_retry import format_topup_amount_retry
+from app.utils.validators import validate_email
 
 
 logger = structlog.get_logger(__name__)
@@ -42,6 +43,7 @@ async def _create_antilopay_payment_and_respond(
     amount_kopeks: int,
     edit_message: bool = False,
     payment_method_type: str | None = None,
+    customer_email: str | None = None,
 ):
     """
     Common logic for creating Antilopay payment and sending response.
@@ -62,7 +64,7 @@ async def _create_antilopay_payment_and_respond(
         user_id=db_user.id,
         amount_kopeks=amount_kopeks,
         description=description,
-        email=getattr(db_user, 'email', None),
+        email=customer_email or getattr(db_user, 'email', None),
         language=db_user.language,
         payment_method_type=payment_method_type,
     )
@@ -180,6 +182,17 @@ async def process_antilopay_payment_amount(
     # antilopay_sbp → 'sbp', antilopay_card → 'card', antilopay_sberpay → 'sberpay', antilopay → None
     payment_method_type = _extract_service_type(payment_method)
 
+    if not getattr(db_user, 'email', None):
+        await state.update_data(amount_kopeks=amount_kopeks)
+        await state.set_state(BalanceStates.waiting_for_antilopay_email)
+        await message.answer(
+            texts.t(
+                'ANTILOPAY_CONTACT_REQUIRED',
+                'Укажите ваш email для оплаты через Antilopay. Это контакт для платежа, он не изменит ваш аккаунт.',
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
+        )
+        return
     await state.clear()
 
     await _create_antilopay_payment_and_respond(
@@ -189,6 +202,33 @@ async def process_antilopay_payment_amount(
         amount_kopeks=amount_kopeks,
         edit_message=False,
         payment_method_type=payment_method_type,
+    )
+
+
+@error_handler
+async def process_antilopay_email(message: types.Message, db_user: User, db: AsyncSession, state: FSMContext):
+    email = (message.text or '').strip()
+    texts = get_texts(db_user.language)
+    if not validate_email(email) or len(email) > 254:
+        await message.answer(texts.t('ANTILOPAY_INVALID_EMAIL', 'Введите корректный email, например name@example.com.'))
+        return
+    data = await state.get_data()
+    amount = data.get('amount_kopeks')
+    if (
+        type(amount) is not int
+        or not settings.ANTILOPAY_MIN_AMOUNT_KOPEKS <= amount <= settings.ANTILOPAY_MAX_AMOUNT_KOPEKS
+    ):
+        await state.clear()
+        await message.answer(texts.t('PAYMENT_CREATE_ERROR', 'Не удалось создать платёж. Попробуйте позже.'))
+        return
+    await state.clear()
+    await _create_antilopay_payment_and_respond(
+        message,
+        db_user,
+        db,
+        amount,
+        payment_method_type=_extract_service_type(data.get('payment_method', 'antilopay')),
+        customer_email=email,
     )
 
 

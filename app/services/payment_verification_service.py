@@ -94,10 +94,11 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.AURAPAY,
         PaymentMethod.CISPAY,
         PaymentMethod.ANORE,
+        PaymentMethod.ANTILOPAY,
         PaymentMethod.TABPAY,
         PaymentMethod.PARITYPAY,
         PaymentMethod.CASHERA,
-        # ETOPLATEZHI / ANTILOPAY / JUPITER / DONUT / LAVA — webhook-driven,
+        # ETOPLATEZHI / JUPITER / DONUT / LAVA — webhook-driven,
         # без API-метода синхронизации БД, manual check не реализован.
     }
 )
@@ -124,6 +125,7 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.AURAPAY,
         PaymentMethod.CISPAY,
         PaymentMethod.ANORE,
+        PaymentMethod.ANTILOPAY,
         PaymentMethod.TABPAY,
         PaymentMethod.PARITYPAY,
         PaymentMethod.CASHERA,
@@ -1858,6 +1860,14 @@ async def run_manual_check(
                 payment = result.get('payment') if result else None
             else:
                 payment = None
+        elif method == PaymentMethod.ANTILOPAY:
+            antilopay_payment = await db.get(AntilopayPayment, local_payment_id)
+            result = (
+                await payment_service.check_antilopay_payment_status(db, antilopay_payment.order_id)
+                if antilopay_payment
+                else None
+            )
+            payment = result.get('payment') if result else None
         elif method == PaymentMethod.CISPAY:
             cispay_payment = await db.get(CisPayPayment, local_payment_id)
             if cispay_payment:

@@ -1963,6 +1963,8 @@
   "ETOPLATEZHI_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽",
   "OVERPAY_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to pay.\nYour balance will be topped up automatically after a successful payment.",
   "OVERPAY_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽",
+  "ANTILOPAY_CONTACT_REQUIRED": "Enter your email to pay with Antilopay. It will be used for this payment and will not change your account.",
+  "ANTILOPAY_INVALID_EMAIL": "Enter a valid email, for example name@example.com.",
   "ANTILOPAY_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to pay.\nYour balance will be topped up automatically after a successful payment.",
   "ANTILOPAY_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽",
   "SUPPORT_TOPUP_DISABLED": "Top-up via support is disabled. Try another payment method.",

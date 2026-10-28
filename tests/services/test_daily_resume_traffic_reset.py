@@ -245,3 +245,13 @@ async def test_miniapp_resume_lifts_panel_limit_after_paid_reset(monkeypatch):
     assert panel.calls[0]['reset_traffic'] is True
     assert panel.enabled == [9001]
     assert subscription.status == SubscriptionStatus.ACTIVE.value
+
+
+async def test_cabinet_overdue_active_resumes_instead_of_pausing(monkeypatch):
+    async with memory_session(monkeypatch, TABLES) as db:
+        panel, subscription = await _resume_from_cabinet(
+            db, monkeypatch, traffic_reset_mode='NO_RESET', reset_on_payment=False, status='active'
+        )
+        assert subscription.is_daily_paused is False
+        assert subscription.actual_status == 'active'
+        assert panel.calls

@@ -32,6 +32,7 @@ async def toggle_subscription_pause(
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = QueryParam(None, description='Subscription ID for multi-tariff'),
+    paused: bool | None = None,
 ) -> dict[str, Any]:
     """Toggle pause/resume for daily subscription."""
     subscription = await resolve_subscription(db, user, subscription_id)
@@ -42,51 +43,34 @@ async def toggle_subscription_pause(
             detail='No subscription found',
         )
 
-    tariff_id = getattr(subscription, 'tariff_id', None)
-    if not tariff_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Subscription has no tariff',
-        )
-
-    tariff = await get_tariff_by_id(db, tariff_id)
-    if not tariff or not getattr(tariff, 'is_daily', False):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Pause is only available for daily tariffs',
-        )
-
-    # Determine current state
+    # Serialize money and state decisions, then read the current paid entitlement.
+    from app.database.crud.user import lock_user_for_pricing
     from app.database.models import SubscriptionStatus
 
-    is_currently_paused = getattr(subscription, 'is_daily_paused', False)
-    was_disabled = subscription.status in (
-        SubscriptionStatus.DISABLED.value,
-        SubscriptionStatus.EXPIRED.value,
-        SubscriptionStatus.LIMITED.value,
-    )
-    was_limited = subscription.status == SubscriptionStatus.LIMITED.value
-
-    # System-DISABLED subs (insufficient balance) should always be treated as needing resume,
-    # even if is_daily_paused is False (it's set by the system, not the user)
-    if was_disabled and not is_currently_paused:
-        new_paused_state = False  # Force resume path
-    else:
-        new_paused_state = not is_currently_paused
-
-    raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
-
-    # Lock user BEFORE discount computation to prevent TOCTOU on promo group
-    # IMPORTANT: must happen BEFORE modifying subscription — lock_user_for_pricing
-    # reloads subscriptions via selectinload which resets in-memory changes
-    from app.database.crud.user import lock_user_for_pricing
-
     user = await lock_user_for_pricing(db, user.id)
-
-    # Re-fetch subscription after lock (selectinload may have replaced the ORM object)
     subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
         raise HTTPException(status_code=404, detail='Subscription not found after lock')
+    await db.refresh(subscription, with_for_update=True)
+
+    if subscription.is_trial:
+        raise HTTPException(status_code=400, detail='Trial subscriptions must be converted through tariff purchase')
+
+    tariff_id = getattr(subscription, 'tariff_id', None)
+    tariff = await get_tariff_by_id(db, tariff_id) if tariff_id else None
+    if not tariff or not getattr(tariff, 'is_daily', False):
+        raise HTTPException(status_code=400, detail='Pause is only available for daily tariffs')
+
+    is_currently_paused = bool(subscription.is_daily_paused)
+    actual_status = subscription.actual_status
+    was_disabled = actual_status in ('disabled', 'expired', 'limited')
+    was_limited = actual_status == 'limited'
+    # Explicit target makes retries safe; old callers retain toggle behavior.
+    new_paused_state = paused if paused is not None else (False if was_disabled else not is_currently_paused)
+    if not new_paused_state and user.restriction_subscription:
+        raise HTTPException(status_code=403, detail='Subscription renewal is restricted for this account')
+    raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
+    transaction = None
 
     subscription.is_daily_paused = new_paused_state
 
@@ -101,7 +85,7 @@ async def toggle_subscription_pause(
 
     # If resuming, check balance and charge
     if not new_paused_state:
-        if daily_price > 0 and user.balance_kopeks < daily_price:
+        if was_disabled and daily_price > 0 and user.balance_kopeks < daily_price:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
@@ -123,6 +107,7 @@ async def toggle_subscription_pause(
                     daily_price,
                     f'Суточная оплата тарифа «{tariff.name}» (возобновление)',
                     mark_as_paid_subscription=True,
+                    commit=False,
                 )
                 if not deducted:
                     raise HTTPException(
@@ -138,16 +123,14 @@ async def toggle_subscription_pause(
                 from app.database.crud.transaction import create_transaction
                 from app.database.models import TransactionType
 
-                try:
-                    await create_transaction(
-                        db=db,
-                        user_id=user.id,
-                        type=TransactionType.SUBSCRIPTION_PAYMENT,
-                        amount_kopeks=daily_price,
-                        description=f'Суточная оплата тарифа «{tariff.name}» (возобновление)',
-                    )
-                except Exception as exc:
-                    logger.warning('Failed to create resume transaction', error=exc)
+                transaction = await create_transaction(
+                    db=db,
+                    user_id=user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    amount_kopeks=daily_price,
+                    description=f'Суточная оплата тарифа «{tariff.name}» (возобновление)',
+                    commit=False,
+                )
 
             # Balance deducted successfully — now activate
             subscription.status = SubscriptionStatus.ACTIVE.value
@@ -158,6 +141,18 @@ async def toggle_subscription_pause(
     await db.commit()
     await db.refresh(subscription)
     await db.refresh(user)
+
+    if transaction is not None:
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            transaction,
+            amount_kopeks=daily_price,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            description=transaction.description,
+        )
 
     # Sync with RemnaWave only when resuming from DISABLED state
     if not new_paused_state and was_disabled:

@@ -86,6 +86,7 @@ async def _create_cispay_payment_and_respond(
         email=getattr(db_user, 'email', None),
         language=db_user.language,
         payment_method_type=payment_method_type,
+        telegram_checkout=True,
     )
 
     if not result:
@@ -171,7 +172,9 @@ async def process_cispay_payment_amount(
 
     data = await state.get_data()
     payment_method = data.get('payment_method', 'cispay')
-    policy = await get_cispay_checkout_policy(db, db_user, _extract_service_type(payment_method))
+    policy = await get_cispay_checkout_policy(
+        db, db_user, _extract_service_type(payment_method), telegram_checkout=True
+    )
     if policy is None or policy['selected_method'] is None:
         await message.answer(texts.t('PAYMENT_UNAVAILABLE', 'Способ оплаты недоступен'))
         await state.clear()
@@ -218,7 +221,9 @@ async def _start_cispay_topup_impl(
 ):
     """Стартует FSM ввода суммы для cisPay."""
     texts = get_texts(db_user.language)
-    policy = await get_cispay_checkout_policy(db, db_user, _extract_service_type(payment_method))
+    policy = await get_cispay_checkout_policy(
+        db, db_user, _extract_service_type(payment_method), telegram_checkout=True
+    )
     if policy is None or policy['selected_method'] is None:
         await callback.answer(texts.t('PAYMENT_UNAVAILABLE', 'Способ оплаты недоступен'), show_alert=True)
         return

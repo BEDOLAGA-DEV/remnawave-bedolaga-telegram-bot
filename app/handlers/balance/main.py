@@ -898,12 +898,14 @@ def register_balance_handlers(dp: Dispatcher):
     dp.callback_query.register(start_etoplatezhi_card_topup, F.data == 'topup_etoplatezhi_card')
 
     from .antilopay import (
+        process_antilopay_email,
         start_antilopay_card_topup,
         start_antilopay_sberpay_topup,
         start_antilopay_sbp_topup,
         start_antilopay_topup,
     )
 
+    dp.message.register(process_antilopay_email, BalanceStates.waiting_for_antilopay_email)
     dp.callback_query.register(start_antilopay_topup, F.data == 'topup_antilopay')
     dp.callback_query.register(start_antilopay_sbp_topup, F.data == 'topup_antilopay_sbp')
     dp.callback_query.register(start_antilopay_card_topup, F.data == 'topup_antilopay_card')

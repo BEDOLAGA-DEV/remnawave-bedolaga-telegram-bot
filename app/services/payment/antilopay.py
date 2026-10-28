@@ -7,11 +7,12 @@ from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import PaymentMethod, TransactionType
-from app.services.antilopay_service import antilopay_service
+from app.database.models import PaymentMethod, TransactionType, User
+from app.services.antilopay_service import antilopay_service, validate_amount
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
@@ -42,6 +43,7 @@ class AntilopayPaymentMixin:
         language: str = 'ru',
         payment_method_type: str | None = None,
         return_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """
         Создает платеж Antilopay.
@@ -51,6 +53,9 @@ class AntilopayPaymentMixin:
         """
         if not settings.is_antilopay_enabled():
             logger.error('Antilopay не настроен')
+            return None
+
+        if type(amount_kopeks) is not int or amount_kopeks <= 0:
             return None
 
         # Валидация лимитов
@@ -70,22 +75,26 @@ class AntilopayPaymentMixin:
             )
             return None
 
-        # Получаем telegram_id пользователя для order_id
+        # Получаем пользователя для order_id и контактных данных
         payment_module = import_module('app.services.payment_service')
         if user_id is not None:
             user = await payment_module.get_user_by_id(db, user_id)
-            tg_id = user.telegram_id if user else user_id
+            if not user or user.restriction_topup:
+                return None
+            email = email or user.email
+            tg_id = user.id
         else:
             user = None
             tg_id = 'guest'
 
-        # Генерируем уникальный order_id с telegram_id для удобного поиска
-        order_id = f'alp{tg_id}_{uuid.uuid4().hex[:6]}'
+        # Уникальный order_id, одинаково пригодный для Telegram и email-аккаунтов
+        order_id = f'alp{tg_id}_{uuid.uuid4().hex}'
         amount_rubles = amount_kopeks / 100
-        currency = settings.ANTILOPAY_CURRENCY
+        currency = settings.ANTILOPAY_CURRENCY.upper()
 
         # Метаданные
         metadata = {
+            **(metadata or {}),
             'user_id': user_id,
             'amount_kopeks': amount_kopeks,
             'description': description,
@@ -109,7 +118,26 @@ class AntilopayPaymentMixin:
             # merchant_extra — строка до 255 символов для callback
             merchant_extra = order_id
 
-            # Создаем платеж через API
+            # Commit the order before HTTP: a signed callback may arrive before its response.
+            lifetime = settings.ANTILOPAY_PAYMENT_LIFETIME_MINUTES
+            expires_at = datetime.now(UTC) + timedelta(minutes=lifetime)
+            antilopay_crud = import_module('app.database.crud.antilopay')
+            if not email:
+                return None
+            local_payment = await antilopay_crud.create_antilopay_payment(
+                db=db,
+                user_id=user_id,
+                order_id=order_id,
+                amount_kopeks=amount_kopeks,
+                currency=currency,
+                description=description,
+                payment_method=payment_method_type,
+                expires_at=expires_at,
+                metadata_json=metadata,
+            )
+            local_payment_id = local_payment.id
+            # End the refresh transaction before waiting for a remote callback.
+            await db.commit()
             api_result = await antilopay_service.create_payment(
                 amount_rubles=amount_rubles,
                 order_id=order_id,
@@ -122,35 +150,16 @@ class AntilopayPaymentMixin:
                 fail_url=result_url,
                 merchant_extra=merchant_extra,
             )
-
-            payment_id = api_result.get('payment_id')
-            payment_url = api_result.get('payment_url')
-
-            logger.info(
-                'Antilopay: получен ответ API',
-                order_id=order_id,
-                payment_id=payment_id,
-                payment_url=payment_url,
-            )
-
-            lifetime = settings.ANTILOPAY_PAYMENT_LIFETIME_MINUTES
-            expires_at = datetime.now(UTC) + timedelta(minutes=lifetime)
-
-            # Сохраняем в БД
-            antilopay_crud = import_module('app.database.crud.antilopay')
-            local_payment = await antilopay_crud.create_antilopay_payment(
-                db=db,
-                user_id=user_id,
-                order_id=order_id,
-                amount_kopeks=amount_kopeks,
-                currency=currency,
-                description=description,
-                payment_url=payment_url,
-                payment_method=payment_method_type,
-                antilopay_payment_id=payment_id,
-                expires_at=expires_at,
-                metadata_json=metadata,
-            )
+            payment_id = api_result['payment_id']
+            payment_url = api_result['payment_url']
+            local_payment = await antilopay_crud.get_antilopay_payment_by_id_for_update(db, local_payment_id)
+            if not local_payment:
+                raise ValueError('Antilopay local order missing')
+            if local_payment.antilopay_payment_id and local_payment.antilopay_payment_id != payment_id:
+                raise ValueError('Antilopay payment identity mismatch')
+            local_payment.antilopay_payment_id = payment_id
+            local_payment.payment_url = payment_url
+            await db.commit()
 
             logger.info(
                 'Antilopay: создан платеж',
@@ -172,6 +181,7 @@ class AntilopayPaymentMixin:
             }
 
         except Exception as e:
+            await db.rollback()
             logger.exception('Antilopay: ошибка создания платежа', error=e)
             return None
 
@@ -193,6 +203,8 @@ class AntilopayPaymentMixin:
             True если платеж успешно обработан
         """
         try:
+            if not isinstance(payload, dict):
+                return False
             callback_type = payload.get('type')
             if callback_type != 'payment':
                 logger.info('Antilopay callback: неизвестный тип', callback_type=callback_type)
@@ -202,8 +214,13 @@ class AntilopayPaymentMixin:
             antilopay_status = payload.get('status')
             our_order_id = payload.get('order_id')
 
-            if not our_order_id or not antilopay_status:
-                logger.warning('Antilopay callback: отсутствуют обязательные поля', payload=payload)
+            if (
+                not our_order_id
+                or antilopay_status not in ANTILOPAY_STATUS_MAP
+                or not isinstance(antilopay_payment_id, str)
+                or not antilopay_payment_id
+            ):
+                logger.warning('Antilopay callback: invalid required fields')
                 return False
 
             # Определяем is_paid по статусу
@@ -220,6 +237,9 @@ class AntilopayPaymentMixin:
                 )
                 return False
 
+            # Keep the same lock order as account operations: User -> Payment.
+            if payment.user_id is not None:
+                await db.execute(select(User.id).where(User.id == payment.user_id).with_for_update())
             # Lock payment row immediately to prevent concurrent webhook processing (TOCTOU race)
             locked = await antilopay_crud.get_antilopay_payment_by_id_for_update(db, payment.id)
             if not locked:
@@ -254,27 +274,19 @@ class AntilopayPaymentMixin:
                 'merchant_extra': payload.get('merchant_extra'),
             }
 
-            # Проверка суммы ДО обновления статуса
+            if payment.antilopay_payment_id and payment.antilopay_payment_id != antilopay_payment_id:
+                await db.rollback()
+                return False
             if is_paid:
-                original_amount = payload.get('original_amount')
-                if original_amount is not None:
-                    # original_amount в РУБЛЯХ (float), конвертируем в копейки
-                    received_kopeks = round(float(original_amount) * 100)
-                    if abs(received_kopeks - payment.amount_kopeks) > 1:
-                        logger.error(
-                            'Antilopay amount mismatch',
-                            expected_kopeks=payment.amount_kopeks,
-                            received_kopeks=received_kopeks,
-                            order_id=payment.order_id,
-                        )
-                        await antilopay_crud.update_antilopay_payment_status(
-                            db=db,
-                            payment=payment,
-                            status='amount_mismatch',
-                            is_paid=False,
-                            callback_payload=callback_payload,
-                        )
-                        return False
+                try:
+                    received_kopeks = validate_amount(payload.get('original_amount'))
+                except ValueError:
+                    await db.rollback()
+                    return False
+                if received_kopeks != payment.amount_kopeks or payload.get('currency') != payment.currency.upper():
+                    logger.error('Antilopay settlement mismatch', order_id=payment.order_id)
+                    await db.rollback()
+                    return False
 
             # Финализируем платеж если оплачен — без промежуточного commit
             if is_paid:
@@ -286,7 +298,10 @@ class AntilopayPaymentMixin:
                 payment.callback_payload = callback_payload
                 payment.updated_at = datetime.now(UTC)
                 await db.flush()
-                return await self._finalize_antilopay_payment(db, payment, trigger='webhook')
+                finalized = await self._finalize_antilopay_payment(db, payment, trigger='webhook')
+                if not finalized:
+                    await db.rollback()
+                return finalized
 
             # Для не-success статусов можно безопасно коммитить
             payment = await antilopay_crud.update_antilopay_payment_status(
@@ -300,6 +315,7 @@ class AntilopayPaymentMixin:
             return True
 
         except Exception as e:
+            await db.rollback()
             logger.exception('Antilopay callback: ошибка обработки', error=e)
             return False
 
@@ -525,7 +541,13 @@ class AntilopayPaymentMixin:
         """Проверяет статус платежа через API Antilopay."""
         try:
             result = await antilopay_service.check_payment(order_id=order_id)
-            return result
+            if result.get('order_id') != order_id:
+                return None
+            if not await self.process_antilopay_callback(db, {**result, 'type': 'payment'}):
+                return None
+            crud = import_module('app.database.crud.antilopay')
+            payment = await crud.get_antilopay_payment_by_order_id(db, order_id)
+            return {**result, 'payment': payment}
         except Exception as e:
             logger.error('Antilopay: ошибка проверки статуса', order_id=order_id, error=e)
             return None
