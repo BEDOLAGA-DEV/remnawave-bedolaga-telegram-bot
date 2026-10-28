@@ -3155,6 +3155,9 @@
   Классы: нет
   Функции: `main`
 - `scripts/check_release_pr_override.mjs` — файл
+- `scripts/check_release_versions.py` — Python-модуль
+  Классы: нет
+  Функции: `check_versions`, `main`
 - `scripts/generate_structure_reference.py` — Python-модуль
   Классы: нет
   Функции: `tracked_paths` — Файлы проекта: отслеживаемые плюс новые, которые git не игнорирует., `describe_module` — Строки «Классы:» и «Функции:» для модуля., `render_entries`, `render`, `build`, `main`
@@ -3715,6 +3718,9 @@
 - `tests/cabinet/test_telegram_widget_replay.py` — Python-модуль
   Классы: нет
   Функции: `test_widget_login_is_one_time_and_24h`, `test_widget_link_is_one_time_and_24h`
+- `tests/cabinet/test_telegram_widget_signed_fields.py` — Python-модуль
+  Классы: нет
+  Функции: `test_widget_signature_survives_cabinet_only_fields`, `test_tampered_signed_field_still_rejected`, `test_only_telegram_fields_are_passed`
 - `tests/cabinet/test_ticket_admin_author.py` — Python-модуль
   Классы: нет
   Функции: `test_cabinet_admin_reply_stores_admin_id` — REGRESSION: reply_to_ticket в admin_tickets.py должен писать admin.id,, `test_support_ws_reply_stores_actor_id_for_admin` — REGRESSION: _handle_ticket_reply в support_ws.py должен писать, `test_bot_admin_reply_still_stores_admin_id` — Пин существующей (корректной) семантики бот-пути: add_message получает
@@ -3745,6 +3751,9 @@
 - `tests/ci/__init__.py` — Python-модуль
   Классы: нет
   Функции: нет
+- `tests/ci/test_release_versions.py` — Python-модуль
+  Классы: нет
+  Функции: `test_repository_versions_match`, `test_release_metadata_mismatch_is_rejected`
 - `tests/ci/test_workflow_versions.py` — Python-модуль
   Классы: нет
   Функции: `test_every_action_is_pinned_to_a_single_version` — Одно действие — одна версия во всём репозитории., `test_all_actions_are_pinned` — Плавающих ссылок вроде @main или @master быть не должно., `test_python_version_is_the_same_everywhere` — Тесты, линтер и аудит обязаны идти на одной версии Python., `test_python_version_matches_pyproject` — CI не должен проверять код на версии, которую проект не поддерживает., `test_postgres_image_matches_production_compose` — Тестовая база должна быть той же версии, что и боевая.

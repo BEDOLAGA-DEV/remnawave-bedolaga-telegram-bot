@@ -900,6 +900,18 @@ async def auth_telegram(
     return response
 
 
+# Поля, которые подписывает сам Telegram Login Widget. Подпись проверяем только по ним:
+# свои поля запроса (campaign_slug, referral_code, accepted_legal_documents, …) в
+# data-check-string ломали хэш — вход с экрана согласия падал с «Invalid or expired».
+_TELEGRAM_WIDGET_SIGNED_FIELDS = frozenset(
+    {'id', 'first_name', 'last_name', 'username', 'photo_url', 'auth_date', 'hash'}
+)
+
+
+def _telegram_widget_signed_data(request: TelegramWidgetAuthRequest) -> dict:
+    return request.model_dump(include=set(_TELEGRAM_WIDGET_SIGNED_FIELDS))
+
+
 @router.post('/telegram/widget', response_model=AuthResponse)
 async def auth_telegram_widget(
     request: TelegramWidgetAuthRequest,
@@ -921,7 +933,7 @@ async def auth_telegram_widget(
             headers={'Retry-After': '60'},
         )
 
-    widget_data = request.model_dump(exclude={'campaign_slug', 'referral_code'})
+    widget_data = _telegram_widget_signed_data(request)
 
     # Login Widget auth is fresh per click (24h is already very generous).
     if not validate_telegram_login_widget(widget_data, max_age_seconds=86400):
