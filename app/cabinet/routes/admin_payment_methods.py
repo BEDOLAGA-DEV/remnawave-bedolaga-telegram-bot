@@ -33,6 +33,7 @@ router = APIRouter(prefix='/admin/payment-methods', tags=['Cabinet Admin Payment
 class SubOptionInfo(BaseModel):
     id: str
     name: str
+    is_provider_enabled: bool = True
 
 
 class PaymentMethodConfigResponse(BaseModel):
@@ -162,7 +163,7 @@ async def list_payment_methods(
 ):
     """List all payment method configurations."""
     configs = await get_all_configs(db)
-    defaults = _get_method_defaults()
+    defaults = _get_method_defaults(include_disabled_sub_options=True)
     return [_enrich_config(c, defaults) for c in configs]
 
 
@@ -189,7 +190,7 @@ async def get_payment_method(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f'Payment method not found: {method_id}',
         )
-    defaults = _get_method_defaults()
+    defaults = _get_method_defaults(include_disabled_sub_options=True)
     return _enrich_config(config, defaults)
 
 
@@ -273,5 +274,5 @@ async def update_payment_method(
 
     logger.info('Admin updated payment method config', admin_id=admin.id, method_id=method_id)
 
-    defaults = _get_method_defaults()
+    defaults = _get_method_defaults(include_disabled_sub_options=True)
     return _enrich_config(config, defaults)

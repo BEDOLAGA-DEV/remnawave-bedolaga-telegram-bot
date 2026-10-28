@@ -3454,6 +3454,9 @@
 - `tests/cabinet/test_cashera_recurrent_routes.py` — Python-модуль
   Классы: нет
   Функции: `user`, `test_enable_gated_before_touching_db`, `test_get_gated_before_touching_db`, `test_cancel_works_even_when_gate_off` — Отмена — операция безопасности, флагом не гейтится., `test_enable_rejects_trial_subscription`, `test_enable_surfaces_missing_price_reason` — Нет цены за период — причина доходит до пользователя., `test_enable_returns_payment_url`, `test_get_returns_none_status_without_binding`, `test_get_returns_binding_state`, `test_purchase_gated_and_maps_errors` — Покупка привязкой: гейт фичи, отказы доносятся как 400., `test_purchase_returns_payment_url_and_subscription`
+- `tests/cabinet/test_cispay_admin_options.py` — Python-модуль
+  Классы: нет
+  Функции: `config`, `test_admin_shows_crypto_even_when_provider_switch_is_off`, `test_admin_catalog_does_not_enable_customer_checkout`
 - `tests/cabinet/test_coupon_routes.py` — Python-модуль
   Классы: нет
   Функции: `test_coupon_routes_registered`, `test_coupons_permissions_registered`, `test_create_batch_returns_links_and_tokens`, `test_create_batch_rejects_inactive_tariff`, `test_create_batch_rejects_blank_name`, `test_get_batch_404_when_missing`, `test_links_export_counts_active_only`, `test_revoke_returns_count_and_updated_card`, `test_redeem_success_for_telegram_user_sends_no_email`, `test_redeem_notifies_email_only_user`, `test_redeem_maps_service_errors_to_structured_contract`, `test_public_status_returns_offer_for_active_coupon`, `test_public_status_is_uniform_404_for_consumed_coupon`, `test_public_status_rate_limited`, `test_public_status_rejects_malformed_token_without_db_hit`
