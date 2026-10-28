@@ -38,7 +38,12 @@ def resolve_purchase_device_selection(
     configured_max = tariff.max_device_limit or settings.MAX_DEVICES_LIMIT
     maximum = min(configured_max, MAX_DEVICE_LIMIT) if configured_max > 0 else MAX_DEVICE_LIMIT
     reason = None
-    if included < 0 or included > MAX_DEVICE_LIMIT or maximum < included:
+    if (
+        (tariff.max_device_limit is not None and tariff.max_device_limit < 0)
+        or included < 0
+        or included > MAX_DEVICE_LIMIT
+        or maximum < included
+    ):
         reason = 'invalid_device_configuration'
     elif included == 0:
         reason = 'unlimited_devices'

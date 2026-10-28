@@ -3057,6 +3057,23 @@ class Transaction(Base):
         return self.amount_kopeks / 100
 
 
+class TariffPurchaseIntent(Base):
+    """Durable identity of a completed selected-device purchase, committed with its debit."""
+
+    __tablename__ = 'tariff_purchase_intents'
+    __table_args__ = (UniqueConstraint('user_id', 'checkout_id', name='uq_tariff_purchase_checkout'),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    checkout_id = Column(String(36), nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    parameters = Column(JSON, nullable=False)
+    subscription_id = Column(Integer, ForeignKey('subscriptions.id', ondelete='SET NULL'), nullable=True)
+    transaction_id = Column(Integer, ForeignKey('transactions.id', ondelete='SET NULL'), nullable=True)
+    charged_kopeks = Column(Integer, nullable=False)
+    created_at = Column(AwareDateTime(), nullable=False, default=func.now())
+
+
 class PaidTrafficResetIntent(Base):
     """A daily charge's destructive panel reset, acknowledged independently of expiry."""
 

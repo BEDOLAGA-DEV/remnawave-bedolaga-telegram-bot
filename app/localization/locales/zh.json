@@ -2327,5 +2327,11 @@
   "TOPUP_RETRY_TOO_LOW": "❌ 最低充值金额：{minimum} 卢布。\n\n如需继续，请向机器人发送一条消息，输入 {minimum} 至 {maximum} 卢布之间的充值金额。",
   "TOPUP_RETRY_TOO_HIGH": "❌ 最高充值金额：{maximum} 卢布。\n\n如需继续，请向机器人发送一条消息，输入 {minimum} 至 {maximum} 卢布之间的充值金额。",
   "TOPUP_RETRY_EXAMPLE": "例如，发送：{amount}",
-  "TOPUP_RETRY_NO_RANGE": "❌ 此方式没有可手动输入的有效金额（最低 {minimum} 卢布，最高 {maximum} 卢布）。请选择其他支付方式。"
+  "TOPUP_RETRY_NO_RANGE": "❌ 此方式没有可手动输入的有效金额（最低 {minimum} 卢布，最高 {maximum} 卢布）。请选择其他支付方式。",
+  "TARIFF_PURCHASE_DEVICE_SELECTION_CHANGED": "此选项不可用或条件已更改。请重新选择套餐以查看当前价格。",
+  "TARIFF_PURCHASE_DEVICE_TOPUP": "还差 {amount}。请充值余额，所选期限和设备数量将保留。",
+  "TARIFF_PURCHASE_DEVICES_BALANCE_ONLY": "添加额外设备时请使用余额付款。如有需要，请先充值。",
+  "TARIFF_PURCHASE_DEVICE_INPUT": "请输入 {min} 到 {max} 之间的整数设备数量。",
+  "TARIFF_PURCHASE_DEVICE_INTEGER": "请输入正整数设备数量。",
+  "TARIFF_PURCHASE_CART_UNAVAILABLE": "无法保存订单。请返回套餐选择页面并重试。"
 }

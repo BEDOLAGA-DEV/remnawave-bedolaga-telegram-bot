@@ -29,6 +29,7 @@ class SubscriptionStates(StatesGroup):
     selecting_custom_days = State()
     selecting_custom_traffic = State()
     confirming_custom_purchase = State()
+    entering_tariff_device_limit = State()
 
     # Локальное переименование HWID-устройства (alias). hwid и page/sub_id
     # передаются через state data, чтобы вернуться к ровно тому же списку.

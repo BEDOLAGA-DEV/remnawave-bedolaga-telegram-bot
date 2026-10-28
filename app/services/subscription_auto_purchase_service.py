@@ -822,6 +822,9 @@ async def _auto_purchase_tariff(
     from app.database.crud.user import subtract_user_balance
     from app.database.models import PaymentMethod, Transaction, TransactionType
 
+    device_checkout = cart_data.get('selected_device_limit') is not None
+    if device_checkout and not settings.is_tariffs_mode():
+        return False
     tariff_id = _safe_int(cart_data.get('tariff_id'))
     period_days = _safe_int(cart_data.get('period_days'))
 
@@ -918,6 +921,7 @@ async def _auto_purchase_tariff(
         settings.is_multi_tariff_enabled()
         and existing_subscription is not None
         and existing_subscription.tariff_id not in (None, tariff_id)
+        and not (device_checkout and existing_subscription.is_trial)
     ):
         logger.warning(
             'Saved checkout source tariff changed; refusing stale purchase',
@@ -950,16 +954,64 @@ async def _auto_purchase_tariff(
         )
         return False
 
-    # Calculate price via PricingEngine (single source of truth)
-    device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
+    if device_checkout:
+        from types import SimpleNamespace
 
-    result = await pricing_engine.calculate_tariff_purchase_price(
-        tariff,
-        period_days,
-        device_limit=device_limit,
-        custom_traffic_gb=custom_traffic_gb,
-        user=user,
-    )
+        from app.database.models import TariffPurchaseIntent
+        from app.services.tariff_purchase_devices import DeviceSelectionError
+        from app.services.tariff_purchase_quote import (
+            PurchaseQuoteError,
+            calculate_purchase_quote,
+            purchase_fingerprint,
+            purchase_quote_terms,
+        )
+
+        await db.refresh(tariff, with_for_update={'read': True})
+        if not tariff.is_active:
+            return False
+        parameters = cart_data.get('device_parameters')
+        if not isinstance(parameters, dict) or not cart_data.get('tariff_checkout_id'):
+            return False
+        if (
+            parameters.get('tariff_id') != tariff_id
+            or parameters.get('period_days') != period_days
+            or parameters.get('selected_device_limit') != cart_data['selected_device_limit']
+            or parameters.get('traffic_gb') != custom_traffic_gb
+        ):
+            return False
+        try:
+            quote = await calculate_purchase_quote(
+                tariff,
+                user,
+                existing_subscription,
+                period_days=period_days,
+                selected_device_limit=cart_data['selected_device_limit'],
+                traffic_gb=custom_traffic_gb,
+            )
+            if purchase_quote_terms(SimpleNamespace(**parameters), existing_subscription, quote) != cart_data.get(
+                'device_quote_terms'
+            ):
+                return False
+        except (PurchaseQuoteError, DeviceSelectionError):
+            return False
+        if user.restriction_subscription:
+            return False
+        group = user.get_primary_promo_group()
+        if not tariff.is_available_for_promo_group(group.id if group else None):
+            return False
+        device_limit = quote.devices.effective_limit
+        result = quote.pricing
+    else:
+        # Calculate price via PricingEngine (single source of truth)
+        device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
+
+        result = await pricing_engine.calculate_tariff_purchase_price(
+            tariff,
+            period_days,
+            device_limit=device_limit,
+            custom_traffic_gb=custom_traffic_gb,
+            user=user,
+        )
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
 
@@ -1021,7 +1073,8 @@ async def _auto_purchase_tariff(
             is_completed=False,
             commit=False,
         )
-        await db.commit()
+        if not device_checkout:
+            await db.commit()
         transaction_id = transaction.id
     except Exception as error:
         logger.error(
@@ -1037,7 +1090,7 @@ async def _auto_purchase_tariff(
         if existing_subscription:
             # Продлеваем существующую подписку
             # Сохраняем докупленные устройства при продлении того же тарифа
-            effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
+            effective_device_limit = device_limit
             was_trial_conversion = bool(existing_subscription.is_trial)
             subscription = await extend_subscription(
                 db,
@@ -1048,11 +1101,13 @@ async def _auto_purchase_tariff(
                 device_limit=effective_device_limit,
                 connected_squads=squads,
                 reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
+                **({'commit': False} if device_checkout else {}),
             )
             if was_trial_conversion:
                 subscription.is_trial = False
                 subscription.status = 'active'
-                await db.commit()
+                if not device_checkout:
+                    await db.commit()
         else:
             # Создаём новую подписку
             subscription = await create_paid_subscription(
@@ -1060,9 +1115,10 @@ async def _auto_purchase_tariff(
                 user_id=user.id,
                 duration_days=period_days,
                 traffic_limit_gb=traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                **({'commit': False} if device_checkout else {}),
             )
             was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
     except Exception as error:
@@ -1073,6 +1129,8 @@ async def _auto_purchase_tariff(
             exc_info=True,
         )
         await db.rollback()
+        if device_checkout:
+            return False  # Debit, product and intent were rolled back together.
         # Refund and release this checkout only in the same committed transaction.
         try:
             from app.database.crud.transaction import emit_transaction_side_effects
@@ -1118,6 +1176,18 @@ async def _auto_purchase_tariff(
     # Complete the reserved payment only after provisioning has persisted.
     from app.database.crud.transaction import emit_transaction_side_effects
 
+    if device_checkout:
+        db.add(
+            TariffPurchaseIntent(
+                user_id=purchase_user_id,
+                checkout_id=cart_data['tariff_checkout_id'],
+                fingerprint=purchase_fingerprint(parameters),
+                parameters=parameters,
+                subscription_id=subscription.id,
+                transaction_id=transaction.id,
+                charged_kopeks=final_price,
+            )
+        )
     transaction.is_completed = True
     transaction.completed_at = datetime.now(UTC)
     await db.commit()
@@ -3104,6 +3174,12 @@ async def _process_single_cart(
 
     cart_mode = cart_data.get('cart_mode') or cart_data.get('mode')
     cart_sub_id = _safe_int(cart_data.get('subscription_id'))
+
+    if cart_mode == 'tariff_purchase' and cart_data.get('selected_device_limit') is not None:
+        # This contract validates the exact target and consent under the wallet
+        # lock, with a durable checkout identity. Legacy time/status heuristics
+        # would incorrectly discard an explicitly purchased trial conversion.
+        return await _auto_purchase_tariff(db, user, cart_data, bot=bot)
 
     # Guard: DISABLED subscription -- stale cart
     if await _is_subscription_disabled(db, user, cart_sub_id or None):

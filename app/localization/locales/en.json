@@ -2327,5 +2327,11 @@
   "TOPUP_RETRY_TOO_LOW": "❌ Minimum top-up amount: {minimum} RUB.\n\nTo continue, send the bot a new top-up amount between {minimum} RUB and {maximum} RUB.",
   "TOPUP_RETRY_TOO_HIGH": "❌ Maximum top-up amount: {maximum} RUB.\n\nTo continue, send the bot a new top-up amount between {minimum} RUB and {maximum} RUB.",
   "TOPUP_RETRY_EXAMPLE": "For example, send: {amount}",
-  "TOPUP_RETRY_NO_RANGE": "❌ This method has no valid amount for manual input (minimum {minimum} RUB, maximum {maximum} RUB). Choose another payment method."
+  "TOPUP_RETRY_NO_RANGE": "❌ This method has no valid amount for manual input (minimum {minimum} RUB, maximum {maximum} RUB). Choose another payment method.",
+  "TARIFF_PURCHASE_DEVICE_SELECTION_CHANGED": "This option is unavailable or the terms have changed. Select the plan again to see the current price.",
+  "TARIFF_PURCHASE_DEVICE_TOPUP": "You need {amount} more. Top up your balance — your selected period and devices will be kept.",
+  "TARIFF_PURCHASE_DEVICES_BALANCE_ONLY": "Pay from your balance when adding devices. Top up first if needed.",
+  "TARIFF_PURCHASE_DEVICE_INPUT": "Enter a whole number of devices from {min} to {max}.",
+  "TARIFF_PURCHASE_DEVICE_INTEGER": "Enter a positive whole number of devices.",
+  "TARIFF_PURCHASE_CART_UNAVAILABLE": "Could not save the order. Return to plan selection and try again."
 }
