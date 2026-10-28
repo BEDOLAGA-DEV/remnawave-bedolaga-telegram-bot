@@ -2045,6 +2045,11 @@ async def select_tariff_period(
         period,
         device_limit=device_limit,
         user=db_user,
+        **(
+            {'daily_devices_billing_version': 1}
+            if getattr(_existing_sub, 'daily_devices_billing_version', 0) == 1 and _existing_sub.tariff_id == tariff.id
+            else {}
+        ),
     )
     final_price = result.final_total
     original_price = result.original_total
@@ -2399,6 +2404,8 @@ async def confirm_daily_tariff_purchase(
             subscription = existing_subscription
             if subscription.is_trial:
                 subscription._converted_from_trial = True
+            if subscription.tariff_id != tariff.id:
+                subscription.daily_devices_billing_version = 0
             subscription.tariff_id = tariff.id
             subscription.traffic_limit_gb = tariff.traffic_limit_gb
             subscription.device_limit = effective_device_limit
@@ -2903,6 +2910,11 @@ async def select_tariff_extend_period(
         period,
         device_limit=actual_device_limit,
         user=db_user,
+        **(
+            {'daily_devices_billing_version': 1}
+            if getattr(subscription, 'daily_devices_billing_version', 0) == 1 and subscription.tariff_id == tariff.id
+            else {}
+        ),
     )
     final_price = result.final_total
     original_price = result.original_total
@@ -3090,6 +3102,11 @@ async def confirm_tariff_extend(
         period,
         device_limit=actual_device_limit,
         user=db_user,
+        **(
+            {'daily_devices_billing_version': 1}
+            if getattr(subscription, 'daily_devices_billing_version', 0) == 1 and subscription.tariff_id == tariff.id
+            else {}
+        ),
     )
     final_price = result.final_total
     consume_promo = result.promo_offer_discount > 0
@@ -4326,6 +4343,8 @@ async def confirm_daily_tariff_switch(
         from app.database.crud.subscription import calc_device_limit_on_tariff_switch
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+        if subscription.tariff_id != tariff.id:
+            subscription.daily_devices_billing_version = 0
         subscription.tariff_id = tariff.id
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
         subscription.device_limit = calc_device_limit_on_tariff_switch(
@@ -5824,6 +5843,12 @@ async def return_to_saved_tariff_cart(
             device_limit=effective_device_limit,
             custom_traffic_gb=custom_traffic_gb,
             user=db_user,
+            **(
+                {'daily_devices_billing_version': 1}
+                if getattr(subscription, 'daily_devices_billing_version', 0) == 1
+                and subscription.tariff_id == tariff.id
+                else {}
+            ),
         )
     total_price = quote.final_total
     discount_amount = quote.original_total - total_price

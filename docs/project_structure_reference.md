@@ -4160,7 +4160,7 @@
   Функции: `test_model_declares_both_columns`, `test_migration_adds_the_same_columns_as_the_model`, `test_migration_is_idempotent_on_a_table_that_already_has_the_columns`
 - `tests/database/test_tariff_purchase_devices_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `checkout_context`, `order`, `test_checkout_prices_and_provisions_once`, `test_quote_changed_before_debit`, `test_reused_checkout_with_different_devices_rejected`, `test_provision_failure_rolls_back_debit_and_allows_retry`, `test_selected_devices_require_quote_and_checkout_id`, `test_topup_preserves_devices_and_agreed_price`, `test_trial_conversion_receives_selected_limit`, `test_manual_and_topup_race_charge_once`, `test_preview_resolves_trial_of_another_tariff_before_consent`, `test_completed_retry_survives_later_availability_change`, `test_telegram_trial_other_tariff_cart_reaches_real_topup_dispatcher`, `test_legacy_request_rejects_date_overflow_before_any_ledger_write`, `test_cart_storage_failure_does_not_claim_order_saved`, `test_daily_selected_devices_persist_with_charge_policy`, `test_daily_selected_intent_failure_rolls_back_wallet_and_product`, `test_existing_versioned_daily_legacy_purchase_keeps_monthly_proration`
+  Функции: `checkout_context`, `order`, `test_checkout_prices_and_provisions_once`, `test_quote_changed_before_debit`, `test_reused_checkout_with_different_devices_rejected`, `test_provision_failure_rolls_back_debit_and_allows_retry`, `test_selected_devices_require_quote_and_checkout_id`, `test_topup_preserves_devices_and_agreed_price`, `test_trial_conversion_receives_selected_limit`, `test_manual_and_topup_race_charge_once`, `test_preview_resolves_trial_of_another_tariff_before_consent`, `test_completed_retry_survives_later_availability_change`, `test_telegram_trial_other_tariff_cart_reaches_real_topup_dispatcher`, `test_legacy_request_rejects_date_overflow_before_any_ledger_write`, `test_cart_storage_failure_does_not_claim_order_saved`, `test_daily_selected_devices_persist_with_charge_policy`, `test_daily_selected_intent_failure_rolls_back_wallet_and_product`, `test_existing_versioned_daily_legacy_purchase_keeps_monthly_proration`, `test_legacy_miniapp_purchase_prices_saved_daily_device_policy`, `test_legacy_daily_conversion_does_not_inherit_old_device_policy`, `test_admin_daily_renewal_preserves_devices_it_charges`
 - `tests/database/test_tariff_purchase_intent_migration_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_intent_migration_preserves_completed_checkout_identity`
@@ -4552,6 +4552,9 @@
 - `tests/handlers/test_daily_bot_resume_traffic_reset.py` — Python-модуль
   Классы: нет
   Функции: `test_bot_resume_resets_traffic_when_enabled` — RESET_TRAFFIC_ON_PAYMENT=true — оплата возобновления обнуляет счётчик и в панели, и у себя., `test_bot_resume_keeps_traffic_when_disabled` — Выключатель выключен — счётчик не трогаем (прежнее поведение)., `test_bot_resume_leaves_daily_reset_to_panel` — Панель обнуляет сама раз в сутки — свой сброс не добавляем, иначе две квоты за день., `test_bot_resume_lifts_panel_limit_after_paid_reset` — Подписка была в лимите трафика: после оплаты со сбросом лимит в панели снимается явно., `test_bot_unpause_without_charge_keeps_traffic` — Снятие своей паузы у активной подписки — не оплата: денег не берём и счётчик не трогаем.
+- `tests/handlers/test_daily_device_policy_pricing_entrypoints.py` — Python-модуль
+  Классы: `PriceBoundary`
+  Функции: `test_existing_daily_price_uses_saved_policy`
 - `tests/handlers/test_device_list_hwid.py` — Python-модуль
   Классы: нет
   Функции: `test_bot_device_list_exposes_full_hwid`, `test_device_hwid_stays_on_its_page`

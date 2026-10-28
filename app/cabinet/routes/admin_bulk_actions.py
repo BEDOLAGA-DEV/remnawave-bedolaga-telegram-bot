@@ -309,6 +309,8 @@ async def _do_change_tariff(
 
     old_tariff = await get_tariff_by_id(db, sub.tariff_id) if sub.tariff_id else None
 
+    if sub.tariff_id != tariff.id:
+        sub.daily_devices_billing_version = 0
     sub.tariff_id = tariff.id
     sub.traffic_limit_gb = tariff.traffic_limit_gb
     sub.device_limit = calc_device_limit_on_admin_tariff_change(

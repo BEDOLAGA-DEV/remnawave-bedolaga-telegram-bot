@@ -508,3 +508,158 @@ async def test_existing_versioned_daily_legacy_purchase_keeps_monthly_proration(
         assert response.status_code == 200, response.text
         async with checkout.maker() as db:
             assert (await db.get(User, 1)).balance_kopeks == 98800
+
+
+@pytest.mark.parametrize('expired', [False, True])
+async def test_legacy_miniapp_purchase_prices_saved_daily_device_policy(postgres_database, monkeypatch, expired):
+    from datetime import UTC, datetime, timedelta
+
+    from app.webapi.routes import miniapp
+
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        async with checkout.maker() as db:
+            tariff = await db.get(Tariff, 7)
+            tariff.is_daily = True
+            tariff.daily_price_kopeks = 1000
+            tariff.device_price_kopeks = 3000
+            db.add(
+                Subscription(
+                    id=10,
+                    user_id=1,
+                    tariff_id=7,
+                    is_trial=False,
+                    status='expired' if expired else 'active',
+                    device_limit=3,
+                    daily_devices_billing_version=1,
+                    is_daily_paused=True,
+                    end_date=datetime.now(UTC) + timedelta(days=-1 if expired else 1),
+                )
+            )
+            await db.commit()
+        async with checkout.maker() as db:
+            user = await get_user_by_id(db, 1)
+            monkeypatch.setattr(miniapp, '_authorize_miniapp_user', AsyncMock(return_value=user))
+            await miniapp.purchase_tariff_endpoint(
+                miniapp.MiniAppTariffPurchaseRequest(initData='test', tariffId=7, periodDays=1), db
+            )
+        async with checkout.maker() as db:
+            assert (await db.get(User, 1)).balance_kopeks == 98800
+            assert (await db.get(Subscription, 10)).daily_devices_billing_version == 1
+
+
+@pytest.mark.parametrize('flow', ['telegram', 'auto'])
+async def test_legacy_daily_conversion_does_not_inherit_old_device_policy(postgres_database, monkeypatch, flow):
+    import inspect
+    from datetime import UTC, datetime, timedelta
+
+    from app.handlers.subscription import tariff_purchase as telegram
+    from app.services import subscription_auto_purchase_service as auto
+    from tests.handlers.test_tariff_purchase_device_selection import context
+
+    monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
+    monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
+    monkeypatch.setattr('app.services.subscription_renewal_service.with_admin_notification_service', AsyncMock())
+    monkeypatch.setattr(telegram, 'should_create_panel_account', AsyncMock(return_value=True))
+    monkeypatch.setattr(telegram.user_cart_service, 'delete_user_cart', AsyncMock())
+    monkeypatch.setattr(telegram.user_cart_service, 'delete_subscription_cart', AsyncMock())
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', False)
+        async with checkout.maker() as db:
+            tariff = await db.get(Tariff, 7)
+            tariff.is_daily = True
+            tariff.daily_price_kopeks = 1000
+            db.add(Tariff(id=8, name='Old', is_active=True, is_daily=True, daily_price_kopeks=500, device_limit=1))
+            db.add(
+                Subscription(
+                    id=10,
+                    user_id=1,
+                    tariff_id=8,
+                    is_trial=False,
+                    status='expired',
+                    device_limit=3,
+                    daily_devices_billing_version=1,
+                    is_daily_paused=True,
+                    end_date=datetime.now(UTC) - timedelta(days=1),
+                )
+            )
+            await db.commit()
+        async with checkout.maker() as db:
+            user = await get_user_by_id(db, 1)
+            if flow == 'auto':
+                assert await auto._auto_purchase_daily_tariff(
+                    db, user, {'tariff_id': 7, 'subscription_id': 10, 'cart_mode': 'daily_tariff_purchase'}
+                )
+            else:
+                state = context()
+                await state.update_data(target_subscription_id=10)
+                callback = SimpleNamespace(
+                    data='daily_tariff_confirm:7',
+                    answer=AsyncMock(),
+                    bot=SimpleNamespace(send_message=AsyncMock()),
+                    message=SimpleNamespace(edit_text=AsyncMock()),
+                )
+                await inspect.unwrap(telegram.confirm_daily_tariff_purchase)(callback, user, db, state)
+        async with checkout.maker() as db:
+            sub = await db.get(Subscription, 10)
+            assert sub.tariff_id == 7
+            assert sub.daily_devices_billing_version == 0
+            assert (await db.get(User, 1)).balance_kopeks == 99000
+
+
+@pytest.mark.parametrize('price_changed', [False, True])
+async def test_admin_daily_renewal_preserves_devices_it_charges(postgres_database, monkeypatch, price_changed):
+    import inspect
+    from datetime import UTC, datetime, timedelta
+
+    from app.handlers.admin import users as admin
+
+    monkeypatch.setattr(type(settings), 'is_notifications_enabled', lambda self: True)
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        async with checkout.maker() as db:
+            tariff = await db.get(Tariff, 7)
+            tariff.is_daily = True
+            tariff.daily_price_kopeks = 1000
+            tariff.device_price_kopeks = 3000
+            tariff.period_prices = {}
+            db.add(
+                Subscription(
+                    id=10,
+                    user_id=1,
+                    tariff_id=7,
+                    is_trial=False,
+                    status='active',
+                    device_limit=3,
+                    daily_devices_billing_version=1,
+                    end_date=datetime.now(UTC) + timedelta(days=1),
+                )
+            )
+            await db.commit()
+        async with checkout.maker() as db:
+            user = await get_user_by_id(db, 1)
+            monkeypatch.setattr(admin.UserService, 'get_user_profile', AsyncMock(return_value={'user': user}))
+            callback = SimpleNamespace(
+                data='admin_buy_tariff_execute_1_7_1_1200',
+                answer=AsyncMock(),
+                message=SimpleNamespace(edit_text=AsyncMock()),
+                bot=SimpleNamespace(send_message=AsyncMock()),
+            )
+            callback.data = 'admin_tariff_buy_select_1_7'
+            await inspect.unwrap(admin.admin_buy_tariff_period)(callback, user, db)
+            buttons = callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard
+            assert buttons[0][0].callback_data == 'admin_tariff_buy_confirm_1_7_1_1200'
+            callback.data = buttons[0][0].callback_data
+            await inspect.unwrap(admin.admin_buy_tariff_confirm)(callback, user, db)
+            confirmation = callback.message.edit_text.await_args
+            assert '📱 Устройств: 3' in confirmation.args[0]
+            callback.data = confirmation.kwargs['reply_markup'].inline_keyboard[0][0].callback_data
+            assert callback.data.endswith('_1200')
+            if price_changed:
+                (await db.get(Tariff, 7)).device_price_kopeks = 6000
+                await db.commit()
+            await inspect.unwrap(admin.admin_buy_tariff_execute)(callback, user, db)
+            if not price_changed:
+                assert '📱 Устройств: 3' in callback.message.edit_text.await_args.args[0]
+                assert '📱 Устройств: 3' in callback.bot.send_message.await_args.kwargs['text']
+        async with checkout.maker() as db:
+            assert (await db.get(User, 1)).balance_kopeks == (100000 if price_changed else 98800)
+            assert (await db.get(Subscription, 10)).device_limit == 3

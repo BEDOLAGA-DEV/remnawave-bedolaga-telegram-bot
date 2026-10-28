@@ -5376,6 +5376,33 @@ async def admin_buy_tariff(callback: types.CallbackQuery, db_user: User, db: Asy
     await callback.answer()
 
 
+async def _admin_tariff_purchase_quote(db, user, tariff, period):
+    """Use the same target, paid device limit and price for preview and execution."""
+    from app.services.pricing_engine import pricing_engine
+
+    if (tariff.is_daily and period != 1) or not tariff.has_configured_price_for_period(period):
+        raise ValueError('Tariff period is unavailable')
+    subscription = await _resolve_admin_subscription(db, user.id, tariff_id=tariff.id)
+    if subscription is None and settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
+    same_tariff = subscription is not None and subscription.tariff_id == tariff.id
+    device_limit = subscription.device_limit if same_tariff else tariff.device_limit
+    pricing = await pricing_engine.calculate_tariff_purchase_price(
+        tariff,
+        period,
+        device_limit=device_limit,
+        user=user,
+        **(
+            {'daily_devices_billing_version': 1}
+            if same_tariff and getattr(subscription, 'daily_devices_billing_version', 0) == 1
+            else {}
+        ),
+    )
+    return subscription, device_limit, pricing
+
+
 @admin_required
 @error_handler
 async def admin_buy_tariff_period(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
@@ -5401,6 +5428,10 @@ async def admin_buy_tariff_period(callback: types.CallbackQuery, db_user: User, 
         await callback.answer('❌ Тариф недоступен', show_alert=True)
         return
 
+    initial_period = 1 if tariff.is_daily else next(iter(tariff.period_prices or {}), None)
+    device_limit = tariff.device_limit
+    if initial_period is not None:
+        _, device_limit, _ = await _admin_tariff_purchase_quote(db, target_user, tariff, int(initial_period))
     target_user_link = user_html_link(target_user)
     target_user_id_display = target_user.telegram_id or target_user.email or f'#{target_user.id}'
     traffic = '♾️ Безлимит' if tariff.traffic_limit_gb == 0 else f'{tariff.traffic_limit_gb} ГБ'
@@ -5410,15 +5441,17 @@ async def admin_buy_tariff_period(callback: types.CallbackQuery, db_user: User, 
     text += f'💰 Баланс: {settings.format_price(target_user.balance_kopeks)}\n\n'
     text += f'📦 <b>Тариф: {html.escape(tariff.name)}</b>\n'
     text += f'📊 Трафик: {traffic}\n'
-    text += f'📱 Устройств: {Texts.format_device_limit(tariff.device_limit)}\n'
+    text += f'📱 Устройств: {Texts.format_device_limit(device_limit)}\n'
     text += f'🌐 Серверов: {len(tariff.allowed_squads) if tariff.allowed_squads else 0}\n\n'
     text += 'Выберите период:'
 
-    prices = tariff.period_prices or {}
+    prices = {'1': tariff.daily_price_kopeks} if tariff.is_daily else (tariff.period_prices or {})
     keyboard = []
 
     for period_str, price in sorted(prices.items(), key=lambda x: int(x[0])):
         period = int(period_str)
+        _, device_limit, pricing = await _admin_tariff_purchase_quote(db, target_user, tariff, period)
+        price = pricing.final_total
         keyboard.append(
             [
                 types.InlineKeyboardButton(
@@ -5463,6 +5496,13 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
         await callback.answer('❌ Тариф недоступен', show_alert=True)
         return
 
+    try:
+        _, device_limit, pricing = await _admin_tariff_purchase_quote(db, target_user, tariff, period)
+        price_kopeks = pricing.final_total
+    except ValueError:
+        await callback.answer('Период тарифа недоступен', show_alert=True)
+        return
+
     # Проверяем баланс
     if target_user.balance_kopeks < price_kopeks:
         missing = price_kopeks - target_user.balance_kopeks
@@ -5495,7 +5535,7 @@ async def admin_buy_tariff_confirm(callback: types.CallbackQuery, db_user: User,
     text += f'💰 Баланс: {settings.format_price(target_user.balance_kopeks)}\n\n'
     text += f'📦 <b>Тариф: {html.escape(tariff.name)}</b>\n'
     text += f'📊 Трафик: {traffic}\n'
-    text += f'📱 Устройств: {Texts.format_device_limit(tariff.device_limit)}\n'
+    text += f'📱 Устройств: {Texts.format_device_limit(device_limit)}\n'
     text += f'📅 Период: {period} дней\n'
     text += f'💰 Стоимость: {settings.format_price(price_kopeks)}\n\n'
     text += 'Подтвердить покупку?'
@@ -5548,28 +5588,9 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
 
     target_user = await lock_user_for_pricing(db, target_user.id)
 
-    existing_subscription = await _resolve_admin_subscription(db, target_user.id, tariff_id=tariff_id)
-    if existing_subscription is None and settings.is_multi_tariff_enabled():
-        from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-        existing_subscription = await get_subscription_by_user_and_tariff(
-            db, target_user.id, tariff_id, include_inactive=True
-        )
-
-    # Recalculate price from locked state (callback data may be stale)
-    from app.services.pricing_engine import PricingEngine
-
-    pricing_engine = PricingEngine()
-    device_limit = None
-    if existing_subscription and existing_subscription.tariff_id == tariff_id:
-        device_limit = existing_subscription.device_limit
-
     try:
-        result = await pricing_engine.calculate_tariff_purchase_price(
-            tariff,
-            period,
-            device_limit=device_limit,
-            user=target_user,
+        existing_subscription, device_limit, result = await _admin_tariff_purchase_quote(
+            db, target_user, tariff, period
         )
         price_kopeks = result.final_total
     except Exception as e:
@@ -5588,6 +5609,8 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             price_kopeks_from_callback=price_kopeks_from_callback,
             price_kopeks=price_kopeks,
         )
+        await callback.answer('Стоимость изменилась. Откройте подтверждение заново.', show_alert=True)
+        return
 
     if target_user.balance_kopeks < price_kopeks:
         await callback.answer('❌ Недостаточно средств на балансе', show_alert=True)
@@ -5618,14 +5641,6 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
         # Получаем серверы из тарифа
         squads = tariff.allowed_squads or []
 
-        # Проверяем есть ли подписка с этим тарифом
-        existing_subscription = await _resolve_admin_subscription(db, target_user.id, tariff_id=tariff_id)
-        if existing_subscription is None and settings.is_multi_tariff_enabled():
-            from app.database.crud.subscription import get_subscription_by_user_and_tariff
-
-            existing_subscription = await get_subscription_by_user_and_tariff(
-                db, target_user.id, tariff_id, include_inactive=True
-            )
         is_tariff_renewal = existing_subscription is not None and existing_subscription.tariff_id == tariff.id
         reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT
         if is_tariff_renewal:
@@ -5643,7 +5658,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 days=period,
                 tariff_id=tariff.id,
                 traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
                 reset_used_traffic=reset_traffic if is_tariff_renewal else None,
             )
@@ -5654,7 +5669,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 user_id=target_user.id,
                 duration_days=period,
                 traffic_limit_gb=tariff.traffic_limit_gb,
-                device_limit=tariff.device_limit,
+                device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
             )
@@ -5689,7 +5704,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             f'👤 {target_user_link} (ID: {target_user_id_display})\n'
             f'📦 Тариф: {html.escape(tariff.name)}\n'
             f'📊 Трафик: {traffic}\n'
-            f'📱 Устройств: {Texts.format_device_limit(tariff.device_limit)}\n'
+            f'📱 Устройств: {Texts.format_device_limit(subscription.device_limit)}\n'
             f'📅 Период: {period} дней\n'
             f'💰 Списано: {settings.format_price(price_kopeks)}\n'
             f'📅 Действует до: {format_datetime(subscription.end_date)}',
@@ -5713,7 +5728,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                     text=f'💳 <b>Администратор оформил вам тариф</b>\n\n'
                     f'📦 Тариф: {html.escape(tariff.name)}\n'
                     f'📊 Трафик: {traffic}\n'
-                    f'📱 Устройств: {Texts.format_device_limit(tariff.device_limit)}\n'
+                    f'📱 Устройств: {Texts.format_device_limit(subscription.device_limit)}\n'
                     f'📅 Период: {period} дней\n'
                     f'💰 Списано с баланса: {settings.format_price(price_kopeks)}\n'
                     f'📅 Действует до: {format_datetime(subscription.end_date)}',

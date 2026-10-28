@@ -1502,6 +1502,8 @@ async def _auto_purchase_daily_tariff(
         if existing_subscription:
             subscription = existing_subscription
             was_trial_conversion = bool(subscription.is_trial)
+            if subscription.tariff_id != tariff.id:
+                subscription.daily_devices_billing_version = 0
             subscription.tariff_id = tariff.id
             subscription.traffic_limit_gb = tariff.traffic_limit_gb
             subscription.device_limit = effective_device_limit

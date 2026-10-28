@@ -84,6 +84,7 @@ async def test_bulk_change_tariff_keeps_paid_devices():
         traffic_limit_gb=0,
         traffic_used_gb=0.0,
         device_limit=11,
+        daily_devices_billing_version=1,
         connected_squads=[],
         purchased_traffic_gb=0,
         traffic_reset_at=None,
@@ -110,4 +111,5 @@ async def test_bulk_change_tariff_keeps_paid_devices():
 
     assert result.success is True
     assert sub.tariff_id == 2
+    assert sub.daily_devices_billing_version == 0
     assert sub.device_limit == 11
