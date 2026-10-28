@@ -74,15 +74,22 @@ async def test_paid_renewal_resets_bot_and_panel_together(
             is_tariff_mode=True,
             breakdown={},
         )
+        renewal_started = datetime.now(UTC)
         result = await renewal.SubscriptionRenewalService().finalize(db, user, subscription, pricing)
+        renewal_finished = datetime.now(UTC)
         await db.refresh(user)
         await db.refresh(subscription)
         assert user.balance_kopeks == 9000
         assert subscription.traffic_used_gb == (0 if reset else 17.5)
         assert subscription.traffic_limit_gb == 500
         assert subscription.device_limit == 2
-        expected_end = (now if expired else old_end) + timedelta(days=30)
-        assert abs((subscription.end_date - expected_end).total_seconds()) < 3
+        period = timedelta(days=30)
+        if expired:
+            # Истёкшая подписка продлевается от момента продления, а `now` снят до
+            # создания схемы: на медленном раннере между ними бывает больше 3 с.
+            assert renewal_started + period <= subscription.end_date <= renewal_finished + period
+        else:
+            assert subscription.end_date == old_end + period
         assert result.charged_from_balance_kopeks == 1000
         transactions = (await db.scalars(select(Transaction))).all()
         assert len(transactions) == 1 and transactions[0].amount_kopeks == -1000
