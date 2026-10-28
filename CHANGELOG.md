@@ -5,20 +5,13 @@
 
 ### Bug Fixes
 
-* **docker:** публиковать веб-API на 127.0.0.1 и учитывать WEB_API_PORT ([37f82a2](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/37f82a2df22ade7582baacf77cc085ca9235680a))
-* **docker:** публиковать веб-API на 127.0.0.1 и учитывать WEB_API_PORT ([dcefef9](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/dcefef9704311f97016257890df45ec181d0840c))
-* **docker:** учитывать порт API и публиковать его на localhost по умолчанию ([9d217f6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9d217f68440c3f206de5a0c957ffa01a8cb859e7))
-* **docker:** учитывать порт API и публиковать его на localhost по умолчанию ([5e5f43f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5e5f43fd11f5c1b58b742517512c80de19549079))
-* **docker:** учитывать порт API и публиковать его на localhost по умолчанию ([c17e0b6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c17e0b6b6a1a18bdfcc1a18762d7de8f4b1f6a6c))
-* **docker:** учитывать порт API и публиковать его на localhost по умолчанию ([d697ac0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d697ac0db5d152a69159906e7aaf4c9e33035a60))
-* **payments:** восстановить CisPay в боте и исправить Antilopay v1, контакт покупателя и зачисление ([9d217f6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9d217f68440c3f206de5a0c957ffa01a8cb859e7))
-* **payments:** восстановить CisPay в боте и исправить Antilopay v1, контакт покупателя и зачисление ([5e5f43f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5e5f43fd11f5c1b58b742517512c80de19549079))
-* **payments:** восстановить CisPay в боте и исправить Antilopay v1, контакт покупателя и зачисление ([c17e0b6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c17e0b6b6a1a18bdfcc1a18762d7de8f4b1f6a6c))
-* **payments:** восстановить CisPay в боте и исправить Antilopay v1, контакт покупателя и зачисление ([d697ac0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d697ac0db5d152a69159906e7aaf4c9e33035a60))
-* **subscription:** безопасно возобновлять суточную подписку с атомарным списанием и проверкой ограничений ([9d217f6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9d217f68440c3f206de5a0c957ffa01a8cb859e7))
-* **subscription:** безопасно возобновлять суточную подписку с атомарным списанием и проверкой ограничений ([5e5f43f](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/5e5f43fd11f5c1b58b742517512c80de19549079))
-* **subscription:** безопасно возобновлять суточную подписку с атомарным списанием и проверкой ограничений ([c17e0b6](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c17e0b6b6a1a18bdfcc1a18762d7de8f4b1f6a6c))
-* **subscription:** безопасно возобновлять суточную подписку с атомарным списанием и проверкой ограничений ([d697ac0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/d697ac0db5d152a69159906e7aaf4c9e33035a60))
+* **payments:** CisPay в Telegram снова использует настройки бота независимо от настроек способов оплаты кабинета.
+* **payments:** Antilopay использует API v1 и RUB, запрашивает контакт покупателя; исправлены ранние уведомления, проверка платежей и повторное зачисление.
+* **subscription:** суточная подписка возобновляется с атомарным списанием; повторные запросы не списывают деньги второй раз. Trial и запрет продления проверяются на сервере.
+* **docker:** WEB_API_PORT учитывается при публикации и healthcheck; API по умолчанию доступен на localhost.
+* **release:** версия uv.lock обновляется вместе с приложением; CI проверяет согласованность релизных файлов до установки зависимостей.
+
+Обновлять вместе с Cabinet 1.81.1. Миграций БД нет. При внешнем reverse proxy проверьте WEB_API_BIND; новое значение по умолчанию — 127.0.0.1.
 
 ## [5.1.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.0.0...v5.1.0) (2026-10-26)
 
