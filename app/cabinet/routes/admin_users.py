@@ -1507,13 +1507,13 @@ async def update_user_subscription(
                 )
 
         # Preserve extra purchased devices above the old tariff's base limit
-        from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+        from app.database.crud.subscription import calc_device_limit_on_admin_tariff_change
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
 
         subscription.tariff_id = request.tariff_id
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
-        subscription.device_limit = calc_device_limit_on_tariff_switch(
+        subscription.device_limit = calc_device_limit_on_admin_tariff_change(
             current_device_limit=subscription.device_limit,
             old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
             new_tariff_device_limit=tariff.device_limit,

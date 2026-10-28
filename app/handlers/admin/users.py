@@ -6022,22 +6022,17 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         old_tariff_id = subscription.tariff_id
 
         # Preserve extra purchased devices above the old tariff's base limit
-        extra_devices = 0
-        if subscription.tariff_id:
-            old_tariff = await get_tariff_by_id(db, subscription.tariff_id)
-            if old_tariff and old_tariff.device_limit:
-                extra_devices = max(0, (subscription.device_limit or old_tariff.device_limit) - old_tariff.device_limit)
+        from app.database.crud.subscription import calc_device_limit_on_admin_tariff_change
+
+        old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
 
         subscription.tariff_id = tariff.id
-
-        new_base = tariff.device_limit if tariff.device_limit is not None else 1
-        new_total = 0 if new_base == 0 else new_base + extra_devices
-        effective_max = tariff.max_device_limit or (
-            settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None
+        subscription.device_limit = calc_device_limit_on_admin_tariff_change(
+            current_device_limit=subscription.device_limit,
+            old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
+            new_tariff_device_limit=tariff.device_limit,
+            max_device_limit=tariff.max_device_limit,
         )
-        if effective_max and new_total > effective_max:
-            new_total = effective_max
-        subscription.device_limit = new_total
 
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
         subscription.connected_squads = tariff.allowed_squads or []
