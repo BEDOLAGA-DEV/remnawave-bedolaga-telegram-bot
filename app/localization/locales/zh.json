@@ -1854,6 +1854,8 @@
   "ETOPLATEZHI_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低：{min_amount}₽\n最高：{max_amount}₽",
   "OVERPAY_PAYMENT_CREATED": "💳 <b>通过 {name} 付款</b>\n\n金额：<b>{amount}₽</b>\n\n点击下方按钮进行付款。\n付款成功后余额将自动充值。",
   "OVERPAY_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低：{min_amount}₽\n最高：{max_amount}₽",
+  "ANTILOPAY_CONTACT_REQUIRED": "请输入用于 Antilopay 付款的邮箱。此邮箱仅用于本次付款，不会更改您的账号。",
+  "ANTILOPAY_INVALID_EMAIL": "请输入有效的邮箱，例如 name@example.com。",
   "ANTILOPAY_PAYMENT_CREATED": "💳 <b>通过 {name} 付款</b>\n\n金额：<b>{amount}₽</b>\n\n点击下方按钮进行付款。\n付款成功后余额将自动充值。",
   "ANTILOPAY_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低：{min_amount}₽\n最高：{max_amount}₽",
   "SUPPORT_TOPUP_DISABLED": "通过客服充值已关闭。请尝试其他支付方式。",

@@ -2091,6 +2091,8 @@
   "ETOPLATEZHI_ENTER_AMOUNT": "💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽",
   "OVERPAY_PAYMENT_CREATED": "💳 <b>Оплата через {name}</b>\n\nСумма: <b>{amount}₽</b>\n\nНажмите кнопку ниже для оплаты.\nПосле успешной оплаты баланс будет пополнен автоматически.",
   "OVERPAY_ENTER_AMOUNT": "💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽",
+  "ANTILOPAY_CONTACT_REQUIRED": "Укажите ваш email для оплаты через Antilopay. Это контакт для платежа, он не изменит ваш аккаунт.",
+  "ANTILOPAY_INVALID_EMAIL": "Введите корректный email, например name@example.com.",
   "ANTILOPAY_PAYMENT_CREATED": "💳 <b>Оплата через {name}</b>\n\nСумма: <b>{amount}₽</b>\n\nНажмите кнопку ниже для оплаты.\nПосле успешной оплаты баланс будет пополнен автоматически.",
   "ANTILOPAY_ENTER_AMOUNT": "💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽",
   "SUPPORT_TOPUP_DISABLED": "Пополнение через поддержку отключено. Попробуйте другой способ оплаты.",
