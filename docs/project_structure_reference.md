@@ -3718,6 +3718,9 @@
 - `tests/cabinet/test_telegram_widget_replay.py` — Python-модуль
   Классы: нет
   Функции: `test_widget_login_is_one_time_and_24h`, `test_widget_link_is_one_time_and_24h`
+- `tests/cabinet/test_telegram_widget_signed_fields.py` — Python-модуль
+  Классы: нет
+  Функции: `test_widget_signature_survives_cabinet_only_fields`, `test_tampered_signed_field_still_rejected`, `test_only_telegram_fields_are_passed`
 - `tests/cabinet/test_ticket_admin_author.py` — Python-модуль
   Классы: нет
   Функции: `test_cabinet_admin_reply_stores_admin_id` — REGRESSION: reply_to_ticket в admin_tickets.py должен писать admin.id,, `test_support_ws_reply_stores_actor_id_for_admin` — REGRESSION: _handle_ticket_reply в support_ws.py должен писать, `test_bot_admin_reply_still_stores_admin_id` — Пин существующей (корректной) семантики бот-пути: add_message получает
