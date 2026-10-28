@@ -20,6 +20,8 @@ def _callback(data: str = 'menu_buy'):
 def _state():
     state = MagicMock()
     state.clear = AsyncMock()
+    state.get_state = AsyncMock(return_value=None)
+    state.set_state = AsyncMock()
     state.update_data = AsyncMock()
     state.get_data = AsyncMock(return_value={})
     return state
@@ -44,6 +46,8 @@ def _period_tariff(tariff_id: int = 42):
     tariff.can_purchase_custom_traffic = MagicMock(return_value=False)
     tariff.period_prices = {'30': 10000}
     tariff.device_limit = 1
+    tariff.max_device_limit = 5
+    tariff.device_price_kopeks = 0
     tariff.traffic_limit_gb = 0
     return tariff
 

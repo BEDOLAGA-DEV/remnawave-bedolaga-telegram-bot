@@ -3646,7 +3646,7 @@
   Функции: `test_traffic_survives_create` — Указанный при создании трафик попадает в строку и в ответ., `test_traffic_is_updatable` — Правка меняет трафик, а не отвечает 200 со старым значением.
 - `tests/cabinet/test_purchase_tariff_expired_trial_reuse.py` — Python-модуль
   Классы: нет
-  Функции: `test_purchase_tariff_tariff_lookup_includes_inactive` — REGRESSION: the ``get_subscription_by_user_and_tariff`` fallback CALL
+  Функции: `test_purchase_tariff_tariff_lookup_includes_inactive`
 - `tests/cabinet/test_purchase_tariff_refund_on_failure.py` — Python-модуль
   Классы: нет
   Функции: `test_persistence_wrapped_in_refund_guard` — REGRESSION: both persistence branches (extend + create) must sit inside, `test_refund_helper_uses_fresh_user_and_refund_transaction` — REGRESSION: ``_refund_charge`` must re-fetch the user via, `test_refund_helper_records_failed_refund_when_credit_fails` — REGRESSION: ``add_user_balance`` swallows its own errors and returns False, `test_extend_subscription_post_commit_cleanup_is_best_effort` — REGRESSION: ``extend_subscription`` commits the extension, then runs, `test_charge_precedes_guard_and_delivery_steps_stay_outside` — Keep period compensation after charging; daily staging is atomic instead., `test_trial_conversion_stays_enabled_in_extend_branch` — REGRESSION: the ``extend_subscription`` call must NOT pass
@@ -5612,6 +5612,9 @@
 - `tests/services/panel_sync/test_runner_pacing.py` — Python-модуль
   Классы: нет
   Функции: `test_bulk_sync_never_resets_devices`, `test_throttled_panel_is_a_warning_not_an_error`, `test_batch_read_transaction_is_closed_before_panel_writes` — Живой лог: коммит в конце пачки падал с «connection is closed» — соединение, `test_batch_fetch_survives_a_dropped_connection`
+- `tests/services/panel_sync/test_selected_devices_live_panel.py` — Python-модуль
+  Классы: нет
+  Функции: `test_selected_devices_reach_panel_and_survive_replay`
 - `tests/services/panel_sync/test_tags.py` — Python-модуль
   Классы: нет
   Функции: `test_normalize_upper_cases_and_treats_blank_as_absent`, `test_normalize_rejects_what_the_panel_rejects`, `test_tariff_tag_wins_for_paid_subscription`, `test_tariff_tag_wins_over_trial_tag_too`, `test_without_tariff_tag_trial_uses_global_trial_tag`, `test_without_tariff_tag_paid_uses_global_paid_tag`, `test_blank_tariff_tag_counts_as_absent`, `test_payload_resolves_tag_from_tariff_when_caller_passed_none`, `test_payload_keeps_explicit_tag_from_caller`, `test_without_a_configured_tag_the_account_gets_none` — «Тега нет» — тоже решение: в PATCH оно уезжает как null и снимает прежний

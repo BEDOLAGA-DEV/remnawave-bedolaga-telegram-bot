@@ -17,7 +17,7 @@ class PriceBoundary(BaseException):
 @pytest.mark.parametrize('flow', ['renewal_preview', 'admin_purchase'])
 async def test_existing_daily_price_uses_saved_policy(monkeypatch, flow):
     from app.handlers.admin import users as admin
-    from app.services.pricing_engine import PricingEngine
+    from app.services.pricing_engine import PricingEngine, pricing_engine
 
     tariff = make_tariff(is_daily=True, daily_price_kopeks=1000, device_price_kopeks=3000, is_active=True)
     subscription = SimpleNamespace(id=10, tariff_id=7, device_limit=3, daily_devices_billing_version=1)
@@ -28,12 +28,12 @@ async def test_existing_daily_price_uses_saved_policy(monkeypatch, flow):
     prices = []
     real_price = PricingEngine.calculate_tariff_purchase_price
 
-    async def price(self, *args, **kwargs):
-        result = await real_price(self, *args, **kwargs)
+    async def price(*args, **kwargs):
+        result = await real_price(pricing_engine, *args, **kwargs)
         prices.append(result.final_total)
         raise PriceBoundary
 
-    monkeypatch.setattr(PricingEngine, 'calculate_tariff_purchase_price', price)
+    monkeypatch.setattr(pricing_engine, 'calculate_tariff_purchase_price', price)
     monkeypatch.setattr(telegram, 'get_tariff_by_id', AsyncMock(return_value=tariff))
     monkeypatch.setattr(telegram, 'get_subscription_by_id_for_user', AsyncMock(return_value=subscription))
     monkeypatch.setattr('app.database.crud.user.lock_user_for_pricing', AsyncMock(return_value=user))
