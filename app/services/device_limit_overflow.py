@@ -10,6 +10,8 @@
 который бот отправляет в панель, и сообщает админам о новых и изменившихся
 случаях. Какой случай уже показан, помнит кэш (``DEVICE_OVERFLOW_REPORT_TTL``):
 пока число устройств и лимит прежние, повтор не раньше чем через этот срок.
+Показанным считается только случай из доставленной части сводки — остальные
+остаются кандидатами следующей проверки.
 """
 
 from __future__ import annotations
@@ -142,7 +144,7 @@ async def mark_reported(overflows: list[DeviceOverflow]) -> None:
 
 
 async def check_device_limit_overflows(db: AsyncSession, bot: Any) -> int:
-    """Одна проверка: найти превышения, отправить новые админам. Возвращает число отправленных случаев."""
+    """Одна проверка: найти превышения, отправить новые админам. Возвращает число доставленных случаев."""
     if not bot or not settings.is_admin_notifications_enabled():
         return 0
     if not settings.ADMIN_NOTIFICATIONS_ADDONS_ENABLED:
@@ -164,8 +166,12 @@ async def check_device_limit_overflows(db: AsyncSession, bot: Any) -> int:
     if not fresh:
         return 0
 
-    sent = await AdminNotificationService(bot).send_device_limit_overflow_notification(fresh, total=len(overflows))
-    if not sent:
-        return 0
-    await mark_reported(fresh)
-    return len(fresh)
+    delivered = await AdminNotificationService(bot).send_device_limit_overflow_notification(fresh, total=len(overflows))
+    if len(delivered) < len(fresh):
+        logger.warning(
+            'Сводка о превышении лимита устройств доставлена не целиком',
+            delivered=len(delivered),
+            undelivered=len(fresh) - len(delivered),
+        )
+    await mark_reported(delivered)
+    return len(delivered)

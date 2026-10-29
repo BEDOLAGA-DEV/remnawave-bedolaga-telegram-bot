@@ -75,6 +75,19 @@ def _format_waiting(waited_minutes: int) -> str:
     return f'{minutes} мин'
 
 
+_HTML_TAG_RE = re.compile(r'<[^<>]+>')
+
+
+def _telegram_text_length(text: str) -> int:
+    """Длина текста так, как её считает Telegram: после разбора HTML, в единицах UTF-16.
+
+    Лимит sendMessage (4096) действует после разбора entities, а эмодзи и
+    другие символы вне BMP занимают по две единицы.
+    """
+    plain = html.unescape(_HTML_TAG_RE.sub('', text))
+    return len(plain.encode('utf-16-le')) // 2
+
+
 class NotificationCategory(StrEnum):
     """Категории уведомлений для маршрутизации по топикам."""
 
@@ -2241,54 +2254,74 @@ class AdminNotificationService:
             logger.error('Ошибка отправки уведомления об изменении подписки', error=e)
             return False
 
-    DEVICE_OVERFLOW_MAX_LINES = 25
+    # Обычное sendMessage — до 4096 символов после разбора entities; запас — на
+    # случай, если наш подсчёт разойдётся с серверным.
+    DEVICE_OVERFLOW_PART_LIMIT = 4000
 
-    async def send_device_limit_overflow_notification(self, overflows: list, *, total: int) -> bool:
+    async def send_device_limit_overflow_notification(self, overflows: list, *, total: int) -> list:
         """Сводка подписок, где устройств в панели больше лимита (app/services/device_limit_overflow.py).
 
         ``overflows`` — новые и изменившиеся случаи, ``total`` — сколько превышений сейчас всего.
-        Строк не больше DEVICE_OVERFLOW_MAX_LINES, остальное — одной строкой «и ещё N»:
-        сообщение должно уложиться в лимит Telegram.
+        Список уходит целиком, при необходимости частями: каждая не длиннее
+        DEVICE_OVERFLOW_PART_LIMIT, чтобы дойти и обычной отправкой, когда rich
+        выключен или недоступен. Возвращает случаи из доставленных частей —
+        показанными можно считать только их.
         """
         if not self._is_enabled() or not overflows:
-            return False
+            return []
 
+        delivered: list = []
         try:
             from app.services.device_limit_overflow import DEVICE_OVERFLOW_ACTIVE_DAYS
 
-            message_lines = [
-                '<b>📱 ПРЕВЫШЕНИЕ ЛИМИТА УСТРОЙСТВ</b>',
-                '',
-                f'Подписок, где устройств больше лимита: <b>{total}</b>, новых или изменившихся: <b>{len(overflows)}</b>',
-                '',
-            ]
-            for overflow in overflows[: self.DEVICE_OVERFLOW_MAX_LINES]:
+            summary = (
+                f'Подписок, где устройств больше лимита: <b>{total}</b>, '
+                f'новых или изменившихся: <b>{len(overflows)}</b>'
+            )
+            footer = f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M")}</i>'
+
+            def render(lines: list[str], number: int, count: int) -> str:
+                title = '<b>📱 ПРЕВЫШЕНИЕ ЛИМИТА УСТРОЙСТВ</b>'
+                if count > 1:
+                    title += f' · часть {number} из {count}'
+                return '\n'.join([title, '', summary, '', *lines, '', footer])
+
+            case_lines = []
+            for overflow in overflows:
                 subscription = overflow.subscription
                 user = subscription.user
                 tariff = _loaded_relationship(subscription, 'tariff')
                 tariff_part = f' · {html.escape(tariff.name)}' if tariff is not None and tariff.name else ''
-                message_lines.append(
+                case_lines.append(
                     f'• {self._get_user_display(user)} ({self._get_user_identifier_display(user)})'
                     f' · #{subscription.id}{tariff_part}: '
                     f'{overflow.devices} устр. при лимите {overflow.device_limit}, '
                     f'за {DEVICE_OVERFLOW_ACTIVE_DAYS} дн. в работе {overflow.active_devices}'
                 )
-            hidden = len(overflows) - self.DEVICE_OVERFLOW_MAX_LINES
-            if hidden > 0:
-                message_lines.append(f'… и ещё {hidden}')
 
-            message_lines.extend(
-                [
-                    '',
-                    f'<i>{format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M")}</i>',
-                ]
-            )
+            # Части набираются по длине, а не по числу строк: имя пользователя и
+            # название тарифа бывают длинными. Заголовок считается по самому
+            # длинному варианту — номер части не больше числа случаев. Каждая
+            # строка добавляет к части свою длину и перевод строки.
+            budget = self.DEVICE_OVERFLOW_PART_LIMIT - _telegram_text_length(render([], len(overflows), len(overflows)))
+            parts: list[list[int]] = [[]]
+            used = 0
+            for index, line in enumerate(case_lines):
+                size = _telegram_text_length(line) + 1
+                if parts[-1] and used + size > budget:
+                    parts.append([])
+                    used = 0
+                parts[-1].append(index)
+                used += size
 
-            return await self._send_message('\n'.join(message_lines), category=NotificationCategory.ADDONS)
+            for number, indexes in enumerate(parts, start=1):
+                text = render([case_lines[i] for i in indexes], number, len(parts))
+                if await self._send_message(text, category=NotificationCategory.ADDONS):
+                    delivered.extend(overflows[i] for i in indexes)
 
         except Exception as e:
             logger.error('Ошибка отправки уведомления о превышении лимита устройств', error=e)
-            return False
+        return delivered
 
     async def _format_servers_detailed(self, server_uuids: list[str]) -> str:
         if not server_uuids:
