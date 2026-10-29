@@ -1,0 +1,60 @@
+# نمونه محلی‌سازی برای زبان فارسی (ایرانی)
+# کلیدها مطابق با ثابت‌های تعریف‌شده در app/localization/texts.py است.
+WELCOME: |
+  خوش آمدید به بات Remnawave Bedolaga!
+  این متن برای سلام گفتن به کاربران به‌روز شود.
+
+MENU:
+  BALANCE: "موجودی"
+  SERVER_STATUS: "وضعیت سرورها"
+  SUBSCRIPTION: "اشتراک"
+
+SERVER_STATUS:
+  TITLE: "📊 <b>وضعیت سرورها</b>"
+  SUMMARY: "کل سرورها: {total} (آنلاین: {online}، آفلاین: {offline})"
+  AVAILABLE: "✅ <b>دسترس‌پذیر</b>"
+  UNAVAILABLE: "❌ <b>دسترس‌ناپذیر</b>"
+  LATENCY: "{latency} میلی‌ثانیه"
+  LATENCY_UNKNOWN: "داده‌ای در دسترس نیست"
+  OFFLINE: "پاسخی دریافت نشد"
+  NO_SERVERS: "داده‌ای برای سرورها در دسترس نیست."
+  PAGINATION: "صفحه {current} از {total}"
+  PREV_PAGE: "⬅️ بازگشت"
+  NEXT_PAGE: "بعدی ➡️"
+  REFRESH: "🔄 تازه‌کردن"
+  ERROR_SHORT: "دریافت داده‌ها ناموفق بود"
+  NOT_CONFIGURED: "این ویژگی دسترس‌پذیر نیست."
+  UPDATED_AT: "⏱ به‌روز‌رسانی در: {time}"
+
+RULES_TEXT: |
+  قوانین سرویس Remnawave:
+    1. از قوانین کشور خود پیروی کنید.
+    2. هرگز اسپم یا محتوای مخرب را توزیع نکنید.
+    3. سایر اعضای جامعه را احترام بگذارید.
+
+PAYMENT_METHODS_NONE_AVAILABLE: |
+  💳 <b>روش‌های شارژ موجودی</b>
+
+  ⚠️ روش‌های پرداخت موقتاً در دسترس نیستند.
+  لطفاً بعداً دوباره امتحان کنید.
+
+  یک روش شارژ انتخاب کنید:
+SUPPORT_TOPUP_DISABLED: "شارژ توسط پشتیبانی غیرفعال شده است. لطفاً از روش دیگری استفاده کنید."
+
+ADMIN_PAYMENTS_TITLE: "💳 <b>تأیید شارژ</b>"
+ADMIN_PAYMENTS_DESCRIPTION: "شارژ‌های معلق در 24 ساعت گذشته."
+ADMIN_PAYMENTS_NOTICE: "برای جزئیات و تأیید دستی روی پرداخت کلیک کنید."
+ADMIN_PAYMENTS_EMPTY: "هیچ شارژ معلقی در 24 ساعت گذشته وجود ندارد."
+ADMIN_PAYMENTS_ITEM_DETAILS: "📄 #{number}"
+ADMIN_PAYMENTS_CHECKABLE_COUNT: "🔄 در دسترس برای تأیید: {count}"
+ADMIN_PAYMENTS_CHECK_ALL: "🔄 تأیید همه"
+ADMIN_PAYMENTS_EXPORT: "📥 صادر به فایل"
+ADMIN_PAYMENTS_NO_CHECKABLE: "هیچ پرداختی برای تأیید وجود ندارد"
+ADMIN_PAYMENTS_CHECKING_ALL: "🔄 در حال تأیید {count} پرداخت..."
+ADMIN_PAYMENTS_CHECK_ALL_RESULT: "🔄 <b>نتیجه تأیید</b>"
+ADMIN_PAYMENTS_CHECK_ALL_CHECKED: "✅ تأیید‌شده: {count}"
+ADMIN_PAYMENTS_CHECK_ALL_CONFIRMED: "💰 تأیید‌شده: {count}"
+ADMIN_PAYMENTS_CHECK_ALL_FAILED: "❌ خطاها: {count}"
+ADMIN_PAYMENTS_EXPORT_EMPTY: "هیچ پرداختی برای صادر کردن وجود ندارد"
+ADMIN_PAYMENTS_EXPORT_CAPTION: "📊 صادرات پرداخت‌ها"
+ADMIN_PAYMENTS_EXPORT_SUCCESS: "✅ فایل ارسال شد"
