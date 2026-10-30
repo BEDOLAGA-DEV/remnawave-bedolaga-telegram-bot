@@ -1457,7 +1457,7 @@
   Классы: нет
   Функции: `get_merge_preview` — Возвращает превью данных обоих аккаунтов для подтверждения мержа., `flush_remnawave_deletions` — Удаляет (или деактивирует как fallback) пользователей RemnaWave., `execute_merge` — Выполняет атомарный мерж двух аккаунтов. Caller отвечает за commit/rollback.
 - `app/services/admin_notification_service.py` — Python-модуль
-  Классы: `NotificationCategory`, `AdminNotificationService` (50 методов)
+  Классы: `NotificationCategory`, `AdminNotificationService` (51 методов)
   Функции: нет
 - `app/services/anore_service.py` — Python-модуль
   Классы: `AnoreAPIError` (1 методов), `AnoreConfig` (1 методов), `AnoreService` (5 методов)
@@ -1538,6 +1538,9 @@
 - `app/services/daily_subscription_service.py` — Python-модуль
   Классы: `DailySubscriptionService` (21 методов)
   Функции: нет
+- `app/services/device_limit_overflow.py` — Python-модуль
+  Классы: `DeviceOverflow` (1 методов)
+  Функции: `find_device_overflows` — Подписки, где устройств в панели больше лимита; без лимита (0 / пусто) не проверяются., `load_checked_subscriptions`, `select_unreported` — Новые случаи и те, у которых сменилось число устройств или лимит., `mark_reported`, `check_device_limit_overflows` — Одна проверка: найти превышения, отправить новые админам. Возвращает число доставленных случаев.
 - `app/services/disposable_email_service.py` — Python-модуль
   Классы: `DisposableEmailService` (7 методов)
   Функции: `parse_extra_domains` — Список оператора из настройки: любые разделители, регистр и ведущие '@'/'.' не важны., `domain_and_parents` — 'deep.sub.mail.tm' → 'deep.sub.mail.tm', 'sub.mail.tm', 'mail.tm' (голый TLD не считается).
@@ -1628,7 +1631,7 @@
   Классы: нет
   Функции: нет
 - `app/services/monitoring_service.py` — Python-модуль
-  Классы: `AutopayFailState` (2 методов), `MonitoringService` (52 методов)
+  Классы: `AutopayFailState` (2 методов), `MonitoringService` (53 методов)
   Функции: `decide_autopay_fail_notification` — Decide whether/what to send on a failed-autopay tick., `apply_autopay_fail_notification` — Mutate state to record that a notification with `reason` was just sent.
 - `app/services/mulenpay_service.py` — Python-модуль
   Классы: `MulenPayService` (10 методов)
@@ -4945,6 +4948,9 @@
 - `tests/services/test_daily_traffic_reset_policy.py` — Python-модуль
   Классы: нет
   Функции: `test_reset_when_setting_enabled` — Выключатель включён — суточное списание обнуляет счётчик, как и любая оплата., `test_no_reset_when_setting_disabled` — Выключатель выключен — поведение прежнее, счётчик не трогаем., `test_no_reset_when_panel_already_resets_daily` — Панель сама обнуляет раз в сутки — второй сброс дал бы две квоты за день., `test_no_reset_when_global_strategy_is_daily` — У тарифа режим не задан — стратегия берётся из общей настройки., `test_reset_for_weekly_panel_strategy` — Недельный сброс панели суточную квоту не покрывает — обнуляем сами., `test_missing_tariff_falls_back_to_global` — Тариф не передан — решает общая настройка, без падения., `test_lift_uses_owner_account_in_single_tariff` — В одиночном режиме аккаунт панели — у пользователя, не у подписки., `test_lift_uses_subscription_account_in_multi_tariff` — В мультитарифе у каждой подписки свой аккаунт — владельца не спрашиваем., `test_lift_survives_panel_error` — Деньги уже взяты, подписка активна — ошибка панели не должна ронять оплату., `test_lift_does_nothing_without_panel_account`
+- `tests/services/test_device_limit_overflow.py` — Python-модуль
+  Классы: `DictCache` (3 методов)
+  Функции: `overflow_settings`, `fake_cache`, `test_reports_only_subscriptions_above_their_limit`, `test_unlimited_subscription_is_not_checked`, `test_active_devices_counted_by_last_update`, `test_multi_tariff_uses_subscription_panel_user`, `test_largest_overflow_first`, `test_case_is_reported_once_until_it_changes`, `test_check_sends_unreported_and_remembers_them`, `test_check_is_skipped_when_addons_notifications_are_off`, `test_failed_send_is_not_marked_reported`, `test_short_summary_is_one_message`, `test_every_case_reaches_admins_in_parts` — 30 случаев с самыми длинными именами — все доходят до админа, каждая часть в лимите Telegram., `test_long_names_fit_plain_send_when_rich_is_unavailable` — Обычная отправка (rich выключен или недоступен) — Telegram отклоняет текст длиннее 4096., `test_undelivered_part_stays_a_candidate` — Сбой одной из частей: её случаи не помечаются показанными и приходят в следующей проверке.
 - `tests/services/test_disposable_email_service.py` — Python-модуль
   Классы: нет
   Функции: `test_parse_extra_domains_tolerates_separators_case_and_at_sign`, `test_operator_extra_domains_block_even_without_fetched_list`, `test_parent_domain_matches_for_both_lists`, `test_disabled_flag_and_malformed_email`
