@@ -4552,6 +4552,9 @@
 - `tests/handlers/test_broadcast_custom_buttons.py` — Python-модуль
   Классы: нет
   Функции: `test_keyboard_passes_icon_custom_emoji_id`, `test_schema_roundtrips_icon_custom_emoji_id`, `test_schema_defaults_to_none_and_rejects_garbage`
+- `tests/handlers/test_broadcast_message_without_text.py` — Python-модуль
+  Классы: нет
+  Функции: `test_message_without_text_is_rejected`, `test_text_message_is_saved`
 - `tests/handlers/test_cashera_topup_flow.py` — Python-модуль
   Классы: нет
   Функции: `test_single_button_by_default`, `test_inline_methods_show_one_button_per_method`, `test_prefilled_amount_keeps_method_in_callback`, `test_quick_amounts_resolve_to_cashera_config`, `test_hidden_when_disabled`, `test_several_methods_ask_to_choose`, `test_choosing_a_method_asks_for_amount`, `test_disabled_method_is_refused`, `test_invoice_is_a_qr_photo_when_requisites_are_ready`

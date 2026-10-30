@@ -793,6 +793,11 @@ async def select_broadcast_target(callback: types.CallbackQuery, db_user: User, 
 async def process_broadcast_message(message: types.Message, db_user: User, state: FSMContext, db: AsyncSession):
     broadcast_text = message.text
 
+    # Без текста (медиа, документ, стикер) message.text равен None (#3169)
+    if not broadcast_text:
+        await message.answer('❌ Отправьте текст рассылки обычным текстовым сообщением')
+        return
+
     if len(broadcast_text) > 4000:
         await message.answer('❌ Сообщение слишком длинное (максимум 4000 символов)')
         return
