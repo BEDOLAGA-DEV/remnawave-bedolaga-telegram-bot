@@ -777,32 +777,9 @@ class DailySubscriptionService:
 
     async def _get_panel_used_gb(self, db: AsyncSession, subscription: Subscription) -> float | None:
         """Текущий израсходованный трафик из панели в ГБ. None — если узнать не удалось."""
-        from app.services.subscription_service import SubscriptionService
+        from app.services.traffic_package_usage import read_panel_used_gb
 
-        service = SubscriptionService()
-        if settings.is_multi_tariff_enabled():
-            panel_user_id = getattr(subscription, 'remnawave_id', None)
-        else:
-            user = await get_user_by_id(db, subscription.user_id)
-            panel_user_id = getattr(user, 'remnawave_id', None) if user else None
-        if panel_user_id is None:
-            return None
-
-        try:
-            async with service.get_api_client() as api:
-                panel_user = await api.get_user_by_id(panel_user_id)
-        except Exception as exc:
-            logger.warning(
-                'Не удалось получить used из панели для выравнивания докупки — применим понижение со страховкой',
-                subscription_id=subscription.id,
-                user_id=subscription.user_id,
-                error=exc,
-            )
-            return None
-
-        if panel_user is None:
-            return None
-        return service._bytes_to_gb(panel_user.used_traffic_bytes)
+        return await read_panel_used_gb(db, subscription)
 
     async def _notify_traffic_reset(self, user: User, subscription: Subscription, reset_gb: int):
         """Уведомляет пользователя о сбросе докупленного трафика."""

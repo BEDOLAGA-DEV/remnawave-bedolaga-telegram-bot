@@ -955,7 +955,9 @@ async def _housekeep_expired_purchases(
         # если в ней остался чужой лимит (грейс ставил «расход + 1 ГБ», правка
         # админом). Раньше ноль проходил мимо, и безлимит не возвращался при
         # продлении (жалоба 2026-09-15). Докупки с безлимитом не складываются.
-        purchased, _ = await _apply_base_limit_preserving_active_purchases(db, subscription, tariff_base, now=now)
+        purchased, _ = await _apply_base_limit_preserving_active_purchases(
+            db, subscription, tariff_base, now=now, defer_expired_drop=not settings.RESET_TRAFFIC_ON_PAYMENT
+        )
         return purchased
 
     current_total = subscription.traffic_limit_gb or 0
@@ -1004,6 +1006,75 @@ async def _housekeep_expired_purchases(
     subscription.traffic_reset_at = nearest_expiry
 
     return purchased_gb
+
+
+async def _expired_purchase_drop_must_wait(
+    db: AsyncSession,
+    subscription: Subscription,
+    tariff_base: int,
+    *,
+    now: datetime,
+) -> bool:
+    """Не ронять лимит истёкшей докупки на продлении, пока панель не сбросит used.
+
+    То же правило, что у ``DailySubscriptionService._should_defer_limit_drop``:
+    если после уборки истёкших пакетов лимит станет меньше уже израсходованного,
+    а панель сама обнулит used (MONTH/MONTH_ROLLING/DAY/WEEK), понижение ждёт
+    этого сброса. Без него продление в окне «докупка истекла — сброс ещё не
+    наступил» отрезает человека в момент оплаты: лимит падает до базы тарифа,
+    used остаётся прежним, панель ставит LIMITED. Истёкшие пакеты остаются в
+    базе, после сброса их уберёт ежедневная уборка докупок.
+
+    Сервис читает актуальный расход панели без commit и изменения подписки.
+    Кэш расхода в БД может устареть. При недоступности панели сохраняем пакет:
+    ежедневная уборка повторит проверку. Окно ожидания ограничено 40 днями.
+    """
+    from app.database.models import TrafficPurchase
+
+    if tariff_base <= 0:
+        return False  # безлимит — за лимит не уйти
+
+    purchases = (
+        (await db.execute(select(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id)))
+        .scalars()
+        .all()
+    )
+    expired = [p for p in purchases if p.expires_at.replace(tzinfo=p.expires_at.tzinfo or UTC) <= now]
+    if not expired:
+        return False
+
+    new_limit = tariff_base + sum(p.traffic_gb for p in purchases if p not in expired)
+    if new_limit >= (subscription.traffic_limit_gb or 0):
+        return False
+
+    # Защита от вечного откладывания при рассинхроне стратегий бота и панели —
+    # тот же порог, что у ежедневной уборки.
+    latest_expiry = max(p.expires_at.replace(tzinfo=p.expires_at.tzinfo or UTC) for p in expired)
+    if now - latest_expiry > timedelta(days=40):
+        return False
+
+    from app.database.crud.tariff import get_tariff_by_id
+    from app.external.remnawave_api import TrafficLimitStrategy
+    from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
+
+    tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+    if get_traffic_reset_strategy(tariff) == TrafficLimitStrategy.NO_RESET:
+        return False  # панель сама не сбросит — ждать нечего
+
+    from app.services.traffic_package_usage import read_panel_used_gb
+
+    used_gb = await read_panel_used_gb(db, subscription)
+    if used_gb is not None and used_gb <= new_limit:
+        return False
+
+    logger.info(
+        '⏸️ Продление: понижение лимита истёкшей докупки отложено до сброса used панелью',
+        subscription_id=subscription.id,
+        current_limit_gb=subscription.traffic_limit_gb,
+        new_limit_gb=new_limit,
+        used_gb=used_gb,
+    )
+    return True
 
 
 async def _tariff_base_traffic_limit(db: AsyncSession, subscription: Subscription) -> int | None:
@@ -1069,6 +1140,7 @@ async def _apply_base_limit_preserving_active_purchases(
     base_limit_gb: int,
     *,
     now: datetime,
+    defer_expired_drop: bool = False,
 ) -> tuple[int, int]:
     """Пересобирает `traffic_limit_gb` инвариант после смены базового лимита.
 
@@ -1117,6 +1189,18 @@ async def _apply_base_limit_preserving_active_purchases(
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
         return 0, 0
+
+    # Only same-tariff renewals without a traffic reset opt into this policy.
+    # Rebuild with all retained packages so an explicit custom base still applies.
+    if defer_expired_drop and await _expired_purchase_drop_must_wait(db, subscription, base_limit_gb, now=now):
+        packages = list(
+            (await db.scalars(select(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))).all()
+        )
+        purchased = sum(package.traffic_gb for package in packages)
+        subscription.purchased_traffic_gb = purchased
+        subscription.traffic_limit_gb = base_limit_gb + purchased
+        subscription.traffic_reset_at = min((package.expires_at for package in packages), default=None)
+        return purchased, subscription.traffic_limit_gb
 
     await db.execute(
         delete(TrafficPurchase)
@@ -1249,6 +1333,7 @@ async def extend_subscription(
 
     # Определяем, происходит ли СМЕНА тарифа (а не продление того же)
     # Включает переход из классического режима (tariff_id=None) в тарифный
+    was_trial = subscription.is_trial
     is_tariff_change = tariff_id is not None and (subscription.tariff_id is None or tariff_id != subscription.tariff_id)
 
     # Флаг: была ли housekeeping-ветка вызвана. Если нет — в конце прогоним
@@ -1381,7 +1466,16 @@ async def extend_subscription(
             # за деньги, у них собственный срок жизни. Раньше тут был хардкод DELETE
             # ВСЕХ пакетов — отсюда юзерский баг «трафик слетел после продления».
             purchased, new_total = await _apply_base_limit_preserving_active_purchases(
-                db, subscription, traffic_limit_gb, now=current_time
+                db,
+                subscription,
+                traffic_limit_gb,
+                now=current_time,
+                defer_expired_drop=(
+                    subscription.tariff_id is not None
+                    and not is_tariff_change
+                    and reset_used_traffic is False
+                    and not was_trial
+                ),
             )
             reason = 'смена тарифа' if is_tariff_change else 'подписка была истёкшей'
             logger.info(
@@ -1397,7 +1491,16 @@ async def extend_subscription(
             # Также проводим housekeeping: истёкшие TrafficPurchase удаляются,
             # purchased_traffic_gb пересчитывается из активных.
             purchased, new_total = await _apply_base_limit_preserving_active_purchases(
-                db, subscription, traffic_limit_gb, now=current_time
+                db,
+                subscription,
+                traffic_limit_gb,
+                now=current_time,
+                defer_expired_drop=(
+                    subscription.tariff_id is not None
+                    and not is_tariff_change
+                    and reset_used_traffic is False
+                    and not was_trial
+                ),
             )
             logger.info(
                 '📊 Обновлен лимит трафика (активные докупки сохранены)',
