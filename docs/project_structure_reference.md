@@ -1870,6 +1870,9 @@
 - `app/services/traffic_monitoring_service.py` — Python-модуль
   Классы: `TrafficViolation`, `TrafficMonitoringServiceV2` (35 методов), `TrafficMonitoringSchedulerV2` (9 методов), `TrafficMonitoringService` (6 методов), `TrafficMonitoringScheduler` (9 методов)
   Функции: нет
+- `app/services/traffic_package_usage.py` — Python-модуль
+  Классы: нет
+  Функции: `read_panel_used_gb`
 - `app/services/traffic_reset_policy.py` — Python-модуль
   Классы: нет
   Функции: `should_reset_traffic_on_daily_charge` — Обнулять ли израсходованный трафик после успешного суточного списания., `should_reset_traffic_on_tariff_purchase` — Обнулять ли израсходованный трафик при покупке тарифа из кабинета., `lift_panel_traffic_limit` — Снять с аккаунта в панели статус «трафик исчерпан» после оплаты новых суток.
@@ -3854,6 +3857,9 @@
 - `tests/crud/test_renewal_heals_grace_overlay_echo.py` — Python-модуль
   Классы: нет
   Функции: `test_tariff_renewal_returns_the_squad_and_limit_the_grace_overlay_overwrote` — Сценарий жалобы №2: «Продлить» в кабинете — только дни., `test_classic_renewal_returns_the_chosen_servers_and_their_limit` — Классика: серверы выбирал человек, лимит не из тарифа — вернуть можно только из сессии., `test_second_grace_that_snapshotted_the_echo_does_not_become_the_source` — Не продлил сразу: у «даты грейса» выдан второй грейс, и его снимок уже с оверлеем., `test_cart_that_already_set_the_tariff_squads_still_counts_from_the_real_end` — Автопокупка из корзины кабинета ставит сквады тарифа ДО продления., `test_squads_changed_after_grace_are_left_alone` — Сквады уже не оверлей (админ поменял, человек купил другой тариф) — продление их не трогает., `test_recurring_charge_order_counts_the_new_period_from_the_real_end` — Lava и Platega продлевают методом модели: починка идёт до него, как в самих шлюзах., `test_fractional_usage_limit_echo_is_recognised` — Ревью 2026-09-15: лимит приходил в подписку округлённым вниз — «расход 7,3 + 1» = 8 ГБ., `test_grace_squad_that_is_also_sold_does_not_trigger_a_false_repair` — Ревью 2026-09-15: сквад грейса — обычный продаваемый сервер, человек честно на нём., `test_server_added_by_a_purchase_stays_next_to_the_returned_ones` — Простая покупка добавляет свой сервер к сквадам подписки: {G, X} → свои серверы + X., `test_classic_renewal_price_counts_the_real_servers_not_the_grace_squad` — Цена считается до продления: по скваду грейса она выходила без своих серверов., `test_paid_on_old_code_the_next_renewal_returns_the_servers` — Жалоба №2: заплатил ещё на v4.11 — сквад грейса остался, дата уже не грейса., `test_grace_squad_that_a_tariff_sells_is_left_alone` — Сквад грейса входит в тариф — на нём можно быть честно, по скваду не узнать., `test_grace_squad_next_to_a_bought_server_is_not_recognised_without_the_date` — Серверы — не ровно сквад грейса: без даты оверлея это уже не эхо, трогать нельзя.
+- `tests/crud/test_renewal_waits_for_panel_reset_before_dropping_topup.py` — Python-модуль
+  Классы: нет
+  Функции: `test_renewal_keeps_expired_topup_while_used_is_above_the_tariff_base`, `test_recurring_charge_entry_keeps_expired_topup_too` — Рекуррентные Lava/Platega продлевают мимо CRUD и зовут reconcile_tariff_traffic_limit., `test_renewal_drops_expired_topup_when_used_fits_the_tariff_base`, `test_renewal_drops_expired_topup_without_periodic_panel_reset` — NO_RESET: панель used не обнулит — ждать нечего, понижаем как раньше., `test_renewal_stops_waiting_after_forty_days` — Защита от вечного откладывания — тот же порог, что у ежедневной уборки., `test_review_explicit_same_tariff_renewal_preserves_deferred_package`, `test_review_daily_deferral_survives_renewal_with_stale_local_usage`, `test_panel_unavailable_retains_package_until_worker_can_check`, `test_confirmed_panel_reset_removes_expired_only_despite_stale_high_cache`, `test_reset_switch_and_unlimited_do_not_defer`
 - `tests/crud/test_subscription_revive.py` — Python-модуль
   Классы: нет
   Функции: `test_revive_expired_starts_fresh_period` — Истёкшую реанимируем: статус active, период с «сейчас», трафик обнулён., `test_revive_alive_extends_from_end_date` — Ещё живую продлеваем от её end_date, накопленный трафик не сбрасываем., `test_create_paid_subscription_revives_existing_in_multitariff` — Мульти-тариф + есть ИСТЁКШАЯ запись тарифа → revive, без вставки дубля., `test_create_paid_subscription_revives_expired_trial` — #3004 (централизовано): ИСТЁКШИЙ ТРИАЛ того же тарифа при платной покупке, `test_revive_expired_trial_converts_to_paid` — Реанимация истёкшего ТРИАЛА: снимаем триальный флаг, обнуляем трафик,, `test_create_paid_subscription_does_not_revive_active` — Активную (не истёкшую) НЕ реанимируем — падаем в обычное создание/IntegrityError., `test_create_paid_subscription_skips_revive_without_tariff` — Классический режим (tariff_id=None) — lookup тарифа не дёргаем, создаём как раньше.
@@ -4116,6 +4122,9 @@
 - `tests/database/test_remaining_purchase_traffic_reset_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_paid_existing_purchase_preserves_traffic_contract`, `test_guest_nonrenewal_keeps_existing_panel_reset_policy`
+- `tests/database/test_renewal_deferred_traffic_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_renewal_then_daily_cleanup_after_panel_reset`
 - `tests/database/test_renewal_hwid_postgres.py` — Python-модуль
   Классы: `Panel` (5 методов)
   Функции: `test_same_tariff_90_day_purchase_preserves_hwid`
@@ -5467,6 +5476,9 @@
 - `tests/services/test_traffic_monitoring_status_filter.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_disabled_and_expired_are_filtered_out` — DISABLED/EXPIRED отсекаются, ACTIVE/LIMITED остаются., `test_all_active_pass_through` — Когда все активны — ничего не теряется., `test_all_inactive_returns_empty` — Сплошь DISABLED/EXPIRED → пустой список (никого не проверяем)., `test_filter_applies_across_paginated_batches` — Фильтр работает на каждом батче; пагинация — по сырому размеру страницы.
+- `tests/services/test_traffic_package_usage.py` — Python-модуль
+  Классы: нет
+  Функции: `test_usage_reader_selects_account_and_preserves_transaction`
 - `tests/services/test_tribute_payment_not_lost.py` — Python-модуль
   Классы: нет
   Функции: `service_on` — TributeService над тестовой сессией; уведомления и рефералка заглушены., `test_failure_before_commit_leaves_nothing_and_retry_credits_once`, `test_unknown_user_raises_alert_and_writes_nothing`, `test_alert_logger_is_not_silenced_as_payment_logger` — Логгеры tribute_service отрезаны от админ-чата, журнала ошибок и файлов — тревога идёт мимо этих фильтров., `test_failure_after_commit_answers_ok_and_is_not_credited_twice` — Деньги уже на балансе — 5xx тут опасен: повтор Tribute с синтетическим ключом, пришедший, `test_event_without_money_does_not_raise_payment_alert`
