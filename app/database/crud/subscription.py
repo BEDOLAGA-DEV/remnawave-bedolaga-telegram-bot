@@ -916,6 +916,8 @@ async def _housekeep_expired_purchases(
         # если в ней остался чужой лимит (грейс ставил «расход + 1 ГБ», правка
         # админом). Раньше ноль проходил мимо, и безлимит не возвращался при
         # продлении (жалоба 2026-09-15). Докупки с безлимитом не складываются.
+        if await _expired_purchase_drop_must_wait(db, subscription, tariff_base, now=now):
+            return subscription.purchased_traffic_gb or 0
         purchased, _ = await _apply_base_limit_preserving_active_purchases(db, subscription, tariff_base, now=now)
         return purchased
 
@@ -965,6 +967,70 @@ async def _housekeep_expired_purchases(
     subscription.traffic_reset_at = nearest_expiry
 
     return purchased_gb
+
+
+async def _expired_purchase_drop_must_wait(
+    db: AsyncSession,
+    subscription: Subscription,
+    tariff_base: int,
+    *,
+    now: datetime,
+) -> bool:
+    """Не ронять лимит истёкшей докупки на продлении, пока панель не сбросит used.
+
+    То же правило, что у ``DailySubscriptionService._should_defer_limit_drop``:
+    если после уборки истёкших пакетов лимит станет меньше уже израсходованного,
+    а панель сама обнулит used (MONTH/MONTH_ROLLING/DAY/WEEK), понижение ждёт
+    этого сброса. Без него продление в окне «докупка истекла — сброс ещё не
+    наступил» отрезает человека в момент оплаты: лимит падает до базы тарифа,
+    used остаётся прежним, панель ставит LIMITED. Истёкшие пакеты остаются в
+    базе, после сброса их уберёт ежедневная уборка докупок.
+
+    Расход берётся из подписки (его пишут вебхуки и синхронизация панели) — CRUD
+    в панель не ходит. Ежедневная уборка сверяется с панелью сама.
+    """
+    from app.database.models import TrafficPurchase
+
+    if tariff_base <= 0:
+        return False  # безлимит — за лимит не уйти
+
+    purchases = (
+        (await db.execute(select(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id)))
+        .scalars()
+        .all()
+    )
+    expired = [p for p in purchases if p.expires_at.replace(tzinfo=p.expires_at.tzinfo or UTC) <= now]
+    if not expired:
+        return False
+
+    new_limit = tariff_base + sum(p.traffic_gb for p in purchases if p not in expired)
+    if new_limit >= (subscription.traffic_limit_gb or 0):
+        return False
+    if (subscription.traffic_used_gb or 0) <= new_limit:
+        return False
+
+    # Защита от вечного откладывания при рассинхроне стратегий бота и панели —
+    # тот же порог, что у ежедневной уборки.
+    latest_expiry = max(p.expires_at.replace(tzinfo=p.expires_at.tzinfo or UTC) for p in expired)
+    if now - latest_expiry > timedelta(days=40):
+        return False
+
+    from app.database.crud.tariff import get_tariff_by_id
+    from app.external.remnawave_api import TrafficLimitStrategy
+    from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
+
+    tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
+    if get_traffic_reset_strategy(tariff) == TrafficLimitStrategy.NO_RESET:
+        return False  # панель сама не сбросит — ждать нечего
+
+    logger.info(
+        '⏸️ Продление: понижение лимита истёкшей докупки отложено до сброса used панелью',
+        subscription_id=subscription.id,
+        current_limit_gb=subscription.traffic_limit_gb,
+        new_limit_gb=new_limit,
+        used_gb=subscription.traffic_used_gb,
+    )
+    return True
 
 
 async def _tariff_base_traffic_limit(db: AsyncSession, subscription: Subscription) -> int | None:
