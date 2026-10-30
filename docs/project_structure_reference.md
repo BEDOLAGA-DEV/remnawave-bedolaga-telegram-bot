@@ -103,6 +103,9 @@
 - `app/logging_handler.py` — Python-модуль
   Классы: `TelegramNotifierProcessor` (8 методов)
   Функции: нет
+- `app/logging_safety.py` — Python-модуль
+  Классы: нет
+  Функции: `redact_text`, `safe_exception_summary`, `safe_value` — Copy containers so nested exceptions cannot fall back to credential-bearing repr., `safe_event`, `safe_traceback` — Keep frames, causes and exception groups, without HTTP request metadata., `sanitize_log_event`, `render_safe_exception`
 - `app/middlewares/`
 - `app/referral_levels.py` — Python-модуль
   Классы: нет
@@ -5065,6 +5068,9 @@
 - `tests/services/test_guest_purchase_referral_code.py` — Python-модуль
   Классы: нет
   Функции: `test_new_email_user_is_created_with_referral_code` — A landing-page email purchase must persist `referral_code` on the new, `test_new_telegram_user_is_created_with_referral_code` — Same guarantee for the telegram-username guest-purchase branch., `test_existing_email_user_without_referral_code_is_backfilled` — Legacy users created before the fix (with referral_code=NULL) must be, `test_existing_email_user_with_referral_code_is_not_overwritten` — Idempotency: if the user already has a referral_code, do not regenerate
+- `tests/services/test_http_logging_safety.py` — Python-модуль
+  Классы: нет
+  Функции: `http_error`, `test_http_errors_do_not_leak_headers`, `test_chained_group_traceback_and_original_exception`, `test_persisted_context_and_traceback_are_safe`, `test_telegram_traceback_is_safe`, `test_container_cycles_and_header_strings`, `test_provider_retries_and_final_failure_use_safe_logs`, `test_reused_exception_in_cause_and_group_cannot_leak_url`, `test_telegram_interpolated_headers_are_redacted`, `test_stdlib_record_is_not_persisted_in_context`, `test_exception_object_as_exc_info_keeps_traceback`
 - `tests/services/test_invite_only_settings.py` — Python-модуль
   Классы: нет
   Функции: `test_invite_only_defaults_are_backward_compatible`, `test_invite_only_settings_are_exposed_in_registration_access_category`

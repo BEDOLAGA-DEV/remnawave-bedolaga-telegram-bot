@@ -7,6 +7,7 @@ import aiohttp
 import structlog
 
 from app.config import settings
+from app.logging_safety import safe_exception_summary
 
 
 # Документация MulenPay ограничений на client не задаёт — поле встречается там
@@ -103,10 +104,11 @@ class MulenPayService:
                     endpoint=endpoint,
                     attempt=attempt,
                     max_retries=self._max_retries,
-                    error=error,
+                    error=safe_exception_summary(error),
+                    exc_info=True,
                 )
             except Exception as error:  # pragma: no cover - safety
-                logger.error('Unexpected MulenPay error', error=error, exc_info=True)
+                logger.error('Unexpected MulenPay error', error=safe_exception_summary(error), exc_info=True)
                 return None
 
             if attempt < self._max_retries:
@@ -125,7 +127,7 @@ class MulenPayService:
                 max_retries=self._max_retries,
                 method=method,
                 endpoint=endpoint,
-                last_error=last_error,
+                last_error=safe_exception_summary(last_error),
             )
 
         return None
@@ -143,7 +145,9 @@ class MulenPayService:
             try:
                 return json.loads(raw_text), raw_text
             except json.JSONDecodeError as error:
-                logger.error('Failed to decode MulenPay JSON response', url=response.url, error=error)
+                logger.error(
+                    'Failed to decode MulenPay JSON response', url=response.url, error=safe_exception_summary(error)
+                )
                 return None, raw_text
 
         return None, raw_text

@@ -11,6 +11,7 @@ import aiohttp
 import structlog
 
 from app.config import settings
+from app.logging_safety import safe_exception_summary
 
 
 if TYPE_CHECKING:
@@ -304,10 +305,11 @@ class PlategaService:
                     endpoint=endpoint,
                     attempt=attempt,
                     max_retries=self._max_retries,
-                    error=error,
+                    error=safe_exception_summary(error),
+                    exc_info=True,
                 )
             except Exception as error:  # pragma: no cover - safety
-                logger.exception('Unexpected Platega error', error=error)
+                logger.exception('Unexpected Platega error', error=safe_exception_summary(error))
                 return _result(None, None)
 
             if attempt < self._max_retries:
@@ -319,7 +321,7 @@ class PlategaService:
                 max_retries=self._max_retries,
                 method=method,
                 endpoint=endpoint,
-                last_error=last_error,
+                last_error=safe_exception_summary(last_error),
             )
 
         return _result(None, None)
@@ -337,7 +339,9 @@ class PlategaService:
             try:
                 return json.loads(raw_text), raw_text
             except json.JSONDecodeError as error:
-                logger.error('Failed to decode Platega JSON response', url=response.url, error=error)
+                logger.error(
+                    'Failed to decode Platega JSON response', url=response.url, error=safe_exception_summary(error)
+                )
                 return None, raw_text
 
         return None, raw_text

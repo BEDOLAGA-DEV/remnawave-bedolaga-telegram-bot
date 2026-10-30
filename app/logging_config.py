@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 
 from app.config import settings
+from app.logging_safety import render_safe_exception, sanitize_log_event
 
 
 def _resolve_log_level(value: object, default: int = logging.INFO) -> int:
@@ -106,6 +107,9 @@ def _auto_capture_exc_info(logger: Any, method_name: str, event_dict: dict[str, 
     renders the full traceback to files, console, and Telegram automatically.
     """
     exc_info = event_dict.get('exc_info')
+    if isinstance(exc_info, BaseException):
+        event_dict['exc_info'] = (type(exc_info), exc_info, exc_info.__traceback__)
+        return event_dict
     if exc_info is True:
         current = sys.exc_info()
         if current[1] is not None:
@@ -165,9 +169,9 @@ def setup_logging() -> tuple[logging.Formatter, logging.Formatter, Any]:
         _auto_capture_exc_info,
         # TelegramNotifierProcessor MUST run while exc_info is still a raw
         # tuple so it can extract the traceback for Telegram notifications.
-        # ConsoleRenderer handles exc_info formatting downstream (with Rich
-        # tracebacks on console, plain text in files).
+        # Output boundaries render a sanitized traceback downstream.
         telegram_notifier,
+        sanitize_log_event,
     ]
 
     # Configure structlog for structlog-originated logs.
@@ -191,6 +195,7 @@ def setup_logging() -> tuple[logging.Formatter, logging.Formatter, Any]:
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             _prefix_logger_name,
+            render_safe_exception,
             structlog.dev.ConsoleRenderer(
                 colors=False,
                 pad_event_to=0,
@@ -224,6 +229,7 @@ def setup_logging() -> tuple[logging.Formatter, logging.Formatter, Any]:
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             _prefix_logger_name,
+            render_safe_exception,
             structlog.dev.ConsoleRenderer(**console_renderer_kwargs),
         ],
     )

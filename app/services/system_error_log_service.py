@@ -223,17 +223,30 @@ class SystemErrorLogService:
             if exc_info[0] is not None:
                 error_type = exc_info[0].__name__
             if exc_info[2] is not None:
-                import traceback as tb_module
+                from app.logging_safety import safe_traceback
 
-                traceback_text = ''.join(tb_module.format_exception(*exc_info))
+                traceback_text = safe_traceback(exc_info)
 
         if error_type is None:
             candidate = event_dict.get('error')
             if isinstance(candidate, BaseException):
                 error_type = type(candidate).__name__
 
+        from app.logging_safety import safe_event
+
+        event_dict = safe_event(event_dict)
+
         # Контекст: всё, что не служебное и сериализуемо в строку.
-        skip_keys = {'exc_info', 'event', 'level', 'logger', 'timestamp', '_admin_notified'}
+        skip_keys = {
+            'exc_info',
+            'event',
+            'level',
+            'logger',
+            'timestamp',
+            '_admin_notified',
+            '_record',
+            '_from_structlog',
+        }
         context: dict[str, str] = {}
         for key, value in event_dict.items():
             if key in skip_keys:

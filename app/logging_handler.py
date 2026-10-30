@@ -27,10 +27,11 @@ import hashlib
 import sys
 import threading
 import time
-import traceback
 from typing import Any, Final
 
 from aiogram import Bot
+
+from app.logging_safety import redact_text, safe_event, safe_traceback
 
 
 # Constants
@@ -389,6 +390,7 @@ class TelegramNotifierProcessor:
 
             # Build a pseudo-Exception from the event_dict
             error = _make_event_dict_error(event_dict)
+            error.event_dict = safe_event(event_dict)
 
             # Build rich context from event_dict
             context_parts: list[str] = []
@@ -416,7 +418,7 @@ class TelegramNotifierProcessor:
             tb_override: str | None = None
             exc_info = event_dict.get('exc_info')
             if exc_info and isinstance(exc_info, tuple) and exc_info[2] is not None:
-                tb_override = _redact_telegram_secrets(''.join(traceback.format_exception(*exc_info)))
+                tb_override = _redact_telegram_secrets(safe_traceback(exc_info))
 
             # Ожидаемый отказ доставки (бот заблокирован, диалога не было, аккаунт
             # удалён) — это не ошибка бота: вместо traceback пишем причину.
@@ -428,7 +430,9 @@ class TelegramNotifierProcessor:
 
             # Также redact в самом сообщении ошибки (event string).
             if error.args:
-                error.args = tuple(_redact_telegram_secrets(arg) if isinstance(arg, str) else arg for arg in error.args)
+                error.args = tuple(
+                    _redact_telegram_secrets(redact_text(arg)) if isinstance(arg, str) else arg for arg in error.args
+                )
 
             outcome = await send_error_to_admin_chat(bot, error, context, tb_override=tb_override)
             _mark_error_event(event_uid, _OUTCOME_TO_STATUS.get(outcome, STATUS_FAILED))
