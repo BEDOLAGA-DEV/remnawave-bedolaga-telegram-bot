@@ -24,6 +24,7 @@ from ai_support_bot.app.services.knowledge_parser import compute_content_hash
 from ai_support_bot.app.services.openai_client import openai_client
 from ai_support_bot.app.services.rag_service import rag_service
 from ai_support_bot.app.services.response_rules import (
+    HAPP_RECOVERY,
     NOTICE,
     apps_answer,
     boundary_answer,
@@ -31,10 +32,12 @@ from ai_support_bot.app.services.response_rules import (
     compact_knowledge,
     deduplicate_answer,
     handoff_answer,
+    happ_recovery_step,
     is_payment_missing,
     is_topup_without_renewal,
     keeps_account_scope,
     mandatory_handoff,
+    manual_review_followup,
     payment_next_step,
     repeated_diagnostics,
     smalltalk_answer,
@@ -386,7 +389,17 @@ class SupportAgent:
             smalltalk = False
 
         forced_reason = mandatory_handoff(question, history)
-        direct_answer = None if forced_reason or image_url else boundary_answer(question) or apps_answer(question, history)
+        if forced_reason is None and support_state.get('manual_review_reason') and manual_review_followup(question):
+            forced_reason = support_state['manual_review_reason']
+        recovery_answer = None
+        recovery_state = dict(support_state)
+        if not image_url and forced_reason in {None, 'diagnostics_failed'} and support_state.get('issue') != 'payment_missing' and not is_payment_missing(question):
+            candidate, recovery_reason = happ_recovery_step(question, history, recovery_state)
+            if candidate and (forced_reason is None or candidate == HAPP_RECOVERY):
+                recovery_answer, forced_reason = candidate, None
+            elif recovery_reason:
+                forced_reason = recovery_reason
+        direct_answer = recovery_answer or (None if forced_reason or image_url else boundary_answer(question) or apps_answer(question, history))
         if switched_question == '' and not image_url:
             direct_answer = 'Напишите ваш новый вопрос.'
         if smalltalk and not forced_reason and not direct_answer:
@@ -412,6 +425,10 @@ class SupportAgent:
             support_state = {'issue': 'other'}
         if forced_reason == 'partnership':
             support_state = {'issue': 'other'}
+        if recovery_answer:
+            support_state['diagnostics'] = recovery_state['diagnostics']
+        if forced_reason in {'subscription_cancellation', 'unrecognized_charge'}:
+            support_state['manual_review_reason'] = forced_reason
 
         registration_refresh = None
         if support_state.get('issue') == 'payment_missing' and not forced_reason and not direct_answer:

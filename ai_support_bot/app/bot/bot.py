@@ -338,6 +338,9 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
         reason = {
             'repeated_diagnostics': 'ИИ повторяет уже предложенную диагностику без нового решения',
             'subscription_restricted': 'сообщение об ограничении или блокировке подписки',
+            'subscription_cancellation': 'запрос на отмену подписки или автоматических списаний',
+            'unrecognized_charge': 'пользователь сообщает о незнакомых списаниях без подключения услуги',
+            'diagnostics_failed': 'диагностика не помогла, требуется ручная проверка',
         }.get(result.get('escalation_reason'), reason)
         notify_text = (
             '⚠️ <b>Внимание: Обращение требует внимания оператора!</b>\n\n'

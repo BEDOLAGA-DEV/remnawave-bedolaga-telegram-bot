@@ -254,3 +254,59 @@ def test_other_subscription_messages_do_not_force_restriction_handoff(text):
     from ai_support_bot.app.services.response_rules import subscription_restricted
 
     assert not subscription_restricted(text)
+
+
+@pytest.mark.parametrize(('question', 'reason'), [
+    ('Отмените подписку', 'subscription_cancellation'),
+    ('Хочу отключить подписку, я ей не пользуюсь', 'subscription_cancellation'),
+    ('Можете отменить подписку?', 'subscription_cancellation'),
+    ('Прекратите списания', 'subscription_cancellation'),
+    ('Отпишите меня', 'subscription_cancellation'),
+    ('У меня снимают деньги, но я нечего не подключал, можете отменить подписку?', 'unrecognized_charge'),
+    ('Списали деньги без моего согласия', 'unrecognized_charge'),
+    ('Я не подписывался, а с карты сняли деньги', 'unrecognized_charge'),
+])
+def test_manual_cancellation_and_unknown_charges_are_escalated(question, reason):
+    assert mandatory_handoff(question, []) == reason
+
+
+@pytest.mark.parametrize('question', [
+    'Как отключить автопродление?',
+    'Как отменить подписку самостоятельно?',
+    'Не отменяйте мою подписку',
+    'Я не хочу отменить подписку',
+    'Почему списались деньги за мою подписку?',
+])
+def test_normal_questions_and_negated_cancellation_do_not_force_manual_review(question):
+    assert mandatory_handoff(question, []) is None
+
+
+def test_split_unknown_charge_report_is_understood_but_thanks_does_not_repeat_handoff():
+    history = [SimpleNamespace(role='user', content='Снимают деньги с карты')]
+    assert mandatory_handoff('Я не подписывался', history) == 'unrecognized_charge'
+    history.append(SimpleNamespace(role='user', content='Я не подписывался'))
+    assert mandatory_handoff('Спасибо', history) is None
+
+
+@pytest.mark.parametrize(('question', 'previous'), [
+    ('Не помогло, я в Incy', 'Обновите подписку и перезапустите устройство в Happ.'),
+    ('Не помогло', 'В Incy обновите подписку и перезапустите устройство.'),
+    ('Не помогло', 'Обновите страницу кабинета для проверки оплаты.'),
+])
+def test_happ_step_is_not_used_for_other_apps_or_account_help(question, previous):
+    from ai_support_bot.app.services.response_rules import happ_recovery_step
+
+    history = [SimpleNamespace(role='assistant', content=previous)]
+    answer, reason = happ_recovery_step(question, history, {})
+    assert answer is None
+    assert reason is None
+
+
+def test_explicit_denial_of_happ_does_not_trigger_its_settings():
+    from ai_support_bot.app.services.response_rules import happ_recovery_step
+
+    history = [SimpleNamespace(role='assistant', content='Обновите подписку в Happ и перезапустите устройство.')]
+    answer, reason = happ_recovery_step('Не помогло, это не Happ', history, {})
+    assert 'Какое VPN-приложение' in answer
+    assert 'TCP' not in answer
+    assert reason is None

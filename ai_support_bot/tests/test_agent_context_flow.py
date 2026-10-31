@@ -899,3 +899,96 @@ async def test_existing_database_adds_multiple_attachment_column_on_startup(flow
         )
         assert await agent_mod.crud.get_support_photos(db, conversation.id, 4242, {'attachment_message_id': message.id}) == ['one', 'two']
         assert await agent_mod.crud.get_support_photos(db, conversation.id, 9999, {'attachment_message_id': message.id}) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('question', [
+    'В App Store нет Happ, как установить?',
+    'Для скачивания в апп стор нет ни incy, ни happ. Есть ли веб версия? Как подключиться к впн без приложения?',
+    'В AppStore Incy недоступен в России',
+])
+async def test_missing_ios_clients_offer_belarus_store_region(flow, monkeypatch, question):
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(agent_mod, 'build_user_context', AsyncMock(side_effect=AssertionError('Unnecessary account read')))
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+    assert 'Беларусь' in result['answer']
+    assert 'Страна/регион' in result['answer']
+    assert 'https://support.apple.com/ru-ru/118283' in result['answer']
+    assert 'позже' not in result['answer']
+    assert not captured['prompts']
+    if 'без приложения' in question:
+        assert 'Веб-кабинет не заменяет приложение' in result['answer']
+
+
+@pytest.mark.asyncio
+async def test_cancellation_status_uses_persisted_manual_review_context(flow):
+    captured, agent_mod, Session = flow
+    from ai_support_bot.app.services import settings_store
+    await settings_store.set_value('CONTEXT_MESSAGES', '1')
+    for question in ('Отмените подписку', 'Отменили?', '?'):
+        async with Session() as db:
+            result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+        assert result['escalate']
+        assert result['escalation_reason'] == 'subscription_cancellation'
+        assert 'Что именно' not in result['answer']
+        assert 'пока не подтверждена' in result['answer']
+    assert not captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_happ_extra_diagnostics_are_offered_once_then_handed_off(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Обновите подписку, выберите другой сервер в Happ и перезапустите устройство.'
+    async with Session() as db:
+        first = await agent_mod.support_agent.generate_answer(db, 4242, 'В Happ VPN не работает')
+    assert not first['escalate']
+    async with Session() as db:
+        recovery = await agent_mod.support_agent.generate_answer(db, 4242, 'Не помогло')
+        conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        assert conversation.support_state['diagnostics']['happ_recovery_offered']
+    assert not recovery['escalate']
+    assert 'Пинг → выберите TCP' in recovery['answer']
+    assert 'Сброс пользовательских настроек' in recovery['answer']
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Всё равно не работает')
+    assert result['escalate']
+    assert result['escalation_reason'] == 'diagnostics_failed'
+    assert 'Сброс' not in result['answer']
+    assert len(captured['prompts']) == 1
+
+
+@pytest.mark.asyncio
+async def test_unknown_client_is_asked_before_happ_specific_recovery(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Обновите список серверов и перезапустите устройство.'
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4242, 'VPN не работает')
+    async with Session() as db:
+        clarification = await agent_mod.support_agent.generate_answer(db, 4242, 'Не помогло')
+    assert not clarification['escalate']
+    assert 'Какое VPN-приложение' in clarification['answer']
+    assert 'TCP' not in clarification['answer']
+    async with Session() as db:
+        recovery = await agent_mod.support_agent.generate_answer(db, 4242, 'Happ')
+    assert 'Сброс пользовательских настроек' in recovery['answer']
+    assert not recovery['escalate']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('question', [
+    'Не помогло, позовите человека',
+    'Happ: подписка ограничена, не помогло',
+    'Верните деньги',
+    'Сделал TCP-пинг и сброс пользовательских настроек в Happ, не помогло',
+])
+async def test_happ_recovery_does_not_delay_required_handoff_or_repeat_completed_steps(flow, question):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Обновите подписку в Happ и перезапустите устройство.'
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4242, 'Happ не подключается')
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+    assert result['escalate']
+    assert 'Сброс' not in result['answer']
+    assert len(captured['prompts']) == 1

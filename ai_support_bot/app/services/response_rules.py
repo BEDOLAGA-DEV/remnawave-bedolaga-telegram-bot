@@ -43,6 +43,8 @@ def starts_unrelated_question(question: str) -> bool:
 
 def conversation_topic(question: str) -> str | None:
     text = question.casefold()
+    if cancellation_request(question):
+        return 'payment_review'
     if is_subscription_refresh(question):
         return 'vpn'
     if is_payment_missing(question) or re.search(r'воз\w*рат.*(?:денег|средств)|верн\w*.*деньг|оплат|плат[её]ж|списал', text):
@@ -130,6 +132,18 @@ def smalltalk_answer(question: str) -> str | None:
 
 def mandatory_handoff(question: str, history: list) -> str | None:
     text = question.casefold()
+    recent_user = ' '.join(getattr(item, 'content', '') or '' for item in history[-6:] if item.role == 'user')
+    payment_context = text + ' ' + recent_user.casefold()
+    charge_pattern = r'спис\w*|снима\w*|снял\w*|снят\w*'
+    denial_pattern = r'не\s+(?:подписывал\w*|подключал\w*|оформлял\w*|заказывал\w*|давал\w* согласия)|без\s+(?:моего\s+)?согласия|незнаком\w* списан|не\s+мо[яё]\s+подписк'
+    if (
+        re.search(charge_pattern, payment_context)
+        and re.search(denial_pattern, payment_context)
+        and (re.search(charge_pattern, text) or re.search(denial_pattern, text) or manual_review_followup(question))
+    ):
+        return 'unrecognized_charge'
+    if cancellation_request(question) or (manual_review_followup(question) and cancellation_request(recent_user)):
+        return 'subscription_cancellation'
     if subscription_restricted(question):
         return 'subscription_restricted'
     if re.fullmatch(r'\s*(?:человек|оператор|админ)[!.?\s]*', text):
@@ -156,6 +170,66 @@ def mandatory_handoff(question: str, history: list) -> str | None:
     return None
 
 
+def cancellation_request(question: str) -> bool:
+    text = question.casefold()
+    if re.search(r'\bне\s+(?:хочу\s+)?(?:отмен|отключ|отпис)', text) or re.match(r'^\s*как\b', text):
+        return False
+    action = re.search(r'\b(?:отмените|отключите|уберите|отпишите|прекратите)\b|(?:хочу|прошу|можете|пожалуйста)\s+(?:мне\s+)?(?:отменить|отключить|отписать|прекратить)', text)
+    return bool(action and re.search(r'подписк|авто\w*плат|авто\w*продл|списан|списыва|снимают|отпишите\s+меня', text))
+
+
+def manual_review_followup(question: str) -> bool:
+    return bool(re.fullmatch(r'[?\s]+|\s*(?:уже\s+)?(?:отменили|отключили|отписали|ну что|не пользуюсь|я (?:им )?не пользуюсь|я не подписывался)[?!.\s]*', question, re.IGNORECASE))
+
+
+HAPP_RECOVERY = (
+    'Для Happ попробуйте ещё так:\n'
+    '• Настройки → Пинг → выберите TCP.\n'
+    '• Сохраните свою ссылку подписки. В самом конце настроек: Сброс → Сброс пользовательских настроек.\n'
+    '• Затем обновите подписку в приложении и перезапустите устройство.\n\n'
+    'Если после этих шагов не заработает, напишите — передам обращение команде.'
+)
+
+
+def happ_recovery_step(question: str, history: list, state: dict) -> tuple[str | None, str | None]:
+    progress = dict(state.get('diagnostics') or {})
+    failed = bool(re.search(r'не помог\w*|не работает|не заработал|та же ошибк|вс[её] равно|не уда[её]тся', question, re.IGNORECASE))
+    previous = next((item.content or '' for item in reversed(history) if item.role == 'assistant'), '')
+    context = question + ' ' + previous + ' ' + ' '.join(item.content or '' for item in history if item.role == 'user')
+    if not progress.get('awaiting_app') and not re.search(r'\b(?:vpn|впн|happ|incy|хапп|хэпп)\b|сервер', context, re.IGNORECASE):
+        return None, None
+    basic_advice = bool(re.search(r'обнов\w*|перезапуст\w*|перезагруз\w*|друг\w* сервер|смен\w* сервер', previous, re.IGNORECASE))
+    if not failed and not progress.get('awaiting_app'):
+        return None, None
+    client = None
+    for item in [question] + [item.content or '' for item in reversed(history) if item.role == 'user'] + [previous]:
+        pattern = r'\b(?:happ|incy|хапп|хэпп|инси|v2rayng|streisand|shadowrocket)\b'
+        stripped = re.sub(r'\bне\s+(?:в\s+)?' + pattern, '', item, flags=re.IGNORECASE)
+        names = re.findall(pattern, stripped, re.IGNORECASE)
+        if names:
+            if len({name.casefold() for name in names}) == 1:
+                client = 'happ' if names[0].casefold() in {'happ', 'хапп', 'хэпп'} else 'other'
+            break
+        if re.search(pattern, item, re.IGNORECASE):
+            break
+    attempted = progress.get('happ_recovery_offered') or bool(re.search(r'пинг.*tcp|tcp.*пинг|сброс.*(?:пользовательск|настро)', previous + '\n' + question, re.IGNORECASE | re.DOTALL))
+    if attempted and failed:
+        return None, 'diagnostics_failed'
+    if not (basic_advice or progress.get('awaiting_app') or re.search(r'вс[её].*(?:пробовал|сделал)', question, re.IGNORECASE)):
+        return None, None
+    if client == 'happ':
+        progress.update(happ_recovery_offered=True, awaiting_app=False)
+        state['diagnostics'] = progress
+        return HAPP_RECOVERY, None
+    if client is None and not progress.get('awaiting_app'):
+        progress['awaiting_app'] = True
+        state['diagnostics'] = progress
+        return 'Какое VPN-приложение вы используете? Это нужно, чтобы предложить следующий шаг именно для него.', None
+    if client is None and progress.get('awaiting_app') and (failed or re.search(r'не знаю|не помню', question, re.IGNORECASE)):
+        return None, 'diagnostics_failed'
+    return None, None
+
+
 def subscription_restricted(text: str) -> bool:
     return bool(re.search(r'подписк\w*\s+(?:(?:временно|сейчас)\s+)?(?:ограничена|заблокирована)\b', text, re.IGNORECASE))
 
@@ -179,6 +253,7 @@ def repeated_diagnostics(answer: str, question: str, history: list, has_image: b
         r'перезапуст|перезагруз', r'обнов\w*.*(?:сервер|подписк)|(?:сервер|подписк).*обнов',
         r'(?:друг\w*|смен\w*|выбер\w*).*сервер', r'wi.?fi|мобильн\w* сет|сотов\w*',
         r'импорт|заново добав|повторно добав', r'переустанов',
+        r'пинг.*tcp|tcp.*пинг', r'сброс.*настро',
     )
     current_actions = {i for i, pattern in enumerate(actions) if re.search(pattern, current)}
     prior_actions = {i for i, pattern in enumerate(actions) if re.search(pattern, prior)}
@@ -188,6 +263,10 @@ def repeated_diagnostics(answer: str, question: str, history: list, has_image: b
 def handoff_answer(reason: str, question: str) -> str:
     if reason == 'partnership':
         return 'Спасибо за предложение о сотрудничестве! Передаю его команде, пожалуйста, подождите.'
+    if reason == 'subscription_cancellation':
+        return 'Передаю запрос на отмену подписки команде для ручной проверки. Отмена пока не подтверждена.'
+    if reason == 'unrecognized_charge':
+        return 'Передаю обращение о незнакомых списаниях команде для ручной проверки и запроса на отключение. Отмена и возврат пока не подтверждены.'
     if not re.search(r'[а-яё]', question, re.IGNORECASE):
         return 'I am passing your request to the support team for review. Please wait.'
     return NOTICE
@@ -196,13 +275,30 @@ def handoff_answer(reason: str, question: str) -> str:
 def apps_answer(question: str, history: list) -> str | None:
     text = question.casefold()
     previous = ' '.join(getattr(item, 'content', '') or '' for item in history[-4:]).casefold()
-    missing = 'happ' in text and bool(re.search(r'нет|не (?:найти|вижу|отображ|доступ)', text)) and 'app store' in text
+    store_context = bool(re.search(r'app\s*store|апп\s*стор|апстор|эпп\s*стор', text))
+    missing = (
+        bool(re.search(r'\b(?:happ|incy)\b', text + ' ' + previous))
+        and bool(re.search(r'нет|недоступ|не (?:найти|вижу|отображ|доступ|могу скачать)', text))
+        and store_context
+    )
     app_request = bool(re.search(r'каки\w* приложени|како\w* (?:приложени|клиент)|что скачать|приложени\w* скачать', text))
     followup = bool(re.match(r'^а (?:для|на)\b', text)) and bool(re.search(r'каки\w* приложени|incy|shadowrocket|v2rayng', previous))
     if not (app_request or followup or missing):
         return None
     if missing:
-        return 'Если Happ не отображается в App Store, используйте Incy, Shadowrocket или Streisand. Доступность приложения зависит от региона магазина.'
+        prefix = (
+            'Для подключения этой VPN-подписки на iPhone нужен VPN-клиент. Веб-кабинет не заменяет приложение.\n\n'
+            if re.search(r'без приложени|веб.?верси|web.?верси', text) else ''
+        )
+        return prefix + (
+            'Если Incy или Happ недоступны в российском App Store, смените регион Apple Account на Беларусь:\n'
+            'Настройки → ваше имя → Медиаматериалы и покупки → Страна/регион → Беларусь '
+            '(в некоторых версиях iOS сначала «Просмотреть»). Следуйте указаниям Apple.\n\n'
+            'Затем снова откройте ссылку App Store в инструкции вашей подписки и попробуйте установить Incy или Happ. '
+            'Меняется регион магазина Apple Account, а не язык или регион iPhone.\n\n'
+            'Смене региона могут мешать остаток средств, подписки Apple или семейный доступ. '
+            'Условия и инструкция Apple: https://support.apple.com/ru-ru/118283'
+        )
     patterns = {'Android': r'android|андроид', 'iPhone/iPad': r'iphone|ipad|ios|айфон', 'Windows': r'windows|виндов', 'macOS': r'macos|макбук|mac\b'}
     platforms = [platform for platform, pattern in patterns.items() if re.search(pattern, text)] or list(CLIENTS)
     return '\n'.join(f'{platform}: {", ".join(CLIENTS[platform])}.' for platform in platforms)
