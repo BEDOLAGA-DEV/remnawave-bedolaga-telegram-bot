@@ -100,7 +100,7 @@ async def test_card_subscription_minimum_never_calls_provider(monkeypatch):
 @pytest.mark.parametrize(
     'reply',
     [
-        {'id': 'other', 'status': 'PENDING', 'payment_url': 'https://cispay.app/pay/a'},
+        {'id': '../invalid', 'status': 'PENDING', 'payment_url': 'https://cispay.app/pay/a'},
         {'id': 'sub-example', 'status': 'ACTIVE', 'payment_url': 'https://cispay.app/pay/a'},
         {'id': 'sub-example', 'status': 'PENDING', 'payment_url': 'http://cispay.app/pay/a'},
         {'id': 'sub-example', 'status': 'PENDING'},
