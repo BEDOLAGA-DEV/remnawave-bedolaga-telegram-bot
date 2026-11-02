@@ -64,6 +64,9 @@ class _Api:
     def __init__(self, known_ids) -> None:
         self.known_ids = set(known_ids)
 
+    async def get_user_devices_all(self, panel_user_id):
+        return {'total': 0, 'devices': []}
+
     async def get_user_by_id(self, panel_user_id):
         return SimpleNamespace(id=panel_user_id) if panel_user_id in self.known_ids else None
 

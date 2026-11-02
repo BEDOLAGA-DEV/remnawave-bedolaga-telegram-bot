@@ -52,6 +52,7 @@ from app.utils.logo_fingerprint import logo_version
 from app.utils.miniapp_buttons import build_miniapp_startapp_url
 from app.utils.promo_offer import build_promo_offer_hint, build_test_access_hint
 from app.utils.rich_buttons import render_keyboard_as_rich_html
+from app.utils.rich_media import prepare_rich_message
 from app.utils.subscription_time import local_days_until
 from app.utils.subscription_utils import get_happ_cryptolink_redirect_link
 from app.utils.timezone import format_local_datetime
@@ -391,6 +392,9 @@ def _connect_url(subscription) -> str:
         redirect_link = get_happ_cryptolink_redirect_link(crypto_link) if crypto_link else None
         if redirect_link:
             return redirect_link
+        # Rich HTML cannot open happ:// directly. Never replace encrypted
+        # delivery with the original subscription URL when the wrapper is absent.
+        return ''
     if settings.should_hide_subscription_link():
         return ''
     return getattr(subscription, 'subscription_url', None) or ''
@@ -652,10 +656,9 @@ def _strip_tg_time(rich_html: str) -> str:
 
 
 def _input_rich_message(rich_html: str, language: str | None) -> InputRichMessage:
-    return InputRichMessage(
-        html=rich_html,
+    return prepare_rich_message(
+        rich_html,
         is_rtl=True if (language or '').lower() in _RTL_LANGUAGES else None,
-        skip_entity_detection=True,
     )
 
 

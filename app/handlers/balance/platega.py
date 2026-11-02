@@ -15,6 +15,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -292,10 +293,9 @@ async def process_platega_payment_amount(
 
     if amount_kopeks < settings.PLATEGA_MIN_AMOUNT_KOPEKS:
         await message.answer(
-            texts.t(
-                'PLATEGA_AMOUNT_TOO_LOW',
-                'Минимальная сумма для оплаты через Platega: {amount}',
-            ).format(amount=settings.format_price(settings.PLATEGA_MIN_AMOUNT_KOPEKS)),
+            format_topup_amount_retry(
+                db_user.language, settings.PLATEGA_MIN_AMOUNT_KOPEKS, settings.PLATEGA_MAX_AMOUNT_KOPEKS, too_low=True
+            ),
             reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         await state.set_state(BalanceStates.waiting_for_amount)
@@ -303,10 +303,9 @@ async def process_platega_payment_amount(
 
     if amount_kopeks > settings.PLATEGA_MAX_AMOUNT_KOPEKS:
         await message.answer(
-            texts.t(
-                'PLATEGA_AMOUNT_TOO_HIGH',
-                'Максимальная сумма для оплаты через Platega: {amount}',
-            ).format(amount=settings.format_price(settings.PLATEGA_MAX_AMOUNT_KOPEKS)),
+            format_topup_amount_retry(
+                db_user.language, settings.PLATEGA_MIN_AMOUNT_KOPEKS, settings.PLATEGA_MAX_AMOUNT_KOPEKS, too_low=False
+            ),
             reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         await state.set_state(BalanceStates.waiting_for_amount)

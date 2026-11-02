@@ -407,14 +407,21 @@ async def sync_with_remnawave(db: AsyncSession, remnawave_squads: list[dict]) ->
                 continue
             filtered = [u for u in current if u not in removed_uuids]
             if len(filtered) != len(current):
-                tariff.allowed_squads = filtered
+                if filtered:
+                    tariff.allowed_squads = filtered
+                else:
+                    # [] means "all available servers", not "no servers".
+                    # Keep the explicit (now invalid) selection for the operator
+                    # and stop selling it instead of granting unrelated access.
+                    tariff.is_active = False
+                    logger.warning('Tariff disabled after all assigned squads were deleted', tariff_id=tariff.id)
                 tariff.updated_at = datetime.now(UTC)
                 cleaned_tariffs += 1
                 logger.info(
-                    '🧹 Тариф "%s" (ID: %s): удалены несуществующие сквады %s',
-                    tariff.name,
-                    tariff.id,
-                    [u for u in current if u in removed_uuids],
+                    'Tariff reconciled after assigned squads were deleted',
+                    tariff_id=tariff.id,
+                    removed_squads=[u for u in current if u in removed_uuids],
+                    selection_retained=not filtered,
                 )
 
         await db.execute(delete(ServerSquad).where(ServerSquad.id.in_(removed_ids)))

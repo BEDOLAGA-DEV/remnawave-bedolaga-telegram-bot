@@ -67,6 +67,7 @@ def harness(monkeypatch):
     """Один батч из одной подписки, gracce-lease разрешён, клиент — мок."""
     subscription = _subscription()
     api = AsyncMock()
+    api.get_user_devices_all.return_value = {'total': 0, 'devices': []}
 
     batches = [[subscription], []]
 

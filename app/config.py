@@ -706,7 +706,7 @@ class Settings(BaseSettings):
     NALOGO_INN: str | None = None
     NALOGO_PASSWORD: str | None = None
     NALOGO_DEVICE_ID: str | None = None
-    NALOGO_STORAGE_PATH: str = './nalogo_tokens.json'
+    NALOGO_STORAGE_PATH: str = './data/nalogo_tokens.json'
     NALOGO_PROXY_URL: str | None = None  # SOCKS proxy for nalog.ru; falls back to PROXY_URL if not set
     # Имя файла чека (без расширения) во вложении письма и в Telegram; {uuid} — id чека
     NALOGO_RECEIPT_FILENAME: str = 'receipt_{uuid}'
@@ -811,6 +811,21 @@ class Settings(BaseSettings):
     PLATEGA_WEBHOOK_HOST: str = '0.0.0.0'
     PLATEGA_WEBHOOK_PORT: int = 8086
     PLATEGA_RECURRENT_ENABLED: bool = False  # Рекуррентные СБП-подписки Platega (автопродление)
+
+    # Anore hosted checkout (RUB). Limits below are local operator policy.
+    ANORE_ENABLED: bool = False
+    ANORE_DISPLAY_NAME: str = 'Anore'
+    ANORE_API_URL: str = 'https://api.anore.cc/v1'
+    ANORE_API_KEY: str | None = None
+    ANORE_SECRET_KEY: str | None = None
+    ANORE_SHOP_ID: int | None = None
+    ANORE_PAYMENT_METHODS: str = 'sbp,card,yoomoney,crypto'
+    ANORE_MIN_AMOUNT_KOPEKS: int = 10000
+    ANORE_MAX_AMOUNT_KOPEKS: int = 100000000
+    ANORE_REQUEST_TIMEOUT: int = 30
+    ANORE_WEBHOOK_PATH: str = '/anore-webhook'
+    ANORE_SUCCESS_URL: str | None = None
+    ANORE_FAIL_URL: str | None = None
 
     WATA_ENABLED: bool = False
     WATA_DISPLAY_NAME: str = 'Wata'
@@ -960,18 +975,6 @@ class Settings(BaseSettings):
         '{"com.app.client.topup.100":10000,"com.app.client.topup.300":30000,"com.app.client.topup.500":50000}'
     )
 
-    # PayPear (paypear.ru)
-    PAYPEAR_ENABLED: bool = False
-    PAYPEAR_SHOP_ID: str | None = None
-    PAYPEAR_SECRET_KEY: str | None = None
-    PAYPEAR_DISPLAY_NAME: str = 'PayPear'
-    PAYPEAR_CURRENCY: str = 'RUB'
-    PAYPEAR_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
-    PAYPEAR_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
-    PAYPEAR_WEBHOOK_PATH: str = '/paypear-webhook'
-    PAYPEAR_RETURN_URL: str | None = None
-    PAYPEAR_PAYMENT_METHOD: str = 'sbp'  # bank_card, sbp, sberpay, tpay
-
     # RollyPay (rollypay.io)
     ROLLYPAY_ENABLED: bool = False
     ROLLYPAY_API_KEY: str | None = None  # X-API-Key header
@@ -1106,13 +1109,15 @@ class Settings(BaseSettings):
     CISPAY_MIN_AMOUNT_KOPEKS: int = 10000  # 100₽
     CISPAY_MAX_AMOUNT_KOPEKS: int = 10000000  # 100 000₽
     CISPAY_WEBHOOK_PATH: str = '/cispay-webhook'
-    # Счёт cisPay живёт 30 минут, после чего переходит в EXPIRED на стороне провайдера
+    # Legacy setting retained for compatibility; expiration comes from provider response.
     CISPAY_PAYMENT_LIFETIME_MINUTES: int = 30
     # Sub-методы cisPay (payment_method в запросе создания платежа)
     CISPAY_CARD_ENABLED: bool = False
     CISPAY_CARD_DISPLAY_NAME: str = 'Карта (CisPay)'
     CISPAY_SBP_ENABLED: bool = False
     CISPAY_SBP_DISPLAY_NAME: str = 'СБП (CisPay)'
+    CISPAY_CRYPTO_ENABLED: bool = False
+    CISPAY_CRYPTO_DISPLAY_NAME: str = 'Криптовалюта (CisPay)'
 
     # Cashera (api.cashera.cash, server-to-server; расчёты мерчанту в USDT, приём — только RUB)
     CASHERA_ENABLED: bool = False
@@ -3082,20 +3087,6 @@ class Settings(BaseSettings):
                 return None
         return None
 
-    def is_paypear_configured(self) -> bool:
-        """Есть ли учётные данные провайдера — без учёта флага включения."""
-        return self.PAYPEAR_SHOP_ID is not None and self.PAYPEAR_SECRET_KEY is not None
-
-    def is_paypear_enabled(self) -> bool:
-        return self.PAYPEAR_ENABLED and self.PAYPEAR_SHOP_ID is not None and self.PAYPEAR_SECRET_KEY is not None
-
-    def get_paypear_display_name(self) -> str:
-        name = (self.PAYPEAR_DISPLAY_NAME or '').strip()
-        return name or 'PayPear'
-
-    def get_paypear_display_name_html(self) -> str:
-        return html.escape(self.get_paypear_display_name())
-
     def is_rollypay_configured(self) -> bool:
         """Есть ли учётные данные провайдера — без учёта флага включения."""
         return self.ROLLYPAY_API_KEY is not None and self.ROLLYPAY_SIGNING_SECRET is not None
@@ -3276,7 +3267,12 @@ class Settings(BaseSettings):
     def is_cispay_enabled(self) -> bool:
         # Пустая строка так же непригодна, как None: с пустым ключом HMAC вебхука
         # тривиально подделывается, поэтому включаем только при непустых значениях.
-        return bool(self.CISPAY_ENABLED and self.CISPAY_SHOP_ID and self.CISPAY_API_KEY)
+        return bool(
+            self.CISPAY_ENABLED
+            and self.CISPAY_SHOP_ID
+            and self.CISPAY_API_KEY
+            and self.CISPAY_CURRENCY.upper() == 'RUB'
+        )
 
     def get_cispay_display_name(self) -> str:
         name = (self.CISPAY_DISPLAY_NAME or '').strip()
@@ -3284,6 +3280,25 @@ class Settings(BaseSettings):
 
     def get_cispay_display_name_html(self) -> str:
         return html.escape(self.get_cispay_display_name())
+
+    def get_cispay_methods(self) -> list[str]:
+        # Legacy generic setup permits fiat only; crypto always requires opt-in.
+        methods = []
+        if self.CISPAY_CARD_ENABLED:
+            methods.append('card')
+        if self.CISPAY_SBP_ENABLED:
+            methods.append('sbp')
+        if not methods:
+            methods = ['card', 'sbp']
+        if self.CISPAY_CRYPTO_ENABLED:
+            methods.append('crypto')
+        return methods
+
+    def is_cispay_crypto_enabled(self) -> bool:
+        return self.CISPAY_CRYPTO_ENABLED and self.is_cispay_enabled()
+
+    def get_cispay_crypto_display_name(self) -> str:
+        return (self.CISPAY_CRYPTO_DISPLAY_NAME or '').strip() or 'Криптовалюта (CisPay)'
 
     def is_cispay_card_enabled(self) -> bool:
         return self.CISPAY_CARD_ENABLED and self.is_cispay_enabled()
@@ -3379,6 +3394,35 @@ class Settings(BaseSettings):
         if not self.WEBHOOK_URL:
             return None
         return f'{self.WEBHOOK_URL.rstrip("/")}{self.CASHERA_WEBHOOK_PATH}'
+
+    def is_anore_configured(self) -> bool:
+        account_key = (self.ANORE_API_KEY or '').startswith('an_')
+        return bool(
+            self.ANORE_API_KEY
+            and self.ANORE_SECRET_KEY
+            and (not account_key or (self.ANORE_SHOP_ID is not None and self.ANORE_SHOP_ID > 0))
+        )
+
+    def is_anore_enabled(self) -> bool:
+        return self.ANORE_ENABLED and self.is_anore_configured() and bool(self.get_anore_methods())
+
+    def get_anore_methods(self) -> list[str]:
+        allowed = {'sbp', 'card', 'yoomoney', 'crypto'}
+        return list(
+            dict.fromkeys(
+                method.strip().lower()
+                for method in self.ANORE_PAYMENT_METHODS.split(',')
+                if method.strip().lower() in allowed
+            )
+        )
+
+    def get_anore_display_name(self) -> str:
+        from app.services.payment_method_config_service import get_display_name_override
+
+        return get_display_name_override('anore') or (self.ANORE_DISPLAY_NAME or '').strip() or 'Anore'
+
+    def get_anore_display_name_html(self) -> str:
+        return html.escape(self.get_anore_display_name())
 
     def is_tabpay_configured(self) -> bool:
         """Есть ли учётные данные провайдера — без учёта флага включения."""

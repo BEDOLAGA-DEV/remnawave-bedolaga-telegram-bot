@@ -87,14 +87,14 @@ services:
       # Логотип для сообщений
       - ./vpn_logo.png:/app/vpn_logo.png:ro
     ports:
-      - '${WEB_API_PORT:-8080}:8080'
+      - '${WEB_API_BIND:-127.0.0.1}:${WEB_API_PORT:-8080}:${WEB_API_PORT:-8080}'
     networks:
       - bot_network
     healthcheck:
       test:
         [
           'CMD-SHELL',
-          'python -c "import requests, os; requests.get(''http://localhost:8080/health'', headers={''X-API-Key'': os.environ.get(''WEB_API_DEFAULT_TOKEN'')}, timeout=5) or exit(1)"',
+          'python -c "import requests, os; requests.get(''http://localhost:'' + os.environ.get(''WEB_API_PORT'', ''8080'') + ''/health'', headers={''X-API-Key'': os.environ.get(''WEB_API_DEFAULT_TOKEN'')}, timeout=5) or exit(1)"',
         ]
       interval: 60s
       timeout: 10s

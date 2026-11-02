@@ -58,8 +58,12 @@ async def test_invalid_family_rejected_before_create_or_update(monkeypatch):
 
         tariff = await create_tariff(db, 'Верный', entitlement_family='main')
         with pytest.raises(ValueError, match='entitlement_family'):
-            await update_tariff(db, tariff, entitlement_family='no spaces')
+            await update_tariff(db, tariff, name='Другое имя', entitlement_family='no spaces')
         assert tariff.entitlement_family == 'main'
+        assert tariff.name == 'Верный'
+        await db.flush()
+        await db.refresh(tariff)
+        assert tariff.name == 'Верный'
 
 
 def test_admin_schemas_validate_family_and_preserve_unset():

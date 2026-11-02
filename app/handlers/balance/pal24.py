@@ -19,6 +19,7 @@ from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 from app.utils.timezone import format_local_datetime
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -353,22 +354,20 @@ async def process_pal24_payment_amount(
         return
 
     if amount_kopeks < settings.PAL24_MIN_AMOUNT_KOPEKS:
-        min_rubles = settings.PAL24_MIN_AMOUNT_KOPEKS / 100
         await message.answer(
-            f'❌ Минимальная сумма для оплаты через PayPalych: {min_rubles:.0f} ₽\n\n'
-            'Отправьте новую сумму пополнения числом в сообщении.',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language, settings.PAL24_MIN_AMOUNT_KOPEKS, settings.PAL24_MAX_AMOUNT_KOPEKS, too_low=True
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > settings.PAL24_MAX_AMOUNT_KOPEKS:
-        max_rubles = settings.PAL24_MAX_AMOUNT_KOPEKS / 100
         await message.answer(
-            (
-                f'❌ Максимальная сумма для оплаты через PayPalych: {max_rubles:,.0f} ₽\n\n'
-                'Отправьте новую сумму пополнения числом в сообщении.'
-            ).replace(',', ' '),
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language, settings.PAL24_MIN_AMOUNT_KOPEKS, settings.PAL24_MAX_AMOUNT_KOPEKS, too_low=False
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 

@@ -198,7 +198,7 @@ class TestGiftMenuVisibilityAndEmptyHistory:
             callbacks = _callbacks(reply_markup)
             assert 'gift_my' in callbacks
             assert 'gift_enter_code' in callbacks
-            assert 'gift_cancel' in callbacks
+            assert any(value.startswith('gift_cancel:') for value in callbacks)
 
     @pytest.mark.asyncio
     async def test_gift_catalog_disabled_sales_without_history_renders_activation_hub(
@@ -215,7 +215,7 @@ class TestGiftMenuVisibilityAndEmptyHistory:
             reply_markup = kwargs.get('reply_markup')
             callbacks = _callbacks(reply_markup)
             assert 'gift_enter_code' in callbacks
-            assert 'gift_cancel' in callbacks
+            assert any(value.startswith('gift_cancel:') for value in callbacks)
 
     @pytest.mark.asyncio
     async def test_gift_catalog_no_tariffs_includes_my_gifts_button(
@@ -233,7 +233,7 @@ class TestGiftMenuVisibilityAndEmptyHistory:
             callbacks = _callbacks(reply_markup)
             assert 'gift_my' in callbacks
             assert 'gift_enter_code' in callbacks
-            assert 'gift_cancel' in callbacks
+            assert any(value.startswith('gift_cancel:') for value in callbacks)
 
     @pytest.mark.asyncio
     async def test_gift_my_empty_history_renders_empty_state(self, mock_callback, mock_db_user, mock_db, memory_state):
@@ -245,7 +245,7 @@ class TestGiftMenuVisibilityAndEmptyHistory:
             assert 'нет оформленных подарков' in text.lower() or 'мои подарки' in text.lower()
             reply_markup = mock_callback.message.edit_text.call_args[1].get('reply_markup')
             callbacks = _callbacks(reply_markup)
-            assert 'gift_back_tariffs' in callbacks or 'gift_cancel' in callbacks
+            assert 'gift_back_tariffs' in callbacks or any(value.startswith('gift_cancel:') for value in callbacks)
 
 
 # ── Step 2: Pagination & Ownership Tests ────────────────────────────────────

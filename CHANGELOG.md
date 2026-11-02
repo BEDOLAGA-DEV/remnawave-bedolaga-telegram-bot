@@ -1,5 +1,65 @@
 # Changelog
 
+## [5.1.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.1.0...v5.1.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **cabinet:** исправлен вход через Telegram Login Widget после принятия обязательных документов: согласие больше не нарушает проверку подписи Telegram.
+* **payments:** CisPay в Telegram снова использует настройки бота независимо от настроек способов оплаты кабинета.
+* **payments:** Antilopay использует API v1 и RUB, запрашивает контакт покупателя; исправлены ранние уведомления, проверка платежей и повторное зачисление.
+* **subscription:** суточная подписка возобновляется с атомарным списанием; повторные запросы не списывают деньги второй раз. Trial и запрет продления проверяются на сервере.
+* **docker:** WEB_API_PORT учитывается при публикации и healthcheck; API по умолчанию доступен на localhost.
+* **release:** версия uv.lock обновляется вместе с приложением; CI проверяет согласованность релизных файлов до установки зависимостей.
+
+Обновлять вместе с Cabinet 1.81.1. Миграций БД нет. При внешнем reverse proxy проверьте WEB_API_BIND; новое значение по умолчанию — 127.0.0.1.
+
+## [5.1.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.0.0...v5.1.0) (2026-10-26)
+
+
+### New Features
+
+* **payments:** add Anore hosted checkout and update CisPay merchant integration ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+
+
+### Bug Fixes
+
+* **checkout:** завершение суточной покупки в Telegram удаляет только исходную версию сохранённой корзины вместе с её копиями и разрешением автопокупки. Новая корзина, выбор в диалоге и несвязанные покупки сохраняются, даже если пользователь успел изменить их во время синхронизации панели.
+* **devices:** при синхронизации конечного HWID-лимита удаляются лишние регистрации, сохраняются наиболее недавно активные устройства. Безлимит и регистрации в пределах лимита сохраняются. Ошибка очистки после оплаты отправляет синхронизацию на повтор без нового списания. Ограничение: отложенные операции Remnawave 3.4.3 могут восстановить удалённые HWID после проверки; строгий предел при конкурентных запросах пока не гарантирован. Подробности — [HWID-лимиты](docs/hwid-limit-reconciliation.md).
+* **wheel:** автоматические вероятности призов теперь рассчитываются из бюджета RTP с учётом стоимости спина и ручных выплат. Удалён минимальный вес, завышавший шанс дорогих призов; недостижимый RTP отмечается в логах. Это исправление меняет фактические выплаты существующих колёс: перед обновлением проверьте стоимость призов и ручные вероятности. RTP — математическое ожидание, а не гарантия выплаты на короткой серии спинов.
+* **wheel:** списание за спин сохраняется до повторной загрузки пользователя при выдаче приза. Синхронизация панели выполняется после сохранения спина в отдельной сессии, чтобы её commit/rollback не нарушал оплату, начисление приза и ответ пользователю.
+
+* **billing:** make checkout charges atomic and prevent duplicate cart and payment processing ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **cabinet:** restore authorization, support attachments and configurable payment behavior ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **deps:** update vulnerable Python dependencies ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **panel:** recover pending expiry, device and traffic operations without losing subscription identity ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+* **subscriptions:** preserve selected subscription, exact-day prices and paid limits across purchases and renewals ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+
+
+### Refactoring
+
+* **payments:** remove retired PayPear integration ([3857abb](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3857abbab08a0162d512252ec95797d758b2c0d1))
+
+## [5.0.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.16.0...v5.0.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **infra:** существующим установкам на PostgreSQL 15 после обновления нужно один раз выполнить make pg-upgrade, до этого база не запускается. Подробно: https://docs.bedolagam.ru/getting-started/postgresql-18-upgrade
+
+### New Features
+
+* **infra:** PostgreSQL 18 — перенос базы командой make pg-upgrade: резервная копия, перенос со сверкой всех таблиц и счётчиков, откат на старый том; сторож не даёт стартовать на пустой базе ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **infra:** Python 3.14 в образе бота ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+
+
+### Bug Fixes
+
+* **admin:** удаление подписки через массовые действия не падает на ленивой подгрузке подписок пользователя ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **deps:** pyjwt 2.15.1 закрывает уязвимости проверки ключей при входе через Telegram OIDC; обновлены starlette, uvicorn, alembic и SQLAlchemy 2.1 ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **reachability:** пачка проверок BSCHEK больше не запускает платную пробу дважды ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+* **start:** правила и политика конфиденциальности при регистрации больше не падают на HTML из редактора кабинета ([4b78751](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4b7875162a8bef394e1b096d9e65179d6683d4a9))
+
 ## [4.16.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v4.15.0...v4.16.0) (2026-09-29)
 
 

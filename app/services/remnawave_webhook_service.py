@@ -34,7 +34,12 @@ from app.database.crud.subscription import (
     reactivate_subscription,
     update_subscription_usage,
 )
-from app.database.crud.user import get_user_by_id, get_user_by_remnawave_id, get_user_by_telegram_id
+from app.database.crud.user import (
+    get_user_by_id,
+    get_user_by_remnawave_id,
+    get_user_by_telegram_id,
+    lock_user_for_update,
+)
 from app.database.models import Subscription, SubscriptionServer, SubscriptionStatus, User
 from app.external.remnawave_api import RemnaWaveAPIError, RemnaWaveInvalidUserIdError
 from app.localization.texts import get_texts
@@ -371,6 +376,12 @@ class RemnaWaveWebhookService:
     async def _process_user_event(self, db: AsyncSession, event_name: str, data: dict, handler: Any) -> bool:
         """Resolve user and execute user-scoped handler."""
         user, subscription = await self._resolve_user_and_subscription(db, data)
+        if user and event_name == 'user.deleted':
+            # A merge may commit after the first lookup, transferring identity
+            # and deleting the selected row. Serialize with merge, refresh, then
+            # resolve again before any destructive handler side effects.
+            await lock_user_for_update(db, user)
+            user, subscription = await self._resolve_user_and_subscription(db, data)
         if not user:
             panel_user_id, short_uuid = self._extract_panel_identity(data)
             logger.warning(
@@ -814,7 +825,17 @@ class RemnaWaveWebhookService:
         if panel_user_id is not None:
             filters.append(Subscription.remnawave_id == panel_user_id)
         if short_uuid:
-            filters.append(Subscription.remnawave_short_uuid == short_uuid)
+            short_filter = Subscription.remnawave_short_uuid == short_uuid
+            if panel_user_id is not None:
+                # A shortUuid fallback can recover missing numeric linkage, but
+                # cannot override a different, already bound panel account.
+                unbound = Subscription.remnawave_id.is_(None)
+                if not settings.is_multi_tariff_enabled():
+                    unbound = unbound & Subscription.user.has(
+                        User.remnawave_id.is_(None) | (User.remnawave_id == panel_user_id)
+                    )
+                short_filter = short_filter & (unbound | (Subscription.remnawave_id == panel_user_id))
+            filters.append(short_filter)
         return filters
 
     async def _find_subscription_by_panel_identity(
@@ -915,8 +936,10 @@ class RemnaWaveWebhookService:
         if not user:
             return None, None
 
-        # In multi-tariff mode, find subscription by panel identity (per-subscription)
-        if settings.is_multi_tariff_enabled() and (panel_user_id is not None or short_uuid):
+        # A panel identity addresses a subscription in BOTH modes. After a merge,
+        # telegramId can belong to the survivor while this event targets the old
+        # panel account; selecting the survivor by user_id would expire it.
+        if panel_user_id is not None or short_uuid:
             subscription = await self._find_subscription_by_panel_identity(
                 db, panel_user_id, short_uuid, user_id=user.id
             )
@@ -946,21 +969,33 @@ class RemnaWaveWebhookService:
                     subscription_user_id=fallback1_sub.user_id,
                     subscription_id=fallback1_sub.id,
                 )
-                # Do NOT return cross-user subscription — would mutate another user's data
-                return user, None
+                # Do NOT invoke handlers against a different current identity.
+                return None, None
 
-            # Fallback 2: all lookups exhausted
+            # Per-subscription lookups exhausted; only a proven legacy User ID
+            # may still authorize a single-subscription fallback below.
             logger.warning(
-                'Webhook: подписка не найдена ни по одному методу поиска, возвращаем (user, None)',
+                'Webhook: подписка не найдена по панельной идентичности, проверяем legacy-привязку пользователя',
                 panel_user_id=panel_user_id,
                 short_uuid=short_uuid,
                 user_id=user.id,
             )
 
+        if panel_user_id is not None or short_uuid:
+            # Legacy subscriptions may store their identity only on User.
+            # Reject unmatched explicit identities even after marker expiry.
+            if panel_user_id is None or panel_user_id != user.remnawave_id:
+                return None, None
+
         if settings.is_multi_tariff_enabled():
             # In multi-tariff mode, don't fall back to arbitrary subscription
             return user, None
         subscription = await get_subscription_by_user_id(db, user.id)
+        if subscription and (panel_user_id is not None or short_uuid):
+            if subscription.remnawave_id is not None and subscription.remnawave_id != panel_user_id:
+                return None, None
+            # shortUuid rotates on credential revocation. A matching numeric
+            # legacy User ID remains authoritative when the short key changed.
         return user, subscription
 
     # ------------------------------------------------------------------
@@ -1136,6 +1171,21 @@ class RemnaWaveWebhookService:
         if not subscription:
             # Подписка уже удалена из БД — фантомный хук от панели, игнорируем
             logger.info('Webhook user.expired: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
+            return
+
+        from app.database.crud.transaction import get_last_subscription_payment_at
+
+        snapshot = read_panel_user(data)
+        if snapshot.expire_at is None:
+            snapshot = replace(snapshot, expire_at=datetime.now(UTC))
+        paid_at = await get_last_subscription_payment_at(db, user.id)
+        if subscription.end_date > datetime.now(UTC) and panel_date_behind_paid_renewal(
+            subscription, snapshot, paid_at=paid_at
+        ):
+            from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+            remnawave_retry_queue.enqueue(subscription_id=subscription.id, user_id=user.id, action='update')
+            logger.info('Ignoring stale panel expiry while local renewal is pending', subscription_id=subscription.id)
             return
 
         # Суточные подписки управляются DailySubscriptionService.

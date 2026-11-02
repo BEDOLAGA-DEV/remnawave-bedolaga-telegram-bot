@@ -188,7 +188,19 @@ async def confirm_subscription_revoke(
                 return
 
     if subscription is None:
-        subscription = db_user.subscription
+        if settings.is_multi_tariff_enabled():
+            from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+            subscriptions = await get_active_subscriptions_by_user_id(db, db_user.id)
+            if len(subscriptions) != 1:
+                await callback.answer(
+                    texts.t('TARIFF_PURCHASE_SELECT_SUBSCRIPTION', 'Выберите подписку'), show_alert=True
+                )
+                return
+            subscription = subscriptions[0]
+            is_multi = True
+        else:
+            subscription = db_user.subscription
 
     if not subscription or not subscription.is_active:
         await callback.answer(
@@ -216,9 +228,9 @@ async def confirm_subscription_revoke(
 
     # Execute revoke
     sub_service = SubscriptionService()
-    new_url = await sub_service.revoke_subscription(db, subscription)
+    result = await sub_service.revoke_subscription(db, subscription)
 
-    if not new_url:
+    if not result:
         await callback.message.edit_text(
             texts.t('SUBSCRIPTION_REVOKE_ERROR', '❌ Ошибка при перевыпуске подписки. Попробуйте позже.'),
             reply_markup=InlineKeyboardMarkup(
@@ -245,7 +257,7 @@ async def confirm_subscription_revoke(
     if state and is_multi:
         await state.update_data(revoke_sub_id=None)
 
-    await callback.message.edit_text(
+    success_text = (
         texts.t(
             'SUBSCRIPTION_REVOKE_SUCCESS',
             (
@@ -254,7 +266,15 @@ async def confirm_subscription_revoke(
                 'Старая ссылка больше не действительна.\n\n'
                 'Все устройства были отключены.'
             ),
-        ),
+        )
+        if result.devices_reset
+        else texts.t(
+            'SUBSCRIPTION_REVOKE_PARTIAL_SUCCESS',
+            'Новая ссылка готова, старая больше не действует. Сбросить все устройства не удалось. Проверьте их в разделе устройств.',
+        )
+    )
+    await callback.message.edit_text(
+        success_text,
         reply_markup=_build_revoke_success_keyboard(db_user.language, multi_tariff=is_multi),
         parse_mode='HTML',
     )

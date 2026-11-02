@@ -57,7 +57,7 @@ async def get_subscription(
 
     subscription = await resolve_subscription(db, fresh_user, subscription_id)
 
-    if not subscription:
+    if not subscription or subscription.is_pending_trial:
         # Return 200 with has_subscription: false instead of 404
         return SubscriptionStatusResponse(has_subscription=False, subscription=None)
 

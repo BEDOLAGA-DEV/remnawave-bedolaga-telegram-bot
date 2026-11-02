@@ -194,10 +194,10 @@ def _subscription_to_response(
         daily_price_kopeks = getattr(subscription.tariff, 'daily_price_kopeks', None)
         # Ровно то, что списывается каждый день: только скидка группы. Промокод —
         # разовый, при покупке; вкладывать его в «цену за день» было бы обманом.
-        if daily_price_kopeks and daily_price_kopeks > 0 and user:
+        if daily_price_kopeks and daily_price_kopeks > 0:
             from app.services.pricing_engine import PricingEngine
 
-            daily_price_kopeks, _ = PricingEngine.daily_group_price(daily_price_kopeks, user)
+            daily_price_kopeks = PricingEngine.daily_subscription_price(subscription, subscription.tariff, user)
         if not tariff_name:  # Only set if not passed as parameter
             tariff_name = getattr(subscription.tariff, 'name', None)
         traffic_reset_mode = (

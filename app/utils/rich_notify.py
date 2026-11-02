@@ -25,7 +25,7 @@ import re
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNotFound
-from aiogram.types import InlineKeyboardMarkup, InputRichMessage
+from aiogram.types import InlineKeyboardMarkup
 
 from app.config import settings
 
@@ -33,6 +33,7 @@ from app.config import settings
 # а не наше — держим его в одном месте, чтобы значения не разъехались.
 from app.utils.rich_admin import RICH_TEXT_LIMIT
 from app.utils.rich_buttons import render_keyboard_as_rich_html
+from app.utils.rich_media import prepare_rich_message
 from app.utils.rich_menu import (
     _is_media_fetch_error,
     _looks_like_unsupported,
@@ -138,8 +139,8 @@ async def try_send_rich_notification(
     среди переносимых кнопок допустим.
 
     ``with_logo`` вставляет шапку с логотипом тем же способом, что и rich-меню:
-    публичной ссылкой в ``<img>``, а не загрузкой файла. Так уведомления
-    мониторинга не теряют логотип при переходе на rich.
+    публичный URL передаётся в ``media``, а ``<img>`` ссылается на его ID.
+    Так уведомления мониторинга не теряют логотип при переходе на rich.
 
     ``timeout`` ограничивает ОДНУ попытку. Он обязателен там, где отправка идёт
     по списку получателей: без него залипший запрос держит await до таймаута
@@ -162,7 +163,7 @@ async def try_send_rich_notification(
 
     kwargs: dict = {
         'chat_id': chat_id,
-        'rich_message': InputRichMessage(html=rich_html, skip_entity_detection=True),
+        'rich_message': prepare_rich_message(rich_html),
     }
     if reply_markup is not None:
         kwargs['reply_markup'] = reply_markup

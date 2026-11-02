@@ -16,6 +16,7 @@ from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 from app.utils.timezone import format_local_datetime
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -144,23 +145,23 @@ async def process_yookassa_payment_amount(
         return
 
     if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-        min_rubles = f'{settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
-        example_rubles = max(1, (settings.YOOKASSA_MIN_AMOUNT_KOPEKS + 99) // 100)
-        retry_hint = f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {min_rubles} ₽.'
-        if example_rubles <= 50000 and example_rubles * 100 <= settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-            retry_hint += f'\n\nНапример, отправьте: {example_rubles}'
         await message.answer(
-            f'❌ Минимальная сумма пополнения картой — {min_rubles} ₽.\n\n{retry_hint}',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language, settings.YOOKASSA_MIN_AMOUNT_KOPEKS, settings.YOOKASSA_MAX_AMOUNT_KOPEKS, too_low=True
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-        max_rubles = f'{settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
         await message.answer(
-            f'❌ Максимальная сумма пополнения картой — {max_rubles} ₽.\n\n'
-            f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не больше {max_rubles} ₽.',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language,
+                settings.YOOKASSA_MIN_AMOUNT_KOPEKS,
+                settings.YOOKASSA_MAX_AMOUNT_KOPEKS,
+                too_low=False,
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
@@ -304,23 +305,23 @@ async def process_yookassa_sbp_payment_amount(
         return
 
     if amount_kopeks < settings.YOOKASSA_MIN_AMOUNT_KOPEKS:
-        min_rubles = f'{settings.YOOKASSA_MIN_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
-        example_rubles = max(1, (settings.YOOKASSA_MIN_AMOUNT_KOPEKS + 99) // 100)
-        retry_hint = f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не меньше {min_rubles} ₽.'
-        if example_rubles <= 50000 and example_rubles * 100 <= settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-            retry_hint += f'\n\nНапример, отправьте: {example_rubles}'
         await message.answer(
-            f'❌ Минимальная сумма пополнения через СБП — {min_rubles} ₽.\n\n{retry_hint}',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language, settings.YOOKASSA_MIN_AMOUNT_KOPEKS, settings.YOOKASSA_MAX_AMOUNT_KOPEKS, too_low=True
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > settings.YOOKASSA_MAX_AMOUNT_KOPEKS:
-        max_rubles = f'{settings.YOOKASSA_MAX_AMOUNT_KOPEKS / 100:.2f}'.rstrip('0').rstrip('.')
         await message.answer(
-            f'❌ Максимальная сумма пополнения через СБП — {max_rubles} ₽.\n\n'
-            f'Чтобы продолжить, отправьте боту сообщение с суммой пополнения не больше {max_rubles} ₽.',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language,
+                settings.YOOKASSA_MIN_AMOUNT_KOPEKS,
+                settings.YOOKASSA_MAX_AMOUNT_KOPEKS,
+                too_low=False,
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 

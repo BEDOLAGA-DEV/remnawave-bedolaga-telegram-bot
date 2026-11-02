@@ -16,6 +16,7 @@ from app.services.payment_service import PaymentService, get_user_by_id as fetch
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 from app.utils.timezone import format_local_datetime
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -113,21 +114,19 @@ async def process_wata_payment_amount(
 
     if amount_kopeks < settings.WATA_MIN_AMOUNT_KOPEKS:
         await message.answer(
-            texts.t(
-                'WATA_AMOUNT_TOO_LOW',
-                'Минимальная сумма пополнения: {amount}',
-            ).format(amount=settings.format_price(settings.WATA_MIN_AMOUNT_KOPEKS)),
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language, settings.WATA_MIN_AMOUNT_KOPEKS, settings.WATA_MAX_AMOUNT_KOPEKS, too_low=True
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > settings.WATA_MAX_AMOUNT_KOPEKS:
         await message.answer(
-            texts.t(
-                'WATA_AMOUNT_TOO_HIGH',
-                'Максимальная сумма пополнения: {amount}',
-            ).format(amount=settings.format_price(settings.WATA_MAX_AMOUNT_KOPEKS)),
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language, settings.WATA_MIN_AMOUNT_KOPEKS, settings.WATA_MAX_AMOUNT_KOPEKS, too_low=False
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 

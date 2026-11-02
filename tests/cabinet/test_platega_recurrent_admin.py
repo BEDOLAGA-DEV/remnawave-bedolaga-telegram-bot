@@ -55,6 +55,7 @@ def _configure_gate(monkeypatch: pytest.MonkeyPatch, *, enabled: bool) -> None:
 def _subscription(**overrides) -> SimpleNamespace:
     base = dict(
         id=42,
+        remnawave_id=None,
         status='active',
         is_trial=False,
         start_date=None,

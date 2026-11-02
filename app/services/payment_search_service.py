@@ -15,6 +15,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.types import String as SAString
 
 from app.database.models import (
+    AnorePayment,
     AntilopayPayment,
     AuraPayPayment,
     CasheraPayment,
@@ -33,7 +34,6 @@ from app.database.models import (
     Pal24Payment,
     ParityPayPayment,
     PaymentMethod,
-    PayPearPayment,
     PlategaPayment,
     RioPayPayment,
     RollyPayPayment,
@@ -45,6 +45,7 @@ from app.database.models import (
     WataPayment,
     YooKassaPayment,
 )
+from app.services.landing_payment_records import exclude_landing_duplicates, fetch_landing_payments
 from app.services.payment_verification_service import (
     PendingPayment,
     _build_record,
@@ -695,39 +696,6 @@ async def _search_overpay(db: AsyncSession, params: SearchParams) -> list[Pendin
     return records
 
 
-async def _search_paypear(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
-    stmt = select(PayPearPayment).options(selectinload(PayPearPayment.user)).order_by(desc(PayPearPayment.created_at))
-    stmt = _apply_date_filter(stmt, PayPearPayment.created_at, params.cutoff, params.upper_bound)
-
-    if params.search:
-        kind = _detect_user_search_kind(params.search)
-        if kind == _UserSearchKind.INVOICE:
-            conditions = [
-                PayPearPayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
-                PayPearPayment.paypear_id.ilike(f'%{_escape_like(params.search)}%'),
-            ]
-            stmt = stmt.where(or_(*conditions))
-        else:
-            stmt = _apply_user_join_filter(stmt, PayPearPayment, kind, params.search)
-
-    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
-    result = await db.execute(stmt)
-    records: list[PendingPayment] = []
-    for payment in result.scalars().all():
-        record = _build_record(
-            PaymentMethod.PAYPEAR,
-            payment,
-            identifier=payment.order_id,
-            amount_kopeks=payment.amount_kopeks,
-            status=payment.status or '',
-            is_paid=bool(payment.is_paid),
-            expires_at=getattr(payment, 'expires_at', None),
-        )
-        if record:
-            records.append(record)
-    return records
-
-
 async def _search_rollypay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
     stmt = (
         select(RollyPayPayment).options(selectinload(RollyPayPayment.user)).order_by(desc(RollyPayPayment.created_at))
@@ -1039,6 +1007,39 @@ async def _search_tabpay(db: AsyncSession, params: SearchParams) -> list[Pending
     return records
 
 
+async def _search_anore(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
+    stmt = select(AnorePayment).options(selectinload(AnorePayment.user)).order_by(desc(AnorePayment.created_at))
+    stmt = _apply_date_filter(stmt, AnorePayment.created_at, params.cutoff, params.upper_bound)
+
+    if params.search:
+        kind = _detect_user_search_kind(params.search)
+        if kind == _UserSearchKind.INVOICE:
+            conditions = [
+                AnorePayment.order_id.ilike(f'%{_escape_like(params.search)}%'),
+                AnorePayment.anore_payment_id.ilike(f'%{_escape_like(params.search)}%'),
+            ]
+            stmt = stmt.where(or_(*conditions))
+        else:
+            stmt = _apply_user_join_filter(stmt, AnorePayment, kind, params.search)
+
+    stmt = stmt.limit(MAX_RECORDS_PER_PROVIDER)
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        record = _build_record(
+            PaymentMethod.ANORE,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _search_cispay(db: AsyncSession, params: SearchParams) -> list[PendingPayment]:
     stmt = select(CisPayPayment).options(selectinload(CisPayPayment.user)).order_by(desc(CisPayPayment.created_at))
     stmt = _apply_date_filter(stmt, CisPayPayment.created_at, params.cutoff, params.upper_bound)
@@ -1174,7 +1175,7 @@ async def _search_platega_recurring(db: AsyncSession, params: SearchParams) -> l
             PaymentMethod.PLATEGA_RECURRENT,
             transaction,
             identifier=transaction.external_id or str(transaction.id),
-            amount_kopeks=transaction.amount_kopeks,
+            amount_kopeks=abs(transaction.amount_kopeks),
             status='paid' if transaction.is_completed else 'pending',
             is_paid=bool(transaction.is_completed),
         )
@@ -1201,7 +1202,6 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.RIOPAY: _search_riopay,
     PaymentMethod.SEVERPAY: _search_severpay,
     PaymentMethod.OVERPAY: _search_overpay,
-    PaymentMethod.PAYPEAR: _search_paypear,
     PaymentMethod.ROLLYPAY: _search_rollypay,
     PaymentMethod.AURAPAY: _search_aurapay,
     PaymentMethod.ETOPLATEZHI: _search_etoplatezhi,
@@ -1211,6 +1211,7 @@ _PROVIDER_SEARCH_MAP: dict[PaymentMethod, Any] = {
     PaymentMethod.LAVA: _search_lava,
     PaymentMethod.CISPAY: _search_cispay,
     PaymentMethod.CASHERA: _search_cashera,
+    PaymentMethod.ANORE: _search_anore,
     PaymentMethod.TABPAY: _search_tabpay,
     PaymentMethod.PARITYPAY: _search_paritypay,
     PaymentMethod.TELEGRAM_STARS: _search_stars,
@@ -1250,6 +1251,17 @@ async def search_payments(
     for batch in provider_results:
         all_records.extend(batch)
 
+    all_records.extend(
+        await fetch_landing_payments(
+            db,
+            params.cutoff,
+            upper_bound=params.upper_bound,
+            search=params.search,
+            method=params.method_filter,
+            limit=MAX_RECORDS_PER_PROVIDER,
+        )
+    )
+    all_records = await exclude_landing_duplicates(db, all_records)
     # Apply status filter in Python (status classification depends on provider logic)
     if params.status_filter != StatusFilter.ALL:
         all_records = [r for r in all_records if _classify_status(r) == params.status_filter]
@@ -1297,6 +1309,19 @@ async def search_payments_stats(
         all_records = []
         for search_fn in _PROVIDER_SEARCH_MAP.values():
             all_records.extend(await search_fn(db, stats_params))
+
+    all_records.extend(
+        await fetch_landing_payments(
+            db,
+            stats_params.cutoff,
+            upper_bound=stats_params.upper_bound,
+            search=stats_params.search,
+            method=stats_params.method_filter,
+            limit=MAX_RECORDS_PER_PROVIDER,
+        )
+    )
+
+    all_records = await exclude_landing_duplicates(db, all_records)
 
     # Classify
     pending_count = 0

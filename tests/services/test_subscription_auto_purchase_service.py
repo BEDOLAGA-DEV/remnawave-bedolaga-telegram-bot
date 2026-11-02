@@ -26,6 +26,7 @@ def _grant_cart_topup_intent(monkeypatch):
     Тихая авто-покупка после пополнения теперь срабатывает только при наличии этой
     метки; тест, проверяющий ПРОПУСК без намерения, переопределяет фикстуру явно.
     """
+    monkeypatch.setattr('app.database.crud.transaction.emit_transaction_side_effects', AsyncMock())
     monkeypatch.setattr(
         'app.services.subscription_auto_purchase_service.user_cart_service.has_topup_intent',
         AsyncMock(return_value=True),
@@ -55,6 +56,7 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
     monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 42
     user.telegram_id = 4242
     user.balance_kopeks = 200_000
@@ -175,7 +177,7 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
     )
     delete_cart_mock = AsyncMock()
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.user_cart_service.delete_user_cart',
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_processed_cart',
         delete_cart_mock,
     )
     clear_draft_mock = AsyncMock()
@@ -215,7 +217,7 @@ async def test_auto_purchase_saved_cart_after_topup_success(monkeypatch):
     result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=bot)
 
     assert result is True
-    delete_cart_mock.assert_awaited_once_with(user.id)
+    delete_cart_mock.assert_awaited_once_with(user.id, cart_data)
     clear_draft_mock.assert_awaited_once_with(user.id)
     bot.send_message.assert_awaited()
     admin_service_mock.send_subscription_purchase_notification.assert_awaited()
@@ -238,6 +240,7 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     subscription.connected_squads = ['squad-a']
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 7
     user.telegram_id = 7007
     user.balance_kopeks = 200_000
@@ -295,7 +298,7 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
     # Корзина продления привязана к подписке -> удаляется per-subscription ключ
     delete_cart_mock = AsyncMock()
     monkeypatch.setattr(
-        'app.services.subscription_auto_purchase_service.user_cart_service.delete_subscription_cart',
+        'app.services.subscription_auto_purchase_service.user_cart_service.delete_processed_cart',
         delete_cart_mock,
     )
     monkeypatch.setattr(
@@ -380,6 +383,7 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
 
     bot = AsyncMock()
     db_session = AsyncMock(spec=AsyncSession)
+    db_session.scalar.return_value = subscription
 
     result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=bot)
 
@@ -391,11 +395,12 @@ async def test_auto_purchase_saved_cart_after_topup_extension(monkeypatch):
         cart_data['description'],
         consume_promo_offer=True,
         mark_as_paid_subscription=True,
+        commit=False,
     )
     assert subscription.device_limit == 2
     assert subscription.traffic_limit_gb == 500
     assert 'squad-b' in subscription.connected_squads
-    delete_cart_mock.assert_awaited_once_with(user.id, subscription.id)
+    delete_cart_mock.assert_awaited_once_with(user.id, cart_data)
     clear_draft_mock.assert_awaited_once_with(user.id)
     admin_service_mock.send_subscription_extension_notification.assert_awaited()
     bot.send_message.assert_awaited()
@@ -420,6 +425,7 @@ def _prepare_extend_race_guard_scenario(monkeypatch, *, recent_transactions: lis
     subscription.connected_squads = ['squad-a']
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 820
     user.telegram_id = 820820
     user.balance_kopeks = 200_000
@@ -561,7 +567,7 @@ async def test_race_guard_fresh_updated_at_without_subscription_payment_allows_p
     )
 
     result = await auto_purchase_saved_cart_after_topup(
-        AsyncMock(spec=AsyncSession),
+        AsyncMock(spec=AsyncSession, scalar=AsyncMock(return_value=_subscription)),
         user,
         bot=AsyncMock(),
     )
@@ -586,7 +592,7 @@ async def test_race_guard_fresh_updated_at_with_subscription_payment_skips_purch
     )
 
     result = await auto_purchase_saved_cart_after_topup(
-        AsyncMock(spec=AsyncSession),
+        AsyncMock(spec=AsyncSession, scalar=AsyncMock(return_value=_subscription)),
         user,
         bot=AsyncMock(),
     )
@@ -613,6 +619,7 @@ async def test_auto_purchase_trial_preserved_on_insufficient_balance(monkeypatch
     subscription.connected_squads = []
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 99
     user.telegram_id = 9999
     # ИСПРАВЛЕНО: Баланс достаточный для первой проверки (строка 243),
@@ -700,6 +707,7 @@ async def test_auto_purchase_trial_preserved_on_insufficient_balance(monkeypatch
     )
 
     db_session = AsyncMock(spec=AsyncSession)
+    db_session.scalar.return_value = subscription
     bot = AsyncMock()
 
     result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=bot)
@@ -728,6 +736,7 @@ async def test_auto_purchase_trial_converted_after_successful_extension(monkeypa
     subscription.connected_squads = []
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 88
     user.telegram_id = 8888
     user.balance_kopeks = 200_000  # Достаточно денег
@@ -843,6 +852,7 @@ async def test_auto_purchase_trial_converted_after_successful_extension(monkeypa
     )
 
     db_session = AsyncMock(spec=AsyncSession)
+    db_session.scalar.return_value = subscription
     db_session.commit = AsyncMock()  # Важно! Отслеживаем commit
     db_session.refresh = AsyncMock()  # ИСПРАВЛЕНО: Добавлен мок для refresh
     bot = AsyncMock()
@@ -874,6 +884,7 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
     subscription.connected_squads = []
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 77
     user.telegram_id = 7777
     user.balance_kopeks = 200_000  # Достаточно денег
@@ -966,8 +977,7 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
         'app.services.subscription_auto_purchase_service.user_cart_service.get_all_subscription_carts',
         AsyncMock(return_value=[]),
     )
-    # Компенсирующий возврат: баланс уже был списан и закоммичен, при ошибке продления
-    # деньги обязаны вернуться пользователю.
+    # Debit and extension now share a transaction; rollback must not create a refund.
     refund_mock = AsyncMock()
     monkeypatch.setattr(
         'app.database.crud.user.add_user_balance',
@@ -975,6 +985,7 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
     )
 
     db_session = AsyncMock(spec=AsyncSession)
+    db_session.scalar.return_value = subscription
     db_session.rollback = AsyncMock()  # Важно! Отслеживаем rollback
     db_session.refresh = AsyncMock()  # ИСПРАВЛЕНО: Добавлен мок для refresh
     bot = AsyncMock()
@@ -985,7 +996,8 @@ async def test_auto_purchase_trial_preserved_on_extension_failure(monkeypatch):
     assert result is False  # Автопокупка не удалась
     assert subscription.is_trial is True  # ТРИАЛ СОХРАНЁН!
     db_session.rollback.assert_awaited()  # ROLLBACK БЫЛ ВЫЗВАН!
-    refund_mock.assert_awaited()  # КОМПЕНСИРУЮЩИЙ ВОЗВРАТ СРЕДСТВ ВЫПОЛНЕН!
+    refund_mock.assert_not_awaited()
+    db_session.commit.assert_not_awaited()
 
 
 async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
@@ -1011,6 +1023,7 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
     subscription.tariff_id = None  # Триал без тарифа
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 66
     user.telegram_id = 6666
     user.balance_kopeks = 200_000
@@ -1144,6 +1157,7 @@ async def test_auto_purchase_trial_remaining_days_transferred(monkeypatch):
     )
 
     db_session = AsyncMock(spec=AsyncSession)
+    db_session.scalar.return_value = subscription
     db_session.commit = AsyncMock()
     db_session.refresh = AsyncMock()  # ИСПРАВЛЕНО: Добавлен мок для refresh
     bot = AsyncMock()
@@ -1203,6 +1217,7 @@ async def test_auto_purchase_skipped_without_topup_intent(monkeypatch):
     )
 
     user = MagicMock(spec=User)
+    user.restriction_subscription = False
     user.id = 555
     user.balance_kopeks = 500_000
 

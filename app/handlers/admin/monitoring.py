@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import html
 from datetime import UTC, date, datetime, timedelta
 
@@ -1099,6 +1100,23 @@ async def nalogo_force_process_callback(callback: CallbackQuery):
         await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
 
 
+def _nalogo_pending_token(payment_id: str) -> str:
+    # Stable across refresh/restart, bounded by Telegram's 64-byte callback limit.
+    return 'v1_' + hashlib.sha256(payment_id.encode()).hexdigest()[:32]
+
+
+async def _resolve_nalogo_pending_id(service, token: str) -> str | None:
+    receipts = await service.get_pending_verification_receipts()
+    matches = {
+        payment_id
+        for receipt in receipts
+        if isinstance(payment_id := receipt.get('payment_id'), str)
+        and (payment_id == token or _nalogo_pending_token(payment_id) == token)
+    }
+    # Never prefix-match old truncated callbacks or choose between hash collisions.
+    return matches.pop() if len(matches) == 1 else None
+
+
 @router.callback_query(F.data == 'admin_mon_nalogo_pending')
 @admin_required
 async def nalogo_pending_callback(callback: CallbackQuery):
@@ -1133,14 +1151,11 @@ async def nalogo_pending_callback(callback: CallbackQuery):
             text += '\n'
 
             # Кнопки для каждого чека
+            token = _nalogo_pending_token(payment_id)
             buttons.append(
                 [
-                    InlineKeyboardButton(
-                        text=f'✅ Создан ({i})', callback_data=f'admin_nalogo_verified:{payment_id[:30]}'
-                    ),
-                    InlineKeyboardButton(
-                        text=f'🔄 Отправить ({i})', callback_data=f'admin_nalogo_retry:{payment_id[:30]}'
-                    ),
+                    InlineKeyboardButton(text=f'✅ Создан ({i})', callback_data=f'admin_nalogo_verified:{token}'),
+                    InlineKeyboardButton(text=f'🔄 Отправить ({i})', callback_data=f'admin_nalogo_retry:{token}'),
                 ]
             )
 
@@ -1167,8 +1182,13 @@ async def nalogo_mark_verified_callback(callback: CallbackQuery):
     try:
         from app.services.nalogo_service import NaloGoService
 
-        payment_id = callback.data.split(':', 1)[1]
+        token = callback.data.split(':', 1)[1]
         nalogo_service = NaloGoService()
+
+        payment_id = await _resolve_nalogo_pending_id(nalogo_service, token)
+        if payment_id is None:
+            await callback.answer('❌ Чек не найден или кнопка устарела. Обновите список чеков.', show_alert=True)
+            return
 
         # Помечаем как проверенный (чек был создан)
         removed = await nalogo_service.mark_pending_as_verified(payment_id, receipt_uuid=None, was_created=True)
@@ -1192,8 +1212,13 @@ async def nalogo_retry_callback(callback: CallbackQuery):
     try:
         from app.services.nalogo_service import NaloGoService
 
-        payment_id = callback.data.split(':', 1)[1]
+        token = callback.data.split(':', 1)[1]
         nalogo_service = NaloGoService()
+
+        payment_id = await _resolve_nalogo_pending_id(nalogo_service, token)
+        if payment_id is None:
+            await callback.answer('❌ Чек не найден или кнопка устарела. Обновите список чеков.', show_alert=True)
+            return
 
         await callback.answer('🔄 Отправляю чек...', show_alert=False)
 

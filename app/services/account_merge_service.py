@@ -9,13 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.auth_methods import OAUTH_PROVIDER_COLUMNS, compute_auth_methods
-from app.database.crud.user import get_user_by_id
+from app.database.crud.user import get_user_by_id, lock_user_for_update
 from app.database.models import (
     AccessPolicy,
     AdminAuditLog,
     AdminRole,
     AdvertisingCampaign,
     AdvertisingCampaignRegistration,
+    AnorePayment,
     BroadcastHistory,
     ButtonClickLog,
     CabinetRefreshToken,
@@ -89,6 +90,7 @@ _PAYMENT_MODELS: tuple[type, ...] = (
     PlategaPayment,
     RioPayPayment,
     SeverPayPayment,
+    AnorePayment,
     WataPayment,
     YooKassaPayment,
 )
@@ -739,10 +741,17 @@ async def execute_merge(
 
     if not primary:
         raise ValueError(f'Основной пользователь (id={primary_user_id}) не найден')
-    if primary.status == UserStatus.DELETED.value:
-        raise ValueError(f'Основной пользователь (id={primary_user_id}) удалён')
     if not secondary:
         raise ValueError(f'Вторичный пользователь (id={secondary_user_id}) не найден')
+
+    # Refresh before transferring identity: with autoflush=False a later refresh
+    # discards pending login changes. Stable order prevents opposing merge locks.
+    if isinstance(primary, User):
+        for account in sorted((primary, secondary), key=lambda account: account.id):
+            await lock_user_for_update(db, account)
+
+    if primary.status == UserStatus.DELETED.value:
+        raise ValueError(f'Основной пользователь (id={primary_user_id}) удалён')
     if secondary.status == UserStatus.DELETED.value:
         raise ValueError(f'Вторичный пользователь (id={secondary_user_id}) уже удалён')
 
@@ -845,15 +854,6 @@ async def execute_merge(
     # 4. Суммируем баланс (включая отрицательный — долг не должен исчезать)
     transferred_kopeks = secondary.balance_kopeks
     if transferred_kopeks != 0:
-        from app.database.models import User as UserModel
-
-        if isinstance(primary, UserModel):
-            from app.database.crud.user import lock_user_for_update
-
-            primary = await lock_user_for_update(db, primary)
-            secondary = await lock_user_for_update(db, secondary)
-            # Re-read after lock in case concurrent payment changed it
-            transferred_kopeks = secondary.balance_kopeks
         primary.balance_kopeks += transferred_kopeks
         secondary.balance_kopeks = 0
         logger.info(

@@ -15,6 +15,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -184,23 +185,15 @@ async def process_overpay_payment_amount(
 
     if amount_kopeks < min_amount:
         await message.answer(
-            texts.t(
-                'PAYMENT_AMOUNT_TOO_LOW',
-                'Минимальная сумма пополнения: {min_amount}₽',
-            ).format(min_amount=min_amount // 100),
-            reply_markup=get_back_keyboard(db_user.language),
-            parse_mode='HTML',
+            format_topup_amount_retry(db_user.language, min_amount, max_amount, too_low=True),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > max_amount:
         await message.answer(
-            texts.t(
-                'PAYMENT_AMOUNT_TOO_HIGH',
-                'Максимальная сумма пополнения: {max_amount}₽',
-            ).format(max_amount=max_amount // 100),
-            reply_markup=get_back_keyboard(db_user.language),
-            parse_mode='HTML',
+            format_topup_amount_retry(db_user.language, min_amount, max_amount, too_low=False),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
@@ -225,8 +218,15 @@ async def process_overpay_payment_amount(
                 texts.t(
                     'OVERPAY_INT_AMOUNT_TOO_LOW',
                     'Минимальная сумма для оплаты в евро: {min_eur}€ (≈ {min_rub}₽)',
-                ).format(min_eur=f'{settings.OVERPAY_INT_MIN_EUR:g}', min_rub=min_rub),
-                reply_markup=get_back_keyboard(db_user.language),
+                ).format(min_eur=f'{settings.OVERPAY_INT_MIN_EUR:g}', min_rub=min_rub)
+                + '\n\n'
+                + format_topup_amount_retry(
+                    db_user.language,
+                    max(min_amount, min_rub * 100),
+                    max_amount,
+                    too_low=True,
+                ),
+                reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
                 parse_mode='HTML',
             )
             return

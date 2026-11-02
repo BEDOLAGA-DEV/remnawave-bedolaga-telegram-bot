@@ -24,6 +24,7 @@ import pytest
 
 from app.config import settings
 from app.database.models import Base, Subscription, SubscriptionStatus, Tariff, User
+from tests.fixtures.paid_reset_panel import PaidResetPanelMixin
 from tests.fixtures.sqlite_memory import memory_session
 
 
@@ -35,10 +36,11 @@ BALANCE_KOPEKS = 100_000
 USED_TRAFFIC_GB = 90.0
 
 
-class _FakePanelSync:
+class _FakePanelSync(PaidResetPanelMixin):
     """Подменяет SubscriptionService: запоминает, с чем к нему пришли."""
 
     def __init__(self) -> None:
+        self.init_reset_panel()
         self.calls: list[dict] = []
         self.enabled: list[int] = []
 
@@ -113,12 +115,17 @@ async def _resume_after_topup(
 ):
     import app.services.subscription_auto_purchase_service as auto_purchase
     import app.services.subscription_renewal_service as renewal_module
+    import app.services.subscription_service as sync_module
 
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset_on_payment)
     monkeypatch.setattr(settings, 'DEFAULT_TRAFFIC_RESET_STRATEGY', 'MONTH')
+    monkeypatch.setattr(settings, 'AUTO_PURCHASE_AFTER_TOPUP_ENABLED', True)
+    monkeypatch.setattr(settings, 'DAILY_SUBSCRIPTIONS_ENABLED', True)
 
     panel = _FakePanelSync()
     monkeypatch.setattr(auto_purchase, 'SubscriptionService', lambda: panel)
+    monkeypatch.setattr(sync_module, 'SubscriptionService', lambda: panel)
+    panel.reset_panel_user.status = 'LIMITED' if status == SubscriptionStatus.LIMITED.value else 'ACTIVE'
     monkeypatch.setattr(renewal_module, 'with_admin_notification_service', AsyncMock(return_value=None))
 
     db.add_all(_rows(traffic_reset_mode=traffic_reset_mode, status=status))
@@ -139,7 +146,8 @@ async def test_topup_resume_resets_traffic_when_enabled(monkeypatch):
 
     assert resumed is True
     assert panel.calls, 'синхронизация с панелью не выполнялась'
-    assert panel.calls[0]['reset_traffic'] is True
+    assert panel.calls[0]['reset_traffic'] is False
+    assert panel.reset_calls == [9001]
     assert panel.calls[0]['reset_reason']
     assert subscription.traffic_used_gb == 0.0
     assert subscription.status == SubscriptionStatus.ACTIVE.value
@@ -185,7 +193,8 @@ async def test_topup_resume_lifts_panel_limit_after_paid_reset(monkeypatch):
         )
 
     assert resumed is True
-    assert panel.calls[0]['reset_traffic'] is True
+    assert panel.calls[0]['reset_traffic'] is False
+    assert panel.reset_calls == [9001]
     assert panel.enabled == [PANEL_USER_ID]
     assert subscription.status == SubscriptionStatus.ACTIVE.value
 

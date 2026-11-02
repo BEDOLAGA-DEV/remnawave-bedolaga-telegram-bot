@@ -2,7 +2,9 @@
 
 When create_remnawave_user() fails during purchase, the subscription exists
 in the bot DB but not in the panel. This queue retries the operation
-periodically until it succeeds or max retries are exhausted.
+periodically until it succeeds or max retries are exhausted. Unconfirmed local
+expiry is also persisted on Subscription and recovered after memory retries are
+exhausted or the process restarts. Other retry intents remain memory-only.
 """
 
 from __future__ import annotations
@@ -14,11 +16,14 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import structlog
+from sqlalchemy import select
 
 from app.database.database import AsyncSessionLocal
+from app.database.models import Subscription, User
 
 
 logger = structlog.get_logger(__name__)
+PAID_RESET_RECOVERY_BUDGET_SECONDS = 20
 
 
 @dataclass
@@ -29,14 +34,21 @@ class RetryItem:
     attempts: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_error: str | None = None
+    reset_traffic: bool = False
+    reset_reason: str | None = None
 
 
 class RemnaWaveRetryQueue:
     def __init__(self, max_retries: int = 5, interval_seconds: int = 120) -> None:
         self._queue: deque[RetryItem] = deque()
+        self._processing_subscription_ids: set[int] = set()
         self._max_retries = max_retries
         self._interval = interval_seconds
         self._task: asyncio.Task | None = None
+        self._expiry_cursor = 0
+
+    def is_processing(self, subscription_id: int) -> bool:
+        return subscription_id in self._processing_subscription_ids
 
     @property
     def pending_count(self) -> int:
@@ -47,16 +59,25 @@ class RemnaWaveRetryQueue:
         subscription_id: int,
         user_id: int,
         action: Literal['create', 'update'] = 'create',
+        *,
+        reset_traffic: bool = False,
+        reset_reason: str | None = None,
     ) -> None:
         # Deduplicate by subscription_id
         for item in self._queue:
             if item.subscription_id == subscription_id:
+                # A prior ordinary sync must not swallow a paid traffic reset.
+                if reset_traffic:
+                    item.reset_traffic = True
+                    item.reset_reason = reset_reason
                 return
         self._queue.append(
             RetryItem(
                 subscription_id=subscription_id,
                 user_id=user_id,
                 action=action,
+                reset_traffic=reset_traffic,
+                reset_reason=reset_reason,
             )
         )
         logger.info(
@@ -67,7 +88,49 @@ class RemnaWaveRetryQueue:
             queue_size=len(self._queue),
         )
 
+    async def _recover_pending_expiries(self) -> None:
+        """Bounded, rotating scan: committed renewals survive memory queue loss."""
+        query = (
+            select(Subscription.id, Subscription.user_id)
+            .join(User, User.id == Subscription.user_id)
+            .where(
+                Subscription.pending_panel_expire_at.is_not(None),
+                Subscription.pending_panel_expire_at == Subscription.end_date,
+                Subscription.end_date > datetime.now(UTC),
+                Subscription.status.in_(('active', 'trial', 'limited')),
+                Subscription.is_daily_paused.is_(False),
+                Subscription.grace_session_open.is_(False),
+                User.status == 'active',
+            )
+            .order_by(Subscription.id)
+            .limit(100)
+        )
+        try:
+            async with AsyncSessionLocal() as db:
+                rows = (await db.execute(query.where(Subscription.id > self._expiry_cursor))).all()
+                if not rows and self._expiry_cursor:
+                    self._expiry_cursor = 0
+                    rows = (await db.execute(query)).all()
+            if rows:
+                self._expiry_cursor = rows[-1].id
+            for subscription_id, user_id in rows:
+                # create is an upsert through panel_sync: it reuses the current
+                # identity and also recovers a paid account never created yet.
+                self.enqueue(subscription_id, user_id, action='create')
+        except Exception:
+            logger.exception('Could not recover pending panel expiries; retrying next cycle')
+
     async def process_pending(self) -> None:
+        from app.services.paid_traffic_reset_service import process_pending_daily_resets
+
+        try:
+            async with asyncio.timeout(PAID_RESET_RECOVERY_BUDGET_SECONDS):
+                await process_pending_daily_resets(AsyncSessionLocal, limit=5)
+        except TimeoutError:
+            logger.warning('Paid traffic reset recovery reached its time budget; continuing expiry delivery')
+        except Exception:
+            logger.exception('Could not recover paid daily traffic resets; retrying next cycle')
+        await self._recover_pending_expiries()
         if not self._queue:
             return
 
@@ -79,6 +142,7 @@ class RemnaWaveRetryQueue:
 
         for item in batch:
             item.attempts += 1
+            self._processing_subscription_ids.add(item.subscription_id)
             try:
                 async with AsyncSessionLocal() as db:
                     sub = await get_subscription_by_id(db, item.subscription_id)
@@ -95,9 +159,13 @@ class RemnaWaveRetryQueue:
                         continue
 
                     if item.action == 'create':
-                        result = await service.create_remnawave_user(db, sub)
+                        result = await service.create_remnawave_user(
+                            db, sub, reset_traffic=item.reset_traffic, reset_reason=item.reset_reason
+                        )
                     else:
-                        result = await service.update_remnawave_user(db, sub)
+                        result = await service.update_remnawave_user(
+                            db, sub, reset_traffic=item.reset_traffic, reset_reason=item.reset_reason
+                        )
 
                     # create_remnawave_user / update_remnawave_user проглатывают
                     # RemnaWaveAPIError внутри себя и возвращают None (не
@@ -116,6 +184,8 @@ class RemnaWaveRetryQueue:
 
             except Exception as error:
                 self._requeue(item, str(error))
+            finally:
+                self._processing_subscription_ids.discard(item.subscription_id)
 
     def _requeue(self, item: RetryItem, error: str) -> None:
         item.last_error = error

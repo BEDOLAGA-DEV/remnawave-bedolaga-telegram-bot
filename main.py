@@ -342,6 +342,12 @@ async def main():
             except Exception as error:
                 logger.error('❌ Не удалось перенести настройки из файлов в базу', error=error)
 
+        bot_run_mode = settings.get_bot_run_mode()
+        polling_enabled = bot_run_mode == 'polling'
+        telegram_webhook_enabled = bot_run_mode == 'webhook'
+        if telegram_webhook_enabled and not settings.get_telegram_webhook_url():
+            raise ValueError('WEBHOOK_URL is required when BOT_RUN_MODE=webhook')
+
         bot = None
         dp = None
         async with timeline.stage('Настройка бота', '🤖', success_message='Бот настроен') as stage:
@@ -605,10 +611,6 @@ async def main():
             else:
                 stage.skip('NaloGO отключен настройками')
 
-        bot_run_mode = settings.get_bot_run_mode()
-        polling_enabled = bot_run_mode == 'polling'
-        telegram_webhook_enabled = bot_run_mode == 'webhook'
-
         payment_webhooks_enabled = any(
             [
                 settings.TRIBUTE_ENABLED,
@@ -787,6 +789,9 @@ async def main():
             success_message='Aiogram polling запущен',
         ) as stage:
             if polling_enabled:
+                # A webhook survives process restarts and prevents getUpdates.
+                # Keep queued updates when changing the transport to polling.
+                await bot.delete_webhook(drop_pending_updates=False)
                 polling_task = asyncio.create_task(dp.start_polling(bot, skip_updates=False))
                 stage.log('skip_updates=False — накопившиеся обновления будут обработаны')
             else:

@@ -364,12 +364,14 @@ async def update_tariff(
     panel_tag: str | None = ...,
 ) -> Tariff:
     """Обновляет существующий тариф."""
+    if entitlement_family is not ...:
+        entitlement_family = normalize_entitlement_family(entitlement_family)
     if name is not None:
         tariff.name = name.strip()
     if description is not None:
         tariff.description = description.strip() if description else None
     if entitlement_family is not ...:
-        tariff.entitlement_family = normalize_entitlement_family(entitlement_family)
+        tariff.entitlement_family = entitlement_family
     if display_order is not None:
         tariff.display_order = max(0, display_order)
     if is_active is not None:

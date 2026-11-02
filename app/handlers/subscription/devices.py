@@ -199,6 +199,13 @@ async def handle_change_devices(
         )
         return
 
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
+        return
+
     # Проверяем тариф подписки
     tariff = None
     if subscription.tariff_id:
@@ -290,6 +297,13 @@ async def confirm_change_devices(
         return
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
         return
 
     # Проверяем тариф подписки
@@ -422,6 +436,7 @@ async def confirm_change_devices(
                 user_id=db_user.id,
                 cart_data={
                     'cart_mode': 'add_devices',
+                    'subscription_id': subscription.id,
                     # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                     # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                     'return_to_cart': True,
@@ -556,6 +571,13 @@ async def execute_change_devices(
             show_alert=True,
         )
         return
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
+        return
+
     current_devices = subscription.device_limit
 
     # Проверяем тариф подписки
@@ -654,6 +676,7 @@ async def execute_change_devices(
             )
 
         # Re-lock subscription after subtract_user_balance committed (released all locks)
+        db_user = await lock_user_for_pricing(db, db_user.id)
         relock_result = await db.execute(
             select(Subscription)
             .where(Subscription.id == subscription.id)
@@ -661,6 +684,21 @@ async def execute_change_devices(
             .execution_options(populate_existing=True)
         )
         subscription = relock_result.scalar_one()
+
+        if subscription.device_limit == 0:
+            if price > 0:
+                db_user.balance_kopeks += price
+                await create_transaction(
+                    db=db,
+                    user_id=db_user.id,
+                    type=TransactionType.REFUND,
+                    amount_kopeks=price,
+                    description='Возврат докупки устройств: подписка стала безлимитной',
+                    commit=False,
+                )
+                await db.commit()
+            await callback.answer('⚠️ У подписки теперь безлимит устройств. Баланс возвращён.', show_alert=True)
+            return
 
         # Re-validate: prevent double-charge and max-limit violation
         if new_devices_count > current_devices:
@@ -678,9 +716,21 @@ async def execute_change_devices(
                     )
                     refund_user = user_refund.scalar_one()
                     refund_user.balance_kopeks += price
+                    await create_transaction(
+                        db=db,
+                        user_id=db_user.id,
+                        type=TransactionType.REFUND,
+                        amount_kopeks=price,
+                        description='Возврат отменённого изменения устройств',
+                        commit=False,
+                    )
                     await db.commit()
                 await callback.answer(
-                    f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.',
+                    (
+                        '⚠️ У подписки теперь безлимит устройств. Баланс возвращён.'
+                        if subscription.device_limit == 0
+                        else f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.'
+                    ),
                     show_alert=True,
                 )
                 return
@@ -694,6 +744,14 @@ async def execute_change_devices(
                 )
                 refund_user = user_refund.scalar_one()
                 refund_user.balance_kopeks += price
+                await create_transaction(
+                    db=db,
+                    user_id=db_user.id,
+                    type=TransactionType.REFUND,
+                    amount_kopeks=price,
+                    description='Возврат отменённого изменения устройств',
+                    commit=False,
+                )
                 await db.commit()
                 await callback.answer(
                     '⚠️ Изменение уже применено. Баланс возвращён.',
@@ -949,6 +1007,8 @@ async def show_devices_page(
                 'DEVICE_MANAGEMENT_LIST_ITEM',
                 '• {device}\n',
             ).format(device=html_mod.escape(device_info))
+            if hwid := device.get('hwid'):
+                devices_text += f'  <code>{html_mod.escape(hwid)}</code>\n'
 
     devices_text += texts.t(
         'DEVICE_MANAGEMENT_ACTIONS',
@@ -1479,6 +1539,13 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
     if subscription is None:
         return
 
+    if subscription.device_limit == 0:
+        await callback.answer(
+            texts.t('DEVICES_SELECTION_DISABLED', '⚠️ Изменение количества устройств недоступно'),
+            show_alert=True,
+        )
+        return
+
     # Проверяем тариф подписки
     tariff = None
     if subscription.tariff_id:
@@ -1616,6 +1683,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             user_id=db_user.id,
             cart_data={
                 'cart_mode': 'add_devices',
+                'subscription_id': subscription.id,
                 # Намерение пополнить ради этой корзины: без него тихая автопокупка после
                 # пополнения пропускает корзину, а кнопка «вернуться» её не знает.
                 'return_to_cart': True,
@@ -1653,6 +1721,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             return
 
         # Re-lock subscription after subtract_user_balance committed (released all locks)
+        db_user = await lock_user_for_pricing(db, db_user.id)
         relock_result = await db.execute(
             select(Subscription)
             .where(Subscription.id == subscription.id)
@@ -1666,7 +1735,7 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
         actual_new = actual_current + devices_count
         tariff_max_recheck = getattr(tariff, 'max_device_limit', None) if tariff else None
         max_devices = tariff_max_recheck or (settings.MAX_DEVICES_LIMIT if settings.MAX_DEVICES_LIMIT > 0 else None)
-        if max_devices and actual_new > max_devices:
+        if subscription.device_limit == 0 or (max_devices and actual_new > max_devices):
             # Concurrent purchase exceeded limit — refund
             user_refund = await db.execute(
                 select(User).where(User.id == db_user.id).with_for_update().execution_options(populate_existing=True)
@@ -1675,7 +1744,11 @@ async def confirm_add_devices(callback: types.CallbackQuery, db_user: User, db: 
             refund_user.balance_kopeks += price
             await db.commit()
             await callback.answer(
-                f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.',
+                (
+                    '⚠️ У подписки теперь безлимит устройств. Баланс возвращён.'
+                    if subscription.device_limit == 0
+                    else f'⚠️ Лимит устройств ({max_devices}) превышен. Баланс возвращён.'
+                ),
                 show_alert=True,
             )
             return
@@ -1993,7 +2066,14 @@ async def show_device_connection_help(
         await callback.answer('❌ Ссылка подписки недоступна', show_alert=True)
         return
 
-    help_text = f"""
+    if settings.should_hide_subscription_link():
+        texts = get_texts(db_user.language)
+        help_text = texts.t(
+            'SUBSCRIPTION_LINK_HIDDEN_NOTICE',
+            'ℹ️ Ссылка подписки доступна по кнопкам ниже или в разделе "Моя подписка".',
+        )
+    else:
+        help_text = f"""
 📱 <b>Как подключить устройство заново</b>
 
 После сброса устройства вам нужно:

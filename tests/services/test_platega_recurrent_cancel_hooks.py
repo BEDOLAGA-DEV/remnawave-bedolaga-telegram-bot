@@ -371,6 +371,7 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
 
     db = AsyncMock()
     db.delete = AsyncMock()
+    db.get.return_value = subscription  # The row still exists after the final grace guard.
 
     result = await multi_tariff.delete_subscription(subscription_id=42, user=user, db=db)
 
@@ -446,6 +447,7 @@ async def test_cancel_safe_wiring_proof_my_subscriptions_delete_execute(monkeypa
     db_user = SimpleNamespace(id=1)
     db = AsyncMock()
     db.delete = AsyncMock()
+    db.get.return_value = subscription  # The row still exists after the final grace guard.
     state = AsyncMock()
 
     await my_subscriptions.handle_subscription_delete_execute(callback, db_user, db, state)

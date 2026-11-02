@@ -482,20 +482,6 @@ class YooKassaPaymentMixin:
             except Exception as parse_error:
                 logger.error('Ошибка парсинга метаданных платежа', parse_error=parse_error)
 
-            invoice_message = payment_metadata.get('invoice_message') or {}
-            if getattr(self, 'bot', None):
-                chat_id = invoice_message.get('chat_id')
-                message_id = invoice_message.get('message_id')
-                if chat_id and message_id:
-                    try:
-                        await self.bot.delete_message(chat_id, message_id)
-                    except Exception as delete_error:  # pragma: no cover - depends on bot rights
-                        logger.warning(
-                            'Не удалось удалить сообщение YooKassa', message_id=message_id, delete_error=delete_error
-                        )
-                    else:
-                        payment_metadata.pop('invoice_message', None)
-
             processing_completed = bool(payment_metadata.get('processing_completed'))
 
             transaction = None
@@ -1163,6 +1149,20 @@ class YooKassaPaymentMixin:
                     telegram_user_id=user.telegram_id if user else None,
                     user_email=user.email if user else None,
                 )
+
+            # Optional Telegram cleanup follows committed credit and saved payment methods.
+            invoice_message = payment_metadata.get('invoice_message') or {}
+            if getattr(self, 'bot', None):
+                chat_id = invoice_message.get('chat_id')
+                message_id = invoice_message.get('message_id')
+                if chat_id and message_id:
+                    try:
+                        async with asyncio.timeout(5):
+                            await self.bot.delete_message(chat_id, message_id)
+                    except Exception as delete_error:  # pragma: no cover - depends on bot rights
+                        logger.warning(
+                            'Не удалось удалить сообщение YooKassa', message_id=message_id, delete_error=delete_error
+                        )
 
             return True
 

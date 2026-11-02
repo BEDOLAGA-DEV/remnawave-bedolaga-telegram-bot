@@ -23,10 +23,11 @@ from datetime import UTC, datetime
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNotFound
-from aiogram.types import InlineKeyboardMarkup, InputRichMessage
+from aiogram.types import InlineKeyboardMarkup
 
 from app.config import settings
 from app.utils.rich_buttons import render_keyboard_as_rich_html
+from app.utils.rich_media import prepare_rich_message
 from app.utils.rich_menu import _looks_like_unsupported
 from app.utils.timezone import format_local_datetime
 
@@ -192,7 +193,7 @@ async def try_send_rich_admin_message(
 
     kwargs: dict = {
         'chat_id': chat_id,
-        'rich_message': InputRichMessage(html=rich_html, skip_entity_detection=True),
+        'rich_message': prepare_rich_message(rich_html),
     }
     if thread_id:
         kwargs['message_thread_id'] = thread_id

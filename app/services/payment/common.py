@@ -401,33 +401,36 @@ async def send_cart_notification_after_topup(
         try_resume_disabled_daily_after_topup,
     )
 
-    # Try to resume DISABLED daily subscription immediately (highest priority)
-    try:
-        daily_resumed = await try_resume_disabled_daily_after_topup(db, user, bot=bot)
-        if daily_resumed:
-            return False
-    except Exception as daily_error:
-        logger.error(
-            'Ошибка авто-возобновления суточной подписки после пополнения',
-            user_id=user.id,
-            error=daily_error,
-            exc_info=True,
-        )
-
     cart_data = await user_cart_service.get_user_cart(user.id)
-    # В приоритете всегда сохраненная корзина: она отражает явный выбор пользователя
-    # (период/тариф/сумма). Автопродление expired — только когда корзины нет.
-    if cart_data:
-        # Подписочные корзины несут total_price, корзины докупки трафика/устройств —
-        # price_kopeks. Раньше проверялся только total_price, и докупка после
-        # пополнения молча выходила здесь, не дойдя до автопокупки.
-        cart_total = cart_data.get('total_price') or cart_data.get('price_kopeks') or 0
-        if not cart_total:
-            logger.warning(
-                'Сохраненная корзина найдена, но цена отсутствует или некорректна',
+    subscription_carts = []
+    fresh_cart_intent = bool(cart_data and await user_cart_service.has_topup_intent(user.id, cart_data))
+    if not fresh_cart_intent:
+        subscription_carts = await user_cart_service.get_all_subscription_carts(user.id) or []
+        for candidate in subscription_carts:
+            if await user_cart_service.has_topup_intent(user.id, candidate):
+                fresh_cart_intent = True
+                break
+    has_cart = bool(cart_data or subscription_carts)
+
+    # A fresh explicit checkout owns this top-up. A stale cart must not disable
+    # the existing daily-resume behavior or authorize a purchase on its own.
+    if not fresh_cart_intent:
+        try:
+            daily_resumed = await try_resume_disabled_daily_after_topup(db, user, bot=bot)
+            if daily_resumed:
+                return False
+        except Exception as daily_error:
+            logger.error(
+                'Ошибка авто-возобновления суточной подписки после пополнения',
                 user_id=user.id,
-                cart_mode=cart_data.get('cart_mode'),
+                error=daily_error,
+                exc_info=True,
             )
+
+    if has_cart:
+        candidates = ([cart_data] if cart_data else []) + subscription_carts
+        if not any(cart.get('total_price') or cart.get('price_kopeks') for cart in candidates):
+            logger.warning('Сохраненные корзины не содержат корректной цены', user_id=user.id)
             return False
 
         # Пробуем сразу оформить подписку из корзины. Если успешно — внутри сервиса

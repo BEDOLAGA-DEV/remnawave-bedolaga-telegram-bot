@@ -71,6 +71,8 @@ jobs:
       - name: Run PostgreSQL tests
         run: uv run pytest -m postgres -q
 
-      - name: Run full test suite
+      # PostgreSQL cases already ran above; the two marker partitions together
+      # cover the full suite without repeating expensive database setup.
+      - name: Run remaining test suite
         if: matrix.full_suite
-        run: uv run pytest -q
+        run: uv run --frozen pytest -m 'not postgres' -q

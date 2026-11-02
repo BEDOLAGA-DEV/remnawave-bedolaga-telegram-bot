@@ -1,68 +1,82 @@
-"""Сервис для работы с API cisPay (H2H merchant API, api.cispay.app)."""
+"""CisPay hosted Merchant API; local balances and outgoing invoices use RUB."""
 
 import hashlib
 import hmac
+import json
+import math
+import re
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import aiohttp
-import structlog
 
 from app.config import settings
 
 
-logger = structlog.get_logger(__name__)
+@dataclass(frozen=True, slots=True)
+class CisPayConfig:
+    base_url: str = 'https://api.cispay.app'
+    shop_id: str = ''
+    api_key: str = field(default='', repr=False)
+    timeout: float = 30
 
 
 class CisPayAPIError(Exception):
-    """Ошибка API cisPay."""
+    """Safe diagnostic: never expose provider bodies, credentials or checkout URLs."""
 
-    def __init__(self, status_code: int, message: str) -> None:
+    def __init__(self, status_code: int | None = None, message: str = '', *, retry_after: int | None = None):
         self.status_code = status_code
-        self.message = message
-        super().__init__(f'cisPay API error ({status_code}): {message}')
+        self.retry_after = retry_after
+        self.message = f'cisPay request failed (HTTP {status_code})' if status_code else 'cisPay response unavailable'
+        super().__init__(self.message)
+
+
+def _retry_after(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        return max(0, int(value))
+    except ValueError:
+        try:
+            deadline = parsedate_to_datetime(value)
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=UTC)
+            return max(0, math.ceil((deadline - datetime.now(UTC)).total_seconds()))
+        except (ValueError, TypeError, OverflowError):
+            return None
+
+
+def _reject_constant(_value):
+    raise ValueError('Invalid JSON number')
 
 
 class CisPayService:
-    """Клиент для cisPay Merchant API (api.cispay.app).
+    """Stateless HTTP transport with one credentials snapshot per operation."""
 
-    Аутентификация — заголовки X-Shop-ID (UUID магазина) и X-Api-Key (cis_sec_...).
-    Суммы везде в копейках. Вебхук подписывается HMAC-SHA256 от сырого тела
-    запроса ключом X-Api-Key (заголовок X-Signature).
-    """
-
-    def __init__(self) -> None:
-        self._session: aiohttp.ClientSession | None = None
+    @staticmethod
+    def snapshot() -> CisPayConfig:
+        return CisPayConfig(
+            base_url=(settings.CISPAY_BASE_URL or 'https://api.cispay.app').rstrip('/'),
+            shop_id=settings.CISPAY_SHOP_ID or '',
+            api_key=settings.CISPAY_API_KEY or '',
+        )
 
     @property
     def base_url(self) -> str:
-        return (settings.CISPAY_BASE_URL or 'https://api.cispay.app').rstrip('/')
+        return self.snapshot().base_url
 
     @property
     def shop_id(self) -> str:
-        return settings.CISPAY_SHOP_ID or ''
+        return self.snapshot().shop_id
 
     @property
     def api_key(self) -> str:
-        return settings.CISPAY_API_KEY or ''
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30),
-            )
-        return self._session
+        return self.snapshot().api_key
 
     async def close(self) -> None:
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
-
-    def _headers(self) -> dict[str, str]:
-        return {
-            'X-Shop-ID': self.shop_id,
-            'X-Api-Key': self.api_key,
-            'Content-Type': 'application/json',
-        }
+        """Compatibility hook: each request owns and closes its session."""
 
     async def _request(
         self,
@@ -71,166 +85,121 @@ class CisPayService:
         *,
         json_payload: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        config: CisPayConfig | None = None,
     ) -> dict[str, Any]:
-        url = f'{self.base_url}/{path.lstrip("/")}'
+        config = config or self.snapshot()
+        raw = (
+            json.dumps(json_payload, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode()
+            if json_payload is not None
+            else None
+        )
+        headers = {'X-Shop-ID': config.shop_id, 'X-Api-Key': config.api_key, 'Content-Type': 'application/json'}
         try:
-            session = await self._get_session()
-            async with session.request(
-                method,
-                url,
-                json=json_payload,
-                params=params,
-                headers=self._headers(),
-            ) as response:
-                data = await response.json(content_type=None)
-                if response.status >= 400:
-                    detail = data.get('detail') if isinstance(data, dict) else data
-                    logger.error(
-                        'cisPay API error',
-                        url=url,
-                        status=response.status,
-                        detail=detail,
-                    )
-                    raise CisPayAPIError(response.status, str(detail))
-                return data if isinstance(data, dict) else {'_raw': data}
-        except aiohttp.ClientError as error:
-            logger.exception('cisPay API connection error', url=url, error=error)
-            raise
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=config.timeout), cookie_jar=aiohttp.DummyCookieJar()
+            ) as session:
+                async with session.request(
+                    method,
+                    f'{config.base_url.rstrip("/")}/{path.lstrip("/")}',
+                    data=raw,
+                    params=params,
+                    headers=headers,
+                    allow_redirects=False,
+                ) as response:
+                    if response.status not in (200, 201):
+                        raise CisPayAPIError(
+                            response.status, retry_after=_retry_after(response.headers.get('Retry-After'))
+                        )
+                    body = bytearray()
+                    async for chunk in response.content.iter_chunked(65536):
+                        body.extend(chunk)
+                        if len(body) > 1_048_576:
+                            raise CisPayAPIError(response.status)
+                    try:
+                        # Preserve fractions of a kopek until the money validator rejects them.
+                        data = json.loads(body, parse_float=str, parse_constant=_reject_constant)
+                    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
+                        raise CisPayAPIError(response.status) from exc
+                    if not isinstance(data, dict):
+                        raise CisPayAPIError(response.status)
+                    return data
+        except (aiohttp.ClientError, TimeoutError) as exc:
+            raise CisPayAPIError from exc
 
     async def create_payment(
         self,
         *,
         amount_kopeks: int,
         order_id: str,
-        payment_method: str,
-        customer_id: str,
+        payment_method: str | None = None,
+        customer_id: str | None = None,
         description: str | None = None,
         redirect_success_url: str | None = None,
         redirect_fail_url: str | None = None,
+        payload: str | None = None,
+        config: CisPayConfig | None = None,
     ) -> dict[str, Any]:
-        """Создаёт платёж (счёт) в cisPay.
-
-        POST /payments — возвращает id (UUIDv7), status=PENDING, payment_url
-        хостинговой страницы оплаты (карта/3-DS/QR СБП на стороне cisPay).
-        customer_id обязателен для SBP — провайдер СБП отклоняет платежи
-        без идентификатора плательщика.
-        """
-        payload: dict[str, Any] = {
-            'amount': int(amount_kopeks),
-            'currency': (settings.CISPAY_CURRENCY or 'RUB').upper(),
-            'order_id': order_id,
-            'payment_method': payment_method,
-            'customer_id': str(customer_id)[:255],
-        }
-        if description:
-            payload['description'] = description[:512]
-        if redirect_success_url:
-            payload['redirect_success_url'] = redirect_success_url[:1024]
-        if redirect_fail_url:
-            payload['redirect_fail_url'] = redirect_fail_url[:1024]
-
-        logger.info(
-            'cisPay API create_payment',
-            order_id=order_id,
-            amount_kopeks=amount_kopeks,
-            payment_method=payment_method,
-        )
-
-        data = await self._request('POST', '/payments', json_payload=payload)
-
-        # По спеке обязателен только id; payment_url — nullable. Если ссылки нет,
-        # платёж всё равно создан на стороне cisPay: запись сохраняем, иначе
-        # пришедший позже вебхук не найдёт платёж и деньги придётся сверять руками.
-        if not data.get('id'):
-            logger.error('cisPay create_payment: в ответе нет id транзакции', response_data=data)
-            raise CisPayAPIError(200, f'Incomplete create payment response: {data}')
-
-        if not data.get('payment_url'):
-            logger.warning(
-                'cisPay create_payment: ответ без payment_url',
-                order_id=order_id,
-                payment_id=data.get('id'),
-            )
-
-        logger.info(
-            'cisPay API payment created',
-            order_id=order_id,
-            payment_id=data.get('id'),
-            status=data.get('status'),
-        )
-        return data
+        """Create once; a duplicate order_id is rejected by CisPay, not idempotently retried."""
+        if type(amount_kopeks) is not int or not 0 < amount_kopeks <= 2_147_483_647:
+            raise ValueError('Invalid CisPay minor-unit amount')
+        if payment_method not in (None, 'CARD', 'SBP', 'CRYPTO'):
+            raise ValueError('Invalid CisPay method')
+        if payment_method == 'CARD' and amount_kopeks < 5000:
+            raise ValueError('CisPay CARD minimum is 5000 kopeks')
+        if not isinstance(order_id, str) or not 1 <= len(order_id) <= 255:
+            raise ValueError('Invalid CisPay order ID')
+        if payment_method in (None, 'SBP') and (not isinstance(customer_id, str) or not customer_id.strip()):
+            raise ValueError('CisPay requires customer_id')
+        if customer_id is not None and (not isinstance(customer_id, str) or len(customer_id) > 255):
+            raise ValueError('Invalid CisPay customer_id')
+        if payload is not None and (not isinstance(payload, str) or len(payload) > 1024):
+            raise ValueError('Invalid CisPay payload')
+        data: dict[str, Any] = {'amount': amount_kopeks, 'currency': 'RUB', 'order_id': order_id}
+        if payment_method is not None:
+            data['payment_method'] = payment_method
+        if customer_id:
+            data['customer_id'] = customer_id
+        for key, value, limit in [
+            ('description', description, 512),
+            ('redirect_success_url', redirect_success_url, 1024),
+            ('redirect_fail_url', redirect_fail_url, 1024),
+        ]:
+            if value:
+                if len(value) > limit:
+                    raise ValueError(f'CisPay {key} too long')
+                data[key] = value
+        if payload is not None:
+            data['payload'] = payload
+        result = await self._request('POST', '/payments', json_payload=data, config=config)
+        if not isinstance(result.get('id'), str) or not result['id']:
+            raise CisPayAPIError(201)
+        return result
 
     async def check_payment(
-        self,
-        *,
-        payment_id: str | None = None,
-        order_id: str | None = None,
+        self, *, payment_id: str | None = None, order_id: str | None = None, config: CisPayConfig | None = None
     ) -> dict[str, Any]:
-        """Получает статус платежа.
-
-        GET /payments/status?id=...|order_id=... — статусы PENDING / PAID /
-        FAILED / EXPIRED / REFUNDED.
-        """
-        params: dict[str, Any] = {}
         if payment_id:
-            params['id'] = payment_id
+            params = {'id': payment_id}
         elif order_id:
-            params['order_id'] = order_id
+            params = {'order_id': order_id}
         else:
-            raise ValueError('cisPay check_payment: нужен payment_id или order_id')
+            raise ValueError('CisPay requires payment_id or order_id')
+        return await self._request('GET', '/payments/status', params=params, config=config)
 
-        logger.info('cisPay check_payment', payment_id=payment_id, order_id=order_id)
-        return await self._request('GET', '/payments/status', params=params)
+    async def get_store_capabilities(self, *, config: CisPayConfig | None = None) -> dict[str, Any]:
+        return await self._request('GET', '/store/capabilities', config=config)
 
-    async def get_store_capabilities(self) -> dict[str, Any]:
-        """Возвращает активные методы оплаты магазина и их комиссии.
+    async def get_balance(self, *, config: CisPayConfig | None = None) -> dict[str, Any]:
+        return await self._request('GET', '/balance', config=config)
 
-        GET /store/capabilities
-        """
-        return await self._request('GET', '/store/capabilities')
-
-    async def get_balance(self) -> dict[str, Any]:
-        """Получает баланс мерчанта.
-
-        GET /balance
-        """
-        return await self._request('GET', '/balance')
-
-    def verify_webhook_signature(self, raw_body: bytes, signature: str | None) -> bool:
-        """Верификация подписи вебхука.
-
-        X-Signature — HMAC-SHA256 hex от тела запроса (байты как есть),
-        ключ — X-Api-Key магазина.
-        """
-        try:
-            received = (signature or '').strip()
-            if not received:
-                logger.warning('cisPay webhook: отсутствует X-Signature')
-                return False
-
-            if not self.api_key:
-                # Без ключа HMAC считался бы от b'' — подпись подделал бы кто угодно
-                logger.error('cisPay webhook: не задан API-ключ, проверка подписи невозможна')
-                return False
-
-            expected = hmac.new(
-                self.api_key.encode('utf-8'),
-                msg=raw_body,
-                digestmod=hashlib.sha256,
-            ).hexdigest()
-
-            if not hmac.compare_digest(expected.lower(), received.lower()):
-                logger.warning(
-                    'cisPay webhook: invalid signature',
-                    expected_prefix=expected[:8],
-                    received_prefix=received[:8],
-                )
-                return False
-            return True
-        except Exception as error:
-            logger.error('cisPay webhook verify error', error=error)
+    def verify_webhook_signature(
+        self, raw_body: bytes, signature: str | None, *, config: CisPayConfig | None = None
+    ) -> bool:
+        config = config or self.snapshot()
+        if not config.api_key or not isinstance(signature, str) or not re.fullmatch('[0-9a-fA-F]{64}', signature):
             return False
+        expected = hmac.new(config.api_key.encode(), raw_body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature.lower())
 
 
-# Singleton instance
 cispay_service = CisPayService()

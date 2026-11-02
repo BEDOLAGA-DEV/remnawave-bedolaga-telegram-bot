@@ -1,7 +1,7 @@
 import asyncio
 import html
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -91,6 +91,15 @@ from app.utils.user_utils import generate_unique_referral_code
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _within_retroactive_referral_window(user) -> bool:
+    """Разрешить только гонку создания аккаунта Mini App с обработкой /start."""
+    created_at = getattr(user, 'created_at', None)
+    if created_at is None:
+        return False
+    age = datetime.now(UTC) - created_at
+    return timedelta(0) <= age <= timedelta(minutes=10)
 
 
 _registration_invite_service = RegistrationInviteService()
@@ -609,6 +618,7 @@ async def _activate_pending_trial(
 
         trial_traffic_limit = settings.TRIAL_TRAFFIC_LIMIT_GB
         trial_device_limit = settings.TRIAL_DEVICE_LIMIT
+        trial_duration_days = settings.TRIAL_DURATION_DAYS
         trial_squads: list[str] = []
         tariff_id_for_trial = None
 
@@ -622,6 +632,8 @@ async def _activate_pending_trial(
             trial_device_limit = trial_tariff.device_limit
             trial_squads = await get_effective_tariff_squad_uuids(db, trial_tariff.allowed_squads)
             tariff_id_for_trial = trial_tariff.id
+            if trial_tariff.trial_duration_days:
+                trial_duration_days = trial_tariff.trial_duration_days
         if not trial_squads:
             trial_squad_uuid = await get_random_trial_squad_uuid(db)
             trial_squads = [trial_squad_uuid] if trial_squad_uuid else []
@@ -629,7 +641,7 @@ async def _activate_pending_trial(
         subscription = await create_trial_subscription(
             db=db,
             user_id=user.id,
-            duration_days=settings.TRIAL_DURATION_DAYS,
+            duration_days=trial_duration_days,
             traffic_limit_gb=trial_traffic_limit,
             device_limit=trial_device_limit,
             connected_squads=trial_squads or None,
@@ -1469,7 +1481,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                     await save_pending_referral(message.from_user.id, referral_code, referrer.id)
                 except Exception as exc:
                     logger.warning('Failed to persist pending referral', referral_code=referral_code, error=exc)
-            elif db_user.referred_by_id is None:
+            elif db_user.referred_by_id is None and _within_retroactive_referral_window(db_user):
                 # RACE FIX: the miniapp may have created the user row
                 # between the /start link click and this handler firing
                 # (e.g. user tapped the WebApp menu button immediately
@@ -1658,6 +1670,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
             from sqlalchemy import delete, update as sa_update
 
             from app.database.models import (
+                AnorePayment,
                 CloudPaymentsPayment,
                 CryptoBotPayment,
                 FreekassaPayment,
@@ -1706,6 +1719,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 HeleketPayment,
                 MulenPayPayment,
                 Pal24Payment,
+                AnorePayment,
                 WataPayment,
                 PlategaPayment,
                 CloudPaymentsPayment,

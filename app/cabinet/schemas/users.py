@@ -65,6 +65,7 @@ class UserSubscriptionInfo(BaseModel):
     """User subscription information."""
 
     id: int
+    remnawave_id: int | None = None
     status: str
     is_trial: bool
     start_date: datetime | None = None

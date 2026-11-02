@@ -145,7 +145,8 @@ class PlategaPaymentMixin:
         )
 
         logger.info(
-            'Создан Platega платёж',
+            f'Создан Platega платёж для {"пользователя " + str(user_id) if user_id is not None else "гостя"} '
+            f'(метод {payment_method_code}, сумма {amount_value:.2f} {settings.PLATEGA_CURRENCY})',
             transaction_id=transaction_id or payment.id,
             user_id=user_id,
             payment_method_code=payment_method_code,
@@ -192,6 +193,12 @@ class PlategaPaymentMixin:
 
         existing = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription.id)
         if existing:
+            from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+            if getattr(subscription, '_recurrent_purchase_terms', None) is not None:
+                validate_recurrent_setup_terms(
+                    subscription, 'platega', existing.amount_kopeks, existing.charge_days, existing.interval
+                )
             # Идемпотентный повтор обязан ТОЖЕ восстановить взаимоисключение:
             # если balance-autopay успели включить обратно (например, пока фича
             # была выключена), оба движка продления остались бы взведёнными.
@@ -237,6 +244,7 @@ class PlategaPaymentMixin:
                 tariff,
                 charge_days,
                 device_limit=getattr(subscription, 'device_limit', None),
+                daily_devices_billing_version=getattr(subscription, 'daily_devices_billing_version', 0),
             )
             amount_kopeks = int(pricing_result.final_total or 0)
         except Exception as pricing_error:  # pragma: no cover - defensive
@@ -251,6 +259,10 @@ class PlategaPaymentMixin:
         # 0 ₽ бессмысленна и вела бы к пустым регулярным «списаниям».
         if not amount_kopeks:
             raise ValueError(f'Тариф не имеет цены за период {charge_days} дней — СБП-автопродление недоступно')
+
+        from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+        validate_recurrent_setup_terms(subscription, 'platega', amount_kopeks, charge_days, interval)
 
         response = await self.platega_service.create_subscription(
             payer=await resolve_user_payer(db, user_id),
@@ -1147,6 +1159,11 @@ async def purchase_tariff_with_sbp_recurring(
     *,
     user: Any,
     tariff: Any,
+    subscription_id: int | None = None,
+    selected_device_limit: int | None = None,
+    quote_id=None,
+    checkout_id=None,
+    channel: str = 'cabinet',
 ) -> dict[str, Any]:
     """Оформление подписки на тариф с оплатой через СБП-автопродление Platega.
 
@@ -1174,13 +1191,39 @@ async def purchase_tariff_with_sbp_recurring(
     if not settings.is_platega_recurrent_enabled():
         raise RuntimeError('Platega recurrent is disabled')
 
+    if any(value is not None for value in (selected_device_limit, quote_id, checkout_id)):
+        from app.services.recurrent_purchase_selection import prepare_recurrent_device_purchase
+
+        subscription = await prepare_recurrent_device_purchase(
+            db,
+            user=user,
+            tariff=tariff,
+            provider='platega',
+            selected_device_limit=selected_device_limit,
+            quote_id=quote_id,
+            checkout_id=checkout_id,
+            subscription_id=subscription_id,
+            channel=channel,
+        )
+        result = await enable_platega_sbp_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
+        return {**result, 'subscription_id': subscription.id}
+
     from app.database.crud.subscription import (
         create_sbp_pending_subscription,
         get_subscription_by_user_and_tariff,
         get_subscription_by_user_id,
     )
 
-    if settings.is_multi_tariff_enabled():
+    if subscription_id is not None:
+        from app.services.recurrent_purchase_selection import resolve_recurrent_purchase_selection
+
+        subscription = await resolve_recurrent_purchase_selection(
+            db,
+            user_id=user.id,
+            tariff_id=tariff.id,
+            subscription_id=subscription_id,
+        )
+    elif settings.is_multi_tariff_enabled():
         subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
     else:
         subscription = await get_subscription_by_user_id(db, user.id)

@@ -29,7 +29,13 @@ _NON_GATEWAY_METHODS = frozenset(
         PaymentMethod.BALANCE.value,
     }
 )
-REAL_PAYMENT_METHODS = [m.value for m in PaymentMethod if m.value not in _NON_GATEWAY_METHODS]
+# Удалённые интеграции остаются только в финансовой классификации: иначе
+# обновление кода задним числом уменьшит выручку по проведённым транзакциям.
+# Это не реестр доступных способов оплаты, создавать платежи по нему нельзя.
+RETIRED_GATEWAY_METHODS = ('paypear',)
+REAL_PAYMENT_METHODS = [m.value for m in PaymentMethod if m.value not in _NON_GATEWAY_METHODS] + list(
+    RETIRED_GATEWAY_METHODS
+)
 
 
 # ── Доп. услуги (докупка трафика / устройств) ──────────────────────────────────

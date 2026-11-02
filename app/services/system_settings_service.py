@@ -147,7 +147,6 @@ class BotConfigurationService:
         'KASSA_AI': '💳 KassaAI',
         'RIOPAY': '💳 RioPay',
         'SEVERPAY': '💳 SeverPay',
-        'PAYPEAR': '💳 PayPear',
         'ROLLYPAY': '💳 RollyPay',
         'OVERPAY': '💳 Overpay',
         'AURAPAY': '💳 AuraPay',
@@ -156,6 +155,7 @@ class BotConfigurationService:
         'JUPITER': '🪐 Jupiter',
         'CISPAY': '💳 CisPay',
         'CASHERA': '💳 Cashera',
+        'ANORE': '💳 Anore',
         'TABPAY': '💳 TabPay',
         'PARITYPAY': '💳 ParityPay',
         'DONUT': '🍩 Donut',
@@ -226,15 +226,15 @@ class BotConfigurationService:
         'FREEKASSA': 'Freekassa: ID магазина, API ключ, секретные слова и вебхуки.',
         'KASSA_AI': 'KassaAI: отдельная платёжка api.fk.life с СБП, картами и SberPay.',
         'RIOPAY': 'RioPay: платёжная система api.riopay.online с поддержкой карт и СБП.',
-        'PAYPEAR': 'PayPear: платёжная система api.paypear.ru с поддержкой карт, СБП, SberPay и T-Pay.',
         'ROLLYPAY': 'RollyPay: платёжный шлюз rollypay.io с СБП, картами и криптовалютой.',
         'OVERPAY': 'Overpay: платёжный шлюз pay.overpay.io с mTLS и поддержкой карт и СБП.',
         'AURAPAY': 'AuraPay: платёжный шлюз aurapay.tech с поддержкой карт и СБП.',
         'ANTILOPAY': 'Antilopay: lk.antilopay.com, оплата картой, СБП и SberPay.',
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
-        'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
+        'CISPAY': 'CisPay: карта, СБП и опциональная криптовалюта на странице провайдера; webhook HMAC-SHA256.',
         'CASHERA': 'Cashera: api.cashera.cash, СБП, карты, крипта и CryptoBot; ключ pk_, секрет sk_, методы оплаты.',
+        'ANORE': 'Anore: рублёвые счета, СБП, карты, ЮMoney и криптовалюта. Webhook HMAC-SHA256.',
         'TABPAY': 'TabPay: tabpay.org, СБП и карты с 3-D Secure; вебхуки подписаны HMAC-SHA256 (X-Signature-V2).',
         'PARITYPAY': 'ParityPay: api.paritypay.net v2, СБП и карты; уведомления подписаны HMAC-SHA256 (X-SIGNATURE).',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
@@ -503,7 +503,6 @@ class BotConfigurationService:
         'KASSA_AI_': 'KASSA_AI',
         'RIOPAY_': 'RIOPAY',
         'SEVERPAY_': 'SEVERPAY',
-        'PAYPEAR_': 'PAYPEAR',
         'ROLLYPAY_': 'ROLLYPAY',
         'OVERPAY_': 'OVERPAY',
         'AURAPAY_': 'AURAPAY',
@@ -512,6 +511,7 @@ class BotConfigurationService:
         'JUPITER_': 'JUPITER',
         'CISPAY_': 'CISPAY',
         'CASHERA_': 'CASHERA',
+        'ANORE_': 'ANORE',
         'TABPAY_': 'TABPAY',
         'PARITYPAY_': 'PARITYPAY',
         'DONUT_': 'DONUT',
@@ -1153,11 +1153,15 @@ class BotConfigurationService:
         },
         'AUTO_PURCHASE_AFTER_TOPUP_ENABLED': {
             'description': (
-                'При достаточном балансе автоматически оформляет сохранённую подписку сразу после пополнения.'
+                'При достаточном балансе автоматически оформляет сохранённую подписку '
+                'или возобновляет приостановленный из-за нехватки средств суточный тариф сразу после пополнения.'
             ),
             'format': 'Булево значение.',
             'example': 'true',
-            'warning': ('Используйте с осторожностью: средства будут списаны мгновенно, если корзина найдена.'),
+            'warning': (
+                'Используйте с осторожностью: средства будут списаны мгновенно, если найдена корзина '
+                'или суточная подписка для возобновления. Подписки на паузе пользователя не возобновляются.'
+            ),
         },
         'SUPPORT_TICKET_SLA_MINUTES': {
             'description': 'Лимит времени для ответа модераторов на тикет в минутах.',

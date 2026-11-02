@@ -1,6 +1,7 @@
 """Handler for CloudPayments balance top-up."""
 
 import html
+from decimal import Decimal, InvalidOperation
 
 import structlog
 from aiogram import types
@@ -16,6 +17,7 @@ from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -164,24 +166,26 @@ async def process_cloudpayments_payment_amount(
 
     # Validate amount
     if amount_kopeks < settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS:
-        min_rub = settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS / 100
         await message.answer(
-            texts.t(
-                'AMOUNT_TOO_LOW',
-                'Минимальная сумма пополнения: {min_amount:.0f}₽',
-            ).format(min_amount=min_rub),
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language,
+                settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS,
+                settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS,
+                too_low=True,
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS:
-        max_rub = settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS / 100
         await message.answer(
-            texts.t(
-                'AMOUNT_TOO_HIGH',
-                'Максимальная сумма пополнения: {max_amount:,.0f}₽',
-            ).format(max_amount=max_rub),
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(
+                db_user.language,
+                settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS,
+                settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS,
+                too_low=False,
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
@@ -278,9 +282,11 @@ async def process_cloudpayments_amount(
     # Parse amount
     try:
         amount_text = message.text.strip().replace(',', '.').replace(' ', '')
-        amount_rub = float(amount_text)
+        amount_rub = Decimal(amount_text)
+        if not amount_rub.is_finite():
+            raise ValueError('Non-finite amount')
         amount_kopeks = int(amount_rub * 100)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, InvalidOperation):
         await message.answer(
             texts.t('INVALID_AMOUNT', 'Введите корректную сумму числом'),
             parse_mode='HTML',
@@ -289,26 +295,26 @@ async def process_cloudpayments_amount(
 
     # Validate amount
     if amount_kopeks < settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS:
-        min_rub = settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS / 100
         await message.answer(
-            texts.t(
-                'AMOUNT_TOO_LOW',
-                'Минимальная сумма пополнения: {min_amount:.0f}₽',
-            ).format(min_amount=min_rub),
-            reply_markup=get_back_keyboard(db_user.language),
-            parse_mode='HTML',
+            format_topup_amount_retry(
+                db_user.language,
+                settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS,
+                settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS,
+                too_low=True,
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS:
-        max_rub = settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS / 100
         await message.answer(
-            texts.t(
-                'AMOUNT_TOO_HIGH',
-                'Максимальная сумма пополнения: {max_amount:,.0f}₽',
-            ).format(max_amount=max_rub),
-            reply_markup=get_back_keyboard(db_user.language),
-            parse_mode='HTML',
+            format_topup_amount_retry(
+                db_user.language,
+                settings.CLOUDPAYMENTS_MIN_AMOUNT_KOPEKS,
+                settings.CLOUDPAYMENTS_MAX_AMOUNT_KOPEKS,
+                too_low=False,
+            ),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
