@@ -247,9 +247,7 @@ class CisPayService:
             raise CisPayAPIError(201)
         return result
 
-    async def get_subscription(
-        self, subscription_id: str, *, config: CisPayConfig | None = None
-    ) -> dict[str, Any]:
+    async def get_subscription(self, subscription_id: str, *, config: CisPayConfig | None = None) -> dict[str, Any]:
         """Читает состояние конкретного плана; несовпадение ID — ошибка."""
         if not isinstance(subscription_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', subscription_id):
             raise ValueError('Invalid CisPay subscription ID')
@@ -258,9 +256,7 @@ class CisPayService:
             raise CisPayAPIError(200)
         return result
 
-    async def cancel_subscription(
-        self, subscription_id: str, *, config: CisPayConfig | None = None
-    ) -> bool:
+    async def cancel_subscription(self, subscription_id: str, *, config: CisPayConfig | None = None) -> bool:
         """Подтверждает удалённую отмену, не меняя локальную запись заранее."""
         if not isinstance(subscription_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', subscription_id):
             raise ValueError('Invalid CisPay subscription ID')
