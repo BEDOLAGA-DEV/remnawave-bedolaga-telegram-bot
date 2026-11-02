@@ -186,6 +186,89 @@ class CisPayService:
             raise ValueError('CisPay requires payment_id or order_id')
         return await self._request('GET', '/payments/status', params=params, config=config)
 
+    async def create_subscription(
+        self,
+        *,
+        amount_kopeks: int,
+        interval_days: int,
+        payment_method: str,
+        customer_id: str,
+        subscription_purpose: str,
+        redirect_success_url: str | None = None,
+        redirect_fail_url: str | None = None,
+        config: CisPayConfig | None = None,
+    ) -> dict[str, Any]:
+        """Создаёт план у провайдера, но не включает локальное автопродление.
+
+        Это только изолированная граница HTTP API. Выдача доступа, согласие
+        плательщика и учёт повторных списаний реализуются отдельно.
+        """
+        if payment_method not in ('CARD', 'SBP'):
+            raise ValueError('Invalid CisPay recurring method')
+        if type(amount_kopeks) is not int or not 0 < amount_kopeks <= 2_147_483_647:
+            raise ValueError('Invalid CisPay subscription amount')
+        if payment_method == 'CARD' and amount_kopeks < 5000:
+            raise ValueError('CisPay CARD subscription minimum is 5000 kopeks')
+        if type(interval_days) is not int or not 7 <= interval_days <= 360:
+            raise ValueError('Invalid CisPay recurring interval')
+        if not isinstance(customer_id, str) or not customer_id.strip() or len(customer_id) > 255:
+            raise ValueError('Invalid CisPay recurring customer')
+        if (
+            not isinstance(subscription_purpose, str)
+            or not subscription_purpose.strip()
+            or len(subscription_purpose) > 255
+        ):
+            raise ValueError('Invalid CisPay subscription purpose')
+        body: dict[str, Any] = {
+            'amount': amount_kopeks,
+            'currency': 'RUB',
+            'interval_days': interval_days,
+            'payment_method': payment_method,
+            'customer_id': customer_id,
+            'subscription_purpose': subscription_purpose,
+        }
+        for key, value in (
+            ('redirect_success_url', redirect_success_url),
+            ('redirect_fail_url', redirect_fail_url),
+        ):
+            if value is not None:
+                if not isinstance(value, str) or not value.startswith('https://') or len(value) > 1024:
+                    raise ValueError(f'Invalid CisPay {key}')
+                body[key] = value
+        # Не повторяем POST после таймаута: создание удалённого плана могло завершиться.
+        result = await self._request('POST', '/subscriptions', json_payload=body, config=config)
+        if (
+            not isinstance(result.get('id'), str)
+            or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', result['id'])
+            or result.get('status') != 'PENDING'
+            or not isinstance(result.get('payment_url'), str)
+            or not result['payment_url'].startswith('https://')
+        ):
+            raise CisPayAPIError(201)
+        return result
+
+    async def get_subscription(
+        self, subscription_id: str, *, config: CisPayConfig | None = None
+    ) -> dict[str, Any]:
+        """Читает состояние конкретного плана; несовпадение ID — ошибка."""
+        if not isinstance(subscription_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', subscription_id):
+            raise ValueError('Invalid CisPay subscription ID')
+        result = await self._request('GET', f'/subscriptions/{subscription_id}', config=config)
+        if result.get('id') != subscription_id:
+            raise CisPayAPIError(200)
+        return result
+
+    async def cancel_subscription(
+        self, subscription_id: str, *, config: CisPayConfig | None = None
+    ) -> bool:
+        """Подтверждает удалённую отмену, не меняя локальную запись заранее."""
+        if not isinstance(subscription_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', subscription_id):
+            raise ValueError('Invalid CisPay subscription ID')
+        result = await self._request('POST', f'/subscriptions/{subscription_id}/cancel', config=config)
+        if result.get('id') != subscription_id or result.get('status') != 'CANCELLED':
+            raise CisPayAPIError(200)
+        return True
+
     async def get_store_capabilities(self, *, config: CisPayConfig | None = None) -> dict[str, Any]:
         return await self._request('GET', '/store/capabilities', config=config)
 
