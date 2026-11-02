@@ -28,19 +28,29 @@ EMAIL_MERGE_OTP_PREFIX = 'email_merge_otp'
 EMAIL_MERGE_OTP_TTL_SECONDS = 900  # 15 minutes
 
 
-async def store_email_merge_otp(initiator_user_id: int, secondary_user_id: int, email: str, code: str) -> None:
-    """Store a pending email-merge code for the initiator (overwrites any prior)."""
+async def store_email_merge_otp(
+    initiator_user_id: int,
+    secondary_user_id: int,
+    email: str,
+    code: str,
+    password_hash: str | None = None,
+) -> None:
+    """Store a pending email-merge code for the initiator (overwrites any prior).
+
+    ``password_hash`` is kept only when the email is held by a DELETED account:
+    after the code is confirmed the address moves to the initiator directly (no
+    merge page), so the password they typed in the link form must survive until then.
+    """
     key = cache_key(EMAIL_MERGE_OTP_PREFIX, str(initiator_user_id))
-    await cache.set(
-        key,
-        {
-            'secondary_user_id': secondary_user_id,
-            'email': email,
-            'code': code,
-            'created_at': datetime.now(UTC).isoformat(),
-        },
-        expire=EMAIL_MERGE_OTP_TTL_SECONDS,
-    )
+    value: dict[str, Any] = {
+        'secondary_user_id': secondary_user_id,
+        'email': email,
+        'code': code,
+        'created_at': datetime.now(UTC).isoformat(),
+    }
+    if password_hash:
+        value['password_hash'] = password_hash
+    await cache.set(key, value, expire=EMAIL_MERGE_OTP_TTL_SECONDS)
 
 
 async def get_email_merge_otp(initiator_user_id: int) -> dict[str, Any] | None:
