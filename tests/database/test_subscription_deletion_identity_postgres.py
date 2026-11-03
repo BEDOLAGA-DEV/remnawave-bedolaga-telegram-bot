@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.cabinet.routes.subscription_modules.multi_tariff import delete_subscription
 from app.config import settings
@@ -40,7 +41,8 @@ def panel(monkeypatch):
     async def client(self):
         yield api
 
-    async def remove(self, panel_user_id):
+    async def remove(self, panel_user_id, *, db):
+        assert isinstance(db, AsyncSession)
         calls.deleted.append(panel_user_id)
         return True
 
@@ -226,7 +228,8 @@ async def test_concurrent_delete_reaches_panel_once(postgres_database, monkeypat
         entered = asyncio.Event()
         release = asyncio.Event()
 
-        async def paused_delete(self, panel_user_id):
+        async def paused_delete(self, panel_user_id, *, db):
+            assert db is left
             panel.deleted.append(panel_user_id)
             entered.set()
             await asyncio.wait_for(release.wait(), 10)
