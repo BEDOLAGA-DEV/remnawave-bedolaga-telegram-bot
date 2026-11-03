@@ -83,8 +83,9 @@ async def test_full_sync_stages_expiry_until_delivery(monkeypatch):
             await deliver_account_projection(factory, api, 1, now=NOW)
         await deliver_account_projection(factory, api, 1, now=NOW)
         assert all(write['expire_at'] == END for write in api.writes)
+        count = len(api.writes)
         await deliver_account_projection(factory, api, 1, now=NOW)
-        assert 'expire_at' not in api.writes[-1]
+        assert len(api.writes) == count
 
 
 async def test_pending_paid_expiry_is_delivered_without_a_service_retry(monkeypatch):
@@ -106,8 +107,9 @@ async def test_pending_paid_expiry_is_delivered_without_a_service_retry(monkeypa
             await deliver_account_projection(factory, api, 1, now=NOW)
         await deliver_account_projection(factory, api, 1, now=NOW)
         assert api.writes[-1]['expire_at'] == END
+        count = len(api.writes)
         await deliver_account_projection(factory, api, 1, now=NOW)
-        assert 'expire_at' not in api.writes[-1]
+        assert len(api.writes) == count
 
 
 async def test_narrow_request_cannot_discard_previous_undelivered_renewal(monkeypatch):
@@ -184,3 +186,67 @@ async def test_staging_refreshes_a_cached_outbox_before_merging_fields(monkeypat
         await stage_managed_sync(db, sub, only_fields={'tag'}, user_tag='CUSTOM')
         assert cached.pending_sync_fields == ['expire_at', 'tag']
         assert cached.revision == 2
+
+
+async def test_unchanged_panel_echo_never_causes_another_patch(monkeypatch):
+    """PATCH -> user.modified -> delivery must converge after the first write."""
+    async with database(monkeypatch) as db:
+        api, factory = await prepare(db)
+        await deliver_account_projection(factory, api, 1, now=NOW)
+        initial_writes = len(api.writes)
+        assert initial_writes == 1
+        for _ in range(5):
+            await deliver_account_projection(factory, api, 1, now=NOW)
+        assert len(api.writes) == initial_writes
+
+
+async def test_echo_still_repairs_real_quota_drift(monkeypatch):
+    async with database(monkeypatch) as db:
+        api, factory = await prepare(db)
+        await deliver_account_projection(factory, api, 1, now=NOW)
+        api.user.traffic_limit_bytes += 10
+        await deliver_account_projection(factory, api, 1, now=NOW)
+        assert len(api.writes) == 2
+        assert api.user.traffic_limit_bytes == 100
+        await deliver_account_projection(factory, api, 1, now=NOW)
+        assert len(api.writes) == 2
+
+
+async def test_modified_webhook_echo_converges(monkeypatch):
+    from contextlib import asynccontextmanager
+    from datetime import datetime
+
+    from app.services import remnawave_webhook_service as webhook, traffic_accounting_service as accounting
+    from app.services.subscription_service import SubscriptionService
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    queued = []
+    original_reconcile = accounting.reconcile_account_locked
+
+    async def reconcile(db, subscription, panel, **kwargs):
+        kwargs.setdefault('now', NOW)
+        return await original_reconcile(db, subscription, panel, **kwargs)
+
+    monkeypatch.setattr(webhook, 'datetime', Clock)
+    monkeypatch.setattr(accounting, 'reconcile_account_locked', reconcile)
+    monkeypatch.setattr(accounting, 'schedule_projection_after_commit', lambda db, target: queued.append(target))
+    async with database(monkeypatch) as db:
+        api, factory = await prepare(db)
+
+        @asynccontextmanager
+        async def client(self):
+            yield api
+
+        monkeypatch.setattr(SubscriptionService, 'get_api_client', client)
+        await deliver_account_projection(factory, api, 1, now=NOW)
+        count = len(api.writes)
+        handler = webhook.RemnaWaveWebhookService(bot=None)
+        await handler._reconcile_managed_status_event(db, await db.get(Subscription, 1))
+        assert queued == [1]
+        for target in queued:
+            await deliver_account_projection(factory, api, target, now=NOW)
+        assert len(api.writes) == count

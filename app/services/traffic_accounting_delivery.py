@@ -118,9 +118,28 @@ async def deliver_account_projection(session_factory, api, subscription_id, *, n
                 fields.add('status')
             if subscription.pending_panel_expire_at is not None:
                 fields.add('expire_at')
-            result = await write_managed_payload_locked(
-                api, panel.id, payload, now=moment, panel_current=getattr(panel, 'expire_at', None), only_fields=fields
+            # A PATCH emits user.modified, which schedules this delivery again.
+            # Acknowledging an already-observed quota/status is essential: never
+            # echo our own unchanged state back to the panel indefinitely.
+            desired = payload.update_kwargs(
+                user_id=panel.id, now=moment, panel_current=getattr(panel, 'expire_at', None), only_fields=fields
             )
+            matches = fields.issubset(QUOTA_FIELDS | {'status'}) and all(
+                getattr(getattr(panel, key, None), 'value', getattr(panel, key, None)) == getattr(value, 'value', value)
+                for key, value in desired.items()
+                if key != 'user_id'
+            )
+            if matches:
+                result = panel
+            else:
+                result = await write_managed_payload_locked(
+                    api,
+                    panel.id,
+                    payload,
+                    now=moment,
+                    panel_current=getattr(panel, 'expire_at', None),
+                    only_fields=fields,
+                )
             if 'status' in fields and payload.status is UserStatus.ACTIVE:
                 state.quota_disabled = False
             state.activation_requested = False
