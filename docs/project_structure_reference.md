@@ -3253,6 +3253,9 @@
   Классы: нет
   Функции: `tracked_paths` — Файлы проекта: отслеживаемые плюс новые, которые git не игнорирует., `describe_module` — Строки «Классы:» и «Функции:» для модуля., `render_entries`, `render`, `build`, `main`
 - `scripts/pg-upgrade.sh` — файл
+- `scripts/pytest_pg_shard.py` — Python-модуль
+  Классы: нет
+  Функции: `partition_items`, `pytest_addoption`, `pytest_configure`, `pytest_collection_modifyitems`
 
 ## tests
 
@@ -3338,6 +3341,9 @@
 - `tests/test_no_undefined_names.py` — Python-модуль
   Классы: нет
   Функции: `test_no_new_undefined_names`, `test_baseline_does_not_rot` — Исправленное имя обязано выпадать из базы, иначе она копит ложь.
+- `tests/test_pg_shard.py` — Python-модуль
+  Классы: `Item` (1 методов)
+  Функции: `test_partitions_cover_all_items_once_and_are_order_independent`, `test_invalid_partition_is_an_error`
 - `tests/test_pg_upgrade_log_pipe.py` — Python-модуль
   Классы: нет
   Функции: `test_pg_readiness_large_log`
