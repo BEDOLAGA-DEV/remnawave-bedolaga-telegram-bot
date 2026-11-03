@@ -1017,6 +1017,24 @@ async def _render_user_subscription_overview(
             ]
         ]
 
+    if subscription is not None:
+        from app.services.cispay_recurrent_guard import has_live_cispay
+
+        if await has_live_cispay(db, subscription.id):
+            from app.handlers.subscription.cispay_recurrent import format_cispay_status
+            from app.services.cispay_recurrent_checkout import get_cispay_agreement_state
+
+            info = await get_cispay_agreement_state(db, user_id=user_id, subscription_id=subscription.id)
+            text += '\n\n' + html.escape(format_cispay_status(info, get_texts(user.language)))
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text='Отключить автоплатёж CisPay',
+                        callback_data=f'admin_cisrec_cancel:{user_id}:{subscription.id}',
+                    )
+                ]
+            )
+
     keyboard.append([types.InlineKeyboardButton(text='⬅️ К пользователю', callback_data=f'admin_user_manage_{user_id}')])
 
     await callback.message.edit_text(text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
@@ -3468,9 +3486,11 @@ async def confirm_subscription_deletion(callback: types.CallbackQuery, db_user: 
     # re-acquired immediately below — closing that window before anything
     # that can't be undone happens.
     from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
+    from app.services.cispay_recurrent_guard import stage_cispay_cancellation
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
+    await stage_cispay_cancellation(db, subscription.id, reason='subscription_deleted')
     await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
 
     await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
@@ -4355,6 +4375,9 @@ async def _update_user_devices(
             logger.error('Пользователь или подписка не найдены', user_id=user_id)
             return False
 
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         old_devices = subscription.device_limit
         subscription.device_limit = devices
         subscription.updated_at = datetime.now(UTC)
@@ -4392,9 +4415,19 @@ async def _update_user_traffic(
             logger.error('Пользователь или подписка не найдены', user_id=user_id)
             return False
 
+        from secrets import token_hex
+
+        from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
+        from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+        subscription, _ = await prepare_admin_tariff_accounting(db, subscription)
         old_traffic = subscription.traffic_limit_gb
         subscription.traffic_limit_gb = traffic_gb
         subscription.updated_at = datetime.now(UTC)
+        if subscription.traffic_accounting_mode == 'managed':
+            await stage_paid_base_grant(
+                db, subscription, operation_key=f'admin:traffic:{token_hex(16)}', reset_base=False
+            )
 
         await db.commit()
 
@@ -4525,10 +4558,25 @@ async def _add_subscription_traffic(
             return False
 
         if gb == 0:
-            subscription.traffic_limit_gb = 0
-            await db.commit()
+            if subscription.traffic_limit_gb:
+                from app.services.traffic_accounting_service import transition_to_unlimited_locked
+                from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+                subscription, accounting_panel = await prepare_traffic_purchase(db, subscription)
+                await transition_to_unlimited_locked(db, subscription, accounting_panel)
+                from sqlalchemy import delete
+
+                from app.database.models import TrafficPurchase
+
+                await db.execute(delete(TrafficPurchase).where(TrafficPurchase.subscription_id == subscription.id))
+                await db.commit()
         else:
-            await add_subscription_traffic(db, subscription, gb)
+            from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+            accounting_panel = None
+            if subscription.traffic_limit_gb:
+                subscription, accounting_panel = await prepare_traffic_purchase(db, subscription)
+            await add_subscription_traffic(db, subscription, gb, panel=accounting_panel)
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
         await reactivate_subscription(db, subscription)
@@ -4600,6 +4648,14 @@ async def _activate_user_subscription(
         if not subscription:
             logger.error('Подписка не найдена для пользователя', user_id=user_id)
             return False
+
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
+
+        from app.services.traffic_accounting_service import stage_authorized_activation
+
+        subscription = await stage_authorized_activation(db, subscription)
 
         # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
         from app.services.grace_access_echo import undo_grace_overlay_echo
@@ -5086,6 +5142,20 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
         from sqlalchemy.orm import selectinload
 
         locked_subscription_id = subscription_id if subscription_id is not None else subscription.id
+        managed_purchase = await subscription_service._persisted_traffic_mode(db, subscription) in {
+            'managed',
+            'migrating',
+        }
+        if managed_purchase:
+            from app.services.traffic_accounting_service import lock_accounting_subscription
+
+            subscription, grace_open = await lock_accounting_subscription(db, locked_subscription_id)
+            if grace_open or subscription.traffic_accounting_mode != 'managed':
+                await db.rollback()
+                await callback.answer(
+                    '❌ Дождитесь завершения временного доступа или обновления трафика', show_alert=True
+                )
+                return
         result = await db.execute(
             select(Subscription)
             .where(Subscription.id == locked_subscription_id, Subscription.user_id == user_id)
@@ -5097,6 +5167,14 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
         if subscription is None:
             await db.rollback()
             await callback.answer('❌ У пользователя нет выбранной подписки', show_alert=True)
+            return
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        try:
+            await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
+        except ValueError as error:
+            await db.rollback()
+            await callback.answer(str(error), show_alert=True)
             return
         available_periods = await _admin_buy_periods(db, subscription)
         if available_periods is None or period_days not in available_periods:
@@ -5202,6 +5280,16 @@ async def admin_buy_subscription_execute(callback: types.CallbackQuery, db_user:
                 description=f'Продление подписки на {period_days} дней (администратор)',
                 commit=False,
             )
+            if managed_purchase:
+                from app.services.traffic_accounting_sync import stage_managed_sync
+                from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+                # A paid same-limit purchase also re-arms a deliberately
+                # retired account. Resize preserves spent quota; it is not a reset.
+                await stage_paid_base_grant(
+                    db, subscription, operation_key=f'admin:buy:{transaction.id}', reset_base=False
+                )
+                await stage_managed_sync(db, subscription)
             await db.commit()
             await db.refresh(subscription)
             from app.database.models import PaymentMethod
@@ -5625,6 +5713,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
         from app.database.crud.user import subtract_user_balance
         from app.services.subscription_service import SubscriptionService
 
+        managed_purchase = getattr(existing_subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
         # Списываем баланс
         success = await subtract_user_balance(
             db,
@@ -5632,6 +5721,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             price_kopeks,
             f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
             mark_as_paid_subscription=True,
+            commit=not managed_purchase,
         )
 
         if not success:
@@ -5660,7 +5750,9 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=device_limit,
                 connected_squads=squads,
-                reset_used_traffic=reset_traffic if is_tariff_renewal else None,
+                paid_traffic_reset=False,
+                reset_used_traffic=reset_traffic,
+                commit=not managed_purchase,
             )
         else:
             # Создаем новую подписку
@@ -5674,6 +5766,29 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 tariff_id=tariff.id,
             )
 
+        # Создаем транзакцию
+        purchase_transaction = await create_transaction(
+            db,
+            user_id=target_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=price_kopeks,
+            description=f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
+            commit=not managed_purchase,
+        )
+
+        if managed_purchase:
+            await db.commit()
+            from app.database.crud.transaction import emit_transaction_side_effects
+
+            await emit_transaction_side_effects(
+                db,
+                purchase_transaction,
+                amount_kopeks=price_kopeks,
+                user_id=target_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                description=f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
+            )
+
         # Обновляем в Remnawave
         try:
             subscription_service = SubscriptionService()
@@ -5685,15 +5800,6 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             )
         except Exception as e:
             logger.error('Ошибка обновления Remnawave', error=e)
-
-        # Создаем транзакцию
-        await create_transaction(
-            db,
-            user_id=target_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=price_kopeks,
-            description=f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
-        )
 
         target_user_link = user_html_link(target_user)
         target_user_id_display = target_user.telegram_id or target_user.email or f'#{target_user.id}'
@@ -5981,11 +6087,15 @@ async def select_admin_tariff_change(callback: types.CallbackQuery, db_user: Use
     text += '⚠️ Параметры подписки будут обновлены в соответствии с тарифом.\n'
     text += 'Дата окончания подписки не изменится.'
 
+    confirmation_data = f'admin_sub_tariff_confirm_{tariff_id}_{user_id}{_sid}'
+    if getattr(subscription, 'traffic_accounting_mode', None) == 'managed':
+        from secrets import token_hex
+
+        confirmation_data = f'astc:{subscription.id}:{tariff_id}:{token_hex(8)}'
+
     keyboard = [
         [
-            types.InlineKeyboardButton(
-                text='✅ Подтвердить', callback_data=f'admin_sub_tariff_confirm_{tariff_id}_{user_id}{_sid}'
-            ),
+            types.InlineKeyboardButton(text='✅ Подтвердить', callback_data=confirmation_data),
             types.InlineKeyboardButton(text='❌ Отмена', callback_data=back_cb),
         ]
     ]
@@ -5998,13 +6108,35 @@ async def select_admin_tariff_change(callback: types.CallbackQuery, db_user: Use
 @error_handler
 async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
     """Применяет смену тарифа."""
-    parts = callback.data.split('_')
-    # admin_sub_tariff_confirm_{tariff_id}_{user_id} or admin_sub_tariff_confirm_{tariff_id}_{user_id}_s{sub_id}
-    user_id, subscription_id = _extract_admin_sub_context(callback.data)
-    if subscription_id:
-        tariff_id = int(parts[-3])
+    confirmation_token = None
+    if callback.data.startswith('astc:'):
+        from app.database.crud.subscription import get_subscription_by_id
+
+        parts = callback.data.split(':')
+        if (
+            len(parts) != 4
+            or not parts[1].isdigit()
+            or not parts[2].isdigit()
+            or len(parts[3]) != 16
+            or any(c not in '0123456789abcdef' for c in parts[3])
+        ):
+            await callback.answer('Откройте подтверждение смены тарифа ещё раз.', show_alert=True)
+            return
+        subscription_id, tariff_id = int(parts[1]), int(parts[2])
+        selected = await get_subscription_by_id(db, subscription_id)
+        if selected is None:
+            await callback.answer('Подписка не найдена.', show_alert=True)
+            return
+        user_id = selected.user_id
+        confirmation_token = parts[3]
     else:
-        tariff_id = int(parts[-2])
+        parts = callback.data.split('_')
+        # admin_sub_tariff_confirm_{tariff_id}_{user_id} or admin_sub_tariff_confirm_{tariff_id}_{user_id}_s{sub_id}
+        user_id, subscription_id = _extract_admin_sub_context(callback.data)
+        if subscription_id:
+            tariff_id = int(parts[-3])
+        else:
+            tariff_id = int(parts[-2])
 
     back_cb = (
         f'admin_user_sub_select_{user_id}_{subscription_id}'
@@ -6022,7 +6154,7 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         await callback.answer('❌ Тариф не найден', show_alert=True)
         return
 
-    if subscription_id and settings.is_multi_tariff_enabled():
+    if subscription_id and (settings.is_multi_tariff_enabled() or confirmation_token):
         from app.database.crud.subscription import get_subscription_by_id_for_user
 
         subscription = await get_subscription_by_id_for_user(db, subscription_id, user_id)
@@ -6033,17 +6165,49 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         await callback.answer('❌ У пользователя нет подписки', show_alert=True)
         return
 
+    from app.services.cispay_recurrent_guard import require_no_cispay
+
+    try:
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
+    except ValueError as error:
+        await db.rollback()
+        await callback.answer(str(error), show_alert=True)
+        return
+
     try:
         old_tariff_id = subscription.tariff_id
 
         # Preserve extra purchased devices above the old tariff's base limit
         from app.database.crud.subscription import calc_device_limit_on_admin_tariff_change
+        from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
+        from app.services.traffic_accounting_service import change_managed_tariff_locked
+
+        subscription, managed_panel = await prepare_admin_tariff_accounting(db, subscription)
+        confirmation_key = None
+        if managed_panel is not None:
+            from hashlib import sha256
+
+            from sqlalchemy import select
+
+            from app.database.models import Transaction
+
+            if not confirmation_token:
+                await callback.answer('Откройте подтверждение смены тарифа ещё раз.', show_alert=True)
+                return
+            source = f'{db_user.id}:{subscription.id}:{tariff.id}:{confirmation_token}'
+            confirmation_key = f'admin-tariff:{sha256(source.encode()).hexdigest()}'
+            previous = await db.scalar(select(Transaction.id).where(Transaction.external_id == confirmation_key))
+            if previous is not None or subscription.tariff_id == tariff.id:
+                await callback.answer('Изменение уже применено.', show_alert=True)
+                return
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
 
         if subscription.tariff_id != tariff.id:
             subscription.daily_devices_billing_version = 0
         subscription.tariff_id = tariff.id
+        if managed_panel is not None:
+            subscription.tariff = tariff
         subscription.device_limit = calc_device_limit_on_admin_tariff_change(
             current_device_limit=subscription.device_limit,
             old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
@@ -6065,20 +6229,30 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         subscription.traffic_reset_at = None
 
         # Сброс использованного трафика по админ-настройке
-        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH and managed_panel is None:
             subscription.traffic_used_gb = 0.0
 
         # Записываем транзакцию о смене тарифа
         from app.database.crud.transaction import create_transaction
 
-        await create_transaction(
+        change_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=0,
             description=f"Смена тарифа администратором на '{tariff.name}'",
+            external_id=confirmation_key,
             commit=False,
         )
+
+        if managed_panel is not None:
+            await change_managed_tariff_locked(
+                db,
+                subscription,
+                managed_panel,
+                operation_key=f'admin-switch:{change_transaction.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+            )
 
         await db.commit()
 
@@ -6087,7 +6261,7 @@ async def confirm_admin_tariff_change(callback: types.CallbackQuery, db_user: Us
         await subscription_service.update_remnawave_user(
             db,
             subscription,
-            reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+            reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH and managed_panel is None,
             reset_reason='смена тарифа (админ)',
             sync_squads=True,
         )
@@ -6380,7 +6554,34 @@ async def set_admin_user_autopay_period(callback: types.CallbackQuery, db_user: 
     await show_admin_user_autopay(refreshed_callback, db_user, db)
 
 
+@admin_required
+@error_handler
+async def cancel_admin_cispay(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    from app.services.cispay_recurrent_service import cancel_cispay_agreement
+
+    parts = callback.data.split(':')
+    if len(parts) != 3 or not all(part.isdecimal() for part in parts[1:]):
+        await callback.answer('Некорректная подписка', show_alert=True)
+        return
+    user_id, subscription_id = map(int, parts[1:])
+    try:
+        result = await cancel_cispay_agreement(db, user_id=user_id, subscription_id=subscription_id, reason='admin')
+    except ValueError:
+        await callback.answer('Подписка не найдена', show_alert=True)
+        return
+    logger.info(
+        'Admin requested CisPay cancellation',
+        admin_id=db_user.id,
+        user_id=user_id,
+        subscription_id=subscription_id,
+        operation_status=result['status'],
+    )
+    await _render_user_subscription_overview(callback, db, user_id, subscription_id=subscription_id)
+    await callback.answer('Запрос на отключение обработан')
+
+
 def register_handlers(dp: Dispatcher):
+    dp.callback_query.register(cancel_admin_cispay, F.data.startswith('admin_cisrec_cancel:'))
     dp.callback_query.register(show_users_menu, F.data == 'admin_users')
 
     dp.callback_query.register(show_users_list, F.data == 'admin_users_list')
@@ -6557,7 +6758,9 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(select_admin_tariff_change, F.data.startswith('admin_sub_tariff_select_'))
 
-    dp.callback_query.register(confirm_admin_tariff_change, F.data.startswith('admin_sub_tariff_confirm_'))
+    dp.callback_query.register(
+        confirm_admin_tariff_change, F.data.startswith('admin_sub_tariff_confirm_') | F.data.startswith('astc:')
+    )
 
     dp.message.register(process_devices_edit_text, AdminStates.editing_user_devices)
 

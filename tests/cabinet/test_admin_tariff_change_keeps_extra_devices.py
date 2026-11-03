@@ -96,6 +96,9 @@ async def test_bulk_change_tariff_keeps_paid_devices():
 
     with (
         patch.object(bulk, 'settings', fake_settings),
+        patch(
+            'app.services.traffic_accounting_service.lock_accounting_subscription', AsyncMock(return_value=(sub, False))
+        ),
         patch.object(bulk, 'get_tariff_by_id', AsyncMock(return_value=old_tariff)),
         patch.object(bulk, '_sync_subscription_to_panel', AsyncMock(return_value={})),
         patch('app.database.crud.transaction.create_transaction', AsyncMock(return_value=None)),
@@ -113,3 +116,57 @@ async def test_bulk_change_tariff_keeps_paid_devices():
     assert sub.tariff_id == 2
     assert sub.daily_devices_billing_version == 0
     assert sub.device_limit == 11
+
+
+async def test_managed_same_tariff_confirmation_does_not_grant_again(monkeypatch):
+    from app.database.crud import transaction as transaction_crud
+    from app.services import paid_traffic_reset_service as resets, traffic_accounting_service as accounting
+
+    tariff = SimpleNamespace(
+        id=2, name='Current', traffic_limit_gb=10, device_limit=2, max_device_limit=16, allowed_squads=[]
+    )
+    sub = SimpleNamespace(
+        id=42,
+        user_id=7,
+        status='active',
+        is_trial=False,
+        end_date=datetime.now(UTC) + timedelta(days=30),
+        tariff_id=2,
+        traffic_accounting_mode='managed',
+        traffic_limit_gb=10,
+        traffic_used_gb=9,
+        device_limit=2,
+        daily_devices_billing_version=1,
+        purchased_traffic_gb=0,
+        connected_squads=[],
+        traffic_reset_at=None,
+    )
+    db = AsyncMock()
+    grant = AsyncMock()
+    transaction = AsyncMock(return_value=SimpleNamespace(id=9))
+    monkeypatch.setattr(resets, 'prepare_admin_tariff_accounting', AsyncMock(return_value=(sub, object())))
+    monkeypatch.setattr(accounting, 'change_managed_tariff_locked', grant)
+    monkeypatch.setattr(transaction_crud, 'create_transaction', transaction)
+    monkeypatch.setattr(bulk, 'get_tariff_by_id', AsyncMock(return_value=tariff))
+    monkeypatch.setattr(bulk, '_sync_subscription_to_panel', AsyncMock())
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', False)
+    result = await bulk._do_change_tariff(
+        db,
+        SimpleNamespace(id=7, username='u', subscriptions=[]),
+        SimpleNamespace(tariff_id=2),
+        tariff,
+        dry_run=False,
+        sub_override=sub,
+    )
+    assert result.success
+    grant.assert_not_awaited()
+    transaction.assert_not_awaited()
+    assert sub.traffic_used_gb == 9
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_in_tariff_mutation_unit_fixture(monkeypatch):
+    # These fake subscriptions have no bank agreement. Real active agreements
+    # are covered by test_cispay_recurrent_charges_postgres.
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))

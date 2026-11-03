@@ -44,6 +44,9 @@ async def test_classic_purchase_counts_trial_remainder_once(monkeypatch, flow, c
     from app.database.crud import subscription_conversion, user as user_crud
     from app.services import grace_access_echo
 
+    # This unit fixture has no bank agreement; live guards are covered on PostgreSQL.
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))
     monkeypatch.setattr(settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', carry)
     monkeypatch.setattr(settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', reset)
     monkeypatch.setattr(grace_access_echo, 'undo_grace_overlay_echo', AsyncMock())

@@ -58,3 +58,8 @@ router.include_router(revoke_router)
 router.include_router(platega_recurrent_router)
 router.include_router(lava_recurrent_router)
 router.include_router(cashera_recurrent_router)
+
+from .subscription_modules.cispay_recurrent import router as cispay_recurrent_router
+
+
+router.include_router(cispay_recurrent_router)

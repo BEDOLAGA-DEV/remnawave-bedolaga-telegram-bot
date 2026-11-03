@@ -312,7 +312,12 @@ async def add_subscription_traffic_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ) -> SubscriptionResponse:
     subscription = await _get_subscription(db, subscription_id)
-    subscription = await add_subscription_traffic(db, subscription, payload.gb)
+    from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+    accounting_panel = None
+    if subscription.traffic_limit_gb:
+        subscription, accounting_panel = await prepare_traffic_purchase(db, subscription)
+    subscription = await add_subscription_traffic(db, subscription, payload.gb, panel=accounting_panel)
 
     # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
     await reactivate_subscription(db, subscription)

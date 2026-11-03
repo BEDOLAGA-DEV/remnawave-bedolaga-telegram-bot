@@ -234,20 +234,18 @@ class CisPayPaymentMixin:
             return None
 
     async def process_cispay_callback(self, db: AsyncSession, payload: dict) -> bool:
-        if payload.get('event'):
-            if (
-                payload.get('object') == 'subscription'
-                and payload.get('_event_header', payload['event']) == payload['event']
-                and payload.get('store_id') == settings.CISPAY_SHOP_ID
-                and payload['event']
-                in {
-                    'subscription.activated',
-                    'subscription.cancelled',
-                    'subscription.failed',
-                }
-            ):
-                return True
-            raise CisPayValidationError('Invalid event')
+        if payload.get('event') or payload.get('subscription_id'):
+            from app.services.cispay_recurrent_service import (
+                process_cispay_subscription_charge,
+                process_cispay_subscription_event,
+            )
+
+            try:
+                if payload.get('event'):
+                    return await process_cispay_subscription_event(db, payload)
+                return await process_cispay_subscription_charge(db, payload, bot=getattr(self, 'bot', None))
+            except ValueError as error:
+                raise CisPayValidationError('Invalid recurring event') from error
         payment = await db.scalar(select(CisPayPayment).where(CisPayPayment.order_id == payload.get('order_id')))
         if payment is None:
             raise CisPayValidationError('Unknown order')

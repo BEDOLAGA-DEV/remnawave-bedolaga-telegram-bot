@@ -803,3 +803,46 @@ async def test_signed_webhook_lifecycle_and_invoice_ledger_are_separate(monkeypa
                 ('masked-charge-2', -12500),
                 ('masked-charge-3', -10000),
             ]
+
+
+@pytest.mark.parametrize('reset_base', [True, False])
+@pytest.mark.parametrize('phase', ['ready', 'suspended'])
+async def test_managed_charge_persists_base_intent_even_if_panel_delivery_fails(monkeypatch, reset_base, phase):
+    from sqlalchemy import select
+
+    from app.database.models import Base, TrafficBaseGrantIntent
+    from app.services.traffic_accounting import TrafficAccount
+    from app.services.traffic_accounting_store import initialize_account
+
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        user, tariff, subscription = await _seed(db)
+        agent, service = _agent(monkeypatch)
+        monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset_base)
+        await agent.create_lava_recurrent_subscription(db, user_id=user.id, subscription=subscription, tariff=tariff)
+        order_id = service.subscribe_recurrent.await_args.kwargs['order_id']
+        now = datetime.now(UTC)
+        state = await initialize_account(
+            db,
+            subscription.id,
+            TrafficAccount('1@local-test', 0, 0, ()),
+            strategy='MONTH',
+            timezone='UTC',
+            anchor=now,
+            next_refresh_at=None,
+        )
+        state.phase = phase
+        subscription.traffic_accounting_mode = 'managed'
+        await db.commit()
+        monkeypatch.setattr(
+            'app.services.subscription_service.SubscriptionService.update_remnawave_user',
+            AsyncMock(side_effect=TimeoutError('local panel failure')),
+        )
+        assert await agent.process_lava_subscription_callback(db, _charge(order_id, 'managed-charge')) is True
+        intents = list((await db.scalars(select(TrafficBaseGrantIntent))).all())
+        assert len(intents) == 1
+        assert intents[0].state == 'pending'
+        assert intents[0].reset_base is reset_base
+        assert intents[0].base_bytes == tariff.traffic_limit_gb * 1024**3
+        assert intents[0].operation_key.startswith('lava:payment:')
+        assert await agent.process_lava_subscription_callback(db, _charge(order_id, 'managed-charge')) is True
+        assert len(list((await db.scalars(select(TrafficBaseGrantIntent))).all())) == 1

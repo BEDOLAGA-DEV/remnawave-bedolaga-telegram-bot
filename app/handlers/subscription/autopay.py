@@ -118,6 +118,9 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
                     )
                 ]
             )
+        from .cispay_recurrent import cispay_menu_rows
+
+        daily_keyboard_rows.extend(await cispay_menu_rows(db, db_user, subscription, texts))
         daily_keyboard_rows.extend(await _cashera_recurring_rows(db, subscription, texts))
         back_cb = f'sm:{sub_id}' if sub_id and settings.is_multi_tariff_enabled() else 'menu_subscription'
         daily_keyboard_rows.append([types.InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)])
@@ -170,6 +173,10 @@ async def handle_autopay_menu(callback: types.CallbackQuery, db_user: User, db: 
             ],
         )
 
+    from .cispay_recurrent import cispay_menu_rows
+
+    for row in await cispay_menu_rows(db, db_user, subscription, texts):
+        keyboard.inline_keyboard.insert(-1, row)
     for row in await _cashera_recurring_rows(db, subscription, texts):
         keyboard.inline_keyboard.insert(-1, row)
 
@@ -188,6 +195,14 @@ async def toggle_autopay(callback: types.CallbackQuery, db_user: User, db: Async
     enable = callback.data.startswith('autopay_enable')
 
     if enable:
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        try:
+            await require_no_cispay(db, user_id=db_user.id, subscription_id=subscription.id)
+        except ValueError as error:
+            await db.rollback()
+            await callback.answer(str(error), show_alert=True)
+            return
         # Trial subscriptions cannot use autopay
         if subscription.is_trial or subscription.is_trial is None:
             texts = get_texts(db_user.language)

@@ -21,7 +21,20 @@ pytestmark = pytest.mark.postgres
 
 @pytest.mark.parametrize(
     'fault',
-    [None, 'ledger', 'commit', 'cancel', 'owner_changed', 'carry', 'extras', 'price_up', 'price_down', 'legacy'],
+    [
+        None,
+        'ledger',
+        'commit',
+        'cancel',
+        'owner_changed',
+        'carry',
+        'extras',
+        'price_up',
+        'price_down',
+        'legacy',
+        'managed',
+        'managed_sync',
+    ],
 )
 async def test_selected_tariff_trial_purchase_is_atomic(postgres_database, monkeypatch, fault):
     async with switch_data(postgres_database, monkeypatch) as (db, user):
@@ -33,6 +46,27 @@ async def test_selected_tariff_trial_purchase_is_atomic(postgres_database, monke
         chosen.traffic_used_gb = 17
         # Extra devices have a price and must survive the paid conversion.
         chosen.device_limit = 4
+        if fault in ('managed', 'managed_sync'):
+            from app.services.traffic_accounting import Allowance, TrafficAccount
+            from app.services.traffic_accounting_store import initialize_account
+
+            now = datetime.now(UTC)
+            state = await initialize_account(
+                db,
+                chosen.id,
+                TrafficAccount(
+                    '123@2025-11-16T00:00:00+00:00',
+                    100,
+                    30,
+                    (Allowance('base:initial', 100 * 1024**3, now + timedelta(days=30)),),
+                ),
+                strategy='NO_RESET',
+                timezone='UTC',
+                anchor=now,
+                next_refresh_at=None,
+            )
+            state.phase = 'ready'
+            chosen.traffic_accounting_mode = 'managed'
         if fault == 'extras':
             chosen.traffic_limit_gb = 225
             chosen.purchased_traffic_gb = 25
@@ -60,6 +94,11 @@ async def test_selected_tariff_trial_purchase_is_atomic(postgres_database, monke
         )
         emitted = AsyncMock()
         monkeypatch.setattr(transaction_crud, 'emit_transaction_side_effects', emitted)
+        if fault == 'managed_sync':
+            monkeypatch.setattr(
+                'app.services.traffic_accounting_sync.stage_managed_sync',
+                AsyncMock(side_effect=RuntimeError('durable panel intent unavailable')),
+            )
         if fault in ('ledger', 'cancel'):
 
             async def fail_ledger(*args, **kwargs):
@@ -113,7 +152,7 @@ async def test_selected_tariff_trial_purchase_is_atomic(postgres_database, monke
             await db.execute(select(Subscription.__table__).where(Subscription.id == 11))
         ).mappings().one() == before_sibling
         ledger = list(await db.scalars(select(Transaction)))
-        if fault in ('ledger', 'commit', 'cancel', 'owner_changed', 'price_up', 'price_down'):
+        if fault in ('ledger', 'commit', 'cancel', 'owner_changed', 'price_up', 'price_down', 'managed_sync'):
             assert after_user == before_user
             expected = dict(before_chosen)
             if fault == 'owner_changed':
@@ -142,3 +181,8 @@ async def test_selected_tariff_trial_purchase_is_atomic(postgres_database, monke
             assert after_user['balance_kopeks'] == before_user['balance_kopeks'] + ledger[0].amount_kopeks
             assert ledger[0].amount_kopeks < -2000
             emitted.assert_awaited_once()
+            if fault == 'managed':
+                from app.database.models import TrafficAccountingState
+
+                state = await db.get(TrafficAccountingState, 12)
+                assert 'expire_at' in state.pending_sync_fields

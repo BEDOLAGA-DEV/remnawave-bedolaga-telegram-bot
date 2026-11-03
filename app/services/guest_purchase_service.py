@@ -581,6 +581,7 @@ async def fulfill_purchase(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
+                paid_traffic_reset=False,
                 reset_used_traffic=reset_traffic,
             )
         elif existing_subscription is not None:
@@ -1588,6 +1589,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
+                paid_traffic_reset=False,
                 reset_used_traffic=reset_traffic if is_tariff_renewal else None,
                 commit=False,
             )

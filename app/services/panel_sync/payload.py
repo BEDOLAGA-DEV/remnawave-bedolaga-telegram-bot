@@ -21,6 +21,7 @@ from app.services.panel_sync.expiry import panel_expire_at
 from app.services.panel_sync.liveness import is_subscription_expired, is_subscription_live
 from app.services.panel_sync.tags import resolve_panel_user_tag
 from app.services.panel_sync.traffic_strategy import get_traffic_reset_strategy
+from app.services.traffic_accounting import AccountingConflict, TrafficAccount
 from app.utils.subscription_utils import resolve_hwid_device_limit_for_payload
 
 
@@ -166,9 +167,16 @@ def build_panel_payload(
     multi_tariff: bool,
     user_tag: str | None = None,
     now: datetime | None = None,
+    accounting_account: TrafficAccount | None = None,
+    accounting_recreation: bool = False,
 ) -> PanelPayload:
     """Собрать поля запроса из пользователя, подписки и её тарифа."""
     moment = now or datetime.now(UTC)
+    accounting_mode = getattr(subscription, 'traffic_accounting_mode', None) or 'legacy'
+    if (accounting_mode == 'migrating' and not (accounting_recreation and accounting_account is not None)) or (
+        accounting_mode == 'managed' and accounting_account is None
+    ):
+        raise AccountingConflict('Managed payload requires a settled accounting lease')
     is_live = is_subscription_live(user, subscription, now=moment)
     tariff = getattr(subscription, 'tariff', None)
 
@@ -198,9 +206,21 @@ def build_panel_payload(
     traffic_limit_gb = getattr(subscription, 'traffic_limit_gb', 0) or 0
     return PanelPayload(
         username=username,
-        status=resolve_panel_status(user, subscription, is_live=is_live, now=moment),
-        traffic_limit_bytes=traffic_limit_gb * _BYTES_IN_GB if traffic_limit_gb > 0 else 0,
-        traffic_limit_strategy=get_traffic_reset_strategy(tariff),
+        status=(
+            UserStatus.DISABLED
+            if accounting_account is not None and accounting_account.remaining_bytes(moment) == 0
+            else resolve_panel_status(user, subscription, is_live=is_live, now=moment)
+        ),
+        traffic_limit_bytes=(
+            accounting_account.panel_limit_bytes(moment)
+            if accounting_account is not None
+            else traffic_limit_gb * _BYTES_IN_GB
+            if traffic_limit_gb > 0
+            else 0
+        ),
+        traffic_limit_strategy=(
+            TrafficLimitStrategy.NO_RESET if accounting_account is not None else get_traffic_reset_strategy(tariff)
+        ),
         telegram_id=getattr(user, 'telegram_id', None),
         email=getattr(user, 'email', None),
         description=settings.format_remnawave_user_description(

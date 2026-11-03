@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import app.database.crud.subscription as subcrud
 from app.config import Settings
 from app.handlers.subscription.tariff_purchase import _resolve_switch_subscription
@@ -89,3 +91,9 @@ async def test_switch_resolver_asks_to_choose_when_ambiguous(monkeypatch):
     assert sub is None
     assert sub_id is None
     callback.answer.assert_awaited()
+
+
+@pytest.fixture(autouse=True)
+def _no_existing_cispay_agreement(monkeypatch):
+    # These legacy fake-DB scenarios have no bank recurring agreement.
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))

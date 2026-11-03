@@ -43,6 +43,47 @@ class AntilopayAPIError(Exception):
         self.api_code = code
         super().__init__(f'Antilopay API error ({status_code}): {message}')
 
+    @property
+    def creation_rejected(self) -> bool:
+        # Documented creation refusals. Duplicate order (5), server errors,
+        # unknown/malformed replies and transport timeouts are ambiguous.
+        return (
+            self.status_code in (200, 400, 401, 403, 422)
+            and type(self.api_code) is int
+            and self.api_code
+            in {
+                1,
+                2,
+                3,
+                4,
+                6,
+                7,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                25,
+                26,
+                27,
+                29,
+                30,
+                31,
+                32,
+                100,
+            }
+        )
+
 
 class AntilopayService:
     """Сервис для работы с API Antilopay."""
@@ -232,16 +273,14 @@ class AntilopayService:
 
                 if not isinstance(data, dict):
                     raise AntilopayAPIError(response.status, 'Invalid response format')
-                if response.status == 200 and data.get('code') == 0:
+                api_code = data.get('code')
+                if response.status == 200 and type(api_code) is int and api_code == 0:
                     return data
 
                 error_msg = data.get('message') or data.get('error') or 'Unspecified API error'
-                logger.error(
-                    'Antilopay check_payment error',
-                    status_code=response.status,
-                    error_msg=error_msg,
-                )
-                raise AntilopayAPIError(response.status, error_msg)
+                # The caller knows whether this is an unresolved local order and
+                # applies retry policy. Do not emit a second context-free alert here.
+                raise AntilopayAPIError(response.status, error_msg, api_code)
 
         except aiohttp.ClientError as e:
             logger.exception('Antilopay API connection error', error=e)

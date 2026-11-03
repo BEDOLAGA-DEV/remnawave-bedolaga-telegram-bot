@@ -713,6 +713,15 @@ class BotConfigurationService:
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
+        'CISPAY_RECURRENT_ENABLED': {
+            'description': 'Автопродление тарифов через СБП CisPay в боте и кабинете.',
+            'format': 'Булево значение (да/нет).',
+            'example': 'false',
+            'warning': 'Первое подтверждение оплачивает период. CisPay должен разрешить подписки магазину. '
+            'Поддерживаются периоды от 7 до 360 дней. Выключение скрывает новое подключение, '
+            'но не отменяет действующие автоплатежи: отключайте их в карточке подписки.',
+            'dependencies': 'CISPAY_ENABLED, CISPAY_SBP_ENABLED, CISPAY_SHOP_ID, CISPAY_API_KEY',
+        },
         'SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED': {
             'description': 'Сообщать администраторам в Telegram о новых тикетах и ответах пользователей.',
             'format': 'Булево значение (да/нет).',
@@ -2346,6 +2355,9 @@ class BotConfigurationService:
         if cls.is_read_only(key) and not force:
             raise ReadOnlySettingError(f'Setting {key} is read-only')
 
+        from app.services.cispay_recurrent_guard import guard_cispay_credentials
+
+        await guard_cispay_credentials(db, key, value)
         raw_value = cls.serialize_value(key, value)
         await upsert_system_setting(db, key, raw_value)
         if commit:
@@ -2382,6 +2394,9 @@ class BotConfigurationService:
         if cls.is_read_only(key) and not force:
             raise ReadOnlySettingError(f'Setting {key} is read-only')
 
+        from app.services.cispay_recurrent_guard import guard_cispay_credentials
+
+        await guard_cispay_credentials(db, key, cls.get_original_value(key))
         await delete_system_setting(db, key)
         if commit:
             await db.commit()

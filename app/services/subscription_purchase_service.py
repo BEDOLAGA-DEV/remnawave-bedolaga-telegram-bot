@@ -1177,6 +1177,9 @@ class MiniAppSubscriptionPurchaseService:
                 commit=False,
             )
 
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(db, subscription, operation_key=f'miniapp-purchase:{transaction.id}')
             await db.commit()
         except BaseException as error:
             await db.rollback()

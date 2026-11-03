@@ -1111,6 +1111,7 @@ def get_subscription_keyboard(
     is_trial: bool = False,
     subscription=None,
     gift_enabled: bool = False,
+    cispay_recurring: bool = False,
 ) -> InlineKeyboardMarkup:
     from app.config import settings
 
@@ -1123,6 +1124,15 @@ def get_subscription_keyboard(
         if settings.is_multi_tariff_enabled() and subscription and hasattr(subscription, 'id')
         else ''
     )
+
+    if has_subscription and cispay_recurring and subscription is not None:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('CISREC_TITLE', 'Автоплатёж CisPay'), callback_data=f'cisrec:menu:{subscription.id}'
+                )
+            ]
+        )
 
     if has_subscription:
         subscription_link = get_display_subscription_link(subscription) if subscription else None

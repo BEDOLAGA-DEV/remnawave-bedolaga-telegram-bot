@@ -17,6 +17,8 @@ async def create_subscription_conversion(
     payment_method: str,
     first_payment_amount_kopeks: int,
     first_paid_period_days: int,
+    *,
+    commit: bool = True,
 ) -> SubscriptionConversion:
     conversion = SubscriptionConversion(
         user_id=user_id,
@@ -28,8 +30,11 @@ async def create_subscription_conversion(
     )
 
     db.add(conversion)
-    await db.commit()
-    await db.refresh(conversion)
+    if commit:
+        await db.commit()
+        await db.refresh(conversion)
+    else:
+        await db.flush()
 
     logger.info(
         '✅ Создана запись о конверсии для пользователя дн. → дн. за ₽',

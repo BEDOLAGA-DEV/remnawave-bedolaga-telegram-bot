@@ -151,6 +151,12 @@ class DailySubscriptionService:
 
         user = await lock_user_for_pricing(db, user.id)
 
+        from app.services.cispay_recurrent_guard import has_conflicting_cispay
+
+        if await has_conflicting_cispay(db, user_id=user.id, subscription_id=subscription.id):
+            await db.commit()
+            return 'skipped'
+
         # Дни могли добавить после выборки планировщика; повторное списание также
         # должно увидеть срок, сохранённый предыдущим обработчиком под блокировкой.
         await db.refresh(subscription, attribute_names=['end_date'], with_for_update=True)
@@ -516,6 +522,18 @@ class DailySubscriptionService:
         self, db: AsyncSession, subscription_id: int, expired_purchase_ids: list[int]
     ) -> int:
         from app.database.models import TrafficPurchase
+        from app.services.traffic_accounting import AccountingConflict
+        from app.services.traffic_accounting_service import refresh_managed_account
+
+        # Acquire the accounting/grace lease before the subscription row lock.
+        # A migrating account must never fall back to legacy destructive resets.
+        candidate = await db.get(Subscription, subscription_id)
+        mode = getattr(candidate, 'traffic_accounting_mode', None)
+        if mode == 'migrating':
+            raise AccountingConflict('Traffic accounting migration is not complete')
+        managed = mode == 'managed'
+        if managed:
+            await refresh_managed_account(db, candidate)
 
         # Получаем подписку вместе с тарифом — тариф нужен для определения
         # стратегии сброса панели (выравнивание докупки)
@@ -531,6 +549,12 @@ class DailySubscriptionService:
 
         if not subscription:
             return 0
+
+        current_mode = getattr(subscription, 'traffic_accounting_mode', None)
+        if current_mode == 'migrating' or (current_mode == 'managed' and not managed):
+            # Migration won the race after our initial read. Retry with the proper
+            # lease order instead of acquiring grace while holding Subscription.
+            raise AccountingConflict('Traffic accounting mode changed during expiry')
 
         # The scan is only a candidate list. A purchase, renewal or another
         # expiration worker may have changed both the totals and these rows.
@@ -613,7 +637,7 @@ class DailySubscriptionService:
         # лимит и used обнуляются согласованно, без окна-режа и без лишнего сброса.
         # (Для NO_RESET панель used не сбросит — там лимит роняем сразу, а used добиваем
         # страховкой-clamp ниже.)
-        if await self._should_defer_limit_drop(db, subscription, new_limit, expired_purchases):
+        if not managed and await self._should_defer_limit_drop(db, subscription, new_limit, expired_purchases):
             logger.info(
                 '⏸️ Понижение лимита докупки отложено: ждём периодический сброс used панелью',
                 subscription_id=subscription.id,
@@ -684,8 +708,10 @@ class DailySubscriptionService:
                 # Preserve the existing NO_RESET / overdue-package clamp policy.
                 # Periodic resets still defer the limit drop above.
                 new_limit_gb = subscription.traffic_limit_gb or 0
-                if new_limit_gb > 0 and updated_user.used_traffic_bytes > subscription_service._gb_to_bytes(
-                    new_limit_gb
+                if (
+                    not managed
+                    and new_limit_gb > 0
+                    and updated_user.used_traffic_bytes > subscription_service._gb_to_bytes(new_limit_gb)
                 ):
                     reset_required = True
                     reset_result = await subscription_service.update_remnawave_user(

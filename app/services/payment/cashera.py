@@ -754,6 +754,9 @@ class CasheraPaymentMixin:
         validate_recurrent_setup_terms(subscription, 'cashera', amount_kopeks, charge_days, interval)
 
         external_id = cr.build_subscription_external_id(subscription.id, uuid.uuid4().hex[:12])
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         response = await cashera_service.create_subscription(
             amount_kopeks=amount_kopeks,
             external_id=external_id,
@@ -1009,6 +1012,15 @@ class CasheraPaymentMixin:
                 external_id=charge_id,
                 commit=False,
             )
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(
+                db,
+                subscription,
+                operation_key=f'cashera:payment:{tx.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_PAYMENT,
+            )
+
             await db.commit()
 
             await emit_transaction_side_effects(

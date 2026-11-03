@@ -63,6 +63,7 @@ class UserTraffic:
     online_at: datetime | None = None
     first_connected_at: datetime | None = None
     last_connected_node_uuid: str | None = None
+    counters_known: bool = True
 
 
 @dataclass
@@ -98,6 +99,7 @@ class RemnaWaveUser:
     happ_link: str | None = None
     happ_crypto_link: str | None = None
     external_squad_uuid: str | None = None
+    next_traffic_reset_at: datetime | None = None
 
     @property
     def used_traffic_bytes(self) -> int:
@@ -2056,6 +2058,9 @@ class RemnaWaveAPI:
             online_at=self._parse_optional_datetime(traffic_data.get('onlineAt')),
             first_connected_at=self._parse_optional_datetime(traffic_data.get('firstConnectedAt')),
             last_connected_node_uuid=traffic_data.get('lastConnectedNodeUuid'),
+            counters_known=all(
+                traffic_data.get(key) is not None for key in ('usedTrafficBytes', 'lifetimeUsedTrafficBytes')
+            ),
         )
 
     def _parse_user(self, user_data: dict) -> RemnaWaveUser:
@@ -2102,6 +2107,7 @@ class RemnaWaveAPI:
             created_at=datetime.fromisoformat(user_data['createdAt'].replace('Z', '+00:00')),
             updated_at=datetime.fromisoformat(user_data['updatedAt'].replace('Z', '+00:00')),
             user_traffic=user_traffic,
+            next_traffic_reset_at=self._parse_optional_datetime(user_data.get('nextTrafficResetAt')),
             sub_revoked_at=self._parse_optional_datetime(user_data.get('subRevokedAt')),
             last_traffic_reset_at=self._parse_optional_datetime(user_data.get('lastTrafficResetAt')),
             last_traffic_reset_at_known=(

@@ -212,6 +212,30 @@ async def push_subscription(
     как все остальные.
     """
     moment = now or datetime.now(UTC)
+    mode = getattr(subscription, 'traffic_accounting_mode', None) or 'legacy'
+    if db is not None and getattr(subscription, 'id', None) is not None:
+        from sqlalchemy import select
+
+        from app.database.models import Subscription
+
+        # Read the fence even if the supplied ORM object predates migration.
+        persisted_mode = await db.scalar(
+            select(Subscription.traffic_accounting_mode).where(Subscription.id == subscription.id)
+        )
+        if isinstance(persisted_mode, str):
+            mode = persisted_mode
+    if mode != 'legacy':
+        return await _push_managed_subscription(
+            api,
+            subscription,
+            db=db,
+            now=moment,
+            only_fields=only_fields,
+            reset_devices=reset_devices,
+            user_tag=user_tag if user_tag is not None else getattr(payload, 'tag', None),
+            create_if_missing=create_if_missing,
+            recreate_on_missing=recreate_on_missing,
+        )
     if multi_tariff is None:
         multi_tariff = settings.is_multi_tariff_enabled()
     if identity is None:
@@ -572,3 +596,118 @@ async def patch_panel_squads(
         active_internal_squads=squads,
         external_squad_uuid=external_squad_uuid,
     )
+
+
+async def patch_managed_traffic(api, *, user_id: int, limit_bytes: int | None = None, status=None):
+    """Accounting coordinator's narrow write, under its shared database lease.
+
+    Never reset usage. NO_RESET is mandatory even for an otherwise narrow quota
+    update. A zero limit would mean unlimited in Remnawave and is rejected.
+    """
+    from app.external.remnawave_api import TrafficLimitStrategy, UserStatus
+    from app.services.traffic_accounting import AccountingConflict
+
+    kwargs = {'user_id': user_id, 'traffic_limit_strategy': TrafficLimitStrategy.NO_RESET}
+    if limit_bytes is not None:
+        if type(limit_bytes) is not int or limit_bytes <= 0:
+            raise AccountingConflict('Managed panel quota must be positive')
+        kwargs['traffic_limit_bytes'] = limit_bytes
+    if status is not None:
+        if status not in {UserStatus.ACTIVE, UserStatus.DISABLED}:
+            raise AccountingConflict('Unsupported managed panel status')
+        kwargs['status'] = status
+    return await api.update_user(**kwargs)
+
+
+async def _push_managed_subscription(
+    api, subscription, *, db, now, only_fields, reset_devices, user_tag, create_if_missing, recreate_on_missing
+):
+    from app.services.traffic_accounting import AccountingConflict
+    from app.services.traffic_accounting_service import (
+        AccountingAccountMissing,
+        _fresh_panel,
+        _require_lease,
+        lock_accounting_subscription,
+        reconcile_account_locked,
+        settle_snapshot,
+    )
+    from app.services.traffic_accounting_store import load_account, save_account
+
+    if db is None:
+        raise AccountingConflict('Managed panel writes require a database transaction')
+    try:
+        _require_lease(db, subscription.id)
+    except AccountingConflict:
+        if db.dirty or db.new:
+            raise AccountingConflict('Acquire the accounting lease before changing billing state') from None
+        subscription, _ = await lock_accounting_subscription(db, subscription.id)
+    loaded = await load_account(db, subscription.id)
+    if loaded is None or loaded[1].phase not in {'ready', 'unlimited'}:
+        raise AccountingConflict('Accounting migration is incomplete')
+    try:
+        panel = await _fresh_panel(db, api, subscription)
+    except AccountingAccountMissing:
+        if not create_if_missing or not recreate_on_missing:
+            return PanelWriteResult(panel_user=None, action='no_changes')
+        # The worker recreates only after confirmed absence. Keep the explicit
+        # sync request durable; never commit a caller's transaction here.
+        from app.services.traffic_accounting_service import schedule_projection_after_commit
+        from app.services.traffic_accounting_sync import stage_managed_sync
+
+        await stage_managed_sync(db, subscription, only_fields=only_fields, user_tag=user_tag)
+        schedule_projection_after_commit(db, subscription.id)
+        return PanelWriteResult(panel_user=None, action='queued')
+    unlimited = loaded[1].phase == 'unlimited'
+    if unlimited:
+        if subscription.traffic_limit_gb != 0:
+            raise AccountingConflict('A finite plan needs an explicit accounting grant')
+        account = settle_snapshot(loaded[0], panel, now=now, exclude_usage=True)
+        await save_account(db, subscription.id, account, expected_revision=loaded[1].revision)
+    else:
+        account = await reconcile_account_locked(db, subscription, panel, now=now)
+    from app.services.traffic_accounting_service import schedule_projection_after_commit
+    from app.services.traffic_accounting_sync import stage_managed_sync
+
+    await stage_managed_sync(db, subscription, only_fields=only_fields, user_tag=user_tag)
+    await reset_managed_devices_once(api, panel.id, enabled=reset_devices)
+    schedule_projection_after_commit(db, subscription.id)
+    return PanelWriteResult(panel_user=panel, action='queued', panel_user_id=panel.id)
+
+
+async def reset_managed_devices_once(api, panel_id, *, enabled):
+    """Explicit action only; retrying quota delivery must not evict new devices."""
+    if enabled is None:
+        enabled = settings.RESET_DEVICES_ON_RENEWAL
+    if not enabled:
+        return
+    try:
+        if not await api.reset_user_devices(panel_id):
+            logger.warning('Managed device reset was not confirmed', panel_user_id=panel_id)
+    except Exception as error:
+        logger.warning('Managed device reset failed', panel_user_id=panel_id, error_type=type(error).__name__)
+
+
+async def write_managed_payload_locked(api, panel_user_id, payload, *, now, panel_current=None, only_fields=None):
+    """Delivery-only write after the coordinator committed its quota intent."""
+    return await _update_with_device_limit(
+        api,
+        api.update_user,
+        **payload.update_kwargs(user_id=panel_user_id, now=now, panel_current=panel_current, only_fields=only_fields),
+    )
+
+
+async def create_managed_replacement(api, user, subscription, account, *, username, now):
+    from dataclasses import replace
+
+    from app.external.remnawave_api import UserStatus
+
+    payload = build_panel_payload(
+        user,
+        subscription,
+        multi_tariff=settings.is_multi_tariff_enabled(),
+        now=now,
+        accounting_account=account,
+        accounting_recreation=True,
+    )
+    payload = replace(payload, username=username, status=UserStatus.DISABLED)
+    return await api.create_user(**payload.create_kwargs(now=now))

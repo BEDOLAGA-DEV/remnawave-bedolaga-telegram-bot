@@ -454,6 +454,13 @@ class MonitoringService:
 
                 # Реконсилиация подписок Cashera + доначисление пропущенных списаний.
                 await self._reconcile_cashera_subscriptions(db)
+                try:
+                    from app.services.cispay_recurrent_service import reconcile_cispay_agreements
+
+                    await reconcile_cispay_agreements(db, bot=self.bot)
+                except Exception:
+                    await db.rollback()
+                    logger.warning('CisPay recurring reconciliation unavailable')
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
@@ -1768,7 +1775,13 @@ class MonitoringService:
                             from app.database.models import PaymentMethod, TransactionType
 
                             old_end_date = subscription.end_date
-                            await extend_subscription(db, subscription, autopay_period, commit=False)
+                            await extend_subscription(
+                                db,
+                                subscription,
+                                autopay_period,
+                                paid_traffic_reset=settings.RESET_TRAFFIC_ON_PAYMENT,
+                                commit=False,
+                            )
                             description = f'Автопродление подписки на {autopay_period} дней'
                             transaction = await create_transaction(
                                 db=db,

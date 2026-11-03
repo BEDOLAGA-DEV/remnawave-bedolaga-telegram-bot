@@ -465,6 +465,11 @@ async def handle_simple_subscription_pay_with_balance(
         await callback.answer('❌ Недостаточно средств на балансе для оплаты подписки', show_alert=True)
         return
 
+    from app.database.crud.subscription import get_subscription_by_user_id
+
+    existing_subscription = await get_subscription_by_user_id(db, db_user.id)
+    managed_purchase = getattr(existing_subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+    purchase_user_id = db_user.id
     try:
         # Списываем средства с баланса пользователя
         purchase_description = f'Оплата подписки на {subscription_params["period_days"]} дней'
@@ -475,6 +480,7 @@ async def handle_simple_subscription_pay_with_balance(
             purchase_description,
             consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
+            commit=not managed_purchase,
         )
 
         if not success:
@@ -492,6 +498,7 @@ async def handle_simple_subscription_pay_with_balance(
             amount_kopeks=price_kopeks,
             description=purchase_description,
             payment_method=PaymentMethod.BALANCE,
+            commit=not managed_purchase,
         )
 
         # Проверяем, есть ли у пользователя уже подписка
@@ -514,7 +521,9 @@ async def handle_simple_subscription_pay_with_balance(
                 traffic_limit_gb=subscription_params['traffic_limit_gb'],
                 device_limit=subscription_params['device_limit'],
                 connected_squads=[resolved_squad_uuid] if resolved_squad_uuid else None,
+                paid_traffic_reset=False,
                 reset_used_traffic=reset_traffic,
+                commit=not managed_purchase,
             )
 
             # Если текущая подписка была пробной, и мы обновляем её
@@ -527,6 +536,18 @@ async def handle_simple_subscription_pay_with_balance(
                 subscription.is_trial = False
 
             await db.commit()
+            if managed_purchase:
+                from app.database.crud.transaction import emit_transaction_side_effects
+
+                await emit_transaction_side_effects(
+                    db,
+                    transaction,
+                    amount_kopeks=price_kopeks,
+                    user_id=db_user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    payment_method=PaymentMethod.BALANCE,
+                    description=purchase_description,
+                )
             await db.refresh(subscription)
         else:
             # Если подписки нет, создаём новую
@@ -712,9 +733,11 @@ async def handle_simple_subscription_pay_with_balance(
         )
 
     except Exception as error:
+        if managed_purchase:
+            await db.rollback()
         logger.error(
             'Ошибка оплаты простой подписки с баланса для пользователя',
-            db_user_id=db_user.id,
+            db_user_id=purchase_user_id,
             error=error,
             exc_info=True,
         )
@@ -2223,6 +2246,11 @@ async def confirm_simple_subscription_purchase(
         await callback.answer('❌ Недостаточно средств на балансе для оплаты подписки', show_alert=True)
         return
 
+    from app.database.crud.subscription import get_subscription_by_user_id
+
+    existing_subscription = await get_subscription_by_user_id(db, db_user.id)
+    managed_purchase = getattr(existing_subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+    purchase_user_id = db_user.id
     try:
         # Списываем средства с баланса пользователя
         purchase_description = f'Оплата подписки на {subscription_params["period_days"]} дней'
@@ -2233,6 +2261,7 @@ async def confirm_simple_subscription_purchase(
             purchase_description,
             consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
+            commit=not managed_purchase,
         )
 
         if not success:
@@ -2250,6 +2279,7 @@ async def confirm_simple_subscription_purchase(
             amount_kopeks=price_kopeks,
             description=purchase_description,
             payment_method=PaymentMethod.BALANCE,
+            commit=not managed_purchase,
         )
 
         # Проверяем, есть ли у пользователя уже подписка
@@ -2272,7 +2302,9 @@ async def confirm_simple_subscription_purchase(
                 traffic_limit_gb=subscription_params['traffic_limit_gb'],
                 device_limit=subscription_params['device_limit'],
                 connected_squads=[resolved_squad_uuid] if resolved_squad_uuid else None,
+                paid_traffic_reset=False,
                 reset_used_traffic=reset_traffic,
+                commit=not managed_purchase,
             )
 
             # Если текущая подписка была пробной, и мы обновляем её
@@ -2285,6 +2317,18 @@ async def confirm_simple_subscription_purchase(
                 subscription.is_trial = False
 
             await db.commit()
+            if managed_purchase:
+                from app.database.crud.transaction import emit_transaction_side_effects
+
+                await emit_transaction_side_effects(
+                    db,
+                    transaction,
+                    amount_kopeks=price_kopeks,
+                    user_id=db_user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    payment_method=PaymentMethod.BALANCE,
+                    description=purchase_description,
+                )
             await db.refresh(subscription)
         else:
             # Если подписки нет, создаём новую
@@ -2470,9 +2514,11 @@ async def confirm_simple_subscription_purchase(
         )
 
     except Exception as error:
+        if managed_purchase:
+            await db.rollback()
         logger.error(
             'Ошибка подтверждения простой подписки с баланса для пользователя',
-            db_user_id=db_user.id,
+            db_user_id=purchase_user_id,
             error=error,
             exc_info=True,
         )

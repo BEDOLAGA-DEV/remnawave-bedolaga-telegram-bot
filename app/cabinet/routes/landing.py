@@ -190,6 +190,10 @@ class PurchaseRequest(BaseModel):
     @model_validator(mode='after')
     def validate_contacts(self) -> 'PurchaseRequest':
         _validate_contact(self.contact_type, self.contact_value)
+        if (
+            self.payment_method == 'platega' or self.payment_method.startswith('platega_')
+        ) and self.contact_type != 'email':
+            raise ValueError('Для оплаты через Platega укажите вашу почту вместо Telegram-имени.')
         if self.is_gift:
             if not self.gift_recipient_type or not self.gift_recipient_value:
                 raise ValueError('Gift recipient type and value are required for gift purchases')

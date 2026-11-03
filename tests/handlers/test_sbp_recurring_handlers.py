@@ -14,6 +14,8 @@ resolution), following the same style as
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import app.handlers.subscription.autopay as autopay_mod
 from app.config import settings
 
@@ -62,7 +64,7 @@ async def test_autopay_menu_daily_tariff_still_shows_sbp_entry(monkeypatch):
     touched the message/keyboard, so no button was ever reachable)."""
     _configure_gate(monkeypatch, True)
     cb, user, db = _make_callback(), _make_user(), AsyncMock()
-    subscription = SimpleNamespace(id=10, tariff=SimpleNamespace(is_daily=True))
+    subscription = SimpleNamespace(id=10, tariff_id=None, status='active', tariff=SimpleNamespace(is_daily=True))
 
     monkeypatch.setattr(autopay_mod, '_resolve_subscription', AsyncMock(return_value=(subscription, 10)))
 
@@ -78,7 +80,7 @@ async def test_autopay_menu_daily_tariff_gate_off_hides_sbp_entry(monkeypatch):
     OFF, the daily-tariff screen must not offer a dead SBP button."""
     _configure_gate(monkeypatch, False)
     cb, user, db = _make_callback(), _make_user(), AsyncMock()
-    subscription = SimpleNamespace(id=10, tariff=SimpleNamespace(is_daily=True))
+    subscription = SimpleNamespace(id=10, tariff_id=None, status='active', tariff=SimpleNamespace(is_daily=True))
 
     monkeypatch.setattr(autopay_mod, '_resolve_subscription', AsyncMock(return_value=(subscription, 10)))
 
@@ -464,3 +466,14 @@ def test_daily_tariff_confirm_keyboard_gates_sbp_button(monkeypatch):
     assert not any(
         cb.startswith('tariff_sbp:') for cb in _keyboard_callbacks(get_daily_tariff_confirm_keyboard(7, 'ru'))
     )
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
+    """These scenarios have no CisPay consent; live-agreement guards use real PostgreSQL tests."""
+    from unittest.mock import AsyncMock
+
+    from app.services import cispay_recurrent_guard
+
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_conflicting_cispay', AsyncMock(return_value=False))

@@ -6111,6 +6111,14 @@ async def update_subscription_traffic_endpoint(
             },
         )
 
+    from app.services.traffic_purchase_service import prepare_user_tariff_switch
+
+    subscription, accounting_panel = await prepare_user_tariff_switch(db, subscription)
+    if subscription.user_id != user.id or subscription.status not in {'active', 'trial'}:
+        raise HTTPException(status_code=403, detail='Traffic management is unavailable for this subscription')
+    old_traffic = subscription.traffic_limit_gb
+    if new_traffic == old_traffic:
+        return MiniAppSubscriptionUpdateResponse(success=True, message='No changes')
     days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
     period_hint_days = days_remaining
 
@@ -6129,6 +6137,7 @@ async def update_subscription_traffic_endpoint(
     price_difference_per_month = discounted_new_per_month - discounted_old_per_month
     total_price_difference = 0
 
+    payment_transaction = None
     if price_difference_per_month > 0:
         total_price_difference = max(100, int(price_difference_per_month * days_remaining / 30))
         if getattr(user, 'balance_kopeks', 0) < total_price_difference:
@@ -6150,6 +6159,7 @@ async def update_subscription_traffic_endpoint(
             user,
             total_price_difference,
             description,
+            commit=False,
         )
         if not success:
             raise HTTPException(
@@ -6160,25 +6170,44 @@ async def update_subscription_traffic_endpoint(
                 },
             )
 
-        await create_transaction(
+        payment_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=total_price_difference,
             description=f'{description} за {days_remaining} дн.',
+            commit=False,
         )
 
     subscription.traffic_limit_gb = new_traffic
     subscription.updated_at = datetime.now(UTC)
+    if accounting_panel is not None:
+        from uuid import uuid4
+
+        from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+        # This MiniApp action historically keeps purchased packages. Resize the
+        # base only, preserving spent base and every unexpired package remainder.
+        operation = str(payment_transaction.id) if payment_transaction is not None else uuid4().hex
+        await stage_paid_base_grant(db, subscription, operation_key=f'classic-traffic:{operation}', reset_base=False)
     await db.commit()
+    from app.services.traffic_purchase_service import finish_traffic_purchase
+
+    await finish_traffic_purchase(db, subscription, payment_transaction)
     await db.refresh(subscription)
     try:
         await db.refresh(user)
     except Exception:  # pragma: no cover - defensive refresh safeguard
         pass
 
-    service = SubscriptionService()
-    await service.update_remnawave_user(db, subscription)
+    try:
+        service = SubscriptionService()
+        await service.update_remnawave_user(db, subscription)
+    except Exception as error:
+        from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+        remnawave_retry_queue.enqueue(subscription_id=subscription.id, user_id=user.id, action='update')
+        logger.warning('Paid traffic switch committed; panel delivery queued', error_type=type(error).__name__)
 
     await with_admin_notification_service(
         lambda service: service.send_subscription_update_notification(
@@ -6804,49 +6833,6 @@ async def purchase_tariff_endpoint(
     except CheckoutSquadsUnavailableError as error:
         raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
 
-    # Списываем баланс
-    if is_daily_tariff:
-        description = f"Активация суточного тарифа '{tariff.name}' (первый день)"
-    elif discount_percent > 0:
-        description = f"Покупка тарифа '{tariff.name}' на {payload.period_days} дней (скидка {discount_percent}%)"
-    else:
-        description = f"Покупка тарифа '{tariff.name}' на {payload.period_days} дней"
-    success = await subtract_user_balance(
-        db,
-        user,
-        price_kopeks,
-        description,
-        consume_promo_offer=consume_promo_offer,
-        mark_as_paid_subscription=True,
-    )
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={
-                'code': 'balance_charge_failed',
-                'message': 'Failed to charge balance',
-            },
-        )
-
-    # Создаём транзакцию
-    await create_transaction(
-        db=db,
-        user_id=user.id,
-        type=TransactionType.SUBSCRIPTION_PAYMENT,
-        amount_kopeks=price_kopeks,
-        description=description,
-    )
-
-    # Получаем список серверов из тарифа
-    squads = tariff.allowed_squads or []
-
-    # Если allowed_squads пустой - значит "все серверы", получаем их
-    if not squads:
-        from app.database.crud.server_squad import get_all_server_squads
-
-        all_servers, _ = await get_all_server_squads(db, available_only=True)
-        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
-
     # Какую подписку продлевать. Переменной здесь не было вовсе: `if subscription:`
     # падало NameError на КАЖДОЙ покупке тарифа через этот эндпоинт. Разрешение
     # повторяет рабочий путь бота (app/handlers/subscription/tariff_purchase.py):
@@ -6861,6 +6847,53 @@ async def purchase_tariff_endpoint(
             subscription = await get_subscription_by_user_and_tariff(db, user.id, tariff.id, include_inactive=True)
     else:
         subscription = await get_subscription_by_user_id(db, user.id)
+
+    managed_purchase = getattr(subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+
+    # Списываем баланс
+    if is_daily_tariff:
+        description = f"Активация суточного тарифа '{tariff.name}' (первый день)"
+    elif discount_percent > 0:
+        description = f"Покупка тарифа '{tariff.name}' на {payload.period_days} дней (скидка {discount_percent}%)"
+    else:
+        description = f"Покупка тарифа '{tariff.name}' на {payload.period_days} дней"
+    success = await subtract_user_balance(
+        db,
+        user,
+        price_kopeks,
+        description,
+        consume_promo_offer=consume_promo_offer,
+        mark_as_paid_subscription=True,
+        commit=not managed_purchase,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                'code': 'balance_charge_failed',
+                'message': 'Failed to charge balance',
+            },
+        )
+
+    # Создаём транзакцию
+    purchase_transaction = await create_transaction(
+        db=db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=price_kopeks,
+        description=description,
+        commit=not managed_purchase,
+    )
+
+    # Получаем список серверов из тарифа
+    squads = tariff.allowed_squads or []
+
+    # Если allowed_squads пустой - значит "все серверы", получаем их
+    if not squads:
+        from app.database.crud.server_squad import get_all_server_squads
+
+        all_servers, _ = await get_all_server_squads(db, available_only=True)
+        squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
     is_tariff_renewal = subscription is not None and subscription.tariff_id == tariff.id
     reset_used_traffic = (
@@ -6888,7 +6921,9 @@ async def purchase_tariff_endpoint(
             traffic_limit_gb=tariff.traffic_limit_gb,
             device_limit=effective_device_limit,
             connected_squads=squads,
-            reset_used_traffic=reset_used_traffic if is_tariff_renewal else None,
+            paid_traffic_reset=False,
+            reset_used_traffic=reset_used_traffic,
+            commit=not managed_purchase,
         )
     else:
         # Создание новой подписки
@@ -6914,6 +6949,19 @@ async def purchase_tariff_endpoint(
         subscription.pending_panel_expire_at = subscription.end_date
         await db.commit()
         await db.refresh(subscription)
+
+    if managed_purchase:
+        await db.commit()
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            purchase_transaction,
+            amount_kopeks=price_kopeks,
+            user_id=user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            description=description,
+        )
 
     # Синхронизируем с RemnaWave: новая подписка панели ещё не известна — sync
     # выберет create; существующая — update. Решение о сбросе совпадает с переданным в CRUD.
@@ -7132,16 +7180,18 @@ async def switch_tariff_endpoint(
         )
 
     from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import prepare_user_tariff_switch
 
+    subscription, accounting_panel = await prepare_user_tariff_switch(db, subscription)
     user = await lock_user_for_pricing(db, user.id)
-    # Lock subscription row to prevent concurrent switch race condition
-    locked_result = await db.execute(
-        select(Subscription)
-        .where(Subscription.id == subscription.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    subscription = locked_result.scalar_one()
+    if subscription.user_id != user.id:
+        raise HTTPException(status_code=404, detail='Subscription not found')
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing_target = await get_subscription_by_user_and_tariff(db, user.id, payload.tariff_id)
+        if existing_target and existing_target.id != subscription.id:
+            raise HTTPException(status_code=409, detail='You already have an active subscription for the target tariff')
 
     if subscription.status not in ('active', 'trial'):
         raise HTTPException(
@@ -7269,7 +7319,7 @@ async def switch_tariff_endpoint(
         # Бесплатный переход (downgrade) — записываем в историю
         description = f"Переход на тариф '{new_tariff.name}'"
         switch_transaction = None
-        await create_transaction(
+        switch_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
@@ -7293,6 +7343,8 @@ async def switch_tariff_endpoint(
 
     subscription.daily_devices_billing_version = 0
     subscription.tariff_id = new_tariff.id
+    if accounting_panel is not None:
+        subscription.tariff = new_tariff
     subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
     subscription.device_limit = calc_device_limit_on_tariff_switch(
         current_device_limit=subscription.device_limit,
@@ -7312,7 +7364,7 @@ async def switch_tariff_endpoint(
 
     # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение (см. tariff_switch_policy).
     reset_used_traffic = should_reset_used_traffic(upgrade_cost)
-    if reset_used_traffic:
+    if reset_used_traffic and accounting_panel is None:
         subscription.traffic_used_gb = 0.0
 
     # Обработка daily полей при смене тарифа
@@ -7343,6 +7395,16 @@ async def switch_tariff_endpoint(
         else:
             logger.info('🔄 Смена с суточного на обычный тариф: очищены daily поля')
 
+    if accounting_panel is not None:
+        from app.services.traffic_accounting_service import change_managed_tariff_locked
+
+        await change_managed_tariff_locked(
+            db,
+            subscription,
+            accounting_panel,
+            operation_key=f'user-switch:{switch_transaction.id}',
+            reset_base=reset_used_traffic,
+        )
     await db.commit()
 
     # Emit deferred side-effects after atomic commit
@@ -7362,7 +7424,7 @@ async def switch_tariff_endpoint(
     await db.refresh(user)
 
     # Синхронизируем с RemnaWave (опционально сбрасываем трафик по настройке)
-    should_reset_traffic = reset_used_traffic
+    should_reset_traffic = reset_used_traffic and accounting_panel is None
     try:
         service = SubscriptionService()
         await service.update_remnawave_user(
@@ -7518,6 +7580,13 @@ async def purchase_traffic_topup_endpoint(
 
     # Lock user BEFORE price computation to prevent TOCTOU on promo discount
     from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+    try:
+        subscription, accounting_panel = await prepare_traffic_purchase(db, subscription, requested_gb=payload.gb)
+    except Exception as error:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail='Traffic accounting is temporarily unavailable') from error
 
     user = await lock_user_for_pricing(db, user.id)
 
@@ -7552,7 +7621,7 @@ async def purchase_traffic_topup_endpoint(
         traffic_description = f'Докупка {payload.gb} ГБ трафика (скидка {traffic_discount_percent}%)'
     else:
         traffic_description = f'Докупка {payload.gb} ГБ трафика'
-    success = await subtract_user_balance(db, user, final_price, traffic_description)
+    success = await subtract_user_balance(db, user, final_price, traffic_description, commit=False)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -7563,12 +7632,24 @@ async def purchase_traffic_topup_endpoint(
         )
 
     # Добавляем трафик (add_subscription_traffic уже создаёт TrafficPurchase и обновляет все необходимые поля)
-    await add_subscription_traffic(db, subscription, payload.gb)
+    await add_subscription_traffic(db, subscription, payload.gb, panel=accounting_panel, commit=False)
 
     # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
     from app.database.crud.subscription import reactivate_subscription
 
-    await reactivate_subscription(db, subscription)
+    await reactivate_subscription(db, subscription, commit=False)
+    payment_transaction = await create_transaction(
+        db=db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=final_price,
+        description=traffic_description,
+        commit=False,
+    )
+    await db.commit()
+    from app.services.traffic_purchase_service import finish_traffic_purchase
+
+    await finish_traffic_purchase(db, subscription, payment_transaction)
 
     # Синхронизируем с RemnaWave
     try:
@@ -7592,15 +7673,6 @@ async def purchase_traffic_topup_endpoint(
                 user_id=subscription.user_id,
                 action='update',
             )
-
-    # Создаем транзакцию
-    await create_transaction(
-        db,
-        user_id=user.id,
-        type=TransactionType.SUBSCRIPTION_PAYMENT,
-        amount_kopeks=final_price,
-        description=traffic_description,
-    )
 
     await db.refresh(user)
     await db.refresh(subscription)
@@ -7665,6 +7737,16 @@ async def toggle_daily_subscription_pause_endpoint(
             detail={'code': 'subscription_lost', 'message': 'Subscription not found after lock'},
         )
 
+    from app.services.traffic_purchase_service import lock_daily_accounting_subscription
+
+    try:
+        subscription = await lock_daily_accounting_subscription(db, subscription, user.id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    tariff = await get_tariff_by_id(db, subscription.tariff_id)
+    if not tariff or not tariff.is_daily or subscription.is_trial:
+        raise HTTPException(status_code=400, detail='Daily paid subscription required')
+
     # Определяем состояние из LOCKED экземпляра
     from app.database.models import SubscriptionStatus
 
@@ -7681,6 +7763,8 @@ async def toggle_daily_subscription_pause_endpoint(
         new_paused_state = False  # Force resume path
     else:
         new_paused_state = not is_currently_paused
+    if not new_paused_state and user.restriction_subscription:
+        raise HTTPException(status_code=403, detail='Subscription renewal is restricted')
     subscription.is_daily_paused = new_paused_state
 
     # Apply group discount to daily price (consistent with DailySubscriptionService and resume-after-topup)
@@ -7756,6 +7840,11 @@ async def toggle_daily_subscription_pause_endpoint(
     # (subtract_user_balance with populate_existing=True may have reloaded it from DB)
     subscription.is_daily_paused = new_paused_state
 
+    if not new_paused_state and was_disabled:
+        from app.services.traffic_purchase_service import stage_daily_resume_grant
+
+        await stage_daily_resume_grant(db, subscription, tariff, resume_transaction)
+
     await db.commit()
     await db.refresh(subscription)
     await db.refresh(user)
@@ -7799,7 +7888,9 @@ async def toggle_daily_subscription_pause_endpoint(
         # общая политика суточного списания, а не жёсткая константа.
         from app.services.traffic_reset_policy import lift_panel_traffic_limit, should_reset_traffic_on_daily_charge
 
-        reset_traffic = should_reset_traffic_on_daily_charge(tariff)
+        reset_traffic = subscription.traffic_accounting_mode != 'managed' and should_reset_traffic_on_daily_charge(
+            tariff
+        )
         reset_reason = 'суточное списание (возобновление)' if reset_traffic else None
         try:
             service = SubscriptionService()

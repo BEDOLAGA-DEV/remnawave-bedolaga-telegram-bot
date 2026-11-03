@@ -876,6 +876,8 @@ async def handle_import_message(
             applied.append(setting_key)
         except ReadOnlySettingError:
             skipped.append(setting_key)
+        except ValueError as error:
+            errors.append(f'{setting_key}: {error}')
 
     await db.commit()
 
@@ -1817,6 +1819,9 @@ async def select_simple_subscription_squad(
     except ReadOnlySettingError:
         await callback.answer('Эта настройка доступна только для чтения', show_alert=True)
         return
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
 
     await db.commit()
 
@@ -2575,6 +2580,9 @@ async def handle_edit_setting(
         await message.answer('⚠️ Эта настройка доступна только для чтения.')
         await state.clear()
         return
+    except ValueError as error:
+        await message.answer(html.escape(str(error)))
+        return
     await db.commit()
 
     text = _render_setting_text(key)
@@ -2626,6 +2634,9 @@ async def handle_direct_setting_input(
         await message.answer('⚠️ Эта настройка доступна только для чтения.')
         await state.clear()
         return
+    except ValueError as error:
+        await message.answer(html.escape(str(error)))
+        return
     await db.commit()
 
     text = _render_setting_text(key)
@@ -2675,6 +2686,9 @@ async def reset_setting(
     except ReadOnlySettingError:
         await callback.answer('Эта настройка доступна только для чтения', show_alert=True)
         return
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
+        return
     await db.commit()
 
     text = _render_setting_text(key)
@@ -2723,6 +2737,9 @@ async def toggle_setting(
         await bot_configuration_service.set_value(db, key, new_value)
     except ReadOnlySettingError:
         await callback.answer('Эта настройка доступна только для чтения', show_alert=True)
+        return
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
         return
     await db.commit()
 
@@ -2779,6 +2796,9 @@ async def apply_setting_choice(
         await bot_configuration_service.set_value(db, key, value)
     except ReadOnlySettingError:
         await callback.answer('Эта настройка доступна только для чтения', show_alert=True)
+        return
+    except ValueError as error:
+        await callback.answer(str(error), show_alert=True)
         return
     await db.commit()
 

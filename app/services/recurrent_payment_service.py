@@ -241,6 +241,13 @@ async def _process_single_subscription(
         'skipped' — баланс достаточен или другая причина пропуска
     """
     from app.database.crud.saved_payment_method import get_active_payment_methods_by_user
+    from app.services.cispay_recurrent_guard import require_no_cispay
+
+    try:
+        await require_no_cispay(db, user_id=user.id, subscription_id=subscription.id)
+    except ValueError:
+        await db.rollback()
+        return 'skipped'
 
     # Рассчитываем стоимость продления
     tariff = getattr(subscription, 'tariff', None)

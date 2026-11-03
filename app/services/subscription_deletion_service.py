@@ -183,6 +183,9 @@ async def delete_subscription_record(
     if subscription is None:
         return
 
+    from app.services.cispay_recurrent_guard import stage_cispay_cancellation
+
+    await stage_cispay_cancellation(db, subscription.id, reason='subscription_deleted')
     panel_user_id, panel_deletable = await _resolve_panel_target(db, subscription)
     panel_account_deleted = False
     if panel_user_id:
@@ -194,8 +197,13 @@ async def delete_subscription_record(
             # ``REMNAWAVE_USER_DELETE_MODE=disable`` — аккаунт в панели не удаляем
             # никогда, даже когда он принадлежит только этой подписке.
             if panel_deletable and settings.get_remnawave_user_delete_mode() == 'delete':
+                if getattr(subscription, 'traffic_accounting_mode', 'legacy') != 'legacy':
+                    # The delete coordinator checkpoints the last quota sample
+                    # in its own transaction. Release this caller's grace/User
+                    # locks first; it rechecks ownership and open grace itself.
+                    await db.commit()
                 RemnaWaveWebhookService.mark_intentional_panel_deletion(panel_user_ids=[panel_user_id])
-                panel_account_deleted = await service.delete_remnawave_user(panel_user_id)
+                panel_account_deleted = await service.delete_remnawave_user(panel_user_id, db=db)
             else:
                 # Общий аккаунт однотарифного режима (или режим disable): доступ
                 # снимаем, но сам аккаунт оставляем — на него ещё смотрит

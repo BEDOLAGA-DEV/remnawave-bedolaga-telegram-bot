@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
-from app.services.payment.payer_identity import PayerIdentity, payer_from_guest, resolve_user_payer
+from app.services.payment.payer_identity import PayerIdentity, resolve_user_payer
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -56,7 +56,7 @@ class PlategaPaymentMixin:
         payer: PayerIdentity | None = None,
     ) -> dict[str, Any] | None:
         """Разовый платёж Platega. ``payer`` — плательщик-гость лендинга; у пользователя
-        он читается по ``user_id`` (metadata.userId/userName обязательны, см. payer_identity)."""
+        он читается по ``user_id`` (metadata.user_email обязателен, см. payer_identity)."""
         service: PlategaService | None = getattr(self, 'platega_service', None)
         if not service or not service.is_configured:
             logger.error('Platega сервис не инициализирован')
@@ -87,12 +87,10 @@ class PlategaPaymentMixin:
         effective_failed_url = failed_url or settings.get_platega_failed_url()
 
         if payer is None:
-            payer = (
-                await resolve_user_payer(db, user_id)
-                if user_id is not None
-                # Ни пользователя, ни гостя вызывающий не дал — плательщик по id платежа.
-                else payer_from_guest(correlation_id, contact_type=None, contact_value=None)
-            )
+            if user_id is None:
+                logger.warning('Platega: создание платежа без плательщика отклонено')
+                return None
+            payer = await resolve_user_payer(db, user_id)
 
         try:
             response = await service.create_payment(
@@ -105,6 +103,9 @@ class PlategaPaymentMixin:
                 failed_url=effective_failed_url,
                 payload=payload_token,
             )
+        except ValueError:
+            logger.warning('Platega: некорректные данные плательщика или платежа')
+            return None
         except Exception as error:  # pragma: no cover - network errors
             logger.exception('Ошибка Platega при создании платежа', error=error)
             return None
@@ -264,6 +265,9 @@ class PlategaPaymentMixin:
 
         validate_recurrent_setup_terms(subscription, 'platega', amount_kopeks, charge_days, interval)
 
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         response = await self.platega_service.create_subscription(
             payer=await resolve_user_payer(db, user_id),
             amount=amount_kopeks / 100,
@@ -566,6 +570,15 @@ class PlategaPaymentMixin:
                 payment_method=PaymentMethod.PLATEGA,
                 external_id=charge_id,
                 commit=False,
+            )
+
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(
+                db,
+                subscription,
+                operation_key=f'platega:payment:{tx.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_PAYMENT,
             )
 
             await db.commit()

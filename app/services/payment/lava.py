@@ -796,6 +796,9 @@ class LavaPaymentMixin:
             logger.warning('Lava: consumer/create не подтверждён', consumer_id=consumer_id, error=str(error))
 
         order_id = build_recurrent_order_id(subscription.id, uuid.uuid4().hex)
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         response = await lava_service.subscribe_recurrent(
             product_id=product_id,
             consumer_id=consumer_id,
@@ -1125,6 +1128,15 @@ class LavaPaymentMixin:
                 payment_method=PaymentMethod.LAVA,
                 external_id=charge_id,
                 commit=False,
+            )
+
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(
+                db,
+                subscription,
+                operation_key=f'lava:payment:{tx.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_PAYMENT,
             )
 
             await db.commit()

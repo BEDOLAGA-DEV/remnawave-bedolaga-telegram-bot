@@ -43,6 +43,7 @@ from app.services.remnawave_sync_service import remnawave_sync_service
 from app.services.reporting_service import reporting_service
 from app.services.riopay_service import riopay_service
 from app.services.system_settings_service import bot_configuration_service
+from app.services.traffic_accounting_worker import traffic_accounting_worker
 from app.services.traffic_monitoring_service import traffic_monitoring_scheduler
 from app.services.version_service import version_service
 from app.services.web_api_token_service import ensure_default_web_api_token
@@ -526,6 +527,11 @@ async def main():
             except Exception as e:
                 stage.warning(f'Grace-доступ безопасно отключён из-за ошибки конфигурации: {e}')
                 logger.error('Ошибка запуска grace-доступа; основной бот продолжает работу', error=e)
+
+        try:
+            await traffic_accounting_worker.start()
+        except Exception as error:
+            logger.warning('Traffic accounting worker startup failed', error_type=type(error).__name__)
 
         # Разовая фоновая чистка накопившихся дублей тарифных подписок (multi-tariff):
         # лишние истёкшие дубли удаляются из БД и панели вместе, как штатное удаление.
@@ -1044,6 +1050,11 @@ async def main():
             await referral_contest_service.stop()
         except Exception as e:
             logger.error('Ошибка остановки сервиса конкурсов', error=e)
+
+        try:
+            await traffic_accounting_worker.stop()
+        except Exception as error:
+            logger.warning('Traffic accounting worker shutdown failed', error_type=type(error).__name__)
 
         logger.info('ℹ️ Остановка сервиса grace-доступа...')
         try:

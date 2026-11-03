@@ -99,6 +99,19 @@ async def _resolve_subscription(callback, db_user, db, state=None):
 
 
 async def _resolve_switch_subscription(callback, db_user, db, state=None):
+    subscription, selected_id = await _resolve_switch_subscription_target(callback, db_user, db, state)
+    if subscription is not None:
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        try:
+            await require_no_cispay(db, user_id=db_user.id, subscription_id=subscription.id)
+        except ValueError as error:
+            await callback.answer(str(error), show_alert=True)
+            return None, None
+    return subscription, selected_id
+
+
+async def _resolve_switch_subscription_target(callback, db_user, db, state=None):
     """Resolve the subscription for tariff-switch flows (issue #3012).
 
     Unlike the generic resolver, this NEVER reads the trailing callback segment as
@@ -442,6 +455,11 @@ def get_tariff_confirm_keyboard(
                 )
             ]
         )
+    buttons.extend(
+        row
+        for row in _sbp_purchase_rows(tariff_id, texts, period)
+        if any((button.callback_data or '').startswith('tariff_cispay:') for button in row)
+    )
     buttons.append([InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -465,7 +483,7 @@ def get_tariff_insufficient_balance_keyboard(
     """
     texts = get_texts(language)
     back_button = InlineKeyboardButton(text=texts.BACK, callback_data=f'tariff_select:{tariff_id}')
-    sbp_rows = _sbp_purchase_rows(tariff_id, texts)
+    sbp_rows = _sbp_purchase_rows(tariff_id, texts, period)
 
     if settings.is_auto_purchase_after_topup_enabled() and missing_kopeks > 0:
         from app.keyboards.inline import get_payment_methods_keyboard
@@ -541,9 +559,22 @@ def get_tariff_extend_insufficient_balance_keyboard(
     )
 
 
-def _sbp_purchase_rows(tariff_id: int, texts) -> list[list[InlineKeyboardButton]]:
+def _sbp_purchase_rows(tariff_id: int, texts, period: int | None = None) -> list[list[InlineKeyboardButton]]:
     """Ряды оформления привязкой провайдера — те же, что на confirm-экранах."""
     rows: list[list[InlineKeyboardButton]] = []
+    if (
+        settings.CISPAY_RECURRENT_ENABLED
+        and settings.is_cispay_sbp_enabled()
+        and type(period) is int
+        and 7 <= period <= 360
+    ):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('CISREC_TITLE', 'Автоплатёж CisPay'), callback_data=f'tariff_cispay:{tariff_id}'
+                )
+            ]
+        )
     if settings.is_platega_recurrent_enabled():
         rows.append(
             [
@@ -908,6 +939,25 @@ async def _bind_tariff_purchase_keyboard(
         custom_days=period,
         custom_traffic_gb=custom_traffic_gb if custom_traffic_gb is not None else tariff.traffic_limit_gb,
     )
+    keyboard.inline_keyboard = [
+        [button for button in row if not (button.callback_data or '').startswith('tariff_cispay:')]
+        for row in keyboard.inline_keyboard
+    ]
+    keyboard.inline_keyboard = [row for row in keyboard.inline_keyboard if row]
+    if not tariff.is_daily and cart['custom_traffic_gb'] is None and type(period) is int and 7 <= period <= 360:
+        from app.services.cispay_recurrent import get_cispay_recurrent_policy
+
+        policy = await get_cispay_recurrent_policy(db, user=db_user, channel='telegram')
+        if policy['enabled']:
+            keyboard.inline_keyboard.insert(
+                -1,
+                [
+                    InlineKeyboardButton(
+                        text=get_texts(db_user.language).t('CISREC_TITLE', 'Автоплатёж CisPay'),
+                        callback_data=f'tariff_cispay:{tariff.id}',
+                    )
+                ],
+            )
     token = _saved_tariff_checkout_external_id(db_user.id, cart).rsplit(':', 1)[-1][:24]
     if devices.selectable:
         row = []
@@ -934,6 +984,7 @@ async def _bind_tariff_purchase_keyboard(
                     'tariff_sbp:',
                     'tariff_lava:',
                     'tariff_cashera:',
+                    'tariff_cispay:',
                 )
             ):
                 button.callback_data += f':{token}'
@@ -3162,6 +3213,7 @@ async def confirm_tariff_extend(
                 tariff_id=tariff.id if was_trial else None,
                 traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
                 device_limit=actual_device_limit if was_trial else None,
+                paid_traffic_reset=settings.RESET_TRAFFIC_ON_PAYMENT or was_trial,
                 commit=False,
             )
 
@@ -4043,6 +4095,7 @@ async def confirm_tariff_switch(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=effective_device_limit,
                 connected_squads=squads,
+                paid_traffic_reset=should_reset_used_traffic(final_price),
                 commit=False,
             )
 

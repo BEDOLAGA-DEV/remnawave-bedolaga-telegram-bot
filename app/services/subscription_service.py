@@ -195,6 +195,13 @@ class SubscriptionService:
         if user is not None:
             await db.refresh(user)
 
+    async def _persisted_traffic_mode(self, db, subscription):
+        mode = getattr(subscription, 'traffic_accounting_mode', None) or 'legacy'
+        persisted = await db.scalar(
+            select(Subscription.traffic_accounting_mode).where(Subscription.id == subscription.id)
+        )
+        return persisted if isinstance(persisted, str) else mode
+
     async def create_remnawave_user(
         self,
         db: AsyncSession,
@@ -203,6 +210,10 @@ class SubscriptionService:
         reset_traffic: bool = False,
         reset_reason: str | None = None,
     ) -> RemnaWaveUser | None:
+        if await self._persisted_traffic_mode(db, subscription) != 'legacy':
+            return await self._update_managed_remnawave_user(
+                db, subscription, reset_traffic=reset_traffic, allow_suspended=True, reset_devices=None
+            )
         try:
             user = await get_user_by_id(db, subscription.user_id)
             if not user:
@@ -478,8 +489,8 @@ class SubscriptionService:
             multi_tariff=multi_tariff,
             payload=payload,
         )
-        if reset_traffic:
-            await self._reset_user_traffic(api, result.panel_user.id, user, reset_reason)
+        if reset_traffic and result.action != 'queued':
+            await self._reset_user_traffic(api, result.panel_user.id, user, reset_reason, db=db)
         return result.panel_user
 
     async def _create_or_update_remnawave_user_multi(
@@ -536,6 +547,75 @@ class SubscriptionService:
             reset_reason=reset_reason,
         )
 
+    async def _update_managed_remnawave_user(
+        self, db, subscription, *, reset_traffic=False, allow_suspended=False, sync_squads=True, reset_devices=False
+    ):
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from app.database.models import TrafficAccountingState
+        from app.services.traffic_accounting import AccountingConflict
+        from app.services.traffic_accounting_delivery import deliver_account_projection
+        from app.services.traffic_accounting_recreation import ensure_account_recreated
+        from app.services.traffic_accounting_service import (
+            AccountingAccountMissing,
+            _fresh_panel,
+            _require_lease,
+            ensure_managed_account,
+            lock_accounting_subscription,
+            reconcile_account_locked,
+        )
+
+        try:
+            _require_lease(db, subscription.id)
+        except AccountingConflict:
+            if db.dirty or db.new:
+                raise AccountingConflict('Commit billing or acquire accounting lease before panel delivery') from None
+            subscription, _ = await lock_accounting_subscription(db, subscription.id)
+        subscription_id = subscription.id
+        factory = async_sessionmaker(db.bind, expire_on_commit=False, autoflush=False)
+        async with self.get_api_client() as api:
+            phase = await db.scalar(
+                select(TrafficAccountingState.phase).where(TrafficAccountingState.subscription_id == subscription_id)
+            )
+            if phase in {'prepared', 'recreating'}:
+                await db.commit()
+                if phase == 'prepared':
+                    await ensure_managed_account(
+                        factory, api, subscription_id, timezone=settings.REMNAWAVE_TRAFFIC_RESET_TIMEZONE
+                    )
+                else:
+                    await ensure_account_recreated(factory, api, subscription_id)
+                subscription, _ = await lock_accounting_subscription(db, subscription_id)
+            try:
+                panel = await _fresh_panel(db, api, subscription)
+            except AccountingAccountMissing:
+                # The public service already commits billing before delivery.
+                # Keep its durable intent and release the caller's locks before
+                # the independently checkpointed recreation transaction.
+                await db.commit()
+                await ensure_account_recreated(factory, api, subscription_id, allow_suspended=allow_suspended)
+                subscription, _ = await lock_accounting_subscription(db, subscription_id)
+                panel = await _fresh_panel(db, api, subscription)
+            # reset_traffic is a legacy delivery hint, never a new entitlement.
+            # Financial transactions persist their own base-grant intent; the
+            # owned delivery coordinator consumes it exactly once.
+            await reconcile_account_locked(db, subscription, panel)
+            from app.services.traffic_accounting_sync import SYNC_FIELDS, stage_managed_sync
+
+            fields = set(SYNC_FIELDS)
+            if not sync_squads:
+                fields.difference_update({'active_internal_squads', 'external_squad_uuid'})
+            await stage_managed_sync(db, subscription, only_fields=fields)
+            from app.services.panel_sync.writer import reset_managed_devices_once
+
+            await reset_managed_devices_once(api, panel.id, enabled=reset_devices)
+            # This public method already owns a commit in the legacy contract.
+            # Commit the intent first; delivery never commits a financial caller.
+            await db.commit()
+            result = await deliver_account_projection(factory, api, subscription_id)
+            await db.refresh(subscription)
+            return result
+
     async def update_remnawave_user(
         self,
         db: AsyncSession,
@@ -545,6 +625,10 @@ class SubscriptionService:
         reset_reason: str | None = None,
         sync_squads: bool = True,
     ) -> RemnaWaveUser | None:
+        if await self._persisted_traffic_mode(db, subscription) != 'legacy':
+            return await self._update_managed_remnawave_user(
+                db, subscription, reset_traffic=reset_traffic, sync_squads=sync_squads
+            )
         try:
             user = await get_user_by_id(db, subscription.user_id)
             if not user:
@@ -734,6 +818,7 @@ class SubscriptionService:
                             reset_id,
                             user,
                             reset_reason,
+                            db=db,
                         )
 
                 subscription.subscription_url = updated_user.subscription_url
@@ -842,9 +927,24 @@ class SubscriptionService:
         panel_user_id: int,
         user,  # User object вместо telegram_id
         reset_reason: str | None = None,
+        *,
+        db: AsyncSession | None = None,
     ) -> None:
         if not panel_user_id:
             return
+        if db is not None:
+            from app.database.models import TrafficAccountingState
+            from app.services.traffic_accounting import AccountingConflict
+
+            if isinstance(getattr(user, 'id', None), int):
+                await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+            managed_id = await db.scalar(
+                select(TrafficAccountingState.subscription_id)
+                .where(TrafficAccountingState.panel_identity.like(f'{int(panel_user_id)}@%'))
+                .limit(1)
+            )
+            if isinstance(managed_id, int):
+                raise AccountingConflict('Managed accounting forbids a physical reset')
 
         try:
             await api.reset_user_traffic(panel_user_id)
@@ -924,10 +1024,21 @@ class SubscriptionService:
             logger.error('Ошибка отключения RemnaWave пользователя', error=e)
             return False
 
-    async def delete_remnawave_user(self, panel_user_id: int) -> bool:
+    async def delete_remnawave_user(self, panel_user_id: int, db: AsyncSession | None = None) -> bool:
         """Полное удаление пользователя из панели RemnaWave (хуки прекращаются)."""
         try:
             async with self.get_api_client() as api:
+                from sqlalchemy.ext.asyncio import async_sessionmaker
+
+                from app.database.database import AsyncSessionLocal
+                from app.services.traffic_accounting_lifecycle import checkpoint_managed_deletion
+
+                factory = (
+                    async_sessionmaker(db.bind, expire_on_commit=False, autoflush=False)
+                    if db is not None
+                    else AsyncSessionLocal
+                )
+                await checkpoint_managed_deletion(factory, api, panel_user_id)
                 await api.delete_user(panel_user_id)
                 logger.info('🗑 Удалён RemnaWave пользователь', panel_user_id=panel_user_id)
                 return True
@@ -949,6 +1060,16 @@ class SubscriptionService:
             from app.services.grace_access_runtime import set_panel_user_enabled_state_grace_safe
 
             async with self.get_api_client() as api:
+                from app.database.database import AsyncSessionLocal
+                from app.services.traffic_accounting_lifecycle import try_enable_managed_account
+
+                if db is not None:
+                    handled, confirmed = await try_enable_managed_account(db, api, panel_user_id)
+                else:
+                    async with AsyncSessionLocal() as guard_db, guard_db.begin():
+                        handled, confirmed = await try_enable_managed_account(guard_db, api, panel_user_id)
+                if handled:
+                    return confirmed
                 await set_panel_user_enabled_state_grace_safe(
                     api,
                     panel_user_id,
@@ -1047,6 +1168,15 @@ class SubscriptionService:
 
     async def sync_subscription_usage(self, db: AsyncSession, subscription: Subscription) -> bool:
         try:
+            if await self._persisted_traffic_mode(db, subscription) in {'managed', 'migrating'}:
+                from app.services.traffic_accounting_service import refresh_managed_account
+
+                account = await refresh_managed_account(db, subscription)
+                subscription.traffic_used_gb = max(
+                    0.0, (subscription.traffic_limit_gb or 0) - account.remaining_bytes(datetime.now(UTC)) / 1024**3
+                )
+                await db.commit()
+                return True
             user = await get_user_by_id(db, subscription.user_id)
             if not user:
                 return False

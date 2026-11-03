@@ -51,7 +51,12 @@ async def toggle_subscription_pause(
     subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
         raise HTTPException(status_code=404, detail='Subscription not found after lock')
-    await db.refresh(subscription, with_for_update=True)
+    from app.services.traffic_purchase_service import lock_daily_accounting_subscription
+
+    try:
+        subscription = await lock_daily_accounting_subscription(db, subscription, user.id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
     if subscription.is_trial:
         raise HTTPException(status_code=400, detail='Trial subscriptions must be converted through tariff purchase')
@@ -133,6 +138,11 @@ async def toggle_subscription_pause(
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
             subscription.pending_panel_expire_at = subscription.end_date
 
+    if not new_paused_state and was_disabled:
+        from app.services.traffic_purchase_service import stage_daily_resume_grant
+
+        await stage_daily_resume_grant(db, subscription, tariff, transaction)
+
     await db.commit()
     await db.refresh(subscription)
     await db.refresh(user)
@@ -153,7 +163,9 @@ async def toggle_subscription_pause(
     if not new_paused_state and was_disabled:
         # Возобновление списывает суточную оплату — значит, обнуление счётчика
         # решает та же политика, что и в ночном списании (см. traffic_reset_policy).
-        reset_traffic = should_reset_traffic_on_daily_charge(tariff)
+        reset_traffic = subscription.traffic_accounting_mode != 'managed' and should_reset_traffic_on_daily_charge(
+            tariff
+        )
         try:
             subscription_service = SubscriptionService()
             await subscription_service.create_remnawave_user(

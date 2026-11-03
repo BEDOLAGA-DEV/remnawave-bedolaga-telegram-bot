@@ -302,18 +302,32 @@ async def handle_reset_traffic(
     if not has_enough_balance:
         balance_info += f'\n⚠️ Не хватает: {texts.format_price(missing_kopeks)}'
 
+    reset_keyboard = get_reset_traffic_confirm_keyboard(
+        reset_price,
+        db_user.language,
+        has_enough_balance=has_enough_balance,
+        missing_kopeks=missing_kopeks,
+    )
+    if getattr(subscription, 'traffic_accounting_mode', None) == 'managed':
+        from uuid import uuid4
+
+        token = uuid4().hex[:24]
+        for row in reset_keyboard.inline_keyboard:
+            for button in row:
+                if button.callback_data == 'confirm_reset_traffic':
+                    button.callback_data = f'confirm_reset_traffic:{subscription.id}:{token}'
+
     await callback.message.edit_text(
         f'🔄 <b>Сброс трафика</b>\n\n'
         f'Использовано: {texts.format_traffic(subscription.traffic_used_gb, is_limit=False)}\n'
         f'Лимит: {texts.format_traffic(subscription.traffic_limit_gb)}\n\n'
         f'Стоимость сброса: {texts.format_price(reset_price)}{price_info}{balance_info}\n\n'
-        'После сброса счетчик использованного трафика станет равным 0.',
-        reply_markup=get_reset_traffic_confirm_keyboard(
-            reset_price,
-            db_user.language,
-            has_enough_balance=has_enough_balance,
-            missing_kopeks=missing_kopeks,
+        + (
+            'Базовый трафик будет обновлён. Остатки докупленных пакетов сохранятся.'
+            if getattr(subscription, 'traffic_accounting_mode', None) == 'managed'
+            else 'После сброса счетчик использованного трафика станет равным 0.'
         ),
+        reply_markup=reset_keyboard,
     )
 
     await callback.answer()
@@ -342,6 +356,73 @@ async def confirm_reset_traffic(
     # Re-resolve after lock since db_user was refreshed
     subscription, _ = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+
+    mode = getattr(subscription, 'traffic_accounting_mode', None)
+    if mode in ('managed', 'migrating'):
+        from hashlib import sha256
+
+        from app.database.crud.transaction import emit_transaction_side_effects
+        from app.services.paid_traffic_reset_service import purchase_managed_reset
+        from app.services.traffic_accounting import AccountingConflict
+        from app.services.traffic_accounting_service import refresh_managed_account
+
+        if mode == 'migrating':
+            await callback.answer('Учёт трафика обновляется. Повторите позже.', show_alert=True)
+            return
+        subscription_id, owner_id, language = subscription.id, db_user.id, db_user.language
+        # Each rendered confirmation has its own nonce; retries reuse it, while
+        # returning to this screen later permits a genuinely new paid reset.
+        parts = (callback.data or '').split(':')
+        token = parts[2] if len(parts) == 3 else ''
+        if (
+            len(parts) != 3
+            or parts[1] != str(subscription_id)
+            or len(token) != 24
+            or any(char not in '0123456789abcdef' for char in token)
+        ):
+            await callback.answer('Откройте подтверждение сброса ещё раз.', show_alert=True)
+            return
+        source = f'{owner_id}:{subscription_id}:{token}'
+        operation_key = f'telegram-reset:{sha256(source.encode()).hexdigest()}'
+        try:
+            transaction, charged = await purchase_managed_reset(
+                db,
+                subscription_id,
+                user_id=owner_id,
+                operation_key=operation_key,
+                price=_calculate_traffic_reset_price,
+            )
+            if charged:
+                await emit_transaction_side_effects(
+                    db,
+                    transaction,
+                    amount_kopeks=abs(transaction.amount_kopeks),
+                    user_id=owner_id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    external_id=operation_key,
+                    description='Сброс трафика',
+                )
+            try:
+                await refresh_managed_account(db, subscription)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                remnawave_retry_queue.enqueue(subscription_id=subscription_id, user_id=owner_id, action='update')
+                await callback.answer('Оплата сохранена. Обновление доступа будет повторено.', show_alert=True)
+                return
+            await callback.message.edit_text(
+                '✅ Базовый трафик обновлён. Остатки докупленных пакетов сохранены.',
+                reply_markup=get_back_keyboard(language),
+            )
+            await callback.answer()
+        except AccountingConflict:
+            await callback.answer('Не удалось обновить трафик. Проверьте баланс и повторите позже.', show_alert=True)
+        except Exception as error:
+            logger.error('Ошибка оплаты обновления трафика', error=error)
+            await callback.answer('Не удалось обновить трафик. Повторите позже.', show_alert=True)
         return
 
     reset_price = _calculate_traffic_reset_price(subscription)
@@ -551,7 +632,8 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
     from app.database.crud.tariff import get_tariff_by_id
 
     traffic_gb = int(callback.data.split('_')[2])
-    texts = get_texts(db_user.language)
+    user_language = db_user.language
+    texts = get_texts(user_language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
         return
@@ -581,6 +663,14 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
 
     # Lock user BEFORE price computation to prevent TOCTOU on group discount
     from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+    try:
+        subscription, accounting_panel = await prepare_traffic_purchase(db, subscription, requested_gb=traffic_gb)
+    except Exception:
+        await db.rollback()
+        await callback.answer('⚠️ Учёт трафика временно недоступен. Попробуйте позже.', show_alert=True)
+        return
 
     db_user = await lock_user_for_pricing(db, db_user.id)
     # Re-resolve after lock since db_user was refreshed
@@ -673,6 +763,7 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             db_user,
             price,
             f'Добавление {traffic_gb} ГБ трафика',
+            commit=False,
         )
 
         if not success:
@@ -680,7 +771,9 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             return
 
         if traffic_gb == 0:
-            subscription.traffic_limit_gb = 0
+            from app.services.traffic_accounting_service import transition_to_unlimited_locked
+
+            await transition_to_unlimited_locked(db, subscription, accounting_panel)
             # При переходе на безлимит сбрасываем все докупки
             from sqlalchemy import delete
 
@@ -691,10 +784,22 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             subscription.traffic_reset_at = None
         else:
             # add_subscription_traffic уже создаёт TrafficPurchase и обновляет все необходимые поля
-            await add_subscription_traffic(db, subscription, traffic_gb)
+            await add_subscription_traffic(db, subscription, traffic_gb, panel=accounting_panel, commit=False)
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
-        await reactivate_subscription(db, subscription)
+        await reactivate_subscription(db, subscription, commit=False)
+        payment_transaction = await create_transaction(
+            db=db,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=price,
+            description=f'Добавление {traffic_gb} ГБ трафика',
+            commit=False,
+        )
+        await db.commit()
+        from app.services.traffic_purchase_service import finish_traffic_purchase
+
+        await finish_traffic_purchase(db, subscription, payment_transaction)
 
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
@@ -707,14 +812,6 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         )
         if _en_panel_id and subscription.status == 'active':
             await subscription_service.enable_remnawave_user(_en_panel_id)
-
-        await create_transaction(
-            db=db,
-            user_id=db_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=price,
-            description=f'Добавление {traffic_gb} ГБ трафика',
-        )
 
         await db.refresh(db_user)
         await db.refresh(subscription)
@@ -742,13 +839,14 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             if total_discount_value > 0:
                 success_text += f' (скидка {traffic_discount_pct}%: -{texts.format_price(total_discount_value)})'
 
-        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(user_language))
 
         logger.info('✅ Пользователь добавил ГБ трафика', telegram_id=db_user.telegram_id, traffic_gb=traffic_gb)
 
     except Exception as e:
+        await db.rollback()
         logger.error('Ошибка добавления трафика', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(user_language))
 
     await callback.answer()
 

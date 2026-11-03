@@ -2955,6 +2955,13 @@ class RemnaWaveService:
                 logger.error('❌ Ошибка удаления связанных записей', records_error=records_error)
 
             try:
+                from app.services.traffic_accounting_lifecycle import retire_managed_account
+
+                # Acquire accounting leases before clearing links and rights.
+                # The ledger's historical grants must not survive a full reset.
+                for sub in user_subscriptions:
+                    if getattr(sub, 'traffic_accounting_mode', 'legacy') != 'legacy':
+                        await retire_managed_account(db, sub.id)
                 if user.balance_kopeks > 0:
                     logger.warning(
                         '⚠️ force_cleanup: СОХРАНЯЕМ баланс пользователя (оплаченные средства)',

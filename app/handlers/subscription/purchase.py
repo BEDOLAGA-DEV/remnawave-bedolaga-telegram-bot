@@ -560,12 +560,16 @@ async def show_subscription_info(callback: types.CallbackQuery, db_user: User, d
             '📱 Скопируйте ссылку и добавьте в ваше VPN приложение',
         )
 
+    from app.services.cispay_recurrent_guard import has_live_cispay
+
+    cispay_recurring = await has_live_cispay(db, subscription.id)
     await callback.message.edit_text(
         message,
         reply_markup=get_subscription_keyboard(
             db_user.language,
             has_subscription=True,
             is_trial=subscription.is_trial,
+            cispay_recurring=cispay_recurring,
             subscription=subscription,
             gift_enabled=gift_enabled,
         ),
@@ -2404,6 +2408,8 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
         return
 
     purchase_completed = False
+    managed_purchase = getattr(db_user.subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+    purchase_language = db_user.language
 
     try:
         success = await subtract_user_balance(
@@ -2413,6 +2419,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
             f'Покупка подписки на {data["period_days"]} дней',
             consume_promo_offer=promo_offer_discount_value > 0,
             mark_as_paid_subscription=True,
+            commit=not managed_purchase,
         )
 
         if not success:
@@ -2489,6 +2496,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                         payment_method='balance',
                         first_payment_amount_kopeks=final_price,
                         first_paid_period_days=period_days,
+                        commit=not managed_purchase,
                     )
                     logger.info(
                         'Записана конверсия: дн. триал → дн. платная за ₽',
@@ -2555,6 +2563,21 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
 
             existing_subscription.traffic_used_gb = 0.0
 
+            if managed_purchase:
+                from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+                transaction = await create_transaction(
+                    db=db,
+                    user_id=db_user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    amount_kopeks=final_price,
+                    description=f'Подписка на {period_days} дней ({months_in_period} мес)',
+                    commit=False,
+                )
+                await stage_paid_base_grant(
+                    db, existing_subscription, operation_key=f'classic-purchase:{transaction.id}'
+                )
+
             await db.commit()
             await db.refresh(existing_subscription)
             subscription = existing_subscription
@@ -2599,6 +2622,18 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 device_limit=resolved_device_limit,
                 connected_squads=new_subscription_countries,
                 traffic_gb=final_traffic_gb,
+            )
+
+        if managed_purchase:
+            from app.database.crud.transaction import emit_transaction_side_effects
+
+            await emit_transaction_side_effects(
+                db,
+                transaction,
+                amount_kopeks=final_price,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                description=f'Подписка на {period_days} дней ({months_in_period} мес)',
             )
 
         from app.database.crud.server_squad import add_user_to_servers, get_server_ids_by_uuids
@@ -2656,13 +2691,14 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     action='create',
                 )
 
-        transaction = await create_transaction(
-            db=db,
-            user_id=db_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_price,
-            description=f'Подписка на {period_days} дней ({months_in_period} мес)',
-        )
+        if not managed_purchase:
+            transaction = await create_transaction(
+                db=db,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=final_price,
+                description=f'Подписка на {period_days} дней ({months_in_period} мес)',
+            )
 
         try:
             notification_service = AdminNotificationService(callback.bot)
@@ -2857,7 +2893,9 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
 
     except Exception as e:
         logger.error('Ошибка покупки подписки', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        if managed_purchase:
+            await db.rollback()
+        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(purchase_language))
 
     if purchase_completed:
         await clear_subscription_checkout_draft(db_user.id)
@@ -3066,6 +3104,21 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
+    from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import lock_daily_accounting_subscription
+
+    try:
+        subscription = await lock_daily_accounting_subscription(db, subscription, db_user.id)
+    except ValueError as error:
+        await db.rollback()
+        await callback.answer(str(error), show_alert=True)
+        return
+    db_user = await lock_user_for_pricing(db, db_user.id)
+    managed = subscription.traffic_accounting_mode == 'managed'
+    if subscription.is_trial:
+        await callback.answer('Subscription renewal is unavailable', show_alert=True)
+        return
+
     # Проверяем что это суточный тариф
     tariff = None
     if subscription.tariff_id:
@@ -3090,6 +3143,9 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
         SubscriptionStatus.LIMITED.value,
     )
     needs_resume = was_paused or is_inactive
+    if needs_resume and db_user.restriction_subscription:
+        await callback.answer('Subscription renewal is unavailable', show_alert=True)
+        return
 
     # При возобновлении проверяем баланс
     if needs_resume:
@@ -3120,6 +3176,7 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
                 daily_price,
                 f'Суточная оплата тарифа «{tariff.name}» (возобновление)',
                 mark_as_paid_subscription=True,
+                commit=not managed,
             )
             if not deducted:
                 await callback.answer(
@@ -3141,15 +3198,36 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
                     type=TransactionType.SUBSCRIPTION_PAYMENT,
                     amount_kopeks=daily_price,
                     description=f'Суточная оплата тарифа «{tariff.name}» (возобновление)',
+                    commit=not managed,
                 )
             except Exception as tx_error:
+                if managed:
+                    raise
                 logger.warning('Не удалось создать транзакцию при возобновлении', error=tx_error)
 
         # Принудительный resume: снимаем паузу + восстанавливаем статус ACTIVE
         from app.database.crud.subscription import resume_daily_subscription
 
         was_limited = subscription.status == SubscriptionStatus.LIMITED.value
-        subscription = await resume_daily_subscription(db, subscription)
+        subscription = await resume_daily_subscription(db, subscription, commit=not managed)
+        if managed:
+            from app.services.traffic_purchase_service import stage_daily_resume_grant
+
+            if is_inactive:
+                await stage_daily_resume_grant(db, subscription, tariff, resume_transaction)
+            await db.commit()
+            await db.refresh(subscription)
+            if resume_transaction is not None:
+                from app.database.crud.transaction import emit_transaction_side_effects
+
+                await emit_transaction_side_effects(
+                    db,
+                    resume_transaction,
+                    amount_kopeks=daily_price,
+                    user_id=db_user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    description=resume_transaction.description,
+                )
         message = texts.t('DAILY_SUBSCRIPTION_RESUMED', '▶️ Подписка возобновлена!')
         # Восстанавливаем connected_squads из тарифа, если очищены деактивацией
         try:
@@ -3175,7 +3253,7 @@ async def handle_toggle_daily_subscription_pause(callback: types.CallbackQuery, 
             # Возобновление после остановки системой списывает суточную оплату —
             # обнуление счётчика решает та же политика, что и в ночном списании,
             # а не жёсткая константа. Снятие своей паузы оплатой не является.
-            reset_traffic = is_inactive and should_reset_traffic_on_daily_charge(tariff)
+            reset_traffic = not managed and is_inactive and should_reset_traffic_on_daily_charge(tariff)
             reset_reason = 'суточное списание (возобновление)' if reset_traffic else None
 
             subscription_service = SubscriptionService()
@@ -4242,7 +4320,9 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(confirm_extend_subscription, F.data.startswith('extend_period_'))
 
-    dp.callback_query.register(confirm_reset_traffic, F.data == 'confirm_reset_traffic')
+    dp.callback_query.register(
+        confirm_reset_traffic, (F.data == 'confirm_reset_traffic') | F.data.startswith('confirm_reset_traffic:')
+    )
 
     dp.callback_query.register(handle_reset_devices, F.data == 'subscription_reset_devices')
 
@@ -4279,6 +4359,10 @@ def register_handlers(dp: Dispatcher):
         F.data == 'clear_saved_cart',
     )
 
+    from .cispay_recurrent import handle_cispay_recurrent, purchase_cispay_from_tariff
+
+    dp.callback_query.register(handle_cispay_recurrent, F.data.startswith('cisrec:'))
+    dp.callback_query.register(purchase_cispay_from_tariff, F.data.startswith('tariff_cispay:'))
     dp.callback_query.register(handle_autopay_menu, F.data == 'subscription_autopay')
 
     dp.callback_query.register(toggle_autopay, F.data.in_(['autopay_enable', 'autopay_disable']))
