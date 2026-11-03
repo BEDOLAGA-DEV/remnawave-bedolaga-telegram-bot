@@ -127,3 +127,33 @@ async def test_parallel_purchase_never_loses_quota_or_partially_charges(postgres
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize('language', ['ru', 'en', 'ua', 'zh', 'fa'])
+async def test_telegram_accounting_failure_preserves_language_after_rollback(postgres_database, monkeypatch, language):
+    from app.config import settings
+    from app.handlers.subscription import traffic
+    from app.localization.texts import get_texts
+
+    async with postgres_sessions(postgres_database, list(Base.metadata.sorted_tables), count=1) as (db,):
+        await seed(db)
+        user = await db.get(User, 1)
+        user.language = language
+        await db.commit()
+        subscription = await db.get(Subscription, 1)
+        monkeypatch.setattr(traffic, '_resolve_subscription', AsyncMock(return_value=(subscription, 1)))
+        monkeypatch.setattr(type(settings), 'is_tariffs_mode', lambda self: False)
+        monkeypatch.setattr(type(settings), 'is_traffic_topup_blocked', lambda self: False)
+        monkeypatch.setattr(type(settings), 'get_traffic_topup_price', lambda self, gb: 100)
+        monkeypatch.setattr(
+            'app.services.traffic_purchase_service.prepare_traffic_purchase',
+            AsyncMock(side_effect=RuntimeError('synthetic accounting failure')),
+        )
+        callback = SimpleNamespace(data='add_traffic_5', answer=AsyncMock())
+        await traffic.add_traffic(callback, user, db)
+        callback.answer.assert_awaited_once_with(
+            get_texts(language).t('SUBSCRIPTION_UI_ACCOUNTING_UNAVAILABLE'), show_alert=True
+        )
+        await db.refresh(user)
+        assert user.balance_kopeks == 10000
+        assert not (await db.scalars(select(Transaction))).all()

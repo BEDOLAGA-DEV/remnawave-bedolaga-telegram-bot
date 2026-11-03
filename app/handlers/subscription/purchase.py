@@ -4989,6 +4989,8 @@ async def _extend_simple_tariff_subscription(
 
     subscription_id = subscription.id
     db_user = await lock_user_for_pricing(db, db_user.id)
+    # Rollback expires ORM attributes; keep the translation context beforehand.
+    texts = get_texts(db_user.language)
     subscription = await db.scalar(
         select(Subscription)
         .where(Subscription.id == subscription_id, Subscription.user_id == db_user.id)
@@ -5012,15 +5014,12 @@ async def _extend_simple_tariff_subscription(
     ):
         await db.rollback()
         await callback.answer(
-            get_texts(getattr(db_user, 'language', None)).t(
-                'SUBSCRIPTION_UI_OPEN_RENEWAL', 'Откройте продление подписки и выберите доступный тариф и период'
-            ),
+            texts.t('SUBSCRIPTION_UI_OPEN_RENEWAL', 'Откройте продление подписки и выберите доступный тариф и период'),
             show_alert=True,
         )
         return
 
     pricing = await pricing_engine.calculate_renewal_price(db, subscription, period_days, user=db_user)
-    texts = get_texts(db_user.language)
     price = pricing.final_total
     if price > db_user.balance_kopeks:
         missing = price - db_user.balance_kopeks

@@ -771,9 +771,7 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
     except Exception:
         await db.rollback()
         await callback.answer(
-            get_texts(getattr(db_user, 'language', None)).t(
-                'SUBSCRIPTION_UI_ACCOUNTING_UNAVAILABLE', '⚠️ Учёт трафика временно недоступен. Попробуйте позже.'
-            ),
+            texts.t('SUBSCRIPTION_UI_ACCOUNTING_UNAVAILABLE', '⚠️ Учёт трафика временно недоступен. Попробуйте позже.'),
             show_alert=True,
         )
         return

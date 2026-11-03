@@ -15,6 +15,7 @@ from app.database.crud.user import get_user_by_id
 from app.database.models import Base, PromoGroup, Subscription, Tariff, TrafficPurchase, Transaction, User
 from app.handlers import simple_subscription as simple
 from app.handlers.subscription.purchase import handle_simple_subscription_purchase
+from app.localization.texts import get_texts
 from app.services.subscription_service import SubscriptionService
 from tests.database.test_renewal_hwid_postgres import Panel
 from tests.fixtures.postgres_db import lock_waiter_appeared, postgres_session
@@ -252,8 +253,12 @@ async def test_quick_tariff_renewal_price_variants(postgres_database, monkeypatc
 @pytest.mark.parametrize(
     'case', ['missing_period', 'null_price', 'daily', 'trial', 'inactive', 'multi', 'restricted', 'disabled', 'pending']
 )
-async def test_quick_tariff_renewal_rejects_unsupported_checkout_before_charge(postgres_database, monkeypatch, case):
+@pytest.mark.parametrize('language', ['ru', 'en', 'ua', 'zh', 'fa'])
+async def test_quick_tariff_renewal_rejects_unsupported_checkout_before_charge(
+    postgres_database, monkeypatch, case, language
+):
     async with checkout(postgres_database, monkeypatch) as c:
+        c.user.language = language
         tariff = await c.db.get(Tariff, 1)
         if case == 'missing_period':
             monkeypatch.setattr(settings, 'SIMPLE_SUBSCRIPTION_PERIOD_DAYS', 15)
@@ -279,6 +284,8 @@ async def test_quick_tariff_renewal_rejects_unsupported_checkout_before_charge(p
         assert not (await c.db.scalars(select(Transaction))).all()
         assert not c.panel.updated
         assert c.callback.answer.call_args.kwargs.get('show_alert') is True
+        if case not in ('multi', 'restricted'):
+            assert c.callback.answer.call_args.args[0] == get_texts(language).t('SUBSCRIPTION_UI_OPEN_RENEWAL')
 
 
 async def test_quick_tariff_renewal_rolls_back_debit_and_discount_when_ledger_fails(postgres_database, monkeypatch):
