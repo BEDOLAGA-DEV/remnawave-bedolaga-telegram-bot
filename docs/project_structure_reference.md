@@ -4833,7 +4833,7 @@
   Функции: `test_quick_amount_modes_and_callback_contract`, `test_edit_prompt_uses_account_language`, `test_invalid_amount_preserves_limits_and_localizes_error`
 - `tests/handlers/test_referral_invite.py` — Python-модуль
   Классы: нет
-  Функции: `test_create_invite_message_wraps_links_in_code`
+  Функции: `test_create_invite_message_wraps_links_in_code`, `test_referral_qr_cache_tracks_link_and_owner`
 - `tests/handlers/test_referral_settings_screen.py` — Python-модуль
   Классы: `TestVisibility` (3 методов), `TestCurrentStateIsVisible` (3 методов), `TestSaving` (7 методов), `TestDaysTargetFollowsTheKindChoice` (2 методов), `TestAmountsAreShown` (2 методов)
   Функции: `allowed`, `sides` — Суммы сторон считает движок по настоящей БД — здесь она не предмет., `subs`, `test_every_handler_is_registered` — Обработчик без регистрации — кнопка, которая молча ничего не делает.
