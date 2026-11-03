@@ -2,7 +2,7 @@
 
 import pytest
 
-from scripts.pytest_pg_shard import partition_items
+from tests.pytest_pg_shard import partition_items
 
 
 class Item:

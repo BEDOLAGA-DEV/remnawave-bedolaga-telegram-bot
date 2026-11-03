@@ -1822,8 +1822,8 @@ async def update_user_subscription(
                 detail='traffic_gb parameter is required for add_traffic action',
             )
 
-        from app.database.crud.subscription import add_subscription_traffic, reactivate_subscription
-        from app.services.traffic_purchase_service import prepare_traffic_purchase
+        from app.database.crud.subscription import reactivate_subscription
+        from app.services.traffic_purchase_service import add_subscription_traffic, prepare_traffic_purchase
 
         accounting_panel = None
         if subscription.traffic_limit_gb:

@@ -12,7 +12,7 @@ from tests.services.test_traffic_accounting_store import database
 
 
 async def test_managed_topup_requires_snapshot_before_any_mutation(monkeypatch):
-    from app.database.crud.subscription import add_subscription_traffic
+    from app.services.traffic_purchase_service import add_subscription_traffic
 
     async with database(monkeypatch) as db:
         sub = await db.get(Subscription, 1)
@@ -25,9 +25,9 @@ async def test_managed_topup_requires_snapshot_before_any_mutation(monkeypatch):
 
 
 async def test_debit_and_grant_roll_back_together(monkeypatch):
-    from app.database.crud.subscription import add_subscription_traffic
     from app.database.crud.user import subtract_user_balance
     from app.services.traffic_accounting_service import lock_accounting_subscription
+    from app.services.traffic_purchase_service import add_subscription_traffic
 
     async with database(monkeypatch) as db:
         sub = await db.get(Subscription, 1)
@@ -65,9 +65,9 @@ async def test_debit_and_grant_roll_back_together(monkeypatch):
 async def test_successful_grant_remains_uncommitted_until_caller_commits(monkeypatch):
     from sqlalchemy import select
 
-    from app.database.crud.subscription import add_subscription_traffic
     from app.database.models import TrafficAllowance, TrafficPurchase
     from app.services.traffic_accounting_service import lock_accounting_subscription, read_counters
+    from app.services.traffic_purchase_service import add_subscription_traffic
     from tests.services.test_traffic_accounting_service import snapshot
 
     panel = snapshot(used=0, lifetime=0)

@@ -65,7 +65,7 @@ jobs:
       # это должно быть видно сразу, а не утонуть в общем прогоне.
       - name: Run PostgreSQL tests
         run: >-
-          uv run --frozen python -m pytest -p scripts.pytest_pg_shard -m postgres -q
+          uv run --frozen python -m pytest -p tests.pytest_pg_shard -m postgres -q
           --pg-shard-index=${{ matrix.shard }} --pg-shard-count=4
 
       # PostgreSQL cases already ran above; the two marker partitions together

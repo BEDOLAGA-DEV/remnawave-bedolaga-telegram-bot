@@ -2093,9 +2093,10 @@ async def _auto_add_traffic(
     """Auto-purchase traffic from saved cart after balance topup."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    from app.database.crud.subscription import add_subscription_traffic, get_subscription_by_user_id
+    from app.database.crud.subscription import get_subscription_by_user_id
     from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
     from app.database.models import PaymentMethod
+    from app.services.traffic_purchase_service import add_subscription_traffic
     from app.utils.pricing_utils import calculate_prorated_price
 
     traffic_gb = _safe_int(cart_data.get('traffic_gb'))

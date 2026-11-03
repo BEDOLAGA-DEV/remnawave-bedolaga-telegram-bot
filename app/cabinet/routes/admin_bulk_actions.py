@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud.subscription import (
-    add_subscription_traffic,
     create_paid_subscription,
     extend_subscription,
     get_subscription_by_id,
@@ -35,6 +34,7 @@ from app.database.models import (
     User,
     UserPromoGroup,
 )
+from app.services.traffic_purchase_service import add_subscription_traffic
 from app.utils.subscription_time import local_days_until
 
 from ..dependencies import get_cabinet_db, require_permission

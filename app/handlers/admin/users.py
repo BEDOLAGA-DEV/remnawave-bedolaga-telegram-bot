@@ -5204,11 +5204,9 @@ async def _add_subscription_traffic(
     db: AsyncSession, user_id: int, gb: int, admin_id: int, subscription_id: int | None = None
 ) -> bool:
     try:
-        from app.database.crud.subscription import (
-            add_subscription_traffic,
-            reactivate_subscription,
-        )
+        from app.database.crud.subscription import reactivate_subscription
         from app.services.subscription_service import SubscriptionService
+        from app.services.traffic_purchase_service import add_subscription_traffic
 
         subscription = await _resolve_admin_subscription(db, user_id, subscription_id)
         if not subscription:

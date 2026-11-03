@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import func, select
 
-from app.database.crud.subscription import add_subscription_traffic
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import Base, Subscription, TrafficPurchase, Transaction, TransactionType, User
 from app.services.traffic_accounting import AccountingConflict, Allowance, TrafficAccount
 from app.services.traffic_accounting_service import lock_accounting_subscription, read_counters
 from app.services.traffic_accounting_store import initialize_account, load_account
+from app.services.traffic_purchase_service import add_subscription_traffic
 from tests.fixtures.postgres_db import lock_waiter_appeared, postgres_sessions
 
 

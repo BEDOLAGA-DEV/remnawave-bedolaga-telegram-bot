@@ -13,12 +13,12 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.config import settings
-from app.database.crud.subscription import add_subscription_traffic
 from app.database.models import Base, Subscription, TrafficPurchase, User
 from app.external.remnawave_api import RemnaWaveAPI
 from app.services.traffic_accounting_delivery import deliver_account_projection
 from app.services.traffic_accounting_service import ensure_managed_account, lock_accounting_subscription
 from app.services.traffic_accounting_store import load_account
+from app.services.traffic_purchase_service import add_subscription_traffic
 from tests.fixtures.postgres_db import postgres_engine
 
 

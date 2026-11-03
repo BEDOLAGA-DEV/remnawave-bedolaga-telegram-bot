@@ -31,7 +31,7 @@ def setup(monkeypatch):
     reactivate = AsyncMock()
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', extend)
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', balance)
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', grant)
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', grant)
     monkeypatch.setattr('app.database.crud.subscription.reactivate_subscription', reactivate)
     monkeypatch.setattr('app.database.crud.transaction.create_transaction', AsyncMock())
     return service, user, sub, promo, panel, extend, balance, grant, reactivate
@@ -116,7 +116,7 @@ async def test_activation_rolls_back_real_days_and_usage_reservation_on_grant_fa
             prepare.side_effect = ValueError('panel unavailable')
         monkeypatch.setattr('app.services.traffic_purchase_service.prepare_traffic_purchase', prepare)
         monkeypatch.setattr(
-            'app.database.crud.subscription.add_subscription_traffic',
+            'app.services.traffic_purchase_service.add_subscription_traffic',
             AsyncMock(side_effect=ValueError('accounting conflict')),
         )
         service = PromoCodeService()
@@ -179,7 +179,7 @@ async def test_activation_rechecks_eligibility_after_panel_preflight(monkeypatch
 
         monkeypatch.setattr('app.services.traffic_purchase_service.prepare_traffic_purchase', preflight)
         grant = AsyncMock()
-        monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', grant)
+        monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', grant)
         result = await PromoCodeService().activate_promocode(db, 1, 'CHECK_AGAIN')
         assert result == {'success': False, 'error': expected}
         grant.assert_not_awaited()

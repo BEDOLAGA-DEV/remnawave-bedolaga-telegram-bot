@@ -13,7 +13,6 @@ from app.database.crud.server_squad import get_effective_tariff_squad_uuids
 from app.database.crud.subscription import (
     add_subscription_devices,
     add_subscription_squad,
-    add_subscription_traffic,
     create_paid_subscription,
     create_trial_subscription,
     deactivate_subscription,
@@ -26,6 +25,7 @@ from app.database.crud.subscription import (
 from app.database.crud.user import get_user_by_id
 from app.database.models import Subscription, SubscriptionStatus
 from app.services.subscription_service import SubscriptionService
+from app.services.traffic_purchase_service import add_subscription_traffic
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.subscriptions import (

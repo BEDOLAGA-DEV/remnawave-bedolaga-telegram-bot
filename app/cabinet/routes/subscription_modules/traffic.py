@@ -165,8 +165,8 @@ async def purchase_traffic(
             detail='Subscription purchases are restricted for this account',
         )
 
-    from app.database.crud.subscription import add_subscription_traffic
     from app.database.crud.tariff import get_tariff_by_id
+    from app.services.traffic_purchase_service import add_subscription_traffic
     from app.utils.pricing_utils import calculate_prorated_price
 
     subscription = await resolve_subscription(db, user, subscription_id)

@@ -7474,10 +7474,10 @@ async def purchase_traffic_topup_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Докупка трафика для подписки."""
-    from app.database.crud.subscription import add_subscription_traffic
     from app.database.crud.transaction import create_transaction
     from app.database.crud.user import subtract_user_balance
     from app.database.models import TransactionType
+    from app.services.traffic_purchase_service import add_subscription_traffic
     from app.utils.pricing_utils import calculate_prorated_price
     from app.webapi.schemas.miniapp import MiniAppTrafficTopupResponse
 

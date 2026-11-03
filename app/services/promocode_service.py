@@ -620,7 +620,8 @@ class PromoCodeService:
         traffic_gb = getattr(promocode, 'traffic_gb', 0) or 0
         traffic_skipped_unlimited = False
         if promocode.type == PromoCodeType.BALANCE_AND_DAYS.value and traffic_gb > 0:
-            from app.database.crud.subscription import add_subscription_traffic, reactivate_subscription
+            from app.database.crud.subscription import reactivate_subscription
+            from app.services.traffic_purchase_service import add_subscription_traffic
 
             if target_sub is None:
                 target_sub = await self._pick_target_subscription(db, user, promocode, subscription_id)
