@@ -2374,5 +2374,15 @@
   "CISREC_ERROR_DEVICES": "请先在订阅管理中更改设备数量。",
   "CISREC_ERROR_AMOUNT": "此金额不支持 CisPay 自动付款。请选择其他周期或一次性付款。",
   "CISREC_ERROR_MISSINGSUBSCRIPTION": "未找到订阅。请刷新并重新选择。",
-  "CISREC_ERROR_SELECTSUBSCRIPTION": "请先选择需要开通自动付款的订阅。"
+  "CISREC_ERROR_SELECTSUBSCRIPTION": "请先选择需要开通自动付款的订阅。",
+  "BOT_COMMAND_START": "主菜单",
+  "BOT_COMMAND_CONTESTS": "竞赛",
+  "BOT_COMMAND_ADMIN_HELP": "管理员帮助",
+  "BOT_COMMAND_RULES_STATS": "规则统计",
+  "BOT_COMMAND_CLEAR_RULES": "清除规则",
+  "BOT_COMMAND_MONITORING": "监控状态",
+  "BOT_COMMAND_PAYSUPPORT": "付款帮助",
+  "PAYMENT_SUPPORT_INFO": "<b>付款帮助</b>\n\n创建工单或联系本服务客服。请提供日期、金额和问题描述。请勿发送密码或银行卡信息。\n\n付款问题由本服务运营者处理，而非 Telegram 客服。",
+  "PAYMENT_SUPPORT_PROMPT": "请描述付款问题，并提供日期和金额。可以附上照片或视频。",
+  "PAYMENT_SUPPORT_TITLE": "付款问题"
 }

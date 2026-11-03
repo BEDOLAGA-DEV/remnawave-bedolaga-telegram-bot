@@ -997,10 +997,10 @@
 - `app/handlers/subscription/`
 - `app/handlers/support.py` — Python-модуль
   Классы: нет
-  Функции: `show_support_info`, `register_handlers`
+  Функции: `show_support_info`, `register_handlers`, `payment_support_command`, `register_command_handlers`
 - `app/handlers/tickets.py` — Python-модуль
   Классы: `TicketStates`
-  Функции: `show_ticket_priority_selection` — Начать создание тикета без выбора приоритета: сразу просим заголовок, `handle_ticket_title_input`, `handle_ticket_message_input`, `show_my_tickets`, `show_my_tickets_closed`, `view_ticket` — Показать детали тикета с пагинацией, `send_ticket_attachments`, `user_delete_message`, `reply_to_ticket` — Начать ответ на тикет, `handle_ticket_reply`, `close_ticket` — Закрыть тикет, `cancel_ticket_creation` — Отменить создание тикета, `cancel_ticket_reply` — Отменить ответ на тикет, `close_ticket_notification` — Закрыть уведомление о тикете, `build_ticket_card_keyboard` — Клавиатура карточки тикета по роли получателя ('admin' / 'moderator' / 'group')., `notify_admins_about_new_ticket` — Уведомить админов о новом тикете, `notify_admins_about_ticket_reply` — Уведомить админов об ответе пользователя на тикет, `register_handlers` — Регистрация обработчиков тикетов
+  Функции: `show_ticket_priority_selection` — Начать создание тикета без выбора приоритета: сразу просим заголовок, `start_payment_ticket`, `handle_ticket_title_input`, `handle_ticket_message_input`, `show_my_tickets`, `show_my_tickets_closed`, `view_ticket` — Показать детали тикета с пагинацией, `send_ticket_attachments`, `user_delete_message`, `reply_to_ticket` — Начать ответ на тикет, `handle_ticket_reply`, `close_ticket` — Закрыть тикет, `cancel_ticket_creation` — Отменить создание тикета, `cancel_ticket_reply` — Отменить ответ на тикет, `close_ticket_notification` — Закрыть уведомление о тикете, `build_ticket_card_keyboard` — Клавиатура карточки тикета по роли получателя ('admin' / 'moderator' / 'group')., `notify_admins_about_new_ticket` — Уведомить админов о новом тикете, `notify_admins_about_ticket_reply` — Уведомить админов об ответе пользователя на тикет, `register_handlers` — Регистрация обработчиков тикетов
 - `app/handlers/webhooks.py` — Python-модуль
   Классы: нет
   Функции: `set_webhook_bot` — Устанавливает экземпляр бота для отправки уведомлений об ошибках в webhook., `tribute_webhook`, `handle_successful_payment`, `handle_pre_checkout_query`
@@ -1504,6 +1504,9 @@
 - `app/services/blocked_users_service.py` — Python-модуль
   Классы: `BlockCheckStatus`, `BlockedUserAction`, `BlockCheckResult`, `BlockedUsersScanResult` (1 методов), `CleanupResult`, `BlockedUsersService` (8 методов)
   Функции: нет
+- `app/services/bot_commands.py` — Python-модуль
+  Классы: `CommandMenuStore` (3 методов), `CommandMenuSync` (3 методов)
+  Функции: `build_menu`, `desired_menus`
 - `app/services/broadcast_audience.py` — Python-модуль
   Классы: нет
   Функции: `validate_audience` — Reject forged field/value combinations and unknown tariff or promo group IDs., `audience_predicate` — Combine rows strictly from top to bottom, including mixed AND/OR rows., `audience_user_query` — One user row per recipient, independent of subscription count., `select_audience_users` — Return the same ordered, unique people for preview and delivery., `preview_audience_users` — Count exactly while keeping only one page of users in memory.
@@ -2444,6 +2447,9 @@
 - `app/utils/subscription_utils.py` — Python-модуль
   Классы: нет
   Функции: `resolve_tariff_cart_traffic` — Resolve explicit custom traffic; reject ambiguous legacy or stale selections., `cleanup_duplicate_subscriptions`, `get_display_subscription_link`, `get_happ_cryptolink_redirect_link`, `convert_subscription_link_to_happ_scheme`, `device_limit_needs_heal` — Return True if a stored ``device_limit`` is structurally invalid., `coerce_panel_device_limit` — Normalize ``hwidDeviceLimit`` from a RemnaWave panel response., `resolve_tariff_renewal_device_limit` — Продление сохраняет докупки лимитного тарифа; ноль у тарифа — безлимит., `resolve_tariff_purchase_device_limit` — Price and provision the same device limit when a paid classic row gets its first tariff., `resolve_min_device_limit` — Нижняя граница, до которой пользователь может уменьшить лимит устройств., `resolve_hwid_device_limit` — Return a positive effective device limit, or None for no finite limit., `resolve_hwid_device_limit_for_payload` — Return the device limit that should be sent to RemnaWave APIs., `resolve_simple_subscription_device_limit` — Return the effective device limit for simple subscription flows.
+- `app/utils/support_access.py` — Python-модуль
+  Классы: нет
+  Функции: `is_support_handler`
 - `app/utils/telegram_delivery.py` — Python-модуль
   Классы: нет
   Функции: `is_user_unreachable` — Сообщение некуда доставить: 403 от Telegram или 400 с маркером недоступности., `describe_unreachable` — Причина по-русски для отчёта админам; для незнакомого отказа — общая формулировка.
@@ -2784,6 +2790,7 @@
 - `docs/project_structure_reference.md` — файл
 - `docs/referral_program_setting.md` — файл
 - `docs/tariff-purchase-devices.md` — файл
+- `docs/telegram-command-menus.md` — файл
 - `docs/traffic-accounting.md` — файл
 - `docs/traffic-package-expiry.md` — файл
 - `docs/web-admin-integration-guide.md` — файл
@@ -4013,6 +4020,9 @@
 - `tests/database/test_autopay_races_postgres.py` — Python-модуль
   Классы: нет
   Функции: `quiet_settings`, `worker`, `test_candidate_is_revalidated_before_charge`, `test_two_workers_cannot_charge_the_same_due_cycle`, `test_imported_subscription_with_autopay_off_never_charges`, `test_failed_renewal_rolls_back_money_days_and_promo`, `test_panel_rollback_does_not_lose_committed_ledger`, `test_manual_charge_in_flight_blocks_autopay_for_same_cycle`, `test_recurring_ledger_fk_does_not_deadlock_with_autopay`, `test_tariff_switch_does_not_deadlock_with_autopay`, `test_cancellation_rolls_back_uncommitted_autopay`
+- `tests/database/test_bot_command_scopes_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_command_scope_journal`
 - `tests/database/test_cabinet_daily_resume_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_trial_cannot_be_paid_through_resume`, `test_expired_daily_resume_and_retry`, `test_restricted_account_cannot_resume_but_can_pause`, `test_failure_does_not_take_money`, `test_concurrent_resume_charges_once`, `test_daily_resume_balance_cases`
@@ -4190,6 +4200,9 @@
 - `tests/database/test_payment_locking_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_for_update_blocks_second_session` — Вторая сессия обязана ЖДАТЬ строку, занятую первой., `test_plain_read_does_not_block` — Контроль к предыдущему тесту: ожидание вызвано именно блокировкой., `test_waiter_sees_committed_changes_after_lock_release` — Дождавшись блокировки, вторая сессия читает уже НОВОЕ значение., `test_duplicate_delivery_credits_exactly_once` — Два одновременных вебхука об одном событии — ровно одно зачисление., `test_duplicate_order_id_loses_race_on_unique_index` — Уникальность order_id обеспечивает БД, а не проверка перед вставкой., `test_order_id_longer_than_column_is_rejected` — VARCHAR(64) на order_id — не декорация: обрезка в клиенте обязательна., `test_payment_without_user_is_rejected` — Внешний ключ на users PostgreSQL проверяет, SQLite — нет., `test_timestamps_keep_the_same_instant_across_timezones` — TIMESTAMPTZ хранит момент времени, а не текст с числами., `test_json_columns_survive_round_trip` — JSON-колонки возвращаются ровно тем же деревом значений.
+- `tests/database/test_payment_support_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_payment_support_creates_owned_ticket_and_preserves_balance`
 - `tests/database/test_pending_expiry_migration_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_pending_expiry_migration_preserves_existing_rights`
@@ -4734,6 +4747,9 @@
 - `tests/handlers/test_page_html_is_telegram_safe.py` — Python-модуль
   Классы: нет
   Функции: `visible` — Все инфо-разделы показываются в боте., `test_faq_page_drops_unsupported_markup`, `test_privacy_policy_drops_unsupported_markup`, `test_public_offer_drops_unsupported_markup`, `test_service_rules_drop_unsupported_markup`, `test_allowed_formatting_survives` — Преобразование не должно съедать разметку, ради которой её и писали., `test_long_page_is_split_without_breaking_a_tag` — Нарезка идёт по преобразованному тексту, иначе тег рвётся посередине., `test_admin_privacy_preview_drops_unsupported_markup` — Экран «Текущий текст политики» показывает то же, что увидит пользователь., `test_admin_offer_preview_drops_unsupported_markup`, `test_registration_privacy_policy_drops_unsupported_markup`, `test_registration_privacy_policy_of_bare_tags_falls_back_to_default`, `test_registration_rules_drop_unsupported_markup`, `test_registration_rules_of_bare_tags_fall_back_to_default`, `test_registration_sends_rules_only_through_the_converter` — Любая новая отправка правил из start.py обязана идти через _rules_for_telegram.
+- `tests/handlers/test_payment_support_command.py` — Python-модуль
+  Классы: нет
+  Функции: `test_paysupport_menu_tracks_stars`, `test_payment_support_uses_configured_channels`, `test_payment_support_contact_for_inaccessible_accounts`, `test_command_routes_inside_fsm_without_clearing_it`, `test_real_middleware_chain_keeps_read_only_payment_help_available`, `test_payment_ticket_prefills_title_and_preserves_ticket_checks`, `test_support_bypass_requires_server_flag_and_private_chat`, `test_return_to_support_keeps_non_security_gates_open`, `test_switching_to_contact_cancels_pending_payment_ticket`
 - `tests/handlers/test_platega_sbp_status_text.py` — Python-модуль
   Классы: нет
   Функции: `test_none_record_means_not_connected`, `test_pending_status`, `test_active_status_with_next_charge_at`, `test_active_status_without_next_charge_at_shows_placeholder` — ACTIVE достижим и без next_charge_at — например, сразу после коллбека, `test_past_due_status`, `test_cancelled_status`, `test_failed_status`, `test_unknown_status_falls_back_to_raw_value` — Защитная ветка: неизвестный статус не должен молча теряться (как и в
@@ -5010,6 +5026,9 @@
 - `tests/services/test_ban_notification_global_switch.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_typed_ban_is_silent_when_notifications_are_off`, `test_typed_ban_is_delivered_when_notifications_are_on` — Обратная сторона: рубильник не должен глушить включённые уведомления., `test_switch_is_checked_before_touching_the_database` — Выход обязан быть до поиска пользователя, как у соседних методов., `test_every_send_method_respects_the_switch` — Ни один способ уведомить пользователя не должен обходить рубильник.
+- `tests/services/test_bot_commands.py` — Python-модуль
+  Классы: нет
+  Функции: `test_private_scopes_and_admin_permissions`, `test_descriptions_and_no_unimplemented_commands`, `test_restart_revocation_and_deleted_locale`, `test_intent_persisted_before_api_and_failure_retried`, `test_failed_delete_remains_tracked`, `test_one_unreachable_admin_does_not_block_other_menus`, `test_retry_after_stops_batch_immediately`, `test_store_survives_restart_and_separates_bots`, `test_worker_reloads_runtime_settings_and_cancels`, `test_readding_admin_after_delete_journal_failure_republishes`, `test_command_descriptions_use_operator_locales`, `test_builtin_override_is_not_ignored`, `test_invalid_custom_description_does_not_break_publication`, `test_stars_toggle_republishes_menus_without_restart`
 - `tests/services/test_broadcast_bad_request_logging.py` — Python-модуль
   Классы: нет
   Функции: `test_bad_request_is_logged_once_per_cause_with_telegram_text`, `test_each_distinct_cause_gets_its_own_error_entry`, `test_blocked_users_are_still_counted_quietly` — «chat not found» — это не сбой рассылки, а ушедший пользователь: без error.

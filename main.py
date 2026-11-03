@@ -20,6 +20,7 @@ from app.localization.loader import ensure_locale_templates
 from app.logging_config import _resolve_log_level, setup_logging
 from app.services.backup_service import backup_service
 from app.services.ban_notification_service import ban_notification_service
+from app.services.bot_commands import CommandMenuStore, CommandMenuSync
 from app.services.broadcast_service import broadcast_service
 from app.services.contest_rotation_service import contest_rotation_service
 from app.services.daily_subscription_service import daily_subscription_service
@@ -200,6 +201,7 @@ async def main():
     traffic_monitoring_task = None
     daily_subscription_task = None
     polling_task = None
+    command_menu_task = None
     web_api_server = None
     telegram_webhook_enabled = False
     polling_enabled = True
@@ -356,6 +358,9 @@ async def main():
             stage.log('Кеш и FSM подготовлены')
 
         bot_user = await bot.get_me()
+        command_menu_task = asyncio.create_task(
+            CommandMenuSync(bot, CommandMenuStore(bot.id)).run(), name='telegram-command-menus'
+        )
         if bot_user.username and not settings.BOT_USERNAME:
             settings.BOT_USERNAME = bot_user.username
             logger.info('BOT_USERNAME auto-detected', bot_username=bot_user.username)
@@ -1055,6 +1060,10 @@ async def main():
             await traffic_accounting_worker.stop()
         except Exception as error:
             logger.warning('Traffic accounting worker shutdown failed', error_type=type(error).__name__)
+
+        if command_menu_task is not None:
+            command_menu_task.cancel()
+            await asyncio.gather(command_menu_task, return_exceptions=True)
 
         logger.info('ℹ️ Остановка сервиса grace-доступа...')
         try:

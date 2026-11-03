@@ -2374,5 +2374,15 @@
   "CISREC_ERROR_DEVICES": "Change your device count in subscription management first.",
   "CISREC_ERROR_AMOUNT": "This amount is not supported for CisPay automatic payments. Choose another period or a one-time payment.",
   "CISREC_ERROR_MISSINGSUBSCRIPTION": "Subscription not found. Refresh and select it again.",
-  "CISREC_ERROR_SELECTSUBSCRIPTION": "Select the subscription you want to set up automatic payments for first."
+  "CISREC_ERROR_SELECTSUBSCRIPTION": "Select the subscription you want to set up automatic payments for first.",
+  "BOT_COMMAND_START": "Main menu",
+  "BOT_COMMAND_CONTESTS": "Contests",
+  "BOT_COMMAND_ADMIN_HELP": "Administrator help",
+  "BOT_COMMAND_RULES_STATS": "Rules statistics",
+  "BOT_COMMAND_CLEAR_RULES": "Clear rules",
+  "BOT_COMMAND_MONITORING": "Monitoring status",
+  "BOT_COMMAND_PAYSUPPORT": "Payment support",
+  "PAYMENT_SUPPORT_INFO": "<b>Payment support</b>\n\nCreate a ticket or contact this service’s support. Include the date, amount and what happened. Do not send passwords or bank card details.\n\nPayment issues are handled by the service owner, not Telegram support.",
+  "PAYMENT_SUPPORT_PROMPT": "Describe the payment issue, including the date and amount. You can attach a photo or video.",
+  "PAYMENT_SUPPORT_TITLE": "Payment issue"
 }
