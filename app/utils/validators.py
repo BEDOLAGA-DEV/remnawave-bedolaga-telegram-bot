@@ -238,8 +238,9 @@ def validate_html_tags(text: str, language: str = 'ru') -> tuple[bool, str]:
     # [^<>], а не [^>]: на тексте из множества «<a» без закрывающей скобки
     # второй вариант перебирает хвост заново с каждого «<». Замер на 80 КБ —
     # 0.84 с здесь и 10 с в проверке структуры ниже, а длина HTML правовых
-    # страниц из кабинета ничем не ограничена.
-    tag_pattern = r'<(/?)([a-zA-Z][a-zA-Z0-9-]*)[^<>]*>'
+    # страниц из кабинета ничем не ограничена. Possessive-квантификаторы
+    # также исключают перебор границы между длинным именем тега и атрибутами.
+    tag_pattern = r'<(/?)([a-zA-Z][a-zA-Z0-9-]*+)[^<>]*+>'
     tags = re.findall(tag_pattern, text)
 
     for is_closing, tag_name in tags:
@@ -254,7 +255,7 @@ def validate_html_tags(text: str, language: str = 'ru') -> tuple[bool, str]:
 
 
 def validate_html_structure(text: str, language: str = 'ru') -> tuple[bool, str]:
-    tag_pattern = r'<(/?)([a-zA-Z][a-zA-Z0-9-]*)[^<>]*?/?>'
+    tag_pattern = r'<(/?)([a-zA-Z][a-zA-Z0-9-]*+)[^<>]*+>'
 
     matches = re.finditer(tag_pattern, text)
     tag_stack = []

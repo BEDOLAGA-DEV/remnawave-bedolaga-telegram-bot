@@ -6125,6 +6125,9 @@
 - `tests/utils/test_chat_menu_button.py` — Python-модуль
   Классы: нет
   Функции: `test_disabled_does_not_touch_menu_button`, `test_enabled_sets_webapp_menu_button`, `test_falls_back_to_miniapp_custom_url`, `test_non_https_url_is_skipped`, `test_empty_text_defaults`
+- `tests/utils/test_codeql_input_boundaries.py` — Python-модуль
+  Классы: нет
+  Функции: `parsing_deadline`, `test_unterminated_escaped_metric_label_is_bounded`, `test_unterminated_long_tag_is_bounded`, `test_unterminated_rich_blocks_are_bounded`, `test_article_sanitization_removes_executable_markup`, `test_metric_label_escapes_and_adjacent_labels_still_parse`, `test_rich_segmentation_preserves_existing_short_input_semantics`, `test_blacklist_conversion_uses_parsed_host_and_blob_path`, `test_article_keeps_editor_formatting_and_uploaded_media`, `test_article_preserves_trusted_embeds_with_forced_sandbox`, `test_article_removes_untrusted_embed_source`
 - `tests/utils/test_decorator_localization.py` — Python-модуль
   Классы: нет
   Функции: `test_denied_admin_action_uses_account_language_without_calling_handler`, `test_error_message_uses_positional_account_or_telegram_language`
