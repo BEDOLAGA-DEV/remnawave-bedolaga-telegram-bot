@@ -238,6 +238,12 @@ class NewsArticleResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator('content')
+    @classmethod
+    def sanitize_stored_content(cls, value: str) -> str:
+        # Existing rows predate the storage sanitizer; protect API consumers too.
+        return _sanitize_html_content(value)
+
 
 class NewsArticleListItem(BaseModel):
     """Compact news article for list views."""

@@ -136,3 +136,33 @@ def test_article_preserves_trusted_embeds_with_forced_sandbox(host):
 )
 def test_article_removes_untrusted_embed_source(url):
     assert 'src=' not in _sanitize_html_content(f'<iframe src="{url}"></iframe>')
+
+
+def test_legacy_article_response_is_sanitized_without_rewriting_storage():
+    from datetime import UTC, datetime
+
+    from app.cabinet.schemas.news import NewsArticleResponse
+
+    stored = {
+        'id': 1,
+        'title': 'Legacy',
+        'slug': 'legacy',
+        'content': '<p>Saved text</p><a href="java&#x73;cript:alert(1)">link</a>',
+        'excerpt': None,
+        'category': 'News',
+        'category_color': '#ffffff',
+        'tag': None,
+        'featured_image_url': None,
+        'is_published': True,
+        'is_featured': False,
+        'published_at': None,
+        'read_time_minutes': 1,
+        'views_count': 0,
+        'created_at': datetime.now(UTC),
+        'updated_at': None,
+    }
+    response = NewsArticleResponse.model_validate(stored)
+    assert '&#x73;' not in response.content
+    assert 'javascript:' not in response.content
+    assert '<p>Saved text</p>' in response.content
+    assert '&#x73;' in stored['content']
