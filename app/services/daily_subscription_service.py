@@ -390,12 +390,18 @@ class DailySubscriptionService:
 
         tariff_label = ''
         if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-            tariff_label = f'\n📦 Тариф: «{subscription.tariff.name}»'
+            tariff_label = (
+                get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                .t('PAYMENT_NOTICE_010', '\n📦 Тариф: «{v0}»')
+                .format(v0=subscription.tariff.name)
+            )
         message = (
-            f'💳 <b>Суточное списание</b>\n\n'
-            f'Списано: {amount_rubles:.2f} ₽\n'
-            f'Остаток баланса: {balance_rubles:.2f} ₽{tariff_label}\n\n'
-            f'Следующее списание через 24 часа.'
+            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+            .t(
+                'DAILY_NOTICE_000',
+                '💳 <b>Суточное списание</b>\n\nСписано: {v0:.2f} ₽\nОстаток баланса: {v1:.2f} ₽{v2}\n\nСледующее списание через 24 часа.',
+            )
+            .format(v0=amount_rubles, v1=balance_rubles, v2=tariff_label)
         )
 
         # Use unified notification delivery service
@@ -422,17 +428,32 @@ class DailySubscriptionService:
         if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
             tariff_label = f' «{subscription.tariff.name}»'
         message = (
-            f'⚠️ <b>Подписка{tariff_label} приостановлена</b>\n\n'
-            f'Недостаточно средств для суточной оплаты.\n\n'
-            f'Требуется: {required_rubles:.2f} ₽\n'
-            f'Баланс: {balance_rubles:.2f} ₽\n\n'
-            f'Пополните баланс, чтобы возобновить подписку.'
+            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+            .t(
+                'DAILY_NOTICE_001',
+                '⚠️ <b>Подписка{v0} приостановлена</b>\n\nНедостаточно средств для суточной оплаты.\n\nТребуется: {v1:.2f} ₽\nБаланс: {v2:.2f} ₽\n\nПополните баланс, чтобы возобновить подписку.',
+            )
+            .format(v0=tariff_label, v1=required_rubles, v2=balance_rubles)
         )
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='menu_balance')],
-                [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                [
+                    InlineKeyboardButton(
+                        text=get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                            'BALANCE_TOPUP', '💳 Пополнить баланс'
+                        ),
+                        callback_data='menu_balance',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                            'MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'
+                        ),
+                        callback_data='menu_subscription',
+                    )
+                ],
             ]
         )
 
@@ -811,13 +832,18 @@ class DailySubscriptionService:
         """Уведомляет пользователя о сбросе докупленного трафика."""
         tariff_label = ''
         if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-            tariff_label = f'\n📦 Тариф: «{subscription.tariff.name}»'
+            tariff_label = (
+                get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                .t('PAYMENT_NOTICE_010', '\n📦 Тариф: «{v0}»')
+                .format(v0=subscription.tariff.name)
+            )
         message = (
-            f'ℹ️ <b>Сброс докупленного трафика</b>\n\n'
-            f'Ваш докупленный трафик ({reset_gb} ГБ) был сброшен, '
-            f'так как прошло 30 дней с момента первой докупки.{tariff_label}\n\n'
-            f'Текущий лимит трафика: {subscription.traffic_limit_gb} ГБ\n\n'
-            f'Вы можете докупить трафик снова в любое время.'
+            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+            .t(
+                'DAILY_NOTICE_002',
+                'ℹ️ <b>Сброс докупленного трафика</b>\n\nВаш докупленный трафик ({v0} ГБ) был сброшен, так как прошло 30 дней с момента первой докупки.{v1}\n\nТекущий лимит трафика: {v2} ГБ\n\nВы можете докупить трафик снова в любое время.',
+            )
+            .format(v0=reset_gb, v1=tariff_label, v2=subscription.traffic_limit_gb)
         )
 
         context = {

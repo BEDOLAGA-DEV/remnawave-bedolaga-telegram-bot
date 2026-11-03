@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.localization.texts import get_texts
 from app.services.payment.payer_identity import PayerIdentity, resolve_user_payer
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
@@ -1090,11 +1091,12 @@ class PlategaPaymentMixin:
                 await self.bot.send_message(
                     user.telegram_id,
                     (
-                        '✅ <b>Пополнение успешно!</b>\n\n'
-                        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
-                        f'🦊 Способ: {method_title}\n'
-                        f'🆔 Транзакция: {transaction.id}\n\n'
-                        'Баланс пополнен автоматически!'
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t(
+                            'PAYMENT_NOTICE_007',
+                            '✅ <b>Пополнение успешно!</b>\n\n💰 Сумма: {v0}\n🦊 Способ: {v1}\n🆔 Транзакция: {v2}\n\nБаланс пополнен автоматически!',
+                        )
+                        .format(v0=settings.format_price(payment.amount_kopeks), v1=method_title, v2=transaction.id)
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,

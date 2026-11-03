@@ -12,11 +12,13 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.config import settings
 from app.database.database import AsyncSessionLocal
+from app.database.models import User
 from app.keyboards.admin import get_monitoring_keyboard
 from app.localization.texts import get_texts
 from app.services.monitoring_service import monitoring_service
 from app.services.nalogo_queue_service import nalogo_queue_service
 from app.services.notification_settings_service import NotificationSettingsService
+from app.services.system_settings_service import normalize_settings_language
 from app.services.traffic_monitoring_service import (
     traffic_monitoring_scheduler,
 )
@@ -30,11 +32,23 @@ logger = structlog.get_logger(__name__)
 router = Router()
 
 
-def _format_toggle(enabled: bool) -> str:
-    return '🟢 Вкл' if enabled else '🔴 Выкл'
+def _monitoring_language(event, db_user: User | None = None, fallback: str | None = None) -> str:
+    account_language = getattr(db_user, 'language', None)
+    telegram_language = getattr(getattr(event, 'from_user', None), 'language_code', None)
+    return normalize_settings_language(account_language, fallback or telegram_language or settings.DEFAULT_LANGUAGE)
+
+
+def _format_toggle(enabled: bool, language: str = 'ru') -> str:
+    texts = get_texts(language)
+    return (
+        texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_000', '🟢 Вкл')
+        if enabled
+        else texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_001', '🔴 Выкл')
+    )
 
 
 def _build_notification_settings_view(language: str):
+    texts = get_texts(language)
     get_texts(language)
     config = NotificationSettingsService.get_config()
 
@@ -44,17 +58,26 @@ def _build_notification_settings_view(language: str):
     third_hours = NotificationSettingsService.get_third_wave_valid_hours()
     third_days = NotificationSettingsService.get_third_wave_trigger_days()
 
-    trial_channel_status = _format_toggle(config.get('trial_channel_unsubscribed', {}).get('enabled', True))
-    expired_1d_status = _format_toggle(config['expired_1d'].get('enabled', True))
-    second_wave_status = _format_toggle(config['expired_second_wave'].get('enabled', True))
-    third_wave_status = _format_toggle(config['expired_third_wave'].get('enabled', True))
+    trial_channel_status = _format_toggle(
+        config.get('trial_channel_unsubscribed', {}).get('enabled', True), language=language
+    )
+    expired_1d_status = _format_toggle(config['expired_1d'].get('enabled', True), language=language)
+    second_wave_status = _format_toggle(config['expired_second_wave'].get('enabled', True), language=language)
+    third_wave_status = _format_toggle(config['expired_third_wave'].get('enabled', True), language=language)
 
-    summary_text = (
-        '🔔 <b>Уведомления пользователям</b>\n\n'
-        f'• Отписка от канала: {trial_channel_status}\n'
-        f'• 1 день после истечения: {expired_1d_status}\n'
-        f'• 2-3 дня (скидка {second_percent}% / {second_hours} ч): {second_wave_status}\n'
-        f'• {third_days} дней (скидка {third_percent}% / {third_hours} ч): {third_wave_status}'
+    summary_text = texts.t(
+        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_002',
+        '🔔 <b>Уведомления пользователям</b>\n\n• Отписка от канала: {value1}\n• 1 день после истечения: {value2}\n• 2-3 дня (скидка {value3}% / {value4} ч): {value5}\n• {value6} дней (скидка {value7}% / {value8} ч): {value9}',
+    ).format(
+        value1=trial_channel_status,
+        value2=expired_1d_status,
+        value3=second_percent,
+        value4=second_hours,
+        value5=second_wave_status,
+        value6=third_days,
+        value7=third_percent,
+        value8=third_hours,
+        value9=third_wave_status,
     )
 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -63,77 +86,122 @@ def _build_notification_settings_view(language: str):
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f'{trial_channel_status} • Отписка от канала',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_003', '{value1} • Отписка от канала'
+                    ).format(value1=trial_channel_status),
                     callback_data='admin_mon_notify_toggle_trial_channel',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text='🧪 Тест: отписка от канала', callback_data='admin_mon_notify_preview_trial_channel'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_004', '🧪 Тест: отписка от канала'
+                    ),
+                    callback_data='admin_mon_notify_preview_trial_channel',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'{expired_1d_status} • 1 день после истечения',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_005', '{value1} • 1 день после истечения'
+                    ).format(value1=expired_1d_status),
                     callback_data='admin_mon_notify_toggle_expired_1d',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text='🧪 Тест: 1 день после истечения', callback_data='admin_mon_notify_preview_expired_1d'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_006', '🧪 Тест: 1 день после истечения'
+                    ),
+                    callback_data='admin_mon_notify_preview_expired_1d',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'{second_wave_status} • 2-3 дня со скидкой',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_007', '{value1} • 2-3 дня со скидкой'
+                    ).format(value1=second_wave_status),
                     callback_data='admin_mon_notify_toggle_expired_2d',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text='🧪 Тест: скидка 2-3 день', callback_data='admin_mon_notify_preview_expired_2d'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_008', '🧪 Тест: скидка 2-3 день'
+                    ),
+                    callback_data='admin_mon_notify_preview_expired_2d',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'✏️ Скидка 2-3 дня: {second_percent}%', callback_data='admin_mon_notify_edit_2d_percent'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_009', '✏️ Скидка 2-3 дня: {value1}%'
+                    ).format(value1=second_percent),
+                    callback_data='admin_mon_notify_edit_2d_percent',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'⏱️ Срок скидки 2-3 дня: {second_hours} ч', callback_data='admin_mon_notify_edit_2d_hours'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_010', '⏱️ Срок скидки 2-3 дня: {value1} ч'
+                    ).format(value1=second_hours),
+                    callback_data='admin_mon_notify_edit_2d_hours',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'{third_wave_status} • {third_days} дней со скидкой',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_011',
+                        '{value1} • {value2} дней со скидкой',
+                    ).format(value1=third_wave_status, value2=third_days),
                     callback_data='admin_mon_notify_toggle_expired_nd',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text='🧪 Тест: скидка спустя дни', callback_data='admin_mon_notify_preview_expired_nd'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_012', '🧪 Тест: скидка спустя дни'
+                    ),
+                    callback_data='admin_mon_notify_preview_expired_nd',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'✏️ Скидка {third_days} дней: {third_percent}%',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_013', '✏️ Скидка {value1} дней: {value2}%'
+                    ).format(value1=third_days, value2=third_percent),
                     callback_data='admin_mon_notify_edit_nd_percent',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'⏱️ Срок скидки {third_days} дней: {third_hours} ч',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_014',
+                        '⏱️ Срок скидки {value1} дней: {value2} ч',
+                    ).format(value1=third_days, value2=third_hours),
                     callback_data='admin_mon_notify_edit_nd_hours',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'📆 Порог уведомления: {third_days} дн.', callback_data='admin_mon_notify_edit_nd_threshold'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_015', '📆 Порог уведомления: {value1} дн.'
+                    ).format(value1=third_days),
+                    callback_data='admin_mon_notify_edit_nd_threshold',
                 )
             ],
-            [InlineKeyboardButton(text='🧪 Отправить все тесты', callback_data='admin_mon_notify_preview_all')],
-            [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_settings')],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_BUILD_NOTIFICATION_SETTINGS_VIEW_016', '🧪 Отправить все тесты'),
+                    callback_data='admin_mon_notify_preview_all',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                    callback_data='admin_mon_settings',
+                )
+            ],
         ]
     )
 
@@ -150,7 +218,9 @@ async def _build_notification_preview_message(language: str, notification_type: 
     from app.keyboards.inline import get_channel_sub_keyboard
     from app.services.channel_subscription_service import channel_subscription_service
 
-    header = '🧪 <b>Тестовое уведомление мониторинга</b>\n\n'
+    header = texts.t(
+        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_PREVIEW_MESSAGE_018', '🧪 <b>Тестовое уведомление мониторинга</b>\n\n'
+    )
 
     if notification_type == 'trial_channel_unsubscribed':
         template = texts.get(
@@ -222,7 +292,9 @@ async def _build_notification_preview_message(language: str, notification_type: 
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text='🎁 Получить скидку',
+                        text=texts.t(
+                            'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_PREVIEW_MESSAGE_019', '🎁 Получить скидку'
+                        ),
                         callback_data='claim_discount_preview',
                     )
                 ],
@@ -268,7 +340,9 @@ async def _build_notification_preview_message(language: str, notification_type: 
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text='🎁 Получить скидку',
+                        text=texts.t(
+                            'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_PREVIEW_MESSAGE_019', '🎁 Получить скидку'
+                        ),
                         callback_data='claim_discount_preview',
                     )
                 ],
@@ -295,7 +369,10 @@ async def _build_notification_preview_message(language: str, notification_type: 
     else:
         raise ValueError(f'Unsupported notification type: {notification_type}')
 
-    footer = '\n\n<i>Сообщение отправлено только вам для проверки оформления.</i>'
+    footer = texts.t(
+        'ADMIN_MONITORING_UI_BUILD_NOTIFICATION_PREVIEW_MESSAGE_021',
+        '\n\n<i>Сообщение отправлено только вам для проверки оформления.</i>',
+    )
     return header + message + footer, keyboard
 
 
@@ -309,8 +386,8 @@ async def _send_notification_preview(bot, chat_id: int, language: str, notificat
     )
 
 
-async def _render_notification_settings(callback: CallbackQuery) -> None:
-    language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+async def _render_notification_settings(callback: CallbackQuery, db_user: User | None = None) -> None:
+    language = _monitoring_language(callback, db_user)
     text, keyboard = _build_notification_settings_view(language)
     await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
@@ -357,66 +434,86 @@ async def _render_notification_settings_for_state(
 
 @router.callback_query(F.data == 'admin_monitoring')
 @admin_required
-async def admin_monitoring_menu(callback: CallbackQuery):
+async def admin_monitoring_menu(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         async with AsyncSessionLocal() as db:
             status = await monitoring_service.get_monitoring_status(db)
 
-            running_status = '🟢 Работает' if status['is_running'] else '🔴 Остановлен'
+            running_status = (
+                texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_022', '🟢 Работает')
+                if status['is_running']
+                else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_023', '🔴 Остановлен')
+            )
             last_update = (
-                format_local_datetime(status['last_update'], '%H:%M:%S') if status['last_update'] else 'Никогда'
+                format_local_datetime(status['last_update'], '%H:%M:%S')
+                if status['last_update']
+                else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_024', 'Никогда')
             )
 
-            text = f"""
-🔍 <b>Система мониторинга</b>
+            text = texts.t(
+                'ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_025',
+                '\n🔍 <b>Система мониторинга</b>\n\n📊 <b>Статус:</b> {value1}\n🕐 <b>Последнее обновление:</b> {value2}\n⚙️ <b>Интервал проверки:</b> {value3} мин\n\n📈 <b>Статистика за 24 часа:</b>\n• Всего событий: {value4}\n• Успешных: {value5}\n• Ошибок: {value6}\n• Успешность: {value7}%\n\n🔧 Выберите действие:\n',
+            ).format(
+                value1=running_status,
+                value2=last_update,
+                value3=settings.MONITORING_INTERVAL,
+                value4=status['stats_24h']['total_events'],
+                value5=status['stats_24h']['successful'],
+                value6=status['stats_24h']['failed'],
+                value7=status['stats_24h']['success_rate'],
+            )
 
-📊 <b>Статус:</b> {running_status}
-🕐 <b>Последнее обновление:</b> {last_update}
-⚙️ <b>Интервал проверки:</b> {settings.MONITORING_INTERVAL} мин
-
-📈 <b>Статистика за 24 часа:</b>
-• Всего событий: {status['stats_24h']['total_events']}
-• Успешных: {status['stats_24h']['successful']}
-• Ошибок: {status['stats_24h']['failed']}
-• Успешность: {status['stats_24h']['success_rate']}%
-
-🔧 Выберите действие:
-"""
-
-            language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+            language = _monitoring_language(callback, db_user)
             keyboard = get_monitoring_keyboard(language)
             await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка в админ меню мониторинга', error=e)
-        await callback.answer('❌ Ошибка получения данных', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_026', '❌ Ошибка получения данных'), show_alert=True
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_settings')
 @admin_required
-async def admin_monitoring_settings(callback: CallbackQuery):
+async def admin_monitoring_settings(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         global_status = (
-            '🟢 Включены' if NotificationSettingsService.are_notifications_globally_enabled() else '🔴 Отключены'
+            texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_SETTINGS_027', '🟢 Включены')
+            if NotificationSettingsService.are_notifications_globally_enabled()
+            else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_SETTINGS_028', '🔴 Отключены')
         )
         second_percent = NotificationSettingsService.get_second_wave_discount_percent()
         third_percent = NotificationSettingsService.get_third_wave_discount_percent()
         third_days = NotificationSettingsService.get_third_wave_trigger_days()
 
-        text = (
-            '⚙️ <b>Настройки мониторинга</b>\n\n'
-            f'🔔 <b>Уведомления пользователям:</b> {global_status}\n'
-            f'• Скидка 2-3 дня: {second_percent}%\n'
-            f'• Скидка после {third_days} дней: {third_percent}%\n\n'
-            'Выберите раздел для настройки.'
-        )
+        text = texts.t(
+            'ADMIN_MONITORING_UI_ADMIN_MONITORING_SETTINGS_029',
+            '⚙️ <b>Настройки мониторинга</b>\n\n🔔 <b>Уведомления пользователям:</b> {value1}\n• Скидка 2-3 дня: {value2}%\n• Скидка после {value3} дней: {value4}%\n\nВыберите раздел для настройки.',
+        ).format(value1=global_status, value2=second_percent, value3=third_days, value4=third_percent)
 
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='🔔 Уведомления пользователям', callback_data='admin_mon_notify_settings')],
-                [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_submenu_settings')],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t(
+                            'ADMIN_MONITORING_UI_ADMIN_MONITORING_SETTINGS_030', '🔔 Уведомления пользователям'
+                        ),
+                        callback_data='admin_mon_notify_settings',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                        callback_data='admin_submenu_settings',
+                    )
+                ],
             ]
         )
 
@@ -424,124 +521,198 @@ async def admin_monitoring_settings(callback: CallbackQuery):
 
     except Exception as e:
         logger.error('Ошибка отображения настроек мониторинга', error=e)
-        await callback.answer('❌ Не удалось открыть настройки', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_SETTINGS_032', '❌ Не удалось открыть настройки'),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_settings')
 @admin_required
-async def admin_notify_settings(callback: CallbackQuery):
+async def admin_notify_settings(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        await _render_notification_settings(callback)
+        await _render_notification_settings(callback, db_user=db_user)
     except Exception as e:
         logger.error('Ошибка отображения настроек уведомлений', error=e)
-        await callback.answer('❌ Не удалось загрузить настройки', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_ADMIN_NOTIFY_SETTINGS_033', '❌ Не удалось загрузить настройки'),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_toggle_trial_channel')
 @admin_required
-async def toggle_trial_channel_notification(callback: CallbackQuery):
+async def toggle_trial_channel_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     enabled = NotificationSettingsService.is_trial_channel_unsubscribed_enabled()
     async with AsyncSessionLocal() as db:
         saved = await NotificationSettingsService.set_trial_channel_unsubscribed_enabled(db, not enabled)
     if not saved:
-        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_034', '❌ Не удалось сохранить настройку'),
+            show_alert=True,
+        )
         return
-    await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
-    await _render_notification_settings(callback)
+    await callback.answer(
+        texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_035', '✅ Включено')
+        if not enabled
+        else texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_036', '⏸️ Отключено')
+    )
+    await _render_notification_settings(callback, db_user=db_user)
 
 
 @router.callback_query(F.data == 'admin_mon_notify_preview_trial_channel')
 @admin_required
-async def preview_trial_channel_notification(callback: CallbackQuery):
+async def preview_trial_channel_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+        language = _monitoring_language(callback, db_user)
         await _send_notification_preview(callback.bot, callback.from_user.id, language, 'trial_channel_unsubscribed')
-        await callback.answer('✅ Пример отправлен')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_037', '✅ Пример отправлен')
+        )
     except Exception as exc:
         logger.error('Failed to send trial channel preview', exc=exc)
-        await callback.answer('❌ Не удалось отправить тест', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_038', '❌ Не удалось отправить тест'),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_toggle_expired_1d')
 @admin_required
-async def toggle_expired_1d_notification(callback: CallbackQuery):
+async def toggle_expired_1d_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     enabled = NotificationSettingsService.is_expired_1d_enabled()
     async with AsyncSessionLocal() as db:
         saved = await NotificationSettingsService.set_expired_1d_enabled(db, not enabled)
     if not saved:
-        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_034', '❌ Не удалось сохранить настройку'),
+            show_alert=True,
+        )
         return
-    await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
-    await _render_notification_settings(callback)
+    await callback.answer(
+        texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_035', '✅ Включено')
+        if not enabled
+        else texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_036', '⏸️ Отключено')
+    )
+    await _render_notification_settings(callback, db_user=db_user)
 
 
 @router.callback_query(F.data == 'admin_mon_notify_preview_expired_1d')
 @admin_required
-async def preview_expired_1d_notification(callback: CallbackQuery):
+async def preview_expired_1d_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+        language = _monitoring_language(callback, db_user)
         await _send_notification_preview(callback.bot, callback.from_user.id, language, 'expired_1d')
-        await callback.answer('✅ Пример отправлен')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_037', '✅ Пример отправлен')
+        )
     except Exception as exc:
         logger.error('Failed to send expired 1d preview', exc=exc)
-        await callback.answer('❌ Не удалось отправить тест', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_038', '❌ Не удалось отправить тест'),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_toggle_expired_2d')
 @admin_required
-async def toggle_second_wave_notification(callback: CallbackQuery):
+async def toggle_second_wave_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     enabled = NotificationSettingsService.is_second_wave_enabled()
     async with AsyncSessionLocal() as db:
         saved = await NotificationSettingsService.set_second_wave_enabled(db, not enabled)
     if not saved:
-        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_034', '❌ Не удалось сохранить настройку'),
+            show_alert=True,
+        )
         return
-    await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
-    await _render_notification_settings(callback)
+    await callback.answer(
+        texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_035', '✅ Включено')
+        if not enabled
+        else texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_036', '⏸️ Отключено')
+    )
+    await _render_notification_settings(callback, db_user=db_user)
 
 
 @router.callback_query(F.data == 'admin_mon_notify_preview_expired_2d')
 @admin_required
-async def preview_second_wave_notification(callback: CallbackQuery):
+async def preview_second_wave_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+        language = _monitoring_language(callback, db_user)
         await _send_notification_preview(callback.bot, callback.from_user.id, language, 'expired_2d')
-        await callback.answer('✅ Пример отправлен')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_037', '✅ Пример отправлен')
+        )
     except Exception as exc:
         logger.error('Failed to send second wave preview', exc=exc)
-        await callback.answer('❌ Не удалось отправить тест', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_038', '❌ Не удалось отправить тест'),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_toggle_expired_nd')
 @admin_required
-async def toggle_third_wave_notification(callback: CallbackQuery):
+async def toggle_third_wave_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     enabled = NotificationSettingsService.is_third_wave_enabled()
     async with AsyncSessionLocal() as db:
         saved = await NotificationSettingsService.set_third_wave_enabled(db, not enabled)
     if not saved:
-        await callback.answer('❌ Не удалось сохранить настройку', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_034', '❌ Не удалось сохранить настройку'),
+            show_alert=True,
+        )
         return
-    await callback.answer('✅ Включено' if not enabled else '⏸️ Отключено')
-    await _render_notification_settings(callback)
+    await callback.answer(
+        texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_035', '✅ Включено')
+        if not enabled
+        else texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_036', '⏸️ Отключено')
+    )
+    await _render_notification_settings(callback, db_user=db_user)
 
 
 @router.callback_query(F.data == 'admin_mon_notify_preview_expired_nd')
 @admin_required
-async def preview_third_wave_notification(callback: CallbackQuery):
+async def preview_third_wave_notification(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+        language = _monitoring_language(callback, db_user)
         await _send_notification_preview(callback.bot, callback.from_user.id, language, 'expired_nd')
-        await callback.answer('✅ Пример отправлен')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_037', '✅ Пример отправлен')
+        )
     except Exception as exc:
         logger.error('Failed to send third wave preview', exc=exc)
-        await callback.answer('❌ Не удалось отправить тест', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_TRIAL_CHANNEL_NOTIFICATION_038', '❌ Не удалось отправить тест'),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_preview_all')
 @admin_required
-async def preview_all_notifications(callback: CallbackQuery):
+async def preview_all_notifications(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+        language = _monitoring_language(callback, db_user)
         chat_id = callback.from_user.id
         for notification_type in [
             'trial_channel_unsubscribed',
@@ -550,10 +721,15 @@ async def preview_all_notifications(callback: CallbackQuery):
             'expired_nd',
         ]:
             await _send_notification_preview(callback.bot, chat_id, language, notification_type)
-        await callback.answer('✅ Все тестовые уведомления отправлены')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_ALL_NOTIFICATIONS_054', '✅ Все тестовые уведомления отправлены')
+        )
     except Exception as exc:
         logger.error('Failed to send all notification previews', exc=exc)
-        await callback.answer('❌ Не удалось отправить тесты', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_PREVIEW_ALL_NOTIFICATIONS_055', '❌ Не удалось отправить тесты'),
+            show_alert=True,
+        )
 
 
 async def _start_notification_value_edit(
@@ -563,8 +739,11 @@ async def _start_notification_value_edit(
     field: str,
     prompt_key: str,
     default_prompt: str,
+    db_user: User | None = None,
 ):
-    language = callback.from_user.language_code or settings.DEFAULT_LANGUAGE
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
+    language = _monitoring_language(callback, db_user)
     await state.set_state(AdminStates.editing_notification_value)
     await state.update_data(
         notification_setting_key=setting_key,
@@ -585,75 +764,103 @@ async def _start_notification_value_edit(
 
 @router.callback_query(F.data == 'admin_mon_notify_edit_2d_percent')
 @admin_required
-async def edit_second_wave_percent(callback: CallbackQuery, state: FSMContext):
+async def edit_second_wave_percent(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await _start_notification_value_edit(
         callback,
         state,
         'expired_second_wave',
         'percent',
         'NOTIFY_PROMPT_SECOND_PERCENT',
-        'Введите новый процент скидки для уведомления через 2-3 дня (0-100):',
+        texts.t(
+            'ADMIN_MONITORING_UI_EDIT_SECOND_WAVE_PERCENT_056',
+            'Введите новый процент скидки для уведомления через 2-3 дня (0-100):',
+        ),
+        db_user=db_user,
     )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_edit_2d_hours')
 @admin_required
-async def edit_second_wave_hours(callback: CallbackQuery, state: FSMContext):
+async def edit_second_wave_hours(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await _start_notification_value_edit(
         callback,
         state,
         'expired_second_wave',
         'hours',
         'NOTIFY_PROMPT_SECOND_HOURS',
-        'Введите количество часов действия скидки (1-168):',
+        texts.t('ADMIN_MONITORING_UI_EDIT_SECOND_WAVE_HOURS_057', 'Введите количество часов действия скидки (1-168):'),
+        db_user=db_user,
     )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_edit_nd_percent')
 @admin_required
-async def edit_third_wave_percent(callback: CallbackQuery, state: FSMContext):
+async def edit_third_wave_percent(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await _start_notification_value_edit(
         callback,
         state,
         'expired_third_wave',
         'percent',
         'NOTIFY_PROMPT_THIRD_PERCENT',
-        'Введите новый процент скидки для позднего предложения (0-100):',
+        texts.t(
+            'ADMIN_MONITORING_UI_EDIT_THIRD_WAVE_PERCENT_058',
+            'Введите новый процент скидки для позднего предложения (0-100):',
+        ),
+        db_user=db_user,
     )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_edit_nd_hours')
 @admin_required
-async def edit_third_wave_hours(callback: CallbackQuery, state: FSMContext):
+async def edit_third_wave_hours(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await _start_notification_value_edit(
         callback,
         state,
         'expired_third_wave',
         'hours',
         'NOTIFY_PROMPT_THIRD_HOURS',
-        'Введите количество часов действия скидки (1-168):',
+        texts.t('ADMIN_MONITORING_UI_EDIT_SECOND_WAVE_HOURS_057', 'Введите количество часов действия скидки (1-168):'),
+        db_user=db_user,
     )
 
 
 @router.callback_query(F.data == 'admin_mon_notify_edit_nd_threshold')
 @admin_required
-async def edit_third_wave_threshold(callback: CallbackQuery, state: FSMContext):
+async def edit_third_wave_threshold(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await _start_notification_value_edit(
         callback,
         state,
         'expired_third_wave',
         'trigger',
         'NOTIFY_PROMPT_THIRD_DAYS',
-        'Через сколько дней после истечения отправлять предложение? (минимум 2):',
+        texts.t(
+            'ADMIN_MONITORING_UI_EDIT_THIRD_WAVE_THRESHOLD_060',
+            'Через сколько дней после истечения отправлять предложение? (минимум 2):',
+        ),
+        db_user=db_user,
     )
 
 
 @router.callback_query(F.data == 'admin_mon_start')
 @admin_required
-async def start_monitoring_callback(callback: CallbackQuery):
+async def start_monitoring_callback(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         if monitoring_service.is_running:
-            await callback.answer('ℹ️ Мониторинг уже запущен')
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_START_MONITORING_CALLBACK_061', 'ℹ️ Мониторинг уже запущен')
+            )
             return
 
         if not monitoring_service.bot:
@@ -661,82 +868,116 @@ async def start_monitoring_callback(callback: CallbackQuery):
 
         asyncio.create_task(monitoring_service.start_monitoring())
 
-        await callback.answer('✅ Мониторинг запущен!')
+        await callback.answer(texts.t('ADMIN_MONITORING_UI_START_MONITORING_CALLBACK_062', '✅ Мониторинг запущен!'))
 
-        await admin_monitoring_menu(callback)
+        await admin_monitoring_menu(callback, db_user=db_user)
 
     except Exception as e:
         logger.error('Ошибка запуска мониторинга', error=e)
-        await callback.answer(f'❌ Ошибка запуска: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_START_MONITORING_CALLBACK_063', '❌ Ошибка запуска: {value1}').format(
+                value1=str(e)
+            ),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_stop')
 @admin_required
-async def stop_monitoring_callback(callback: CallbackQuery):
+async def stop_monitoring_callback(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         if not monitoring_service.is_running:
-            await callback.answer('ℹ️ Мониторинг уже остановлен')
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_STOP_MONITORING_CALLBACK_064', 'ℹ️ Мониторинг уже остановлен')
+            )
             return
 
         monitoring_service.stop_monitoring()
-        await callback.answer('⏹️ Мониторинг остановлен!')
+        await callback.answer(texts.t('ADMIN_MONITORING_UI_STOP_MONITORING_CALLBACK_065', '⏹️ Мониторинг остановлен!'))
 
-        await admin_monitoring_menu(callback)
+        await admin_monitoring_menu(callback, db_user=db_user)
 
     except Exception as e:
         logger.error('Ошибка остановки мониторинга', error=e)
-        await callback.answer(f'❌ Ошибка остановки: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_STOP_MONITORING_CALLBACK_066', '❌ Ошибка остановки: {value1}').format(
+                value1=str(e)
+            ),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_force_check')
 @admin_required
-async def force_check_callback(callback: CallbackQuery):
+async def force_check_callback(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        await callback.answer('⏳ Выполняем проверку подписок...')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_FORCE_CHECK_CALLBACK_067', '⏳ Выполняем проверку подписок...')
+        )
 
         async with AsyncSessionLocal() as db:
             results = await monitoring_service.force_check_subscriptions(db)
 
-            text = f"""
-✅ <b>Принудительная проверка завершена</b>
-
-📊 <b>Результаты проверки:</b>
-• Истекших подписок: {results['expired']}
-• Истекающих подписок: {results['expiring']}
-• Готовых к автооплате: {results['autopay_ready']}
-
-🕐 <b>Время проверки:</b> {format_local_datetime(datetime.now(UTC), '%H:%M:%S')}
-
-Нажмите "Назад" для возврата в меню мониторинга.
-"""
+            text = texts.t(
+                'ADMIN_MONITORING_UI_FORCE_CHECK_CALLBACK_068',
+                '\n✅ <b>Принудительная проверка завершена</b>\n\n📊 <b>Результаты проверки:</b>\n• Истекших подписок: {value1}\n• Истекающих подписок: {value2}\n• Готовых к автооплате: {value3}\n\n🕐 <b>Время проверки:</b> {value4}\n\nНажмите "Назад" для возврата в меню мониторинга.\n',
+            ).format(
+                value1=results['expired'],
+                value2=results['expiring'],
+                value3=results['autopay_ready'],
+                value4=format_local_datetime(datetime.now(UTC), '%H:%M:%S'),
+            )
 
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_monitoring')]]
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                            callback_data='admin_monitoring',
+                        )
+                    ]
+                ]
             )
 
             await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка принудительной проверки', error=e)
-        await callback.answer(f'❌ Ошибка проверки: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_FORCE_CHECK_CALLBACK_070', '❌ Ошибка проверки: {value1}').format(
+                value1=str(e)
+            ),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_traffic_check')
 @admin_required
-async def traffic_check_callback(callback: CallbackQuery):
+async def traffic_check_callback(callback: CallbackQuery, db_user: User | None = None):
     """Ручная проверка трафика — использует snapshot и дельту."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         # Проверяем, включен ли мониторинг трафика
         if not traffic_monitoring_scheduler.is_enabled():
             await callback.answer(
-                '⚠️ Мониторинг трафика отключен в настройках\nВключите TRAFFIC_FAST_CHECK_ENABLED=true в .env',
+                texts.t(
+                    'ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_071',
+                    '⚠️ Мониторинг трафика отключен в настройках\nВключите TRAFFIC_FAST_CHECK_ENABLED=true в .env',
+                ),
                 show_alert=True,
             )
             return
 
-        await callback.answer('⏳ Запускаем проверку трафика (дельта)...')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_072', '⏳ Запускаем проверку трафика (дельта)...')
+        )
 
         # Используем run_fast_check — он сравнивает с snapshot и отправляет уведомления
         from app.services.traffic_monitoring_service import traffic_monitoring_scheduler_v2
@@ -751,37 +992,52 @@ async def traffic_check_callback(callback: CallbackQuery):
         snapshot_age = await traffic_monitoring_scheduler_v2.service.get_snapshot_age_minutes()
         threshold_gb = traffic_monitoring_scheduler_v2.service.get_fast_check_threshold_gb()
 
-        text = f"""
-📊 <b>Проверка трафика завершена</b>
-
-🔍 <b>Результаты (дельта):</b>
-• Превышений за интервал: {len(violations)}
-• Порог дельты: {threshold_gb} ГБ
-• Возраст snapshot: {snapshot_age:.1f} мин
-
-🕐 <b>Время проверки:</b> {format_local_datetime(datetime.now(UTC), '%H:%M:%S')}
-"""
+        text = texts.t(
+            'ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_073',
+            '\n📊 <b>Проверка трафика завершена</b>\n\n🔍 <b>Результаты (дельта):</b>\n• Превышений за интервал: {value1}\n• Порог дельты: {value2} ГБ\n• Возраст snapshot: {value3} мин\n\n🕐 <b>Время проверки:</b> {value4}\n',
+        ).format(
+            value1=len(violations),
+            value2=threshold_gb,
+            value3=format(snapshot_age, '.1f'),
+            value4=format_local_datetime(datetime.now(UTC), '%H:%M:%S'),
+        )
 
         if violations:
-            text += '\n⚠️ <b>Превышения дельты:</b>\n'
+            text += texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_074', '\n⚠️ <b>Превышения дельты:</b>\n')
             for v in violations[:10]:
                 # Числовой id панели не режется срезом, а при отсутствии идентичности
                 # нельзя уронить весь экран в «❌ Ошибка» — показываем прочерк.
                 fallback = f'ID {v.user_id}' if v.user_id else '—'
                 name = html.escape(v.full_name or '') or fallback
-                text += f'• {name}: +{v.used_traffic_gb:.1f} ГБ\n'
+                text += texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_075', '• {value1}: +{value2} ГБ\n').format(
+                    value1=name, value2=format(v.used_traffic_gb, '.1f')
+                )
             if len(violations) > 10:
-                text += f'... и ещё {len(violations) - 10}\n'
-            text += '\n📨 Уведомления отправлены (с учётом кулдауна)'
+                text += texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_076', '... и ещё {value1}\n').format(
+                    value1=len(violations) - 10
+                )
+            text += texts.t(
+                'ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_077', '\n📨 Уведомления отправлены (с учётом кулдауна)'
+            )
         else:
-            text += '\n✅ Превышений не обнаружено'
+            text += texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_078', '\n✅ Превышений не обнаружено')
 
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='🔄 Повторить', callback_data='admin_mon_traffic_check')],
-                [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_monitoring')],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_079', '🔄 Повторить'),
+                        callback_data='admin_mon_traffic_check',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                        callback_data='admin_monitoring',
+                    )
+                ],
             ]
         )
 
@@ -789,12 +1045,17 @@ async def traffic_check_callback(callback: CallbackQuery):
 
     except Exception as e:
         logger.error('Ошибка проверки трафика', error=e)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data.startswith('admin_mon_logs'))
 @admin_required
-async def monitoring_logs_callback(callback: CallbackQuery):
+async def monitoring_logs_callback(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         page = 1
         if '_page_' in callback.data:
@@ -804,15 +1065,21 @@ async def monitoring_logs_callback(callback: CallbackQuery):
             all_logs = await monitoring_service.get_monitoring_logs(db, limit=1000)
 
             if not all_logs:
-                text = '📋 <b>Логи мониторинга пусты</b>\n\nСистема еще не выполнила проверки.'
-                keyboard = get_monitoring_logs_back_keyboard()
+                text = texts.t(
+                    'ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_082',
+                    '📋 <b>Логи мониторинга пусты</b>\n\nСистема еще не выполнила проверки.',
+                )
+                keyboard = get_monitoring_logs_back_keyboard(language=language)
                 await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
                 return
 
             per_page = 8
             paginated_logs = paginate_list(all_logs, page=page, per_page=per_page)
 
-            text = f'📋 <b>Логи мониторинга</b> (стр. {page}/{paginated_logs.total_pages})\n\n'
+            text = texts.t(
+                'ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_083',
+                '📋 <b>Логи мониторинга</b> (стр. {value1}/{value2})\n\n',
+            ).format(value1=page, value2=paginated_logs.total_pages)
 
             for log in paginated_logs.items:
                 icon = '✅' if log['is_success'] else '❌'
@@ -830,69 +1097,99 @@ async def monitoring_logs_callback(callback: CallbackQuery):
             total_failed = len(all_logs) - total_success
             success_rate = round(total_success / len(all_logs) * 100, 1) if all_logs else 0
 
-            text += '📊 <b>Общая статистика:</b>\n'
-            text += f'• Всего событий: {len(all_logs)}\n'
-            text += f'• Успешных: {total_success}\n'
-            text += f'• Ошибок: {total_failed}\n'
-            text += f'• Успешность: {success_rate}%'
+            text += texts.t('ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_084', '📊 <b>Общая статистика:</b>\n')
+            text += texts.t('ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_085', '• Всего событий: {value1}\n').format(
+                value1=len(all_logs)
+            )
+            text += texts.t('ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_086', '• Успешных: {value1}\n').format(
+                value1=total_success
+            )
+            text += texts.t('ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_087', '• Ошибок: {value1}\n').format(
+                value1=total_failed
+            )
+            text += texts.t('ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_088', '• Успешность: {value1}%').format(
+                value1=success_rate
+            )
 
-            keyboard = get_monitoring_logs_keyboard(page, paginated_logs.total_pages)
+            keyboard = get_monitoring_logs_keyboard(page, paginated_logs.total_pages, language=language)
             await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка получения логов', error=e)
-        await callback.answer('❌ Ошибка получения логов', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_MONITORING_LOGS_CALLBACK_089', '❌ Ошибка получения логов'), show_alert=True
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_clear_logs')
 @admin_required
-async def clear_logs_callback(callback: CallbackQuery):
+async def clear_logs_callback(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         async with AsyncSessionLocal() as db:
             deleted_count = await monitoring_service.cleanup_old_logs(db, days=0)
             await db.commit()
 
             if deleted_count > 0:
-                await callback.answer(f'🗑️ Удалено {deleted_count} записей логов')
+                await callback.answer(
+                    texts.t('ADMIN_MONITORING_UI_CLEAR_LOGS_CALLBACK_090', '🗑️ Удалено {value1} записей логов').format(
+                        value1=deleted_count
+                    )
+                )
             else:
-                await callback.answer('ℹ️ Логи уже пусты')
+                await callback.answer(texts.t('ADMIN_MONITORING_UI_CLEAR_LOGS_CALLBACK_091', 'ℹ️ Логи уже пусты'))
 
-            await monitoring_logs_callback(callback)
+            await monitoring_logs_callback(callback, db_user=db_user)
 
     except Exception as e:
         logger.error('Ошибка очистки логов', error=e)
-        await callback.answer(f'❌ Ошибка очистки: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_CLEAR_LOGS_CALLBACK_092', '❌ Ошибка очистки: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_test_notifications')
 @admin_required
-async def test_notifications_callback(callback: CallbackQuery):
+async def test_notifications_callback(callback: CallbackQuery, db_user: User | None = None):  # noqa: PT028
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        test_message = f"""
-🧪 <b>Тестовое уведомление системы мониторинга</b>
-
-Это тестовое сообщение для проверки работы системы уведомлений.
-
-📊 <b>Статус системы:</b>
-• Мониторинг: {'🟢 Работает' if monitoring_service.is_running else '🔴 Остановлен'}
-• Уведомления: {'🟢 Включены' if settings.ENABLE_NOTIFICATIONS else '🔴 Отключены'}
-• Время теста: {format_local_datetime(datetime.now(UTC), '%H:%M:%S %d.%m.%Y')}
-
-✅ Если вы получили это сообщение, система уведомлений работает корректно!
-"""
+        test_message = texts.t(
+            'ADMIN_MONITORING_UI_TEST_NOTIFICATIONS_CALLBACK_093',
+            '\n🧪 <b>Тестовое уведомление системы мониторинга</b>\n\nЭто тестовое сообщение для проверки работы системы уведомлений.\n\n📊 <b>Статус системы:</b>\n• Мониторинг: {value1}\n• Уведомления: {value2}\n• Время теста: {value3}\n\n✅ Если вы получили это сообщение, система уведомлений работает корректно!\n',
+        ).format(
+            value1=texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_022', '🟢 Работает')
+            if monitoring_service.is_running
+            else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_023', '🔴 Остановлен'),
+            value2=texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_SETTINGS_027', '🟢 Включены')
+            if settings.ENABLE_NOTIFICATIONS
+            else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_SETTINGS_028', '🔴 Отключены'),
+            value3=format_local_datetime(datetime.now(UTC), '%H:%M:%S %d.%m.%Y'),
+        )
 
         await callback.bot.send_message(callback.from_user.id, test_message, parse_mode='HTML')
 
-        await callback.answer('✅ Тестовое уведомление отправлено!')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TEST_NOTIFICATIONS_CALLBACK_098', '✅ Тестовое уведомление отправлено!')
+        )
 
     except Exception as e:
         logger.error('Ошибка отправки тестового уведомления', error=e)
-        await callback.answer(f'❌ Ошибка отправки: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TEST_NOTIFICATIONS_CALLBACK_099', '❌ Ошибка отправки: {value1}').format(
+                value1=str(e)
+            ),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_statistics')
 @admin_required
-async def monitoring_statistics_callback(callback: CallbackQuery):
+async def monitoring_statistics_callback(callback: CallbackQuery, db_user: User | None = None):
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         async with AsyncSessionLocal() as db:
             from app.database.crud.subscription import get_subscriptions_statistics
@@ -908,31 +1205,27 @@ async def monitoring_statistics_callback(callback: CallbackQuery):
             week_success = sum(1 for log in week_logs if log['is_success'])
             week_errors = len(week_logs) - week_success
 
-            text = f"""
-📊 <b>Статистика мониторинга</b>
-
-📱 <b>Подписки:</b>
-• Всего: {sub_stats['total_subscriptions']}
-• Активных: {sub_stats['active_subscriptions']}
-• Тестовых: {sub_stats['trial_subscriptions']}
-• Платных: {sub_stats['paid_subscriptions']}
-
-📈 <b>За сегодня:</b>
-• Успешных операций: {mon_status['stats_24h']['successful']}
-• Ошибок: {mon_status['stats_24h']['failed']}
-• Успешность: {mon_status['stats_24h']['success_rate']}%
-
-📊 <b>За неделю:</b>
-• Всего событий: {len(week_logs)}
-• Успешных: {week_success}
-• Ошибок: {week_errors}
-• Успешность: {round(week_success / len(week_logs) * 100, 1) if week_logs else 0}%
-
-🔧 <b>Система:</b>
-• Интервал: {settings.MONITORING_INTERVAL} мин
-• Уведомления: {'🟢 Вкл' if getattr(settings, 'ENABLE_NOTIFICATIONS', True) else '🔴 Выкл'}
-• Автооплата: {', '.join(map(str, settings.get_autopay_warning_days()))} дней
-"""
+            text = texts.t(
+                'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_100',
+                '\n📊 <b>Статистика мониторинга</b>\n\n📱 <b>Подписки:</b>\n• Всего: {value1}\n• Активных: {value2}\n• Тестовых: {value3}\n• Платных: {value4}\n\n📈 <b>За сегодня:</b>\n• Успешных операций: {value5}\n• Ошибок: {value6}\n• Успешность: {value7}%\n\n📊 <b>За неделю:</b>\n• Всего событий: {value8}\n• Успешных: {value9}\n• Ошибок: {value10}\n• Успешность: {value11}%\n\n🔧 <b>Система:</b>\n• Интервал: {value12} мин\n• Уведомления: {value13}\n• Автооплата: {value14} дней\n',
+            ).format(
+                value1=sub_stats['total_subscriptions'],
+                value2=sub_stats['active_subscriptions'],
+                value3=sub_stats['trial_subscriptions'],
+                value4=sub_stats['paid_subscriptions'],
+                value5=mon_status['stats_24h']['successful'],
+                value6=mon_status['stats_24h']['failed'],
+                value7=mon_status['stats_24h']['success_rate'],
+                value8=len(week_logs),
+                value9=week_success,
+                value10=week_errors,
+                value11=round(week_success / len(week_logs) * 100, 1) if week_logs else 0,
+                value12=settings.MONITORING_INTERVAL,
+                value13=texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_000', '🟢 Вкл')
+                if getattr(settings, 'ENABLE_NOTIFICATIONS', True)
+                else texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_001', '🔴 Выкл'),
+                value14=', '.join(map(str, settings.get_autopay_warning_days())),
+            )
 
             # Добавляем информацию о чеках NaloGO
             if settings.is_nalogo_enabled():
@@ -943,14 +1236,24 @@ async def monitoring_statistics_callback(callback: CallbackQuery):
                 pending_count = nalogo_status.get('pending_verification_count', 0)
                 pending_amount = nalogo_status.get('pending_verification_amount', 0)
 
-                nalogo_section = f"""
-🧾 <b>Чеки NaloGO:</b>
-• Сервис: {'🟢 Работает' if running else '🔴 Остановлен'}
-• В очереди: {queue_len} чек(ов)"""
+                nalogo_section = texts.t(
+                    'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_103',
+                    '\n🧾 <b>Чеки NaloGO:</b>\n• Сервис: {value1}\n• В очереди: {value2} чек(ов)',
+                ).format(
+                    value1=texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_022', '🟢 Работает')
+                    if running
+                    else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_023', '🔴 Остановлен'),
+                    value2=queue_len,
+                )
                 if queue_len > 0:
-                    nalogo_section += f'\n• На сумму: {total_amount:,.2f} ₽'
+                    nalogo_section += texts.t(
+                        'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_106', '\n• На сумму: {value1} ₽'
+                    ).format(value1=format(total_amount, ',.2f'))
                 if pending_count > 0:
-                    nalogo_section += f'\n⚠️ <b>Требуют проверки: {pending_count} ({pending_amount:,.2f} ₽)</b>'
+                    nalogo_section += texts.t(
+                        'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_107',
+                        '\n⚠️ <b>Требуют проверки: {value1} ({value2} ₽)</b>',
+                    ).format(value1=pending_count, value2=format(pending_amount, ',.2f'))
                 text += nalogo_section
 
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -963,7 +1266,9 @@ async def monitoring_statistics_callback(callback: CallbackQuery):
                 if nalogo_status.get('queue_length', 0) > 0:
                     nalogo_buttons.append(
                         InlineKeyboardButton(
-                            text=f'🧾 Отправить ({nalogo_status["queue_length"]})',
+                            text=texts.t(
+                                'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_108', '🧾 Отправить ({value1})'
+                            ).format(value1=nalogo_status['queue_length']),
                             callback_data='admin_mon_nalogo_force_process',
                         )
                     )
@@ -971,49 +1276,82 @@ async def monitoring_statistics_callback(callback: CallbackQuery):
                 if pending_count > 0:
                     nalogo_buttons.append(
                         InlineKeyboardButton(
-                            text=f'⚠️ Проверить ({pending_count})', callback_data='admin_mon_nalogo_pending'
+                            text=texts.t(
+                                'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_109', '⚠️ Проверить ({value1})'
+                            ).format(value1=pending_count),
+                            callback_data='admin_mon_nalogo_pending',
                         )
                     )
                 nalogo_buttons.append(
-                    InlineKeyboardButton(text='📊 Сверка чеков', callback_data='admin_mon_receipts_missing')
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_110', '📊 Сверка чеков'),
+                        callback_data='admin_mon_receipts_missing',
+                    )
                 )
                 buttons.append(nalogo_buttons)
 
-            buttons.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_monitoring')])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                        callback_data='admin_monitoring',
+                    )
+                ]
+            )
             keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
             await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка получения статистики', error=e)
-        await callback.answer(f'❌ Ошибка получения статистики: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t(
+                'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_112', '❌ Ошибка получения статистики: {value1}'
+            ).format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_nalogo_force_process')
 @admin_required
-async def nalogo_force_process_callback(callback: CallbackQuery):
+async def nalogo_force_process_callback(callback: CallbackQuery, db_user: User | None = None):
     """Принудительная отправка чеков из очереди."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        await callback.answer('🔄 Запускаю обработку очереди чеков...', show_alert=False)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_NALOGO_FORCE_PROCESS_CALLBACK_113', '🔄 Запускаю обработку очереди чеков...'),
+            show_alert=False,
+        )
 
         result = await nalogo_queue_service.force_process()
 
         if 'error' in result:
-            await callback.answer(f'❌ {result["error"]}', show_alert=True)
+            detail = result['error']
+            if detail == 'NaloGO сервис не настроен':
+                detail = texts.t('NALOGO_SERVICE_NOT_CONFIGURED', 'NaloGO сервис не настроен')
+            await callback.answer(f'❌ {detail}', show_alert=True)
             return
 
-        result.get('message', 'Готово')
+        result.get('message', texts.t('ADMIN_MONITORING_UI_NALOGO_FORCE_PROCESS_CALLBACK_114', 'Готово'))
         processed = result.get('processed', 0)
         remaining = result.get('remaining', 0)
 
         if processed > 0:
-            text = f'✅ Обработано: {processed} чек(ов)'
+            text = texts.t(
+                'ADMIN_MONITORING_UI_NALOGO_FORCE_PROCESS_CALLBACK_115', '✅ Обработано: {value1} чек(ов)'
+            ).format(value1=processed)
             if remaining > 0:
-                text += f'\n⏳ Осталось в очереди: {remaining}'
+                text += texts.t(
+                    'ADMIN_MONITORING_UI_NALOGO_FORCE_PROCESS_CALLBACK_116', '\n⏳ Осталось в очереди: {value1}'
+                ).format(value1=remaining)
         elif remaining > 0:
-            text = f'⚠️ Сервис nalog.ru недоступен\n⏳ В очереди: {remaining} чек(ов)'
+            text = texts.t(
+                'ADMIN_MONITORING_UI_NALOGO_FORCE_PROCESS_CALLBACK_117',
+                '⚠️ Сервис nalog.ru недоступен\n⏳ В очереди: {value1} чек(ов)',
+            ).format(value1=remaining)
         else:
-            text = '📭 Очередь пуста'
+            text = texts.t('ADMIN_MONITORING_UI_NALOGO_FORCE_PROCESS_CALLBACK_118', '📭 Очередь пуста')
 
         await callback.answer(text, show_alert=True)
 
@@ -1033,31 +1371,27 @@ async def nalogo_force_process_callback(callback: CallbackQuery):
             week_success = sum(1 for log in week_logs if log['is_success'])
             week_errors = len(week_logs) - week_success
 
-            stats_text = f"""
-📊 <b>Статистика мониторинга</b>
-
-📱 <b>Подписки:</b>
-• Всего: {sub_stats['total_subscriptions']}
-• Активных: {sub_stats['active_subscriptions']}
-• Тестовых: {sub_stats['trial_subscriptions']}
-• Платных: {sub_stats['paid_subscriptions']}
-
-📈 <b>За сегодня:</b>
-• Успешных операций: {mon_status['stats_24h']['successful']}
-• Ошибок: {mon_status['stats_24h']['failed']}
-• Успешность: {mon_status['stats_24h']['success_rate']}%
-
-📊 <b>За неделю:</b>
-• Всего событий: {len(week_logs)}
-• Успешных: {week_success}
-• Ошибок: {week_errors}
-• Успешность: {round(week_success / len(week_logs) * 100, 1) if week_logs else 0}%
-
-🔧 <b>Система:</b>
-• Интервал: {settings.MONITORING_INTERVAL} мин
-• Уведомления: {'🟢 Вкл' if getattr(settings, 'ENABLE_NOTIFICATIONS', True) else '🔴 Выкл'}
-• Автооплата: {', '.join(map(str, settings.get_autopay_warning_days()))} дней
-"""
+            stats_text = texts.t(
+                'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_100',
+                '\n📊 <b>Статистика мониторинга</b>\n\n📱 <b>Подписки:</b>\n• Всего: {value1}\n• Активных: {value2}\n• Тестовых: {value3}\n• Платных: {value4}\n\n📈 <b>За сегодня:</b>\n• Успешных операций: {value5}\n• Ошибок: {value6}\n• Успешность: {value7}%\n\n📊 <b>За неделю:</b>\n• Всего событий: {value8}\n• Успешных: {value9}\n• Ошибок: {value10}\n• Успешность: {value11}%\n\n🔧 <b>Система:</b>\n• Интервал: {value12} мин\n• Уведомления: {value13}\n• Автооплата: {value14} дней\n',
+            ).format(
+                value1=sub_stats['total_subscriptions'],
+                value2=sub_stats['active_subscriptions'],
+                value3=sub_stats['trial_subscriptions'],
+                value4=sub_stats['paid_subscriptions'],
+                value5=mon_status['stats_24h']['successful'],
+                value6=mon_status['stats_24h']['failed'],
+                value7=mon_status['stats_24h']['success_rate'],
+                value8=len(week_logs),
+                value9=week_success,
+                value10=week_errors,
+                value11=round(week_success / len(week_logs) * 100, 1) if week_logs else 0,
+                value12=settings.MONITORING_INTERVAL,
+                value13=texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_000', '🟢 Вкл')
+                if getattr(settings, 'ENABLE_NOTIFICATIONS', True)
+                else texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_001', '🔴 Выкл'),
+                value14=', '.join(map(str, settings.get_autopay_warning_days())),
+            )
 
             if settings.is_nalogo_enabled():
                 nalogo_status = await nalogo_queue_service.get_status()
@@ -1065,12 +1399,19 @@ async def nalogo_force_process_callback(callback: CallbackQuery):
                 total_amount = nalogo_status.get('total_amount', 0)
                 running = nalogo_status.get('running', False)
 
-                nalogo_section = f"""
-🧾 <b>Чеки NaloGO:</b>
-• Сервис: {'🟢 Работает' if running else '🔴 Остановлен'}
-• В очереди: {queue_len} чек(ов)"""
+                nalogo_section = texts.t(
+                    'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_103',
+                    '\n🧾 <b>Чеки NaloGO:</b>\n• Сервис: {value1}\n• В очереди: {value2} чек(ов)',
+                ).format(
+                    value1=texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_022', '🟢 Работает')
+                    if running
+                    else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_023', '🔴 Остановлен'),
+                    value2=queue_len,
+                )
                 if queue_len > 0:
-                    nalogo_section += f'\n• На сумму: {total_amount:,.2f} ₽'
+                    nalogo_section += texts.t(
+                        'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_106', '\n• На сумму: {value1} ₽'
+                    ).format(value1=format(total_amount, ',.2f'))
                 stats_text += nalogo_section
 
             buttons = []
@@ -1081,23 +1422,38 @@ async def nalogo_force_process_callback(callback: CallbackQuery):
                 if nalogo_status.get('queue_length', 0) > 0:
                     nalogo_buttons.append(
                         InlineKeyboardButton(
-                            text=f'🧾 Отправить ({nalogo_status["queue_length"]})',
+                            text=texts.t(
+                                'ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_108', '🧾 Отправить ({value1})'
+                            ).format(value1=nalogo_status['queue_length']),
                             callback_data='admin_mon_nalogo_force_process',
                         )
                     )
                 nalogo_buttons.append(
-                    InlineKeyboardButton(text='📊 Сверка чеков', callback_data='admin_mon_receipts_missing')
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_MONITORING_STATISTICS_CALLBACK_110', '📊 Сверка чеков'),
+                        callback_data='admin_mon_receipts_missing',
+                    )
                 )
                 buttons.append(nalogo_buttons)
 
-            buttons.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_monitoring')])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                        callback_data='admin_monitoring',
+                    )
+                ]
+            )
             keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
             await callback.message.edit_text(stats_text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка принудительной обработки чеков', error=e)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 def _nalogo_pending_token(payment_id: str) -> str:
@@ -1119,8 +1475,10 @@ async def _resolve_nalogo_pending_id(service, token: str) -> str | None:
 
 @router.callback_query(F.data == 'admin_mon_nalogo_pending')
 @admin_required
-async def nalogo_pending_callback(callback: CallbackQuery):
+async def nalogo_pending_callback(callback: CallbackQuery, db_user: User | None = None):
     """Просмотр чеков ожидающих ручной проверки."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -1130,11 +1488,17 @@ async def nalogo_pending_callback(callback: CallbackQuery):
         receipts = await nalogo_service.get_pending_verification_receipts()
 
         if not receipts:
-            await callback.answer('✅ Нет чеков на проверку', show_alert=True)
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_130', '✅ Нет чеков на проверку'), show_alert=True
+            )
             return
 
-        text = f'⚠️ <b>Чеки требующие проверки: {len(receipts)}</b>\n\n'
-        text += 'Проверьте в lknpd.nalog.ru созданы ли эти чеки.\n\n'
+        text = texts.t(
+            'ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_131', '⚠️ <b>Чеки требующие проверки: {value1}</b>\n\n'
+        ).format(value1=len(receipts))
+        text += texts.t(
+            'ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_132', 'Проверьте в lknpd.nalog.ru созданы ли эти чеки.\n\n'
+        )
 
         buttons = []
         for i, receipt in enumerate(receipts[:10], 1):
@@ -1154,31 +1518,60 @@ async def nalogo_pending_callback(callback: CallbackQuery):
             token = _nalogo_pending_token(payment_id)
             buttons.append(
                 [
-                    InlineKeyboardButton(text=f'✅ Создан ({i})', callback_data=f'admin_nalogo_verified:{token}'),
-                    InlineKeyboardButton(text=f'🔄 Отправить ({i})', callback_data=f'admin_nalogo_retry:{token}'),
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_133', '✅ Создан ({value1})').format(
+                            value1=i
+                        ),
+                        callback_data=f'admin_nalogo_verified:{token}',
+                    ),
+                    InlineKeyboardButton(
+                        text=texts.t(
+                            'ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_134', '🔄 Отправить ({value1})'
+                        ).format(value1=i),
+                        callback_data=f'admin_nalogo_retry:{token}',
+                    ),
                 ]
             )
 
         if len(receipts) > 10:
-            text += f'\n... и ещё {len(receipts) - 10} чек(ов)'
+            text += texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_135', '\n... и ещё {value1} чек(ов)').format(
+                value1=len(receipts) - 10
+            )
 
         buttons.append(
-            [InlineKeyboardButton(text='🗑 Очистить всё (проверено)', callback_data='admin_nalogo_clear_pending')]
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_136', '🗑 Очистить всё (проверено)'),
+                    callback_data='admin_nalogo_clear_pending',
+                )
+            ]
         )
-        buttons.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_statistics')])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                    callback_data='admin_mon_statistics',
+                )
+            ]
+        )
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
         await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка просмотра очереди проверки', error=e)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data.startswith('admin_nalogo_verified:'))
 @admin_required
-async def nalogo_mark_verified_callback(callback: CallbackQuery):
+async def nalogo_mark_verified_callback(callback: CallbackQuery, db_user: User | None = None):
     """Пометить чек как созданный в налоговой."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         from app.services.nalogo_service import NaloGoService
 
@@ -1187,28 +1580,44 @@ async def nalogo_mark_verified_callback(callback: CallbackQuery):
 
         payment_id = await _resolve_nalogo_pending_id(nalogo_service, token)
         if payment_id is None:
-            await callback.answer('❌ Чек не найден или кнопка устарела. Обновите список чеков.', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'ADMIN_MONITORING_UI_NALOGO_MARK_VERIFIED_CALLBACK_139',
+                    '❌ Чек не найден или кнопка устарела. Обновите список чеков.',
+                ),
+                show_alert=True,
+            )
             return
 
         # Помечаем как проверенный (чек был создан)
         removed = await nalogo_service.mark_pending_as_verified(payment_id, receipt_uuid=None, was_created=True)
 
         if removed:
-            await callback.answer('✅ Чек помечен как созданный', show_alert=True)
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_NALOGO_MARK_VERIFIED_CALLBACK_140', '✅ Чек помечен как созданный'),
+                show_alert=True,
+            )
             # Обновляем список
-            await nalogo_pending_callback(callback)
+            await nalogo_pending_callback(callback, db_user=db_user)
         else:
-            await callback.answer('❌ Чек не найден', show_alert=True)
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_NALOGO_MARK_VERIFIED_CALLBACK_141', '❌ Чек не найден'), show_alert=True
+            )
 
     except Exception as e:
         logger.error('Ошибка пометки чека', error=e)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data.startswith('admin_nalogo_retry:'))
 @admin_required
-async def nalogo_retry_callback(callback: CallbackQuery):
+async def nalogo_retry_callback(callback: CallbackQuery, db_user: User | None = None):
     """Повторно отправить чек в налоговую."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         from app.services.nalogo_service import NaloGoService
 
@@ -1217,62 +1626,99 @@ async def nalogo_retry_callback(callback: CallbackQuery):
 
         payment_id = await _resolve_nalogo_pending_id(nalogo_service, token)
         if payment_id is None:
-            await callback.answer('❌ Чек не найден или кнопка устарела. Обновите список чеков.', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'ADMIN_MONITORING_UI_NALOGO_MARK_VERIFIED_CALLBACK_139',
+                    '❌ Чек не найден или кнопка устарела. Обновите список чеков.',
+                ),
+                show_alert=True,
+            )
             return
 
-        await callback.answer('🔄 Отправляю чек...', show_alert=False)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_NALOGO_RETRY_CALLBACK_144', '🔄 Отправляю чек...'), show_alert=False
+        )
 
         # bot обязателен: без него чек уйдёт в ФНС, но покупатель его не получит
         receipt_uuid = await nalogo_service.retry_pending_receipt(payment_id, bot=callback.bot)
 
         if receipt_uuid:
-            await callback.answer(f'✅ Чек создан: {receipt_uuid}', show_alert=True)
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_NALOGO_RETRY_CALLBACK_145', '✅ Чек создан: {value1}').format(
+                    value1=receipt_uuid
+                ),
+                show_alert=True,
+            )
             # Обновляем список
-            await nalogo_pending_callback(callback)
+            await nalogo_pending_callback(callback, db_user=db_user)
         else:
-            await callback.answer('❌ Не удалось создать чек', show_alert=True)
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_NALOGO_RETRY_CALLBACK_146', '❌ Не удалось создать чек'), show_alert=True
+            )
 
     except Exception as e:
         logger.error('Ошибка повторной отправки чека', error=e)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_nalogo_clear_pending')
 @admin_required
-async def nalogo_clear_pending_callback(callback: CallbackQuery):
+async def nalogo_clear_pending_callback(callback: CallbackQuery, db_user: User | None = None):
     """Очистить всю очередь проверки."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         from app.services.nalogo_service import NaloGoService
 
         nalogo_service = NaloGoService()
         count = await nalogo_service.clear_pending_verification()
 
-        await callback.answer(f'✅ Очищено: {count} чек(ов)', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_NALOGO_CLEAR_PENDING_CALLBACK_148', '✅ Очищено: {value1} чек(ов)').format(
+                value1=count
+            ),
+            show_alert=True,
+        )
         # Возвращаемся на статистику
         await callback.message.edit_text(
-            '✅ Очередь проверки очищена',
+            texts.t('ADMIN_MONITORING_UI_NALOGO_CLEAR_PENDING_CALLBACK_149', '✅ Очередь проверки очищена'),
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_statistics')]]
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                            callback_data='admin_mon_statistics',
+                        )
+                    ]
+                ]
             ),
         )
 
     except Exception as e:
         logger.error('Ошибка очистки очереди', error=e)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_receipts_missing')
 @admin_required
-async def receipts_missing_callback(callback: CallbackQuery):
+async def receipts_missing_callback(callback: CallbackQuery, db_user: User | None = None):
     """Сверка чеков по логам."""
     # Напрямую вызываем сверку по логам
-    await _do_reconcile_logs(callback)
+    await _do_reconcile_logs(callback, db_user=db_user)
 
 
 @router.callback_query(F.data == 'admin_mon_receipts_link_old')
 @admin_required
-async def receipts_link_old_callback(callback: CallbackQuery):
+async def receipts_link_old_callback(callback: CallbackQuery, db_user: User | None = None):
     """Привязать старые чеки из NaloGO к транзакциям по сумме и дате."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
         from sqlalchemy import and_, select
@@ -1280,7 +1726,10 @@ async def receipts_link_old_callback(callback: CallbackQuery):
         from app.database.models import PaymentMethod, Transaction, TransactionType
         from app.services.nalogo_service import NaloGoService
 
-        await callback.answer('🔄 Загружаю чеки из NaloGO...', show_alert=False)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_152', '🔄 Загружаю чеки из NaloGO...'),
+            show_alert=False,
+        )
 
         TRACKING_START_DATE = datetime(2024, 12, 29, 0, 0, 0, tzinfo=UTC)
 
@@ -1304,7 +1753,12 @@ async def receipts_link_old_callback(callback: CallbackQuery):
             transactions = result.scalars().all()
 
             if not transactions:
-                await callback.answer('✅ Нет старых транзакций для привязки', show_alert=True)
+                await callback.answer(
+                    texts.t(
+                        'ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_153', '✅ Нет старых транзакций для привязки'
+                    ),
+                    show_alert=True,
+                )
                 return
 
             # Получаем чеки из NaloGO за последние 60 дней
@@ -1319,7 +1773,12 @@ async def receipts_link_old_callback(callback: CallbackQuery):
             )
 
             if not incomes:
-                await callback.answer('❌ Не удалось получить чеки из NaloGO', show_alert=True)
+                await callback.answer(
+                    texts.t(
+                        'ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_154', '❌ Не удалось получить чеки из NaloGO'
+                    ),
+                    show_alert=True,
+                )
                 return
 
             # Создаём словарь чеков по сумме для быстрого поиска
@@ -1359,15 +1818,28 @@ async def receipts_link_old_callback(callback: CallbackQuery):
             if linked > 0:
                 await db.commit()
 
-            text = '🔗 <b>Привязка завершена</b>\n\n'
-            text += f'Всего транзакций: {len(transactions)}\n'
-            text += f'Чеков в NaloGO: {len(incomes)}\n'
-            text += f'Привязано: <b>{linked}</b>\n'
-            text += f'Не удалось привязать: {len(transactions) - linked}'
+            text = texts.t('ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_155', '🔗 <b>Привязка завершена</b>\n\n')
+            text += texts.t(
+                'ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_156', 'Всего транзакций: {value1}\n'
+            ).format(value1=len(transactions))
+            text += texts.t('ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_157', 'Чеков в NaloGO: {value1}\n').format(
+                value1=len(incomes)
+            )
+            text += texts.t(
+                'ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_158', 'Привязано: <b>{value1}</b>\n'
+            ).format(value1=linked)
+            text += texts.t(
+                'ADMIN_MONITORING_UI_RECEIPTS_LINK_OLD_CALLBACK_159', 'Не удалось привязать: {value1}'
+            ).format(value1=len(transactions) - linked)
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_statistics')],
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                            callback_data='admin_mon_statistics',
+                        )
+                    ],
                 ]
             )
 
@@ -1375,23 +1847,28 @@ async def receipts_link_old_callback(callback: CallbackQuery):
 
     except Exception as e:
         logger.error('Ошибка привязки старых чеков', error=e, exc_info=True)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_receipts_reconcile')
 @admin_required
-async def receipts_reconcile_menu_callback(callback: CallbackQuery, state: FSMContext):
+async def receipts_reconcile_menu_callback(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
     """Меню выбора периода сверки."""
 
     # Очищаем состояние на случай если остался ввод даты
     await state.clear()
 
     # Сразу показываем сверку по логам
-    await _do_reconcile_logs(callback)
+    await _do_reconcile_logs(callback, db_user=db_user)
 
 
-async def _do_reconcile_logs(callback: CallbackQuery):
+async def _do_reconcile_logs(callback: CallbackQuery, db_user: User | None = None):
     """Внутренняя функция сверки по логам."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         import re
         from collections import defaultdict
@@ -1399,7 +1876,9 @@ async def _do_reconcile_logs(callback: CallbackQuery):
 
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        await callback.answer('🔄 Анализирую логи платежей...', show_alert=False)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_162', '🔄 Анализирую логи платежей...'), show_alert=False
+        )
 
         # Путь к файлу логов платежей (logs/current/)
         log_file_path = await asyncio.to_thread(Path(settings.LOG_FILE).resolve)
@@ -1410,14 +1889,25 @@ async def _do_reconcile_logs(callback: CallbackQuery):
         if not await asyncio.to_thread(payments_log.exists):
             try:
                 await callback.message.edit_text(
-                    '❌ <b>Файл логов не найден</b>\n\n'
-                    f'Путь: <code>{payments_log}</code>\n\n'
-                    '<i>Логи появятся после первого успешного платежа.</i>',
+                    texts.t(
+                        'ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_163',
+                        '❌ <b>Файл логов не найден</b>\n\nПуть: <code>{value1}</code>\n\n<i>Логи появятся после первого успешного платежа.</i>',
+                    ).format(value1=payments_log),
                     parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup(
                         inline_keyboard=[
-                            [InlineKeyboardButton(text='🔄 Обновить', callback_data='admin_mon_reconcile_logs')],
-                            [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_statistics')],
+                            [
+                                InlineKeyboardButton(
+                                    text=texts.t('ADMIN_MONITORING_UI_GET_MONITORING_LOGS_KEYBOARD_190', '🔄 Обновить'),
+                                    callback_data='admin_mon_reconcile_logs',
+                                )
+                            ],
+                            [
+                                InlineKeyboardButton(
+                                    text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                                    callback_data='admin_mon_statistics',
+                                )
+                            ],
                         ]
                     ),
                 )
@@ -1457,10 +1947,19 @@ async def _do_reconcile_logs(callback: CallbackQuery):
         except Exception as e:
             logger.error('Ошибка чтения логов', error=e)
             await callback.message.edit_text(
-                f'❌ <b>Ошибка чтения логов</b>\n\n{e!s}',
+                texts.t(
+                    'ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_168', '❌ <b>Ошибка чтения логов</b>\n\n{value1}'
+                ).format(value1=str(e)),
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[[InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_statistics')]]
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                                callback_data='admin_mon_statistics',
+                            )
+                        ]
+                    ]
                 ),
             )
             return
@@ -1484,30 +1983,55 @@ async def _do_reconcile_logs(callback: CallbackQuery):
         missing_count = len(payments_without_receipts)
         missing_amount = sum(p['amount'] for p in payments_without_receipts)
 
-        text = '📋 <b>Сверка по логам</b>\n\n'
-        text += f'📦 <b>Всего платежей:</b> {total_payments}\n'
-        text += f'🧾 <b>Чеков создано:</b> {total_receipts}\n\n'
+        text = texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_170', '📋 <b>Сверка по логам</b>\n\n')
+        text += texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_171', '📦 <b>Всего платежей:</b> {value1}\n').format(
+            value1=total_payments
+        )
+        text += texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_172', '🧾 <b>Чеков создано:</b> {value1}\n\n').format(
+            value1=total_receipts
+        )
 
         if missing_count == 0:
-            text += '✅ <b>Все платежи имеют чеки!</b>'
+            text += texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_173', '✅ <b>Все платежи имеют чеки!</b>')
         else:
-            text += f'⚠️ <b>Без чеков:</b> {missing_count} платежей на {missing_amount:,.2f} ₽\n\n'
+            text += texts.t(
+                'ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_174', '⚠️ <b>Без чеков:</b> {value1} платежей на {value2} ₽\n\n'
+            ).format(value1=missing_count, value2=format(missing_amount, ',.2f'))
 
             # Показываем по датам (последние)
             sorted_dates = sorted(by_date.keys(), reverse=True)
             for date_str in sorted_dates[:7]:
                 date_payments = by_date[date_str]
                 date_amount = sum(p['amount'] for p in date_payments)
-                text += f'• <b>{date_str}:</b> {len(date_payments)} шт. на {date_amount:,.2f} ₽\n'
+                text += texts.t(
+                    'ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_175', '• <b>{value1}:</b> {value2} шт. на {value3} ₽\n'
+                ).format(value1=date_str, value2=len(date_payments), value3=format(date_amount, ',.2f'))
 
             if len(sorted_dates) > 7:
-                text += f'\n<i>...и ещё {len(sorted_dates) - 7} дней</i>'
+                text += texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_176', '\n<i>...и ещё {value1} дней</i>').format(
+                    value1=len(sorted_dates) - 7
+                )
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='🔄 Обновить', callback_data='admin_mon_reconcile_logs')],
-                [InlineKeyboardButton(text='📄 Детали', callback_data='admin_mon_reconcile_logs_details')],
-                [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_statistics')],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_GET_MONITORING_LOGS_KEYBOARD_190', '🔄 Обновить'),
+                        callback_data='admin_mon_reconcile_logs',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_178', '📄 Детали'),
+                        callback_data='admin_mon_reconcile_logs_details',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                        callback_data='admin_mon_statistics',
+                    )
+                ],
             ]
         )
 
@@ -1520,27 +2044,35 @@ async def _do_reconcile_logs(callback: CallbackQuery):
         pass  # Игнорируем если сообщение не изменилось
     except Exception as e:
         logger.error('Ошибка сверки по логам', error=e, exc_info=True)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == 'admin_mon_reconcile_logs')
 @admin_required
-async def receipts_reconcile_logs_refresh_callback(callback: CallbackQuery):
+async def receipts_reconcile_logs_refresh_callback(callback: CallbackQuery, db_user: User | None = None):
     """Обновить сверку по логам."""
-    await _do_reconcile_logs(callback)
+    await _do_reconcile_logs(callback, db_user=db_user)
 
 
 @router.callback_query(F.data == 'admin_mon_reconcile_logs_details')
 @admin_required
-async def receipts_reconcile_logs_details_callback(callback: CallbackQuery):
+async def receipts_reconcile_logs_details_callback(callback: CallbackQuery, db_user: User | None = None):
     """Детальный список платежей без чеков."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         import re
         from pathlib import Path
 
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        await callback.answer('🔄 Загружаю детали...', show_alert=False)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_RECEIPTS_RECONCILE_LOGS_DETAILS_CALLBACK_181', '🔄 Загружаю детали...'),
+            show_alert=False,
+        )
 
         # Путь к логам (logs/current/)
         log_file_path = await asyncio.to_thread(Path(settings.LOG_FILE).resolve)
@@ -1549,7 +2081,10 @@ async def receipts_reconcile_logs_details_callback(callback: CallbackQuery):
         payments_log = current_dir / settings.LOG_PAYMENTS_FILE
 
         if not await asyncio.to_thread(payments_log.exists):
-            await callback.answer('❌ Файл логов не найден', show_alert=True)
+            await callback.answer(
+                texts.t('ADMIN_MONITORING_UI_RECEIPTS_RECONCILE_LOGS_DETAILS_CALLBACK_182', '❌ Файл логов не найден'),
+                show_alert=True,
+            )
             return
 
         payment_pattern = re.compile(
@@ -1587,9 +2122,12 @@ async def receipts_reconcile_logs_details_callback(callback: CallbackQuery):
         missing.sort(key=lambda x: (x['date'], x['time']), reverse=True)
 
         if not missing:
-            text = '✅ <b>Все платежи имеют чеки!</b>'
+            text = texts.t('ADMIN_MONITORING_UI_DO_RECONCILE_LOGS_173', '✅ <b>Все платежи имеют чеки!</b>')
         else:
-            text = f'📄 <b>Платежи без чеков ({len(missing)} шт.)</b>\n\n'
+            text = texts.t(
+                'ADMIN_MONITORING_UI_RECEIPTS_RECONCILE_LOGS_DETAILS_CALLBACK_186',
+                '📄 <b>Платежи без чеков ({value1} шт.)</b>\n\n',
+            ).format(value1=len(missing))
 
             for p in missing[:20]:
                 text += (
@@ -1599,11 +2137,19 @@ async def receipts_reconcile_logs_details_callback(callback: CallbackQuery):
                 )
 
             if len(missing) > 20:
-                text += f'<i>...и ещё {len(missing) - 20} платежей</i>'
+                text += texts.t(
+                    'ADMIN_MONITORING_UI_RECEIPTS_RECONCILE_LOGS_DETAILS_CALLBACK_187',
+                    '<i>...и ещё {value1} платежей</i>',
+                ).format(value1=len(missing) - 20)
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_mon_reconcile_logs')],
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                        callback_data='admin_mon_reconcile_logs',
+                    )
+                ],
             ]
         )
 
@@ -1616,10 +2162,14 @@ async def receipts_reconcile_logs_details_callback(callback: CallbackQuery):
         pass
     except Exception as e:
         logger.error('Ошибка детализации', error=e, exc_info=True)
-        await callback.answer(f'❌ Ошибка: {e!s}', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e)),
+            show_alert=True,
+        )
 
 
-def get_monitoring_logs_keyboard(current_page: int, total_pages: int):
+def get_monitoring_logs_keyboard(current_page: int, total_pages: int, language: str = 'ru'):
+    texts = get_texts(language)
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     keyboard = []
@@ -1640,91 +2190,148 @@ def get_monitoring_logs_keyboard(current_page: int, total_pages: int):
     keyboard.extend(
         [
             [
-                InlineKeyboardButton(text='🔄 Обновить', callback_data='admin_mon_logs'),
-                InlineKeyboardButton(text='🗑️ Очистить', callback_data='admin_mon_clear_logs'),
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_GET_MONITORING_LOGS_KEYBOARD_190', '🔄 Обновить'),
+                    callback_data='admin_mon_logs',
+                ),
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_GET_MONITORING_LOGS_KEYBOARD_191', '🗑️ Очистить'),
+                    callback_data='admin_mon_clear_logs',
+                ),
             ],
-            [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_monitoring')],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                    callback_data='admin_monitoring',
+                )
+            ],
         ]
     )
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_monitoring_logs_back_keyboard():
+def get_monitoring_logs_back_keyboard(language: str = 'ru'):
+    texts = get_texts(language)
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text='🔄 Обновить', callback_data='admin_mon_logs'),
-                InlineKeyboardButton(text='🔍 Фильтры', callback_data='admin_mon_logs_filters'),
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_GET_MONITORING_LOGS_KEYBOARD_190', '🔄 Обновить'),
+                    callback_data='admin_mon_logs',
+                ),
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_GET_MONITORING_LOGS_BACK_KEYBOARD_194', '🔍 Фильтры'),
+                    callback_data='admin_mon_logs_filters',
+                ),
             ],
-            [InlineKeyboardButton(text='🗑️ Очистить логи', callback_data='admin_mon_clear_logs')],
-            [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_monitoring')],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_GET_MONITORING_LOGS_BACK_KEYBOARD_195', '🗑️ Очистить логи'),
+                    callback_data='admin_mon_clear_logs',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                    callback_data='admin_monitoring',
+                )
+            ],
         ]
     )
 
 
 @router.message(Command('monitoring'))
 @admin_required
-async def monitoring_command(message: Message):
+async def monitoring_command(message: Message, db_user: User | None = None):
+    language = _monitoring_language(message, db_user)
+    texts = get_texts(language)
     try:
         async with AsyncSessionLocal() as db:
             status = await monitoring_service.get_monitoring_status(db)
 
-            running_status = '🟢 Работает' if status['is_running'] else '🔴 Остановлен'
+            running_status = (
+                texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_022', '🟢 Работает')
+                if status['is_running']
+                else texts.t('ADMIN_MONITORING_UI_ADMIN_MONITORING_MENU_023', '🔴 Остановлен')
+            )
 
-            text = f"""
-🔍 <b>Быстрый статус мониторинга</b>
-
-📊 <b>Статус:</b> {running_status}
-📈 <b>События за 24ч:</b> {status['stats_24h']['total_events']}
-✅ <b>Успешность:</b> {status['stats_24h']['success_rate']}%
-
-Для подробного управления используйте админ-панель.
-"""
+            text = texts.t(
+                'ADMIN_MONITORING_UI_MONITORING_COMMAND_199',
+                '\n🔍 <b>Быстрый статус мониторинга</b>\n\n📊 <b>Статус:</b> {value1}\n📈 <b>События за 24ч:</b> {value2}\n✅ <b>Успешность:</b> {value3}%\n\nДля подробного управления используйте админ-панель.\n',
+            ).format(
+                value1=running_status,
+                value2=status['stats_24h']['total_events'],
+                value3=status['stats_24h']['success_rate'],
+            )
 
             await message.answer(text, parse_mode='HTML')
 
     except Exception as e:
         logger.error('Ошибка команды /monitoring', error=e)
-        await message.answer(f'❌ Ошибка: {e!s}')
+        await message.answer(
+            texts.t('ADMIN_MONITORING_UI_TRAFFIC_CHECK_CALLBACK_081', '❌ Ошибка: {value1}').format(value1=str(e))
+        )
 
 
 @router.message(AdminStates.editing_notification_value)
-async def process_notification_value_input(message: Message, state: FSMContext):
+async def process_notification_value_input(message: Message, state: FSMContext, db_user: User | None = None):
+    language = _monitoring_language(message, db_user)
+    texts = get_texts(language)
     data = await state.get_data()
     if not data:
         await state.clear()
-        await message.answer('ℹ️ Контекст утерян, попробуйте снова из меню настроек.')
+        await message.answer(
+            texts.t(
+                'ADMIN_MONITORING_UI_PROCESS_NOTIFICATION_VALUE_INPUT_201',
+                'ℹ️ Контекст утерян, попробуйте снова из меню настроек.',
+            )
+        )
         return
 
     raw_value = (message.text or '').strip()
     try:
         value = int(raw_value)
     except (TypeError, ValueError):
-        language = data.get('settings_language') or message.from_user.language_code or settings.DEFAULT_LANGUAGE
+        language = _monitoring_language(message, db_user, data.get('settings_language'))
         texts = get_texts(language)
         await message.answer(texts.get('NOTIFICATION_VALUE_INVALID', '❌ Введите целое число.'))
         return
 
     key = data.get('notification_setting_key')
     field = data.get('notification_setting_field')
-    language = data.get('settings_language') or message.from_user.language_code or settings.DEFAULT_LANGUAGE
+    language = _monitoring_language(message, db_user, data.get('settings_language'))
     texts = get_texts(language)
 
     # Добавляем дополнительные проверки диапазона значений
     if (key == 'expired_second_wave' and field == 'percent') or (key == 'expired_third_wave' and field == 'percent'):
         if value < 0 or value > 100:
-            await message.answer('❌ Процент скидки должен быть от 0 до 100.')
+            await message.answer(
+                texts.t(
+                    'ADMIN_MONITORING_UI_PROCESS_NOTIFICATION_VALUE_INPUT_202',
+                    '❌ Процент скидки должен быть от 0 до 100.',
+                )
+            )
             return
     elif (key == 'expired_second_wave' and field == 'hours') or (key == 'expired_third_wave' and field == 'hours'):
         if value < 1 or value > 168:  # Максимум 168 часов (7 дней)
-            await message.answer('❌ Количество часов должно быть от 1 до 168.')
+            await message.answer(
+                texts.t(
+                    'ADMIN_MONITORING_UI_PROCESS_NOTIFICATION_VALUE_INPUT_203',
+                    '❌ Количество часов должно быть от 1 до 168.',
+                )
+            )
             return
     elif key == 'expired_third_wave' and field == 'trigger':
         if value < 2:  # Минимум 2 дня
-            await message.answer('❌ Количество дней должно быть не менее 2.')
+            await message.answer(
+                texts.t(
+                    'ADMIN_MONITORING_UI_PROCESS_NOTIFICATION_VALUE_INPUT_204',
+                    '❌ Количество дней должно быть не менее 2.',
+                )
+            )
             return
 
     setters = {
@@ -1778,12 +2385,18 @@ async def process_notification_value_input(message: Message, state: FSMContext):
 # ============== Настройки мониторинга трафика ==============
 
 
-def _format_traffic_toggle(enabled: bool) -> str:
-    return '🟢 Вкл' if enabled else '🔴 Выкл'
+def _format_traffic_toggle(enabled: bool, language: str = 'ru') -> str:
+    texts = get_texts(language)
+    return (
+        texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_000', '🟢 Вкл')
+        if enabled
+        else texts.t('ADMIN_MONITORING_UI_FORMAT_TOGGLE_001', '🔴 Выкл')
+    )
 
 
-def _build_traffic_settings_keyboard() -> InlineKeyboardMarkup:
+def _build_traffic_settings_keyboard(language: str = 'ru') -> InlineKeyboardMarkup:
     """Строит клавиатуру настроек мониторинга трафика."""
+    texts = get_texts(language)
     fast_enabled = settings.TRAFFIC_FAST_CHECK_ENABLED
     daily_enabled = settings.TRAFFIC_DAILY_CHECK_ENABLED
 
@@ -1797,60 +2410,90 @@ def _build_traffic_settings_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f'{_format_traffic_toggle(fast_enabled)} Быстрая проверка',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_KEYBOARD_207', '{value1} Быстрая проверка'
+                    ).format(value1=_format_traffic_toggle(fast_enabled, language=language)),
                     callback_data='admin_traffic_toggle_fast',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'⏱ Интервал: {fast_interval} мин', callback_data='admin_traffic_edit_fast_interval'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_KEYBOARD_208', '⏱ Интервал: {value1} мин'
+                    ).format(value1=fast_interval),
+                    callback_data='admin_traffic_edit_fast_interval',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'📊 Порог дельты: {fast_threshold} ГБ', callback_data='admin_traffic_edit_fast_threshold'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_KEYBOARD_209', '📊 Порог дельты: {value1} ГБ'
+                    ).format(value1=fast_threshold),
+                    callback_data='admin_traffic_edit_fast_threshold',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'{_format_traffic_toggle(daily_enabled)} Суточная проверка',
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_KEYBOARD_210', '{value1} Суточная проверка'
+                    ).format(value1=_format_traffic_toggle(daily_enabled, language=language)),
                     callback_data='admin_traffic_toggle_daily',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'🕐 Время проверки: {daily_time}', callback_data='admin_traffic_edit_daily_time'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_KEYBOARD_211', '🕐 Время проверки: {value1}'
+                    ).format(value1=daily_time),
+                    callback_data='admin_traffic_edit_daily_time',
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f'📈 Суточный порог: {daily_threshold} ГБ', callback_data='admin_traffic_edit_daily_threshold'
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_KEYBOARD_212', '📈 Суточный порог: {value1} ГБ'
+                    ).format(value1=daily_threshold),
+                    callback_data='admin_traffic_edit_daily_threshold',
                 )
             ],
-            [InlineKeyboardButton(text=f'⏳ Кулдаун: {cooldown} мин', callback_data='admin_traffic_edit_cooldown')],
-            [InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_monitoring')],
+            [
+                InlineKeyboardButton(
+                    text=texts.t(
+                        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_KEYBOARD_213', '⏳ Кулдаун: {value1} мин'
+                    ).format(value1=cooldown),
+                    callback_data='admin_traffic_edit_cooldown',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_MONITORING_UI_NALOGO_PENDING_CALLBACK_137', '⬅️ Назад'),
+                    callback_data='admin_monitoring',
+                )
+            ],
         ]
     )
 
 
-def _build_traffic_settings_text() -> str:
+def _build_traffic_settings_text(language: str = 'ru') -> str:
     """Строит текст настроек мониторинга трафика."""
+    texts = get_texts(language)
     fast_enabled = settings.TRAFFIC_FAST_CHECK_ENABLED
     daily_enabled = settings.TRAFFIC_DAILY_CHECK_ENABLED
 
-    fast_status = _format_traffic_toggle(fast_enabled)
-    daily_status = _format_traffic_toggle(daily_enabled)
+    fast_status = _format_traffic_toggle(fast_enabled, language=language)
+    daily_status = _format_traffic_toggle(daily_enabled, language=language)
 
-    text = (
-        '⚙️ <b>Настройки мониторинга трафика</b>\n\n'
-        f'<b>Быстрая проверка:</b> {fast_status}\n'
-        f'• Интервал: {settings.TRAFFIC_FAST_CHECK_INTERVAL_MINUTES} мин\n'
-        f'• Порог дельты: {settings.TRAFFIC_FAST_CHECK_THRESHOLD_GB} ГБ\n\n'
-        f'<b>Суточная проверка:</b> {daily_status}\n'
-        f'• Время: {settings.TRAFFIC_DAILY_CHECK_TIME} UTC\n'
-        f'• Порог: {settings.TRAFFIC_DAILY_THRESHOLD_GB} ГБ\n\n'
-        f'<b>Общие:</b>\n'
-        f'• Кулдаун уведомлений: {settings.TRAFFIC_NOTIFICATION_COOLDOWN_MINUTES} мин\n'
+    text = texts.t(
+        'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_TEXT_215',
+        '⚙️ <b>Настройки мониторинга трафика</b>\n\n<b>Быстрая проверка:</b> {value1}\n• Интервал: {value2} мин\n• Порог дельты: {value3} ГБ\n\n<b>Суточная проверка:</b> {value4}\n• Время: {value5} UTC\n• Порог: {value6} ГБ\n\n<b>Общие:</b>\n• Кулдаун уведомлений: {value7} мин\n',
+    ).format(
+        value1=fast_status,
+        value2=settings.TRAFFIC_FAST_CHECK_INTERVAL_MINUTES,
+        value3=settings.TRAFFIC_FAST_CHECK_THRESHOLD_GB,
+        value4=daily_status,
+        value5=settings.TRAFFIC_DAILY_CHECK_TIME,
+        value6=settings.TRAFFIC_DAILY_THRESHOLD_GB,
+        value7=settings.TRAFFIC_NOTIFICATION_COOLDOWN_MINUTES,
     )
 
     # Информация о фильтрах
@@ -1859,32 +2502,44 @@ def _build_traffic_settings_text() -> str:
     excluded_user_ids = settings.get_traffic_excluded_user_ids()
 
     if monitored_nodes:
-        text += f'• Мониторим только: {len(monitored_nodes)} нод(ы)\n'
+        text += texts.t(
+            'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_TEXT_216', '• Мониторим только: {value1} нод(ы)\n'
+        ).format(value1=len(monitored_nodes))
     if ignored_nodes:
-        text += f'• Игнорируем: {len(ignored_nodes)} нод(ы)\n'
+        text += texts.t(
+            'ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_TEXT_217', '• Игнорируем: {value1} нод(ы)\n'
+        ).format(value1=len(ignored_nodes))
     if excluded_user_ids:
-        text += f'• Исключено юзеров: {len(excluded_user_ids)}\n'
+        text += texts.t('ADMIN_MONITORING_UI_BUILD_TRAFFIC_SETTINGS_TEXT_218', '• Исключено юзеров: {value1}\n').format(
+            value1=len(excluded_user_ids)
+        )
 
     return text
 
 
 @router.callback_query(F.data == 'admin_mon_traffic_settings')
 @admin_required
-async def admin_traffic_settings(callback: CallbackQuery):
+async def admin_traffic_settings(callback: CallbackQuery, db_user: User | None = None):
     """Показывает настройки мониторинга трафика."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
-        text = _build_traffic_settings_text()
-        keyboard = _build_traffic_settings_keyboard()
+        text = _build_traffic_settings_text(language=language)
+        keyboard = _build_traffic_settings_keyboard(language=language)
         await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
     except Exception as e:
         logger.error('Ошибка отображения настроек трафика', error=e)
-        await callback.answer('❌ Ошибка загрузки настроек', show_alert=True)
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_ADMIN_TRAFFIC_SETTINGS_219', '❌ Ошибка загрузки настроек'), show_alert=True
+        )
 
 
 @router.callback_query(F.data == 'admin_traffic_toggle_fast')
 @admin_required
-async def toggle_fast_check(callback: CallbackQuery):
+async def toggle_fast_check(callback: CallbackQuery, db_user: User | None = None):
     """Переключает быструю проверку трафика."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         from app.services.system_settings_service import BotConfigurationService
 
@@ -1895,22 +2550,28 @@ async def toggle_fast_check(callback: CallbackQuery):
             await BotConfigurationService.set_value(db, 'TRAFFIC_FAST_CHECK_ENABLED', new_value)
             await db.commit()
 
-        await callback.answer('✅ Включено' if new_value else '⏸️ Отключено')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_035', '✅ Включено')
+            if new_value
+            else texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_036', '⏸️ Отключено')
+        )
 
         # Обновляем отображение
-        text = _build_traffic_settings_text()
-        keyboard = _build_traffic_settings_keyboard()
+        text = _build_traffic_settings_text(language=language)
+        keyboard = _build_traffic_settings_keyboard(language=language)
         await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка переключения быстрой проверки', error=e)
-        await callback.answer('❌ Ошибка', show_alert=True)
+        await callback.answer(texts.t('ADMIN_MONITORING_UI_TOGGLE_FAST_CHECK_222', '❌ Ошибка'), show_alert=True)
 
 
 @router.callback_query(F.data == 'admin_traffic_toggle_daily')
 @admin_required
-async def toggle_daily_check(callback: CallbackQuery):
+async def toggle_daily_check(callback: CallbackQuery, db_user: User | None = None):
     """Переключает суточную проверку трафика."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     try:
         from app.services.system_settings_service import BotConfigurationService
 
@@ -1921,21 +2582,27 @@ async def toggle_daily_check(callback: CallbackQuery):
             await BotConfigurationService.set_value(db, 'TRAFFIC_DAILY_CHECK_ENABLED', new_value)
             await db.commit()
 
-        await callback.answer('✅ Включено' if new_value else '⏸️ Отключено')
+        await callback.answer(
+            texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_035', '✅ Включено')
+            if new_value
+            else texts.t('ADMIN_MONITORING_UI_TOGGLE_TRIAL_CHANNEL_NOTIFICATION_036', '⏸️ Отключено')
+        )
 
-        text = _build_traffic_settings_text()
-        keyboard = _build_traffic_settings_keyboard()
+        text = _build_traffic_settings_text(language=language)
+        keyboard = _build_traffic_settings_keyboard(language=language)
         await callback.message.edit_text(text, parse_mode='HTML', reply_markup=keyboard)
 
     except Exception as e:
         logger.error('Ошибка переключения суточной проверки', error=e)
-        await callback.answer('❌ Ошибка', show_alert=True)
+        await callback.answer(texts.t('ADMIN_MONITORING_UI_TOGGLE_FAST_CHECK_222', '❌ Ошибка'), show_alert=True)
 
 
 @router.callback_query(F.data == 'admin_traffic_edit_fast_interval')
 @admin_required
-async def edit_fast_interval(callback: CallbackQuery, state: FSMContext):
+async def edit_fast_interval(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
     """Начинает редактирование интервала быстрой проверки."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await state.set_state(AdminStates.editing_traffic_setting)
     await state.update_data(
         traffic_setting_key='TRAFFIC_FAST_CHECK_INTERVAL_MINUTES',
@@ -1944,13 +2611,19 @@ async def edit_fast_interval(callback: CallbackQuery, state: FSMContext):
         settings_message_id=callback.message.message_id,
     )
     await callback.answer()
-    await callback.message.answer('⏱ Введите интервал быстрой проверки в минутах (минимум 1):')
+    await callback.message.answer(
+        texts.t(
+            'ADMIN_MONITORING_UI_EDIT_FAST_INTERVAL_226', '⏱ Введите интервал быстрой проверки в минутах (минимум 1):'
+        )
+    )
 
 
 @router.callback_query(F.data == 'admin_traffic_edit_fast_threshold')
 @admin_required
-async def edit_fast_threshold(callback: CallbackQuery, state: FSMContext):
+async def edit_fast_threshold(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
     """Начинает редактирование порога быстрой проверки."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await state.set_state(AdminStates.editing_traffic_setting)
     await state.update_data(
         traffic_setting_key='TRAFFIC_FAST_CHECK_THRESHOLD_GB',
@@ -1959,13 +2632,17 @@ async def edit_fast_threshold(callback: CallbackQuery, state: FSMContext):
         settings_message_id=callback.message.message_id,
     )
     await callback.answer()
-    await callback.message.answer('📊 Введите порог дельты трафика в ГБ (например: 5.0):')
+    await callback.message.answer(
+        texts.t('ADMIN_MONITORING_UI_EDIT_FAST_THRESHOLD_227', '📊 Введите порог дельты трафика в ГБ (например: 5.0):')
+    )
 
 
 @router.callback_query(F.data == 'admin_traffic_edit_daily_time')
 @admin_required
-async def edit_daily_time(callback: CallbackQuery, state: FSMContext):
+async def edit_daily_time(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
     """Начинает редактирование времени суточной проверки."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await state.set_state(AdminStates.editing_traffic_setting)
     await state.update_data(
         traffic_setting_key='TRAFFIC_DAILY_CHECK_TIME',
@@ -1975,14 +2652,19 @@ async def edit_daily_time(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
     await callback.message.answer(
-        '🕐 Введите время суточной проверки в формате HH:MM (в часовом поясе бота):\nНапример: 00:00, 03:00, 12:30'
+        texts.t(
+            'ADMIN_MONITORING_UI_EDIT_DAILY_TIME_228',
+            '🕐 Введите время суточной проверки в формате HH:MM (в часовом поясе бота):\nНапример: 00:00, 03:00, 12:30',
+        )
     )
 
 
 @router.callback_query(F.data == 'admin_traffic_edit_daily_threshold')
 @admin_required
-async def edit_daily_threshold(callback: CallbackQuery, state: FSMContext):
+async def edit_daily_threshold(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
     """Начинает редактирование суточного порога."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await state.set_state(AdminStates.editing_traffic_setting)
     await state.update_data(
         traffic_setting_key='TRAFFIC_DAILY_THRESHOLD_GB',
@@ -1991,13 +2673,19 @@ async def edit_daily_threshold(callback: CallbackQuery, state: FSMContext):
         settings_message_id=callback.message.message_id,
     )
     await callback.answer()
-    await callback.message.answer('📈 Введите суточный порог трафика в ГБ (например: 50.0):')
+    await callback.message.answer(
+        texts.t(
+            'ADMIN_MONITORING_UI_EDIT_DAILY_THRESHOLD_229', '📈 Введите суточный порог трафика в ГБ (например: 50.0):'
+        )
+    )
 
 
 @router.callback_query(F.data == 'admin_traffic_edit_cooldown')
 @admin_required
-async def edit_cooldown(callback: CallbackQuery, state: FSMContext):
+async def edit_cooldown(callback: CallbackQuery, state: FSMContext, db_user: User | None = None):
     """Начинает редактирование кулдауна уведомлений."""
+    language = _monitoring_language(callback, db_user)
+    texts = get_texts(language)
     await state.set_state(AdminStates.editing_traffic_setting)
     await state.update_data(
         traffic_setting_key='TRAFFIC_NOTIFICATION_COOLDOWN_MINUTES',
@@ -2006,18 +2694,27 @@ async def edit_cooldown(callback: CallbackQuery, state: FSMContext):
         settings_message_id=callback.message.message_id,
     )
     await callback.answer()
-    await callback.message.answer('⏳ Введите кулдаун уведомлений в минутах (минимум 1):')
+    await callback.message.answer(
+        texts.t('ADMIN_MONITORING_UI_EDIT_COOLDOWN_230', '⏳ Введите кулдаун уведомлений в минутах (минимум 1):')
+    )
 
 
 @router.message(AdminStates.editing_traffic_setting)
-async def process_traffic_setting_input(message: Message, state: FSMContext):
+async def process_traffic_setting_input(message: Message, state: FSMContext, db_user: User | None = None):
     """Обрабатывает ввод настройки мониторинга трафика."""
+    language = _monitoring_language(message, db_user)
+    texts = get_texts(language)
     from app.services.system_settings_service import BotConfigurationService
 
     data = await state.get_data()
     if not data:
         await state.clear()
-        await message.answer('ℹ️ Контекст утерян, попробуйте снова из меню настроек.')
+        await message.answer(
+            texts.t(
+                'ADMIN_MONITORING_UI_PROCESS_NOTIFICATION_VALUE_INPUT_201',
+                'ℹ️ Контекст утерян, попробуйте снова из меню настроек.',
+            )
+        )
         return
 
     raw_value = (message.text or '').strip()
@@ -2029,21 +2726,30 @@ async def process_traffic_setting_input(message: Message, state: FSMContext):
         if setting_type == 'int':
             value = int(raw_value)
             if value < 1:
-                raise ValueError('Значение должно быть >= 1')
+                raise ValueError(
+                    texts.t('ADMIN_MONITORING_UI_PROCESS_TRAFFIC_SETTING_INPUT_232', 'Значение должно быть >= 1')
+                )
         elif setting_type == 'float':
             value = float(raw_value.replace(',', '.'))
             if value <= 0:
-                raise ValueError('Значение должно быть > 0')
+                raise ValueError(
+                    texts.t('ADMIN_MONITORING_UI_PROCESS_TRAFFIC_SETTING_INPUT_233', 'Значение должно быть > 0')
+                )
         elif setting_type == 'time':
             # Валидация формата HH:MM
             import re
 
             if not re.match(r'^\d{1,2}:\d{2}$', raw_value):
-                raise ValueError('Неверный формат времени. Используйте HH:MM')
+                raise ValueError(
+                    texts.t(
+                        'ADMIN_MONITORING_UI_PROCESS_TRAFFIC_SETTING_INPUT_234',
+                        'Неверный формат времени. Используйте HH:MM',
+                    )
+                )
             parts = raw_value.split(':')
             hours, minutes = int(parts[0]), int(parts[1])
             if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
-                raise ValueError('Неверное время')
+                raise ValueError(texts.t('ADMIN_MONITORING_UI_PROCESS_TRAFFIC_SETTING_INPUT_235', 'Неверное время'))
             value = f'{hours:02d}:{minutes:02d}'
         else:
             value = raw_value
@@ -2059,18 +2765,26 @@ async def process_traffic_setting_input(message: Message, state: FSMContext):
 
         back_keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='⬅️ К настройкам трафика', callback_data='admin_mon_traffic_settings')]
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('ADMIN_MONITORING_UI_PROCESS_TRAFFIC_SETTING_INPUT_236', '⬅️ К настройкам трафика'),
+                        callback_data='admin_mon_traffic_settings',
+                    )
+                ]
             ]
         )
-        await message.answer('✅ Настройка сохранена!', reply_markup=back_keyboard)
+        await message.answer(
+            texts.t('ADMIN_MONITORING_UI_PROCESS_TRAFFIC_SETTING_INPUT_237', '✅ Настройка сохранена!'),
+            reply_markup=back_keyboard,
+        )
 
         # Обновляем исходное сообщение с настройками
         chat_id = data.get('settings_message_chat')
         message_id = data.get('settings_message_id')
         if chat_id and message_id:
             try:
-                text = _build_traffic_settings_text()
-                keyboard = _build_traffic_settings_keyboard()
+                text = _build_traffic_settings_text(language=language)
+                keyboard = _build_traffic_settings_keyboard(language=language)
                 await message.bot.edit_message_text(
                     chat_id=chat_id, message_id=message_id, text=text, parse_mode='HTML', reply_markup=keyboard
                 )
@@ -2079,7 +2793,11 @@ async def process_traffic_setting_input(message: Message, state: FSMContext):
 
     except Exception as e:
         logger.error('Ошибка сохранения настройки трафика', error=e)
-        await message.answer(f'❌ Ошибка сохранения: {e!s}')
+        await message.answer(
+            texts.t('ADMIN_MONITORING_UI_PROCESS_TRAFFIC_SETTING_INPUT_238', '❌ Ошибка сохранения: {value1}').format(
+                value1=str(e)
+            )
+        )
 
     await state.clear()
 

@@ -33,7 +33,16 @@ def test_tariff_card_exposes_custom_traffic_entry() -> None:
 
 def test_tariff_summary_includes_custom_traffic_block() -> None:
     body = _function_source(TARIFFS, 'format_tariff_info')
-    assert 'format_custom_traffic_settings(tariff)' in body
+    calls = [
+        node
+        for node in ast.walk(ast.parse(body))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == 'format_custom_traffic_settings'
+    ]
+    assert len(calls) == 1
+    assert ast.unparse(calls[0].args[0]) == 'tariff'
+    assert any(keyword.arg == 'language' and ast.unparse(keyword.value) == 'language' for keyword in calls[0].keywords)
     assert '<b>Произвольный трафик:</b>' in body
 
 

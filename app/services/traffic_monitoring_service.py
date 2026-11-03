@@ -15,6 +15,7 @@ from app.config import settings
 from app.database.crud.user import get_user_by_remnawave_id
 from app.database.database import AsyncSessionLocal
 from app.external.remnawave_api import RemnaWaveUser, UserStatus
+from app.localization.texts import get_texts
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.remnawave_service import RemnaWaveService
 from app.utils.cache import cache, cache_key
@@ -753,6 +754,7 @@ class TrafficMonitoringServiceV2:
 
         admin_service = AdminNotificationService(bot)
         topic_id = settings.SUSPICIOUS_NOTIFICATIONS_TOPIC_ID
+        texts = get_texts(settings.DEFAULT_LANGUAGE) if topic_id else await admin_service._notification_texts()
 
         # Ограничиваем количество уведомлений за раз (защита от flood)
         max_notifications = 10
@@ -780,40 +782,48 @@ class TrafficMonitoringServiceV2:
                     db_user = await get_user_by_remnawave_id(db, violation.user_id)
                     if db_user:
                         user_id_display = db_user.telegram_id or db_user.email or f'#{db_user.id}'
-                        user_info = f'👤 <b>{html.escape(db_user.full_name or "Без имени")}</b>\n🆔 ID: <code>{user_id_display}</code>\n'
+                        user_info = f'👤 <b>{html.escape(db_user.full_name or texts.t("TRAFFIC_NOTICE_UNNAMED", "Без имени"))}</b>\n🆔 ID: <code>{html.escape(str(user_id_display))}</code>\n'
                         if db_user.username:
                             user_info += f'📱 Username: @{html.escape(db_user.username)}\n'
 
                 if violation.check_type == 'fast':
                     check_type_emoji = '⚡'
-                    check_type_name = 'Быстрая проверка'
-                    traffic_label = 'За интервал'
+                    check_type_name = texts.t('TRAFFIC_NOTICE_FAST', 'Быстрая проверка')
+                    traffic_label = texts.t('TRAFFIC_NOTICE_INTERVAL', 'За интервал')
                 elif violation.check_type == 'daily':
                     check_type_emoji = '📅'
-                    check_type_name = 'Суточная проверка'
-                    traffic_label = 'За 24 часа'
+                    check_type_name = texts.t('TRAFFIC_NOTICE_DAILY', 'Суточная проверка')
+                    traffic_label = texts.t('TRAFFIC_NOTICE_24H', 'За 24 часа')
                 else:
                     check_type_emoji = '🔍'
-                    check_type_name = 'Ручная проверка'
-                    traffic_label = 'Использовано'
+                    check_type_name = texts.t('TRAFFIC_NOTICE_MANUAL', 'Ручная проверка')
+                    traffic_label = texts.t('TRAFFIC_NOTICE_USED', 'Использовано')
 
-                message = (
-                    f'⚠️ <b>Превышение трафика</b>\n\n'
-                    f'{user_info}'
-                    f'🔑 ID в панели: <code>{violation.user_id}</code>\n\n'
-                    f'{check_type_emoji} <b>{check_type_name}</b>\n'
-                    f'📊 {traffic_label}: <b>{violation.used_traffic_gb} ГБ</b>\n'
-                    f'📈 Порог: <b>{violation.threshold_gb} ГБ</b>\n'
-                    f'🚨 Превышение: <b>{violation.used_traffic_gb - violation.threshold_gb:.2f} ГБ</b>\n'
+                message = texts.t(
+                    'TRAFFIC_NOTICE_BODY',
+                    '⚠️ <b>Превышение трафика</b>\n\n{user_info}🔑 ID в панели: <code>{panel_id}</code>\n\n{emoji} <b>{check_type}</b>\n📊 {label}: <b>{used} ГБ</b>\n📈 Порог: <b>{threshold} ГБ</b>\n🚨 Превышение: <b>{excess:.2f} ГБ</b>\n',
+                ).format(
+                    user_info=user_info,
+                    panel_id=violation.user_id,
+                    emoji=check_type_emoji,
+                    check_type=check_type_name,
+                    label=traffic_label,
+                    used=violation.used_traffic_gb,
+                    threshold=violation.threshold_gb,
+                    excess=violation.used_traffic_gb - violation.threshold_gb,
                 )
 
                 # Показываем название ноды и UUID
                 if violation.last_node_name:
-                    message += f'\n🖥 Сервер: <b>{violation.last_node_name}</b>'
+                    message += texts.t('TRAFFIC_NOTICE_NODE', '\n🖥 Сервер: <b>{name}</b>').format(
+                        name=html.escape(violation.last_node_name)
+                    )
                     if violation.last_node_uuid:
-                        message += f'\n   <code>{violation.last_node_uuid}</code>'
+                        message += f'\n   <code>{html.escape(violation.last_node_uuid)}</code>'
                 elif violation.last_node_uuid:
-                    message += f'\n🖥 Сервер: <code>{violation.last_node_uuid}</code>'
+                    message += texts.t('TRAFFIC_NOTICE_NODE_ID', '\n🖥 Сервер: <code>{id}</code>').format(
+                        id=html.escape(violation.last_node_uuid)
+                    )
 
                 message += f'\n\n⏰ {format_local_datetime(datetime.now(UTC), "%d.%m.%Y %H:%M:%S")}'
 

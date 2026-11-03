@@ -33,6 +33,17 @@ from .stats_service import MenuLayoutStatsService
 
 logger = structlog.get_logger(__name__)
 
+# Older saved layouts contain only the original Russian/English defaults.
+# Recognize those exact pairs for display, without rewriting operator settings.
+_LEGACY_DEFAULT_LABELS = {
+    (labels['ru'], labels['en']): labels
+    for labels in (
+        [button['text'] for button in DEFAULT_MENU_CONFIG['buttons'].values()]
+        + [button['default_text'] for button in BUILTIN_BUTTONS_INFO]
+        + [button['text'] for button in AVAILABLE_CALLBACKS]
+    )
+}
+
 
 class MenuLayoutService:
     """Сервис для управления конфигурацией меню."""
@@ -935,6 +946,10 @@ class MenuLayoutService:
         # Пробуем запрошенный язык
         if language in text_config:
             return text_config[language]
+        if set(text_config) == {'ru', 'en'}:
+            defaults = _LEGACY_DEFAULT_LABELS.get((text_config['ru'], text_config['en']))
+            if defaults and language in defaults:
+                return defaults[language]
         # Пробуем fallback
         if fallback_language in text_config:
             return text_config[fallback_language]

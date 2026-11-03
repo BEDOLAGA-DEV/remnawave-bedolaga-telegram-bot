@@ -333,7 +333,7 @@ def _period_button_text(tariff: Tariff, period: int, price_text: str, texts) -> 
     В инлайн-кнопку рамку не нарисовать, поэтому выделение — подпись в начале
     текста: она видна до цены и не теряется среди остальных строк.
     """
-    label = f'{format_period(period)} — {price_text}'
+    label = f'{format_period(period, language=texts.language)} — {price_text}'
     if tariff.highlight_period_days is not None and int(tariff.highlight_period_days) == period:
         return f'{texts.t("TARIFF_PERIOD_BEST_VALUE_BADGE", "⭐ выгодно")} · {label}'
     return label
@@ -613,7 +613,7 @@ def format_tariff_info_for_user(
     """Форматирует информацию о тарифе для пользователя."""
     texts = get_texts(language)
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
     text = texts.t(
         'TARIFF_PURCHASE_INFO',
@@ -1169,7 +1169,7 @@ async def format_custom_tariff_preview(
     traffic_display = (
         texts.t('TARIFF_PURCHASE_TRAFFIC_GB', '{traffic} ГБ').format(traffic=traffic_gb)
         if traffic_gb > 0
-        else format_traffic(tariff.traffic_limit_gb)
+        else format_traffic(tariff.traffic_limit_gb, language=texts.language)
     )
 
     text = texts.t('TARIFF_PURCHASE_CUSTOM_TITLE', '📦 <b>{name}</b>\n\n<b>Настройте параметры:</b>\n').format(
@@ -1184,7 +1184,7 @@ async def format_custom_tariff_preview(
     else:
         # Фиксированный период - показываем без возможности изменения
         text += texts.t('TARIFF_PURCHASE_CUSTOM_PERIOD_LINE', '📅 Период: <b>{period}</b>\n').format(
-            period=format_period(days)
+            period=format_period(days, language=texts.language)
         )
         text += f'   💰 {format_price_kopeks(period_price)}\n'
 
@@ -1408,7 +1408,7 @@ async def _proceed_with_selected_tariff(
                 price=format_price_kopeks(next_daily_price)
             )
         user_balance = db_user.balance_kopeks or 0
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
         daily_keyboard = await _bind_tariff_purchase_keyboard(
             get_daily_tariff_confirm_keyboard(tariff_id, db_user.language, back_callback=back_callback),
@@ -1902,9 +1902,9 @@ async def _confirm_tariff_checkout(callback, state, db_user, db, tariff, period)
             'Перейдите в раздел «Подписка» для подключения.',
         ).format(
             name=html.escape(tariff.name),
-            traffic=format_traffic(subscription.traffic_limit_gb),
+            traffic=format_traffic(subscription.traffic_limit_gb, language=texts.language),
             devices=subscription.device_limit,
-            period=format_period(period),
+            period=format_period(period, language=texts.language),
             price=format_price_kopeks(abs(payment.amount_kopeks)),
         ),
         reply_markup=InlineKeyboardMarkup(
@@ -2113,7 +2113,7 @@ async def select_tariff_period(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
     confirm_keyboard = await _bind_tariff_purchase_keyboard(
         get_tariff_confirm_keyboard(tariff_id, period, db_user.language),
@@ -2149,7 +2149,7 @@ async def select_tariff_period(
                 name=html.escape(tariff.name),
                 traffic=traffic,
                 devices=shown_device_limit,
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 discount=discount_text,
                 total=format_price_kopeks(final_price),
                 balance=format_price_kopeks(user_balance),
@@ -2224,7 +2224,7 @@ async def select_tariff_period(
                 '⚠️ Не хватает: <b>{missing}</b>',
             ).format(
                 name=html.escape(tariff.name),
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 price=format_price_kopeks(final_price),
                 balance=format_price_kopeks(user_balance),
                 missing=format_price_kopeks(missing),
@@ -2577,7 +2577,7 @@ async def confirm_daily_tariff_purchase(
         # Payment is committed. Do not overwrite a newer dialog with its result.
         return
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
     await callback.message.edit_text(
         texts.t(
@@ -2866,7 +2866,7 @@ async def show_tariff_extend(
         await callback.answer()
         return
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
     # Проверяем есть ли у пользователя скидки по периодам
     promo_group = db_user.get_primary_promo_group() if hasattr(db_user, 'get_primary_promo_group') else None
@@ -2977,7 +2977,7 @@ async def select_tariff_extend_period(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
     if user_balance >= final_price:
         discount_text = ''
@@ -3002,7 +3002,7 @@ async def select_tariff_extend_period(
                 name=html.escape(tariff.name),
                 traffic=traffic,
                 devices=actual_device_limit,
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 discount=discount_text,
                 total=format_price_kopeks(final_price),
                 balance=format_price_kopeks(user_balance),
@@ -3044,7 +3044,7 @@ async def select_tariff_extend_period(
                 '⚠️ Не хватает: <b>{missing}</b>',
             ).format(
                 name=html.escape(tariff.name),
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 price=format_price_kopeks(final_price),
                 balance=format_price_kopeks(user_balance),
                 missing=format_price_kopeks(missing),
@@ -3309,7 +3309,7 @@ async def confirm_tariff_extend(
 
         await state.clear()
 
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
         await callback.message.edit_text(
             texts.t(
@@ -3324,7 +3324,7 @@ async def confirm_tariff_extend(
                 name=html.escape(tariff.name),
                 traffic=traffic,
                 devices=actual_device_limit,
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 price=format_price_kopeks(final_price),
             ),
             reply_markup=InlineKeyboardMarkup(
@@ -3695,7 +3695,7 @@ async def select_tariff_switch(
                 )
                 return
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
     # Проверяем, суточный ли это тариф
     is_daily = getattr(tariff, 'is_daily', False)
@@ -3858,7 +3858,7 @@ async def select_tariff_switch_period(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(tariff.traffic_limit_gb)
+    traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
     # Текущая подписка (с которой переходят): у старой подписки тарифа нет,
     # и в подтверждении так и пишем, а не «Неизвестно».
@@ -3922,7 +3922,7 @@ async def select_tariff_switch_period(
                 '⚠️ Не хватает: <b>{missing}</b>',
             ).format(
                 name=html.escape(tariff.name),
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 price=format_price_kopeks(final_price),
                 balance=format_price_kopeks(user_balance),
                 missing=format_price_kopeks(missing),
@@ -4221,7 +4221,7 @@ async def confirm_tariff_switch(
 
         await state.clear()
 
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
         # При смене тарифа устанавливается оплаченный период
         time_info = texts.t('TARIFF_SWITCH_PERIOD_LINE', '📅 Период: {days} дней').format(days=days_for_new_tariff)
@@ -4521,7 +4521,7 @@ async def confirm_daily_tariff_switch(
 
         await state.clear()
 
-        traffic = format_traffic(tariff.traffic_limit_gb)
+        traffic = format_traffic(tariff.traffic_limit_gb, language=texts.language)
 
         await callback.message.edit_text(
             texts.t(
@@ -4958,8 +4958,8 @@ async def preview_instant_switch(
     # Проверяем баланс
     user_balance = db_user.balance_kopeks or 0
 
-    traffic = format_traffic(new_tariff.traffic_limit_gb)
-    current_traffic = format_traffic(current_tariff.traffic_limit_gb)
+    traffic = format_traffic(new_tariff.traffic_limit_gb, language=texts.language)
+    current_traffic = format_traffic(current_tariff.traffic_limit_gb, language=texts.language)
 
     # Проверяем, суточный ли новый тариф
     is_new_daily = getattr(new_tariff, 'is_daily', False)
@@ -5138,6 +5138,61 @@ async def preview_instant_switch(
     await callback.answer()
 
 
+def _localize_recurrent_purchase_error(error: object, language: str) -> str:
+    """Translate only known application errors; preserve provider/custom details."""
+    import re
+
+    value = str(error)
+    texts = get_texts(language)
+    keys = {
+        'Оформление через Lava недоступно при подписке другого тарифа — оплатите с баланса': 'RECURRENT_UI_LAVA_OTHER_TARIFF',
+        'Оформление через Lava недоступно для триальной подписки — оплатите с баланса': 'RECURRENT_UI_LAVA_TRIAL',
+        'Оформление через Lava недоступно для этой подписки — оплатите с баланса': 'RECURRENT_UI_LAVA_UNAVAILABLE',
+        'СБП-оформление недоступно при подписке другого тарифа — оплатите с баланса': 'RECURRENT_UI_SBP_OTHER_TARIFF',
+        'СБП-оформление недоступно для триальной подписки — оплатите с баланса': 'RECURRENT_UI_SBP_TRIAL',
+        'СБП-оформление недоступно для этой подписки — оплатите с баланса': 'RECURRENT_UI_SBP_UNAVAILABLE',
+        'Для перехода с classic или другого тарифа оплатите с баланса': 'RECURRENT_UI_OTHER_TARIFF',
+        'Тариф уже активен в другой подписке — выберите её для продления': 'RECURRENT_UI_OTHER_SUBSCRIPTION',
+        'Продукт Lava недоступен': 'RECURRENT_UI_LAVA_PRODUCT_UNAVAILABLE',
+        'Продукт Lava дешевле продления с выбранными устройствами — оплатите с баланса': 'RECURRENT_UI_LAVA_PRODUCT_CHEAPER',
+        'Для триальной подписки оплатите с баланса': 'RECURRENT_UI_TRIAL_BALANCE',
+        'Для тарифа не задан продукт Lava — автопродление недоступно': 'RECURRENT_UI_LAVA_NO_PRODUCT',
+        'Пользователь не найден': 'RECURRENT_UI_USER_NOT_FOUND',
+        'Продукт Lava недоступен — попробуйте позже': 'RECURRENT_UI_LAVA_TRY_LATER',
+        'Продукт Lava не имеет цены — автопродление недоступно': 'RECURRENT_UI_LAVA_NO_PRICE',
+        'invalid_provider': 'RECURRENT_UI_INVALID_PROVIDER',
+        'invalid_recurrent_price': 'RECURRENT_UI_INVALID_PRICE',
+        'checkout_closed': 'RECURRENT_UI_CHECKOUT_CLOSED',
+        'device_consent_required': 'RECURRENT_UI_DEVICE_CONSENT',
+        'checkout_conflict': 'RECURRENT_UI_CHECKOUT_CONFLICT',
+        'invalid_device_limit': 'RECURRENT_UI_INVALID_DEVICE_LIMIT',
+        'quote_unavailable': 'RECURRENT_UI_QUOTE_UNAVAILABLE',
+        'quote_expired': 'RECURRENT_UI_QUOTE_EXPIRED',
+        'Подписка не найдена': 'SUBSCRIPTION_NOT_FOUND',
+        'tariff_unavailable': 'TARIFF_PURCHASE_DEVICE_SELECTION_CHANGED',
+        'device_selection_not_available': 'TARIFF_PURCHASE_DEVICE_SELECTION_CHANGED',
+        'quote_changed': 'CISREC_ERROR_QUOTECHANGED',
+    }
+    if value in keys:
+        return texts.t(keys[value], value)
+    match = re.fullmatch(
+        'Продукт Lava стоит (?P<price>\\d+\\.\\d{2}) ₽, а продление подписки — (?P<renewal>\\d+\\.\\d{2}) ₽ за (?P<days>\\d+) дн\\. Заведите продукт с актуальной ценой\\.',
+        value,
+    )
+    if match:
+        return texts.t(
+            'RECURRENT_UI_LAVA_PRICE_MISMATCH',
+            'Продукт Lava стоит {price} ₽, а продление подписки — {renewal} ₽ за {days} дн. Заведите продукт с актуальной ценой.',
+        ).format(**match.groupdict())
+    match = re.fullmatch('Тариф не имеет цены за период (?P<days>\\d+) дней — СБП-автопродление недоступно', value)
+    if match:
+        return texts.t(
+            'RECURRENT_UI_SBP_NO_PERIOD_PRICE',
+            'Тариф не имеет цены за период {days} дней — СБП-автопродление недоступно',
+        ).format(**match.groupdict())
+    return value
+
+
 async def _prepare_telegram_recurrent_devices(callback, db_user, db, state, tariff, provider):
     """Show the actual provider charge, then confirm the same bound device intent."""
     if state is None:
@@ -5191,7 +5246,7 @@ async def _prepare_telegram_recurrent_devices(callback, db_user, db, state, tari
                     channel='telegram',
                 )
             except ValueError as error:
-                await callback.answer(str(error), show_alert=True)
+                await callback.answer(_localize_recurrent_purchase_error(error, db_user.language), show_alert=True)
                 return None
             token = uuid4().hex[:16]
             consent = dict(
@@ -5264,7 +5319,7 @@ async def purchase_tariff_with_lava(
     try:
         result = await purchase_tariff_with_lava_recurring(db, user=db_user, tariff=tariff, **device_arguments)
     except ValueError as error:
-        await callback.answer(str(error), show_alert=True)
+        await callback.answer(_localize_recurrent_purchase_error(error, db_user.language), show_alert=True)
         return
     except Exception:
         await callback.answer(
@@ -5323,7 +5378,7 @@ async def purchase_tariff_with_cashera(
     try:
         result = await purchase_tariff_with_cashera_recurring(db, user=db_user, tariff=tariff, **device_arguments)
     except ValueError as error:
-        await callback.answer(str(error), show_alert=True)
+        await callback.answer(_localize_recurrent_purchase_error(error, db_user.language), show_alert=True)
         return
     except Exception:
         await callback.answer(
@@ -5664,7 +5719,7 @@ async def confirm_instant_switch(
 
         await state.clear()
 
-        traffic = format_traffic(new_tariff.traffic_limit_gb)
+        traffic = format_traffic(new_tariff.traffic_limit_gb, language=texts.language)
 
         # Для суточного тарифа другое сообщение об успехе
         if is_new_daily:
@@ -5931,7 +5986,7 @@ async def return_to_saved_tariff_cart(
         custom_traffic_gb=custom_traffic_gb,
     )
     user_balance = db_user.balance_kopeks or 0
-    traffic = format_traffic(traffic_limit_gb)
+    traffic = format_traffic(traffic_limit_gb, language=texts.language)
 
     # Проверяем баланс (при 100% скидке — пропускаем)
     if total_price > 0 and user_balance < total_price:
@@ -5971,7 +6026,7 @@ async def return_to_saved_tariff_cart(
                     '⚠️ Не хватает: <b>{missing}</b>',
                 ).format(
                     name=html.escape(tariff.name),
-                    period=format_period(period),
+                    period=format_period(period, language=texts.language),
                     price=format_price_kopeks(total_price),
                     balance=format_price_kopeks(user_balance),
                     missing=format_price_kopeks(missing),
@@ -5998,7 +6053,7 @@ async def return_to_saved_tariff_cart(
                     '⚠️ Не хватает: <b>{missing}</b>',
                 ).format(
                     name=html.escape(tariff.name),
-                    period=format_period(period),
+                    period=format_period(period, language=texts.language),
                     price=format_price_kopeks(total_price),
                     balance=format_price_kopeks(user_balance),
                     missing=format_price_kopeks(missing),
@@ -6074,7 +6129,7 @@ async def return_to_saved_tariff_cart(
                 name=html.escape(tariff.name),
                 traffic=traffic,
                 devices=effective_device_limit,
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 discount=discount_text,
                 total=format_price_kopeks(total_price),
                 balance=format_price_kopeks(user_balance),
@@ -6129,7 +6184,7 @@ async def return_to_saved_tariff_cart(
                 name=html.escape(tariff.name),
                 traffic=traffic,
                 devices=effective_device_limit,
-                period=format_period(period),
+                period=format_period(period, language=texts.language),
                 discount=discount_text,
                 total=format_price_kopeks(total_price),
                 balance=format_price_kopeks(user_balance),
@@ -6173,7 +6228,7 @@ async def purchase_tariff_with_sbp(
     try:
         result = await purchase_tariff_with_sbp_recurring(db, user=db_user, tariff=tariff, **device_arguments)
     except ValueError as error:
-        await callback.answer(str(error), show_alert=True)
+        await callback.answer(_localize_recurrent_purchase_error(error, db_user.language), show_alert=True)
         return
     except RuntimeError:
         await callback.answer(

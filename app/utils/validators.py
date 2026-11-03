@@ -2,6 +2,8 @@ import html as html_module
 import re
 from datetime import datetime
 
+from app.localization.texts import get_texts
+
 
 ALLOWED_HTML_TAGS = {
     'b',
@@ -229,7 +231,7 @@ def validate_referral_code(code: str) -> bool:
     return validate_promocode(code)
 
 
-def validate_html_tags(text: str) -> tuple[bool, str]:
+def validate_html_tags(text: str, language: str = 'ru') -> tuple[bool, str]:
     if not text:
         return True, ''
 
@@ -244,12 +246,14 @@ def validate_html_tags(text: str) -> tuple[bool, str]:
         tag_name_lower = tag_name.lower()
 
         if tag_name_lower not in ALLOWED_HTML_TAGS and tag_name_lower not in SELF_CLOSING_TAGS:
-            return False, f'Неподдерживаемый тег: <{tag_name}>'
+            return False, get_texts(language).t('HTML_UNSUPPORTED_TAG', 'Неподдерживаемый тег: <{tag}>').format(
+                tag=tag_name
+            )
 
-    return validate_html_structure(text)
+    return validate_html_structure(text, language)
 
 
-def validate_html_structure(text: str) -> tuple[bool, str]:
+def validate_html_structure(text: str, language: str = 'ru') -> tuple[bool, str]:
     tag_pattern = r'<(/?)([a-zA-Z][a-zA-Z0-9-]*)[^<>]*?/?>'
 
     matches = re.finditer(tag_pattern, text)
@@ -267,14 +271,18 @@ def validate_html_structure(text: str) -> tuple[bool, str]:
             tag_stack.append(tag_name)
         else:
             if not tag_stack:
-                return False, f'Закрывающий тег без открывающего: </{tag_name}>'
+                return False, get_texts(language).t(
+                    'HTML_CLOSING_WITHOUT_OPENING', 'Закрывающий тег без открывающего: </{tag}>'
+                ).format(tag=tag_name)
 
             last_tag = tag_stack.pop()
             if last_tag != tag_name:
-                return False, f'Неправильная вложенность тегов: ожидался </{last_tag}>, найден </{tag_name}>'
+                return False, get_texts(language).t(
+                    'HTML_WRONG_NESTING', 'Неправильная вложенность тегов: ожидался </{expected}>, найден </{actual}>'
+                ).format(expected=last_tag, actual=tag_name)
 
     if tag_stack:
-        return False, f'Незакрытый тег: <{tag_stack[-1]}>'
+        return False, get_texts(language).t('HTML_UNCLOSED_TAG', 'Незакрытый тег: <{tag}>').format(tag=tag_stack[-1])
 
     return True, ''
 
@@ -297,8 +305,10 @@ def fix_html_tags(text: str) -> str:
     return result
 
 
-def get_html_help_text() -> str:
-    return """<b>Поддерживаемые HTML теги:</b>
+def get_html_help_text(language: str = 'ru') -> str:
+    return get_texts(language).t(
+        'HTML_HELP_TEXT',
+        """<b>Поддерживаемые HTML теги:</b>
 
 • <code>&lt;b&gt;жирный&lt;/b&gt;</code> или <code>&lt;strong&gt;&lt;/strong&gt;</code>
 • <code>&lt;i&gt;курсив&lt;/i&gt;</code> или <code>&lt;em&gt;&lt;/em&gt;</code>
@@ -320,7 +330,8 @@ def get_html_help_text() -> str:
 <code>&lt;b&gt;жирный &lt;i&gt;курсив&lt;/b&gt;&lt;/i&gt;</code>
 
 <b>✅ Правильно:</b>
-<code>&lt;b&gt;жирный &lt;i&gt;курсив&lt;/i&gt;&lt;/b&gt;</code>"""
+<code>&lt;b&gt;жирный &lt;i&gt;курсив&lt;/i&gt;&lt;/b&gt;</code>""",
+    )
 
 
 def validate_rules_content(text: str) -> tuple[bool, str, str | None]:

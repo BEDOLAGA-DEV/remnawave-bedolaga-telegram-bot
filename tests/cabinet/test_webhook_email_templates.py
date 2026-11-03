@@ -30,7 +30,7 @@ def test_every_webhook_type_has_email_template_in_every_language():
 
 def test_webhook_email_language_fallback_to_ru():
     templates = EmailNotificationTemplates()
-    fallback = templates.get_template(NotificationType.WEBHOOK_SUB_EXPIRED, 'fa', {})
+    fallback = templates.get_template(NotificationType.WEBHOOK_SUB_EXPIRED, 'xx', {})
     ru = templates.get_template(NotificationType.WEBHOOK_SUB_EXPIRED, 'ru', {})
     assert fallback['subject'] == ru['subject']
 

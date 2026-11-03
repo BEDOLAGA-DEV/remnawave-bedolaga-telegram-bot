@@ -169,7 +169,7 @@ async def _build_overview(
                 text=texts.t(
                     'ADMIN_PRIVACY_POLICY_DISPLAY_MODE_BUTTON',
                     '👁 Отображение: {mode}',
-                ).format(mode=display_mode_label(settings.PRIVACY_POLICY_DISPLAY_MODE)),
+                ).format(mode=display_mode_label(settings.PRIVACY_POLICY_DISPLAY_MODE, language=db_user.language)),
                 callback_data='admin_privacy_policy_display_mode',
             )
         ]
@@ -251,7 +251,7 @@ async def cycle_privacy_policy_display_mode(
     db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
-    new_mode = await cycle_display_mode_setting(callback, db, 'PRIVACY_POLICY_DISPLAY_MODE')
+    new_mode = await cycle_display_mode_setting(callback, db, 'PRIVACY_POLICY_DISPLAY_MODE', language=db_user.language)
     if new_mode is None:
         return
 
@@ -264,7 +264,7 @@ async def cycle_privacy_policy_display_mode(
         texts.t(
             'ADMIN_DISPLAY_MODE_CHANGED',
             'Отображение: {mode}',
-        ).format(mode=display_mode_label(new_mode))
+        ).format(mode=display_mode_label(new_mode, language=db_user.language))
     )
 
 

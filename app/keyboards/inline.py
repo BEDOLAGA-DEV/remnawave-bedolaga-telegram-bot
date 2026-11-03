@@ -552,7 +552,9 @@ def _build_cabinet_main_menu_keyboard(
                         )
                     ]
                     if section_cfg.get('enabled', True):
-                        admin_web_text = section_cfg.get('labels', {}).get(language, '') or '🖥 Веб-Админка'
+                        admin_web_text = section_cfg.get('labels', {}).get(language, '') or texts.t(
+                            'MENU_WEB_ADMIN', '🖥 Веб-Админка'
+                        )
                         admin_row.append(_cabinet_button(admin_web_text, '/admin', 'admin_panel'))
                     keyboard_rows.append(admin_row)
                     continue  # bypass max_per_row chunking
@@ -564,7 +566,9 @@ def _build_cabinet_main_menu_keyboard(
 
     # -- Moderator panel (only when not admin — admin row handled above) --
     if is_moderator and not is_admin:
-        keyboard_rows.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
+        keyboard_rows.append(
+            [InlineKeyboardButton(text=get_texts(language).t('MODERATION_BUTTON'), callback_data='moderator_panel')]
+        )
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
@@ -805,7 +809,9 @@ def get_main_menu_keyboard(
         logger.debug('DEBUG KEYBOARD: Админ кнопка НЕ добавлена')
     # Moderator access (limited support panel)
     if (not is_admin) and is_moderator:
-        keyboard.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
+        keyboard.append(
+            [InlineKeyboardButton(text=get_texts(language).t('MODERATION_BUTTON'), callback_data='moderator_panel')]
+        )
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -1346,7 +1352,11 @@ def get_payment_methods_keyboard_with_cart(
 
     # Добавляем кнопку "Очистить корзину"
     keyboard.inline_keyboard.append(
-        [InlineKeyboardButton(text='🗑️ Очистить корзину и вернуться', callback_data='clear_saved_cart')]
+        [
+            InlineKeyboardButton(
+                text=get_texts(language).t('CART_CLEAR_AND_RETURN_BUTTON'), callback_data='clear_saved_cart'
+            )
+        ]
     )
 
     # Добавляем кнопку возврата к оформлению подписки
@@ -1364,8 +1374,12 @@ def get_subscription_confirm_keyboard_with_cart(language: str = 'ru') -> InlineK
     texts = get_texts(language)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='✅ Подтвердить покупку', callback_data='subscription_confirm')],
-            [InlineKeyboardButton(text='🗑️ Очистить корзину', callback_data='clear_saved_cart')],
+            [
+                InlineKeyboardButton(
+                    text=get_texts(language).t('TARIFF_PURCHASE_CONFIRM_BUTTON'), callback_data='subscription_confirm'
+                )
+            ],
+            [InlineKeyboardButton(text=get_texts(language).t('CART_CLEAR_BUTTON'), callback_data='clear_saved_cart')],
             [
                 InlineKeyboardButton(
                     text=texts.BACK,
@@ -1396,7 +1410,7 @@ def get_insufficient_balance_keyboard_with_cart(
         0,
         [
             InlineKeyboardButton(
-                text='🗑️ Очистить корзину и вернуться',
+                text=get_texts(language).t('CART_CLEAR_AND_RETURN_BUTTON'),
                 callback_data='clear_saved_cart',
             )
         ],
@@ -1951,7 +1965,9 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_SEVERPAY', f'💳 Банковская карта ({severpay_name})'),
+                    text=texts.t(
+                        'PAYMENT_SEVERPAY', texts.t('PAYMENT_BANK_CARD_PROVIDER').format(provider=severpay_name)
+                    ),
                     callback_data=_build_callback('severpay'),
                 )
             ]
@@ -2198,7 +2214,10 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_LAVA_CARD', f'💳 {lava_card_name} - через {lava_name}'),
+                    text=texts.t(
+                        'PAYMENT_LAVA_CARD',
+                        texts.t('PAYMENT_CARD_VIA_PROVIDER').format(method=lava_card_name, provider=lava_name),
+                    ),
                     callback_data=_build_callback('lava_card'),
                 )
             ]
@@ -2211,7 +2230,10 @@ def get_payment_methods_keyboard(amount_kopeks: int, language: str = DEFAULT_LAN
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text=texts.t('PAYMENT_LAVA_SBP', f'📱 {lava_sbp_name} - через {lava_name}'),
+                    text=texts.t(
+                        'PAYMENT_LAVA_SBP',
+                        texts.t('PAYMENT_SBP_VIA_PROVIDER').format(method=lava_sbp_name, provider=lava_name),
+                    ),
                     callback_data=_build_callback('lava_sbp'),
                 )
             ]
@@ -3016,7 +3038,8 @@ def get_reset_traffic_confirm_keyboard(
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=f'✅ Сбросить за {settings.format_price(price_kopeks)}', callback_data='confirm_reset_traffic'
+                    text=texts.t('RESET_TRAFFIC_PRICE_BUTTON', '').format(price=settings.format_price(price_kopeks)),
+                    callback_data='confirm_reset_traffic',
                 )
             ]
         )
@@ -3974,9 +3997,15 @@ def get_ticket_notification_keyboard(
     url_row: list[InlineKeyboardButton] = []
     if username:
         safe_username = username.lstrip('@')
-        url_row.append(InlineKeyboardButton(text='✉ ЛС', url=f'tg://resolve?domain={safe_username}'))
+        url_row.append(
+            InlineKeyboardButton(
+                text=get_texts(language).t('TICKET_DIRECT_MESSAGE_BUTTON'), url=f'tg://resolve?domain={safe_username}'
+            )
+        )
     if (tg_id := _coerce_tg_user_id(telegram_id)) is not None:
-        url_row.append(InlineKeyboardButton(text='👤 Профиль', url=f'tg://user?id={tg_id}'))
+        url_row.append(
+            InlineKeyboardButton(text=get_texts(language).t('TICKET_PROFILE_BUTTON'), url=f'tg://user?id={tg_id}')
+        )
     if url_row:
         keyboard.append(url_row)
 
@@ -3985,7 +4014,7 @@ def get_ticket_notification_keyboard(
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    text='👤 К пользователю',
+                    text=get_texts(language).t('TICKET_MANAGE_USER_BUTTON'),
                     callback_data=f'admin_user_manage_{user_id}_from_ticket_{ticket_id}',
                 )
             ]

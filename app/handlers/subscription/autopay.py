@@ -794,7 +794,9 @@ async def handle_subscription_cancel(callback: types.CallbackQuery, state: FSMCo
 
     await show_main_menu(callback, db_user, db)
 
-    await callback.answer('❌ Покупка отменена')
+    await callback.answer(
+        get_texts(getattr(db_user, 'language', None)).t('SUBSCRIPTION_UI_PURCHASE_CANCELLED', '❌ Покупка отменена')
+    )
 
 
 async def _show_previous_configuration_step(
@@ -805,7 +807,7 @@ async def _show_previous_configuration_step(
     db: AsyncSession,
 ):
     if await _should_show_countries_management(db_user):
-        countries = await _get_available_countries(db_user.promo_group_id)
+        countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
         data = await state.get_data()
         selected_countries = data.get('countries', [])
 

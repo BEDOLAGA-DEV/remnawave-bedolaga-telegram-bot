@@ -1601,13 +1601,13 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
             # «не хватает 0.40 ₽» вместо обрезанного «0 ₽» от integer division.
             missing_label = texts.format_price(missing, round_kopeks=False)
             await callback.answer(
-                texts.t('INSUFFICIENT_FUNDS_DETAILED', f'❌ Недостаточно средств. Не хватает {missing_label}'),
+                texts.t('INSUFFICIENT_FUNDS_DETAILED').format(missing=missing_label),
                 show_alert=True,
             )
             return
     except Exception as e:
         logger.error('Ошибка расчёта стоимости при активации', error=e)
-        await callback.answer('❌ Ошибка расчёта стоимости', show_alert=True)
+        await callback.answer(texts.t('PURCHASE_PRICE_CALCULATION_ERROR'), show_alert=True)
         return
 
     try:
@@ -1628,9 +1628,8 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
 
             await callback.answer(
                 texts.t(
-                    'ACTIVATION_SUCCESS',
-                    f'✅ Подписка продлена на {best_period} дней за {pricing.final_total // 100} ₽!',
-                ),
+                    'SUBSCRIPTION_QUICK_RENEWED',
+                ).format(days=best_period, amount=pricing.final_total // 100),
                 show_alert=True,
             )
         else:
@@ -1645,7 +1644,7 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
                 consume_promo_offer=consume_promo,
             )
             if not success:
-                await callback.answer('❌ Недостаточно средств', show_alert=True)
+                await callback.answer(texts.t('TARIFF_PURCHASE_INSUFFICIENT_FUNDS'), show_alert=True)
                 return
 
             # Создание новой подписки
@@ -1673,9 +1672,7 @@ async def handle_activate_button(callback: types.CallbackQuery, db_user: User, d
             )
 
             await callback.answer(
-                texts.t(
-                    'ACTIVATION_SUCCESS', f'✅ Подписка активирована на {best_period} дней за {best_price // 100} ₽!'
-                ),
+                texts.t('SUBSCRIPTION_QUICK_ACTIVATED').format(days=best_period, amount=best_price // 100),
                 show_alert=True,
             )
 

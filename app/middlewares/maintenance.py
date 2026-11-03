@@ -55,7 +55,14 @@ class MaintenanceMiddleware(BaseMiddleware):
         if SupportSettingsService.is_moderator(user.id):
             return await handler(event, data)
 
-        maintenance_message = maintenance_service.get_maintenance_message()
+        db_user = data.get('db_user')
+        language = (
+            getattr(db_user, 'language', None) or getattr(user, 'language_code', None) or settings.DEFAULT_LANGUAGE
+        )
+        language = language.lower().split('-')[0]
+        if language == 'uk':
+            language = 'ua'
+        maintenance_message = maintenance_service.get_maintenance_message(language)
 
         try:
             if isinstance(event, Message):

@@ -5,6 +5,7 @@
 
 import html
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -20,9 +21,67 @@ from app.database.models import (
     WithdrawalRequest,
     WithdrawalRequestStatus,
 )
+from app.localization.texts import get_texts
 
 
 logger = structlog.get_logger(__name__)
+
+
+_WITHDRAWAL_DETAIL_KEYS = {
+    'LOW': 'ADMIN_WITHDRAWAL_DETAIL_LOW',
+    'MEDIUM': 'ADMIN_WITHDRAWAL_DETAIL_MEDIUM',
+    'HIGH': 'ADMIN_WITHDRAWAL_DETAIL_HIGH',
+    'CRITICAL': 'ADMIN_WITHDRAWAL_DETAIL_CRITICAL',
+    '🔴 РЕКОМЕНДУЕТСЯ ОТКЛОНИТЬ': 'ADMIN_WITHDRAWAL_DETAIL_REJECT',
+    '🟠 ТРЕБУЕТ ПРОВЕРКИ': 'ADMIN_WITHDRAWAL_DETAIL_REVIEW_HIGH',
+    '🟡 Рекомендуется проверить': 'ADMIN_WITHDRAWAL_DETAIL_REVIEW',
+    '🟢 Можно одобрить': 'ADMIN_WITHDRAWAL_DETAIL_APPROVE',
+    '🔴 Нет рефералов, но есть реферальный доход!': 'ADMIN_WITHDRAWAL_DETAIL_NO_REFERRALS',
+    '⚠️ Весь доход от одного реферала': 'ADMIN_WITHDRAWAL_DETAIL_SINGLE_REFERRAL',
+    'Заявка не найдена': 'ADMIN_WITHDRAWAL_DETAIL_NOT_FOUND',
+    'Заявка уже обработана': 'ADMIN_WITHDRAWAL_DETAIL_PROCESSED',
+    'Пользователь не найден': 'ADMIN_WITHDRAWAL_DETAIL_USER_NOT_FOUND',
+}
+_WITHDRAWAL_DETAIL_PATTERNS = [
+    (
+        '🔴\\ Пополнил\\ (?P<v0>-?\\d+(?:\\.\\d+)?)₽,\\ но\\ ничего\\ не\\ покупал!',
+        'ADMIN_WITHDRAWAL_DETAIL_NO_PURCHASES',
+        '🔴 Пополнил {v0}₽, но ничего не покупал!',
+    ),
+    (
+        '🟠\\ Пополнил\\ (?P<v0>-?\\d+(?:\\.\\d+)?)₽,\\ потратил\\ только\\ (?P<v1>-?\\d+(?:\\.\\d+)?)₽',
+        'ADMIN_WITHDRAWAL_DETAIL_LOW_SPENDING',
+        '🟠 Пополнил {v0}₽, потратил только {v1}₽',
+    ),
+    ('(?P<v0>-?\\d+(?:\\.\\d+)?)\\ пополнений/мес', 'ADMIN_WITHDRAWAL_DETAIL_TOPUP_COUNT', '{v0} пополнений/мес'),
+    ('сумма\\ (?P<v0>-?\\d+(?:\\.\\d+)?)₽', 'ADMIN_WITHDRAWAL_DETAIL_TOPUP_AMOUNT', 'сумма {v0}₽'),
+    (
+        '⚠️\\ Подозрительная\\ активность\\ у\\ (?P<v0>-?\\d+(?:\\.\\d+)?)\\ реферала\\(ов\\)',
+        'ADMIN_WITHDRAWAL_DETAIL_SUSPICIOUS',
+        '⚠️ Подозрительная активность у {v0} реферала(ов)',
+    ),
+    (
+        '⚠️\\ (?P<v0>-?\\d+(?:\\.\\d+)?)\\ начислений\\ за\\ неделю\\ \\((?P<v1>-?\\d+(?:\\.\\d+)?)₽\\)',
+        'ADMIN_WITHDRAWAL_DETAIL_RECENT',
+        '⚠️ {v0} начислений за неделю ({v1}₽)',
+    ),
+    (
+        'Недостаточно\\ средств\\ на\\ балансе\\.\\ Баланс:\\ (?P<v0>-?\\d+(?:\\.\\d+)?)₽',
+        'ADMIN_WITHDRAWAL_DETAIL_INSUFFICIENT',
+        'Недостаточно средств на балансе. Баланс: {v0}₽',
+    ),
+]
+
+
+def localize_withdrawal_detail(value: str, language: str = 'ru') -> str:
+    """Translate only the service's closed vocabulary, preserving unknown details."""
+    texts = get_texts(language)
+    if key := _WITHDRAWAL_DETAIL_KEYS.get(value):
+        return texts.t(key, value)
+    for pattern, key, default in _WITHDRAWAL_DETAIL_PATTERNS:
+        if match := re.fullmatch(pattern, value):
+            return texts.t(key, default).format(**match.groupdict())
+    return value
 
 
 class ReferralWithdrawalService:
@@ -617,60 +676,104 @@ class ReferralWithdrawalService:
 
         return text
 
-    def format_analysis_for_admin(self, analysis: dict) -> str:
+    def format_analysis_for_admin(self, analysis: dict, language: str = 'ru') -> str:
         """Форматирует анализ для отображения админу."""
         risk_emoji = {'low': '🟢', 'medium': '🟡', 'high': '🟠', 'critical': '🔴'}
 
-        text = f"""
-🔍 <b>Анализ на подозрительную активность</b>
-
-{risk_emoji.get(analysis['risk_level'], '⚪')} Уровень риска: <b>{analysis['risk_level'].upper()}</b>
-📊 Оценка риска: <b>{analysis['risk_score']}/100</b>
-{analysis.get('recommendation_text', '')}
-"""
+        text = (
+            get_texts(language)
+            .t(
+                'ADMIN_WITHDRAWAL_UI_000',
+                '\n🔍 <b>Анализ на подозрительную активность</b>\n\n{v0} Уровень риска: <b>{v1}</b>\n📊 Оценка риска: <b>{v2}/100</b>\n{v3}\n',
+            )
+            .format(
+                v0=risk_emoji.get(analysis['risk_level'], '⚪'),
+                v1=localize_withdrawal_detail(analysis['risk_level'].upper(), language),
+                v2=analysis['risk_score'],
+                v3=localize_withdrawal_detail(analysis.get('recommendation_text', ''), language),
+            )
+        )
 
         if analysis.get('flags'):
-            text += '\n⚠️ <b>Предупреждения:</b>\n'
+            text += get_texts(language).t('ADMIN_WITHDRAWAL_UI_001', '\n⚠️ <b>Предупреждения:</b>\n')
             for flag in analysis['flags']:
-                text += f'  {flag}\n'
+                text += f'  {localize_withdrawal_detail(flag, language)}\n'
 
         details = analysis.get('details', {})
 
         # Статистика баланса
         if 'balance_stats' in details:
             bs = details['balance_stats']
-            text += '\n💰 <b>Баланс:</b>\n'
-            text += f'• Заработано с рефералов: {bs["total_earned"] / 100:.0f}₽\n'
-            text += f'• Собственные пополнения: {bs["own_deposits"] / 100:.0f}₽\n'
-            text += f'• Потрачено: {bs["spending"] / 100:.0f}₽\n'
-            text += f'• Уже выведено: {bs["withdrawn"] / 100:.0f}₽\n'
+            text += get_texts(language).t('ADMIN_WITHDRAWAL_UI_002', '\n💰 <b>Баланс:</b>\n')
+            text += (
+                get_texts(language)
+                .t('ADMIN_WITHDRAWAL_UI_003', '• Заработано с рефералов: {v0:.0f}₽\n')
+                .format(v0=bs['total_earned'] / 100)
+            )
+            text += (
+                get_texts(language)
+                .t('ADMIN_WITHDRAWAL_UI_004', '• Собственные пополнения: {v0:.0f}₽\n')
+                .format(v0=bs['own_deposits'] / 100)
+            )
+            text += (
+                get_texts(language)
+                .t('ADMIN_WITHDRAWAL_UI_005', '• Потрачено: {v0:.0f}₽\n')
+                .format(v0=bs['spending'] / 100)
+            )
+            text += (
+                get_texts(language)
+                .t('ADMIN_WITHDRAWAL_UI_006', '• Уже выведено: {v0:.0f}₽\n')
+                .format(v0=bs['withdrawn'] / 100)
+            )
 
         # Статистика по рефералам
         if 'referral_deposits' in details:
             rd = details['referral_deposits']
-            text += '\n👥 <b>Рефералы:</b>\n'
-            text += f'• Всего: {details.get("referral_count", 0)}\n'
-            text += f'• Платящих: {rd["paying_referrals"]}\n'
-            text += f'• Всего пополнений: {rd["total_deposits"]} ({rd["total_amount"] / 100:.0f}₽)\n'
+            text += get_texts(language).t('ADMIN_WITHDRAWAL_UI_007', '\n👥 <b>Рефералы:</b>\n')
+            text += (
+                get_texts(language)
+                .t('ADMIN_WITHDRAWAL_UI_008', '• Всего: {v0}\n')
+                .format(v0=details.get('referral_count', 0))
+            )
+            text += (
+                get_texts(language).t('ADMIN_WITHDRAWAL_UI_009', '• Платящих: {v0}\n').format(v0=rd['paying_referrals'])
+            )
+            text += (
+                get_texts(language)
+                .t('ADMIN_WITHDRAWAL_UI_010', '• Всего пополнений: {v0} ({v1:.0f}₽)\n')
+                .format(v0=rd['total_deposits'], v1=rd['total_amount'] / 100)
+            )
 
         # Подозрительные рефералы
         if details.get('suspicious_referrals'):
-            text += '\n🚨 <b>Подозрительные рефералы:</b>\n'
+            text += get_texts(language).t('ADMIN_WITHDRAWAL_UI_011', '\n🚨 <b>Подозрительные рефералы:</b>\n')
             for sr in details['suspicious_referrals'][:5]:
-                text += f'• {html.escape(sr["name"])}: {sr["deposits_count"]} поп., {sr["deposits_total"] / 100:.0f}₽\n'
-                text += f'  Флаги: {", ".join(sr["flags"])}\n'
+                text += (
+                    get_texts(language)
+                    .t('ADMIN_WITHDRAWAL_UI_013', '• {v0}: {v1} поп., {v2:.0f}₽\n')
+                    .format(v0=html.escape(sr['name']), v1=sr['deposits_count'], v2=sr['deposits_total'] / 100)
+                )
+                text += (
+                    get_texts(language)
+                    .t('ADMIN_WITHDRAWAL_UI_014', '  Флаги: {v0}\n')
+                    .format(v0=', '.join(localize_withdrawal_detail(flag, language) for flag in sr['flags']))
+                )
 
         # Источники дохода
         if 'earnings_by_reason' in details:
-            text += '\n📊 <b>Источники дохода:</b>\n'
+            text += get_texts(language).t('ADMIN_WITHDRAWAL_UI_012', '\n📊 <b>Источники дохода:</b>\n')
             reason_names = {
-                'referral_first_topup': 'Бонус за 1-е пополнение',
-                'referral_commission_topup': 'Комиссия с пополнений',
-                'referral_commission': 'Комиссия с покупок',
+                'referral_first_topup': get_texts(language).t('ADMIN_WITHDRAWAL_UI_015', 'Бонус за 1-е пополнение'),
+                'referral_commission_topup': get_texts(language).t('ADMIN_WITHDRAWAL_UI_016', 'Комиссия с пополнений'),
+                'referral_commission': get_texts(language).t('ADMIN_WITHDRAWAL_UI_017', 'Комиссия с покупок'),
             }
             for reason, data in details['earnings_by_reason'].items():
                 name = reason_names.get(reason, reason)
-                text += f'• {name}: {data["count"]} шт. ({data["total"] / 100:.0f}₽)\n'
+                text += (
+                    get_texts(language)
+                    .t('ADMIN_WITHDRAWAL_UI_018', '• {v0}: {v1} шт. ({v2:.0f}₽)\n')
+                    .format(v0=name, v1=data['count'], v2=data['total'] / 100)
+                )
 
         return text
 

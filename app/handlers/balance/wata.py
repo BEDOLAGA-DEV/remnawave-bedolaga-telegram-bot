@@ -11,8 +11,9 @@ from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
+from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
-from app.services.payment_service import PaymentService, get_user_by_id as fetch_user_by_id
+from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
 from app.utils.timezone import format_local_datetime
@@ -32,23 +33,36 @@ async def start_wata_payment(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        reason = html.escape(
+            getattr(db_user, 'restriction_reason', None)
+            or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
         return
 
     if not settings.is_wata_enabled():
-        await callback.answer('❌ Оплата через WATA временно недоступна', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_WATA_UNAVAILABLE', '❌ Оплата через WATA временно недоступна'), show_alert=True
+        )
         return
 
     message_text = texts.t(
@@ -92,16 +106,27 @@ async def process_wata_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        reason = html.escape(
+            getattr(db_user, 'restriction_reason', None)
+            or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode='HTML',
         )
@@ -109,7 +134,7 @@ async def process_wata_payment_amount(
         return
 
     if not settings.is_wata_enabled():
-        await message.answer('❌ Оплата через WATA временно недоступна')
+        await message.answer(texts.t('SUBSCRIPTION_UI_WATA_UNAVAILABLE', '❌ Оплата через WATA временно недоступна'))
         return
 
     if amount_kopeks < settings.WATA_MIN_AMOUNT_KOPEKS:
@@ -256,31 +281,39 @@ async def process_wata_payment_amount(
 async def check_wata_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
+    db_user: User | None = None,
 ):
+    texts = get_texts(
+        getattr(db_user, 'language', None)
+        or getattr(getattr(callback, 'from_user', None), 'language_code', None)
+        or DEFAULT_LANGUAGE
+    )
+    if db_user is None:
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
+        return
     try:
         local_payment_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_UI_INVALID_ID', '❌ Некорректный идентификатор платежа'), show_alert=True
+        )
+        return
+
+    from app.database.crud.wata import get_wata_payment_by_id
+
+    payment = await get_wata_payment_by_id(db, local_payment_id)
+    if not payment or payment.user_id != db_user.id:
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
         return
 
     payment_service = PaymentService(callback.bot)
     status_info = await payment_service.get_wata_payment_status(db, local_payment_id)
 
     if not status_info:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
         return
 
     payment = status_info['payment']
-
-    user_language = 'ru'
-    try:
-        user = await fetch_user_by_id(db, payment.user_id)
-        if user and getattr(user, 'language', None):
-            user_language = user.language
-    except Exception as error:
-        logger.debug('Не удалось получить пользователя для WATA статуса', error=error)
-
-    texts = get_texts(user_language)
 
     status_labels: dict[str, dict[str, str]] = {
         'Opened': {'emoji': '⏳', 'label': texts.t('WATA_STATUS_OPENED', 'Ожидает оплаты')},
@@ -297,15 +330,26 @@ async def check_wata_payment_status(
         texts.t('WATA_STATUS_TITLE', '💳 <b>Статус платежа WATA</b>'),
         '',
         f'🆔 ID: {payment.payment_link_id}',
-        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}',
-        f'📊 Статус: {label_info["emoji"]} {label_info["label"]}',
-        f'📅 Создан: {format_local_datetime(payment.created_at, "%d.%m.%Y %H:%M") if payment.created_at else "—"}',
+        texts.t('PAYMENT_UI_AMOUNT', '💰 Сумма: {value1}').format(value1=settings.format_price(payment.amount_kopeks)),
+        texts.t('PAYMENT_UI_STATUS', '📊 Статус: {value1} {value2}').format(
+            value1=label_info['emoji'], value2=label_info['label']
+        ),
+        texts.t('PAYMENT_UI_CREATED', '📅 Создан: {value1}').format(
+            value1=format_local_datetime(payment.created_at, '%d.%m.%Y %H:%M') if payment.created_at else '—'
+        ),
     ]
 
     if payment.is_paid:
-        message_lines.append('\n✅ Платеж успешно завершен! Средства уже на балансе.')
+        message_lines.append(
+            texts.t('PAYMENT_UI_SUCCESS_CREDITED_SHORT', '\n✅ Платеж успешно завершен! Средства уже на балансе.')
+        )
     elif payment.status in {'Opened', 'Closed'}:
-        message_lines.append('\n⏳ Платеж еще не завершен. Завершите оплату по ссылке и проверьте статус позже.')
+        message_lines.append(
+            texts.t(
+                'PAYMENT_UI_WAITING_PAYMENT_LINK',
+                '\n⏳ Платеж еще не завершен. Завершите оплату по ссылке и проверьте статус позже.',
+            )
+        )
 
     await callback.message.answer('\n'.join(message_lines), parse_mode='HTML')
     await callback.answer()

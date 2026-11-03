@@ -212,15 +212,19 @@ class PaymentCommonMixin:
         )
 
         try:
-            payment_method = payment_method_title or 'Банковская карта (YooKassa)'
+            payment_method = payment_method_title or get_texts(
+                getattr(user_snapshot, 'language', None) or settings.DEFAULT_LANGUAGE
+            ).t('PAYMENT_NOTICE_011', 'Банковская карта (YooKassa)')
 
             # Стандартное сообщение с полной клавиатурой
             keyboard = await self.build_topup_success_keyboard(user_snapshot)
             message = (
-                '✅ <b>Платеж успешно завершен!</b>\n\n'
-                f'💰 Сумма: {settings.format_price(amount_kopeks)}\n'
-                f'💳 Способ: {payment_method}\n\n'
-                'Средства зачислены на ваш баланс!'
+                get_texts(getattr(user_snapshot, 'language', None) or settings.DEFAULT_LANGUAGE)
+                .t(
+                    'PAYMENT_NOTICE_018',
+                    '✅ <b>Платеж успешно завершен!</b>\n\n💰 Сумма: {v0}\n💳 Способ: {v1}\n\nСредства зачислены на ваш баланс!',
+                )
+                .format(v0=settings.format_price(amount_kopeks), v1=payment_method)
             )
 
             await self.bot.send_message(

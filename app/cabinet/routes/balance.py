@@ -17,6 +17,7 @@ from app.database.crud.saved_payment_method import (
 )
 from app.database.crud.user import get_user_by_id
 from app.database.models import PaymentMethod, Transaction, User
+from app.localization.texts import get_texts
 from app.services.payment_method_config_service import get_enabled_methods_for_user
 from app.services.payment_service import PaymentService
 from app.services.payment_verification_service import (
@@ -277,13 +278,16 @@ async def create_stars_invoice(
         from aiogram.types import LabeledPrice
 
         async with create_bot() as bot:
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
             invoice_url = await bot.create_invoice_link(
-                title='Пополнение баланса VPN',
-                description=f'Пополнение баланса на {normalized_kopeks / 100:.2f} ₽ ({stars_amount} ⭐)',
+                title=texts.t('STARS_INVOICE_TITLE', 'Пополнение баланса VPN'),
+                description=texts.t(
+                    'STARS_BALANCE_DESCRIPTION', 'Пополнение баланса на {amount:.2f} ₽ ({stars} ⭐)'
+                ).format(amount=normalized_kopeks / 100, stars=stars_amount),
                 payload=payload,
                 provider_token='',
                 currency='XTR',
-                prices=[LabeledPrice(label='Пополнение баланса', amount=stars_amount)],
+                prices=[LabeledPrice(label=texts.t('STARS_BALANCE_LABEL', 'Пополнение баланса'), amount=stars_amount)],
             )
 
         logger.info(

@@ -666,11 +666,11 @@ async def get_maintenance_status(
     payload: MiniAppSubscriptionRequest,
     db: AsyncSession = Depends(get_db_session),
 ) -> MiniAppMaintenanceStatusResponse:
-    _, _ = await _resolve_user_from_init_data(db, payload.init_data)
+    user, _ = await _resolve_user_from_init_data(db, payload.init_data)
     status_info = maintenance_service.get_status_info()
     return MiniAppMaintenanceStatusResponse(
         is_active=bool(status_info.get('is_active')),
-        message=maintenance_service.get_maintenance_message(),
+        message=maintenance_service.get_maintenance_message(user.language),
         reason=status_info.get('reason'),
     )
 
@@ -973,6 +973,7 @@ async def create_payment_link(
         try:
             payment_service = PaymentService(bot)
             invoice_link = await payment_service.create_stars_invoice(
+                language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                 amount_kopeks=amount_kopeks,
                 description=settings.get_balance_payment_description(
                     amount_kopeks, telegram_user_id=user.telegram_id, user_db_id=user.id

@@ -222,6 +222,8 @@ def render_email_layout(
     given = context or {}
     values = {**build_layout_context(language, unsubscribe_url=str(given.get('unsubscribe_url') or '')), **given}
     result = layout_html
+    if language == 'fa' and layout_html == DEFAULT_EMAIL_LAYOUT:
+        result = result.replace('<html>', '<html lang="fa" dir="rtl">', 1)
     for key in LAYOUT_CONTEXT_VARS:
         raw = values.get(key)
         value = '' if raw is None else str(raw)
