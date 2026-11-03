@@ -46,7 +46,7 @@ class TicketStates(StatesGroup):
 
 
 async def show_ticket_priority_selection(
-    callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession
+    callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession, *, payment_support: bool = False
 ):
     """Начать создание тикета без выбора приоритета: сразу просим заголовок"""
     texts = get_texts(db_user.language)
@@ -74,7 +74,11 @@ async def show_ticket_priority_selection(
         )
         return
 
-    prompt_text = texts.t('TICKET_TITLE_INPUT', 'Введите заголовок тикета:')
+    prompt_text = (
+        texts.t('PAYMENT_SUPPORT_PROMPT')
+        if payment_support
+        else texts.t('TICKET_TITLE_INPUT', 'Введите заголовок тикета:')
+    )
     cancel_kb = get_ticket_cancel_keyboard(db_user.language)
     prompt_msg = callback.message
     try:
@@ -87,9 +91,27 @@ async def show_ticket_priority_selection(
             pass
         prompt_msg = await callback.message.answer(prompt_text, reply_markup=cancel_kb)
     # Запоминаем исходное сообщение бота, чтобы далее редактировать его, а не слать новые
-    await state.update_data(prompt_chat_id=prompt_msg.chat.id, prompt_message_id=prompt_msg.message_id)
-    await state.set_state(TicketStates.waiting_for_title)
+    await state.update_data(
+        prompt_chat_id=prompt_msg.chat.id, prompt_message_id=prompt_msg.message_id, payment_support=payment_support
+    )
+    if payment_support:
+        await state.update_data(title=texts.t('PAYMENT_SUPPORT_TITLE')[:255])
+        await state.set_state(TicketStates.waiting_for_message)
+    else:
+        await state.set_state(TicketStates.waiting_for_title)
     await callback.answer()
+
+
+async def start_payment_ticket(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
+    from app.services.support_settings_service import SupportSettingsService
+
+    if not SupportSettingsService.is_tickets_enabled():
+        await callback.answer()
+        from app.handlers.support import payment_support_command
+
+        await payment_support_command(callback.message, db_user=db_user)
+        return
+    await show_ticket_priority_selection(callback, state, db_user, db, payment_support=True)
 
 
 async def handle_ticket_title_input(message: types.Message, state: FSMContext, db_user: User, db: AsyncSession):
@@ -158,6 +180,16 @@ async def handle_ticket_message_input(message: types.Message, state: FSMContext,
     current_state = await state.get_state()
     if current_state != TicketStates.waiting_for_message:
         return
+
+    if (await state.get_data()).get('payment_support'):
+        from app.services.support_settings_service import SupportSettingsService
+
+        if not SupportSettingsService.is_tickets_enabled():
+            from app.handlers.support import payment_support_command
+
+            await state.clear()
+            await payment_support_command(message, db_user=db_user)
+            return
 
     # Защита от спама: принимаем только первое сообщение в коротком окне
     try:
@@ -1150,40 +1182,58 @@ async def notify_admins_about_ticket_reply(
 def register_handlers(dp: Dispatcher):
     """Регистрация обработчиков тикетов"""
 
+    dp.callback_query.register(start_payment_ticket, F.data == 'payment_support_create', flags={'support_access': True})
+
     # Создание тикета (теперь без приоритета)
-    dp.callback_query.register(show_ticket_priority_selection, F.data == 'create_ticket')
+    dp.callback_query.register(
+        show_ticket_priority_selection, F.data == 'create_ticket', flags={'support_access': True}
+    )
 
-    dp.message.register(handle_ticket_title_input, TicketStates.waiting_for_title)
+    dp.message.register(handle_ticket_title_input, TicketStates.waiting_for_title, flags={'support_access': True})
 
-    dp.message.register(handle_ticket_message_input, TicketStates.waiting_for_message)
+    dp.message.register(handle_ticket_message_input, TicketStates.waiting_for_message, flags={'support_access': True})
 
     # Просмотр тикетов
-    dp.callback_query.register(show_my_tickets, F.data == 'my_tickets')
-    dp.callback_query.register(show_my_tickets_closed, F.data == 'my_tickets_closed')
-    dp.callback_query.register(show_my_tickets_closed, F.data.startswith('my_tickets_closed_page_'))
+    dp.callback_query.register(show_my_tickets, F.data == 'my_tickets', flags={'support_access': True})
+    dp.callback_query.register(show_my_tickets_closed, F.data == 'my_tickets_closed', flags={'support_access': True})
+    dp.callback_query.register(
+        show_my_tickets_closed, F.data.startswith('my_tickets_closed_page_'), flags={'support_access': True}
+    )
 
-    dp.callback_query.register(view_ticket, F.data.startswith('view_ticket_') | F.data.startswith('ticket_view_page_'))
+    dp.callback_query.register(
+        view_ticket,
+        F.data.startswith('view_ticket_') | F.data.startswith('ticket_view_page_'),
+        flags={'support_access': True},
+    )
 
     # Вложения пользователя
-    dp.callback_query.register(send_ticket_attachments, F.data.startswith('ticket_attachments_'))
+    dp.callback_query.register(
+        send_ticket_attachments, F.data.startswith('ticket_attachments_'), flags={'support_access': True}
+    )
 
-    dp.callback_query.register(user_delete_message, F.data.startswith('user_delete_message_'))
+    dp.callback_query.register(
+        user_delete_message, F.data.startswith('user_delete_message_'), flags={'support_access': True}
+    )
 
     # Ответы на тикеты
-    dp.callback_query.register(reply_to_ticket, F.data.startswith('reply_ticket_'))
+    dp.callback_query.register(reply_to_ticket, F.data.startswith('reply_ticket_'), flags={'support_access': True})
 
-    dp.message.register(handle_ticket_reply, TicketStates.waiting_for_reply)
+    dp.message.register(handle_ticket_reply, TicketStates.waiting_for_reply, flags={'support_access': True})
 
     # Закрытие тикетов
-    dp.callback_query.register(close_ticket, F.data.regexp(r'^close_ticket_\d+$'))
+    dp.callback_query.register(close_ticket, F.data.regexp(r'^close_ticket_\d+$'), flags={'support_access': True})
 
     # Отмена операций
-    dp.callback_query.register(cancel_ticket_creation, F.data == 'cancel_ticket_creation')
+    dp.callback_query.register(
+        cancel_ticket_creation, F.data == 'cancel_ticket_creation', flags={'support_access': True}
+    )
 
-    dp.callback_query.register(cancel_ticket_reply, F.data == 'cancel_ticket_reply')
+    dp.callback_query.register(cancel_ticket_reply, F.data == 'cancel_ticket_reply', flags={'support_access': True})
 
     # Пагинация тикетов
-    dp.callback_query.register(show_my_tickets, F.data.startswith('my_tickets_page_'))
+    dp.callback_query.register(show_my_tickets, F.data.startswith('my_tickets_page_'), flags={'support_access': True})
 
     # Закрытие уведомлений
-    dp.callback_query.register(close_ticket_notification, F.data.startswith('close_ticket_notification_'))
+    dp.callback_query.register(
+        close_ticket_notification, F.data.startswith('close_ticket_notification_'), flags={'support_access': True}
+    )

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.localization.texts import get_texts
 from app.services.lava_service import lava_service
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -542,11 +543,12 @@ class LavaPaymentMixin:
                 await self.bot.send_message(
                     user.telegram_id,
                     (
-                        '✅ <b>Пополнение успешно!</b>\n\n'
-                        f'\U0001f4b0 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
-                        f'\U0001f4b3 Способ: {display_name}\n'
-                        f'\U0001f194 Транзакция: {transaction.id}\n\n'
-                        'Баланс пополнен автоматически!'
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t(
+                            'PAYMENT_NOTICE_000',
+                            '✅ <b>Пополнение успешно!</b>\n\n💰 Сумма: {v0}\n💳 Способ: {v1}\n🆔 Транзакция: {v2}\n\nБаланс пополнен автоматически!',
+                        )
+                        .format(v0=settings.format_price(payment.amount_kopeks), v1=display_name, v2=transaction.id)
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
@@ -718,6 +720,16 @@ class LavaPaymentMixin:
 
         existing = await sub_crud.get_active_lava_subscription_by_subscription(db, subscription.id)
         if existing:
+            from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+            if getattr(subscription, '_recurrent_purchase_terms', None) is not None:
+                validate_recurrent_setup_terms(
+                    subscription,
+                    'lava',
+                    existing.amount_kopeks,
+                    existing.charge_days,
+                    getattr(subscription, '_recurrent_purchase_terms', {}).get('interval'),
+                )
             # Идемпотентный повтор обязан ТОЖЕ восстановить взаимоисключение.
             if getattr(subscription, 'autopay_enabled', False):
                 subscription.autopay_enabled = False
@@ -767,6 +779,12 @@ class LavaPaymentMixin:
                 f'{true_amount / 100:.2f} ₽ за {charge_days} дн. Заведите продукт с актуальной ценой.'
             )
 
+        from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+        validate_recurrent_setup_terms(
+            subscription, 'lava', amount_kopeks, charge_days, str(product.get('period') or f'{charge_days}_days')
+        )
+
         consumer_id = self._lava_consumer_id(user)
         try:
             await lava_service.create_recurrent_consumer(
@@ -780,6 +798,9 @@ class LavaPaymentMixin:
             logger.warning('Lava: consumer/create не подтверждён', consumer_id=consumer_id, error=str(error))
 
         order_id = build_recurrent_order_id(subscription.id, uuid.uuid4().hex)
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         response = await lava_service.subscribe_recurrent(
             product_id=product_id,
             consumer_id=consumer_id,
@@ -851,6 +872,13 @@ class LavaPaymentMixin:
                 'redirect_url': winner.redirect_url,
                 'status': winner.status,
             }
+
+        expected_terms = getattr(subscription, '_recurrent_purchase_terms', None)
+        if expected_terms is not None and amount_kopeks != expected_terms['amount_kopeks']:
+            # Persist before cancellation so the normal reconciler can retry
+            # a failed remote cancel; never expose a differently priced invoice.
+            await self.cancel_lava_recurrent_subscription(db, local_id=record.id)
+            raise ValueError('quote_changed')
 
         # Взаимоисключение движков продления — ПОСЛЕ успешного создания записи:
         # раньше отмена Platega шла до subscribe, и любой сбой оформления Lava
@@ -1104,6 +1132,15 @@ class LavaPaymentMixin:
                 commit=False,
             )
 
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(
+                db,
+                subscription,
+                operation_key=f'lava:payment:{tx.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_PAYMENT,
+            )
+
             await db.commit()
 
             from app.database.crud.transaction import emit_transaction_side_effects
@@ -1214,6 +1251,10 @@ async def purchase_tariff_with_lava_recurring(
     user: Any,
     tariff: Any,
     subscription_id: int | None = None,
+    selected_device_limit: int | None = None,
+    quote_id=None,
+    checkout_id=None,
+    channel: str = 'cabinet',
 ) -> dict[str, Any]:
     """Оформление подписки на тариф оплатой через автопродление Lava.
 
@@ -1233,6 +1274,23 @@ async def purchase_tariff_with_lava_recurring(
     """
     if not settings.is_lava_recurrent_enabled():
         raise RuntimeError('Lava recurrent is disabled')
+
+    if any(value is not None for value in (selected_device_limit, quote_id, checkout_id)):
+        from app.services.recurrent_purchase_selection import prepare_recurrent_device_purchase
+
+        subscription = await prepare_recurrent_device_purchase(
+            db,
+            user=user,
+            tariff=tariff,
+            provider='lava',
+            selected_device_limit=selected_device_limit,
+            quote_id=quote_id,
+            checkout_id=checkout_id,
+            subscription_id=subscription_id,
+            channel=channel,
+        )
+        result = await enable_lava_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
+        return {**result, 'subscription_id': subscription.id}
 
     from app.database.crud.subscription import (
         create_sbp_pending_subscription,

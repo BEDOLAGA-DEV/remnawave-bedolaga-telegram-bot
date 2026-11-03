@@ -1,9 +1,10 @@
 """Subscription schemas for cabinet."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ServerInfo(BaseModel):
@@ -23,9 +24,19 @@ class TrafficPurchaseInfo(BaseModel):
     created_at: datetime
     days_remaining: int
     progress_percent: float
+    remaining_gb: float | None = None
 
 
-class SubscriptionData(BaseModel):
+class TrafficAccountingData(BaseModel):
+    """Settled balances; unknown historical allocations remain null."""
+
+    traffic_accounting_mode: Literal['legacy', 'managed'] = 'legacy'
+    traffic_remaining_gb: float | None = None
+    base_traffic_remaining_gb: float | None = None
+    next_traffic_refresh_at: datetime | None = None
+
+
+class SubscriptionData(TrafficAccountingData):
     """User subscription data."""
 
     id: int
@@ -217,6 +228,14 @@ class PurchasePreviewRequest(BaseModel):
 # ============ Tariff Purchase Schemas ============
 
 
+class TariffPurchasePreviewRequest(BaseModel):
+    tariff_id: int = Field(..., ge=1, strict=True)
+    period_days: int = Field(..., ge=1, le=2_147_483_647, strict=True)
+    traffic_gb: int | None = Field(None, ge=0, le=100_000, strict=True)
+    subscription_id: int | None = Field(None, ge=1, strict=True)
+    selected_device_limit: int | None = Field(None, ge=1, le=2_147_483_647, strict=True)
+
+
 class TariffPurchaseRequest(BaseModel):
     """Request to purchase a tariff."""
 
@@ -245,3 +264,19 @@ class TariffPurchaseRequest(BaseModel):
         pattern=r'^[A-Za-z0-9._:-]{4,128}$',
         description='Cached Yandex.Metrika ClientID (optional).',
     )
+
+
+class TariffCheckoutRequest(TariffPurchaseRequest):
+    """New checkout contract; switch endpoints keep their separate request."""
+
+    period_days: int = Field(..., ge=1, le=2_147_483_647, strict=True)
+    selected_device_limit: int | None = Field(None, ge=1, le=2_147_483_647, strict=True)
+    quote_id: UUID | None = None
+
+    @model_validator(mode='after')
+    def require_selected_device_consent(self):
+        if self.selected_device_limit is not None and (self.quote_id is None or self.checkout_id is None):
+            raise ValueError('Selected devices require quote_id and checkout_id')
+        if self.quote_id is not None and self.selected_device_limit is None:
+            raise ValueError('A device quote requires selected_device_limit')
+        return self

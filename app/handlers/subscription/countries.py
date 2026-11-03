@@ -65,7 +65,7 @@ async def handle_add_countries(callback: types.CallbackQuery, db_user: User, db:
         )
         return
 
-    countries = await _get_available_countries(db_user.promo_group_id)
+    countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
     current_countries = subscription.connected_squads
 
     period_hint_days = _get_period_hint_from_subscription(subscription)
@@ -182,7 +182,7 @@ async def handle_manage_country(callback: types.CallbackQuery, db_user: User, db
     data = await state.get_data()
     current_selected = data.get('countries', subscription.connected_squads.copy())
 
-    countries = await _get_available_countries(db_user.promo_group_id)
+    countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
     allowed_country_ids = {country['uuid'] for country in countries}
 
     if country_uuid not in allowed_country_ids:
@@ -249,7 +249,7 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
     selected_countries = data.get('countries', [])
     current_countries = subscription.connected_squads
 
-    countries = await _get_available_countries(db_user.promo_group_id)
+    countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
     allowed_country_ids = {country['uuid'] for country in countries}
 
     selected_countries = [country_uuid for country_uuid in selected_countries if country_uuid in allowed_country_ids]
@@ -333,7 +333,9 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
 
     if total_cost > 0 and db_user.balance_kopeks < total_cost:
         missing_kopeks = total_cost - db_user.balance_kopeks
-        required_text = f'{texts.format_price(total_cost)} (за {charged_days} дн.)'
+        required_text = texts.t('SUBSCRIPTION_UI_PRICE_FOR_DAYS', '{price} (за {days} дн.)').format(
+            price=texts.format_price(total_cost), days=charged_days
+        )
         message_text = texts.t(
             'ADDON_INSUFFICIENT_FUNDS_MESSAGE',
             (
@@ -508,11 +510,15 @@ async def apply_countries_changes(callback: types.CallbackQuery, db_user: User, 
 
 
 async def select_country(callback: types.CallbackQuery, state: FSMContext, db_user: User, db: AsyncSession):
+    texts = get_texts(getattr(db_user, 'language', None))
     country_uuid = callback.data.split('_')[1]
     data = await state.get_data()
 
     if 'period_days' not in data:
-        await callback.answer('❌ Данные подписки устарели. Начните оформление заново.', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_CHECKOUT_STALE', '❌ Данные подписки устарели. Начните оформление заново.'),
+            show_alert=True,
+        )
         return
 
     selected_countries = data.get('countries', [])
@@ -521,11 +527,14 @@ async def select_country(callback: types.CallbackQuery, state: FSMContext, db_us
     else:
         selected_countries.append(country_uuid)
 
-    countries = await _get_available_countries(db_user.promo_group_id)
+    countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
     allowed_country_ids = {country['uuid'] for country in countries}
 
     if country_uuid not in allowed_country_ids and country_uuid not in selected_countries:
-        await callback.answer('❌ Сервер недоступен для вашей промогруппы', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_SERVER_GROUP_UNAVAILABLE', '❌ Сервер недоступен для вашей промогруппы'),
+            show_alert=True,
+        )
         return
 
     data['countries'] = selected_countries
@@ -553,7 +562,10 @@ async def countries_continue(callback: types.CallbackQuery, state: FSMContext, d
     texts = get_texts(db_user.language)
 
     if not data.get('countries'):
-        await callback.answer('⚠️ Выберите хотя бы одну страну!', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_SELECT_COUNTRY', '⚠️ Выберите хотя бы одну страну!'),
+            show_alert=True,
+        )
         return
 
     if not settings.is_devices_selection_enabled():
@@ -571,7 +583,17 @@ async def countries_continue(callback: types.CallbackQuery, state: FSMContext, d
     await callback.answer()
 
 
-async def _get_available_countries(promo_group_id: int | None = None):
+def _localize_fallback_countries(countries: list[dict], language: str | None) -> list[dict]:
+    """Localize only our synthetic fallback; keep cached/operator names intact."""
+    return [
+        {**country, 'name': get_texts(language).t('SUBSCRIPTION_UI_FREE_SERVER', '🆓 Бесплатный сервер')}
+        if country.get('uuid') == 'default-free'
+        else country
+        for country in countries
+    ]
+
+
+async def _get_available_countries(promo_group_id: int | None = None, language: str | None = None):
     from app.database.crud.server_squad import get_available_server_squads
     from app.database.database import AsyncSessionLocal
     from app.utils.cache import cache, cache_key
@@ -579,7 +601,7 @@ async def _get_available_countries(promo_group_id: int | None = None):
     cache_key_value = cache_key('available_countries', promo_group_id or 'all')
     cached_countries = await cache.get(cache_key_value)
     if cached_countries:
-        return cached_countries
+        return _localize_fallback_countries(cached_countries, language)
 
     try:
         async with AsyncSessionLocal() as db:
@@ -639,7 +661,7 @@ async def _get_available_countries(promo_group_id: int | None = None):
                 )
 
         await cache.set(cache_key_value, countries, 300)
-        return countries
+        return _localize_fallback_countries(countries, language)
 
     except Exception as e:
         logger.error('Ошибка получения списка стран', error=e)
@@ -654,11 +676,11 @@ async def _get_available_countries(promo_group_id: int | None = None):
         ]
 
         await cache.set(cache_key_value, fallback_countries, 60)
-        return fallback_countries
+        return _localize_fallback_countries(fallback_countries, language)
 
 
-async def _get_countries_info(squad_uuids):
-    countries = await _get_available_countries()
+async def _get_countries_info(squad_uuids, language: str | None = None):
+    countries = await _get_available_countries(language=language)
     return [c for c in countries if c['uuid'] in squad_uuids]
 
 
@@ -702,11 +724,16 @@ async def handle_add_country_to_subscription(
     logger.info('🔍 Данные состояния', data=data)
 
     selected_countries = data.get('countries', [])
-    countries = await _get_available_countries(db_user.promo_group_id)
+    countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
     allowed_country_ids = {country['uuid'] for country in countries}
 
     if country_uuid not in allowed_country_ids and country_uuid not in selected_countries:
-        await callback.answer('❌ Сервер недоступен для вашей промогруппы', show_alert=True)
+        await callback.answer(
+            get_texts(getattr(db_user, 'language', None)).t(
+                'SUBSCRIPTION_UI_SERVER_GROUP_UNAVAILABLE', '❌ Сервер недоступен для вашей промогруппы'
+            ),
+            show_alert=True,
+        )
         return
 
     if country_uuid in selected_countries:
@@ -796,7 +823,7 @@ async def _should_show_countries_management(user: User | None = None) -> bool:
                 )
                 return False
 
-        countries = await _get_available_countries(promo_group_id)
+        countries = await _get_available_countries(promo_group_id, language=getattr(user, 'language', None))
         available_countries = [c for c in countries if c.get('is_available', True)]
         return len(available_countries) > 1
     except Exception as e:
@@ -816,7 +843,7 @@ async def confirm_add_countries_to_subscription(
     selected_countries = data.get('countries', [])
     current_countries = subscription.connected_squads
 
-    countries = await _get_available_countries(db_user.promo_group_id)
+    countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
     allowed_country_ids = {country['uuid'] for country in countries}
 
     selected_countries = [country_uuid for country_uuid in selected_countries if country_uuid in allowed_country_ids]
@@ -825,7 +852,10 @@ async def confirm_add_countries_to_subscription(
     removed_countries = [c for c in current_countries if c not in selected_countries]
 
     if not new_countries and not removed_countries:
-        await callback.answer('⚠️ Изменения не обнаружены', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_NO_CHANGES', '⚠️ Изменения не обнаружены'),
+            show_alert=True,
+        )
         return
 
     # TOCTOU protection: lock user row before reading discount and charging balance
@@ -920,7 +950,10 @@ async def confirm_add_countries_to_subscription(
             )
 
             if not success:
-                await callback.answer('❌ Ошибка списания средств', show_alert=True)
+                await callback.answer(
+                    texts.t('SUBSCRIPTION_UI_DEBIT_FAILED', '❌ Ошибка списания средств'),
+                    show_alert=True,
+                )
                 return
 
             await create_transaction(
@@ -941,23 +974,31 @@ async def confirm_add_countries_to_subscription(
         await db.refresh(db_user)
         await db.refresh(subscription)
 
-        success_text = '✅ Страны успешно обновлены!\n\n'
+        success_text = texts.t('SUBSCRIPTION_UI_COUNTRIES_UPDATED', '✅ Страны успешно обновлены!\n\n')
 
         if new_countries_names:
-            success_text += f'➕ Добавлены страны:\n{chr(10).join(f"• {name}" for name in new_countries_names)}\n'
+            success_text += texts.t('SUBSCRIPTION_UI_COUNTRIES_ADDED', '➕ Добавлены страны:\n{countries}\n').format(
+                countries=chr(10).join(f'• {name}' for name in new_countries_names)
+            )
             if total_price > 0:
-                success_text += f'💰 Списано: {texts.format_price(total_price)}'
+                success_text += texts.t('SUBSCRIPTION_UI_CHARGED_AMOUNT', '💰 Списано: {amount}').format(
+                    amount=texts.format_price(total_price)
+                )
                 if total_discount_value > 0:
-                    success_text += (
-                        f' (скидка {servers_discount_percent}%: -{texts.format_price(total_discount_value)})'
-                    )
+                    success_text += texts.t(
+                        'SUBSCRIPTION_UI_DISCOUNT_SUFFIX', ' (скидка {percent}%: -{amount})'
+                    ).format(percent=servers_discount_percent, amount=texts.format_price(total_discount_value))
                 success_text += '\n'
 
         if removed_countries_names:
-            success_text += f'\n➖ Отключены страны:\n{chr(10).join(f"• {name}" for name in removed_countries_names)}\n'
-            success_text += 'ℹ️ Повторное подключение будет платным\n'
+            success_text += texts.t(
+                'SUBSCRIPTION_UI_COUNTRIES_REMOVED', '\n➖ Отключены страны:\n{countries}\n'
+            ).format(countries=chr(10).join(f'• {name}' for name in removed_countries_names))
+            success_text += texts.t('SUBSCRIPTION_UI_RECONNECT_PAID', 'ℹ️ Повторное подключение будет платным\n')
 
-        success_text += f'\n🌍 Активных стран: {len(selected_countries)}'
+        success_text += texts.t('SUBSCRIPTION_UI_COUNTRIES_ACTIVE', '\n🌍 Активных стран: {count}').format(
+            count=len(selected_countries)
+        )
 
         await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
 

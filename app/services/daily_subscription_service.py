@@ -151,6 +151,12 @@ class DailySubscriptionService:
 
         user = await lock_user_for_pricing(db, user.id)
 
+        from app.services.cispay_recurrent_guard import has_conflicting_cispay
+
+        if await has_conflicting_cispay(db, user_id=user.id, subscription_id=subscription.id):
+            await db.commit()
+            return 'skipped'
+
         # Дни могли добавить после выборки планировщика; повторное списание также
         # должно увидеть срок, сохранённый предыдущим обработчиком под блокировкой.
         await db.refresh(subscription, attribute_names=['end_date'], with_for_update=True)
@@ -161,10 +167,10 @@ class DailySubscriptionService:
             if end_date > datetime.now(UTC):
                 return 'skipped'
 
-        # Только скидка группы — тот же расчёт, что показывает кабинет (PricingEngine.daily_group_price).
+        # Только скидка группы — тот же расчёт, что показывает кабинет (PricingEngine.daily_subscription_price).
         from app.services.pricing_engine import PricingEngine
 
-        daily_price, _ = PricingEngine.daily_group_price(raw_daily_price, user)
+        daily_price = PricingEngine.daily_subscription_price(subscription, tariff, user)
 
         # Проверяем баланс (при 100% скидке — пропускаем)
         if daily_price > 0 and user.balance_kopeks < daily_price:
@@ -384,12 +390,18 @@ class DailySubscriptionService:
 
         tariff_label = ''
         if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-            tariff_label = f'\n📦 Тариф: «{subscription.tariff.name}»'
+            tariff_label = (
+                get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                .t('PAYMENT_NOTICE_010', '\n📦 Тариф: «{v0}»')
+                .format(v0=subscription.tariff.name)
+            )
         message = (
-            f'💳 <b>Суточное списание</b>\n\n'
-            f'Списано: {amount_rubles:.2f} ₽\n'
-            f'Остаток баланса: {balance_rubles:.2f} ₽{tariff_label}\n\n'
-            f'Следующее списание через 24 часа.'
+            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+            .t(
+                'DAILY_NOTICE_000',
+                '💳 <b>Суточное списание</b>\n\nСписано: {v0:.2f} ₽\nОстаток баланса: {v1:.2f} ₽{v2}\n\nСледующее списание через 24 часа.',
+            )
+            .format(v0=amount_rubles, v1=balance_rubles, v2=tariff_label)
         )
 
         # Use unified notification delivery service
@@ -416,17 +428,32 @@ class DailySubscriptionService:
         if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
             tariff_label = f' «{subscription.tariff.name}»'
         message = (
-            f'⚠️ <b>Подписка{tariff_label} приостановлена</b>\n\n'
-            f'Недостаточно средств для суточной оплаты.\n\n'
-            f'Требуется: {required_rubles:.2f} ₽\n'
-            f'Баланс: {balance_rubles:.2f} ₽\n\n'
-            f'Пополните баланс, чтобы возобновить подписку.'
+            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+            .t(
+                'DAILY_NOTICE_001',
+                '⚠️ <b>Подписка{v0} приостановлена</b>\n\nНедостаточно средств для суточной оплаты.\n\nТребуется: {v1:.2f} ₽\nБаланс: {v2:.2f} ₽\n\nПополните баланс, чтобы возобновить подписку.',
+            )
+            .format(v0=tariff_label, v1=required_rubles, v2=balance_rubles)
         )
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text='💳 Пополнить баланс', callback_data='menu_balance')],
-                [InlineKeyboardButton(text='📱 Моя подписка', callback_data='menu_subscription')],
+                [
+                    InlineKeyboardButton(
+                        text=get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                            'BALANCE_TOPUP', '💳 Пополнить баланс'
+                        ),
+                        callback_data='menu_balance',
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                            'MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'
+                        ),
+                        callback_data='menu_subscription',
+                    )
+                ],
             ]
         )
 
@@ -516,6 +543,18 @@ class DailySubscriptionService:
         self, db: AsyncSession, subscription_id: int, expired_purchase_ids: list[int]
     ) -> int:
         from app.database.models import TrafficPurchase
+        from app.services.traffic_accounting import AccountingConflict
+        from app.services.traffic_accounting_service import refresh_managed_account
+
+        # Acquire the accounting/grace lease before the subscription row lock.
+        # A migrating account must never fall back to legacy destructive resets.
+        candidate = await db.get(Subscription, subscription_id)
+        mode = getattr(candidate, 'traffic_accounting_mode', None)
+        if mode == 'migrating':
+            raise AccountingConflict('Traffic accounting migration is not complete')
+        managed = mode == 'managed'
+        if managed:
+            await refresh_managed_account(db, candidate)
 
         # Получаем подписку вместе с тарифом — тариф нужен для определения
         # стратегии сброса панели (выравнивание докупки)
@@ -531,6 +570,12 @@ class DailySubscriptionService:
 
         if not subscription:
             return 0
+
+        current_mode = getattr(subscription, 'traffic_accounting_mode', None)
+        if current_mode == 'migrating' or (current_mode == 'managed' and not managed):
+            # Migration won the race after our initial read. Retry with the proper
+            # lease order instead of acquiring grace while holding Subscription.
+            raise AccountingConflict('Traffic accounting mode changed during expiry')
 
         # The scan is only a candidate list. A purchase, renewal or another
         # expiration worker may have changed both the totals and these rows.
@@ -613,7 +658,7 @@ class DailySubscriptionService:
         # лимит и used обнуляются согласованно, без окна-режа и без лишнего сброса.
         # (Для NO_RESET панель used не сбросит — там лимит роняем сразу, а used добиваем
         # страховкой-clamp ниже.)
-        if await self._should_defer_limit_drop(db, subscription, new_limit, expired_purchases):
+        if not managed and await self._should_defer_limit_drop(db, subscription, new_limit, expired_purchases):
             logger.info(
                 '⏸️ Понижение лимита докупки отложено: ждём периодический сброс used панелью',
                 subscription_id=subscription.id,
@@ -684,8 +729,10 @@ class DailySubscriptionService:
                 # Preserve the existing NO_RESET / overdue-package clamp policy.
                 # Periodic resets still defer the limit drop above.
                 new_limit_gb = subscription.traffic_limit_gb or 0
-                if new_limit_gb > 0 and updated_user.used_traffic_bytes > subscription_service._gb_to_bytes(
-                    new_limit_gb
+                if (
+                    not managed
+                    and new_limit_gb > 0
+                    and updated_user.used_traffic_bytes > subscription_service._gb_to_bytes(new_limit_gb)
                 ):
                     reset_required = True
                     reset_result = await subscription_service.update_remnawave_user(
@@ -777,44 +824,26 @@ class DailySubscriptionService:
 
     async def _get_panel_used_gb(self, db: AsyncSession, subscription: Subscription) -> float | None:
         """Текущий израсходованный трафик из панели в ГБ. None — если узнать не удалось."""
-        from app.services.subscription_service import SubscriptionService
+        from app.services.traffic_package_usage import read_panel_used_gb
 
-        service = SubscriptionService()
-        if settings.is_multi_tariff_enabled():
-            panel_user_id = getattr(subscription, 'remnawave_id', None)
-        else:
-            user = await get_user_by_id(db, subscription.user_id)
-            panel_user_id = getattr(user, 'remnawave_id', None) if user else None
-        if panel_user_id is None:
-            return None
-
-        try:
-            async with service.get_api_client() as api:
-                panel_user = await api.get_user_by_id(panel_user_id)
-        except Exception as exc:
-            logger.warning(
-                'Не удалось получить used из панели для выравнивания докупки — применим понижение со страховкой',
-                subscription_id=subscription.id,
-                user_id=subscription.user_id,
-                error=exc,
-            )
-            return None
-
-        if panel_user is None:
-            return None
-        return service._bytes_to_gb(panel_user.used_traffic_bytes)
+        return await read_panel_used_gb(db, subscription)
 
     async def _notify_traffic_reset(self, user: User, subscription: Subscription, reset_gb: int):
         """Уведомляет пользователя о сбросе докупленного трафика."""
         tariff_label = ''
         if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-            tariff_label = f'\n📦 Тариф: «{subscription.tariff.name}»'
+            tariff_label = (
+                get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                .t('PAYMENT_NOTICE_010', '\n📦 Тариф: «{v0}»')
+                .format(v0=subscription.tariff.name)
+            )
         message = (
-            f'ℹ️ <b>Сброс докупленного трафика</b>\n\n'
-            f'Ваш докупленный трафик ({reset_gb} ГБ) был сброшен, '
-            f'так как прошло 30 дней с момента первой докупки.{tariff_label}\n\n'
-            f'Текущий лимит трафика: {subscription.traffic_limit_gb} ГБ\n\n'
-            f'Вы можете докупить трафик снова в любое время.'
+            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+            .t(
+                'DAILY_NOTICE_002',
+                'ℹ️ <b>Сброс докупленного трафика</b>\n\nВаш докупленный трафик ({v0} ГБ) был сброшен, так как прошло 30 дней с момента первой докупки.{v1}\n\nТекущий лимит трафика: {v2} ГБ\n\nВы можете докупить трафик снова в любое время.',
+            )
+            .format(v0=reset_gb, v1=tariff_label, v2=subscription.traffic_limit_gb)
         )
 
         context = {

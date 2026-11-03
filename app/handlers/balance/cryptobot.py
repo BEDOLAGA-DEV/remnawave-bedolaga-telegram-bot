@@ -10,6 +10,7 @@ from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
+from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
@@ -27,47 +28,59 @@ async def start_cryptobot_payment(callback: types.CallbackQuery, db_user: User, 
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        reason = html.escape(
+            getattr(db_user, 'restriction_reason', None)
+            or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
         return
 
     if not settings.is_cryptobot_enabled():
-        await callback.answer('❌ Оплата криптовалютой временно недоступна', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_UI_CRYPTO_UNAVAILABLE', '❌ Оплата криптовалютой временно недоступна'), show_alert=True
+        )
         return
 
     from app.utils.currency_converter import currency_converter
 
     try:
         current_rate = await currency_converter.get_usd_to_rub_rate()
-        rate_text = f'💱 Текущий курс: 1 USD = {current_rate:.2f} ₽'
+        rate_text = texts.t('PAYMENT_UI_EXCHANGE_RATE_EXACT', '💱 Текущий курс: 1 USD = {value1} ₽').format(
+            value1=format(current_rate, '.2f')
+        )
     except Exception as e:
         logger.warning('Не удалось получить курс валют', error=e)
         current_rate = 95.0
-        rate_text = f'💱 Курс: 1 USD ≈ {current_rate:.0f} ₽'
+        rate_text = texts.t('PAYMENT_UI_EXCHANGE_RATE_APPROX', '💱 Курс: 1 USD ≈ {value1} ₽').format(
+            value1=format(current_rate, '.0f')
+        )
 
     available_assets = settings.get_cryptobot_assets()
     assets_text = ', '.join(available_assets)
 
-    message_text = (
-        f'🪙 <b>Пополнение криптовалютой</b>\n\n'
-        f'Введите сумму для пополнения от 100 до 100,000 ₽:\n\n'
-        f'💰 Доступные активы: {assets_text}\n'
-        f'⚡ Мгновенное зачисление на баланс\n'
-        f'🔒 Безопасная оплата через CryptoBot\n\n'
-        f'{rate_text}\n'
-        f'Сумма будет автоматически конвертирована в USD для оплаты.'
-    )
+    message_text = texts.t(
+        'PAYMENT_UI_CRYPTO_PROMPT',
+        '🪙 <b>Пополнение криптовалютой</b>\n\nВведите сумму для пополнения от 100 до 100,000 ₽:\n\n💰 Доступные активы: {value1}\n⚡ Мгновенное зачисление на баланс\n🔒 Безопасная оплата через CryptoBot\n\n{value2}\nСумма будет автоматически конвертирована в USD для оплаты.',
+    ).format(value1=assets_text, value2=rate_text)
 
     keyboard = await get_topup_amount_keyboard('cryptobot', db_user.language, back_callback='back_to_menu')
 
@@ -91,26 +104,35 @@ async def process_cryptobot_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        reason = html.escape(
+            getattr(db_user, 'restriction_reason', None)
+            or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode='HTML',
         )
         await state.clear()
         return
 
-    texts = get_texts(db_user.language)
-
     if not settings.is_cryptobot_enabled():
-        await message.answer('❌ Оплата криптовалютой временно недоступна')
+        await message.answer(texts.t('PAYMENT_UI_CRYPTO_UNAVAILABLE', '❌ Оплата криптовалютой временно недоступна'))
         return
 
     amount_rubles = amount_kopeks / 100
@@ -178,7 +200,12 @@ async def process_cryptobot_payment_amount(
         )
 
         if not payment_result:
-            await message.answer('❌ Ошибка создания платежа. Попробуйте позже или обратитесь в поддержку.')
+            await message.answer(
+                texts.t(
+                    'PAYMENT_UI_CREATE_ERROR_SUPPORT',
+                    '❌ Ошибка создания платежа. Попробуйте позже или обратитесь в поддержку.',
+                )
+            )
             await state.clear()
             return
 
@@ -188,16 +215,20 @@ async def process_cryptobot_payment_amount(
         payment_url = bot_invoice_url or mini_app_invoice_url
 
         if not payment_url:
-            await message.answer('❌ Ошибка получения ссылки для оплаты. Обратитесь в поддержку.')
+            await message.answer(
+                texts.t(
+                    'PAYMENT_UI_LINK_ERROR_SUPPORT', '❌ Ошибка получения ссылки для оплаты. Обратитесь в поддержку.'
+                )
+            )
             await state.clear()
             return
 
         keyboard = types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='🪙 Оплатить', url=payment_url)],
+                [types.InlineKeyboardButton(text=texts.t('PAY_WITH_COINS_BUTTON', '🪙 Оплатить'), url=payment_url)],
                 [
                     types.InlineKeyboardButton(
-                        text='📊 Проверить статус',
+                        text=texts.t('SUBSCRIPTION_UI_CHECK_STATUS', '📊 Проверить статус'),
                         callback_data=f'check_cryptobot_{payment_result["local_payment_id"]}',
                     )
                 ],
@@ -221,20 +252,17 @@ async def process_cryptobot_payment_amount(
                 logger.warning('Не удалось удалить сообщение с запросом суммы CryptoBot', delete_error=delete_error)
 
         invoice_message = await message.answer(
-            f'🪙 <b>Оплата криптовалютой</b>\n\n'
-            f'💰 Сумма к зачислению: {amount_rubles:.0f} ₽\n'
-            f'💵 К оплате: {amount_usd:.2f} USD\n'
-            f'🪙 Актив: {payment_result["asset"]}\n'
-            f'💱 Курс: 1 USD = {current_rate:.2f} ₽\n'
-            f'🆔 ID платежа: {payment_result["invoice_id"][:8]}...\n\n'
-            f'📱 <b>Инструкция:</b>\n'
-            f"1. Нажмите кнопку 'Оплатить'\n"
-            f'2. Выберите удобный актив\n'
-            f'3. Переведите указанную сумму\n'
-            f'4. Деньги поступят на баланс автоматически\n\n'
-            f'🔒 Оплата проходит через защищенную систему CryptoBot\n'
-            f'⚡ Поддерживаемые активы: USDT, TON, BTC, ETH\n\n'
-            f'❓ Если возникнут проблемы, обратитесь в {settings.get_support_contact_display_html()}',
+            texts.t(
+                'PAYMENT_UI_CRYPTO_INSTRUCTIONS',
+                "🪙 <b>Оплата криптовалютой</b>\n\n💰 Сумма к зачислению: {value1} ₽\n💵 К оплате: {value2} USD\n🪙 Актив: {value3}\n💱 Курс: 1 USD = {value4} ₽\n🆔 ID платежа: {value5}...\n\n📱 <b>Инструкция:</b>\n1. Нажмите кнопку 'Оплатить'\n2. Выберите удобный актив\n3. Переведите указанную сумму\n4. Деньги поступят на баланс автоматически\n\n🔒 Оплата проходит через защищенную систему CryptoBot\n⚡ Поддерживаемые активы: USDT, TON, BTC, ETH\n\n❓ Если возникнут проблемы, обратитесь в {value6}",
+            ).format(
+                value1=format(amount_rubles, '.0f'),
+                value2=format(amount_usd, '.2f'),
+                value3=payment_result['asset'],
+                value4=format(current_rate, '.2f'),
+                value5=payment_result['invoice_id'][:8],
+                value6=settings.get_support_contact_display_html(),
+            ),
             reply_markup=keyboard,
             parse_mode='HTML',
         )
@@ -256,12 +284,25 @@ async def process_cryptobot_payment_amount(
 
     except Exception as e:
         logger.error('Ошибка создания CryptoBot платежа', error=e)
-        await message.answer('❌ Ошибка создания платежа. Попробуйте позже или обратитесь в поддержку.')
+        await message.answer(
+            texts.t(
+                'PAYMENT_UI_CREATE_ERROR_SUPPORT',
+                '❌ Ошибка создания платежа. Попробуйте позже или обратитесь в поддержку.',
+            )
+        )
         await state.clear()
 
 
 @error_handler
-async def check_cryptobot_payment_status(callback: types.CallbackQuery, db: AsyncSession):
+async def check_cryptobot_payment_status(callback: types.CallbackQuery, db: AsyncSession, db_user: User | None = None):
+    texts = get_texts(
+        getattr(db_user, 'language', None)
+        or getattr(getattr(callback, 'from_user', None), 'language_code', None)
+        or DEFAULT_LANGUAGE
+    )
+    if db_user is None:
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
+        return
     try:
         local_payment_id = int(callback.data.split('_')[-1])
 
@@ -269,34 +310,48 @@ async def check_cryptobot_payment_status(callback: types.CallbackQuery, db: Asyn
 
         payment = await get_cryptobot_payment_by_id(db, local_payment_id)
 
-        if not payment:
-            await callback.answer('❌ Платеж не найден', show_alert=True)
+        if not payment or payment.user_id != db_user.id:
+            await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
             return
 
         status_emoji = {'active': '⏳', 'paid': '✅', 'expired': '❌'}
 
-        status_text = {'active': 'Ожидает оплаты', 'paid': 'Оплачен', 'expired': 'Истек'}
+        status_text = {
+            'active': texts.t('WATA_STATUS_OPENED', 'Ожидает оплаты'),
+            'paid': texts.t('WATA_STATUS_PAID', 'Оплачен'),
+            'expired': texts.t('PAYMENT_UI_STATUS_EXPIRED', 'Истек'),
+        }
 
         emoji = status_emoji.get(payment.status, '❓')
-        status = status_text.get(payment.status, 'Неизвестно')
+        status = status_text.get(payment.status, texts.t('WATA_STATUS_UNKNOWN', 'Неизвестно'))
 
-        message_text = (
-            f'🪙 Статус платежа:\n\n'
-            f'🆔 ID: {payment.invoice_id[:8]}...\n'
-            f'💰 Сумма: {payment.amount} {payment.asset}\n'
-            f'📊 Статус: {emoji} {status}\n'
-            f'📅 Создан: {format_local_datetime(payment.created_at, "%d.%m.%Y %H:%M")}\n'
+        message_text = texts.t(
+            'PAYMENT_UI_CRYPTO_STATUS',
+            '🪙 Статус платежа:\n\n🆔 ID: {value1}...\n💰 Сумма: {value2} {value3}\n📊 Статус: {value4} {value5}\n📅 Создан: {value6}\n',
+        ).format(
+            value1=payment.invoice_id[:8],
+            value2=payment.amount,
+            value3=payment.asset,
+            value4=emoji,
+            value5=status,
+            value6=format_local_datetime(payment.created_at, '%d.%m.%Y %H:%M'),
         )
 
         if payment.is_paid:
-            message_text += '\n✅ Платеж успешно завершен!\n\nСредства зачислены на баланс.'
+            message_text += texts.t(
+                'PAYMENT_UI_SUCCESS_CREDITED', '\n✅ Платеж успешно завершен!\n\nСредства зачислены на баланс.'
+            )
         elif payment.is_pending:
-            message_text += "\n⏳ Платеж ожидает оплаты. Нажмите кнопку 'Оплатить' выше."
+            message_text += texts.t(
+                'PAYMENT_UI_WAITING_PAY_BUTTON', "\n⏳ Платеж ожидает оплаты. Нажмите кнопку 'Оплатить' выше."
+            )
         elif payment.is_expired:
-            message_text += f'\n❌ Платеж истек. Обратитесь в {settings.get_support_contact_display()}'
+            message_text += texts.t('PAYMENT_UI_EXPIRED_SUPPORT', '\n❌ Платеж истек. Обратитесь в {value1}').format(
+                value1=settings.get_support_contact_display()
+            )
 
         await callback.answer(message_text, show_alert=True)
 
     except Exception as e:
         logger.error('Ошибка проверки статуса CryptoBot платежа', error=e)
-        await callback.answer('❌ Ошибка проверки статуса', show_alert=True)
+        await callback.answer(texts.t('PAYMENT_UI_STATUS_ERROR', '❌ Ошибка проверки статуса'), show_alert=True)

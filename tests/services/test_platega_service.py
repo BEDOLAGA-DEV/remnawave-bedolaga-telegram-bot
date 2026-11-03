@@ -6,7 +6,7 @@ from app.services.payment.payer_identity import PayerIdentity
 from app.services.platega_service import PlategaService
 
 
-PAYER = PayerIdentity(user_id='555', user_name='@neo', contact='555')
+PAYER = PayerIdentity(user_id='555', user_name='@neo', contact='555', platega_email='555@telegram.org')
 
 
 def _configure_platega(monkeypatch: pytest.MonkeyPatch, **overrides) -> None:
@@ -189,6 +189,7 @@ async def test_v2_url_field_reaches_returned_redirect_url(monkeypatch: pytest.Mo
     result = await mixin.create_platega_payment(
         db=None,
         user_id=1,
+        payer=PAYER,
         amount_kopeks=10_000,
         description='Пополнение',
         language='ru',
@@ -217,7 +218,7 @@ async def test_create_payment_sends_payer_metadata(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(service, '_request', fake_request)
     await service.create_payment(payer=PAYER, payment_method=2, amount=100.0, currency='RUB')
 
-    assert captured['json_data']['metadata'] == {'userId': '555', 'userName': '@neo'}
+    assert captured['json_data']['metadata'] == {'userId': '555', 'userName': '@neo', 'user_email': '555@telegram.org'}
 
 
 async def test_create_payment_requires_the_payer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,3 +227,38 @@ async def test_create_payment_requires_the_payer(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(TypeError):
         await PlategaService().create_payment(payment_method=2, amount=100.0, currency='RUB')  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize('api_version', ['v1', 'v2'])
+@pytest.mark.parametrize('payment_method', [2, 10, 11, 12, 13])
+async def test_all_payment_methods_include_buyer_email(monkeypatch, api_version, payment_method):
+    _configure_platega(monkeypatch, PLATEGA_API_VERSION=api_version)
+    service = PlategaService()
+    captured = {}
+
+    async def transport(method, endpoint, **kwargs):
+        captured.update(kwargs['json_data'])
+        return {'transactionId': 'tx', 'status': 'PENDING'}
+
+    monkeypatch.setattr(service, '_request', transport)
+    await service.create_payment(payer=PAYER, payment_method=payment_method, amount=100, currency='RUB')
+    assert captured['paymentMethod'] == payment_method
+    assert captured['metadata']['user_email'] == '555@telegram.org'
+
+
+@pytest.mark.parametrize('email', [None, 'broken', 'Name <buyer@example.com>', 'buyer@example.com\n'])
+@pytest.mark.parametrize('recurring', [False, True])
+async def test_invalid_identity_never_reaches_transport(monkeypatch, email, recurring):
+    from unittest.mock import AsyncMock
+
+    _configure_platega(monkeypatch)
+    service = PlategaService()
+    transport = AsyncMock()
+    monkeypatch.setattr(service, '_request', transport)
+    payer = PayerIdentity(user_id='user-7', user_name='buyer', contact='buyer', platega_email=email)
+    with pytest.raises(ValueError):
+        if recurring:
+            await service.create_subscription(payer=payer, amount=100, currency='RUB', interval='month')
+        else:
+            await service.create_payment(payer=payer, amount=100, currency='RUB', payment_method=2)
+    transport.assert_not_awaited()

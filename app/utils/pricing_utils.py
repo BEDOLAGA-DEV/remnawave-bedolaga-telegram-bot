@@ -278,32 +278,21 @@ def _pluralize_days_ru(n: int) -> str:
 
 
 def format_period_description(days: int, language: str = 'ru') -> str:
-    language_code = (language or 'ru').split('-')[0].lower()
-    if language_code in {'ru', 'fa'}:
-        if days == 30:
-            return '1 месяц'
-        if days == 60:
-            return '2 месяца'
-        if days == 90:
-            return '3 месяца'
-        if days == 180:
-            return '6 месяцев'
-        if days == 360:
-            return '12 месяцев'
-        return f'{days} {_pluralize_days_ru(days)}'
+    from app.localization.texts import get_texts
+    from app.utils.formatting import format_period
 
-    if days == 30:
-        return '1 month'
-    if days == 60:
-        return '2 months'
-    if days == 90:
-        return '3 months'
-    if days == 180:
-        return '6 months'
-    if days == 360:
-        return '12 months'
-    day_word = 'day' if days == 1 else 'days'
-    return f'{days} {day_word}'
+    language_code = (language or 'ru').replace('_', '-').split('-')[0].lower()
+    months = {30: 1, 60: 2, 90: 3, 180: 6, 360: 12}.get(days)
+    if months is None:
+        return format_period(days, language)
+    if months == 1:
+        form = 'ONE'
+    elif language_code in {'ru', 'ua', 'uk'} and 2 <= months <= 4:
+        form = 'FEW'
+    else:
+        form = 'MANY'
+    defaults = {'ONE': '{count} месяц', 'FEW': '{count} месяца', 'MANY': '{count} месяцев'}
+    return get_texts(language).t(f'FORMAT_PERIOD_MONTHS_{form}', defaults[form]).format(count=months)
 
 
 def validate_pricing_calculation(base_price: int, monthly_additions: int, months: int, total_calculated: int) -> bool:

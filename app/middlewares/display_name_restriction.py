@@ -15,6 +15,7 @@ from aiogram.types import (
 
 from app.config import settings
 from app.localization.texts import get_texts
+from app.utils.support_access import is_support_handler
 
 
 logger = structlog.get_logger(__name__)
@@ -77,6 +78,9 @@ class DisplayNameRestrictionMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        if is_support_handler(event, data):
+            return await handler(event, data)
+
         user: TgUser | None = None
 
         if isinstance(event, (Message, CallbackQuery, PreCheckoutQuery)):

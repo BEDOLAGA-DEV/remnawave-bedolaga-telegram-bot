@@ -761,3 +761,15 @@ def test_stale_bulk_snapshot_does_not_roll_back_squads_either():
 
     assert subscription.connected_squads == ['new-tariff-squad']
     assert 'connected_squads' not in changed
+
+
+def test_managed_snapshot_never_imports_technical_ceiling_or_quota_owned_disable():
+    sub = _sub(traffic_accounting_mode='managed')
+    snapshot = read_panel_user(
+        {'status': 'DISABLED', 'trafficLimitBytes': 500 * 1024**3, 'userTraffic': {'usedTrafficBytes': 450 * 1024**3}}
+    )
+    changed = project_onto_subscription(sub, snapshot, now=NOW, policy=ADMIN_PULL)
+    assert sub.traffic_limit_gb == 100
+    assert sub.traffic_used_gb == 1.0
+    assert sub.status == 'active'
+    assert 'traffic_limit_gb' not in changed

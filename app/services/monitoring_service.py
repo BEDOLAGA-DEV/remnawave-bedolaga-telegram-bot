@@ -193,6 +193,10 @@ def _expires_by_own_date(subscription: Subscription, *, now: datetime) -> bool:
     return end_date <= now
 
 
+DEVICE_OVERFLOW_FIRST_CHECK_DELAY_SECONDS = 10 * 60
+DEVICE_OVERFLOW_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+
+
 class MonitoringService:
     def __init__(self, bot=None):
         self.is_running = False
@@ -203,6 +207,7 @@ class MonitoringService:
         self._sla_task = None
         self._withdrawal_reminder_task = None
         self._user_reminder_task = None
+        self._device_overflow_task = None
         self._live_menu_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
@@ -361,6 +366,12 @@ class MonitoringService:
                 self._user_reminder_task = asyncio.create_task(self._user_reminder_loop())
         except Exception as e:
             logger.error('Не удалось запустить напоминания пользователям', error=e)
+        # Устройства сверх лимита подписки — раз в сутки, сводка админам
+        try:
+            if not self._device_overflow_task or self._device_overflow_task.done():
+                self._device_overflow_task = asyncio.create_task(self._device_overflow_loop())
+        except Exception as e:
+            logger.error('Не удалось запустить проверку превышения лимита устройств', error=e)
         try:
             if not self._live_menu_task or self._live_menu_task.done():
                 from app.services.live_menu_service import live_menu_loop
@@ -390,6 +401,8 @@ class MonitoringService:
             self._withdrawal_reminder_task.cancel()
         if self._user_reminder_task and not self._user_reminder_task.done():
             self._user_reminder_task.cancel()
+        if self._device_overflow_task and not self._device_overflow_task.done():
+            self._device_overflow_task.cancel()
         if self._live_menu_task and not self._live_menu_task.done():
             self._live_menu_task.cancel()
 
@@ -441,6 +454,13 @@ class MonitoringService:
 
                 # Реконсилиация подписок Cashera + доначисление пропущенных списаний.
                 await self._reconcile_cashera_subscriptions(db)
+                try:
+                    from app.services.cispay_recurrent_service import reconcile_cispay_agreements
+
+                    await reconcile_cispay_agreements(db, bot=self.bot)
+                except Exception:
+                    await db.rollback()
+                    logger.warning('CisPay recurring reconciliation unavailable')
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
@@ -576,12 +596,13 @@ class MonitoringService:
                 user, user.balance_kopeks, charge_amount, subscription=subscription, is_final=is_final
             )
         elif not user.telegram_id:
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
             if is_final:
-                reason_text = 'Последнее напоминание: подписка скоро отключится — недостаточно средств'
+                reason_text = texts.t('MONITOR_AUTOPAY_FINAL_REASON', '')
             elif cause == 'charge_error':
-                reason_text = 'Ошибка списания средств'
+                reason_text = texts.t('MONITOR_AUTOPAY_CHARGE_REASON', '')
             else:
-                reason_text = 'Недостаточно средств на балансе'
+                reason_text = texts.t('MONITOR_AUTOPAY_BALANCE_REASON', '')
             await notification_delivery_service.notify_autopay_failed(user=user, reason=reason_text)
 
         apply_autopay_fail_notification(state, reason, now_ts)
@@ -1631,11 +1652,8 @@ class MonitoringService:
                             ):
                                 await self.bot.send_message(
                                     chat_id=user.telegram_id,
-                                    text=(
-                                        '⚠️ <b>Автоплатёж приостановлен</b>\n\n'
-                                        'Ваша подписка была создана до введения тарифов. '
-                                        'Для работы автоплатежа необходимо выбрать тариф.\n\n'
-                                        'Перейдите в раздел «Моя подписка» → «Продлить», чтобы выбрать тариф.'
+                                    text=get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                                        'MONITOR_LEGACY_AUTOPAY_NOTICE', ''
                                     ),
                                     parse_mode='HTML',
                                 )
@@ -1755,7 +1773,13 @@ class MonitoringService:
                             from app.database.models import PaymentMethod, TransactionType
 
                             old_end_date = subscription.end_date
-                            await extend_subscription(db, subscription, autopay_period, commit=False)
+                            await extend_subscription(
+                                db,
+                                subscription,
+                                autopay_period,
+                                paid_traffic_reset=settings.RESET_TRAFFIC_ON_PAYMENT,
+                                commit=False,
+                            )
                             description = f'Автопродление подписки на {autopay_period} дней'
                             transaction = await create_transaction(
                                 db=db,
@@ -1926,26 +1950,25 @@ class MonitoringService:
                     notification_type=NotificationType.SUBSCRIPTION_EXPIRED,
                     context={'tariff_name': tariff_name or ''},
                 )
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
             tariff_label = ''
             if settings.is_multi_tariff_enabled():
                 if tariff_name:
-                    tariff_label = f' «{tariff_name}»'
+                    tariff_label = f' «{html.escape(tariff_name)}»'
                 elif hasattr(subscription, 'tariff') and subscription.tariff:
-                    tariff_label = f' «{subscription.tariff.name}»'
-            message = f"""
-⛔ <b>Подписка{tariff_label} истекла</b>
-
-Ваша подписка истекла. Для восстановления доступа продлите подписку.
-
-🔧 Доступ к серверам заблокирован до продления.
-"""
+                    tariff_label = f' «{html.escape(subscription.tariff.name)}»'
+            message = texts.t('MONITOR_SUBSCRIPTION_EXPIRED', '').format(tariff_label=tariff_label)
 
             from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_subscription_extend_button('💎 Продлить подписку', subscription.id)],
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
+                    [build_subscription_extend_button(texts.t('SUBSCRIPTION_EXTEND', ''), subscription.id)],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', ''), callback_data='balance_topup'
+                        )
+                    ],
                 ]
             )
 
@@ -2097,28 +2120,27 @@ class MonitoringService:
                     notification_type=NotificationType.WINBACK_TRIAL_ENDING,
                     context={},
                 )
-            get_texts(user.language)
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
 
             tariff_label = ''
             if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-                tariff_label = f' «{subscription.tariff.name}»'
-            message = f"""
-🎁 <b>Тестовая подписка{tariff_label} скоро закончится!</b>
-
-Ваша тестовая подписка истекает через 2 часа.
-
-💎 <b>Не хотите остаться без VPN?</b>
-Переходите на полную подписку!
-
-⚡️ Успейте оформить до окончания тестового периода!
-"""
+                tariff_label = f' «{html.escape(subscription.tariff.name)}»'
+            message = texts.t('MONITOR_TRIAL_ENDING', '').format(tariff_label=tariff_label)
 
             from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💎 Купить подписку', callback_data='menu_buy')],
-                    [build_miniapp_or_callback_button(text='💰 Пополнить баланс', callback_data='balance_topup')],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('MENU_BUY_SUBSCRIPTION', ''), callback_data='menu_buy'
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', ''), callback_data='balance_topup'
+                        )
+                    ],
                 ]
             )
 
@@ -2379,7 +2401,8 @@ class MonitoringService:
                 inline_keyboard=[
                     [
                         build_miniapp_or_callback_button(
-                            text='🎁 Получить скидку', callback_data=f'claim_discount_{offer_id}'
+                            text=texts.t('ADMIN_MONITORING_UI_BUILD_NOTIFICATION_PREVIEW_MESSAGE_019', ''),
+                            callback_data=f'claim_discount_{offer_id}',
                         )
                     ],
                     [
@@ -2438,10 +2461,10 @@ class MonitoringService:
                 and hasattr(subscription, 'tariff')
                 and subscription.tariff
             ):
-                tariff_label = f' «{subscription.tariff.name}»'
+                tariff_label = f' «{html.escape(subscription.tariff.name)}»'
             message = texts.AUTOPAY_SUCCESS.format(days=days, amount=settings.format_price(amount))
             if tariff_label:
-                message += f'\n📦 Тариф:{tariff_label}'
+                message += texts.t('MONITOR_TARIFF_LINE', '').format(tariff_label=tariff_label)
             await self._send_message_with_logo(
                 chat_id=user.telegram_id,
                 text=message,
@@ -2489,14 +2512,24 @@ class MonitoringService:
                 and hasattr(subscription, 'tariff')
                 and subscription.tariff
             ):
-                message += f'\n📦 Тариф: «{subscription.tariff.name}»'
+                message += texts.t('MONITOR_TARIFF_LINE', '').format(
+                    tariff_label=f' «{html.escape(subscription.tariff.name)}»'
+                )
 
             from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                    [build_miniapp_or_callback_button(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', ''), callback_data='balance_topup'
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('MY_SUBSCRIPTION_BUTTON', ''), callback_data='menu_subscription'
+                        )
+                    ],
                 ]
             )
 
@@ -3431,6 +3464,26 @@ class MonitoringService:
             except Exception:
                 interval_seconds = 900
             await asyncio.sleep(interval_seconds)
+
+    async def _device_overflow_loop(self):
+        from app.services.device_limit_overflow import check_device_limit_overflows
+
+        # Первый проход не сразу после старта: бот поднимается вместе с остальными
+        # фоновыми задачами, а сутки ничего не решают.
+        await asyncio.sleep(DEVICE_OVERFLOW_FIRST_CHECK_DELAY_SECONDS)
+        while self.is_running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    try:
+                        await check_device_limit_overflows(db, self.bot)
+                    except Exception as e:
+                        logger.warning('Сбой проверки превышения лимита устройств', error=str(e))
+                        await db.rollback()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning('Ошибка в цикле проверки превышения лимита устройств', error=str(e))
+            await asyncio.sleep(DEVICE_OVERFLOW_CHECK_INTERVAL_SECONDS)
 
     async def _log_monitoring_event(
         self, db: AsyncSession, event_type: str, message: str, data: dict[str, Any] = None, is_success: bool = True

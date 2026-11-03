@@ -1,6 +1,7 @@
 """#3158: tariff quotas must not inherit classic fixed traffic settings."""
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -26,6 +27,9 @@ async def test_tariff_renewal_preserves_base_and_only_active_purchases(
     monkeypatch.setattr(settings, 'TRAFFIC_SELECTION_MODE', mode)
     monkeypatch.setattr(settings, 'FIXED_TRAFFIC_LIMIT_GB', 100)
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset)
+    # This test checks quota ownership, with panel usage below the renewed limit.
+    # The local cache alone no longer proves that expired top-ups can be dropped.
+    monkeypatch.setattr('app.services.traffic_package_usage.read_panel_used_gb', AsyncMock(return_value=17.5))
     now = datetime.now(UTC)
     async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
         user = User(id=42, telegram_id=42, first_name='Test', language='ru', status='active')

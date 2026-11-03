@@ -1110,7 +1110,7 @@ class PaymentService(
                 language=settings.DEFAULT_LANGUAGE,
                 payment_method_code=method_code,
                 return_url=return_url,
-                payer=await resolve_guest_payer(db, purchase_token),
+                payer=await resolve_guest_payer(db, purchase_token, for_platega=True),
             )
             if result:
                 await _patch_guest_metadata(result['local_payment_id'], 'platega')

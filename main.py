@@ -20,6 +20,7 @@ from app.localization.loader import ensure_locale_templates
 from app.logging_config import _resolve_log_level, setup_logging
 from app.services.backup_service import backup_service
 from app.services.ban_notification_service import ban_notification_service
+from app.services.bot_commands import CommandMenuStore, CommandMenuSync
 from app.services.broadcast_service import broadcast_service
 from app.services.contest_rotation_service import contest_rotation_service
 from app.services.daily_subscription_service import daily_subscription_service
@@ -43,6 +44,7 @@ from app.services.remnawave_sync_service import remnawave_sync_service
 from app.services.reporting_service import reporting_service
 from app.services.riopay_service import riopay_service
 from app.services.system_settings_service import bot_configuration_service
+from app.services.traffic_accounting_worker import traffic_accounting_worker
 from app.services.traffic_monitoring_service import traffic_monitoring_scheduler
 from app.services.version_service import version_service
 from app.services.web_api_token_service import ensure_default_web_api_token
@@ -199,6 +201,7 @@ async def main():
     traffic_monitoring_task = None
     daily_subscription_task = None
     polling_task = None
+    command_menu_task = None
     web_api_server = None
     telegram_webhook_enabled = False
     polling_enabled = True
@@ -355,6 +358,9 @@ async def main():
             stage.log('Кеш и FSM подготовлены')
 
         bot_user = await bot.get_me()
+        command_menu_task = asyncio.create_task(
+            CommandMenuSync(bot, CommandMenuStore(bot.id)).run(), name='telegram-command-menus'
+        )
         if bot_user.username and not settings.BOT_USERNAME:
             settings.BOT_USERNAME = bot_user.username
             logger.info('BOT_USERNAME auto-detected', bot_username=bot_user.username)
@@ -526,6 +532,11 @@ async def main():
             except Exception as e:
                 stage.warning(f'Grace-доступ безопасно отключён из-за ошибки конфигурации: {e}')
                 logger.error('Ошибка запуска grace-доступа; основной бот продолжает работу', error=e)
+
+        try:
+            await traffic_accounting_worker.start()
+        except Exception as error:
+            logger.warning('Traffic accounting worker startup failed', error_type=type(error).__name__)
 
         # Разовая фоновая чистка накопившихся дублей тарифных подписок (multi-tariff):
         # лишние истёкшие дубли удаляются из БД и панели вместе, как штатное удаление.
@@ -1044,6 +1055,15 @@ async def main():
             await referral_contest_service.stop()
         except Exception as e:
             logger.error('Ошибка остановки сервиса конкурсов', error=e)
+
+        try:
+            await traffic_accounting_worker.stop()
+        except Exception as error:
+            logger.warning('Traffic accounting worker shutdown failed', error_type=type(error).__name__)
+
+        if command_menu_task is not None:
+            command_menu_task.cancel()
+            await asyncio.gather(command_menu_task, return_exceptions=True)
 
         logger.info('ℹ️ Остановка сервиса grace-доступа...')
         try:

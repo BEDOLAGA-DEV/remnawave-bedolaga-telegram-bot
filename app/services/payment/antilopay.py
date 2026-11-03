@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType, User
-from app.services.antilopay_service import antilopay_service, validate_amount
+from app.localization.texts import get_texts
+from app.services.antilopay_service import AntilopayAPIError, antilopay_service, validate_amount
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
@@ -102,6 +103,7 @@ class AntilopayPaymentMixin:
             'type': 'balance_topup',
         }
 
+        local_payment_id = None
         try:
             # Определяем prefer_methods по типу подметода
             prefer_methods: list[str] | None = None
@@ -180,6 +182,20 @@ class AntilopayPaymentMixin:
                 'local_payment_id': local_payment.id,
             }
 
+        except AntilopayAPIError as error:
+            await db.rollback()
+            if local_payment_id is not None and error.creation_rejected:
+                payment = await antilopay_crud.get_antilopay_payment_by_id_for_update(db, local_payment_id)
+                # Never overwrite a callback that won while POST was in flight.
+                if payment and not payment.is_paid and not payment.antilopay_payment_id:
+                    payment.status = 'failed'
+                    payment.metadata_json = {**(payment.metadata_json or {}), 'creation_error_code': error.api_code}
+                await db.commit()
+            logger.error(
+                f'Antilopay create rejected/unresolved: HTTP {error.status_code}, API {error.api_code}',
+                error=error,
+            )
+            return None
         except Exception as e:
             await db.rollback()
             logger.exception('Antilopay: ошибка создания платежа', error=e)
@@ -252,6 +268,11 @@ class AntilopayPaymentMixin:
                 logger.info('Antilopay callback: платеж уже обработан', order_id=payment.order_id)
                 return True
 
+            metadata = dict(payment.metadata_json or {})
+            metadata.pop('antilopay_check_after', None)
+            metadata.pop('antilopay_check_attempts', None)
+            payment.metadata_json = metadata
+
             # Маппинг статуса
             status_info = ANTILOPAY_STATUS_MAP.get(antilopay_status, ('pending', False))
             internal_status, is_paid = status_info
@@ -309,6 +330,7 @@ class AntilopayPaymentMixin:
                 payment=payment,
                 status=internal_status,
                 is_paid=False,
+                antilopay_payment_id=antilopay_payment_id,
                 callback_payload=callback_payload,
             )
 
@@ -491,11 +513,12 @@ class AntilopayPaymentMixin:
                 await self.bot.send_message(
                     user.telegram_id,
                     (
-                        '\u2705 <b>Пополнение успешно!</b>\n\n'
-                        f'\U0001f4b0 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
-                        f'\U0001f4b3 Способ: {display_name}\n'
-                        f'\U0001f194 Транзакция: {transaction.id}\n\n'
-                        'Баланс пополнен автоматически!'
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t(
+                            'PAYMENT_NOTICE_000',
+                            '✅ <b>Пополнение успешно!</b>\n\n💰 Сумма: {v0}\n💳 Способ: {v1}\n🆔 Транзакция: {v2}\n\nБаланс пополнен автоматически!',
+                        )
+                        .format(v0=settings.format_price(payment.amount_kopeks), v1=display_name, v2=transaction.id)
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
@@ -548,6 +571,36 @@ class AntilopayPaymentMixin:
             crud = import_module('app.database.crud.antilopay')
             payment = await crud.get_antilopay_payment_by_order_id(db, order_id)
             return {**result, 'payment': payment}
+        except AntilopayAPIError as error:
+            await db.rollback()
+            if type(error.api_code) is int and error.api_code == 8:
+                crud = import_module('app.database.crud.antilopay')
+                payment = await crud.get_antilopay_payment_by_order_id(db, order_id)
+                known_remote = False
+                if payment is not None:
+                    payment = await crud.get_antilopay_payment_by_id_for_update(db, payment.id)
+                    known_remote = bool(payment.antilopay_payment_id)
+                    if not payment.is_paid:
+                        metadata = dict(payment.metadata_json or {})
+                        previous = metadata.get('antilopay_check_attempts', 0)
+                        attempts = min(previous + 1, 4) if type(previous) is int and previous >= 0 else 1
+                        minutes = min(60, 10 * 2 ** (attempts - 1))
+                        metadata.update(
+                            antilopay_check_attempts=attempts,
+                            antilopay_check_after=(datetime.now(UTC) + timedelta(minutes=minutes)).isoformat(),
+                        )
+                        payment.metadata_json = metadata
+                    await db.commit()
+                log = logger.error if known_remote else logger.warning
+                log('Antilopay: payment not found (API 8); automatic check deferred', order_id=order_id, api_code=8)
+            else:
+                logger.error(
+                    f'Antilopay check failed: HTTP {error.status_code}, API {error.api_code}',
+                    order_id=order_id,
+                    error=error,
+                )
+            return None
         except Exception as e:
+            await db.rollback()
             logger.error('Antilopay: ошибка проверки статуса', order_id=order_id, error=e)
             return None

@@ -45,3 +45,38 @@ async def test_create_invite_message_wraps_links_in_code(monkeypatch):
     assert '&lt;code&gt;' not in html
     # Still rendered inside the copyable quote.
     assert '<blockquote>' in html and '</blockquote>' in html
+
+
+async def test_referral_qr_cache_tracks_link_and_owner(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        type(ref.settings),
+        'get_bot_referral_link',
+        lambda self, code, bot: f'https://example.com/{bot}?ref={code}',
+    )
+    monkeypatch.setattr(type(ref.settings), 'get_cabinet_referral_link', lambda self, code: None)
+    links = []
+
+    def make_image(link):
+        links.append(link)
+        return SimpleNamespace(save=lambda path: path.write_bytes(link.encode()))
+
+    monkeypatch.setattr(ref.qrcode, 'make', make_image)
+    callback = SimpleNamespace(
+        answer=AsyncMock(),
+        bot=SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username='example_bot'))),
+        message=SimpleNamespace(edit_media=AsyncMock()),
+    )
+    user = SimpleNamespace(id=1, referral_code='first', language='ru')
+    await ref.show_referral_qr(callback, user)
+    await ref.show_referral_qr(callback, user)
+    assert len(links) == 1
+    user.referral_code = 'second'
+    await ref.show_referral_qr(callback, user)
+    user.id = 2
+    await ref.show_referral_qr(callback, user)
+    assert len(links) == 3
+    images = list((tmp_path / 'data' / 'referral_qr').glob('*.png'))
+    assert len(images) == 3
+    assert sorted(path.read_text() for path in images) == sorted(links)
+    assert callback.message.edit_media.await_count == 4

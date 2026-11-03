@@ -9,9 +9,9 @@ import pytest
 from sqlalchemy import select, text
 
 from app.config import settings
-from app.database.crud.subscription import add_subscription_traffic
 from app.database.models import Base, Subscription, Tariff, TrafficPurchase, User
 from app.services.daily_subscription_service import DailySubscriptionService
+from app.services.traffic_purchase_service import add_subscription_traffic
 from tests.fixtures.postgres_db import lock_waiter_appeared, postgres_sessions
 
 

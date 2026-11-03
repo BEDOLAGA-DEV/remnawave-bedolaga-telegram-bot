@@ -110,3 +110,12 @@ async def test_status_nonzero_code_is_not_success(transport):
     with pytest.raises(AntilopayAPIError):
         await service.check_payment(order_id='masked-order')
     assert requests[0][0].endswith('/api/v1/payment/check')
+
+
+async def test_check_preserves_provider_error_code(transport):
+    service, requests = transport
+    service.test_response.payload = {'code': 8, 'error': 'Payment not found'}
+    with pytest.raises(AntilopayAPIError) as caught:
+        await service.check_payment(order_id='masked-order')
+    assert caught.value.api_code == 8
+    assert requests[0][1] == {'project_identificator': 'masked-project', 'order_id': 'masked-order'}

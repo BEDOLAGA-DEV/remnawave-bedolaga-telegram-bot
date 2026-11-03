@@ -53,19 +53,28 @@ async def handle_connect_subscription(
                     _t = await _get_tariff(db, sub.tariff_id)
                     tariff_name = _t.name if _t else f'#{sub.id}'
                 else:
-                    tariff_name = f'Подписка #{sub.id}'
+                    tariff_name = texts.t('SUBSCRIPTION_UI_NAME_ID', 'Подписка #{id}').format(id=sub.id)
                 days_left = local_days_until(sub.end_date) if sub.end_date else 0
                 keyboard.append(
                     [
                         types.InlineKeyboardButton(
-                            text=f'🔗 {tariff_name} ({days_left}д.)',
+                            text=texts.t('SUBSCRIPTION_UI_CONNECT_DAYS', '🔗 {name} ({days}д.)').format(
+                                name=tariff_name, days=days_left
+                            ),
                             callback_data=f'sl:{sub.id}',
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('SUBSCRIPTION_UI_BACK', '◀️ Назад'),
+                        callback_data='back_to_menu',
+                    )
+                ]
+            )
             await callback.message.edit_text(
-                '🔗 <b>Подключиться</b>\n\nВыберите подписку:',
+                texts.t('SUBSCRIPTION_UI_CONNECT_SELECT', '🔗 <b>Подключиться</b>\n\nВыберите подписку:'),
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             )
             await callback.answer()

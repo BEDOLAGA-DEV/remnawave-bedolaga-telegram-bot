@@ -27,7 +27,7 @@ from app.database.crud.user import (
     get_user_by_telegram_id,
 )
 from app.database.crud.user_message import get_random_active_message
-from app.database.models import GuestPurchase, PinnedMessage, SubscriptionStatus, UserStatus
+from app.database.models import GuestPurchase, PinnedMessage, SubscriptionStatus, User, UserStatus
 from app.keyboards.inline import (
     get_back_keyboard,
     get_language_selection_keyboard,
@@ -1374,7 +1374,7 @@ async def cmd_start(message: types.Message, state: FSMContext, db: AsyncSession,
                 )
             else:
                 logger.warning('Web auth attempt from unregistered user', telegram_id=message.from_user.id)
-                await message.answer('❌ Сначала зарегистрируйтесь в боте, затем попробуйте войти в кабинет.')
+                await message.answer(get_texts(message.from_user.language_code).t('WEB_AUTH_REGISTER_FIRST'))
             return
         start_parameter = None  # Invalid token, ignore
 
@@ -3355,6 +3355,7 @@ async def required_sub_channel_check(
 async def process_webauth_confirm(
     callback: types.CallbackQuery,
     db: AsyncSession,
+    db_user: User | None = None,
 ):
     """Handle web auth confirmation or denial."""
     await callback.answer()
@@ -3362,19 +3363,20 @@ async def process_webauth_confirm(
     if not isinstance(callback.message, types.Message):
         return
 
+    texts = get_texts(db_user.language if db_user else callback.from_user.language_code)
     if callback.data == 'webauth_deny':
-        await callback.message.edit_text('❌ Вход отменён.')
+        await callback.message.edit_text(texts.t('WEB_AUTH_CANCELLED'))
         return
 
     # Extract token from callback_data: "webauth_confirm:{token}"
     token = callback.data.split(':', 1)[1] if ':' in callback.data else ''
     if len(token) < WEB_AUTH_TOKEN_MIN_LENGTH:
-        await callback.message.edit_text('❌ Ошибка: неверный токен.')
+        await callback.message.edit_text(texts.t('WEB_AUTH_INVALID_TOKEN'))
         return
 
     user = await get_user_by_telegram_id(db, callback.from_user.id)
     if not user or user.status != UserStatus.ACTIVE.value:
-        await callback.message.edit_text('❌ Учётная запись неактивна.')
+        await callback.message.edit_text(texts.t('WEB_AUTH_INACTIVE'))
         return
 
     linked = await link_web_auth_token(token, callback.from_user.id, user.id)

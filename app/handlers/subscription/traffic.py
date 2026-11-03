@@ -6,10 +6,7 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PERIOD_PRICES, settings
-from app.database.crud.subscription import (
-    add_subscription_traffic,
-    reactivate_subscription,
-)
+from app.database.crud.subscription import reactivate_subscription
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import TransactionType, User
@@ -26,6 +23,7 @@ from app.localization.texts import get_texts
 from app.services.pricing_engine import PricingEngine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
+from app.services.traffic_purchase_service import add_subscription_traffic
 from app.services.user_cart_service import user_cart_service
 from app.states import SubscriptionStates
 from app.utils.legacy_subscription import is_legacy_subscription
@@ -78,19 +76,28 @@ async def handle_add_traffic(callback: types.CallbackQuery, db_user: User, db: A
                     _t = await _get_tariff(db, sub.tariff_id)
                     tariff_name = _t.name if _t else f'#{sub.id}'
                 else:
-                    tariff_name = f'Подписка #{sub.id}'
+                    tariff_name = texts.t('SUBSCRIPTION_UI_NAME_ID', 'Подписка #{id}').format(id=sub.id)
                 days_left = local_days_until(sub.end_date) if sub.end_date else 0
                 keyboard.append(
                     [
                         types.InlineKeyboardButton(
-                            text=f'📊 {tariff_name} ({days_left}д.)',
+                            text=texts.t('SUBSCRIPTION_UI_TRAFFIC_DAYS_BUTTON', '📊 {traffic} ({days}д.)').format(
+                                traffic=tariff_name, days=days_left
+                            ),
                             callback_data=f'st:{sub.id}',
                         )
                     ]
                 )
-            keyboard.append([types.InlineKeyboardButton(text='◀️ Назад', callback_data='back_to_menu')])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('SUBSCRIPTION_UI_BACK', '◀️ Назад'),
+                        callback_data='back_to_menu',
+                    )
+                ]
+            )
             await callback.message.edit_text(
-                '📊 <b>Докупить трафик</b>\n\nВыберите подписку:',
+                texts.t('SUBSCRIPTION_UI_TRAFFIC_SELECT', '📊 <b>Докупить трафик</b>\n\nВыберите подписку:'),
                 reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             )
             await callback.answer()
@@ -264,7 +271,12 @@ async def handle_reset_traffic(
     from app.config import settings
 
     if settings.is_traffic_topup_blocked():
-        await callback.answer('⚠️ В текущем режиме трафик фиксированный и не может быть сброшен', show_alert=True)
+        await callback.answer(
+            get_texts(getattr(db_user, 'language', None)).t(
+                'SUBSCRIPTION_UI_FIXED_TRAFFIC_RESET', '⚠️ В текущем режиме трафик фиксированный и не может быть сброшен'
+            ),
+            show_alert=True,
+        )
         return
 
     texts = get_texts(db_user.language)
@@ -273,11 +285,17 @@ async def handle_reset_traffic(
         return
 
     if not subscription or subscription.is_trial:
-        await callback.answer('⌛ Эта функция доступна только для платных подписок', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_PAID_ONLY_HOURGLASS', '⌛ Эта функция доступна только для платных подписок'),
+            show_alert=True,
+        )
         return
 
     if subscription.traffic_limit_gb == 0:
-        await callback.answer('⌛ У вас безлимитный трафик', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_UNLIMITED_TRAFFIC', '⌛ У вас безлимитный трафик'),
+            show_alert=True,
+        )
         return
 
     reset_price = _calculate_traffic_reset_price(subscription)
@@ -287,33 +305,61 @@ async def handle_reset_traffic(
     price_info = ''
     if purchased_gb > 0 and settings.get_traffic_reset_price_mode() == 'traffic_with_purchased':
         base_traffic_gb = subscription.traffic_limit_gb - purchased_gb
-        price_info = (
-            f'\n\n💡 <i>Расчет цены:</i>\n'
-            f'• Базовый трафик: {texts.format_traffic(base_traffic_gb)}\n'
-            f'• Докупленный: {texts.format_traffic(purchased_gb)}'
-        )
+        price_info = texts.t(
+            'SUBSCRIPTION_UI_RESET_PRICE_BREAKDOWN',
+            '\n\n💡 <i>Расчет цены:</i>\n• Базовый трафик: {base}\n• Докупленный: {extra}',
+        ).format(base=texts.format_traffic(base_traffic_gb), extra=texts.format_traffic(purchased_gb))
 
     # Проверяем достаточно ли средств
     has_enough_balance = db_user.balance_kopeks >= reset_price
     missing_kopeks = max(0, reset_price - db_user.balance_kopeks)
 
     # Формируем текст о балансе
-    balance_info = f'\n\n💰 На балансе: {texts.format_price(db_user.balance_kopeks)}'
+    balance_info = texts.t('SUBSCRIPTION_UI_BALANCE_LINE', '\n\n💰 На балансе: {balance}').format(
+        balance=texts.format_price(db_user.balance_kopeks)
+    )
     if not has_enough_balance:
-        balance_info += f'\n⚠️ Не хватает: {texts.format_price(missing_kopeks)}'
+        balance_info += texts.t('SUBSCRIPTION_UI_MISSING_LINE', '\n⚠️ Не хватает: {amount}').format(
+            amount=texts.format_price(missing_kopeks)
+        )
+
+    reset_keyboard = get_reset_traffic_confirm_keyboard(
+        reset_price,
+        db_user.language,
+        has_enough_balance=has_enough_balance,
+        missing_kopeks=missing_kopeks,
+    )
+    if getattr(subscription, 'traffic_accounting_mode', None) == 'managed':
+        from uuid import uuid4
+
+        token = uuid4().hex[:24]
+        for row in reset_keyboard.inline_keyboard:
+            for button in row:
+                if button.callback_data == 'confirm_reset_traffic':
+                    button.callback_data = f'confirm_reset_traffic:{subscription.id}:{token}'
 
     await callback.message.edit_text(
-        f'🔄 <b>Сброс трафика</b>\n\n'
-        f'Использовано: {texts.format_traffic(subscription.traffic_used_gb, is_limit=False)}\n'
-        f'Лимит: {texts.format_traffic(subscription.traffic_limit_gb)}\n\n'
-        f'Стоимость сброса: {texts.format_price(reset_price)}{price_info}{balance_info}\n\n'
-        'После сброса счетчик использованного трафика станет равным 0.',
-        reply_markup=get_reset_traffic_confirm_keyboard(
-            reset_price,
-            db_user.language,
-            has_enough_balance=has_enough_balance,
-            missing_kopeks=missing_kopeks,
+        texts.t(
+            'SUBSCRIPTION_UI_RESET_DETAILS',
+            '🔄 <b>Сброс трафика</b>\n\nИспользовано: {used}\nЛимит: {limit}\n\nСтоимость сброса: {price}{discount}{breakdown}\n\n',
+        ).format(
+            used=texts.format_traffic(subscription.traffic_used_gb, is_limit=False),
+            limit=texts.format_traffic(subscription.traffic_limit_gb),
+            price=texts.format_price(reset_price),
+            discount=price_info,
+            breakdown=balance_info,
+        )
+        + (
+            texts.t(
+                'SUBSCRIPTION_UI_RESET_KEEP_EXTRA',
+                'Базовый трафик будет обновлён. Остатки докупленных пакетов сохранятся.',
+            )
+            if getattr(subscription, 'traffic_accounting_mode', None) == 'managed'
+            else texts.t(
+                'SUBSCRIPTION_UI_RESET_USAGE_ZERO', 'После сброса счетчик использованного трафика станет равным 0.'
+            )
         ),
+        reply_markup=reset_keyboard,
     )
 
     await callback.answer()
@@ -325,13 +371,23 @@ async def confirm_reset_traffic(
     from app.config import settings
 
     if settings.is_traffic_topup_blocked():
-        await callback.answer('⚠️ В текущем режиме трафик фиксированный', show_alert=True)
+        await callback.answer(
+            get_texts(getattr(db_user, 'language', None)).t(
+                'SUBSCRIPTION_UI_FIXED_TRAFFIC', '⚠️ В текущем режиме трафик фиксированный'
+            ),
+            show_alert=True,
+        )
         return
 
     if settings.is_multi_tariff_enabled():
         _state_data = await state.get_data() if state else {}
         if not _state_data.get('active_subscription_id'):
-            await callback.answer('Выберите подписку через "Мои подписки"', show_alert=True)
+            await callback.answer(
+                get_texts(getattr(db_user, 'language', None)).t(
+                    'SUBSCRIPTION_UI_SELECT_MY_SUBSCRIPTIONS', 'Выберите подписку через "Мои подписки"'
+                ),
+                show_alert=True,
+            )
             return
 
     from app.database.crud.user import lock_user_for_pricing
@@ -342,6 +398,96 @@ async def confirm_reset_traffic(
     # Re-resolve after lock since db_user was refreshed
     subscription, _ = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
+        return
+
+    mode = getattr(subscription, 'traffic_accounting_mode', None)
+    if mode in ('managed', 'migrating'):
+        from hashlib import sha256
+
+        from app.database.crud.transaction import emit_transaction_side_effects
+        from app.services.paid_traffic_reset_service import purchase_managed_reset
+        from app.services.traffic_accounting import AccountingConflict
+        from app.services.traffic_accounting_service import refresh_managed_account
+
+        if mode == 'migrating':
+            await callback.answer(
+                texts.t('SUBSCRIPTION_UI_ACCOUNTING_UPDATING', 'Учёт трафика обновляется. Повторите позже.'),
+                show_alert=True,
+            )
+            return
+        subscription_id, owner_id, language = subscription.id, db_user.id, db_user.language
+        # Each rendered confirmation has its own nonce; retries reuse it, while
+        # returning to this screen later permits a genuinely new paid reset.
+        parts = (callback.data or '').split(':')
+        token = parts[2] if len(parts) == 3 else ''
+        if (
+            len(parts) != 3
+            or parts[1] != str(subscription_id)
+            or len(token) != 24
+            or any(char not in '0123456789abcdef' for char in token)
+        ):
+            await callback.answer(
+                texts.t('SUBSCRIPTION_UI_REOPEN_RESET_CONFIRM', 'Откройте подтверждение сброса ещё раз.'),
+                show_alert=True,
+            )
+            return
+        source = f'{owner_id}:{subscription_id}:{token}'
+        operation_key = f'telegram-reset:{sha256(source.encode()).hexdigest()}'
+        try:
+            transaction, charged = await purchase_managed_reset(
+                db,
+                subscription_id,
+                user_id=owner_id,
+                operation_key=operation_key,
+                price=_calculate_traffic_reset_price,
+            )
+            if charged:
+                await emit_transaction_side_effects(
+                    db,
+                    transaction,
+                    amount_kopeks=abs(transaction.amount_kopeks),
+                    user_id=owner_id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    external_id=operation_key,
+                    description='Сброс трафика',
+                )
+            try:
+                await refresh_managed_account(db, subscription)
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                from app.services.remnawave_retry_queue import remnawave_retry_queue
+
+                remnawave_retry_queue.enqueue(subscription_id=subscription_id, user_id=owner_id, action='update')
+                await callback.answer(
+                    texts.t(
+                        'SUBSCRIPTION_UI_PAYMENT_SAVED_RETRY', 'Оплата сохранена. Обновление доступа будет повторено.'
+                    ),
+                    show_alert=True,
+                )
+                return
+            await callback.message.edit_text(
+                texts.t(
+                    'SUBSCRIPTION_UI_BASE_RESET_SUCCESS',
+                    '✅ Базовый трафик обновлён. Остатки докупленных пакетов сохранены.',
+                ),
+                reply_markup=get_back_keyboard(language),
+            )
+            await callback.answer()
+        except AccountingConflict:
+            await callback.answer(
+                texts.t(
+                    'SUBSCRIPTION_UI_TRAFFIC_BALANCE_RETRY',
+                    'Не удалось обновить трафик. Проверьте баланс и повторите позже.',
+                ),
+                show_alert=True,
+            )
+        except Exception as error:
+            logger.error('Ошибка оплаты обновления трафика', error=error)
+            await callback.answer(
+                texts.t('SUBSCRIPTION_UI_TRAFFIC_RETRY', 'Не удалось обновить трафик. Повторите позже.'),
+                show_alert=True,
+            )
         return
 
     reset_price = _calculate_traffic_reset_price(subscription)
@@ -378,7 +524,10 @@ async def confirm_reset_traffic(
         success = await subtract_user_balance(db, db_user, reset_price, 'Сброс трафика')
 
         if not success:
-            await callback.answer('⌛ Ошибка списания средств', show_alert=True)
+            await callback.answer(
+                texts.t('SUBSCRIPTION_UI_DEBIT_HOURGLASS', '⌛ Ошибка списания средств'),
+                show_alert=True,
+            )
             return
 
         subscription.traffic_used_gb = 0.0
@@ -431,9 +580,10 @@ async def confirm_reset_traffic(
         await db.refresh(subscription)
 
         await callback.message.edit_text(
-            f'✅ Трафик успешно сброшен!\n\n'
-            f'🔄 Использованный трафик обнулен\n'
-            f'📊 Лимит: {texts.format_traffic(subscription.traffic_limit_gb)}',
+            texts.t(
+                'SUBSCRIPTION_UI_RESET_SUCCESS_DETAILS',
+                '✅ Трафик успешно сброшен!\n\n🔄 Использованный трафик обнулен\n📊 Лимит: {limit}',
+            ).format(limit=texts.format_traffic(subscription.traffic_limit_gb)),
             reply_markup=get_back_keyboard(db_user.language),
         )
 
@@ -468,35 +618,50 @@ async def refresh_traffic_config():
         return False
 
 
-async def get_traffic_packages_info() -> str:
+async def get_traffic_packages_info(language: str | None = None) -> str:
+    texts = get_texts(language)
     try:
         packages = settings.get_traffic_packages()
 
-        info_lines = ['📦 Настроенные пакеты трафика:']
+        info_lines = [texts.t('SUBSCRIPTION_UI_PACKAGES_TITLE', '📦 Настроенные пакеты трафика:')]
 
         enabled_packages = [pkg for pkg in packages if pkg['enabled']]
         disabled_packages = [pkg for pkg in packages if not pkg['enabled']]
 
         if enabled_packages:
-            info_lines.append('\n✅ Активные:')
+            info_lines.append(texts.t('SUBSCRIPTION_UI_PACKAGES_ACTIVE_TITLE', '\n✅ Активные:'))
             for pkg in enabled_packages:
-                gb_text = '♾️ Безлимит' if pkg['gb'] == 0 else f'{pkg["gb"]} ГБ'
+                gb_text = (
+                    texts.t('SUBSCRIPTION_UI_UNLIMITED_INFINITY', '♾️ Безлимит')
+                    if pkg['gb'] == 0
+                    else texts.t('SUBSCRIPTION_UI_GB_VALUE', '{amount} ГБ').format(amount=pkg['gb'])
+                )
                 info_lines.append(f'   • {gb_text}: {pkg["price"] // 100}₽')
 
         if disabled_packages:
-            info_lines.append('\n❌ Отключенные:')
+            info_lines.append(texts.t('SUBSCRIPTION_UI_PACKAGES_DISABLED_TITLE', '\n❌ Отключенные:'))
             for pkg in disabled_packages:
-                gb_text = '♾️ Безлимит' if pkg['gb'] == 0 else f'{pkg["gb"]} ГБ'
+                gb_text = (
+                    texts.t('SUBSCRIPTION_UI_UNLIMITED_INFINITY', '♾️ Безлимит')
+                    if pkg['gb'] == 0
+                    else texts.t('SUBSCRIPTION_UI_GB_VALUE', '{amount} ГБ').format(amount=pkg['gb'])
+                )
                 info_lines.append(f'   • {gb_text}: {pkg["price"] // 100}₽')
 
-        info_lines.append(f'\n📊 Всего пакетов: {len(packages)}')
-        info_lines.append(f'🟢 Активных: {len(enabled_packages)}')
-        info_lines.append(f'🔴 Отключенных: {len(disabled_packages)}')
+        info_lines.append(
+            texts.t('SUBSCRIPTION_UI_PACKAGES_TOTAL', '\n📊 Всего пакетов: {count}').format(count=len(packages))
+        )
+        info_lines.append(
+            texts.t('SUBSCRIPTION_UI_PACKAGES_ACTIVE', '🟢 Активных: {count}').format(count=len(enabled_packages))
+        )
+        info_lines.append(
+            texts.t('SUBSCRIPTION_UI_PACKAGES_DISABLED', '🔴 Отключенных: {count}').format(count=len(disabled_packages))
+        )
 
         return '\n'.join(info_lines)
 
     except Exception as e:
-        return f'⚠️ Ошибка получения информации: {e}'
+        return texts.t('SUBSCRIPTION_UI_PACKAGES_INFO_ERROR', '⚠️ Ошибка получения информации: {error}').format(error=e)
 
 
 async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_user: User):
@@ -512,7 +677,7 @@ async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_us
     await state.set_data(data)
 
     if await _should_show_countries_management(db_user):
-        countries = await _get_available_countries(db_user.promo_group_id)
+        countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
         # Автоматически предвыбираем бесплатные серверы
         preselected = _get_preselected_free_countries(countries)
         data['countries'] = preselected
@@ -528,7 +693,7 @@ async def select_traffic(callback: types.CallbackQuery, state: FSMContext, db_us
         await callback.answer()
         return
 
-    countries = await _get_available_countries(db_user.promo_group_id)
+    countries = await _get_available_countries(db_user.promo_group_id, language=db_user.language)
     available_countries = [c for c in countries if c.get('is_available', True)]
     data['countries'] = [available_countries[0]['uuid']] if available_countries else []
     await state.set_data(data)
@@ -551,7 +716,8 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
     from app.database.crud.tariff import get_tariff_by_id
 
     traffic_gb = int(callback.data.split('_')[2])
-    texts = get_texts(db_user.language)
+    user_language = db_user.language
+    texts = get_texts(user_language)
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     if subscription is None:
         return
@@ -566,21 +732,47 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         if tariff and tariff.can_topup_traffic():
             base_price = tariff.get_traffic_topup_price(traffic_gb) or 0
         else:
-            await callback.answer('⚠️ На вашем тарифе докупка трафика недоступна', show_alert=True)
+            await callback.answer(
+                get_texts(getattr(db_user, 'language', None)).t(
+                    'SUBSCRIPTION_UI_TARIFF_TRAFFIC_UNAVAILABLE', '⚠️ На вашем тарифе докупка трафика недоступна'
+                ),
+                show_alert=True,
+            )
             return
     else:
         # Стандартный режим
         if settings.is_traffic_topup_blocked():
-            await callback.answer('⚠️ В текущем режиме трафик фиксированный', show_alert=True)
+            await callback.answer(
+                get_texts(getattr(db_user, 'language', None)).t(
+                    'SUBSCRIPTION_UI_FIXED_TRAFFIC', '⚠️ В текущем режиме трафик фиксированный'
+                ),
+                show_alert=True,
+            )
             return
         base_price = settings.get_traffic_topup_price(traffic_gb)
 
     if base_price == 0 and traffic_gb != 0:
-        await callback.answer('⚠️ Цена для этого пакета не настроена', show_alert=True)
+        await callback.answer(
+            get_texts(getattr(db_user, 'language', None)).t(
+                'SUBSCRIPTION_UI_PACKAGE_PRICE_MISSING', '⚠️ Цена для этого пакета не настроена'
+            ),
+            show_alert=True,
+        )
         return
 
     # Lock user BEFORE price computation to prevent TOCTOU on group discount
     from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+    try:
+        subscription, accounting_panel = await prepare_traffic_purchase(db, subscription, requested_gb=traffic_gb)
+    except Exception:
+        await db.rollback()
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_ACCOUNTING_UNAVAILABLE', '⚠️ Учёт трафика временно недоступен. Попробуйте позже.'),
+            show_alert=True,
+        )
+        return
 
     db_user = await lock_user_for_pricing(db, db_user.id)
     # Re-resolve after lock since db_user was refreshed
@@ -673,14 +865,22 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             db_user,
             price,
             f'Добавление {traffic_gb} ГБ трафика',
+            commit=False,
         )
 
         if not success:
-            await callback.answer('⚠️ Ошибка списания средств', show_alert=True)
+            await callback.answer(
+                get_texts(getattr(db_user, 'language', None)).t(
+                    'SUBSCRIPTION_UI_DEBIT_WARNING_EMOJI', '⚠️ Ошибка списания средств'
+                ),
+                show_alert=True,
+            )
             return
 
         if traffic_gb == 0:
-            subscription.traffic_limit_gb = 0
+            from app.services.traffic_accounting_service import transition_to_unlimited_locked
+
+            await transition_to_unlimited_locked(db, subscription, accounting_panel)
             # При переходе на безлимит сбрасываем все докупки
             from sqlalchemy import delete
 
@@ -691,10 +891,22 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
             subscription.traffic_reset_at = None
         else:
             # add_subscription_traffic уже создаёт TrafficPurchase и обновляет все необходимые поля
-            await add_subscription_traffic(db, subscription, traffic_gb)
+            await add_subscription_traffic(db, subscription, traffic_gb, panel=accounting_panel, commit=False)
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
-        await reactivate_subscription(db, subscription)
+        await reactivate_subscription(db, subscription, commit=False)
+        payment_transaction = await create_transaction(
+            db=db,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=price,
+            description=f'Добавление {traffic_gb} ГБ трафика',
+            commit=False,
+        )
+        await db.commit()
+        from app.services.traffic_purchase_service import finish_traffic_purchase
+
+        await finish_traffic_purchase(db, subscription, payment_transaction)
 
         subscription_service = SubscriptionService()
         await subscription_service.update_remnawave_user(db, subscription)
@@ -707,14 +919,6 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         )
         if _en_panel_id and subscription.status == 'active':
             await subscription_service.enable_remnawave_user(_en_panel_id)
-
-        await create_transaction(
-            db=db,
-            user_id=db_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=price,
-            description=f'Добавление {traffic_gb} ГБ трафика',
-        )
 
         await db.refresh(db_user)
         await db.refresh(subscription)
@@ -730,32 +934,56 @@ async def add_traffic(callback: types.CallbackQuery, db_user: User, db: AsyncSes
         except Exception as e:
             logger.error('Ошибка отправки уведомления о докупке трафика', error=e)
 
-        success_text = '✅ Трафик успешно добавлен!\n\n'
+        success_text = get_texts(getattr(db_user, 'language', None)).t(
+            'SUBSCRIPTION_UI_TRAFFIC_ADDED_TITLE', '✅ Трафик успешно добавлен!\n\n'
+        )
         if traffic_gb == 0:
-            success_text += '🎉 Теперь у вас безлимитный трафик!'
+            success_text += get_texts(getattr(db_user, 'language', None)).t(
+                'SUBSCRIPTION_UI_NOW_UNLIMITED_TRAFFIC', '🎉 Теперь у вас безлимитный трафик!'
+            )
         else:
-            success_text += f'📈 Добавлено: {traffic_gb} ГБ\n'
-            success_text += f'Новый лимит: {texts.format_traffic(subscription.traffic_limit_gb)}'
+            success_text += (
+                get_texts(getattr(db_user, 'language', None))
+                .t('SUBSCRIPTION_UI_TRAFFIC_ADDED_LINE', '📈 Добавлено: {traffic} ГБ\n')
+                .format(traffic=traffic_gb)
+            )
+            success_text += (
+                get_texts(getattr(db_user, 'language', None))
+                .t('SUBSCRIPTION_UI_NEW_LIMIT_VALUE', 'Новый лимит: {limit}')
+                .format(limit=texts.format_traffic(subscription.traffic_limit_gb))
+            )
 
         if price > 0:
-            success_text += f'\n💰 Списано: {texts.format_price(price)}'
+            success_text += (
+                get_texts(getattr(db_user, 'language', None))
+                .t('SUBSCRIPTION_UI_CHARGED_LINE', '\n💰 Списано: {amount}')
+                .format(amount=texts.format_price(price))
+            )
             if total_discount_value > 0:
-                success_text += f' (скидка {traffic_discount_pct}%: -{texts.format_price(total_discount_value)})'
+                success_text += (
+                    get_texts(getattr(db_user, 'language', None))
+                    .t('SUBSCRIPTION_UI_DISCOUNT_SUFFIX', ' (скидка {percent}%: -{amount})')
+                    .format(percent=traffic_discount_pct, amount=texts.format_price(total_discount_value))
+                )
 
-        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(user_language))
 
         logger.info('✅ Пользователь добавил ГБ трафика', telegram_id=db_user.telegram_id, traffic_gb=traffic_gb)
 
     except Exception as e:
+        await db.rollback()
         logger.error('Ошибка добавления трафика', error=e)
-        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(db_user.language))
+        await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(user_language))
 
     await callback.answer()
 
 
 async def handle_no_traffic_packages(callback: types.CallbackQuery, db_user: User):
     await callback.answer(
-        '⚠️ В данный момент нет доступных пакетов трафика. Обратитесь в техподдержку для получения информации.',
+        get_texts(getattr(db_user, 'language', None)).t(
+            'SUBSCRIPTION_UI_NO_TRAFFIC_PACKAGES',
+            '⚠️ В данный момент нет доступных пакетов трафика. Обратитесь в техподдержку для получения информации.',
+        ),
         show_alert=True,
     )
 
@@ -766,7 +994,12 @@ async def handle_switch_traffic(
     from app.config import settings
 
     if settings.is_traffic_topup_blocked():
-        await callback.answer('⚠️ В текущем режиме трафик фиксированный', show_alert=True)
+        await callback.answer(
+            get_texts(getattr(db_user, 'language', None)).t(
+                'SUBSCRIPTION_UI_FIXED_TRAFFIC', '⚠️ В текущем режиме трафик фиксированный'
+            ),
+            show_alert=True,
+        )
         return
 
     texts = get_texts(db_user.language)
@@ -775,7 +1008,10 @@ async def handle_switch_traffic(
         return
 
     if not subscription or subscription.is_trial:
-        await callback.answer('⚠️ Эта функция доступна только для платных подписок', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_PAID_ONLY', '⚠️ Эта функция доступна только для платных подписок'),
+            show_alert=True,
+        )
         return
 
     # Проверяем настройку тарифа
@@ -784,7 +1020,12 @@ async def handle_switch_traffic(
 
         tariff = await get_tariff_by_id(db, subscription.tariff_id)
         if tariff and not tariff.allow_traffic_topup:
-            await callback.answer('⚠️ Для вашего тарифа переключение трафика недоступно', show_alert=True)
+            await callback.answer(
+                texts.t(
+                    'SUBSCRIPTION_UI_TRAFFIC_SWITCH_UNAVAILABLE', '⚠️ Для вашего тарифа переключение трафика недоступно'
+                ),
+                show_alert=True,
+            )
             return
 
     current_traffic = subscription.traffic_limit_gb
@@ -802,16 +1043,15 @@ async def handle_switch_traffic(
     # Показываем информацию о докупленном трафике, если он есть
     purchased_info = ''
     if purchased_traffic > 0:
-        purchased_info = f'\n📦 Базовый пакет: {texts.format_traffic(base_traffic)}\n➕ Докуплено: {texts.format_traffic(purchased_traffic)}'
+        purchased_info = texts.t(
+            'SUBSCRIPTION_UI_BASE_EXTRA_TRAFFIC', '\n📦 Базовый пакет: {base}\n➕ Докуплено: {extra}'
+        ).format(base=texts.format_traffic(base_traffic), extra=texts.format_traffic(purchased_traffic))
 
     await callback.message.edit_text(
-        f'🔄 <b>Переключение лимита трафика</b>\n\n'
-        f'Текущий лимит: {texts.format_traffic(current_traffic)}{purchased_info}\n'
-        f'Выберите новый лимит трафика:\n\n'
-        f'💡 <b>Важно:</b>\n'
-        f'• При увеличении - доплата за разницу\n'
-        f'• При уменьшении - возврат средств не производится\n'
-        f'• Докупленный трафик будет сброшен',
+        texts.t(
+            'SUBSCRIPTION_UI_SWITCH_TRAFFIC_DETAILS',
+            '🔄 <b>Переключение лимита трафика</b>\n\nТекущий лимит: {limit}{packages}\nВыберите новый лимит трафика:\n\n💡 <b>Важно:</b>\n• При увеличении - доплата за разницу\n• При уменьшении - возврат средств не производится\n• Докупленный трафик будет сброшен',
+        ).format(limit=texts.format_traffic(current_traffic), packages=purchased_info),
         reply_markup=get_traffic_switch_keyboard(
             current_traffic,
             db_user.language,
@@ -841,7 +1081,10 @@ async def confirm_switch_traffic(
     base_traffic = current_traffic - purchased_traffic
 
     if new_traffic_gb == current_traffic:
-        await callback.answer('ℹ️ Лимит трафика не изменился', show_alert=True)
+        await callback.answer(
+            texts.t('SUBSCRIPTION_UI_TRAFFIC_UNCHANGED', 'ℹ️ Лимит трафика не изменился'),
+            show_alert=True,
+        )
         return
 
     # Используем базовый трафик для определения текущей цены пакета
@@ -884,7 +1127,9 @@ async def confirm_switch_traffic(
                     'Выберите способ пополнения. Сумма подставится автоматически.'
                 ),
             ).format(
-                required=f'{texts.format_price(total_price_difference)} (за {days_remaining} дн.)',
+                required=texts.t('SUBSCRIPTION_UI_PRICE_FOR_DAYS', '{price} (за {days} дн.)').format(
+                    price=texts.format_price(total_price_difference), days=days_remaining
+                ),
                 balance=texts.format_price(db_user.balance_kopeks, round_kopeks=False),
                 missing=texts.format_price(missing_kopeks, round_kopeks=False),
             )
@@ -900,22 +1145,36 @@ async def confirm_switch_traffic(
             await callback.answer()
             return
 
-        action_text = f'увеличить до {texts.format_traffic(new_traffic_gb)}'
-        cost_text = f'Доплата: {texts.format_price(total_price_difference)} (за {days_remaining} дн.)'
+        action_text = texts.t('SUBSCRIPTION_UI_INCREASE_TO', 'увеличить до {limit}').format(
+            limit=texts.format_traffic(new_traffic_gb)
+        )
+        cost_text = texts.t('SUBSCRIPTION_UI_EXTRA_CHARGE_DAYS', 'Доплата: {amount} (за {days} дн.)').format(
+            amount=texts.format_price(total_price_difference), days=days_remaining
+        )
         if discount_savings_per_month > 0:
             total_discount_savings = int(discount_savings_per_month * days_remaining / 30)
-            cost_text += f' (скидка {traffic_discount_percent}%: -{texts.format_price(total_discount_savings)})'
+            cost_text += texts.t('SUBSCRIPTION_UI_DISCOUNT_SUFFIX', ' (скидка {percent}%: -{amount})').format(
+                percent=traffic_discount_percent, amount=texts.format_price(total_discount_savings)
+            )
     else:
         total_price_difference = 0
-        action_text = f'уменьшить до {texts.format_traffic(new_traffic_gb)}'
-        cost_text = 'Возврат средств не производится'
+        action_text = texts.t('SUBSCRIPTION_UI_DECREASE_TO', 'уменьшить до {limit}').format(
+            limit=texts.format_traffic(new_traffic_gb)
+        )
+        cost_text = texts.t('SUBSCRIPTION_UI_NO_REFUND', 'Возврат средств не производится')
 
-    confirm_text = '🔄 <b>Подтверждение переключения трафика</b>\n\n'
-    confirm_text += f'Текущий лимит: {texts.format_traffic(current_traffic)}\n'
-    confirm_text += f'Новый лимит: {texts.format_traffic(new_traffic_gb)}\n\n'
-    confirm_text += f'Действие: {action_text}\n'
+    confirm_text = texts.t(
+        'SUBSCRIPTION_UI_TRAFFIC_SWITCH_CONFIRM_TITLE', '🔄 <b>Подтверждение переключения трафика</b>\n\n'
+    )
+    confirm_text += texts.t('SUBSCRIPTION_UI_CURRENT_LIMIT_LINE', 'Текущий лимит: {limit}\n').format(
+        limit=texts.format_traffic(current_traffic)
+    )
+    confirm_text += texts.t('SUBSCRIPTION_UI_NEW_LIMIT_LINES', 'Новый лимит: {limit}\n\n').format(
+        limit=texts.format_traffic(new_traffic_gb)
+    )
+    confirm_text += texts.t('SUBSCRIPTION_UI_ACTION_LINE', 'Действие: {action}\n').format(action=action_text)
     confirm_text += f'💰 {cost_text}\n\n'
-    confirm_text += 'Подтвердить переключение?'
+    confirm_text += texts.t('SUBSCRIPTION_UI_CONFIRM_SWITCH_QUESTION', 'Подтвердить переключение?')
 
     await callback.message.edit_text(
         confirm_text,
@@ -975,7 +1234,10 @@ async def execute_switch_traffic(
             )
 
             if not success:
-                await callback.answer('⚠️ Ошибка списания средств', show_alert=True)
+                await callback.answer(
+                    texts.t('SUBSCRIPTION_UI_DEBIT_WARNING_EMOJI', '⚠️ Ошибка списания средств'),
+                    show_alert=True,
+                )
                 return
 
             days_remaining = max(1, math.ceil((subscription.end_date - datetime.now(UTC)).total_seconds() / 86400))
@@ -1029,16 +1291,26 @@ async def execute_switch_traffic(
             logger.error('Ошибка отправки уведомления об изменении трафика', error=e)
 
         if new_traffic_gb > current_traffic:
-            success_text = '✅ Лимит трафика увеличен!\n\n'
-            success_text += f'📊 Было: {texts.format_traffic(current_traffic)} → '
-            success_text += f'Стало: {texts.format_traffic(new_traffic_gb)}\n'
+            success_text = texts.t('SUBSCRIPTION_UI_LIMIT_INCREASED', '✅ Лимит трафика увеличен!\n\n')
+            success_text += texts.t('SUBSCRIPTION_UI_PREVIOUS_TRAFFIC', '📊 Было: {traffic} → ').format(
+                traffic=texts.format_traffic(current_traffic)
+            )
+            success_text += texts.t('SUBSCRIPTION_UI_UPDATED_TRAFFIC', 'Стало: {traffic}\n').format(
+                traffic=texts.format_traffic(new_traffic_gb)
+            )
             if price_difference > 0:
-                success_text += f'💰 Списано: {texts.format_price(price_difference)}'
+                success_text += texts.t('SUBSCRIPTION_UI_CHARGED_AMOUNT', '💰 Списано: {amount}').format(
+                    amount=texts.format_price(price_difference)
+                )
         elif new_traffic_gb < current_traffic:
-            success_text = '✅ Лимит трафика уменьшен!\n\n'
-            success_text += f'📊 Было: {texts.format_traffic(current_traffic)} → '
-            success_text += f'Стало: {texts.format_traffic(new_traffic_gb)}\n'
-            success_text += 'ℹ️ Возврат средств не производится'
+            success_text = texts.t('SUBSCRIPTION_UI_LIMIT_DECREASED', '✅ Лимит трафика уменьшен!\n\n')
+            success_text += texts.t('SUBSCRIPTION_UI_PREVIOUS_TRAFFIC', '📊 Было: {traffic} → ').format(
+                traffic=texts.format_traffic(current_traffic)
+            )
+            success_text += texts.t('SUBSCRIPTION_UI_UPDATED_TRAFFIC', 'Стало: {traffic}\n').format(
+                traffic=texts.format_traffic(new_traffic_gb)
+            )
+            success_text += texts.t('SUBSCRIPTION_UI_NO_REFUND_INFO', 'ℹ️ Возврат средств не производится')
 
         await callback.message.edit_text(success_text, reply_markup=get_back_keyboard(db_user.language))
 

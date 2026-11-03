@@ -195,7 +195,7 @@ async def _build_overview(
                 text=texts.t(
                     'ADMIN_FAQ_DISPLAY_MODE_BUTTON',
                     '👁 Отображение: {mode}',
-                ).format(mode=display_mode_label(settings.FAQ_DISPLAY_MODE)),
+                ).format(mode=display_mode_label(settings.FAQ_DISPLAY_MODE, language=db_user.language)),
                 callback_data='admin_faq_display_mode',
             )
         ]
@@ -276,7 +276,7 @@ async def cycle_faq_display_mode(
     db: AsyncSession,
 ):
     texts = get_texts(db_user.language)
-    new_mode = await cycle_display_mode_setting(callback, db, 'FAQ_DISPLAY_MODE')
+    new_mode = await cycle_display_mode_setting(callback, db, 'FAQ_DISPLAY_MODE', language=db_user.language)
     if new_mode is None:
         return
 
@@ -289,7 +289,7 @@ async def cycle_faq_display_mode(
         texts.t(
             'ADMIN_DISPLAY_MODE_CHANGED',
             'Отображение: {mode}',
-        ).format(mode=display_mode_label(new_mode))
+        ).format(mode=display_mode_label(new_mode, language=db_user.language))
     )
 
 

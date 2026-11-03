@@ -180,7 +180,7 @@ class _PanelSpy:
         from app.services.remnawave_webhook_service import RemnaWaveWebhookService
         from app.services.subscription_service import SubscriptionService
 
-        async def fake_delete(_self, panel_user_id):
+        async def fake_delete(_self, panel_user_id, db=None):
             self.deleted.append(panel_user_id)
             self.order.append('panel_delete')
             return True

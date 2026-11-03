@@ -110,8 +110,11 @@ def _ci_postgres_images() -> dict[str, set[str]]:
             if not image:
                 continue
             if MATRIX_POSTGRES in image:
-                entries = job['strategy']['matrix']['include']
-                images = {image.replace(MATRIX_POSTGRES, str(entry['postgres'])) for entry in entries}
+                matrix = job['strategy']['matrix']
+                versions = {str(version) for version in matrix.get('postgres', [])}
+                versions.update(str(entry['postgres']) for entry in matrix.get('include', []) if 'postgres' in entry)
+                assert versions, f'{path.name}: в матрице не заданы версии PostgreSQL'
+                images = {image.replace(MATRIX_POSTGRES, version) for version in versions}
             else:
                 images = {image}
             for resolved in images:

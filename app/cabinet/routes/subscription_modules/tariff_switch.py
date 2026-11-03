@@ -11,7 +11,6 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -251,16 +250,21 @@ async def switch_tariff(
             )
 
     from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import prepare_user_tariff_switch
 
+    try:
+        subscription, accounting_panel = await prepare_user_tariff_switch(db, resolved)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     user = await lock_user_for_pricing(db, user.id)
-    # Lock subscription row to prevent concurrent tariff switches
-    locked_result = await db.execute(
-        select(Subscription)
-        .where(Subscription.id == resolved.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    subscription = locked_result.scalar_one()
+    if subscription.user_id != user.id:
+        raise HTTPException(status_code=404, detail='Subscription not found')
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing_target = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
+        if existing_target and existing_target.id != subscription.id:
+            raise HTTPException(status_code=409, detail='You already have an active subscription for the target tariff')
 
     # Use actual_status for correct status check (handles time-based expiration)
     actual_status = subscription.actual_status
@@ -464,7 +468,7 @@ async def switch_tariff(
     else:
         # Free switch (downgrade) — record in history
         description = f"Переход на тариф '{new_tariff.name}'"
-        await create_transaction(
+        switch_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
@@ -481,21 +485,17 @@ async def switch_tariff(
     from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
-    # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила бы
-    # списывать сумму СТАРОГО тарифа со старым каденсом. Отменяем привязку до
-    # мутаций — юзер переподключит СБП-автопродление под новый тариф (нужна
-    # новая банковская авторизация, молча пересоздать нельзя).
+    # Cancel recurring bindings only after the complete switch has committed.
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
-    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
-
-    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
-    await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
     # Re-load subscription to avoid MissingGreenlet from expired lazy relationship
     # (subtract_user_balance re-selects User with populate_existing=True which expires relationships)
     await db.refresh(subscription)
 
+    subscription.daily_devices_billing_version = 0
     subscription.tariff_id = new_tariff.id
+    if accounting_panel is not None:
+        subscription.tariff = new_tariff
     subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
     subscription.device_limit = calc_device_limit_on_tariff_switch(
         current_device_limit=subscription.device_limit,
@@ -517,7 +517,7 @@ async def switch_tariff(
     # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение — иначе прыжок
     # туда-обратно по бесплатному направлению давал новую квоту каждый раз.
     reset_used_traffic = should_reset_used_traffic(upgrade_cost)
-    if reset_used_traffic:
+    if reset_used_traffic and accounting_panel is None:
         subscription.traffic_used_gb = 0.0
 
     if switching_to_daily:
@@ -532,7 +532,22 @@ async def switch_tariff(
         subscription.is_daily_paused = False
 
     subscription.updated_at = datetime.now(UTC)
+    if accounting_panel is not None:
+        from app.services.traffic_accounting_service import change_managed_tariff_locked
+
+        await change_managed_tariff_locked(
+            db,
+            subscription,
+            accounting_panel,
+            operation_key=f'user-switch:{switch_transaction.id}',
+            reset_base=reset_used_traffic,
+        )
     await db.commit()
+
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
+    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+    await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
 
     # Emit deferred side-effects after atomic commit
     if upgrade_cost > 0 and switch_transaction:
@@ -548,7 +563,7 @@ async def switch_tariff(
         )
 
     # Sync with RemnaWave (optionally reset traffic based on admin setting)
-    should_reset_traffic = reset_used_traffic
+    should_reset_traffic = reset_used_traffic and accounting_panel is None
     # Refresh subscription after commit (all objects are expired)
     await db.refresh(subscription)
 
@@ -642,11 +657,14 @@ async def switch_tariff(
     # so the central purchase event fired by the SUBSCRIPTION_PAYMENT sees the
     # CID and does not race it (#558449). Nothing to do here.
 
+    from app.services.traffic_accounting_service import traffic_accounting_summary
+
+    accounting = await traffic_accounting_summary(db, subscription.id)
     response: dict[str, Any] = {
         'success': True,
         'message': f"Switched from '{old_tariff_name}' to '{new_tariff.name}'"
         + (' (devices reset)' if devices_reset else ''),
-        'subscription': _subscription_to_response(subscription, user=user),
+        'subscription': _subscription_to_response(subscription, user=user, traffic_accounting=accounting),
         'old_tariff_name': old_tariff_name,
         'new_tariff_id': new_tariff.id,
         'new_tariff_name': new_tariff.name,

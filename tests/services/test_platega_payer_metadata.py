@@ -76,7 +76,7 @@ async def test_telegram_user_payment_carries_telegram_id_and_username(monkeypatc
 
         payer = await _pay(db, user_id=42)
 
-    assert payer.platega_metadata() == {'userId': '555', 'userName': '@neo'}
+    assert payer.platega_metadata() == {'userId': '555', 'userName': '@neo', 'user_email': '555@telegram.org'}
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,11 @@ async def test_email_user_payment_carries_internal_id_and_email(monkeypatch) -> 
 
         payer = await _pay(db, user_id=43)
 
-    assert payer.platega_metadata() == {'userId': 'user-43', 'userName': 'mail@example.com'}
+    assert payer.platega_metadata() == {
+        'userId': 'user-43',
+        'userName': 'mail@example.com',
+        'user_email': 'mail@example.com',
+    }
 
 
 @pytest.mark.asyncio
@@ -102,12 +106,21 @@ async def test_explicit_payer_is_sent_as_is(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_payment_without_user_and_payer_is_still_filled(monkeypatch) -> None:
+async def test_payment_without_user_and_payer_is_rejected(monkeypatch) -> None:
+    stub = _StubPlatega()
+    mixin = platega_mixin.PlategaPaymentMixin()
+    mixin.platega_service = stub
     async with memory_session(monkeypatch, TABLES) as db:
-        payer = await _pay(db, user_id=None)
-
-    assert payer.user_id.startswith('guest-')
-    assert payer.user_name
+        result = await mixin.create_platega_payment(
+            db,
+            user_id=None,
+            amount_kopeks=10_000,
+            description='Пополнение',
+            language='ru',
+            payment_method_code=2,
+        )
+    assert result is None
+    assert not stub.calls
 
 
 @pytest.mark.asyncio
@@ -134,7 +147,7 @@ async def test_sbp_subscription_carries_the_payer(monkeypatch) -> None:
         await Svc().create_platega_sbp_subscription(db, user_id=777, subscription=subscription, tariff=tariff)
 
     payer = create_subscription.await_args.kwargs['payer']
-    assert payer.platega_metadata() == {'userId': '9001', 'userName': 'Анна'}
+    assert payer.platega_metadata() == {'userId': '9001', 'userName': 'Анна', 'user_email': '9001@telegram.org'}
 
 
 @pytest.mark.asyncio
@@ -157,8 +170,8 @@ async def test_landing_guest_payment_carries_the_guest(monkeypatch) -> None:
         db.add(
             GuestPurchase(
                 token=TOKEN,
-                contact_type='telegram',
-                contact_value='@buyer',
+                contact_type='email',
+                contact_value='buyer@example.com',
                 amount_kopeks=10_000,
                 period_days=30,
                 payment_method='platega_2',
@@ -176,5 +189,85 @@ async def test_landing_guest_payment_carries_the_guest(monkeypatch) -> None:
             return_url='https://example.com/ok',
         )
 
-    guest_id = 'guest-' + hashlib.sha256(TOKEN.encode()).hexdigest()[:16]
-    assert captured['payer'].platega_metadata() == {'userId': guest_id, 'userName': '@buyer'}
+    guest_id = 'guest-' + hashlib.sha256(b'email:buyer@example.com').hexdigest()[:32]
+    assert captured['payer'].platega_metadata() == {
+        'userId': guest_id,
+        'userName': 'buyer@example.com',
+        'user_email': 'buyer@example.com',
+    }
+
+
+@pytest.mark.asyncio
+async def test_guest_gift_uses_authenticated_buyer_not_recipient(monkeypatch):
+    from app.services.payment.payer_identity import resolve_guest_payer
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        db.add(User(id=42, telegram_id=555, language='ru', status='active'))
+        await db.flush()
+        db.add(
+            GuestPurchase(
+                token=TOKEN,
+                buyer_user_id=42,
+                is_gift=True,
+                contact_type='email',
+                contact_value='buyer@example.com',
+                gift_recipient_type='email',
+                gift_recipient_value='recipient@example.com',
+                amount_kopeks=10_000,
+                period_days=30,
+                payment_method='platega_2',
+                status='pending',
+            )
+        )
+        await db.commit()
+        payer = await resolve_guest_payer(db, TOKEN, for_platega=True)
+    assert payer.platega_metadata()['user_email'] == '555@telegram.org'
+    assert payer.user_id == '555'
+
+
+@pytest.mark.parametrize('method', ['platega', 'platega_2', 'platega_11', 'platega_12', 'platega_13'])
+def test_landing_platega_requires_buyer_email_before_creating_order(method):
+    from pydantic import ValidationError
+
+    from app.cabinet.routes.landing import PurchaseRequest
+
+    with pytest.raises(ValidationError, match='Platega'):
+        PurchaseRequest(
+            tariff_id=1, period_days=30, contact_type='telegram', contact_value='@buyer', payment_method=method
+        )
+    purchase = PurchaseRequest(
+        tariff_id=1,
+        period_days=30,
+        contact_type='email',
+        contact_value='buyer@example.com',
+        payment_method=method,
+        is_gift=True,
+        gift_recipient_type='telegram',
+        gift_recipient_value='@recipient',
+    )
+    assert purchase.gift_recipient_value == '@recipient'
+
+
+def test_other_gateway_keeps_telegram_guest_contact():
+    from app.cabinet.routes.landing import PurchaseRequest
+
+    purchase = PurchaseRequest(
+        tariff_id=1, period_days=30, contact_type='telegram', contact_value='@buyer', payment_method='mulenpay'
+    )
+    assert purchase.contact_type == 'telegram'
+
+
+@pytest.mark.asyncio
+async def test_missing_payer_record_does_not_send_payment(monkeypatch):
+    from app.services.platega_service import PlategaService
+
+    service = PlategaService()
+    transport = AsyncMock()
+    monkeypatch.setattr(service, '_request', transport)
+    async with memory_session(monkeypatch, TABLES) as db:
+        from app.services.payment.payer_identity import resolve_user_payer
+
+        payer = await resolve_user_payer(db, 999)
+        with pytest.raises(ValueError):
+            await service.create_payment(payer=payer, amount=100, currency='RUB', payment_method=2)
+    transport.assert_not_awaited()

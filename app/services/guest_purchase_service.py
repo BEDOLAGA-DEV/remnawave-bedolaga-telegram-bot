@@ -581,10 +581,13 @@ async def fulfill_purchase(
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
+                paid_traffic_reset=False,
                 reset_used_traffic=reset_traffic,
             )
         elif existing_subscription is not None:
             # A different tariff keeps the existing replacement policy.
+            if existing_subscription.tariff_id != tariff.id:
+                existing_subscription.daily_devices_billing_version = 0
             existing_subscription.tariff_id = tariff.id
             subscription = await replace_subscription(
                 db,
@@ -1163,11 +1166,14 @@ async def _send_telegram_gift_notification(
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         from app.bot_factory import create_bot
+        from app.localization.texts import get_texts
+
+        texts = get_texts(getattr(user, 'language', None))
 
         gift_from = ''
         if purchase.contact_value:
             safe_name = html_mod.escape(purchase.contact_value)
-            gift_from = f'\nОт: {safe_name}'
+            gift_from = texts.t('REFERRAL_GIFT_UI_031', '\nОт: {value1}').format(value1=safe_name)
 
         gift_msg = ''
         if purchase.gift_message:
@@ -1175,19 +1181,28 @@ async def _send_telegram_gift_notification(
             gift_msg = f'\n\n"{safe_msg}"'
 
         safe_tariff = html_mod.escape(tariff_name) if tariff_name else ''
-        period_text = f'{purchase.period_days} дн.' if purchase.period_days else ''
+        period_text = (
+            texts.t('REFERRAL_GIFT_UI_032', '{value1} дн.').format(value1=purchase.period_days)
+            if purchase.period_days
+            else ''
+        )
         tariff_text = f'{safe_tariff} — {period_text}' if safe_tariff else period_text
 
-        text = f'🎁 <b>Вам подарили VPN подписку!</b>\n{tariff_text}{gift_from}{gift_msg}'
+        text = texts.t('REFERRAL_GIFT_UI_030', '🎁 <b>Вам подарили VPN подписку!</b>\n{value1}{value2}{value3}').format(
+            value1=tariff_text, value2=gift_from, value3=gift_msg
+        )
 
         keyboard = None
         if is_pending_activation:
-            text += '\n\nУ вас уже есть активная подписка. Нажмите кнопку ниже, чтобы активировать подарок (текущая подписка будет заменена).'
+            text += texts.t(
+                'REFERRAL_GIFT_UI_033',
+                '\n\nУ вас уже есть активная подписка. Нажмите кнопку ниже, чтобы активировать подарок (текущая подписка будет заменена).',
+            )
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text='Активировать подарок',
+                            text=texts.t('REFERRAL_GIFT_UI_034', 'Активировать подарок'),
                             callback_data=f'gift_activate:{purchase.id}',
                         )
                     ]
@@ -1586,6 +1601,7 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
                 traffic_limit_gb=tariff.traffic_limit_gb,
                 device_limit=tariff.device_limit,
                 connected_squads=squads,
+                paid_traffic_reset=False,
                 reset_used_traffic=reset_traffic if is_tariff_renewal else None,
                 commit=False,
             )

@@ -51,7 +51,12 @@ async def toggle_subscription_pause(
     subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
         raise HTTPException(status_code=404, detail='Subscription not found after lock')
-    await db.refresh(subscription, with_for_update=True)
+    from app.services.traffic_purchase_service import lock_daily_accounting_subscription
+
+    try:
+        subscription = await lock_daily_accounting_subscription(db, subscription, user.id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
     if subscription.is_trial:
         raise HTTPException(status_code=400, detail='Trial subscriptions must be converted through tariff purchase')
@@ -69,7 +74,6 @@ async def toggle_subscription_pause(
     new_paused_state = paused if paused is not None else (False if was_disabled else not is_currently_paused)
     if not new_paused_state and user.restriction_subscription:
         raise HTTPException(status_code=403, detail='Subscription renewal is restricted for this account')
-    raw_daily_price = getattr(tariff, 'daily_price_kopeks', 0)
     transaction = None
 
     subscription.is_daily_paused = new_paused_state
@@ -77,11 +81,7 @@ async def toggle_subscription_pause(
     # Apply group discount to daily price (consistent with DailySubscriptionService and miniapp resume)
     from app.services.pricing_engine import PricingEngine
 
-    promo_group = PricingEngine.resolve_promo_group(user)
-    daily_group_pct = promo_group.get_discount_percent('period', 1) if promo_group else 0
-    daily_price = (
-        PricingEngine.apply_discount(raw_daily_price, daily_group_pct) if daily_group_pct > 0 else raw_daily_price
-    )
+    daily_price = PricingEngine.daily_subscription_price(subscription, tariff, user)
 
     # If resuming, check balance and charge
     if not new_paused_state:
@@ -138,6 +138,11 @@ async def toggle_subscription_pause(
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
             subscription.pending_panel_expire_at = subscription.end_date
 
+    if not new_paused_state and was_disabled:
+        from app.services.traffic_purchase_service import stage_daily_resume_grant
+
+        await stage_daily_resume_grant(db, subscription, tariff, transaction)
+
     await db.commit()
     await db.refresh(subscription)
     await db.refresh(user)
@@ -158,7 +163,9 @@ async def toggle_subscription_pause(
     if not new_paused_state and was_disabled:
         # Возобновление списывает суточную оплату — значит, обнуление счётчика
         # решает та же политика, что и в ночном списании (см. traffic_reset_policy).
-        reset_traffic = should_reset_traffic_on_daily_charge(tariff)
+        reset_traffic = subscription.traffic_accounting_mode != 'managed' and should_reset_traffic_on_daily_charge(
+            tariff
+        )
         try:
             subscription_service = SubscriptionService()
             await subscription_service.create_remnawave_user(

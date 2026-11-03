@@ -1063,7 +1063,8 @@ async def test_resolve_wata_payment_status_uses_payment_link_lookup(monkeypatch)
 
 
 @pytest.mark.anyio('asyncio')
-async def test_create_payment_link_stars_normalizes_amount(monkeypatch):
+@pytest.mark.parametrize('language', ['ru', 'en', 'ua', 'zh', 'fa'])
+async def test_create_payment_link_stars_normalizes_amount(monkeypatch, language):
     monkeypatch.setattr(settings, 'TELEGRAM_STARS_ENABLED', True, raising=False)
     monkeypatch.setattr(settings, 'TELEGRAM_STARS_RATE_RUB', 1000.0, raising=False)
     monkeypatch.setattr(settings, 'BOT_TOKEN', 'test-token', raising=False)
@@ -1081,7 +1082,9 @@ async def test_create_payment_link_stars_normalizes_amount(monkeypatch):
             payload,
             *,
             stars_amount=None,
+            language=None,
         ):
+            captured['language'] = language
             captured['amount_kopeks'] = amount_kopeks
             captured['description'] = description
             captured['payload'] = payload
@@ -1102,7 +1105,7 @@ async def test_create_payment_link_stars_normalizes_amount(monkeypatch):
             self.session = DummySession()
 
     async def fake_resolve_user(db, init_data):
-        return types.SimpleNamespace(id=7, telegram_id=7, language='ru'), {}
+        return types.SimpleNamespace(id=7, telegram_id=7, language=language), {}
 
     monkeypatch.setattr(miniapp, 'PaymentService', DummyPaymentService)
     monkeypatch.setattr(miniapp, 'create_bot', lambda token=None, **kwargs: DummyBot(token or settings.BOT_TOKEN))
@@ -1122,6 +1125,7 @@ async def test_create_payment_link_stars_normalizes_amount(monkeypatch):
     assert response.extra['requested_amount_kopeks'] == 101000
     assert captured['amount_kopeks'] == 100000
     assert captured['stars_amount'] == 1
+    assert captured['language'] == language
     assert captured['bot_token'] == 'test-token'
     assert captured.get('session_closed') is True
 

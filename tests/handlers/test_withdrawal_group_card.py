@@ -71,7 +71,12 @@ def approved(monkeypatch):
         return True, None
 
     monkeypatch.setattr(admin_referrals.referral_withdrawal_service, 'approve_request', approve)
-    monkeypatch.setattr(admin_referrals.referral_withdrawal_service, 'format_analysis_for_admin', lambda analysis: '')
+
+    def render_analysis(analysis, *, language):
+        assert language == 'ru'
+        return ''
+
+    monkeypatch.setattr(admin_referrals.referral_withdrawal_service, 'format_analysis_for_admin', render_analysis)
     monkeypatch.setattr(admin_referrals, 'get_user_by_id', AsyncMock(return_value=_user()))
     db = AsyncMock()
     db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: request))

@@ -208,7 +208,9 @@ def resolve_hwid_device_limit(subscription: Subscription | None) -> int | None:
     if subscription is None:
         return None
 
-    if not settings.is_devices_selection_enabled():
+    # Tariff limits are purchased per subscription. A classic-mode forced
+    # amount must not replace paid tariff devices when projecting to the panel.
+    if getattr(subscription, 'tariff_id', None) is None and not settings.is_devices_selection_enabled():
         forced_limit = settings.get_disabled_mode_device_limit()
         if forced_limit is not None and forced_limit > 0:
             _logger.info(

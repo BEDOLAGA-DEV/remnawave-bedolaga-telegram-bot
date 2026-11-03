@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
-from app.services.payment.payer_identity import PayerIdentity, payer_from_guest, resolve_user_payer
+from app.localization.texts import get_texts
+from app.services.payment.payer_identity import PayerIdentity, resolve_user_payer
 from app.services.platega_service import PlategaService
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -56,7 +57,7 @@ class PlategaPaymentMixin:
         payer: PayerIdentity | None = None,
     ) -> dict[str, Any] | None:
         """Разовый платёж Platega. ``payer`` — плательщик-гость лендинга; у пользователя
-        он читается по ``user_id`` (metadata.userId/userName обязательны, см. payer_identity)."""
+        он читается по ``user_id`` (metadata.user_email обязателен, см. payer_identity)."""
         service: PlategaService | None = getattr(self, 'platega_service', None)
         if not service or not service.is_configured:
             logger.error('Platega сервис не инициализирован')
@@ -87,12 +88,10 @@ class PlategaPaymentMixin:
         effective_failed_url = failed_url or settings.get_platega_failed_url()
 
         if payer is None:
-            payer = (
-                await resolve_user_payer(db, user_id)
-                if user_id is not None
-                # Ни пользователя, ни гостя вызывающий не дал — плательщик по id платежа.
-                else payer_from_guest(correlation_id, contact_type=None, contact_value=None)
-            )
+            if user_id is None:
+                logger.warning('Platega: создание платежа без плательщика отклонено')
+                return None
+            payer = await resolve_user_payer(db, user_id)
 
         try:
             response = await service.create_payment(
@@ -105,6 +104,9 @@ class PlategaPaymentMixin:
                 failed_url=effective_failed_url,
                 payload=payload_token,
             )
+        except ValueError:
+            logger.warning('Platega: некорректные данные плательщика или платежа')
+            return None
         except Exception as error:  # pragma: no cover - network errors
             logger.exception('Ошибка Platega при создании платежа', error=error)
             return None
@@ -193,6 +195,12 @@ class PlategaPaymentMixin:
 
         existing = await sub_crud.get_active_platega_subscription_by_subscription(db, subscription.id)
         if existing:
+            from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+            if getattr(subscription, '_recurrent_purchase_terms', None) is not None:
+                validate_recurrent_setup_terms(
+                    subscription, 'platega', existing.amount_kopeks, existing.charge_days, existing.interval
+                )
             # Идемпотентный повтор обязан ТОЖЕ восстановить взаимоисключение:
             # если balance-autopay успели включить обратно (например, пока фича
             # была выключена), оба движка продления остались бы взведёнными.
@@ -238,6 +246,7 @@ class PlategaPaymentMixin:
                 tariff,
                 charge_days,
                 device_limit=getattr(subscription, 'device_limit', None),
+                daily_devices_billing_version=getattr(subscription, 'daily_devices_billing_version', 0),
             )
             amount_kopeks = int(pricing_result.final_total or 0)
         except Exception as pricing_error:  # pragma: no cover - defensive
@@ -253,6 +262,13 @@ class PlategaPaymentMixin:
         if not amount_kopeks:
             raise ValueError(f'Тариф не имеет цены за период {charge_days} дней — СБП-автопродление недоступно')
 
+        from app.services.recurrent_purchase_selection import validate_recurrent_setup_terms
+
+        validate_recurrent_setup_terms(subscription, 'platega', amount_kopeks, charge_days, interval)
+
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         response = await self.platega_service.create_subscription(
             payer=await resolve_user_payer(db, user_id),
             amount=amount_kopeks / 100,
@@ -555,6 +571,15 @@ class PlategaPaymentMixin:
                 payment_method=PaymentMethod.PLATEGA,
                 external_id=charge_id,
                 commit=False,
+            )
+
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(
+                db,
+                subscription,
+                operation_key=f'platega:payment:{tx.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_PAYMENT,
             )
 
             await db.commit()
@@ -1066,11 +1091,12 @@ class PlategaPaymentMixin:
                 await self.bot.send_message(
                     user.telegram_id,
                     (
-                        '✅ <b>Пополнение успешно!</b>\n\n'
-                        f'💰 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
-                        f'🦊 Способ: {method_title}\n'
-                        f'🆔 Транзакция: {transaction.id}\n\n'
-                        'Баланс пополнен автоматически!'
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t(
+                            'PAYMENT_NOTICE_007',
+                            '✅ <b>Пополнение успешно!</b>\n\n💰 Сумма: {v0}\n🦊 Способ: {v1}\n🆔 Транзакция: {v2}\n\nБаланс пополнен автоматически!',
+                        )
+                        .format(v0=settings.format_price(payment.amount_kopeks), v1=method_title, v2=transaction.id)
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
@@ -1149,6 +1175,10 @@ async def purchase_tariff_with_sbp_recurring(
     user: Any,
     tariff: Any,
     subscription_id: int | None = None,
+    selected_device_limit: int | None = None,
+    quote_id=None,
+    checkout_id=None,
+    channel: str = 'cabinet',
 ) -> dict[str, Any]:
     """Оформление подписки на тариф с оплатой через СБП-автопродление Platega.
 
@@ -1175,6 +1205,23 @@ async def purchase_tariff_with_sbp_recurring(
     """
     if not settings.is_platega_recurrent_enabled():
         raise RuntimeError('Platega recurrent is disabled')
+
+    if any(value is not None for value in (selected_device_limit, quote_id, checkout_id)):
+        from app.services.recurrent_purchase_selection import prepare_recurrent_device_purchase
+
+        subscription = await prepare_recurrent_device_purchase(
+            db,
+            user=user,
+            tariff=tariff,
+            provider='platega',
+            selected_device_limit=selected_device_limit,
+            quote_id=quote_id,
+            checkout_id=checkout_id,
+            subscription_id=subscription_id,
+            channel=channel,
+        )
+        result = await enable_platega_sbp_recurring(db, user_id=user.id, subscription=subscription, tariff=tariff)
+        return {**result, 'subscription_id': subscription.id}
 
     from app.database.crud.subscription import (
         create_sbp_pending_subscription,

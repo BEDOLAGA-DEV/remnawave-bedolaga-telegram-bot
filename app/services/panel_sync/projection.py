@@ -354,6 +354,12 @@ def project_onto_subscription(
     """
     moment = now or datetime.now(UTC)
     changed: set[str] = set()
+    managed = getattr(subscription, 'traffic_accounting_mode', 'legacy') in {'managed', 'migrating'}
+    if managed:
+        # Only a fresh snapshot under the accounting lease may reconcile quota
+        # and quota-owned DISABLED. Bulk/event snapshots cannot carry that proof.
+        policy = replace(policy, takes_traffic_limit=False)
+        trust_status = False
 
     if snapshot_taken_at is not None:
         touched_at = max(
@@ -392,7 +398,7 @@ def project_onto_subscription(
         subscription.subscription_crypto_link = snapshot.crypto_link
         changed.add('subscription_crypto_link')
 
-    if snapshot.traffic_used_gb is not None:
+    if snapshot.traffic_used_gb is not None and not managed:
         current = subscription.traffic_used_gb or 0.0
         if abs(current - snapshot.traffic_used_gb) > _TRAFFIC_TOLERANCE_GB:
             subscription.traffic_used_gb = snapshot.traffic_used_gb

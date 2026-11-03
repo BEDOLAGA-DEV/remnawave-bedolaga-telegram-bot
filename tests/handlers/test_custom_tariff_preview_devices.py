@@ -68,6 +68,7 @@ async def test_custom_preview_shows_inherited_devices_and_checkout_price(
         await db.commit()
         user = await lock_user_for_pricing(db, 42)
         state = SimpleNamespace(
+            get_state=AsyncMock(return_value=None),
             get_data=AsyncMock(return_value={'custom_days': 30, 'custom_traffic_gb': 0}),
             update_data=AsyncMock(),
             set_state=AsyncMock(),

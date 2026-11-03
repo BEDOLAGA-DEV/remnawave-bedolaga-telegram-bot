@@ -418,7 +418,9 @@ class SubscriptionRenewalService:
                 )
                 if not success:
                     raise SubscriptionRenewalChargeError('Failed to charge balance')
-            subscription_after = await extend_subscription(db, subscription_before, period_days, commit=False)
+            subscription_after = await extend_subscription(
+                db, subscription_before, period_days, paid_traffic_reset=settings.RESET_TRAFFIC_ON_PAYMENT, commit=False
+            )
             transaction = await create_transaction(
                 db=db,
                 user_id=user.id,
