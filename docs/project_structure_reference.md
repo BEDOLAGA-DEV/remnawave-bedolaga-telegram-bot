@@ -4166,6 +4166,9 @@
 - `tests/database/test_panel_account_reuse_postgres.py` — Python-модуль
   Классы: нет
   Функции: `multi_tariff`, `single_tariff`, `test_multi_tariff_row_with_panel_id_is_updated`, `test_multi_tariff_row_without_id_adopts_free_user_account` — Старая подписка без id, аккаунт у человека есть и свободен — привязать и обновить, не создавать., `test_multi_tariff_row_without_id_creates_when_user_account_is_taken` — Аккаунт человека уже у другой подписки — новой строке нужен свой аккаунт., `test_multi_tariff_row_without_any_account_creates`, `test_single_tariff_follows_user_account_only`, `test_single_tariff_adopts_subscription_account_when_user_has_none` — Аккаунт создан в мультитарифе (записан у подписки), оператор вернулся в одиночный режим:, `test_single_tariff_does_not_steal_account_held_by_another_user`
+- `tests/database/test_panel_echo_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_panel_echo_converges`
 - `tests/database/test_panel_identity_recovery_postgres.py` — Python-модуль
   Классы: `Panel` (8 методов)
   Функции: `test_identity_sync_repairs_only_proven_dead_links`
@@ -5802,7 +5805,7 @@
   Функции: `test_active_subscription_of_an_active_user_is_live`, `test_trial_counts_as_live`, `test_blocked_user_is_never_live` — Блокировка обязана доезжать до панели: иначе синхронизация снимает бан., `test_deleted_user_is_never_live`, `test_expired_by_date_is_not_live_even_with_active_column`, `test_disabled_and_limited_columns_are_not_live`, `test_missing_end_date_is_not_live`, `test_naive_end_date_is_read_as_utc` — В базах до TIMESTAMPTZ дата приходит наивной — считаем её UTC, а не локальной., `test_user_without_status_attribute_is_treated_as_active` — Часть вызывающих отдаёт облегчённый объект без статуса — синк не роняем., `test_matches_actual_status_of_the_model` — Правило обязано совпадать с Subscription.actual_status — иначе разъедутся снова., `test_is_subscription_expired_matches_actual_status_of_the_model` — Вебхук и импорт отличают «истекла» от «отключена» этим же правилом — оно обязано совпадать с моделью., `test_is_subscription_expired_takes_an_explicit_clock`
 - `tests/services/panel_sync/test_managed_write_masks.py` — Python-модуль
   Классы: нет
-  Функции: `prepare`, `test_polling_does_not_rewrite_metadata`, `test_narrow_mask_and_custom_tag_survive_lost_reply`, `test_full_sync_stages_expiry_until_delivery`, `test_pending_paid_expiry_is_delivered_without_a_service_retry`, `test_narrow_request_cannot_discard_previous_undelivered_renewal`, `test_narrow_sync_does_not_recreate_when_disallowed`, `test_device_reset_is_explicit_and_not_replayed_by_worker`, `test_staging_refreshes_a_cached_outbox_before_merging_fields`
+  Функции: `prepare`, `test_polling_does_not_rewrite_metadata`, `test_narrow_mask_and_custom_tag_survive_lost_reply`, `test_full_sync_stages_expiry_until_delivery`, `test_pending_paid_expiry_is_delivered_without_a_service_retry`, `test_narrow_request_cannot_discard_previous_undelivered_renewal`, `test_narrow_sync_does_not_recreate_when_disallowed`, `test_device_reset_is_explicit_and_not_replayed_by_worker`, `test_staging_refreshes_a_cached_outbox_before_merging_fields`, `test_unchanged_panel_echo_never_causes_another_patch` — PATCH -> user.modified -> delivery must converge after the first write., `test_echo_still_repairs_real_quota_drift`, `test_modified_webhook_echo_converges`
 - `tests/services/panel_sync/test_no_bypass.py` — Python-модуль
   Классы: нет
   Функции: `test_nobody_writes_to_the_panel_directly`, `test_grace_is_still_the_only_exception_that_needs_one` — Переведут грейс на сервис — убрать его из списка, иначе тот начнёт врать.
