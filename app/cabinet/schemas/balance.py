@@ -62,6 +62,9 @@ class PaymentMethodResponse(BaseModel):
     # сразу (seamless flow внутри MiniApp WebView). Если False — показывает панель
     # "Открыть страницу оплаты" с кнопкой.
     open_url_direct: bool = False
+    # True — оплата этим методом регистрирует рекуррентное списание (card-on-file);
+    # фронт обязан показать чекбокс согласия с условиями рекуррентов.
+    requires_recurring_consent: bool = False
 
 
 class TopUpRequest(BaseModel):
