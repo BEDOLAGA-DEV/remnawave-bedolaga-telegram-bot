@@ -1,7 +1,7 @@
 from collections.abc import AsyncGenerator
 
 import structlog
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ai_support_bot.app.core.config import settings
@@ -10,7 +10,15 @@ from ai_support_bot.app.db.models import Base
 
 logger = structlog.get_logger(__name__)
 
-engine = create_async_engine(settings.effective_database_url, pool_pre_ping=True)
+_database_url = settings.effective_database_url
+engine = create_async_engine(_database_url, pool_pre_ping=True,
+                             connect_args={'timeout': 30} if _database_url.startswith('sqlite') else {})
+if _database_url.startswith('sqlite'):
+    @event.listens_for(engine.sync_engine, 'connect')
+    def _configure_sqlite(connection, _record):
+        cursor = connection.cursor()
+        cursor.execute('PRAGMA journal_mode=WAL')
+        cursor.close()
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 main_engine = None

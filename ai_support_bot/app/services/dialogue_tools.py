@@ -19,6 +19,19 @@ def extract_reported_email(text: str) -> str | None:
     return emails[0] if len(emails) == 1 else None
 
 
+def capture_payment_details(text: str, state: dict) -> None:
+    """Preserve explicit user-supplied details; these never confirm payment."""
+    amount = re.search(r'\b\d+(?:[.,]\d{1,2})?\s*(?:₽|руб\w*)', text, re.IGNORECASE)
+    paid_at = re.search(r'\b(?:\d{2}\.\d{2}(?:\.\d{4})?\s+)?(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*(?:МСК|UTC|GMT))?', text, re.IGNORECASE)
+    operation = next((token for token in re.findall(r'\b[A-Z0-9]{20,64}\b', text) if re.search(r'[A-Z]', token) and re.search(r'\d', token)), None)
+    if amount:
+        state['payment_amount'] = amount.group().strip()
+    if paid_at:
+        state['payment_time'] = paid_at.group().strip()
+    if operation:
+        state['payment_operation_id'] = operation
+
+
 def extract_registration_method(text: str, history: list) -> str | None:
     question = text.strip().casefold().rstrip('.!?')
     if re.match(r'^(?:как|если|можно ли)\b', question) or re.search(r'не знаю|не помню|кажется|возможно|ли\s+(?:через|по)\b', question):
@@ -156,6 +169,8 @@ def support_details_for_admin(state: dict) -> str:
     labels = {
         'purchase_channel': 'Место покупки', 'registration_method': 'Способ регистрации',
         'email': 'Указанный email', 'receipt_reported': 'Сообщил о чеке/выписке',
+        'payment_amount': 'Сумма со слов пользователя', 'payment_time': 'Время со слов пользователя',
+        'payment_operation_id': 'Номер операции со слов пользователя',
     }
     values = {'site': 'сайт', 'telegram': 'Telegram', 'email': 'почта', 'other': 'другое', 'unknown': 'неизвестно'}
     lines = ['Сведения со слов пользователя (владение email и платёж не подтверждены):']

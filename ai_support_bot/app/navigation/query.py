@@ -1,6 +1,13 @@
 import re
 
 
+def is_connection_problem(query: str) -> bool:
+    return bool(
+        re.search(r'vpn|впн|подключ|сервер|интернет|telegram|телеграм|\bтг\b', query, re.IGNORECASE)
+        and re.search(r'проблем|не могу|не откры|не за[йх]|не груз|не работ|ничего|сбо[йи]|ошиб|тайм.?аут|отвал|через раз', query, re.IGNORECASE)
+    )
+
+
 def is_subscription_refresh(query: str) -> bool:
     text = query.casefold()
     text = re.sub(r'\bне\s+(?:хочу\s+)?продл\w*', '', text)

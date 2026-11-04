@@ -15,6 +15,12 @@ AUTO_PAUSE_MINUTES = 30
 
 async def get_chat(connection_id: str, chat_id: int, owner_id: int) -> BusinessChatControl:
     async with database.AsyncSessionLocal() as db:
+        query = select(BusinessChatControl).where(
+            BusinessChatControl.connection_id == connection_id, BusinessChatControl.chat_id == chat_id,
+        )
+        existing = await db.scalar(query)
+        if existing is not None:
+            return existing
         insert = sqlite_insert if db.bind.dialect.name == 'sqlite' else pg_insert
         await db.execute(
             insert(BusinessChatControl)

@@ -14,6 +14,7 @@ from ai_support_bot.app.navigation.query import contextual_navigation_query, is_
 from ai_support_bot.app.services import settings_store
 from ai_support_bot.app.services.dialogue_tools import (
     SUPPORT_TOOLS,
+    capture_payment_details,
     execute_support_tool,
     extract_registration_method,
     extract_reported_email,
@@ -388,6 +389,10 @@ class SupportAgent:
         if history and (is_context_followup(question) or question.strip().casefold() in {'да', 'нет', 'ага', 'угу'}):
             smalltalk = False
 
+        # Creating a conversation flushes an INSERT. Never hold that SQLite writer
+        # across network calls; the secretary must still be able to record a pause.
+        await db.commit()
+
         forced_reason = mandatory_handoff(question, history)
         if forced_reason is None and support_state.get('manual_review_reason') and manual_review_followup(question):
             forced_reason = support_state['manual_review_reason']
@@ -406,7 +411,7 @@ class SupportAgent:
             direct_answer = smalltalk_answer(question)
         if not forced_reason and image_url and not settings_store.get_bool('VISION_ENABLED') and not question.strip():
             direct_answer = 'Анализ изображений сейчас отключён. Опишите, что показано на фото, и какую проблему нужно решить.'
-        if not forced_reason and not direct_answer and not image_url and settings_store.get_bool('NAVIGATION_ENABLED'):
+        if not forced_reason and not direct_answer and not image_url and not is_payment_missing(question) and settings_store.get_bool('NAVIGATION_ENABLED'):
             nav_query = build_nav_query(question, history, summary)
             if is_topup_without_renewal(question):
                 surface = navigation_tool.resolve_surface(nav_query)
@@ -417,9 +422,14 @@ class SupportAgent:
             )
             if direct_answer and is_topup_without_renewal(question):
                 direct_answer = 'Пополнение баланса и продление — разные операции. Само пополнение не означает немедленного продления подписки.\n\nДля ручного продления:\n' + direct_answer
-        if is_payment_missing(question):
+        supplied_details = {}
+        capture_payment_details(question, supplied_details)
+        complete_details = all(supplied_details.get(key) for key in ('payment_amount', 'payment_time', 'payment_operation_id'))
+        payment_reply = complete_details and any(re.search(r'плат[её]ж|оплат|чек|выписк', item.content or '', re.IGNORECASE) for item in history)
+        if is_payment_missing(question) or payment_reply:
             if support_state.get('issue') != 'payment_missing':
-                support_state = {'issue': 'payment_missing'}
+                pending_email = support_state.get('email')
+                support_state = {'issue': 'payment_missing', **({'email': pending_email} if pending_email else {})}
             smalltalk = False
         elif (direct_answer or starts_technical_issue(question)) and (support_state.get('issue') == 'payment_missing' or support_state.get('email') or support_state.get('attachment_file_id')):
             support_state = {'issue': 'other'}
@@ -429,6 +439,13 @@ class SupportAgent:
             support_state['diagnostics'] = recovery_state['diagnostics']
         if forced_reason in {'subscription_cancellation', 'unrecognized_charge'}:
             support_state['manual_review_reason'] = forced_reason
+        if support_state.get('issue') == 'payment_missing':
+            capture_payment_details(question, support_state)
+            if all(support_state.get(key) for key in ('payment_amount', 'payment_time', 'payment_operation_id')):
+                if supplied_email := extract_reported_email(question):
+                    support_state['email'] = supplied_email
+                forced_reason = forced_reason or 'payment_review'
+                direct_answer = None
 
         registration_refresh = None
         if support_state.get('issue') == 'payment_missing' and not forced_reason and not direct_answer:
@@ -616,6 +633,7 @@ class SupportAgent:
 
         await crud.bump_user_turn(db, conversation.id)
         await db.flush()
+        await db.commit()
         if not forced_reason and not direct_answer:
             await summary_service.maybe_summarize(db, conversation)
 

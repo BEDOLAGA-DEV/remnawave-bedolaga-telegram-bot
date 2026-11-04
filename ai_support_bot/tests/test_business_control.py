@@ -82,3 +82,14 @@ async def test_expired_auto_pause_does_not_block_new_messages(store):
         )
         await db.commit()
     assert await control.active(chat.id, chat.revision)
+
+
+@pytest.mark.asyncio
+async def test_existing_chat_lookup_does_not_write_while_another_transaction_is_open(store):
+    import asyncio
+    chat = await control.get_chat('one', 555, 900)
+    async with database.AsyncSessionLocal() as writer:
+        await writer.execute(update(BusinessChatControl).where(BusinessChatControl.id == chat.id).values(manual_pause=True))
+        found = await asyncio.wait_for(control.get_chat('one', 555, 900), timeout=0.5)
+        assert found.id == chat.id
+        await writer.rollback()

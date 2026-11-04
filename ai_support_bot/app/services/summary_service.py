@@ -85,6 +85,7 @@ class SummaryService:
 
         total_messages = await crud.count_conversation_messages(db, conversation.id)
         up_to_id = new_messages[-1].id
+        await db.commit()
         summary = await self.build_summary(db, conversation.id, conversation.summary, new_messages)
         if summary:
             await crud.save_summary(db, conversation.id, summary, total_messages, up_to_id=up_to_id)

@@ -992,3 +992,82 @@ async def test_happ_recovery_does_not_delay_required_handoff_or_repeat_completed
     assert result['escalate']
     assert 'Сброс' not in result['answer']
     assert len(captured['prompts']) == 1
+
+
+@pytest.mark.asyncio
+async def test_connected_but_no_traffic_uses_diagnostics_instead_of_navigation(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Проверьте другой сервер и сообщите, какое VPN-приложение используете.'
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242,
+            'Здравствуйте! Сейчас есть какие-то проблемы с подключением к vpn? '
+            'Не могу с вечера в ТГ зайти. VPN обновляется, подключается, но ничего не открывается')
+    assert captured['prompts']
+    assert result['answer'] == captured['reply']
+    assert 'ГЛАВНОЕ МЕНЮ' not in result['answer']
+
+
+@pytest.mark.asyncio
+async def test_complete_payment_complaint_is_taken_for_review_not_text_editing(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Да, этот текст подходит. Можете отправлять как есть.'
+    question = ('Я оплатила подписку, но в личном кабинете платёж не отразился. '
+                'Проверьте оплату: 219 ₽, 01.11.2026 18:58:20 МСК, номер операции TESTPAYMENT20261101000000000001')
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+    assert result['escalate']
+    assert result['escalation_reason'] == 'payment_review'
+    assert 'отправлять' not in result['answer']
+    assert '219' in result['support_context']
+    assert '18:58:20' in result['support_context']
+    assert 'TESTPAYMENT20261101000000000001' in result['support_context']
+    assert not captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_payment_details_continue_existing_case_without_requesting_receipt_again(flow):
+    captured, agent_mod, Session = flow
+    async with Session() as db:
+        conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        conversation.support_state = {'issue': 'payment_missing', 'email': 'buyer@example.com'}
+        await db.commit()
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242,
+            '219 рублей\n11:57\nTESTPAYMENT20261104000000000002\nВидимо это')
+    assert result['escalate']
+    assert 'buyer@example.com' in result['support_context']
+    assert 'пришлите' not in result['answer'].lower()
+    assert not captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_model_request_does_not_hold_sqlite_write_transaction(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    from ai_support_bot.app.services import business_control
+    original = agent_mod.openai_client.chat_completion
+    async def chat_completion(*args, **kwargs):
+        chat = await asyncio.wait_for(business_control.get_chat('concurrent-test', 555, 900), timeout=0.5)
+        assert chat.id
+        await asyncio.wait_for(business_control.set_manual(chat.id, True), timeout=0.5)
+        return await original(*args, **kwargs)
+    monkeypatch.setattr(agent_mod.openai_client, 'chat_completion', chat_completion)
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'У меня необычная проблема с VPN-клиентом')
+    assert result['answer']
+    assert captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_summary_request_does_not_hold_sqlite_writer(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    from ai_support_bot.app.services import business_control, settings_store
+    await settings_store.set_value('SUMMARY_ENABLED', '1')
+    await settings_store.set_value('SUMMARY_EVERY_N_TURNS', '1')
+    async def build_summary(*args, **kwargs):
+        chat = await asyncio.wait_for(business_control.get_chat('summary-concurrent-test', 555, 900), timeout=0.5)
+        await asyncio.wait_for(business_control.set_manual(chat.id, True), timeout=0.5)
+        return 'Проверка сводки'
+    monkeypatch.setattr(agent_mod.summary_service, 'build_summary', build_summary)
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Вопрос по работе нестандартного VPN-клиента')
+    assert result['answer']

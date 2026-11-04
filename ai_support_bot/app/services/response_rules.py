@@ -5,6 +5,7 @@ from html import unescape
 
 from ai_support_bot.app.navigation.query import (
     is_channel_followup,
+    is_connection_problem,
     is_context_followup,
     is_subscription_refresh,
     navigation_target,
@@ -88,12 +89,14 @@ def keeps_account_scope(question: str) -> bool:
 
 
 def starts_technical_issue(question: str) -> bool:
-    return bool(re.search(r'vpn|впн|incy|happ|сервер|интернет', question, re.IGNORECASE)) and bool(
+    return (is_connection_problem(question) or (bool(re.search(r'vpn|впн|incy|happ|сервер|интернет', question, re.IGNORECASE)) and bool(
         re.search(r'не работает|не подключ|ошибк|нет интернет|обрыв', question, re.IGNORECASE)
-    ) and not re.search(r'плат[её]ж|оплат|попол|деньги|списал', question, re.IGNORECASE)
+    ))) and not re.search(r'плат[её]ж|оплат|попол|деньги|списал', question, re.IGNORECASE)
 
 
 def payment_next_step(state: dict) -> tuple[str, bool]:
+    if all(state.get(key) for key in ('payment_amount', 'payment_time', 'payment_operation_id')):
+        return NOTICE, True
     channel = state.get('purchase_channel')
     if channel not in {'site', 'telegram'}:
         return 'Где вы оплачивали: на сайте или в Telegram-боте?', False
@@ -306,7 +309,7 @@ def apps_answer(question: str, history: list) -> str | None:
 
 def is_payment_missing(question: str) -> bool:
     return bool(re.search(
-        r'(?:деньги|плат[её]ж|пополнени\w*|оплата)\s+не\s+(?:приш|поступ|зачис|появ)|не\s+(?:приш|поступ|зачис|появ)\w*\s+(?:деньги|плат[её]ж|оплата)|баланс\s+не\s+попол|не\s+пополни\w*\s+баланс',
+        r'(?:деньги|плат[её]ж|пополнени\w*|оплата)\s+не\s+(?:приш|поступ|зачис|появ|отраз)|не\s+(?:приш|поступ|зачис|появ|отраз)\w*\s+(?:деньги|плат[её]ж|оплата)|баланс\s+не\s+попол|не\s+пополни\w*\s+баланс|(?:денег|средств)\s+на\s+балансе\s+нет',
         question, re.IGNORECASE,
     ))
 

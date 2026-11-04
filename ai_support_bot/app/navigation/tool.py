@@ -6,7 +6,7 @@ from typing import Any
 import structlog
 
 from ai_support_bot.app.navigation import registry
-from ai_support_bot.app.navigation.query import navigation_target
+from ai_support_bot.app.navigation.query import is_connection_problem, navigation_target
 from ai_support_bot.app.navigation.renderer import node_to_dict, render_matches, render_node, render_overview, web_url
 from ai_support_bot.app.navigation.schema import NavTree
 from ai_support_bot.app.navigation.search import search
@@ -174,6 +174,8 @@ async def build_prompt_block(
 
 
 async def answer_request(query: str, language: str = 'ru', ttl_seconds: int = 0) -> str | None:
+    if is_connection_problem(query):
+        return None
     if not re.search(r'как|где|инструкци|покажи|какие разделы', query, re.IGNORECASE):
         return None
     if re.search(r'не работает|не продл|не приш|не поступ|не зачис|сколько|почему', query, re.IGNORECASE):
