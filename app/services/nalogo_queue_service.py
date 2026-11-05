@@ -12,6 +12,7 @@ from aiogram import Bot
 from dateutil.parser import isoparse
 
 from app.config import settings
+from app.localization.texts import get_texts
 from app.services.nalogo_service import NaloGoService
 from app.utils.cache import cache
 
@@ -88,7 +89,14 @@ class NalogoQueueService:
         self._task = None
         logger.info('Сервис очереди чеков NaloGO остановлен')
 
-    async def _send_admin_notification(self, message: str, skip_cooldown: bool = False) -> None:
+    async def _send_admin_notification(
+        self,
+        message: str,
+        skip_cooldown: bool = False,
+        *,
+        localization_key: str | None = None,
+        localization_values: dict | None = None,
+    ) -> None:
         """Отправить уведомление админам о чеках."""
         if not self._bot:
             return
@@ -111,6 +119,19 @@ class NalogoQueueService:
                     return
 
         try:
+            if localization_key:
+                language = settings.DEFAULT_LANGUAGE
+                if int(chat_id) > 0 and not topic_id:
+                    try:
+                        from app.database.crud.user import get_user_by_telegram_id
+                        from app.database.database import AsyncSessionLocal
+
+                        async with AsyncSessionLocal() as db:
+                            admin = await get_user_by_telegram_id(db, int(chat_id))
+                            language = getattr(admin, 'language', None) or settings.DEFAULT_LANGUAGE
+                    except Exception:
+                        logger.debug('Не удалось определить язык получателя уведомления очереди чеков')
+                message = get_texts(language).t(localization_key, message).format(**(localization_values or {}))
             await self._bot.send_message(
                 chat_id=chat_id,
                 message_thread_id=topic_id,
@@ -182,6 +203,14 @@ class NalogoQueueService:
             payment_id = receipt_data.get('payment_id', 'unknown')
             amount = receipt_data.get('amount', 0)
 
+            # Ambiguous requests and manual confirmations must never be sent automatically.
+            if payment_id and payment_id != 'unknown':
+                confirmed = await cache.get(f'nalogo:created:{payment_id}')
+                if confirmed is True or await self._nalogo_service.is_pending_verification(payment_id):
+                    await cache.delete(f'nalogo:queued:{payment_id}')
+                    skipped += 1
+                    continue
+
             # Проверяем лимит попыток
             if attempts >= self._max_attempts:
                 logger.error(
@@ -206,7 +235,7 @@ class NalogoQueueService:
 
                 # Извлекаем время оплаты из очереди (чтобы чек был с правильным временем)
                 operation_time = None
-                created_at_str = receipt_data.get('created_at')
+                created_at_str = receipt_data.get('operation_time') or receipt_data.get('created_at')
                 if created_at_str:
                     try:
                         operation_time = isoparse(created_at_str)
@@ -239,6 +268,7 @@ class NalogoQueueService:
                     telegram_user_id=telegram_user_id,
                     amount_kopeks=amount_kopeks,
                     operation_time=operation_time,  # Время оплаты, а не отправки
+                    user_email=user_email,
                 )
 
                 if receipt_uuid:
@@ -266,6 +296,11 @@ class NalogoQueueService:
                             user_email=user_email,
                         )
                 else:
+                    if await self._nalogo_service.is_pending_verification(payment_id):
+                        await cache.delete(f'nalogo:queued:{payment_id}')
+                        skipped += 1
+                        service_unavailable = True
+                        break
                     # Вернуть в очередь с увеличенным счетчиком попыток
                     await self._nalogo_service.requeue_receipt(receipt_data)
                     failed += 1
@@ -313,7 +348,11 @@ class NalogoQueueService:
                     f'💰 <b>На сумму:</b> {total_queued_amount:,.2f} ₽\n\n'
                     f'Чеки будут отправлены автоматически когда сервис восстановится.'
                 )
-                await self._send_admin_notification(message)
+                await self._send_admin_notification(
+                    message,
+                    localization_key='NALOGO_QUEUE_UNAVAILABLE',
+                    localization_values={'count': remaining, 'amount': total_queued_amount},
+                )
 
         # Уведомление об успешной разгрузке очереди
         elif remaining == 0 and self._had_pending_receipts and processed > 0:
@@ -324,7 +363,12 @@ class NalogoQueueService:
                 f'📋 <b>Отправлено:</b> {processed} чек(ов)\n'
                 f'💰 <b>На сумму:</b> {total_processed_amount:,.2f} ₽'
             )
-            await self._send_admin_notification(message, skip_cooldown=True)
+            await self._send_admin_notification(
+                message,
+                skip_cooldown=True,
+                localization_key='NALOGO_QUEUE_CLEARED',
+                localization_values={'count': processed, 'amount': total_processed_amount},
+            )
 
     async def force_process(self) -> dict:
         """Принудительно обработать очередь (для ручного запуска)."""

@@ -31,6 +31,7 @@ from app.database.models import (
     UserStatus,
 )
 from app.external.remnawave_api import RemnaWaveAPI, test_api_connection
+from app.localization.texts import Texts, get_texts
 from app.utils.timezone import format_local_datetime
 
 
@@ -95,6 +96,27 @@ class _StartupStats:
     sales_mode: str
 
 
+async def _recipient_texts(chat_id: int | str | None, topic_id: int | None) -> Texts:
+    """Use the configured locale for shared chats; resolve a known private admin once."""
+    fallback = get_texts(settings.DEFAULT_LANGUAGE)
+    if topic_id:
+        return fallback
+    try:
+        recipient_id = int(chat_id)
+        if recipient_id <= 0:
+            return fallback
+        from app.services.support_settings_service import SupportSettingsService
+
+        if not settings.is_admin(recipient_id) and not SupportSettingsService.is_moderator(recipient_id):
+            return fallback
+        async with AsyncSessionLocal() as db:
+            language = await db.scalar(select(User.language).where(User.telegram_id == recipient_id))
+        return get_texts(language) if isinstance(language, str) and language else fallback
+    except Exception:
+        logger.debug('Startup notification recipient language unavailable; using configured default')
+        return fallback
+
+
 def _number(value: int | None) -> str:
     """4558 → «4 558» (узкий неразрывный пробел — число не рвётся переносом)."""
     return NO_VALUE if value is None else f'{value:,}'.replace(',', '\u202f')
@@ -105,50 +127,89 @@ def _rubles(kopeks: int | None) -> str:
     return NO_VALUE if kopeks is None else f'{_number(kopeks // KOPEKS_IN_RUBLE)} ₽'
 
 
-def _panel_line(stats: _StartupStats) -> str:
+def _panel_line(stats: _StartupStats, texts: Texts | None = None) -> str:
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     icon = '🟢' if stats.panel_connected else '🔴'
-    latency = f' · {stats.panel_latency_ms} мс' if stats.panel_latency_ms is not None else ''
-    return f'{icon} Панель {html.escape(stats.panel_status)}{latency}'
+    latency = (
+        texts.t('STARTUP_NOTICE_002', ' · {v0} мс').format(v0=stats.panel_latency_ms)
+        if stats.panel_latency_ms is not None
+        else ''
+    )
+    return texts.t('STARTUP_NOTICE_000', '{v0} Панель {v1}{v2}').format(
+        v0=icon,
+        v1=html.escape(
+            {
+                'не настроена': texts.t('STARTUP_NOTICE_079', 'не настроена'),
+                'недоступна': texts.t('STARTUP_NOTICE_080', 'недоступна'),
+                'ошибка подключения': texts.t('STARTUP_NOTICE_081', 'ошибка подключения'),
+                'на связи': texts.t('STARTUP_NOTICE_082', 'на связи'),
+            }.get(stats.panel_status, stats.panel_status)
+        ),
+        v2=latency,
+    )
 
 
-def _attention(stats: _StartupStats) -> list[str]:
+def _attention(stats: _StartupStats, texts: Texts | None = None) -> list[str]:
     """То, что админу стоит сделать сразу после запуска. Пусто — всё в порядке."""
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     items: list[str] = []
     if not stats.panel_connected:
-        items.append('Панель Remnawave не отвечает — подписки не синхронизируются')
+        items.append(texts.t('STARTUP_NOTICE_019', 'Панель Remnawave не отвечает — подписки не синхронизируются'))
     if stats.maintenance:
-        items.append('Включён режим техработ — пользователи видят заглушку')
+        items.append(texts.t('STARTUP_NOTICE_020', 'Включён режим техработ — пользователи видят заглушку'))
     if stats.open_tickets:
-        items.append(f'Открытых тикетов ждут ответа: {_number(stats.open_tickets)}')
+        items.append(
+            texts.t('STARTUP_NOTICE_021', 'Открытых тикетов ждут ответа: {v0}').format(v0=_number(stats.open_tickets))
+        )
     return items
 
 
-def _sections(stats: _StartupStats) -> list[tuple[str, list[tuple[str, str]]]]:
+def _sections(stats: _StartupStats, texts: Texts | None = None) -> list[tuple[str, list[tuple[str, str]]]]:
     """Разделы сводки: общий источник для классического и rich-вида."""
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     new_users = NO_VALUE if stats.users_new is None else f'+{_number(stats.users_new)}'
     return [
-        ('👥 Пользователи', [('Всего', _number(stats.users)), ('Новых за сутки', new_users)]),
-        ('💳 Активные подписки', [('Платных', _number(stats.paid)), ('Триалов', _number(stats.trials))]),
         (
-            '💰 Деньги',
-            [('Пополнения за сутки', _rubles(stats.deposits_kopeks)), ('На балансах', _rubles(stats.balances_kopeks))],
+            texts.t('STARTUP_NOTICE_022', '👥 Пользователи'),
+            [
+                (texts.t('STARTUP_NOTICE_069', 'Всего'), _number(stats.users)),
+                (texts.t('STARTUP_NOTICE_070', 'Новых за сутки'), new_users),
+            ],
+        ),
+        (
+            texts.t('STARTUP_NOTICE_023', '💳 Активные подписки'),
+            [
+                (texts.t('STARTUP_NOTICE_071', 'Платных'), _number(stats.paid)),
+                (texts.t('STARTUP_NOTICE_072', 'Триалов'), _number(stats.trials)),
+            ],
+        ),
+        (
+            texts.t('STARTUP_NOTICE_024', '💰 Деньги'),
+            [
+                (texts.t('STARTUP_NOTICE_073', 'Пополнения за сутки'), _rubles(stats.deposits_kopeks)),
+                (texts.t('STARTUP_NOTICE_074', 'На балансах'), _rubles(stats.balances_kopeks)),
+            ],
         ),
     ]
 
 
-def _mode_label(stats: _StartupStats) -> str:
-    return {'classic': 'классика', 'tariffs': 'тарифы', 'multi_tariff': 'мультитариф'}.get(
-        stats.sales_mode, stats.sales_mode
-    )
+def _mode_label(stats: _StartupStats, texts: Texts | None = None) -> str:
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
+    return {
+        'classic': texts.t('STARTUP_NOTICE_064', 'классика'),
+        'tariffs': texts.t('STARTUP_NOTICE_065', 'тарифы'),
+        'multi_tariff': texts.t('STARTUP_NOTICE_066', 'мультитариф'),
+    }.get(stats.sales_mode, stats.sales_mode)
 
 
-def render_startup_message(stats: _StartupStats, *, timestamp: str) -> str:
+def render_startup_message(stats: _StartupStats, *, timestamp: str, texts: Texts | None = None) -> str:
     """Классический вид (HTML): разделы деревом, внимание — отдельным блоком."""
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     lines = [
         f'🚀 <b>Remnawave Bedolaga Bot</b> · <code>v{html.escape(stats.version)}</code>',
-        '<i>Запущен и готов к работе</i>',
+        texts.t('STARTUP_NOTICE_003', '<i>Запущен и готов к работе</i>'),
     ]
-    for title, rows in _sections(stats):
+    for title, rows in _sections(stats, texts=texts):
         lines.append('')
         lines.append(f'<b>{title}</b>')
         for index, (label, value) in enumerate(rows):
@@ -157,23 +218,28 @@ def render_startup_message(stats: _StartupStats, *, timestamp: str) -> str:
 
     lines += [
         '',
-        '<b>🛠 Система</b>',
-        f'├ {_panel_line(stats)}',
-        f'├ Тикетов открыто: <b>{_number(stats.open_tickets)}</b>',
-        f'└ Режим продаж: {_mode_label(stats)}',
+        texts.t('STARTUP_NOTICE_004', '<b>🛠 Система</b>'),
+        f'├ {_panel_line(stats, texts=texts)}',
+        texts.t('STARTUP_NOTICE_005', '├ Тикетов открыто: <b>{v0}</b>').format(v0=_number(stats.open_tickets)),
+        texts.t('STARTUP_NOTICE_006', '└ Режим продаж: {v0}').format(v0=_mode_label(stats, texts=texts)),
     ]
 
-    attention = _attention(stats)
+    attention = _attention(stats, texts=texts)
     if attention:
-        lines += ['', '<blockquote>⚠️ <b>Требует внимания</b>', *(f'• {item}' for item in attention)]
+        lines += [
+            '',
+            texts.t('STARTUP_NOTICE_025', '<blockquote>⚠️ <b>Требует внимания</b>'),
+            *(f'• {item}' for item in attention),
+        ]
         lines[-1] += '</blockquote>'
 
     lines += ['', f'<i>{html.escape(timestamp)}</i>']
     return '\n'.join(lines)
 
 
-def render_startup_rich(stats: _StartupStats) -> str:
+def render_startup_rich(stats: _StartupStats, texts: Texts | None = None) -> str:
     """Rich-вид (Bot API 10.1): те же разделы таблицами."""
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     from app.utils.rich_admin import rich_footer_now, rich_kv_table
     from app.utils.rich_menu import _resolve_rich_logo_url
 
@@ -183,25 +249,25 @@ def render_startup_rich(stats: _StartupStats) -> str:
         blocks.append(f'<img src="{html.escape(logo_url, quote=True)}"/>')
     blocks += [
         f'<h5>🚀 Remnawave Bedolaga Bot · v{html.escape(stats.version)}</h5>',
-        '<p>Запущен и готов к работе</p>',
+        texts.t('STARTUP_NOTICE_007', '<p>Запущен и готов к работе</p>'),
     ]
-    attention = _attention(stats)
+    attention = _attention(stats, texts=texts)
     if attention:
         blocks.append(
-            '<blockquote>⚠️ <b>Требует внимания</b><br>'
+            texts.t('STARTUP_NOTICE_075', '<blockquote>⚠️ <b>Требует внимания</b><br>')
             + '<br>'.join(f'• {item}' for item in attention)
             + '</blockquote>'
         )
-    for title, rows in _sections(stats):
+    for title, rows in _sections(stats, texts=texts):
         blocks.append(f'<p><b>{title}</b></p>')
         blocks.append(rich_kv_table([(label, f'<b>{value}</b>') for label, value in rows]))
-    blocks.append('<p><b>🛠 Система</b></p>')
+    blocks.append(texts.t('STARTUP_NOTICE_008', '<p><b>🛠 Система</b></p>'))
     blocks.append(
         rich_kv_table(
             [
-                ('Панель', _panel_line(stats)),
-                ('Тикетов открыто', _number(stats.open_tickets)),
-                ('Режим продаж', _mode_label(stats)),
+                (texts.t('STARTUP_NOTICE_076', 'Панель'), _panel_line(stats, texts=texts)),
+                (texts.t('STARTUP_NOTICE_077', 'Тикетов открыто'), _number(stats.open_tickets)),
+                (texts.t('STARTUP_NOTICE_078', 'Режим продаж'), _mode_label(stats, texts=texts)),
             ]
         )
     )
@@ -358,14 +424,17 @@ class StartupNotificationService:
             return False
 
         try:
+            texts = await _recipient_texts(self.chat_id, self.topic_id)
             stats = await self._collect_stats()
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text='⭐ Звезда на GitHub', url=GITHUB_BOT_URL),
-                        InlineKeyboardButton(text='🖥 Кабинет', url=GITHUB_CABINET_URL),
+                        InlineKeyboardButton(
+                            text=texts.t('STARTUP_NOTICE_084', '⭐ Звезда на GitHub'), url=GITHUB_BOT_URL
+                        ),
+                        InlineKeyboardButton(text=texts.t('STARTUP_NOTICE_085', '🖥 Кабинет'), url=GITHUB_CABINET_URL),
                     ],
-                    [InlineKeyboardButton(text='💬 Сообщество', url=COMMUNITY_URL)],
+                    [InlineKeyboardButton(text=texts.t('STARTUP_NOTICE_086', '💬 Сообщество'), url=COMMUNITY_URL)],
                 ]
             )
 
@@ -377,7 +446,7 @@ class StartupNotificationService:
                 if await try_send_rich_admin_message(
                     self.bot,
                     self.chat_id,
-                    render_startup_rich(stats),
+                    render_startup_rich(stats, texts=texts),
                     thread_id=self.topic_id,
                     reply_markup=keyboard,
                 ):
@@ -389,7 +458,7 @@ class StartupNotificationService:
             message_kwargs: dict = {
                 'chat_id': self.chat_id,
                 'text': render_startup_message(
-                    stats, timestamp=format_local_datetime(datetime.now(UTC), DATETIME_FORMAT)
+                    stats, timestamp=format_local_datetime(datetime.now(UTC), DATETIME_FORMAT), texts=texts
                 ),
                 'parse_mode': ParseMode.HTML,
                 'reply_markup': keyboard,
@@ -469,7 +538,7 @@ async def send_bot_startup_notification(bot: Bot) -> bool:
     return await service.send_startup_notification()
 
 
-def _get_error_recommendations(error_message: str) -> str | None:
+def _get_error_recommendations(error_message: str, texts: Texts | None = None) -> str | None:
     """
     Возвращает рекомендации по исправлению ошибки на основе текста ошибки.
 
@@ -479,76 +548,110 @@ def _get_error_recommendations(error_message: str) -> str | None:
     Returns:
         Рекомендации в формате HTML blockquote или None
     """
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     error_lower = error_message.lower()
 
     # Ошибки прав доступа к примонтированным каталогам (logs/data/locales/uploads)
     if any(keyword in error_lower for keyword in PERMISSION_ERROR_KEYWORDS):
         tips = [
-            '• Бот в контейнере работает от пользователя с uid 1000',
-            '• Похоже, примонтированные каталоги принадлежат другому пользователю',
-            '• Проверьте права на каталоги logs, data, locales (и uploads)',
-            '• Обычно лечится на хосте: <code>chown -R 1000:1000 logs data locales</code>',
-            '• После исправления: docker compose restart bot',
+            texts.t('STARTUP_NOTICE_026', '• Бот в контейнере работает от пользователя с uid 1000'),
+            texts.t('STARTUP_NOTICE_027', '• Похоже, примонтированные каталоги принадлежат другому пользователю'),
+            texts.t('STARTUP_NOTICE_028', '• Проверьте права на каталоги logs, data, locales (и uploads)'),
+            texts.t(
+                'STARTUP_NOTICE_029', '• Обычно лечится на хосте: <code>chown -R 1000:1000 logs data locales</code>'
+            ),
+            texts.t('STARTUP_NOTICE_030', '• После исправления: docker compose restart bot'),
         ]
-        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
+        return (
+            texts.t('STARTUP_NOTICE_067', '<blockquote expandable>💡 <b>Рекомендации:</b>\n')
+            + '\n'.join(tips)
+            + '</blockquote>'
+        )
 
     # Ошибки вебхука
     if any(keyword in error_lower for keyword in WEBHOOK_ERROR_KEYWORDS):
         tips = [
-            '• Проверьте WEBHOOK_HOST в .env',
-            '• Убедитесь что домен доступен извне',
-            '• Проверьте SSL сертификат (должен быть валидный)',
-            '• Проверьте reverse proxy (nginx/caddy)',
-            '• Проверьте сеть Docker (docker network)',
-            '• Попробуйте: docker compose restart',
+            texts.t('STARTUP_NOTICE_031', '• Проверьте WEBHOOK_HOST в .env'),
+            texts.t('STARTUP_NOTICE_032', '• Убедитесь что домен доступен извне'),
+            texts.t('STARTUP_NOTICE_033', '• Проверьте SSL сертификат (должен быть валидный)'),
+            texts.t('STARTUP_NOTICE_034', '• Проверьте reverse proxy (nginx/caddy)'),
+            texts.t('STARTUP_NOTICE_035', '• Проверьте сеть Docker (docker network)'),
+            texts.t('STARTUP_NOTICE_036', '• Попробуйте: docker compose restart'),
         ]
-        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
+        return (
+            texts.t('STARTUP_NOTICE_067', '<blockquote expandable>💡 <b>Рекомендации:</b>\n')
+            + '\n'.join(tips)
+            + '</blockquote>'
+        )
 
     # Ошибки подключения к БД
     if any(keyword in error_lower for keyword in DATABASE_ERROR_KEYWORDS):
         tips = [
-            '• Проверьте что PostgreSQL запущен',
-            '• Проверьте DATABASE_URL в .env',
-            '• Проверьте сеть Docker между контейнерами',
-            '• Попробуйте: docker compose restart db',
+            texts.t('STARTUP_NOTICE_037', '• Проверьте что PostgreSQL запущен'),
+            texts.t('STARTUP_NOTICE_038', '• Проверьте DATABASE_URL в .env'),
+            texts.t('STARTUP_NOTICE_039', '• Проверьте сеть Docker между контейнерами'),
+            texts.t('STARTUP_NOTICE_040', '• Попробуйте: docker compose restart db'),
         ]
-        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
+        return (
+            texts.t('STARTUP_NOTICE_067', '<blockquote expandable>💡 <b>Рекомендации:</b>\n')
+            + '\n'.join(tips)
+            + '</blockquote>'
+        )
 
     # Ошибки Redis
     if REDIS_ERROR_KEYWORD in error_lower:
         tips = [
-            '• Проверьте что Redis запущен',
-            '• Проверьте REDIS_URL в .env',
-            '• Попробуйте: docker compose restart redis',
+            texts.t('STARTUP_NOTICE_041', '• Проверьте что Redis запущен'),
+            texts.t('STARTUP_NOTICE_042', '• Проверьте REDIS_URL в .env'),
+            texts.t('STARTUP_NOTICE_043', '• Попробуйте: docker compose restart redis'),
         ]
-        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
+        return (
+            texts.t('STARTUP_NOTICE_067', '<blockquote expandable>💡 <b>Рекомендации:</b>\n')
+            + '\n'.join(tips)
+            + '</blockquote>'
+        )
 
     # Ошибки Remnawave API
     if any(keyword in error_lower for keyword in REMNAWAVE_ERROR_KEYWORDS):
         tips = [
-            '• Проверьте REMNAWAVE_API_URL в .env',
-            '• Проверьте REMNAWAVE_API_KEY',
-            '• Убедитесь что панель Remnawave доступна',
+            texts.t('STARTUP_NOTICE_044', '• Проверьте REMNAWAVE_API_URL в .env'),
+            texts.t('STARTUP_NOTICE_045', '• Проверьте REMNAWAVE_API_KEY'),
+            texts.t('STARTUP_NOTICE_046', '• Убедитесь что панель Remnawave доступна'),
         ]
-        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
+        return (
+            texts.t('STARTUP_NOTICE_067', '<blockquote expandable>💡 <b>Рекомендации:</b>\n')
+            + '\n'.join(tips)
+            + '</blockquote>'
+        )
 
     # Ошибки токена бота
     if any(keyword in error_lower for keyword in AUTH_ERROR_KEYWORDS):
         tips = [
-            '• Проверьте BOT_TOKEN в .env',
-            '• Убедитесь что токен актуален (@BotFather)',
+            texts.t('STARTUP_NOTICE_047', '• Проверьте BOT_TOKEN в .env'),
+            texts.t('STARTUP_NOTICE_048', '• Убедитесь что токен актуален (@BotFather)'),
         ]
-        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
+        return (
+            texts.t('STARTUP_NOTICE_067', '<blockquote expandable>💡 <b>Рекомендации:</b>\n')
+            + '\n'.join(tips)
+            + '</blockquote>'
+        )
 
     # Ошибки inline-кнопок с URL (WebApp, кастомные протоколы)
     if any(keyword in error_lower for keyword in INLINE_BUTTON_URL_ERROR_KEYWORDS):
         tips = [
-            '• Проверьте MINIAPP_CUSTOM_URL в .env',
-            '• Проверьте HAPP_CRYPTOLINK_REDIRECT_TEMPLATE',
-            '• Telegram не поддерживает кастомные схемы (happ://, v2ray://, ss://, и т.д.) в inline-кнопках',
-            '• Используйте HTTPS редирект для диплинков',
+            texts.t('STARTUP_NOTICE_049', '• Проверьте MINIAPP_CUSTOM_URL в .env'),
+            texts.t('STARTUP_NOTICE_050', '• Проверьте HAPP_CRYPTOLINK_REDIRECT_TEMPLATE'),
+            texts.t(
+                'STARTUP_NOTICE_051',
+                '• Telegram не поддерживает кастомные схемы (happ://, v2ray://, ss://, и т.д.) в inline-кнопках',
+            ),
+            texts.t('STARTUP_NOTICE_052', '• Используйте HTTPS редирект для диплинков'),
         ]
-        return '<blockquote expandable>💡 <b>Рекомендации:</b>\n' + '\n'.join(tips) + '</blockquote>'
+        return (
+            texts.t('STARTUP_NOTICE_067', '<blockquote expandable>💡 <b>Рекомендации:</b>\n')
+            + '\n'.join(tips)
+            + '</blockquote>'
+        )
 
     return None
 
@@ -585,25 +688,40 @@ _FAILURE_SOURCES: Final[dict[str, str]] = {
 SHUTDOWN_ERROR_PREVIEW_LENGTH: Final[int] = 300
 
 
-def _signal_label(signum: int | None) -> tuple[str, str | None]:
+def _signal_label(signum: int | None, texts: Texts | None = None) -> tuple[str, str | None]:
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     if signum is None:
-        return 'без сигнала', None
+        return texts.t('STARTUP_NOTICE_053', 'без сигнала'), None
     if signum in _SIGNAL_REASONS:
-        return _SIGNAL_REASONS[signum]
+        return {
+            signal.SIGTERM.value: (
+                texts.t('STARTUP_NOTICE_009', _SIGNAL_REASONS[signal.SIGTERM.value][0]),
+                texts.t('STARTUP_NOTICE_010', _SIGNAL_REASONS[signal.SIGTERM.value][1]),
+            ),
+            signal.SIGINT.value: (
+                texts.t('STARTUP_NOTICE_011', _SIGNAL_REASONS[signal.SIGINT.value][0]),
+                texts.t('STARTUP_NOTICE_012', _SIGNAL_REASONS[signal.SIGINT.value][1]),
+            ),
+        }[signum]
     try:
-        return f'сигнал {signal.Signals(signum).name}', None
+        return texts.t('STARTUP_NOTICE_054', 'сигнал {v0}').format(v0=signal.Signals(signum).name), None
     except ValueError:
-        return f'сигнал {signum}', None
+        return texts.t('STARTUP_NOTICE_054', 'сигнал {v0}').format(v0=signum), None
 
 
-def format_uptime(delta: timedelta) -> str:
+def format_uptime(delta: timedelta, texts: Texts | None = None) -> str:
     """«3 д 4 ч 12 мин»; нули в начале опускаются, меньше минуты — словами."""
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
     total_minutes = int(delta.total_seconds() // 60)
     if total_minutes < 1:
-        return 'меньше минуты'
+        return texts.t('STARTUP_NOTICE_013', 'меньше минуты')
     days, rest = divmod(total_minutes, 24 * 60)
     hours, minutes = divmod(rest, 60)
-    parts = [f'{days} д' if days else '', f'{hours} ч' if hours else '', f'{minutes} мин' if minutes else '']
+    parts = [
+        texts.t('STARTUP_NOTICE_055', '{v0} д').format(v0=days) if days else '',
+        texts.t('STARTUP_NOTICE_056', '{v0} ч').format(v0=hours) if hours else '',
+        texts.t('STARTUP_NOTICE_057', '{v0} мин').format(v0=minutes) if minutes else '',
+    ]
     return ' '.join(part for part in parts if part)
 
 
@@ -613,9 +731,15 @@ def render_shutdown_message(
     version: str,
     started_at: datetime | None,
     now: datetime,
+    texts: Texts | None = None,
 ) -> str:
     """Классический HTML: причина, аптайм, что делать дальше."""
-    header_icon, header_text = ('🔴', 'Бот остановился из-за ошибки') if reason.is_failure else ('🛑', 'Бот остановлен')
+    texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
+    header_icon, header_text = (
+        ('🔴', texts.t('STARTUP_NOTICE_058', 'Бот остановился из-за ошибки'))
+        if reason.is_failure
+        else ('🛑', texts.t('STARTUP_NOTICE_059', 'Бот остановлен'))
+    )
     lines = [
         f'{header_icon} <b>Remnawave Bedolaga Bot</b> · <code>v{html.escape(version)}</code>',
         f'<i>{header_text}</i>',
@@ -625,35 +749,57 @@ def render_shutdown_message(
     hint: str | None
     if reason.is_failure:
         error = reason.error
-        source = _FAILURE_SOURCES.get(reason.source or '', reason.source or 'неизвестно')
+        source = {**_FAILURE_SOURCES, 'main_loop': texts.t('STARTUP_NOTICE_001', 'основной цикл')}.get(
+            reason.source or '', reason.source or texts.t('STARTUP_NOTICE_068', 'неизвестно')
+        )
         error_text = f'{type(error).__name__}: {error}'[:SHUTDOWN_ERROR_PREVIEW_LENGTH]
         lines += [
-            f'<b>Причина:</b> ошибка — {html.escape(source)}',
+            texts.t('STARTUP_NOTICE_060', '<b>Причина:</b> ошибка — {v0}').format(v0=html.escape(source)),
             f'<code>{html.escape(error_text)}</code>',
         ]
-        hint = _get_error_recommendations(str(error))
+        hint = _get_error_recommendations(str(error), texts=texts)
     else:
-        label, hint_text = _signal_label(reason.signum)
-        lines.append(f'<b>Причина:</b> плановая остановка, {html.escape(label)}')
+        label, hint_text = _signal_label(reason.signum, texts=texts)
+        lines.append(
+            texts.t('STARTUP_NOTICE_061', '<b>Причина:</b> плановая остановка, {v0}').format(v0=html.escape(label))
+        )
         hint = f'<i>{hint_text}</i>' if hint_text else None
 
     lines.append('')
     if started_at is not None:
-        lines.append(f'⏱ Проработал: <b>{format_uptime(now - started_at)}</b>')
-        lines.append(f'🕐 Запущен: {html.escape(format_local_datetime(started_at, DATETIME_FORMAT))}')
-    lines.append(f'🕓 Остановлен: {html.escape(format_local_datetime(now, DATETIME_FORMAT))}')
+        lines.append(
+            texts.t('STARTUP_NOTICE_062', '⏱ Проработал: <b>{v0}</b>').format(
+                v0=format_uptime(now - started_at, texts=texts)
+            )
+        )
+        lines.append(
+            texts.t('STARTUP_NOTICE_063', '🕐 Запущен: {v0}').format(
+                v0=html.escape(format_local_datetime(started_at, DATETIME_FORMAT))
+            )
+        )
+    lines.append(
+        texts.t('STARTUP_NOTICE_014', '🕓 Остановлен: {v0}').format(
+            v0=html.escape(format_local_datetime(now, DATETIME_FORMAT))
+        )
+    )
 
     if hint:
         lines += ['', hint]
 
     next_step = (
-        'Docker с политикой <code>restart</code> поднимет бота заново — дождитесь сообщения о запуске.'
+        texts.t(
+            'STARTUP_NOTICE_015',
+            'Docker с политикой <code>restart</code> поднимет бота заново — дождитесь сообщения о запуске.',
+        )
         if reason.is_failure
-        else 'Если это перезапуск — дождитесь сообщения о запуске.'
+        else texts.t('STARTUP_NOTICE_016', 'Если это перезапуск — дождитесь сообщения о запуске.')
     )
     lines += [
         '',
-        f'<blockquote>{next_step} Не пришло за пару минут — бот не поднялся, проверьте логи контейнера.</blockquote>',
+        texts.t(
+            'STARTUP_NOTICE_017',
+            '<blockquote>{v0} Не пришло за пару минут — бот не поднялся, проверьте логи контейнера.</blockquote>',
+        ).format(v0=next_step),
     ]
     return '\n'.join(lines)
 
@@ -678,6 +824,7 @@ async def send_shutdown_notification(
     )
     topic_id = getattr(settings, topic_key, None) or getattr(settings, 'ADMIN_NOTIFICATIONS_TOPIC_ID', None)
 
+    texts = await _recipient_texts(chat_id, topic_id)
     message_kwargs: dict = {
         'chat_id': chat_id,
         'text': render_shutdown_message(
@@ -685,13 +832,20 @@ async def send_shutdown_notification(
             version=StartupNotificationService(bot)._get_version(),
             started_at=started_at,
             now=datetime.now(UTC),
+            texts=texts,
         ),
         'parse_mode': ParseMode.HTML,
         'disable_web_page_preview': True,
     }
     if reason.is_failure:
         message_kwargs['reply_markup'] = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='💬 Сообщить разработчику', url=DEVELOPER_CONTACT_URL)]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=texts.t('STARTUP_NOTICE_083', '💬 Сообщить разработчику'), url=DEVELOPER_CONTACT_URL
+                    )
+                ]
+            ]
         )
     if topic_id:
         message_kwargs['message_thread_id'] = topic_id
@@ -729,6 +883,7 @@ async def send_crash_notification(bot: Bot, error: Exception, traceback_str: str
         return False
 
     try:
+        texts = await _recipient_texts(chat_id, topic_id)
         timestamp = format_local_datetime(datetime.now(UTC), DATETIME_FORMAT)
         error_type = type(error).__name__
         error_message = str(error)[:CRASH_ERROR_MESSAGE_MAX_LENGTH]
@@ -755,15 +910,13 @@ async def send_crash_notification(bot: Bot, error: Exception, traceback_str: str
         )
 
         # Текст сообщения (escape HTML в error_type/message — они могут содержать <class ...>)
-        message_text = (
-            f'<b>Remnawave Bedolaga Bot</b>\n\n'
-            f'❌ Бот упал с ошибкой\n\n'
-            f'<b>Тип:</b> <code>{html.escape(error_type)}</code>\n'
-            f'<b>Сообщение:</b> <code>{html.escape(error_message[:CRASH_ERROR_PREVIEW_LENGTH])}</code>\n'
-        )
+        message_text = texts.t(
+            'STARTUP_NOTICE_018',
+            '<b>Remnawave Bedolaga Bot</b>\n\n❌ Бот упал с ошибкой\n\n<b>Тип:</b> <code>{v0}</code>\n<b>Сообщение:</b> <code>{v1}</code>\n',
+        ).format(v0=html.escape(error_type), v1=html.escape(error_message[:CRASH_ERROR_PREVIEW_LENGTH]))
 
         # Добавляем рекомендации если есть
-        recommendations = _get_error_recommendations(error_message)
+        recommendations = _get_error_recommendations(error_message, texts=texts)
         if recommendations:
             message_text += f'\n{recommendations}\n'
 
@@ -774,7 +927,7 @@ async def send_crash_notification(bot: Bot, error: Exception, traceback_str: str
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text='💬 Сообщить разработчику',
+                        text=texts.t('STARTUP_NOTICE_083', '💬 Сообщить разработчику'),
                         url=DEVELOPER_CONTACT_URL,
                     ),
                 ],

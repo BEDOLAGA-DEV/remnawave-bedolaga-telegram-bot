@@ -11,11 +11,13 @@ POST /subscription/trial
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,10 +33,12 @@ from app.database.crud.subscription import (
     should_carry_trial_remaining_days,
 )
 from app.database.crud.tariff import get_tariff_by_id, get_tariffs_for_user
-from app.database.crud.transaction import create_transaction
+from app.database.crud.transaction import create_transaction, emit_transaction_side_effects
 from app.database.crud.user import add_user_balance, get_user_by_id, subtract_user_balance
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
+from app.localization.texts import get_texts
+from app.services.cispay_recurrent import get_cispay_recurrent_policy
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -49,13 +53,21 @@ from app.services.subscription_purchase_service import (
 from app.services.subscription_service import SubscriptionService
 from app.services.traffic_reset_policy import should_reset_traffic_on_tariff_purchase
 from app.services.user_cart_service import user_cart_service
-from app.utils.pricing_utils import calculate_price_per_month, format_period_description
+from app.utils.pricing_utils import (
+    calculate_months_from_days,
+    calculate_period_device_cost,
+    calculate_price_per_month,
+    format_period_description,
+)
+from app.utils.subscription_utils import resolve_tariff_purchase_device_limit
 from app.utils.timezone import format_local_datetime
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import (
     PurchasePreviewRequest,
     SubscriptionResponse,
+    TariffCheckoutRequest,
+    TariffPurchasePreviewRequest,
     TariffPurchaseRequest,
     TrialActivateRequest,
     TrialInfoResponse,
@@ -166,8 +178,9 @@ async def _build_tariff_response(
     # Вычисляем доп. устройства для текущего тарифа (при продлении)
     extra_devices_count = 0
     extra_device_price_per_month = 0
-    if subscription and subscription.tariff_id == tariff.id:
-        extra_devices_count = max(0, (subscription.device_limit or 0) - (tariff.device_limit or 0))
+    actual_device_limit = resolve_tariff_purchase_device_limit(tariff, subscription)
+    if tariff.device_limit != 0:
+        extra_devices_count = max(0, actual_device_limit - (tariff.device_limit or 0))
         if extra_devices_count > 0:
             extra_device_price_per_month = (
                 tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
@@ -176,16 +189,18 @@ async def _build_tariff_response(
     periods = []
     if tariff.period_prices:
         for period_str, price_kopeks in sorted(tariff.period_prices.items(), key=lambda x: int(x[0])):
-            if int(price_kopeks) < 0:
+            if price_kopeks is None or int(price_kopeks) < 0:
                 continue  # Skip disabled periods (negative price)
             period_days = int(period_str)
-            months = max(1, period_days // 30)
+            months = calculate_months_from_days(period_days)
 
             # Базовая цена тарифа
             base_tariff_price = int(price_kopeks)
 
             # Стоимость доп. устройств за этот период
-            extra_devices_cost = extra_devices_count * extra_device_price_per_month * months
+            extra_devices_cost = calculate_period_device_cost(
+                extra_device_price_per_month, extra_devices_count, period_days
+            )
 
             # Apply per-category promo group discounts
             original_price = base_tariff_price + extra_devices_cost
@@ -247,12 +262,23 @@ async def _build_tariff_response(
 
             periods.append(period_data)
 
-    traffic_label = '♾️ Безлимит' if tariff.traffic_limit_gb == 0 else f'{tariff.traffic_limit_gb} ГБ'
+    texts = get_texts(language)
+    traffic_label = (
+        f'♾️ {texts.t("TRAFFIC_UNLIMITED_SHORT")}'
+        if tariff.traffic_limit_gb == 0
+        else texts.t('TARIFF_PURCHASE_TRAFFIC_GB').format(traffic=tariff.traffic_limit_gb)
+    )
 
     # Суточная цена — как и периоды, только со скидкой группы: промокод накладывает
     # кабинет для показа и сервер при списании (PricingEngine.daily_group_price).
     original_daily_price = getattr(tariff, 'daily_price_kopeks', 0) or 0
     daily_price, daily_discount_percent = PricingEngine.daily_group_price(original_daily_price, user)
+    if tariff.is_daily and extra_devices_count:
+        daily_devices_cost = extra_devices_count * extra_device_price_per_month
+        devices_percent = promo_group.get_discount_percent('devices', 1) if promo_group else 0
+        daily_price += pricing_engine.apply_discount(daily_devices_cost, devices_percent)
+        original_daily_price += daily_devices_cost
+        daily_discount_percent = round((1 - daily_price / original_daily_price) * 100) if original_daily_price else 0
 
     # Apply discount to custom price_per_day if applicable
     price_per_day = tariff.price_per_day_kopeks or 0
@@ -264,7 +290,7 @@ async def _build_tariff_response(
             price_per_day = pricing_engine.apply_discount(price_per_day, custom_days_discount_percent)
 
     # Apply discount to device price if applicable
-    device_price = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else 0
+    device_price = tariff.device_price_kopeks if tariff.device_price_kopeks is not None else settings.PRICE_PER_DEVICE
     original_device_price = device_price
     device_discount_percent = 0
     if promo_group and device_price > 0:
@@ -273,9 +299,7 @@ async def _build_tariff_response(
             device_price = pricing_engine.apply_discount(device_price, device_discount_percent)
 
     # Показываем реальное количество устройств (с докупленными) для текущего тарифа
-    actual_device_limit = tariff.device_limit
-    if subscription and subscription.tariff_id == tariff.id:
-        actual_device_limit = max(tariff.device_limit or 0, subscription.device_limit or 0)
+    actual_device_limit = resolve_tariff_purchase_device_limit(tariff, subscription)
 
     response: dict[str, Any] = {
         'id': tariff.id,
@@ -289,6 +313,7 @@ async def _build_tariff_response(
         'traffic_limit_label': traffic_label,
         'is_unlimited_traffic': tariff.traffic_limit_gb == 0,
         'device_limit': actual_device_limit,
+        'purchase_device_selection_supported': True,
         'base_device_limit': tariff.device_limit,
         'extra_devices_count': extra_devices_count,
         'device_price_kopeks': device_price,
@@ -336,6 +361,31 @@ async def _build_tariff_response(
     if custom_days_discount_percent > 0 and original_price_per_day > 0:
         response['original_price_per_day_kopeks'] = original_price_per_day
         response['custom_days_discount_percent'] = custom_days_discount_percent
+
+    if tariff.custom_days_enabled:
+        # Custom days use exact-period rates and discount whole category totals.
+        # Keep legacy discounted units for other consumers of purchase-options.
+        custom_group = pricing_engine.resolve_promo_group(user)
+        if custom_group is not None and not tariff.is_available_for_promo_group(custom_group.id):
+            custom_group = None
+        discount_days = set()
+        if custom_group is not None:
+            discount_days.update(custom_group._get_period_discounts_map())
+            if custom_group.is_default and settings.is_base_promo_group_period_discount_enabled():
+                discount_days.update(settings.get_base_promo_group_period_discounts())
+        response['custom_days_pricing'] = {
+            'price_per_day_kopeks': original_price_per_day,
+            'device_price_kopeks': original_device_price,
+            'period_prices': tariff.period_prices or {},
+            'default_device_discount_percent': custom_group.get_discount_percent('devices') if custom_group else 0,
+            'discounts_by_days': {
+                str(days): {
+                    'period': custom_group.get_discount_percent('period', days),
+                    'devices': custom_group.get_discount_percent('devices', days),
+                }
+                for days in sorted(discount_days)
+            },
+        }
 
     return response
 
@@ -433,6 +483,9 @@ async def get_purchase_options(
                 # подписки, если фича включена.
                 'lava_recurrent_enabled': settings.is_lava_recurrent_enabled(),
                 'cashera_recurrent_enabled': settings.is_cashera_recurrent_enabled(),
+                'cispay_recurrent_enabled': (await get_cispay_recurrent_policy(db, user=user, channel='cabinet'))[
+                    'enabled'
+                ],
             }
 
         # Classic mode - return periods
@@ -668,20 +721,199 @@ async def submit_purchase(
 # ============ Tariff Purchase (for tariffs mode) ============
 
 
+async def _resolve_tariff_purchase_target(
+    db: AsyncSession, user: User, tariff: Tariff, request: TariffPurchaseRequest | TariffPurchasePreviewRequest
+):
+    """Use the same target resolution for preview and confirmation."""
+    existing_subscription = None
+    if settings.is_multi_tariff_enabled():
+        if request.subscription_id is not None:
+            existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
+            if existing_subscription is None:
+                raise HTTPException(status_code=404, detail='Subscription not found')
+            if existing_subscription is not None and existing_subscription.tariff_id is None:
+                # Старая подписка (куплена в классике, тариф не задан): тариф
+                # надевается на неё же — та же строка и тот же аккаунт панели,
+                # у человека остаётся прежняя ссылка. Живая подписка этого
+                # тарифа уже есть → отказ до списания, а не падение на
+                # частичном уникальном индексе после.
+                await _ensure_tariff_not_already_active(db, user.id, tariff.id)
+            elif existing_subscription and existing_subscription.tariff_id != tariff.id:
+                # A paid switch must use the switch endpoint and its quote.
+                # Discarding the explicit source would charge for a new
+                # subscription (or renew a different one) instead.
+                if not existing_subscription.is_trial and existing_subscription.actual_status in (
+                    'active',
+                    'limited',
+                ):
+                    source_tariff = await get_tariff_by_id(db, existing_subscription.tariff_id)
+                    purchase_fallback = (
+                        settings.TARIFF_SWITCH_RESET_FREE_DAYS and source_tariff is not None and source_tariff.is_free
+                    )
+                    if not purchase_fallback:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail={
+                                'code': 'subscription_tariff_mismatch',
+                                'message': 'Для выбранной подписки требуется смена тарифа. '
+                                'Обновите страницу и выберите «Сменить тариф».',
+                            },
+                        )
+                # Trial/expired/free-source purchases retain their existing
+                # conversion policy; they have no paid switch quote.
+                logger.warning(
+                    'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
+                    request_subscription_id=request.subscription_id,
+                    pinned_tariff_id=existing_subscription.tariff_id,
+                    request_tariff_id=tariff.id,
+                    user_id=user.id,
+                )
+                existing_subscription = None
+        if existing_subscription is None:
+            from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+            # include_inactive=True so an EXPIRED (or disabled) trial of THIS
+            # tariff is found and converted in place via the extend branch
+            # below (same Remnawave user → same link). Without it the expired
+            # trial is invisible → killed → re-created with a new link.
+            existing_subscription = await get_subscription_by_user_and_tariff(
+                db, user.id, tariff.id, include_inactive=True
+            )
+    elif request.subscription_id is not None:
+        existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
+        if existing_subscription is None:
+            raise HTTPException(status_code=404, detail='Subscription not found')
+    else:
+        existing_subscription = await get_subscription_by_user_id(db, user.id)
+    if (
+        existing_subscription is None
+        and settings.is_multi_tariff_enabled()
+        and (
+            isinstance(request, TariffPurchasePreviewRequest)
+            or getattr(request, 'selected_device_limit', None) is not None
+        )
+    ):
+        from app.database.crud.subscription import resolve_trial_conversion_candidate
+
+        existing_subscription = await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+    if existing_subscription is not None:
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        try:
+            await require_no_cispay(db, user_id=user.id, subscription_id=existing_subscription.id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+    return existing_subscription
+
+
+@router.post('/purchase-tariff/preview')
+async def preview_tariff_purchase(
+    request: TariffPurchasePreviewRequest,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    from app.services.tariff_purchase_devices import DeviceSelectionError
+    from app.services.tariff_purchase_quote import (
+        PurchaseQuoteError,
+        calculate_purchase_quote,
+        purchase_quote_terms,
+        save_purchase_quote,
+    )
+
+    if getattr(user, 'restriction_subscription', False):
+        raise HTTPException(status_code=403, detail='Subscription purchases are restricted for this account')
+    if not settings.is_tariffs_mode():
+        raise HTTPException(status_code=400, detail='Tariffs mode is not enabled')
+    tariff = await get_tariff_by_id(db, request.tariff_id)
+    if tariff is None or not tariff.is_active:
+        raise HTTPException(status_code=404, detail='Tariff not found or inactive')
+    group = user.get_primary_promo_group()
+    if not tariff.is_available_for_promo_group(group.id if group else None):
+        raise HTTPException(status_code=403, detail='This tariff is not available for your promo group')
+    target = await _resolve_tariff_purchase_target(db, user, tariff, request)
+    try:
+        quote = await calculate_purchase_quote(
+            tariff,
+            user,
+            target,
+            period_days=request.period_days,
+            selected_device_limit=request.selected_device_limit,
+            traffic_gb=request.traffic_gb,
+        )
+        terms = purchase_quote_terms(request, target, quote)
+        quote_id, expires_at = await save_purchase_quote(user.id, 'cabinet', terms)
+    except (PurchaseQuoteError, DeviceSelectionError) as error:
+        raise HTTPException(
+            status_code=503 if error.code == 'quote_unavailable' else 409, detail={'code': error.code}
+        ) from error
+    from app.services.recurrent_purchase_selection import find_recurrent_pending_intent
+
+    recurrent_pending = await find_recurrent_pending_intent(db, target) if target is not None else None
+    return {
+        'recurrent_checkout_pending': recurrent_pending is not None,
+        'quote_id': str(quote_id),
+        'expires_at': expires_at,
+        'tariff_id': tariff.id,
+        'subscription_id': target.id if target else None,
+        'period_days': request.period_days,
+        'traffic_gb': quote.traffic_limit_gb,
+        'device_selection': asdict(quote.devices),
+        'purchase_kind': quote.purchase_kind,
+        'tariff_cost_kopeks': quote.pricing.base_price,
+        'devices_cost_kopeks': quote.pricing.devices_price,
+        'traffic_cost_kopeks': quote.pricing.traffic_price,
+        'discount_kopeks': quote.pricing.promo_group_discount + quote.pricing.promo_offer_discount,
+        'total_kopeks': quote.pricing.final_total,
+        'next_daily_charge_kopeks': quote.next_daily_charge_kopeks,
+        'balance_kopeks': user.balance_kopeks,
+        'missing_kopeks': max(0, quote.pricing.final_total - user.balance_kopeks),
+        'billing_mode': 'daily' if tariff.is_daily else 'period',
+    }
+
+
 @router.post('/purchase-tariff')
 async def purchase_tariff(
-    request: TariffPurchaseRequest,
+    request: TariffCheckoutRequest,
     user: User = Depends(get_current_cabinet_user),
     db: AsyncSession = Depends(get_cabinet_db),
 ) -> dict[str, Any]:
     """Purchase a tariff (for tariffs mode)."""
-    if getattr(user, 'restriction_subscription', False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Subscription purchases are restricted for this account',
-        )
-
+    purchase_user_id = user.id
+    checkout_external_id = None
+    selected_devices = getattr(request, 'selected_device_limit', None)
+    device_checkout = selected_devices is not None
     try:
+        from app.database.crud.user import lock_user_for_pricing
+
+        if device_checkout:
+            user = await lock_user_for_pricing(db, user.id)
+            from app.database.models import TariffPurchaseIntent
+            from app.services.tariff_purchase_quote import purchase_fingerprint, purchase_parameters
+
+            parameters = purchase_parameters(request)
+            fingerprint = purchase_fingerprint(parameters)
+            completed = await db.scalar(
+                select(TariffPurchaseIntent).where(
+                    TariffPurchaseIntent.user_id == purchase_user_id,
+                    TariffPurchaseIntent.checkout_id == str(request.checkout_id),
+                )
+            )
+            if completed is not None:
+                if completed.fingerprint != fingerprint:
+                    raise HTTPException(status_code=409, detail={'code': 'checkout_conflict'})
+                return {
+                    'success': True,
+                    'subscription_id': completed.subscription_id,
+                    'charged_amount': completed.charged_kopeks,
+                    'already_processed': True,
+                }
+
+        if getattr(user, 'restriction_subscription', False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='Subscription purchases are restricted for this account',
+            )
+
         # Check tariffs mode
         if not settings.is_tariffs_mode():
             raise HTTPException(
@@ -698,9 +930,34 @@ async def purchase_tariff(
             )
 
         # Lock user BEFORE price computation to prevent TOCTOU on promo offer
-        from app.database.crud.user import lock_user_for_pricing
+        if not device_checkout:
+            user = await lock_user_for_pricing(db, user.id)
 
-        user = await lock_user_for_pricing(db, user.id)
+        if device_checkout:
+            await db.refresh(tariff, with_for_update={'read': True})
+            if not tariff.is_active or getattr(user, 'restriction_subscription', False):
+                raise HTTPException(status_code=409, detail={'code': 'quote_changed'})
+
+        if request.checkout_id is not None and (not tariff.is_daily or device_checkout):
+            from app.services.subscription_auto_purchase_service import _saved_tariff_checkout_external_id
+
+            checkout_external_id = _saved_tariff_checkout_external_id(
+                purchase_user_id, {'tariff_checkout_id': str(request.checkout_id)}
+            )
+            existing_payment = await db.scalar(
+                select(Transaction.id).where(
+                    Transaction.external_id == checkout_external_id,
+                    Transaction.payment_method == PaymentMethod.BALANCE.value,
+                )
+            )
+            if existing_payment is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        'code': 'checkout_already_processed',
+                        'message': 'Эта покупка уже принята. Проверьте список подписок перед новой покупкой.',
+                    },
+                )
 
         # Check tariff availability for user's promo group and get promo group for discounts
         promo_group = user.get_primary_promo_group() if hasattr(user, 'get_primary_promo_group') else None
@@ -769,57 +1026,66 @@ async def purchase_tariff(
         # ``uq_subscriptions_user_tariff_active`` on confirm and
         # logging "Тариф уже активен" — the exact production scenario
         # the bot-side fix already closed (commit 5cd53e4c).
-        existing_subscription = None
-        if settings.is_multi_tariff_enabled():
-            if request.subscription_id is not None:
-                existing_subscription = await get_subscription_by_id_for_user(db, request.subscription_id, user.id)
-                if existing_subscription is not None and existing_subscription.tariff_id is None:
-                    # Старая подписка (куплена в классике, тариф не задан): тариф
-                    # надевается на неё же — та же строка и тот же аккаунт панели,
-                    # у человека остаётся прежняя ссылка. Живая подписка этого
-                    # тарифа уже есть → отказ до списания, а не падение на
-                    # частичном уникальном индексе после.
-                    await _ensure_tariff_not_already_active(db, user.id, tariff.id)
-                # If the pinned sub points to a different tariff than
-                # the request carries (admin swap, stale client state),
-                # ignore it and fall back to tariff-level lookup so the
-                # purchase doesn't extend a sub of the wrong tariff.
-                elif existing_subscription and existing_subscription.tariff_id != tariff.id:
-                    logger.warning(
-                        'Cabinet purchase: explicit subscription_id has divergent tariff_id; falling back',
-                        request_subscription_id=request.subscription_id,
-                        pinned_tariff_id=existing_subscription.tariff_id,
-                        request_tariff_id=tariff.id,
-                        user_id=user.id,
-                    )
-                    existing_subscription = None
-            if existing_subscription is None:
-                from app.database.crud.subscription import get_subscription_by_user_and_tariff
+        existing_subscription = await _resolve_tariff_purchase_target(db, user, tariff, request)
+        if (
+            is_daily_tariff
+            and existing_subscription is not None
+            and existing_subscription.tariff_id == tariff.id
+            and not existing_subscription.is_trial
+            and existing_subscription.is_active
+            and not existing_subscription.is_daily_paused
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Daily tariff is already active')
+        from app.services.tariff_purchase_quote import PurchaseQuoteError, validate_purchase_duration
 
-                # include_inactive=True so an EXPIRED (or disabled) trial of THIS
-                # tariff is found and converted in place via the extend branch
-                # below (same Remnawave user → same link). Without it the expired
-                # trial is invisible → killed → re-created with a new link.
-                existing_subscription = await get_subscription_by_user_and_tariff(
-                    db, user.id, tariff.id, include_inactive=True
+        try:
+            validate_purchase_duration(period_days, existing_subscription)
+        except PurchaseQuoteError as error:
+            raise HTTPException(status_code=409, detail={'code': error.code}) from error
+
+        if device_checkout:
+            from app.services.tariff_purchase_devices import DeviceSelectionError
+            from app.services.tariff_purchase_quote import (
+                PurchaseQuoteError,
+                calculate_purchase_quote,
+                load_purchase_quote,
+                purchase_quote_terms,
+            )
+
+            try:
+                agreed_terms = await load_purchase_quote(user.id, 'cabinet', request.quote_id)
+                quote = await calculate_purchase_quote(
+                    tariff,
+                    user,
+                    existing_subscription,
+                    period_days=period_days,
+                    selected_device_limit=selected_devices,
+                    traffic_gb=request.traffic_gb,
                 )
+                current_terms = purchase_quote_terms(request, existing_subscription, quote)
+                if current_terms != agreed_terms:
+                    raise PurchaseQuoteError('quote_changed')
+            except (PurchaseQuoteError, DeviceSelectionError) as error:
+                raise HTTPException(status_code=409, detail={'code': error.code}) from error
+            effective_device_limit = quote.devices.effective_limit
+            result = quote.pricing
         else:
-            existing_subscription = await get_subscription_by_user_id(db, user.id)
-        device_limit = None
-        effective_device_limit = tariff.device_limit
-        if existing_subscription and existing_subscription.tariff_id == tariff.id:
-            device_limit = existing_subscription.device_limit
-            if (existing_subscription.device_limit or 0) > (tariff.device_limit or 0):
-                effective_device_limit = existing_subscription.device_limit
+            effective_device_limit = resolve_tariff_purchase_device_limit(tariff, existing_subscription)
+            device_limit = effective_device_limit
 
-        # Calculate price via PricingEngine (single source of truth)
-        result = await pricing_engine.calculate_tariff_purchase_price(
-            tariff,
-            period_days,
-            device_limit=device_limit,
-            custom_traffic_gb=custom_traffic_gb,
-            user=user,
-        )
+            # Calculate price via PricingEngine (single source of truth)
+            result = await pricing_engine.calculate_tariff_purchase_price(
+                tariff,
+                period_days,
+                device_limit=device_limit,
+                custom_traffic_gb=custom_traffic_gb,
+                user=user,
+                **(
+                    {'daily_devices_billing_version': 1}
+                    if getattr(existing_subscription, 'daily_devices_billing_version', 0) == 1
+                    else {}
+                ),
+            )
         price_kopeks = result.final_total
         original_price = result.original_total
         bd = result.breakdown
@@ -856,6 +1122,7 @@ async def purchase_tariff(
             if is_daily_tariff:
                 cart_data = {
                     'cart_mode': 'daily_tariff_purchase',
+                    'period_days': 1,
                     'tariff_id': tariff.id,
                     'is_daily': True,
                     'daily_price_kopeks': price_kopeks,
@@ -884,6 +1151,7 @@ async def purchase_tariff(
                     'return_to_cart': True,
                     'description': f'Покупка тарифа {tariff.name} на {period_days} дней',
                     'traffic_limit_gb': traffic_limit_gb,
+                    'custom_traffic_gb': custom_traffic_gb,
                     'device_limit': effective_device_limit,
                     'allowed_squads': tariff.allowed_squads or [],
                     'discount_percent': discount_percent,
@@ -892,11 +1160,21 @@ async def purchase_tariff(
                     'subscription_id': existing_subscription.id if existing_subscription else None,
                 }
 
+            if checkout_external_id is not None:
+                cart_data['tariff_checkout_id'] = str(request.checkout_id)
+            if device_checkout:
+                cart_data['selected_device_limit'] = selected_devices
+                cart_data['device_quote_terms'] = agreed_terms
+                cart_data['device_parameters'] = parameters
+
+            cart_saved = False
             try:
-                await user_cart_service.save_user_cart(user.id, cart_data)
+                cart_saved = bool(await user_cart_service.save_user_cart(user.id, cart_data))
                 logger.info('Cart saved for auto-purchase (cabinet) user tariff', user_id=user.id, tariff_id=tariff.id)
             except Exception as e:
                 logger.error('Error saving cart for auto-purchase (cabinet)', error=e)
+            if device_checkout and not cart_saved:
+                raise HTTPException(status_code=503, detail={'code': 'cart_unavailable'})
 
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -904,7 +1182,7 @@ async def purchase_tariff(
                     'code': 'insufficient_funds',
                     'message': f'Недостаточно средств. Не хватает {settings.format_price(missing, round_kopeks=False)}',
                     'missing_amount': missing,
-                    'cart_saved': True,
+                    'cart_saved': cart_saved,
                     'cart_mode': cart_data['cart_mode'],
                 },
             )
@@ -921,6 +1199,13 @@ async def purchase_tariff(
             all_servers, _ = await get_all_server_squads(db, available_only=True)
             squads = [s.squad_uuid for s in all_servers if s.squad_uuid]
 
+        from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
+
+        try:
+            await validate_checkout_squads(squads)
+        except CheckoutSquadsUnavailableError as error:
+            raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
+
         # Charge balance
         if is_daily_tariff:
             description = f"Активация суточного тарифа '{tariff.name}'"
@@ -930,29 +1215,47 @@ async def purchase_tariff(
             description += f' (скидка {discount_percent}%)'
         if promo_offer_discount_value > 0:
             description += f' (промо -{promo_offer_discount_percent}%)'
-        success = await subtract_user_balance(
-            db,
-            user,
-            price_kopeks,
-            description,
-            consume_promo_offer=promo_offer_discount_value > 0,
-            mark_as_paid_subscription=True,
+        managed_purchase = getattr(subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+        atomic_charge = bool(checkout_external_id) or is_daily_tariff or managed_purchase
+        saved_promo = (
+            user.promo_offer_discount_percent,
+            user.promo_offer_discount_source,
+            user.promo_offer_discount_expires_at,
         )
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail='Failed to charge balance',
+        try:
+            success = await subtract_user_balance(
+                db,
+                user,
+                price_kopeks,
+                description,
+                consume_promo_offer=promo_offer_discount_value > 0,
+                mark_as_paid_subscription=True,
+                **({'commit': False} if atomic_charge else {}),
             )
-
-        # Create transaction
-        transaction = await create_transaction(
-            db=db,
-            user_id=user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=price_kopeks,
-            description=description,
-            payment_method=PaymentMethod.BALANCE,
-        )
+            if not success:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='Failed to charge balance')
+            transaction = await create_transaction(
+                db=db,
+                user_id=purchase_user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=price_kopeks,
+                description=description,
+                payment_method=PaymentMethod.BALANCE,
+                **(
+                    {'external_id': checkout_external_id, 'is_completed': False, 'commit': False}
+                    if checkout_external_id
+                    else {'commit': False}
+                    if is_daily_tariff or managed_purchase
+                    else {}
+                ),
+            )
+            if checkout_external_id and not device_checkout and not managed_purchase:
+                await db.commit()
+        except Exception:
+            if atomic_charge:
+                await db.rollback()
+            raise
+        transaction_id = transaction.id
 
         # Плоские копии для веток возврата средств ниже: после db.rollback()
         # ORM-объекты expired, а синхронный доступ к их атрибутам в async-контексте
@@ -967,6 +1270,9 @@ async def purchase_tariff(
             Сбои возврата только логируем (CRITICAL): исходную ошибку покупки
             маскировать нельзя, а двойного списания здесь быть не может.
             """
+            if is_daily_tariff or device_checkout or managed_purchase:
+                # Debit/product/ledger were rolled back together.
+                return
             try:
                 refund_user = await get_user_by_id(db, refund_user_id)
                 if refund_user is None:
@@ -985,10 +1291,13 @@ async def purchase_tariff(
                     refund_user,
                     price_kopeks,
                     reason,
-                    create_transaction=True,
+                    create_transaction=not bool(checkout_external_id),
                     transaction_type=TransactionType.REFUND,
+                    **({'commit': False} if checkout_external_id else {}),
                 )
                 if not refund_success:
+                    if checkout_external_id:
+                        await db.rollback()
                     logger.critical(
                         'CRITICAL: add_user_balance вернул False при возврате средств в кабинете',
                         user_id=refund_user_id,
@@ -998,12 +1307,35 @@ async def purchase_tariff(
                         refund_user_id, price_kopeks, reason, 'add_user_balance returned False'
                     )
                     return
+                if checkout_external_id:
+                    refund = await create_transaction(
+                        db, refund_user_id, TransactionType.REFUND, price_kopeks, reason, commit=False
+                    )
+                    failed_transaction = await db.get(Transaction, transaction_id)
+                    failed_transaction.external_id = None
+                    if promo_offer_discount_value > 0:
+                        (
+                            refund_user.promo_offer_discount_percent,
+                            refund_user.promo_offer_discount_source,
+                            refund_user.promo_offer_discount_expires_at,
+                        ) = saved_promo
+                    await db.commit()
+                    await emit_transaction_side_effects(
+                        db,
+                        refund,
+                        amount_kopeks=price_kopeks,
+                        user_id=refund_user_id,
+                        type=TransactionType.REFUND,
+                        description=reason,
+                    )
                 logger.info(
                     'Cabinet purchase: средства возвращены после ошибки покупки тарифа',
                     user_id=refund_user_id,
                     refund_kopeks=price_kopeks,
                 )
             except Exception as refund_error:
+                if checkout_external_id:
+                    await db.rollback()
                 logger.critical(
                     'CRITICAL: не удалось вернуть средства после ошибки покупки тарифа в кабинете',
                     user_id=refund_user_id,
@@ -1087,7 +1419,9 @@ async def purchase_tariff(
                     traffic_limit_gb=traffic_limit_gb,
                     device_limit=effective_device_limit,
                     connected_squads=squads,
+                    paid_traffic_reset=False,
                     reset_used_traffic=reset_used_traffic,
+                    **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase else {}),
                 )
             else:
                 # Create new subscription (или конверсия исключённого выше триала)
@@ -1097,10 +1431,11 @@ async def purchase_tariff(
                         user_id=user.id,
                         duration_days=period_days,
                         traffic_limit_gb=traffic_limit_gb,
-                        device_limit=tariff.device_limit,
+                        device_limit=effective_device_limit,
                         connected_squads=squads,
                         tariff_id=tariff.id,
                         conversion_trial=_conversion_trial,
+                        **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase else {}),
                     )
                 except IntegrityError:
                     # Partial unique index violation: user already has active subscription for this tariff
@@ -1115,6 +1450,14 @@ async def purchase_tariff(
                         status_code=status.HTTP_409_CONFLICT,
                         detail='You already have an active subscription for this tariff',
                     )
+            if is_daily_tariff:
+                subscription.last_daily_charge_at = datetime.now(UTC)
+                if device_checkout:
+                    subscription.daily_devices_billing_version = 1
+                subscription.is_daily_paused = False
+                if not device_checkout:
+                    await db.commit()
+                    await db.refresh(subscription)
         except HTTPException:
             # 409-ветка выше уже вернула средства; повторная компенсация здесь
             # превратила бы одиночный возврат в двойной.
@@ -1136,9 +1479,42 @@ async def purchase_tariff(
                 detail='Failed to process tariff purchase',
             )
 
+        if device_checkout:
+            if _bonus_seconds > 0:
+                subscription.end_date += timedelta(seconds=_bonus_seconds)
+                subscription.pending_panel_expire_at = subscription.end_date
+                _bonus_seconds = 0
+            db.add(
+                TariffPurchaseIntent(
+                    user_id=purchase_user_id,
+                    checkout_id=str(request.checkout_id),
+                    fingerprint=fingerprint,
+                    parameters=parameters,
+                    subscription_id=subscription.id,
+                    transaction_id=transaction.id,
+                    charged_kopeks=price_kopeks,
+                )
+            )
+
+        if checkout_external_id or managed_purchase:
+            transaction.is_completed = True
+            transaction.completed_at = datetime.now(UTC)
+            await db.commit()
+            await emit_transaction_side_effects(
+                db,
+                transaction,
+                amount_kopeks=price_kopeks,
+                user_id=purchase_user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                payment_method=PaymentMethod.BALANCE,
+                external_id=checkout_external_id,
+                description=description,
+            )
+
         # Add remaining trial time to paid subscription
         if _bonus_seconds > 0 and subscription:
             subscription.end_date = subscription.end_date + timedelta(seconds=_bonus_seconds)
+            subscription.pending_panel_expire_at = subscription.end_date
             await db.commit()
             await db.refresh(subscription)
             logger.info(
@@ -1147,12 +1523,25 @@ async def purchase_tariff(
                 subscription_id=subscription.id,
             )
 
-        # For daily tariffs, set last_daily_charge_at
         if is_daily_tariff:
-            subscription.last_daily_charge_at = datetime.now(UTC)
-            subscription.is_daily_paused = False
-            await db.commit()
-            await db.refresh(subscription)
+            await emit_transaction_side_effects(
+                db,
+                transaction,
+                amount_kopeks=price_kopeks,
+                user_id=purchase_user_id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                payment_method=PaymentMethod.BALANCE,
+                description=description,
+            )
+            if existing_subscription is not None:
+                # extend_subscription(commit=False) defers this external effect.
+                # Keep it after the activation commit, outside compensation.
+                try:
+                    from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
+
+                    await shift_lava_next_charge_after_manual_extension(db, subscription.id, period_days)
+                except Exception as shift_error:
+                    logger.warning('Failed to shift Lava next charge after daily activation', error=shift_error)
 
         # --- Disable killed trials on RemnaWave panel ---
         service = SubscriptionService()
@@ -1334,7 +1723,7 @@ async def purchase_tariff(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error('Failed to purchase tariff for user', user_id=user.id, error=e)
+        logger.error('Failed to purchase tariff for user', user_id=purchase_user_id, error=e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to process tariff purchase',
@@ -1466,6 +1855,13 @@ async def activate_trial(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Trial already used',
         )
+
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_trial_checkout_squads
+
+    try:
+        await validate_trial_checkout_squads(db)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
 
     # Check if trial requires payment
     requires_payment = bool(settings.TRIAL_PAYMENT_ENABLED)

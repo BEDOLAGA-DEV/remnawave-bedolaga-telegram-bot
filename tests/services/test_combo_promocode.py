@@ -196,7 +196,7 @@ async def test_combo_grants_traffic(monkeypatch):
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', AsyncMock(return_value=True))
     add_traffic = AsyncMock(return_value=sub)
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', add_traffic)
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', add_traffic)
 
     description = await service._apply_promocode_effects(AsyncMock(), _user(), _combo_promocode(traffic_gb=50))
 
@@ -221,7 +221,7 @@ async def test_combo_without_traffic_does_not_touch_it(monkeypatch):
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', AsyncMock(return_value=True))
     add_traffic = AsyncMock()
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', add_traffic)
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', add_traffic)
 
     await service._apply_promocode_effects(AsyncMock(), _user(), _combo_promocode())
 
@@ -252,7 +252,7 @@ async def test_traffic_reactivates_limited_subscription(monkeypatch):
     reactivate = AsyncMock(side_effect=fake_reactivate)
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', AsyncMock(return_value=True))
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock(return_value=sub))
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.database.crud.subscription.reactivate_subscription', reactivate)
 
     user = _user()
@@ -284,7 +284,7 @@ async def test_traffic_not_granted_on_unlimited_subscription(monkeypatch):
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', AsyncMock(return_value=True))
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', add_traffic)
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', add_traffic)
 
     description = await service._apply_promocode_effects(AsyncMock(), _user(), _combo_promocode(traffic_gb=50))
 
@@ -310,7 +310,7 @@ async def test_target_subscription_picked_once_per_activation(monkeypatch):
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', AsyncMock(return_value=True))
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock(return_value=sub))
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.database.crud.subscription.reactivate_subscription', AsyncMock(return_value=sub))
 
     picks = []
@@ -345,7 +345,7 @@ async def test_traffic_only_applies_to_the_bonus_set_type(monkeypatch):
     add_traffic = AsyncMock()
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', AsyncMock(return_value=sub))
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', add_traffic)
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', add_traffic)
 
     days_only = _combo_promocode(type=PromoCodeType.SUBSCRIPTION_DAYS.value, traffic_gb=50, balance_bonus_kopeks=0)
     await service._apply_promocode_effects(AsyncMock(), _user(), days_only)
@@ -370,7 +370,7 @@ async def test_traffic_only_on_unlimited_does_not_burn_the_code(monkeypatch):
 
     sub = _subscription(traffic_limit_gb=0)
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=sub))
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock())
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', AsyncMock())
 
     traffic_only = _combo_promocode(traffic_gb=50, subscription_days=0, balance_bonus_kopeks=0)
 
@@ -392,7 +392,7 @@ async def test_unlimited_subscription_keeps_other_bonuses(monkeypatch):
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', AsyncMock(return_value=sub))
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', AsyncMock(return_value=True))
-    monkeypatch.setattr('app.database.crud.subscription.add_subscription_traffic', AsyncMock())
+    monkeypatch.setattr('app.services.traffic_purchase_service.add_subscription_traffic', AsyncMock())
 
     description = await service._apply_promocode_effects(AsyncMock(), _user(), _combo_promocode(traffic_gb=50))
 

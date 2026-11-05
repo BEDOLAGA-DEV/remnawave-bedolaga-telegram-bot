@@ -1,18 +1,16 @@
 """Данные плательщика для шлюзов, которые требуют их в каждом платеже.
 
-Platega (docs.platega.io, «Создание платежной ссылки с заданным методом»):
-``metadata.userId`` и ``metadata.userName`` — строки, обязательные для части
-категорий магазинов. «Отсутствие ``metadata.userId`` при наличии требования
-отключает антифрод-защиту и может привести к отключению магазина».
+Platega (docs.platega.io, обновление 2026-10-30): ``metadata.user_email``
+обязателен в каждом платеже и должен обозначать покупателя, а не заказ.
+``userId`` обязателен для отдельных категорий; ``userName`` дополнительный.
 
 MulenPay (письмо провайдера, 2026-09-15): поле ``client`` «требуется заполнять
 почтой, телефоном или ТГ ид и т.п.». Документация формата не задаёт — в примере
 только почта.
 
-Все поля всегда непустые: у любого плательщика есть хотя бы внутренний id —
-Telegram ID, ``user-<id>`` у пользователей без Telegram, ``guest-<хеш токена>`` у
-гостей лендинга. Получение данных не имеет права сорвать платёж: любая ошибка
-чтения даёт плательщика по одному id.
+Контакт MulenPay сохраняет прежние правила и резервный идентификатор при
+ошибке БД. Platega требует отдельный email-идентификатор: при отсутствии
+достоверных данных запрос к провайдеру не отправляем.
 """
 
 from __future__ import annotations
@@ -22,6 +20,7 @@ import unicodedata
 from dataclasses import dataclass
 
 import structlog
+from pydantic import EmailStr, TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +30,7 @@ logger = structlog.get_logger(__name__)
 #: Предел выбран защитно (шлюзы длину не документируют) и совпадает с колонками
 #: users.email / users.username, чтобы обрезка была недостижима на живых данных.
 PAYER_FIELD_MAX_LENGTH = 255
+_EMAIL_ADAPTER = TypeAdapter(EmailStr)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,8 +44,19 @@ class PayerIdentity:
     #: Как с ним связаться (MulenPay ``client``).
     contact: str
 
+    #: Только идентификация Platega; синтетический адрес нельзя использовать для чеков.
+    platega_email: str | None = None
+
     def platega_metadata(self) -> dict[str, str]:
-        return {'userId': self.user_id, 'userName': self.user_name}
+        email = self.platega_email
+        if not email or any(c.isspace() or c in '<>' or unicodedata.category(c) in ('Cc', 'Cf', 'Cs') for c in email):
+            raise ValueError('Platega: отсутствует корректный идентификатор плательщика')
+        try:
+            _EMAIL_ADAPTER.validate_python(email)
+        except ValueError:
+            # Не включать контакт в ошибку: она может попасть в журнал.
+            raise ValueError('Platega: некорректный email плательщика') from None
+        return {'userId': self.user_id, 'userName': self.user_name, 'user_email': email}
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +120,9 @@ def payer_from_user(record: PayerRecord) -> PayerIdentity:
             user_id,
         ),
         contact=_first(email if record.email_verified else None, telegram_id, user_id),
+        # Telegram ID не меняется при смене username/привязке почты. Для web-only
+        # аккаунтов передаём исходную почту, без обрезки или исправления адреса.
+        platega_email=f'{telegram_id}@telegram.org' if telegram_id else (record.email or f'{user_id}@gmail.com'),
     )
 
 
@@ -121,7 +135,18 @@ def payer_from_guest(purchase_token: str, *, contact_type: str | None, contact_v
     """Гость лендинга: аккаунта нет, есть контакт, который он оставил (почта или Telegram)."""
     user_id = guest_payer_id(purchase_token)
     contact = _clean(contact_value) if contact_type in ('email', 'telegram') else None
-    return PayerIdentity(user_id=user_id, user_name=_first(contact, user_id), contact=_first(contact, user_id))
+    platega_email = None
+    if contact_type == 'email' and contact_value:
+        platega_email = contact_value
+        user_id = 'guest-' + hashlib.sha256(('email:' + contact_value).encode(errors='replace')).hexdigest()[:32]
+    # Гостевой username не подтверждает постоянный Telegram ID: его можно
+    # сменить/передать. Для Platega требуется email либо аккаунт покупателя.
+    return PayerIdentity(
+        user_id=user_id,
+        user_name=_first(contact, user_id),
+        contact=_first(contact, user_id),
+        platega_email=platega_email,
+    )
 
 
 async def resolve_user_payer(db: AsyncSession, user_id: int) -> PayerIdentity:
@@ -159,7 +184,7 @@ async def resolve_user_payer(db: AsyncSession, user_id: int) -> PayerIdentity:
     )
 
 
-async def resolve_guest_payer(db: AsyncSession, purchase_token: str) -> PayerIdentity:
+async def resolve_guest_payer(db: AsyncSession, purchase_token: str, *, for_platega: bool = False) -> PayerIdentity:
     """Плательщик-гость по токену покупки лендинга."""
     try:
         from app.database.crud.landing import get_purchase_by_token
@@ -168,6 +193,10 @@ async def resolve_guest_payer(db: AsyncSession, purchase_token: str) -> PayerIde
     except Exception as error:
         logger.warning('Не удалось прочитать гостевую покупку — отправляем только id', error=str(error))
         purchase = None
+    # У подарка user_id принадлежит получателю. Идентификатор плательщика —
+    # исключительно buyer_user_id; он должен совпадать с обычным пополнением.
+    if for_platega and purchase is not None and purchase.buyer_user_id is not None:
+        return await resolve_user_payer(db, purchase.buyer_user_id)
     return payer_from_guest(
         purchase_token,
         contact_type=getattr(purchase, 'contact_type', None),

@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -60,6 +61,7 @@ async def _memory_session(monkeypatch):
             lambda c: Base.metadata.create_all(
                 c,
                 tables=[
+                    Base.metadata.tables['cispay_subscriptions'],
                     PlategaSubscription.__table__,
                     Subscription.__table__,
                     Transaction.__table__,
@@ -1361,3 +1363,72 @@ async def test_confirmed_charge_returns_a_zeroed_tariff_subscription_to_the_tari
 
         await db.refresh(subscription)
         assert subscription.traffic_limit_gb == 50
+
+
+@pytest.mark.parametrize('reset_base', [True, False])
+@pytest.mark.parametrize('phase', ['ready', 'suspended'])
+async def test_managed_charge_persists_base_intent_even_if_panel_delivery_fails(monkeypatch, reset_base, phase):
+    from app.config import settings
+    from app.database.models import TrafficBaseGrantIntent, User
+    from app.services.payment.platega import PlategaPaymentMixin
+    from app.services.traffic_accounting import TrafficAccount
+    from app.services.traffic_accounting_store import initialize_account
+    from tests.fixtures.sqlite_memory import memory_session
+
+    class Svc(PlategaPaymentMixin):
+        pass
+
+    async with memory_session(monkeypatch, list(Base.metadata.sorted_tables)) as db:
+        now = datetime.now(UTC)
+        db.add(User(id=1))
+        subscription = Subscription(
+            id=1,
+            user_id=1,
+            status='active',
+            is_trial=False,
+            traffic_limit_gb=40,
+            start_date=now,
+            end_date=now + timedelta(days=2),
+        )
+        db.add(subscription)
+        await db.commit()
+        await sub_crud.create_platega_subscription(
+            db,
+            user_id=1,
+            subscription_id=1,
+            tariff_id=None,
+            interval=3,
+            charge_days=30,
+            amount_kopeks=19900,
+            redirect_url=None,
+            platega_subscription_id='ps-managed',
+            status='ACTIVE',
+        )
+        state = await initialize_account(
+            db,
+            subscription.id,
+            TrafficAccount('1@local-test', 0, 0, ()),
+            strategy='MONTH',
+            timezone='UTC',
+            anchor=now,
+            next_refresh_at=None,
+        )
+        state.phase = phase
+        subscription.traffic_accounting_mode = 'managed'
+        await db.commit()
+        monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset_base)
+        monkeypatch.setattr(
+            'app.services.subscription_service.SubscriptionService.update_remnawave_user',
+            AsyncMock(side_effect=TimeoutError('local panel failure')),
+        )
+        svc = Svc()
+        payload = {'Status': 'CONFIRMED', 'Id': 'managed-charge', 'SubscriptionId': 'ps-managed'}
+        await svc.process_platega_subscription_callback(db, payload)
+        intents = list((await db.scalars(select(TrafficBaseGrantIntent))).all())
+        assert len(intents) == 1
+        assert intents[0].state == 'pending'
+        assert intents[0].reset_base is reset_base
+        assert intents[0].base_bytes == 40 * 1024**3
+        assert intents[0].operation_key.startswith('platega:payment:')
+        await svc.process_platega_subscription_callback(db, payload)
+        assert len(list((await db.scalars(select(TrafficBaseGrantIntent))).all())) == 1

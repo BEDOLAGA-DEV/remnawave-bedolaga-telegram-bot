@@ -7,6 +7,11 @@
       "include-component-in-tag": false,
       "extra-files": [
         {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='remnawave-bedolaga-telegram-bot')].version"
+        },
+        {
           "type": "generic",
           "path": "Dockerfile",
           "glob": false

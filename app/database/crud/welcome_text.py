@@ -6,6 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import User, WelcomeText
+from app.localization.texts import get_texts
 
 
 logger = structlog.get_logger(__name__)
@@ -222,10 +223,11 @@ def replace_placeholders(text: str, user) -> str:
     first_name = first_name.strip() if first_name else None
     username = username.strip() if username else None
 
-    user_name = html.escape(first_name or username or 'друг')
-    display_first_name = html.escape(first_name or 'друг')
-    display_username = f'@{html.escape(username)}' if username else html.escape(first_name or 'друг')
-    clean_username = html.escape(username or first_name or 'друг')
+    fallback_name = get_texts(getattr(user, 'language', None) or 'ru').t('WELCOME_FALLBACK_NAME', 'друг')
+    user_name = html.escape(first_name or username or fallback_name)
+    display_first_name = html.escape(first_name or fallback_name)
+    display_username = f'@{html.escape(username)}' if username else html.escape(first_name or fallback_name)
+    clean_username = html.escape(username or first_name or fallback_name)
 
     replacements = {
         '{user_name}': user_name,
@@ -260,10 +262,19 @@ async def get_welcome_text_for_user(db: AsyncSession, user) -> str:
     return replace_placeholders(welcome_text, user)
 
 
-def get_available_placeholders() -> dict:
+def get_available_placeholders(language: str = 'ru') -> dict:
+    texts = get_texts(language)
     return {
-        '{user_name}': 'Имя или username пользователя (приоритет: имя → username → "друг")',
-        '{first_name}': 'Только имя пользователя (или "друг" если не указано)',
-        '{username}': 'Username с символом @ (или имя если username не указан)',
-        '{username_clean}': 'Username без символа @ (или имя если username не указан)',
+        '{user_name}': texts.t(
+            'ADMIN_WELCOME_PLACEHOLDER_000', 'Имя или username пользователя (приоритет: имя → username → "друг")'
+        ),
+        '{first_name}': texts.t(
+            'ADMIN_WELCOME_PLACEHOLDER_001', 'Только имя пользователя (или "друг" если не указано)'
+        ),
+        '{username}': texts.t(
+            'ADMIN_WELCOME_PLACEHOLDER_002', 'Username с символом @ (или имя если username не указан)'
+        ),
+        '{username_clean}': texts.t(
+            'ADMIN_WELCOME_PLACEHOLDER_003', 'Username без символа @ (или имя если username не указан)'
+        ),
     }

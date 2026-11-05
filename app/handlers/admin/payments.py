@@ -29,7 +29,7 @@ logger = structlog.get_logger(__name__)
 PAGE_SIZE = 6
 
 
-def _method_display(method: PaymentMethod) -> str:
+def _method_display(method: PaymentMethod, language: str = 'ru') -> str:
     if method == PaymentMethod.MULENPAY:
         return settings.get_mulenpay_display_name()
     if method == PaymentMethod.PAL24:
@@ -43,7 +43,7 @@ def _method_display(method: PaymentMethod) -> str:
     if method == PaymentMethod.PLATEGA:
         return settings.get_platega_display_name()
     if method == PaymentMethod.PLATEGA_RECURRENT:
-        return f'{settings.get_platega_display_name()} СБП'
+        return get_texts(language).t('ADMIN_PAYMENT_PROVIDER_SBP').format(provider=settings.get_platega_display_name())
     if method == PaymentMethod.CRYPTOBOT:
         return 'CryptoBot'
     if method == PaymentMethod.TELEGRAM_STARS:
@@ -58,6 +58,8 @@ def _method_display(method: PaymentMethod) -> str:
         return settings.get_cispay_display_name()
     if method == PaymentMethod.CASHERA:
         return settings.get_cashera_display_name()
+    if method == PaymentMethod.ANORE:
+        return settings.get_anore_display_name()
     if method == PaymentMethod.TABPAY:
         return settings.get_tabpay_display_name()
     if method == PaymentMethod.PARITYPAY:
@@ -71,6 +73,12 @@ def _status_info(
     texts,
 ) -> tuple[str, str]:
     status = (record.status or '').lower()
+
+    if record.method == PaymentMethod.ANORE and bool(getattr(record.payment, 'is_test', False)):
+        return '🧪', texts.t('ADMIN_ANORE_SANDBOX', 'Тестовый платёж — баланс не пополнен')
+
+    if record.method == PaymentMethod.CISPAY and bool(getattr(record.payment, 'is_sandbox', False)):
+        return '🧪', texts.t('ADMIN_ANORE_SANDBOX')
 
     if record.is_paid:
         return '✅', texts.t('ADMIN_PAYMENT_STATUS_PAID', '✅ Paid')
@@ -234,7 +242,10 @@ def _build_list_keyboard(
             [
                 InlineKeyboardButton(
                     text=button_text,
-                    callback_data=f'admin_payment_{record.method.value}_{record.local_id}',
+                    callback_data=(
+                        f'admin_payment_{"landing_" if record.source == "landing" else ""}'
+                        f'{record.method.value}_{record.local_id}'
+                    ),
                 )
             ]
         )
@@ -304,14 +315,17 @@ def _build_detail_keyboard(
     payment = record.payment
     payment_url = getattr(payment, 'payment_url', None)
     if record.method == PaymentMethod.PAL24:
-        payment_url = payment.link_url or payment.link_page_url or payment_url
+        payment_url = getattr(payment, 'link_url', None) or getattr(payment, 'link_page_url', None) or payment_url
     elif record.method == PaymentMethod.WATA:
-        payment_url = payment.url or payment_url
+        payment_url = getattr(payment, 'url', None) or payment_url
     elif record.method == PaymentMethod.YOOKASSA:
         payment_url = getattr(payment, 'confirmation_url', None) or payment_url
     elif record.method == PaymentMethod.CRYPTOBOT:
         payment_url = (
-            payment.bot_invoice_url or payment.mini_app_invoice_url or payment.web_app_invoice_url or payment_url
+            getattr(payment, 'bot_invoice_url', None)
+            or getattr(payment, 'mini_app_invoice_url', None)
+            or getattr(payment, 'web_app_invoice_url', None)
+            or payment_url
         )
 
     if payment_url:
@@ -338,7 +352,9 @@ def _build_detail_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _format_user_line(user: User) -> str:
+def _format_user_line(user: User | None, language: str = 'ru') -> str:
+    if user is None:
+        return get_texts(language).t('ADMIN_PAYMENT_GUEST_BUYER')
     username = format_username(user.username, user.telegram_id, user.full_name)
     user_id_display = user.telegram_id or user.email or f'#{user.id}'
     return f'👤 {html.escape(username)} (<code>{user_id_display}</code>)'
@@ -357,7 +373,9 @@ def _build_record_lines(
         crypto_asset = getattr(record.payment, 'asset', None)
         if crypto_amount and crypto_asset:
             amount = f'{crypto_amount} {crypto_asset}'
-    method_name = _method_display(record.method)
+    method_name = _method_display(record.method, language) + (
+        texts.t('ADMIN_PAYMENT_LANDING_SUFFIX') if record.source == 'landing' else ''
+    )
     emoji, status_text = _status_info(record, texts=texts)
     created = format_datetime(record.created_at)
     age = format_time_ago(record.created_at, language)
@@ -368,7 +386,7 @@ def _build_record_lines(
         f'{index}. <b>{html.escape(method_name)}</b> — {amount}',
         f'   {emoji} {status_text}',
         f'   🕒 {created} ({age})',
-        _format_user_line(record.user),
+        _format_user_line(record.user, language),
     ]
 
     if identifier:
@@ -380,7 +398,9 @@ def _build_record_lines(
 
 
 def _build_payment_details_text(record: PendingPayment, *, texts, language: str) -> str:
-    method_name = _method_display(record.method)
+    method_name = _method_display(record.method, language) + (
+        texts.t('ADMIN_PAYMENT_LANDING_SUFFIX') if record.source == 'landing' else ''
+    )
     emoji, status_text = _status_info(record, texts=texts)
     amount = settings.format_price(record.amount_kopeks)
     if record.method == PaymentMethod.CRYPTOBOT:
@@ -401,7 +421,7 @@ def _build_payment_details_text(record: PendingPayment, *, texts, language: str)
         f'💰 {texts.t("ADMIN_PAYMENT_AMOUNT", "Amount")}: {amount}',
         f'🕒 {texts.t("ADMIN_PAYMENT_CREATED", "Created")}: {created} ({age})',
         f'🆔 ID: <code>{identifier}</code>',
-        _format_user_line(record.user),
+        _format_user_line(record.user, language),
     ]
 
     if record.expires_at:
@@ -597,15 +617,16 @@ async def show_payment_details(
     db_user: User,
     db: AsyncSession,
 ) -> None:
-    parsed = _parse_method_and_id(callback.data, prefix='admin_payment_')
+    source = 'landing' if callback.data.startswith('admin_payment_landing_') else 'provider'
+    parsed = _parse_method_and_id(callback.data, prefix=f'admin_payment_{"landing_" if source == "landing" else ""}')
     if not parsed:
-        await callback.answer('❌ Invalid payment reference', show_alert=True)
+        await callback.answer(get_texts(db_user.language).t('ADMIN_PAYMENT_INVALID_REFERENCE'), show_alert=True)
         return
 
     method, payment_id = parsed
-    record = await get_payment_record(db, method, payment_id)
+    record = await get_payment_record(db, method, payment_id, source=source)
     if not record:
-        await callback.answer('❌ Платеж не найден', show_alert=True)
+        await callback.answer(get_texts(db_user.language).t('ADMIN_PAYMENT_NOT_FOUND'), show_alert=True)
         return
 
     await _render_payment_details(callback, db_user, record)
@@ -624,7 +645,7 @@ async def manual_check_payment(
     parsed = _parse_method_and_id(callback.data, prefix='admin_payment_check_')
     if not parsed:
         logger.warning('Failed to parse', callback_data=callback.data)
-        await callback.answer('❌ Invalid payment reference', show_alert=True)
+        await callback.answer(get_texts(db_user.language).t('ADMIN_PAYMENT_INVALID_REFERENCE'), show_alert=True)
         return
 
     method, payment_id = parsed
@@ -803,8 +824,9 @@ async def export_payments(
 
         payment_data = {
             'id': record.local_id,
+            'source': record.source,
             'method': record.method.value,
-            'method_display': _method_display(record.method),
+            'method_display': _method_display(record.method, db_user.language),
             'identifier': record.identifier,
             'amount_kopeks': record.amount_kopeks,
             'amount_rubles': record.amount_kopeks / 100,
@@ -817,7 +839,9 @@ async def export_payments(
                 'telegram_id': user.telegram_id,
                 'username': user.username,
                 'full_name': user.full_name,
-            },
+            }
+            if user
+            else None,
         }
 
         # Добавляем специфичные поля в зависимости от метода

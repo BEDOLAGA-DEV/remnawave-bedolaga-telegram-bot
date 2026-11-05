@@ -241,6 +241,13 @@ async def _process_single_subscription(
         'skipped' — баланс достаточен или другая причина пропуска
     """
     from app.database.crud.saved_payment_method import get_active_payment_methods_by_user
+    from app.services.cispay_recurrent_guard import require_no_cispay
+
+    try:
+        await require_no_cispay(db, user_id=user.id, subscription_id=subscription.id)
+    except ValueError:
+        await db.rollback()
+        return 'skipped'
 
     # Рассчитываем стоимость продления
     tariff = getattr(subscription, 'tariff', None)
@@ -387,7 +394,11 @@ async def _process_single_subscription(
                         '✅ <b>Автоплатёж выполнен</b>\n\nБаланс пополнен на {amount} для продления подписки.',
                     ).format(amount=settings.format_price(topup_amount_kopeks))
                     if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-                        msg += f'\n📦 Тариф: «{subscription.tariff.name}»'
+                        msg += (
+                            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                            .t('PAYMENT_NOTICE_010', '\n📦 Тариф: «{v0}»')
+                            .format(v0=subscription.tariff.name)
+                        )
                     await bot.send_message(
                         chat_id=user.telegram_id,
                         text=msg,
@@ -440,7 +451,11 @@ async def _process_single_subscription(
                 '❌ <b>Автоплатёж не удался</b>\n\nНе удалось списать {amount} ни с одной сохранённой карты для продления подписки.\n\nПополните баланс вручную, чтобы подписка не прервалась.',
             ).format(amount=settings.format_price(topup_amount_kopeks))
             if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-                msg += f'\n📦 Тариф: «{subscription.tariff.name}»'
+                msg += (
+                    get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                    .t('PAYMENT_NOTICE_010', '\n📦 Тариф: «{v0}»')
+                    .format(v0=subscription.tariff.name)
+                )
             await bot.send_message(
                 chat_id=user.telegram_id,
                 text=msg,

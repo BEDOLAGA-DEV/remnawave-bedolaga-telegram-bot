@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
@@ -119,7 +118,7 @@ async def list_subscription_event_logs(
     db: AsyncSession = Depends(get_db_session),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    event_types: Iterable[str] | None = Query(default=None, alias='event_type'),
+    event_types: list[str] | None = Query(default=None, alias='event_type'),
     user_id: int | None = Query(default=None),
 ) -> SubscriptionEventListResponse:
     events, total = await list_subscription_events(

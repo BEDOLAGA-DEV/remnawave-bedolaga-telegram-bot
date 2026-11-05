@@ -14,8 +14,9 @@ failed = total, а в логах и в журнале системных оши�
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from aiogram.exceptions import TelegramBadRequest
 
 from app.services.broadcast_service import BroadcastConfig, BroadcastMediaConfig, BroadcastService
@@ -102,3 +103,16 @@ async def test_blocked_users_are_still_counted_quietly(monkeypatch):
     assert (sent, failed, blocked) == (0, 0, 2)
     logger.error.assert_not_called()
     logger.warning.assert_not_called()
+
+
+@pytest.mark.parametrize('length', [1001, 1024, 1025, 4000])
+async def test_plain_text_broadcast_is_not_limited_to_media_caption(monkeypatch, length):
+    from app.services.broadcast_service import BroadcastService
+
+    monkeypatch.setattr('app.utils.rich_notify.try_send_rich_notification', AsyncMock(return_value=False))
+    service = BroadcastService()
+    service._bot = AsyncMock()
+    text = 'x' * length
+    await service._deliver_message(42, BroadcastConfig(target='all', message_text=text, selected_buttons=[]), None)
+    service._bot.send_message.assert_awaited_once_with(chat_id=42, text=text, parse_mode='HTML', reply_markup=None)
+    service._bot.send_photo.assert_not_awaited()

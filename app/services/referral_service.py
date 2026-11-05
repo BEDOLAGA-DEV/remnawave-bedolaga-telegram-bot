@@ -11,6 +11,7 @@ from app.config import settings
 from app.database.crud.referral import create_referral_earning, get_commission_payment_count, get_user_campaign_id
 from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.models import ReferralEarning, TransactionType, User
+from app.localization.texts import Texts, get_texts
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -742,27 +743,37 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
                 logger.error('Ошибка выдачи наград за регистрацию реферала', error=str(error))
 
         if bot:
+            texts = get_texts(getattr(referrer, 'language', None))
+            referee_texts = get_texts(getattr(new_user, 'language', None))
             commission_percent = get_effective_referral_commission_percent(referrer)
-            referral_notification = (
-                f'🎉 <b>Добро пожаловать!</b>\n\n'
-                f'Вы перешли по реферальной ссылке пользователя <b>{html.escape(referrer.full_name)}</b>!'
-            )
+            referral_notification = referee_texts.t(
+                'REFERRAL_GIFT_UI_007',
+                '🎉 <b>Добро пожаловать!</b>\n\nВы перешли по реферальной ссылке пользователя <b>{value1}</b>!',
+            ).format(value1=html.escape(referrer.full_name))
             # Обещание приглашённому одной фразой — общее для Telegram и письма.
             referee_promise = ''
             if settings.is_referral_levels_scheme():
                 from app.services.referral_reward_service import describe_referee_bonus
 
-                referee_promise = await describe_referee_bonus(db, referrer=referrer) or ''
-                if referee_promise:
-                    referral_notification += f'\n\n🎁 Ваш бонус: {referee_promise}!'
-            elif settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
                 referee_promise = (
-                    f'{settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)} при первом пополнении '
-                    f'от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)}'
+                    await describe_referee_bonus(db, referrer=referrer, language=referee_texts.language) or ''
                 )
-                referral_notification += (
-                    f'\n\n💰 При первом пополнении от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)} '
-                    f'вы получите бонус {settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)}!'
+                if referee_promise:
+                    referral_notification += referee_texts.t(
+                        'REFERRAL_GIFT_UI_014', '\n\n🎁 Ваш бонус: {value1}!'
+                    ).format(value1=referee_promise)
+            elif settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
+                referee_promise = referee_texts.t(
+                    'REFERRAL_GIFT_UI_015', '{value1} при первом пополнении от {value2}'
+                ).format(
+                    value1=settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
+                    value2=settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
+                )
+                referral_notification += referee_texts.t(
+                    'REFERRAL_GIFT_UI_016', '\n\n💰 При первом пополнении от {value1} вы получите бонус {value2}!'
+                ).format(
+                    value1=settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
+                    value2=settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
                 )
             await send_referral_notification(
                 bot,
@@ -779,14 +790,15 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
 
                 # Уведомление уходит пригласившему — в списке отмечается ЕГО ранг,
                 # иначе вся лестница выглядит как перечень уже причитающихся ему наград.
-                level_lines = await describe_active_levels(db, viewer=referrer)
-                inviter_notification = (
-                    f'👥 <b>Новый реферал!</b>\n\n'
-                    f'По вашей ссылке зарегистрировался пользователь '
-                    f'<b>{html.escape(new_user.full_name)}</b>!'
-                )
+                level_lines = await describe_active_levels(db, viewer=referrer, language=texts.language)
+                inviter_notification = texts.t(
+                    'REFERRAL_GIFT_UI_011',
+                    '👥 <b>Новый реферал!</b>\n\nПо вашей ссылке зарегистрировался пользователь <b>{value1}</b>!',
+                ).format(value1=html.escape(new_user.full_name))
                 if level_lines:
-                    inviter_notification += '\n\n📈 Ваши награды:\n' + '\n'.join(f'• {line}' for line in level_lines)
+                    inviter_notification += texts.t('REFERRAL_GIFT_UI_018', '\n\n📈 Ваши награды:\n') + '\n'.join(
+                        f'• {line}' for line in level_lines
+                    )
                 await send_referral_notification(
                     bot,
                     referrer.telegram_id,
@@ -802,28 +814,34 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
                 )
                 return True
 
-            inviter_notification = (
-                f'👥 <b>Новый реферал!</b>\n\n'
-                f'По вашей ссылке зарегистрировался пользователь <b>{html.escape(new_user.full_name)}</b>!\n\n'
-                f'💰 Когда он пополнит баланс от {settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS)}, '
+            inviter_notification = texts.t(
+                'REFERRAL_GIFT_UI_008',
+                '👥 <b>Новый реферал!</b>\n\nПо вашей ссылке зарегистрировался пользователь <b>{value1}</b>!\n\n💰 Когда он пополнит баланс от {value2}, ',
+            ).format(
+                value1=html.escape(new_user.full_name),
+                value2=settings.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
             )
             if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0 and commission_percent > 0:
-                inviter_notification += (
-                    f'вы получите {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)} + '
-                    f'{commission_percent}% от суммы пополнения.\n\n'
+                inviter_notification += texts.t(
+                    'REFERRAL_GIFT_UI_012', 'вы получите {value1} + {value2}% от суммы пополнения.\n\n'
+                ).format(
+                    value1=settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS), value2=commission_percent
                 )
             elif settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
-                inviter_notification += (
-                    f'вы получите {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)}.\n\n'
+                inviter_notification += texts.t('REFERRAL_GIFT_UI_017', 'вы получите {value1}.\n\n').format(
+                    value1=settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)
                 )
             elif commission_percent > 0:
-                inviter_notification += f'вы получите {commission_percent}% от суммы.\n\n'
-            else:
-                inviter_notification += 'вы получите уведомление.\n\n'
-            if commission_percent > 0:
-                inviter_notification += (
-                    f'📈 С каждого последующего пополнения вы будете получать {commission_percent}% комиссии.'
+                inviter_notification += texts.t('REFERRAL_GIFT_UI_019', 'вы получите {value1}% от суммы.\n\n').format(
+                    value1=commission_percent
                 )
+            else:
+                inviter_notification += texts.t('REFERRAL_GIFT_UI_020', 'вы получите уведомление.\n\n')
+            if commission_percent > 0:
+                inviter_notification += texts.t(
+                    'REFERRAL_GIFT_UI_013',
+                    '📈 С каждого последующего пополнения вы будете получать {value1}% комиссии.',
+                ).format(value1=commission_percent)
             await send_referral_notification(
                 bot,
                 referrer.telegram_id,
@@ -845,22 +863,31 @@ async def process_referral_registration(db: AsyncSession, new_user_id: int, refe
         return False
 
 
-def _format_reward_line(outcome) -> str:
+def _format_reward_line(outcome, texts: Texts | None = None) -> str:
     """Одна строка «что получено» для уведомления.
 
     Дни и деньги называются раздельно и своими словами: обобщать их в «награду»
     нельзя — получатель должен понимать, куда идти смотреть начисленное.
     """
+    texts = texts or get_texts('ru')
     parts = []
     if outcome.money_credited > 0:
         parts.append(settings.format_price(outcome.money_credited))
     if outcome.days_credited > 0:
-        tariff_suffix = f' тарифа «{html.escape(outcome.tariff_name)}»' if outcome.tariff_name else ''
-        parts.append(f'{outcome.days_credited} дн. подписки{tariff_suffix}')
+        tariff_suffix = (
+            texts.t('REFERRAL_GIFT_UI_009', ' тарифа «{value1}»').format(value1=html.escape(outcome.tariff_name))
+            if outcome.tariff_name
+            else ''
+        )
+        parts.append(
+            texts.t('REFERRAL_GIFT_UI_010', '{value1} дн. подписки{value2}').format(
+                value1=outcome.days_credited, value2=tariff_suffix
+            )
+        )
     return ' + '.join(parts)
 
 
-def _level_event_phrase(event: str, level: int, referee_name: str) -> str:
+def _level_event_phrase(event: str, level: int, referee_name: str, texts: Texts | None = None) -> str:
     """Из-за чего пришла награда — своими словами.
 
     Две вещи, которые нельзя писать наугад. Первое: при триггере «регистрация»
@@ -874,19 +901,24 @@ def _level_event_phrase(event: str, level: int, referee_name: str) -> str:
     прятала бы имя собственного реферала у каждого, кто поднялся выше первого
     ранга, и обещала бы «сеть», которой в этом режиме не существует.
     """
+    texts = texts or get_texts('ru')
     from app.config import settings
     from app.services.referral_reward_service import RewardEvent
 
     if level > 1 and not settings.is_referral_tier_levels():
-        source = f'участник вашей сети (уровень {level})'
+        source = texts.t('REFERRAL_GIFT_UI_001', 'участник вашей сети (уровень {value1})').format(value1=level)
     else:
-        source = f'ваш реферал <b>{html.escape(referee_name)}</b>'
+        source = texts.t('REFERRAL_GIFT_UI_002', 'ваш реферал <b>{value1}</b>').format(value1=html.escape(referee_name))
 
     if event == RewardEvent.REGISTRATION:
-        return f'По вашей ссылке зарегистрировался {source}.'
+        return texts.t('REFERRAL_GIFT_UI_003', 'По вашей ссылке зарегистрировался {value1}.').format(value1=source)
     if event == RewardEvent.FIRST_TOPUP:
-        return f'{source[0].upper()}{source[1:]} сделал первое пополнение.'
-    return f'{source[0].upper()}{source[1:]} пополнил баланс.'
+        return texts.t('REFERRAL_GIFT_UI_004', '{value1}{value2} сделал первое пополнение.').format(
+            value1=source[0].upper(), value2=source[1:]
+        )
+    return texts.t('REFERRAL_GIFT_UI_000', '{value1}{value2} пополнил баланс.').format(
+        value1=source[0].upper(), value2=source[1:]
+    )
 
 
 async def _notify_level_outcome(bot, db: AsyncSession, referee, outcome, *, event: str) -> None:
@@ -901,15 +933,19 @@ async def _notify_level_outcome(bot, db: AsyncSession, referee, outcome, *, even
     if recipient is None:
         return
 
-    reward_line = _format_reward_line(outcome)
+    texts = get_texts(getattr(recipient, 'language', None))
+    reward_line = _format_reward_line(outcome, texts=texts)
     if outcome.component.is_referrer:
-        text = (
-            f'💰 <b>Реферальная награда!</b>\n\n'
-            f'{_level_event_phrase(event, outcome.component.level, referee.full_name)}\n\n'
-            f'🎁 Начислено: {reward_line}'
+        text = texts.t(
+            'REFERRAL_GIFT_UI_005', '💰 <b>Реферальная награда!</b>\n\n{value1}\n\n🎁 Начислено: {value2}'
+        ).format(
+            value1=_level_event_phrase(event, outcome.component.level, referee.full_name, texts=texts),
+            value2=reward_line,
         )
     else:
-        text = f'🎉 <b>Бонус по реферальной программе!</b>\n\n🎁 Начислено: {reward_line}'
+        text = texts.t(
+            'REFERRAL_GIFT_UI_006', '🎉 <b>Бонус по реферальной программе!</b>\n\n🎁 Начислено: {value1}'
+        ).format(value1=reward_line)
 
     await send_referral_notification(
         bot,
@@ -1007,6 +1043,9 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
             )
             return False
 
+        texts = get_texts(getattr(referrer, 'language', None))
+        referee_texts = get_texts(getattr(user, 'language', None))
+
         if settings.is_referral_levels_scheme():
             return await _process_topup_levels(db, user, topup_amount_kopeks, bot)
 
@@ -1070,13 +1109,14 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                         )
 
                         if bot:
-                            commission_notification = (
-                                f'💰 <b>Реферальная комиссия!</b>\n\n'
-                                f'Ваш реферал <b>{html.escape(user.full_name)}</b> пополнил баланс на '
-                                f'{settings.format_price(topup_amount_kopeks)}\n\n'
-                                f'🎁 Ваша комиссия ({commission_percent}%): '
-                                f'{settings.format_price(commission_amount)}\n\n'
-                                f'💎 Средства зачислены на ваш баланс.'
+                            commission_notification = texts.t(
+                                'REFERRAL_GIFT_UI_026',
+                                '💰 <b>Реферальная комиссия!</b>\n\nВаш реферал <b>{value1}</b> пополнил баланс на {value2}\n\n🎁 Ваша комиссия ({value3}%): {value4}\n\n💎 Средства зачислены на ваш баланс.',
+                            ).format(
+                                value1=html.escape(user.full_name),
+                                value2=settings.format_price(topup_amount_kopeks),
+                                value3=commission_percent,
+                                value4=settings.format_price(commission_amount),
                             )
                             await send_referral_notification(
                                 bot,
@@ -1128,12 +1168,10 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                     )
 
                     if bot:
-                        bonus_notification = (
-                            f'🎉 <b>Бонус получен!</b>\n\n'
-                            f'За первое пополнение вы получили бонус '
-                            f'{settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS)}!\n\n'
-                            f'💎 Средства зачислены на ваш баланс.'
-                        )
+                        bonus_notification = referee_texts.t(
+                            'REFERRAL_GIFT_UI_022',
+                            '🎉 <b>Бонус получен!</b>\n\nЗа первое пополнение вы получили бонус {value1}!\n\n💎 Средства зачислены на ваш баланс.',
+                        ).format(value1=settings.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS))
                         await send_referral_notification(
                             bot,
                             user.telegram_id,
@@ -1180,25 +1218,31 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                         bonus_parts = []
                         if settings.REFERRAL_INVITER_BONUS_KOPEKS > 0:
                             bonus_parts.append(
-                                f'фикс. бонус {settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)}'
+                                texts.t('REFERRAL_GIFT_UI_028', 'фикс. бонус {value1}').format(
+                                    value1=settings.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS)
+                                )
                             )
                         if commission_amount > 0:
                             bonus_parts.append(
-                                f'комиссия {commission_percent}% = {settings.format_price(commission_amount)}'
+                                texts.t('REFERRAL_GIFT_UI_029', 'комиссия {value1}% = {value2}').format(
+                                    value1=commission_percent, value2=settings.format_price(commission_amount)
+                                )
                             )
                         bonus_breakdown = ' + '.join(bonus_parts)
-                        inviter_bonus_notification = (
-                            f'💰 <b>Реферальная награда!</b>\n\n'
-                            f'Ваш реферал <b>{html.escape(user.full_name)}</b> сделал первое пополнение '
-                            f'на {settings.format_price(topup_amount_kopeks)}!\n\n'
-                            f'🎁 Ваша награда: {settings.format_price(inviter_bonus)}'
-                            f' ({bonus_breakdown})'
+                        inviter_bonus_notification = texts.t(
+                            'REFERRAL_GIFT_UI_024',
+                            '💰 <b>Реферальная награда!</b>\n\nВаш реферал <b>{value1}</b> сделал первое пополнение на {value2}!\n\n🎁 Ваша награда: {value3} ({value4})',
+                        ).format(
+                            value1=html.escape(user.full_name),
+                            value2=settings.format_price(topup_amount_kopeks),
+                            value3=settings.format_price(inviter_bonus),
+                            value4=bonus_breakdown,
                         )
                         if commission_percent > 0:
-                            inviter_bonus_notification += (
-                                f'\n\n📈 Теперь с каждого его пополнения вы будете получать '
-                                f'{commission_percent}% комиссии.'
-                            )
+                            inviter_bonus_notification += texts.t(
+                                'REFERRAL_GIFT_UI_027',
+                                '\n\n📈 Теперь с каждого его пополнения вы будете получать {value1}% комиссии.',
+                            ).format(value1=commission_percent)
                         await send_referral_notification(
                             bot,
                             referrer.telegram_id,
@@ -1245,13 +1289,14 @@ async def process_referral_topup(db: AsyncSession, user_id: int, topup_amount_ko
                 )
 
                 if bot:
-                    commission_notification = (
-                        f'💰 <b>Реферальная комиссия!</b>\n\n'
-                        f'Ваш реферал <b>{html.escape(user.full_name)}</b> пополнил баланс на '
-                        f'{settings.format_price(topup_amount_kopeks)}\n\n'
-                        f'🎁 Ваша комиссия ({commission_percent}%): '
-                        f'{settings.format_price(commission_amount)}\n\n'
-                        f'💎 Средства зачислены на ваш баланс.'
+                    commission_notification = texts.t(
+                        'REFERRAL_GIFT_UI_026',
+                        '💰 <b>Реферальная комиссия!</b>\n\nВаш реферал <b>{value1}</b> пополнил баланс на {value2}\n\n🎁 Ваша комиссия ({value3}%): {value4}\n\n💎 Средства зачислены на ваш баланс.',
+                    ).format(
+                        value1=html.escape(user.full_name),
+                        value2=settings.format_price(topup_amount_kopeks),
+                        value3=commission_percent,
+                        value4=settings.format_price(commission_amount),
                     )
                     await send_referral_notification(
                         bot,
@@ -1326,13 +1371,15 @@ async def process_referral_purchase(
             )
 
             if bot:
-                purchase_commission_notification = (
-                    f'💰 <b>Комиссия с покупки!</b>\n\n'
-                    f'Ваш реферал <b>{html.escape(user.full_name)}</b> совершил покупку на '
-                    f'{settings.format_price(purchase_amount_kopeks)}\n\n'
-                    f'🎁 Ваша комиссия ({commission_percent}%): '
-                    f'{settings.format_price(commission_amount)}\n\n'
-                    f'💎 Средства зачислены на ваш баланс.'
+                texts = get_texts(getattr(referrer, 'language', None))
+                purchase_commission_notification = texts.t(
+                    'REFERRAL_GIFT_UI_035',
+                    '💰 <b>Комиссия с покупки!</b>\n\nВаш реферал <b>{value1}</b> совершил покупку на {value2}\n\n🎁 Ваша комиссия ({value3}%): {value4}\n\n💎 Средства зачислены на ваш баланс.',
+                ).format(
+                    value1=html.escape(user.full_name),
+                    value2=settings.format_price(purchase_amount_kopeks),
+                    value3=commission_percent,
+                    value4=settings.format_price(commission_amount),
                 )
                 await send_referral_notification(
                     bot,

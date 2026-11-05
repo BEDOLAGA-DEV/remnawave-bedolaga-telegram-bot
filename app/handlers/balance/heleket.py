@@ -11,10 +11,12 @@ from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
+from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -30,23 +32,36 @@ async def start_heleket_payment(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        reason = html.escape(
+            getattr(db_user, 'restriction_reason', None)
+            or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await callback.message.edit_text(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
         await callback.answer()
         return
 
     if not settings.is_heleket_enabled():
-        await callback.answer('❌ Оплата через Heleket недоступна', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_UI_HELEKET_UNAVAILABLE', '❌ Оплата через Heleket недоступна'), show_alert=True
+        )
         return
 
     markup = settings.get_heleket_markup_percent()
@@ -61,12 +76,12 @@ async def start_heleket_payment(
         markup_text = None
 
     message_lines = [
-        '🪙 <b>Пополнение через Heleket</b>',
+        texts.t('PAYMENT_UI_HELEKET_TOPUP_TITLE', '🪙 <b>Пополнение через Heleket</b>'),
         '\n',
-        'Введите сумму пополнения от 100 до 100,000 ₽:',
+        texts.t('PAYMENT_UI_CRYPTO_AMOUNT_PROMPT', 'Введите сумму пополнения от 100 до 100,000 ₽:'),
         '',
-        '⚡ Мгновенное зачисление',
-        '🔒 Безопасная оплата',
+        texts.t('PAYMENT_UI_INSTANT_CREDIT', '⚡ Мгновенное зачисление'),
+        texts.t('PAYMENT_UI_SECURE_PAYMENT', '🔒 Безопасная оплата'),
     ]
 
     if markup_text:
@@ -101,16 +116,27 @@ async def process_heleket_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        reason = html.escape(
+            getattr(db_user, 'restriction_reason', None)
+            or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url
+                    )
+                ]
+            )
         keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\n'
-            'Если вы считаете это ошибкой, вы можете обжаловать решение.',
+            texts.t(
+                'USER_RESTRICTION_TOPUP_BLOCKED',
+                '🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.',
+            ).format(reason=reason),
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode='HTML',
         )
@@ -118,22 +144,22 @@ async def process_heleket_payment_amount(
         return
 
     if not settings.is_heleket_enabled():
-        await message.answer('❌ Оплата через Heleket недоступна')
+        await message.answer(texts.t('PAYMENT_UI_HELEKET_UNAVAILABLE', '❌ Оплата через Heleket недоступна'))
         return
 
     amount_rubles = amount_kopeks / 100
 
     if amount_rubles < 100:
         await message.answer(
-            'Минимальная сумма пополнения: 100 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(db_user.language, 10000, 10000000, too_low=True),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_rubles > 100000:
         await message.answer(
-            'Максимальная сумма пополнения: 100,000 ₽\n\nОтправьте новую сумму пополнения числом в сообщении.',
-            reply_markup=get_back_keyboard(db_user.language),
+            format_topup_amount_retry(db_user.language, 10000, 10000000, too_low=False),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
@@ -148,13 +174,20 @@ async def process_heleket_payment_amount(
     )
 
     if not result:
-        await message.answer('❌ Не удалось создать счёт в Heleket. Попробуйте позже или обратитесь в поддержку.')
+        await message.answer(
+            texts.t(
+                'PAYMENT_UI_HELEKET_CREATE_ERROR',
+                '❌ Не удалось создать счёт в Heleket. Попробуйте позже или обратитесь в поддержку.',
+            )
+        )
         await state.clear()
         return
 
     payment_url = result.get('payment_url')
     if not payment_url:
-        await message.answer('❌ Не удалось получить ссылку для оплаты Heleket')
+        await message.answer(
+            texts.t('PAYMENT_UI_HELEKET_LINK_ERROR', '❌ Не удалось получить ссылку для оплаты Heleket')
+        )
         await state.clear()
         return
 
@@ -164,13 +197,19 @@ async def process_heleket_payment_amount(
     discount_percent = result.get('discount_percent')
 
     details = [
-        '🪙 <b>Оплата через Heleket</b>',
+        texts.t('PAYMENT_UI_HELEKET_PAYMENT_TITLE', '🪙 <b>Оплата через Heleket</b>'),
         '',
-        f'💰 Сумма к зачислению: {amount_rubles:.0f} ₽',
+        texts.t('PAYMENT_UI_CREDIT_AMOUNT', '💰 Сумма к зачислению: {value1} ₽').format(
+            value1=format(amount_rubles, '.0f')
+        ),
     ]
 
     if payer_amount and payer_currency:
-        details.append(f'🪙 К оплате: {payer_amount} {payer_currency}')
+        details.append(
+            texts.t('PAYMENT_UI_PAY_AMOUNT_CURRENCY', '🪙 К оплате: {value1} {value2}').format(
+                value1=payer_amount, value2=payer_currency
+            )
+        )
 
     markup_percent: float | None = None
     if discount_percent is not None:
@@ -194,18 +233,22 @@ async def process_heleket_payment_amount(
             payer_amount_float = float(payer_amount)
             if payer_amount_float > 0:
                 rub_per_currency = amount_rubles / payer_amount_float
-                details.append(f'💱 Курс: 1 {payer_currency} ≈ {rub_per_currency:.2f} ₽')
+                details.append(
+                    texts.t('PAYMENT_UI_EXCHANGE_RATE_CURRENCY', '💱 Курс: 1 {value1} ≈ {value2} ₽').format(
+                        value1=payer_currency, value2=format(rub_per_currency, '.2f')
+                    )
+                )
         except (TypeError, ValueError, ZeroDivisionError):
             pass
 
     details.extend(
         [
             '',
-            '📱 Инструкция:',
-            "1. Нажмите кнопку 'Оплатить'",
-            '2. Перейдите на страницу Heleket',
-            '3. Оплатите указанную сумму',
-            '4. Баланс пополнится автоматически',
+            texts.t('PAYMENT_UI_INSTRUCTIONS_TITLE', '📱 Инструкция:'),
+            texts.t('PAYMENT_UI_STEP_PAY', "1. Нажмите кнопку 'Оплатить'"),
+            texts.t('PAYMENT_UI_STEP_HELEKET', '2. Перейдите на страницу Heleket'),
+            texts.t('PAYMENT_UI_STEP_TRANSFER', '3. Оплатите указанную сумму'),
+            texts.t('PAYMENT_UI_STEP_AUTO_CREDIT', '4. Баланс пополнится автоматически'),
         ]
     )
 
@@ -270,22 +313,30 @@ async def process_heleket_payment_amount(
 async def check_heleket_payment_status(
     callback: types.CallbackQuery,
     db: AsyncSession,
+    db_user: User | None = None,
 ) -> None:
+    texts = get_texts(
+        getattr(db_user, 'language', None)
+        or getattr(getattr(callback, 'from_user', None), 'language_code', None)
+        or DEFAULT_LANGUAGE
+    )
+    if db_user is None:
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
+        return
     try:
         local_payment_id = int(callback.data.split('_')[-1])
     except (ValueError, IndexError):
-        await callback.answer('Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_UI_INVALID_ID_PLAIN', 'Некорректный идентификатор платежа'), show_alert=True
+        )
         return
 
     from app.database.crud.heleket import get_heleket_payment_by_id
 
     payment = await get_heleket_payment_by_id(db, local_payment_id)
-    if not payment:
-        await callback.answer('Платёж не найден', show_alert=True)
+    if not payment or payment.user_id != db_user.id:
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
         return
-
-    language = getattr(payment.user, 'language', None) or settings.DEFAULT_LANGUAGE
-    texts = get_texts(language)
 
     if payment.is_paid:
         message = texts.t('HELEKET_PAYMENT_ALREADY_PAID', '✅ Платёж уже зачислен')
@@ -334,6 +385,8 @@ async def check_heleket_payment_status(
         try:
             message = template.format(status=status_value)
         except Exception:  # pragma: no cover - defensive formatting
-            message = f'ℹ️ Статус платежа: {status_value}'
+            message = texts.t('PAYMENT_UI_STATUS_UNKNOWN_VALUE', 'ℹ️ Статус платежа: {value1}').format(
+                value1=status_value
+            )
 
     await callback.answer(message, show_alert=True)

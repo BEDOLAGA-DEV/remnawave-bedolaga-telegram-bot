@@ -26,6 +26,7 @@ async def create_cispay_payment(
     charged_amount_kopeks: int | None = None,
     expires_at: datetime | None = None,
     metadata_json: dict | None = None,
+    is_sandbox: bool = False,
 ) -> CisPayPayment:
     """Создаёт запись о платеже cisPay."""
     payment = CisPayPayment(
@@ -42,6 +43,7 @@ async def create_cispay_payment(
         metadata_json=metadata_json,
         status='pending',
         is_paid=False,
+        is_sandbox=is_sandbox,
     )
     db.add(payment)
     await db.commit()

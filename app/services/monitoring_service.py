@@ -55,6 +55,7 @@ from app.external.remnawave_api import (
     is_user_not_found_error,
 )
 from app.localization.texts import get_texts
+from app.services.autopay_guard import lock_autopay_target
 from app.services.autopay_period import resolve_autopay_period_candidate
 from app.services.grace_access_runtime import update_panel_user_grace_safe
 from app.services.notification_delivery_service import (
@@ -192,6 +193,10 @@ def _expires_by_own_date(subscription: Subscription, *, now: datetime) -> bool:
     return end_date <= now
 
 
+DEVICE_OVERFLOW_FIRST_CHECK_DELAY_SECONDS = 10 * 60
+DEVICE_OVERFLOW_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+
+
 class MonitoringService:
     def __init__(self, bot=None):
         self.is_running = False
@@ -202,6 +207,7 @@ class MonitoringService:
         self._sla_task = None
         self._withdrawal_reminder_task = None
         self._user_reminder_task = None
+        self._device_overflow_task = None
         self._live_menu_task = None
         # In-memory fallback состояния уведомлений об ошибке автоплатежа (на случай
         # недоступности Redis). Ключ — (subscription_id, cycle_token=int(end_date.timestamp())).
@@ -360,6 +366,12 @@ class MonitoringService:
                 self._user_reminder_task = asyncio.create_task(self._user_reminder_loop())
         except Exception as e:
             logger.error('Не удалось запустить напоминания пользователям', error=e)
+        # Устройства сверх лимита подписки — раз в сутки, сводка админам
+        try:
+            if not self._device_overflow_task or self._device_overflow_task.done():
+                self._device_overflow_task = asyncio.create_task(self._device_overflow_loop())
+        except Exception as e:
+            logger.error('Не удалось запустить проверку превышения лимита устройств', error=e)
         try:
             if not self._live_menu_task or self._live_menu_task.done():
                 from app.services.live_menu_service import live_menu_loop
@@ -389,6 +401,8 @@ class MonitoringService:
             self._withdrawal_reminder_task.cancel()
         if self._user_reminder_task and not self._user_reminder_task.done():
             self._user_reminder_task.cancel()
+        if self._device_overflow_task and not self._device_overflow_task.done():
+            self._device_overflow_task.cancel()
         if self._live_menu_task and not self._live_menu_task.done():
             self._live_menu_task.cancel()
 
@@ -440,9 +454,20 @@ class MonitoringService:
 
                 # Реконсилиация подписок Cashera + доначисление пропущенных списаний.
                 await self._reconcile_cashera_subscriptions(db)
+                try:
+                    from app.services.cispay_recurrent_service import reconcile_cispay_agreements
+
+                    await reconcile_cispay_agreements(db, bot=self.bot)
+                except Exception:
+                    await db.rollback()
+                    logger.warning('CisPay recurring reconciliation unavailable')
                 await self._check_expired_subscriptions(db)
                 await self._check_expiring_subscriptions(db)
                 await self._check_trial_expiring_soon(db)
+                # Channel checks use their own batch sessions and may wait on
+                # Telegram for minutes. Release the completed outer transaction
+                # so PostgreSQL does not terminate it while it sits idle.
+                await db.commit()
                 await self._check_trial_channel_subscriptions(db)
                 await self._check_expired_subscription_followups(db)
                 await self._check_traffic_warnings(db)
@@ -571,12 +596,13 @@ class MonitoringService:
                 user, user.balance_kopeks, charge_amount, subscription=subscription, is_final=is_final
             )
         elif not user.telegram_id:
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
             if is_final:
-                reason_text = 'Последнее напоминание: подписка скоро отключится — недостаточно средств'
+                reason_text = texts.t('MONITOR_AUTOPAY_FINAL_REASON', '')
             elif cause == 'charge_error':
-                reason_text = 'Ошибка списания средств'
+                reason_text = texts.t('MONITOR_AUTOPAY_CHARGE_REASON', '')
             else:
-                reason_text = 'Недостаточно средств на балансе'
+                reason_text = texts.t('MONITOR_AUTOPAY_BALANCE_REASON', '')
             await notification_delivery_service.notify_autopay_failed(user=user, reason=reason_text)
 
         apply_autopay_fail_notification(state, reason, now_ts)
@@ -1626,11 +1652,8 @@ class MonitoringService:
                             ):
                                 await self.bot.send_message(
                                     chat_id=user.telegram_id,
-                                    text=(
-                                        '⚠️ <b>Автоплатёж приостановлен</b>\n\n'
-                                        'Ваша подписка была создана до введения тарифов. '
-                                        'Для работы автоплатежа необходимо выбрать тариф.\n\n'
-                                        'Перейдите в раздел «Моя подписка» → «Продлить», чтобы выбрать тариф.'
+                                    text=get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                                        'MONITOR_LEGACY_AUTOPAY_NOTICE', ''
                                     ),
                                     parse_mode='HTML',
                                 )
@@ -1651,26 +1674,16 @@ class MonitoringService:
             # MissingGreenlet при sync-lazy-load, который SQLAlchemy 2.0 async
             # session не поддерживает (напр. lock_user_for_pricing c
             # populate_existing=True разгружает Subscription.user backref).
-            autopay_pairs: list[tuple[int, int]] = [(s.id, s.user_id) for s in autopay_subscriptions]
+            autopay_pairs = [(s.id, s.user_id, s.end_date) for s in autopay_subscriptions]
 
-            for sub_id_local, sub_user_id_local in autopay_pairs:
+            for sub_id_local, sub_user_id_local, expected_end_date in autopay_pairs:
                 try:
-                    # Refetch subscription с eager load user/tariff —
-                    # никаких lazy access по ходу итерации.
-                    refetch_result = await db.execute(
-                        select(Subscription)
-                        .options(
-                            selectinload(Subscription.user).options(
-                                selectinload(User.promo_group),
-                                selectinload(User.user_promo_groups).selectinload(UserPromoGroup.promo_group),
-                            ),
-                            selectinload(Subscription.tariff),
-                        )
-                        .where(Subscription.id == sub_id_local)
+                    target = await lock_autopay_target(
+                        db, sub_user_id_local, sub_id_local, expected_end_date=expected_end_date
                     )
-                    subscription = refetch_result.scalar_one_or_none()
-                    if subscription is None:
+                    if target is None:
                         continue
+                    user, subscription = target
 
                     from app.database.crud.subscription import is_recently_updated_by_webhook
 
@@ -1679,10 +1692,6 @@ class MonitoringService:
                             'Пропуск автоплатежа подписки : обновлена вебхуком недавно',
                             subscription_id=subscription.id,
                         )
-                        continue
-
-                    user = subscription.user
-                    if not user:
                         continue
 
                     user_identifier = user.telegram_id or f'email:{user.id}'
@@ -1705,10 +1714,7 @@ class MonitoringService:
                     )
 
                     try:
-                        from app.database.crud.user import lock_user_for_pricing
                         from app.services.pricing_engine import pricing_engine
-
-                        user = await lock_user_for_pricing(db, user.id)
 
                         pricing = await pricing_engine.calculate_renewal_price(
                             db,
@@ -1759,109 +1765,81 @@ class MonitoringService:
                             'Автопродление подписки',
                             consume_promo_offer=promo_discount_percent > 0,
                             mark_as_paid_subscription=True,
+                            commit=False,
                         )
 
                         if success:
-                            # subtract_user_balance мог оставить сессию в expired state
-                            # (напр. rollback внутри log_promo_offer_action при consume_promo_offer).
-                            # Перезагружаем subscription с eager-загрузкой user/tariff, чтобы
-                            # избежать MissingGreenlet на последующих обращениях к subscription.*
-                            refetch_result = await db.execute(
-                                select(Subscription)
-                                .options(
-                                    selectinload(Subscription.user),
-                                    selectinload(Subscription.tariff),
-                                )
-                                .where(Subscription.id == subscription.id)
-                            )
-                            refreshed_subscription = refetch_result.scalar_one_or_none()
-                            if refreshed_subscription is None:
-                                logger.warning(
-                                    'Подписка пропала после списания — пропускаем шаги продления',
-                                    subscription_id=subscription.id,
-                                    user_id=user.id,
-                                )
-                                processed_count += 1
-                                self._notified_users.add(autopay_key)
-                                continue
-                            subscription = refreshed_subscription
+                            from app.database.crud.transaction import create_transaction, emit_transaction_side_effects
+                            from app.database.models import PaymentMethod, TransactionType
 
-                            # extend_subscription сам обработает EXPIRED→ACTIVE переход
-                            # (проверяет status + end_date для определения was_expired)
-                            if subscription.status == SubscriptionStatus.EXPIRED.value:
-                                logger.info(
-                                    '🔄 Autopay: продление EXPIRED подписки (восстановление)',
-                                    subscription_id=subscription.id,
-                                    user_id=user.id,
-                                )
                             old_end_date = subscription.end_date
+                            await extend_subscription(
+                                db,
+                                subscription,
+                                autopay_period,
+                                paid_traffic_reset=settings.RESET_TRAFFIC_ON_PAYMENT,
+                                commit=False,
+                            )
+                            description = f'Автопродление подписки на {autopay_period} дней'
+                            transaction = await create_transaction(
+                                db=db,
+                                user_id=user.id,
+                                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                                amount_kopeks=charge_amount,
+                                description=description,
+                                payment_method=PaymentMethod.BALANCE,
+                                commit=False,
+                            )
+                            # Debit, expiry and ledger become durable together. No
+                            # other worker can charge this due cycle in between.
+                            await db.commit()
+                            await emit_transaction_side_effects(
+                                db,
+                                transaction,
+                                amount_kopeks=charge_amount,
+                                user_id=sub_user_id_local,
+                                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                                payment_method=PaymentMethod.BALANCE,
+                                description=description,
+                            )
                             try:
-                                await extend_subscription(db, subscription, autopay_period)
-                            except Exception as extend_exc:
-                                # Баланс уже списан и закоммичен в subtract_user_balance выше.
-                                # Само продление упало → компенсирующий возврат, иначе деньги
-                                # пропадают без продления (как и делает _auto_extend_subscription).
-                                logger.error(
-                                    '🔴 Автопродление: extend_subscription упал — возвращаю списанное',
-                                    user_id=user.id,
-                                    subscription_id=subscription.id,
-                                    exc=extend_exc,
-                                )
-                                try:
-                                    from app.database.crud.user import add_user_balance
-                                    from app.database.models import TransactionType as _TxType
+                                from app.services.payment.lava import shift_lava_next_charge_after_manual_extension
 
-                                    await add_user_balance(
-                                        db,
-                                        user,
-                                        charge_amount,
-                                        'Возврат: автопродление не удалось',
-                                        transaction_type=_TxType.REFUND,
-                                        create_transaction=True,
-                                    )
-                                except Exception as refund_exc:
-                                    logger.critical(
-                                        '🔴🔴 Автопродление: НЕ УДАЛОСЬ вернуть списанное — нужно ручное вмешательство',
-                                        user_id=user.id,
-                                        charge_amount=charge_amount,
-                                        exc=refund_exc,
-                                    )
-                                failed_count += 1
-                                continue
+                                await shift_lava_next_charge_after_manual_extension(db, sub_id_local, autopay_period)
+                            except Exception as lava_error:
+                                logger.warning('Could not shift Lava charge after autopay', error=lava_error)
 
-                            # Синк панели — лучшее-усилие: продление уже в БД, при сбое не возвращаем,
-                            # а полагаемся на очередь повтора синка.
+                            await db.refresh(user)
+                            await db.refresh(subscription)
                             try:
-                                await self.subscription_service.update_remnawave_user(
+                                result = await self.subscription_service.update_remnawave_user(
                                     db,
                                     subscription,
                                     reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
                                     reset_reason='автопродление подписки',
                                 )
                             except Exception as sync_exc:
+                                result = None
                                 logger.error(
-                                    'Автопродление: ошибка синка RemnaWave (продление уже применено в БД)',
-                                    user_id=user.id,
-                                    subscription_id=subscription.id,
-                                    exc=sync_exc,
+                                    'Autopay panel sync failed after commit',
+                                    subscription_id=sub_id_local,
+                                    error=sync_exc,
                                 )
+                            # Panel service may rollback and expire ORM even when
+                            # returning None. Money and ledger were committed above.
+                            await db.refresh(user)
+                            await db.refresh(subscription)
+                            await db.refresh(transaction)
+                            if result is None:
+                                from app.services.remnawave_retry_queue import remnawave_retry_queue
 
-                            # Создаём транзакцию, чтобы автопродление было видно в статистике и карточке пользователя
-                            try:
-                                from app.database.crud.transaction import create_transaction
-                                from app.database.models import PaymentMethod, TransactionType
-
-                                transaction = await create_transaction(
-                                    db=db,
-                                    user_id=user.id,
-                                    type=TransactionType.SUBSCRIPTION_PAYMENT,
-                                    amount_kopeks=charge_amount,
-                                    description=f'Автопродление подписки на {autopay_period} дней',
-                                    payment_method=PaymentMethod.BALANCE,
+                                remnawave_retry_queue.enqueue(
+                                    subscription_id=sub_id_local,
+                                    user_id=sub_user_id_local,
+                                    action='update',
+                                    reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+                                    reset_reason='автопродление подписки',
                                 )
-                            except Exception as exc:
-                                logger.warning('Не удалось создать транзакцию автопродления', user_id=user.id, exc=exc)
-                                transaction = None
 
                             # Отправляем уведомление администраторам
                             try:
@@ -1947,6 +1925,9 @@ class MonitoringService:
                             rollback_error=rollback_error,
                         )
                     continue
+                finally:
+                    # Also release locks on eligibility/price/balance early exits.
+                    await db.rollback()
 
             if processed_count > 0 or failed_count > 0:
                 await self._log_monitoring_event(
@@ -1969,26 +1950,25 @@ class MonitoringService:
                     notification_type=NotificationType.SUBSCRIPTION_EXPIRED,
                     context={'tariff_name': tariff_name or ''},
                 )
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
             tariff_label = ''
             if settings.is_multi_tariff_enabled():
                 if tariff_name:
-                    tariff_label = f' «{tariff_name}»'
+                    tariff_label = f' «{html.escape(tariff_name)}»'
                 elif hasattr(subscription, 'tariff') and subscription.tariff:
-                    tariff_label = f' «{subscription.tariff.name}»'
-            message = f"""
-⛔ <b>Подписка{tariff_label} истекла</b>
-
-Ваша подписка истекла. Для восстановления доступа продлите подписку.
-
-🔧 Доступ к серверам заблокирован до продления.
-"""
+                    tariff_label = f' «{html.escape(subscription.tariff.name)}»'
+            message = texts.t('MONITOR_SUBSCRIPTION_EXPIRED', '').format(tariff_label=tariff_label)
 
             from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_subscription_extend_button('💎 Продлить подписку', subscription.id)],
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
+                    [build_subscription_extend_button(texts.t('SUBSCRIPTION_EXTEND', ''), subscription.id)],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', ''), callback_data='balance_topup'
+                        )
+                    ],
                 ]
             )
 
@@ -2140,28 +2120,27 @@ class MonitoringService:
                     notification_type=NotificationType.WINBACK_TRIAL_ENDING,
                     context={},
                 )
-            get_texts(user.language)
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
 
             tariff_label = ''
             if settings.is_multi_tariff_enabled() and hasattr(subscription, 'tariff') and subscription.tariff:
-                tariff_label = f' «{subscription.tariff.name}»'
-            message = f"""
-🎁 <b>Тестовая подписка{tariff_label} скоро закончится!</b>
-
-Ваша тестовая подписка истекает через 2 часа.
-
-💎 <b>Не хотите остаться без VPN?</b>
-Переходите на полную подписку!
-
-⚡️ Успейте оформить до окончания тестового периода!
-"""
+                tariff_label = f' «{html.escape(subscription.tariff.name)}»'
+            message = texts.t('MONITOR_TRIAL_ENDING', '').format(tariff_label=tariff_label)
 
             from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💎 Купить подписку', callback_data='menu_buy')],
-                    [build_miniapp_or_callback_button(text='💰 Пополнить баланс', callback_data='balance_topup')],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('MENU_BUY_SUBSCRIPTION', ''), callback_data='menu_buy'
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', ''), callback_data='balance_topup'
+                        )
+                    ],
                 ]
             )
 
@@ -2422,7 +2401,8 @@ class MonitoringService:
                 inline_keyboard=[
                     [
                         build_miniapp_or_callback_button(
-                            text='🎁 Получить скидку', callback_data=f'claim_discount_{offer_id}'
+                            text=texts.t('ADMIN_MONITORING_UI_BUILD_NOTIFICATION_PREVIEW_MESSAGE_019', ''),
+                            callback_data=f'claim_discount_{offer_id}',
                         )
                     ],
                     [
@@ -2481,10 +2461,10 @@ class MonitoringService:
                 and hasattr(subscription, 'tariff')
                 and subscription.tariff
             ):
-                tariff_label = f' «{subscription.tariff.name}»'
+                tariff_label = f' «{html.escape(subscription.tariff.name)}»'
             message = texts.AUTOPAY_SUCCESS.format(days=days, amount=settings.format_price(amount))
             if tariff_label:
-                message += f'\n📦 Тариф:{tariff_label}'
+                message += texts.t('MONITOR_TARIFF_LINE', '').format(tariff_label=tariff_label)
             await self._send_message_with_logo(
                 chat_id=user.telegram_id,
                 text=message,
@@ -2532,14 +2512,24 @@ class MonitoringService:
                 and hasattr(subscription, 'tariff')
                 and subscription.tariff
             ):
-                message += f'\n📦 Тариф: «{subscription.tariff.name}»'
+                message += texts.t('MONITOR_TARIFF_LINE', '').format(
+                    tariff_label=f' «{html.escape(subscription.tariff.name)}»'
+                )
 
             from aiogram.types import InlineKeyboardMarkup
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [build_miniapp_or_callback_button(text='💳 Пополнить баланс', callback_data='balance_topup')],
-                    [build_miniapp_or_callback_button(text='📱 Моя подписка', callback_data='menu_subscription')],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('BALANCE_TOPUP', ''), callback_data='balance_topup'
+                        )
+                    ],
+                    [
+                        build_miniapp_or_callback_button(
+                            text=texts.t('MY_SUBSCRIPTION_BUTTON', ''), callback_data='menu_subscription'
+                        )
+                    ],
                 ]
             )
 
@@ -3474,6 +3464,26 @@ class MonitoringService:
             except Exception:
                 interval_seconds = 900
             await asyncio.sleep(interval_seconds)
+
+    async def _device_overflow_loop(self):
+        from app.services.device_limit_overflow import check_device_limit_overflows
+
+        # Первый проход не сразу после старта: бот поднимается вместе с остальными
+        # фоновыми задачами, а сутки ничего не решают.
+        await asyncio.sleep(DEVICE_OVERFLOW_FIRST_CHECK_DELAY_SECONDS)
+        while self.is_running:
+            try:
+                async with AsyncSessionLocal() as db:
+                    try:
+                        await check_device_limit_overflows(db, self.bot)
+                    except Exception as e:
+                        logger.warning('Сбой проверки превышения лимита устройств', error=str(e))
+                        await db.rollback()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning('Ошибка в цикле проверки превышения лимита устройств', error=str(e))
+            await asyncio.sleep(DEVICE_OVERFLOW_CHECK_INTERVAL_SECONDS)
 
     async def _log_monitoring_event(
         self, db: AsyncSession, event_type: str, message: str, data: dict[str, Any] = None, is_success: bool = True

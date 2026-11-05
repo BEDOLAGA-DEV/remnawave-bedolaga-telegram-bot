@@ -11,6 +11,7 @@ from app.database.models import User
 from app.services.system_settings_service import (
     ReadOnlySettingError,
     bot_configuration_service,
+    normalize_settings_language,
 )
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -156,7 +157,7 @@ def _coerce_value(key: str, value: Any) -> Any:
     return normalized
 
 
-def _serialize_definition(definition, include_choices: bool = True) -> SettingDefinition:
+def _serialize_definition(definition, include_choices: bool = True, language: str | None = None) -> SettingDefinition:
     """Serialize setting definition to response model."""
     raw_current = bot_configuration_service.get_current_value(definition.key)
     # SECURITY: never echo plaintext secrets (payment keys, SMTP/panel passwords, API
@@ -178,11 +179,11 @@ def _serialize_definition(definition, include_choices: bool = True) -> SettingDe
                 label=option.label,
                 description=option.description,
             )
-            for option in bot_configuration_service.get_choice_options(definition.key)
+            for option in bot_configuration_service.get_choice_options(definition.key, language)
         ]
 
     # Get setting hints
-    guidance = bot_configuration_service.get_setting_guidance(definition.key)
+    guidance = bot_configuration_service.get_setting_guidance(definition.key, language)
     hint = SettingHint(
         description=guidance.get('description', ''),
         format=guidance.get('format', ''),
@@ -195,7 +196,7 @@ def _serialize_definition(definition, include_choices: bool = True) -> SettingDe
         name=definition.display_name,
         category=SettingCategoryRef(
             key=definition.category_key,
-            label=definition.category_label,
+            label=bot_configuration_service.get_category_label(definition.category_key, language),
         ),
         type=definition.type_label,
         is_optional=definition.is_optional,
@@ -216,14 +217,19 @@ def _serialize_definition(definition, include_choices: bool = True) -> SettingDe
 @router.get('/categories', response_model=list[SettingCategorySummary])
 async def list_categories(
     admin: User = Depends(require_permission('settings:read')),
+    language: str | None = Query(default=None, max_length=32),
 ):
     """Get list of setting categories."""
     categories = bot_configuration_service.get_categories()
     return [
         SettingCategorySummary(
             key=key,
-            label=label,
-            description=bot_configuration_service.get_category_description(key),
+            label=bot_configuration_service.get_category_label(
+                key, normalize_settings_language(language, getattr(admin, 'language', None))
+            ),
+            description=bot_configuration_service.get_category_description(
+                key, normalize_settings_language(language, getattr(admin, 'language', None))
+            ),
             items=count,
         )
         for key, label, count in categories
@@ -234,18 +240,29 @@ async def list_categories(
 async def list_settings(
     admin: User = Depends(require_permission('settings:read')),
     category: str | None = Query(default=None, alias='category_key'),
+    language: str | None = Query(default=None, max_length=32),
 ):
     """Get list of all settings or settings for a specific category."""
     items: list[SettingDefinition] = []
 
     if category:
         definitions = bot_configuration_service.get_settings_for_category(category)
-        items.extend(_serialize_definition(defn) for defn in definitions)
+        items.extend(
+            _serialize_definition(
+                defn, language=normalize_settings_language(language, getattr(admin, 'language', None))
+            )
+            for defn in definitions
+        )
         return items
 
     for category_key, _, _ in bot_configuration_service.get_categories():
         definitions = bot_configuration_service.get_settings_for_category(category_key)
-        items.extend(_serialize_definition(defn) for defn in definitions)
+        items.extend(
+            _serialize_definition(
+                defn, language=normalize_settings_language(language, getattr(admin, 'language', None))
+            )
+            for defn in definitions
+        )
 
     return items
 
@@ -254,6 +271,7 @@ async def list_settings(
 async def get_setting(
     key: str,
     admin: User = Depends(require_permission('settings:read')),
+    language: str | None = Query(default=None, max_length=32),
 ):
     """Get a specific setting by key."""
     try:
@@ -261,7 +279,9 @@ async def get_setting(
     except KeyError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'Setting not found') from error
 
-    return _serialize_definition(definition)
+    return _serialize_definition(
+        definition, language=normalize_settings_language(language, getattr(admin, 'language', None))
+    )
 
 
 @router.put('/{key}', response_model=SettingDefinition)
@@ -270,6 +290,7 @@ async def update_setting(
     payload: SettingUpdateRequest,
     admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
+    language: str | None = Query(default=None, max_length=32),
 ):
     """Update a setting value."""
     try:
@@ -284,20 +305,26 @@ async def update_setting(
     # admin didn't edit the field, so preserve the stored secret instead of overwriting
     # it with the mask string.
     if bot_configuration_service.is_secret_key(key) and payload.value == bot_configuration_service.SECRET_MASK:
-        return _serialize_definition(definition)
+        return _serialize_definition(
+            definition, language=normalize_settings_language(language, getattr(admin, 'language', None))
+        )
 
     value = _coerce_value(key, payload.value)
     try:
         await bot_configuration_service.set_value(db, key, value)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     await _sync_maintenance_mode_if_needed(key)
     await db.commit()
 
     # Never log secret values in plaintext.
     log_value = bot_configuration_service.SECRET_MASK if bot_configuration_service.is_secret_key(key) else value
     logger.info('Admin updated setting to', telegram_id=admin.telegram_id, key=key, value=log_value)
-    return _serialize_definition(definition)
+    return _serialize_definition(
+        definition, language=normalize_settings_language(language, getattr(admin, 'language', None))
+    )
 
 
 @router.delete('/{key}', response_model=SettingDefinition)
@@ -305,6 +332,7 @@ async def reset_setting(
     key: str,
     admin: User = Depends(require_permission('settings:edit')),
     db: AsyncSession = Depends(get_cabinet_db),
+    language: str | None = Query(default=None, max_length=32),
 ):
     """Reset a setting to its default value."""
     try:
@@ -319,8 +347,12 @@ async def reset_setting(
         await bot_configuration_service.reset_value(db, key)
     except ReadOnlySettingError as error:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
     await _sync_maintenance_mode_if_needed(key)
     await db.commit()
 
     logger.info('Admin reset setting', telegram_id=admin.telegram_id, key=key)
-    return _serialize_definition(definition)
+    return _serialize_definition(
+        definition, language=normalize_settings_language(language, getattr(admin, 'language', None))
+    )

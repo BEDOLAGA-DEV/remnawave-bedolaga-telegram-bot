@@ -44,6 +44,16 @@ async def revoke_subscription(
     if not fresh_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
 
+    if settings.is_multi_tariff_enabled() and not subscription_id:
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        subscriptions = await get_active_subscriptions_by_user_id(db, fresh_user.id)
+        if len(subscriptions) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={'code': 'subscription_selection_required', 'message': 'Select the subscription to reissue'},
+            )
+
     subscription = await resolve_subscription(db, fresh_user, subscription_id)
     if not subscription:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Subscription not found')
@@ -68,9 +78,9 @@ async def revoke_subscription(
 
     # Execute revoke
     sub_service = SubscriptionService()
-    new_url = await sub_service.revoke_subscription(db, subscription)
+    result = await sub_service.revoke_subscription(db, subscription)
 
-    if not new_url:
+    if not result:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to reissue subscription',
@@ -88,5 +98,6 @@ async def revoke_subscription(
 
     return {
         'success': True,
+        'devices_reset': result.devices_reset,
         'cooldown_seconds': settings.SUBSCRIPTION_REVOKE_COOLDOWN_SECONDS,
     }

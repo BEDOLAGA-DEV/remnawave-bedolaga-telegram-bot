@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 
-from app.database.models import Base
+from app.database.models import Base, CisPaySubscription
 
 
 @compiles(JSONB, 'sqlite')
@@ -39,6 +39,10 @@ def ensure_real_aiosqlite(monkeypatch) -> None:
 async def memory_session(monkeypatch, tables: Sequence[Table]) -> AsyncIterator[AsyncSession]:
     """Сессия к :memory: БД, где созданы только переданные таблицы."""
     ensure_real_aiosqlite(monkeypatch)
+    tables = list(tables)
+    if any(table.name == 'subscriptions' for table in tables) and CisPaySubscription.__table__ not in tables:
+        # Subscription mutations now always check persisted recurring consent, even feature-off.
+        tables.append(CisPaySubscription.__table__)
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as conn:
         await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=list(tables)))

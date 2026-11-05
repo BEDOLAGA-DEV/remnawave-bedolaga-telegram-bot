@@ -17,6 +17,7 @@ from app.services.kassa_ai_service import KASSA_AI_SUB_METHODS
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
 from app.utils.decorators import error_handler
+from app.utils.topup_retry import format_topup_amount_retry
 
 
 logger = structlog.get_logger(__name__)
@@ -28,22 +29,22 @@ _KASSA_AI_METHOD_CONFIG = {
     'kassa_ai': {
         'is_enabled': settings.is_kassa_ai_enabled,
         'display_name': settings.get_kassa_ai_display_name,
-        'unavailable_text': 'KassaAI временно недоступен',
+        'unavailable_key': 'KASSA_AI_UNAVAILABLE_GENERAL',
     },
     'kassa_ai_sbp': {
         'is_enabled': settings.is_kassa_ai_sbp_enabled,
         'display_name': settings.get_kassa_ai_sbp_display_name,
-        'unavailable_text': 'KassaAI СБП временно недоступен',
+        'unavailable_key': 'KASSA_AI_UNAVAILABLE_SBP',
     },
     'kassa_ai_card': {
         'is_enabled': settings.is_kassa_ai_card_enabled,
         'display_name': settings.get_kassa_ai_card_display_name,
-        'unavailable_text': 'KassaAI Карта временно недоступна',
+        'unavailable_key': 'KASSA_AI_UNAVAILABLE_CARD',
     },
     'kassa_ai_sberpay': {
         'is_enabled': settings.is_kassa_ai_sberpay_enabled,
         'display_name': settings.get_kassa_ai_sberpay_display_name,
-        'unavailable_text': 'KassaAI SberPay временно недоступен',
+        'unavailable_key': 'KASSA_AI_UNAVAILABLE_SBERPAY',
     },
 }
 
@@ -53,14 +54,21 @@ async def _check_topup_restriction(callback: types.CallbackQuery, db_user: User)
     if not getattr(db_user, 'restriction_topup', False):
         return False
     texts = get_texts(db_user.language)
-    reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+    reason = html.escape(
+        getattr(db_user, 'restriction_reason', None)
+        or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+    )
     support_url = settings.get_support_contact_url()
     keyboard = []
     if support_url:
-        keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append(
+            [InlineKeyboardButton(text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url)]
+        )
     keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
     await callback.message.edit_text(
-        f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+        texts.t('USER_RESTRICTION_TOPUP_BLOCKED_SHORT', '🚫 <b>Пополнение ограничено</b>\n\n{reason}').format(
+            reason=reason
+        ),
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
     )
@@ -181,15 +189,22 @@ async def process_kassa_ai_payment_amount(
 
     # Проверка ограничения на пополнение
     if getattr(db_user, 'restriction_topup', False):
-        reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
+        reason = html.escape(
+            getattr(db_user, 'restriction_reason', None)
+            or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+        )
         support_url = settings.get_support_contact_url()
         keyboard = []
         if support_url:
-            keyboard.append([InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+            keyboard.append(
+                [InlineKeyboardButton(text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url)]
+            )
         keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
 
         await message.answer(
-            f'🚫 <b>Пополнение ограничено</b>\n\n{reason}',
+            texts.t('USER_RESTRICTION_TOPUP_BLOCKED_SHORT', '🚫 <b>Пополнение ограничено</b>\n\n{reason}').format(
+                reason=reason
+            ),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         )
@@ -202,23 +217,15 @@ async def process_kassa_ai_payment_amount(
 
     if amount_kopeks < min_amount:
         await message.answer(
-            texts.t(
-                'PAYMENT_AMOUNT_TOO_LOW',
-                'Минимальная сумма пополнения: {min_amount}₽',
-            ).format(min_amount=min_amount // 100),
-            reply_markup=get_back_keyboard(db_user.language),
-            parse_mode='HTML',
+            format_topup_amount_retry(db_user.language, min_amount, max_amount, too_low=True),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
     if amount_kopeks > max_amount:
         await message.answer(
-            texts.t(
-                'PAYMENT_AMOUNT_TOO_HIGH',
-                'Максимальная сумма пополнения: {max_amount}₽',
-            ).format(max_amount=max_amount // 100),
-            reply_markup=get_back_keyboard(db_user.language),
-            parse_mode='HTML',
+            format_topup_amount_retry(db_user.language, min_amount, max_amount, too_low=False),
+            reply_markup=get_back_keyboard(db_user.language, callback_data='balance_topup'),
         )
         return
 
@@ -249,7 +256,7 @@ async def _start_kassa_ai_sub_topup(
     texts = get_texts(db_user.language)
 
     if not cfg['is_enabled']():
-        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', cfg['unavailable_text']), show_alert=True)
+        await callback.answer(texts.t('KASSA_AI_NOT_AVAILABLE', texts.t(cfg['unavailable_key'])), show_alert=True)
         return
 
     if await _check_topup_restriction(callback, db_user):

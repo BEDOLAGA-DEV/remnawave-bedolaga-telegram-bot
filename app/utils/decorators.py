@@ -8,10 +8,21 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 
 from app.config import settings
+from app.database.models import User
 from app.localization.texts import get_texts
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _response_language(event, args, kwargs) -> str:
+    """Use account preference for both keyword and positional handler calls."""
+    db_user = kwargs.get('db_user')
+    if db_user is None:
+        db_user = next((arg for arg in args if isinstance(arg, User)), None)
+    return (
+        getattr(db_user, 'language', None) or getattr(getattr(event, 'from_user', None), 'language_code', None) or 'ru'
+    )
 
 
 def admin_required(func: Callable) -> Callable:
@@ -22,7 +33,7 @@ def admin_required(func: Callable) -> Callable:
             user = event.from_user
 
         if not user or not settings.is_admin(user.id):
-            texts = get_texts()
+            texts = get_texts(_response_language(event, args, kwargs))
 
             try:
                 if isinstance(event, types.Message):
@@ -121,14 +132,13 @@ def _extract_event(args) -> types.TelegramObject:
 
 async def _send_error_message(args, kwargs, original_error, func_name: str = 'unknown'):
     event = _extract_event(args)
-    db_user = kwargs.get('db_user')
 
     # Отправляем сообщение пользователю
     try:
         if not event:
             return
 
-        texts = get_texts(db_user.language if db_user else 'ru')
+        texts = get_texts(_response_language(event, args, kwargs))
 
         if isinstance(event, types.Message):
             await event.answer(texts.ERROR)

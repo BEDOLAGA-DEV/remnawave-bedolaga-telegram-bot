@@ -14,14 +14,16 @@ logger = structlog.get_logger(__name__)
 
 async def handle_delete_ban_notification(
     callback: types.CallbackQuery,
+    db_user: User | None = None,
 ):
     """Удаляет уведомление о бане при нажатии на кнопку"""
+    texts = get_texts(db_user.language if db_user else callback.from_user.language_code)
     try:
         await callback.message.delete()
-        await callback.answer('Уведомление удалено')
+        await callback.answer(texts.t('NOTIFICATION_DELETED'))
     except Exception as e:
         logger.warning('Не удалось удалить уведомление', error=e)
-        await callback.answer('Не удалось удалить', show_alert=False)
+        await callback.answer(texts.t('NOTIFICATION_DELETE_FAILED'), show_alert=False)
 
 
 async def handle_webhook_notification_close(

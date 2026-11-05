@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.localization.texts import get_texts
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
@@ -482,20 +483,6 @@ class YooKassaPaymentMixin:
             except Exception as parse_error:
                 logger.error('Ошибка парсинга метаданных платежа', parse_error=parse_error)
 
-            invoice_message = payment_metadata.get('invoice_message') or {}
-            if getattr(self, 'bot', None):
-                chat_id = invoice_message.get('chat_id')
-                message_id = invoice_message.get('message_id')
-                if chat_id and message_id:
-                    try:
-                        await self.bot.delete_message(chat_id, message_id)
-                    except Exception as delete_error:  # pragma: no cover - depends on bot rights
-                        logger.warning(
-                            'Не удалось удалить сообщение YooKassa', message_id=message_id, delete_error=delete_error
-                        )
-                    else:
-                        payment_metadata.pop('invoice_message', None)
-
             processing_completed = bool(payment_metadata.get('processing_completed'))
 
             transaction = None
@@ -712,11 +699,16 @@ class YooKassaPaymentMixin:
                                         await self.bot.send_message(
                                             chat_id=user.telegram_id,
                                             text=(
-                                                f'🎉 <b>Пробная подписка активирована!</b>\n\n'
-                                                f'💳 Оплачено: {settings.format_price(payment.amount_kopeks)}\n'
-                                                f'📅 Период: {settings.TRIAL_DURATION_DAYS} дней\n'
-                                                f'📱 Устройств: {subscription.device_limit}\n\n'
-                                                f'Используйте меню для подключения к VPN.'
+                                                get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                                                .t(
+                                                    'PAYMENT_NOTICE_012',
+                                                    '🎉 <b>Пробная подписка активирована!</b>\n\n💳 Оплачено: {v0}\n📅 Период: {v1} дней\n📱 Устройств: {v2}\n\nИспользуйте меню для подключения к VPN.',
+                                                )
+                                                .format(
+                                                    v0=settings.format_price(payment.amount_kopeks),
+                                                    v1=settings.TRIAL_DURATION_DAYS,
+                                                    v2=subscription.device_limit,
+                                                )
                                             ),
                                             parse_mode='HTML',
                                         )
@@ -925,7 +917,9 @@ class YooKassaPaymentMixin:
                                     payment.amount_kopeks,
                                     user=None,  # Передаем None, чтобы _ensure_user_snapshot загрузил данные сам
                                     db=db,
-                                    payment_method_title='Банковская карта (YooKassa)',
+                                    payment_method_title=get_texts(
+                                        getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
+                                    ).t('PAYMENT_NOTICE_011', 'Банковская карта (YooKassa)'),
                                 )
                                 logger.info('Уведомление пользователю о платеже отправлено успешно')
                             except Exception as error:
@@ -1022,29 +1016,42 @@ class YooKassaPaymentMixin:
 
                                         _t = await get_tariff_by_id(db, subscription.tariff_id)
                                         if _t:
-                                            tariff_line = f'\n📦 Тариф: «{_t.name}»'
+                                            tariff_line = (
+                                                get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                                                .t('PAYMENT_NOTICE_010', '\n📦 Тариф: «{v0}»')
+                                                .format(v0=_t.name)
+                                            )
                                     except Exception:
                                         pass
                                 success_message = (
-                                    f'✅ <b>Подписка успешно активирована!</b>\n\n'
-                                    f'📅 Период: {subscription_period} дней\n'
-                                    f'📱 Устройства: 1\n'
-                                    f'📊 Трафик: Безлимит\n'
-                                    f'💳 Оплата: {settings.format_price(payment.amount_kopeks)} (YooKassa)'
-                                    f'{tariff_line}\n\n'
-                                    f"🔗 Для подключения перейдите в раздел 'Моя подписка'"
+                                    get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                                    .t(
+                                        'PAYMENT_NOTICE_009',
+                                        "✅ <b>Подписка успешно активирована!</b>\n\n📅 Период: {v0} дней\n📱 Устройства: 1\n📊 Трафик: Безлимит\n💳 Оплата: {v1} (YooKassa){v2}\n\n🔗 Для подключения перейдите в раздел 'Моя подписка'",
+                                    )
+                                    .format(
+                                        v0=subscription_period,
+                                        v1=settings.format_price(payment.amount_kopeks),
+                                        v2=tariff_line,
+                                    )
                                 )
 
                                 keyboard = types.InlineKeyboardMarkup(
                                     inline_keyboard=[
                                         [
                                             types.InlineKeyboardButton(
-                                                text='📱 Моя подписка', callback_data='menu_subscription'
+                                                text=get_texts(
+                                                    getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
+                                                ).t('MY_SUBSCRIPTION_BUTTON', '📱 Моя подписка'),
+                                                callback_data='menu_subscription',
                                             )
                                         ],
                                         [
                                             types.InlineKeyboardButton(
-                                                text='🏠 Главное меню', callback_data='back_to_menu'
+                                                text=get_texts(
+                                                    getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
+                                                ).t('MAIN_MENU_BUTTON', '🏠 Главное меню'),
+                                                callback_data='back_to_menu',
                                             )
                                         ],
                                     ]
@@ -1163,6 +1170,20 @@ class YooKassaPaymentMixin:
                     telegram_user_id=user.telegram_id if user else None,
                     user_email=user.email if user else None,
                 )
+
+            # Optional Telegram cleanup follows committed credit and saved payment methods.
+            invoice_message = payment_metadata.get('invoice_message') or {}
+            if getattr(self, 'bot', None):
+                chat_id = invoice_message.get('chat_id')
+                message_id = invoice_message.get('message_id')
+                if chat_id and message_id:
+                    try:
+                        async with asyncio.timeout(5):
+                            await self.bot.delete_message(chat_id, message_id)
+                    except Exception as delete_error:  # pragma: no cover - depends on bot rights
+                        logger.warning(
+                            'Не удалось удалить сообщение YooKassa', message_id=message_id, delete_error=delete_error
+                        )
 
             return True
 

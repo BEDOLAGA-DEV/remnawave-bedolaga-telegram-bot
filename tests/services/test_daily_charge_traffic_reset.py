@@ -21,6 +21,7 @@ import pytest
 from app.config import settings
 from app.database.models import Base, Subscription, SubscriptionStatus, Tariff, User
 from app.services.daily_subscription_service import DailySubscriptionService
+from tests.fixtures.paid_reset_panel import PaidResetPanelMixin
 from tests.fixtures.sqlite_memory import memory_session
 
 
@@ -68,7 +69,7 @@ def _subscription(*, status: str = SubscriptionStatus.ACTIVE.value) -> Subscript
         is_trial=False,
         is_daily_paused=False,
         start_date=now - timedelta(days=5),
-        end_date=now + timedelta(hours=2),
+        end_date=now - timedelta(hours=1),
         last_daily_charge_at=now - timedelta(days=1, hours=1),
         traffic_limit_gb=100,
         traffic_used_gb=90.0,
@@ -78,10 +79,11 @@ def _subscription(*, status: str = SubscriptionStatus.ACTIVE.value) -> Subscript
     )
 
 
-class _FakePanelSync:
+class _FakePanelSync(PaidResetPanelMixin):
     """Подменяет SubscriptionService: запоминает, с чем к нему пришли."""
 
     def __init__(self) -> None:
+        self.init_reset_panel()
         self.update_calls: list[dict] = []
         self.create_calls: list[dict] = []
 
@@ -127,7 +129,8 @@ async def test_charge_resets_traffic_when_enabled(monkeypatch, panel):
         subscription = await _charge(db, monkeypatch, traffic_reset_mode='NO_RESET', reset_on_payment=True)
 
     assert panel.update_calls, 'синхронизация с панелью не выполнялась'
-    assert panel.update_calls[0]['reset_traffic'] is True
+    assert panel.update_calls[0]['reset_traffic'] is False
+    assert panel.reset_calls == [9001]
     assert panel.update_calls[0]['reset_reason']
     assert subscription.traffic_used_gb == 0.0
 

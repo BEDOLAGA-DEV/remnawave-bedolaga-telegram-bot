@@ -16,6 +16,7 @@ from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import get_db
 from app.database.models import PaymentMethod, TransactionType
 from app.external.tribute import TributeService as TributeAPI
+from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.utils.user_utils import format_referrer_info
 
@@ -290,11 +291,14 @@ class TributeService:
                     session, f'donation_{payment_id}', PaymentMethod.TRIBUTE
                 )
 
+                user = await get_user_by_telegram_id(session, user_id)
+                language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
+
                 if transaction:
                     transaction.description = f'{transaction.description} (платеж отклонен)'
                     await session.commit()
 
-                await self._send_failure_notification(user_id)
+                await self._send_failure_notification(user_id, language=language)
 
                 logger.info(
                     'Обработан неудачный Tribute платеж для пользователя',
@@ -335,9 +339,10 @@ class TributeService:
                     if user.balance_kopeks >= amount_kopeks:
                         user.balance_kopeks -= amount_kopeks
 
+                language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
                 await session.commit()
 
-                await self._send_refund_notification(user_id, amount_kopeks)
+                await self._send_refund_notification(user_id, amount_kopeks, language=language)
 
                 logger.info(
                     'Обработан возврат Tribute: ₽ для пользователя',
@@ -368,17 +373,16 @@ class TributeService:
                     logger.warning('Пользователь не найден для уведомления Tribute', user_id=user_id)
                     break
 
+                texts = get_texts(user.language or settings.DEFAULT_LANGUAGE)
+
                 # Сначала отправляем стандартное уведомление
                 payment_service = PaymentService(self.bot)
                 keyboard = await payment_service.build_topup_success_keyboard(user)
 
-                text = (
-                    f'✅ **Платеж успешно получен!**\n\n'
-                    f'💰 Сумма: {int(amount_rubles)} ₽\n'
-                    f'💳 Способ оплаты: Tribute\n'
-                    f'🎉 Средства зачислены на баланс!\n\n'
-                    f'Спасибо за оплату! 🙏'
-                )
+                text = texts.t(
+                    'TRIBUTE_SUCCESS_NOTICE',
+                    '✅ **Платеж успешно получен!**\n\n💰 Сумма: {amount} ₽\n💳 Способ оплаты: Tribute\n🎉 Средства зачислены на баланс!\n\nСпасибо за оплату! 🙏',
+                ).format(amount=int(amount_rubles))
 
                 await self.bot.send_message(user_id, text, reply_markup=keyboard, parse_mode='Markdown')
 
@@ -391,7 +395,7 @@ class TributeService:
         except Exception as e:
             logger.error('Ошибка отправки уведомления об успешном платеже', error=e)
 
-    async def _send_failure_notification(self, user_id: int):
+    async def _send_failure_notification(self, user_id: int, language: str | None = None):
         if not settings.is_notifications_enabled():
             return
 
@@ -401,20 +405,24 @@ class TributeService:
             return
 
         try:
-            text = (
-                '⌘ **Платеж не прошел**\n\n'
-                'К сожалению, ваш платеж через Tribute был отклонен.\n\n'
-                'Возможные причины:\n'
-                '• Недостаточно средств на карте\n'
-                '• Технические проблемы банка\n'
-                '• Превышен лимит операций\n\n'
-                'Попробуйте еще раз или обратитесь в поддержку.'
+            texts = get_texts(language or settings.DEFAULT_LANGUAGE)
+            text = texts.t(
+                'TRIBUTE_FAILED_NOTICE',
+                '⌘ **Платеж не прошел**\n\nК сожалению, ваш платеж через Tribute был отклонен.\n\nВозможные причины:\n• Недостаточно средств на карте\n• Технические проблемы банка\n• Превышен лимит операций\n\nПопробуйте еще раз или обратитесь в поддержку.',
             )
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='🔄 Попробовать снова', callback_data='menu_balance')],
-                    [InlineKeyboardButton(text='💬 Поддержка', callback_data='menu_support')],
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('TRIBUTE_RETRY_BUTTON', '🔄 Попробовать снова'), callback_data='menu_balance'
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('TRIBUTE_SUPPORT_BUTTON', '💬 Поддержка'), callback_data='menu_support'
+                        )
+                    ],
                 ]
             )
 
@@ -423,7 +431,7 @@ class TributeService:
         except Exception as e:
             logger.error('Ошибка отправки уведомления о неудачном платеже', error=e)
 
-    async def _send_refund_notification(self, user_id: int, amount_kopeks: int):
+    async def _send_refund_notification(self, user_id: int, amount_kopeks: int, language: str | None = None):
         if not settings.is_notifications_enabled():
             return
 
@@ -433,20 +441,26 @@ class TributeService:
             return
 
         try:
+            texts = get_texts(language or settings.DEFAULT_LANGUAGE)
             amount_rubles = amount_kopeks / 100
 
-            text = (
-                f'🔄 **Возврат средств**\n\n'
-                f'💰 Сумма возврата: {int(amount_rubles)} ₽\n'
-                f'💳 Способ: Tribute\n\n'
-                f'Средства будут возвращены на вашу карту в течение 3-5 рабочих дней.\n\n'
-                f'Если у вас есть вопросы, обратитесь в поддержку.'
-            )
+            text = texts.t(
+                'TRIBUTE_REFUND_NOTICE',
+                '🔄 **Возврат средств**\n\n💰 Сумма возврата: {amount} ₽\n💳 Способ: Tribute\n\nСредства будут возвращены на вашу карту в течение 3-5 рабочих дней.\n\nЕсли у вас есть вопросы, обратитесь в поддержку.',
+            ).format(amount=int(amount_rubles))
 
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='💬 Поддержка', callback_data='menu_support')],
-                    [InlineKeyboardButton(text='🏠 Главное меню', callback_data='back_to_menu')],
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('TRIBUTE_SUPPORT_BUTTON', '💬 Поддержка'), callback_data='menu_support'
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=texts.t('TRIBUTE_MENU_BUTTON', '🏠 Главное меню'), callback_data='back_to_menu'
+                        )
+                    ],
                 ]
             )
 

@@ -5,6 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import ServiceRule
+from app.localization.texts import refresh_rules_cache
 
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +38,7 @@ async def create_or_update_rules(
     db.add(new_rules)
     await db.commit()
     await db.refresh(new_rules)
+    await refresh_rules_cache(language)
 
     logger.info('✅ Правила обновлены', language=language, new_rules_id=new_rules.id)
     return new_rules
@@ -51,6 +53,7 @@ async def clear_all_rules(db: AsyncSession, language: str = 'ru') -> bool:
         )
 
         await db.commit()
+        await refresh_rules_cache(language)
 
         rows_affected = result.rowcount
         logger.info(
@@ -120,6 +123,7 @@ async def restore_rules_version(db: AsyncSession, rule_id: int, language: str = 
         db.add(restored_rule)
         await db.commit()
         await db.refresh(restored_rule)
+        await refresh_rules_cache(language)
 
         logger.info(
             '✅ Восстановлена версия правил ID как новое правило ID', rule_id=rule_id, restored_rule_id=restored_rule.id

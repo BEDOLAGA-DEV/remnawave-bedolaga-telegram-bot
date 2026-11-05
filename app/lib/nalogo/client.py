@@ -57,6 +57,7 @@ class Client:
             storage_path=storage_path,
             device_id=device_id,
             proxy_url=proxy_url,
+            timeout=timeout,
         )
 
         # Initialize HTTP client with auth middleware

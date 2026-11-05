@@ -50,7 +50,9 @@ async def _handle_wheel_spin_payment(
 
         if not config.is_enabled:
             await message.answer(
-                '❌ Колесо удачи временно недоступно. Звезды будут возвращены.',
+                texts.t(
+                    'STARS_WHEEL_UNAVAILABLE_REFUND', '❌ Колесо удачи временно недоступно. Звезды будут возвращены.'
+                ),
             )
             return False
 
@@ -83,8 +85,10 @@ async def _handle_wheel_spin_payment(
             )
             await db.commit()
             await message.answer(
-                '❌ Для использования колеса удачи необходима активная подписка.\n'
-                f'💰 {stars_amount} Stars возвращены на баланс в виде {kopeks_fallback / 100:.0f} ₽.',
+                texts.t(
+                    'STARS_WHEEL_SUBSCRIPTION_REFUND',
+                    '❌ Для использования колеса удачи необходима активная подписка.\n💰 {stars} Stars возвращены на баланс в виде {amount} ₽.',
+                ).format(stars=stars_amount, amount=format(kopeks_fallback / 100, '.0f')),
             )
             logger.warning(
                 'Wheel spin without subscription, refunded to balance',
@@ -99,7 +103,7 @@ async def _handle_wheel_spin_payment(
 
         if not prizes:
             await message.answer(
-                '❌ Призы не настроены. Обратитесь в поддержку.',
+                texts.t('STARS_WHEEL_NO_PRIZES', '❌ Призы не настроены. Обратитесь в поддержку.'),
             )
             return False
 
@@ -123,8 +127,10 @@ async def _handle_wheel_spin_payment(
                 )
                 await db.commit()
                 await message.answer(
-                    '❌ Достигнут дневной лимит спинов.\n'
-                    f'💰 {stars_amount} Stars возвращены на баланс в виде {kopeks_fallback / 100:.0f} ₽.',
+                    texts.t(
+                        'STARS_WHEEL_LIMIT_REFUND',
+                        '❌ Достигнут дневной лимит спинов.\n💰 {stars} Stars возвращены на баланс в виде {amount} ₽.',
+                    ).format(stars=stars_amount, amount=format(kopeks_fallback / 100, '.0f')),
                 )
                 logger.warning(
                     'Wheel spin over daily limit, refunded to balance',
@@ -200,16 +206,33 @@ async def _handle_wheel_spin_payment(
 
         # Ensure all changes are committed (subscription days, traffic GB, etc.)
         await db.commit()
+        await wheel_service._sync_subscription_after_spin(user, selected_prize)
 
         # Отправляем результат
-        prize_message = wheel_service._get_prize_message(selected_prize, generated_promocode)
+        prize_templates = {
+            'nothing': ('STARS_WHEEL_PRIZE_NOTHING', 'К сожалению, в этот раз не повезло. Попробуйте еще!'),
+            'balance_bonus': ('STARS_WHEEL_PRIZE_BALANCE', 'Поздравляем! Вы выиграли {amount}₽ на баланс!'),
+            'subscription_days': ('STARS_WHEEL_PRIZE_DAYS', 'Поздравляем! Вы выиграли дней подписки: {value}!'),
+            'traffic_gb': ('STARS_WHEEL_PRIZE_TRAFFIC', 'Поздравляем! Вы выиграли {value}GB трафика!'),
+            'promocode': ('STARS_WHEEL_PRIZE_PROMOCODE', 'Поздравляем! Ваш промокод: {code}'),
+        }
+        prize_key, prize_default = prize_templates.get(
+            selected_prize.prize_type, ('STARS_WHEEL_PRIZE_GENERIC', 'Поздравляем с выигрышем!')
+        )
+        prize_message = texts.t(prize_key, prize_default).format(
+            amount=f'{selected_prize.prize_value / 100:.0f}',
+            value=selected_prize.prize_value,
+            code=html.escape(generated_promocode or ''),
+        )
 
         emoji = selected_prize.emoji or '🎁'
         await message.answer(
-            f'🎰 <b>Колесо удачи!</b>\n\n'
-            f'{emoji} <b>{html.escape(selected_prize.display_name)}</b>\n\n'
-            f'{prize_message}\n\n'
-            f'⭐ Потрачено: {stars_amount} Stars',
+            texts.t(
+                'STARS_WHEEL_RESULT',
+                '🎰 <b>Колесо удачи!</b>\n\n{emoji} <b>{prize}</b>\n\n{message}\n\n⭐ Потрачено: {stars} Stars',
+            ).format(
+                emoji=emoji, prize=html.escape(selected_prize.display_name), message=prize_message, stars=stars_amount
+            ),
             parse_mode='HTML',
         )
 
@@ -224,7 +247,7 @@ async def _handle_wheel_spin_payment(
     except Exception as e:
         logger.error('Ошибка обработки wheel spin payment', error=e, exc_info=True)
         await message.answer(
-            '❌ Произошла ошибка при обработке спина. Обратитесь в поддержку.',
+            texts.t('STARS_WHEEL_ERROR', '❌ Произошла ошибка при обработке спина. Обратитесь в поддержку.'),
         )
         return False
 
@@ -250,7 +273,7 @@ async def _handle_trial_payment(
         if len(parts) < 2:
             logger.error('Невалидный trial payload', payload=payload)
             await message.answer(
-                '❌ Ошибка: неверный формат платежа. Обратитесь в поддержку.',
+                texts.t('STARS_TRIAL_INVALID_PAYMENT', '❌ Ошибка: неверный формат платежа. Обратитесь в поддержку.'),
             )
             return False
 
@@ -259,7 +282,7 @@ async def _handle_trial_payment(
         except ValueError:
             logger.error('Невалидный subscription_id в trial payload', payload=payload)
             await message.answer(
-                '❌ Ошибка: неверный ID подписки. Обратитесь в поддержку.',
+                texts.t('STARS_TRIAL_INVALID_SUBSCRIPTION', '❌ Ошибка: неверный ID подписки. Обратитесь в поддержку.'),
             )
             return False
 
@@ -303,7 +326,10 @@ async def _handle_trial_payment(
                 transaction_type=TransactionType.REFUND,
             )
             await message.answer(
-                '❌ Не удалось активировать пробную подписку. Средства возвращены на баланс.',
+                texts.t(
+                    'STARS_TRIAL_ACTIVATION_REFUND',
+                    '❌ Не удалось активировать пробную подписку. Средства возвращены на баланс.',
+                ),
             )
             return False
 
@@ -340,11 +366,14 @@ async def _handle_trial_payment(
 
         # Отправляем сообщение пользователю
         await message.answer(
-            f'🎉 <b>Пробная подписка активирована!</b>\n\n'
-            f'⭐ Потрачено: {stars_amount} Stars\n'
-            f'📅 Период: {settings.TRIAL_DURATION_DAYS} дней\n'
-            f'📱 Устройств: {Texts.format_device_limit(subscription.device_limit)}\n\n'
-            f'Используйте меню для подключения к VPN.',
+            texts.t(
+                'STARS_TRIAL_ACTIVATED',
+                '🎉 <b>Пробная подписка активирована!</b>\n\n⭐ Потрачено: {stars} Stars\n📅 Период: {days} дней\n📱 Устройств: {devices}\n\nИспользуйте меню для подключения к VPN.',
+            ).format(
+                stars=stars_amount,
+                days=settings.TRIAL_DURATION_DAYS,
+                devices=Texts.format_device_limit(subscription.device_limit),
+            ),
             parse_mode='HTML',
         )
 
@@ -359,7 +388,10 @@ async def _handle_trial_payment(
     except Exception as e:
         logger.error('Ошибка обработки trial payment', error=e, exc_info=True)
         await message.answer(
-            '❌ Произошла ошибка при активации пробной подписки. Обратитесь в поддержку.',
+            texts.t(
+                'STARS_TRIAL_ACTIVATION_ERROR',
+                '❌ Произошла ошибка при активации пробной подписки. Обратитесь в поддержку.',
+            ),
         )
         return False
 
@@ -379,11 +411,13 @@ async def _handle_guest_purchase_payment(
     from app.database.crud.landing import get_purchase_by_token
     from app.services.payment.common import try_fulfill_guest_purchase
 
+    texts = get_texts(user.language or DEFAULT_LANGUAGE)
+
     try:
         purchase_token = payload[len('guest_purchase_') :]
         if not purchase_token or not _PURCHASE_TOKEN_RE.match(purchase_token):
             logger.error('Invalid purchase_token format in guest_purchase payload', payload=payload)
-            await message.answer('❌ Ошибка: неверный формат платежа.')
+            await message.answer(texts.t('STARS_GIFT_INVALID_PAYMENT', '❌ Ошибка: неверный формат платежа.'))
             return
 
         # Verify Stars amount matches expected price (±5% tolerance for conversion rounding)
@@ -398,7 +432,7 @@ async def _handle_guest_purchase_payment(
                     expected_stars=expected_stars,
                     purchase_id=existing.id,
                 )
-                await message.answer('❌ Сумма оплаты не совпадает с ожидаемой.')
+                await message.answer(texts.t('STARS_GIFT_AMOUNT_MISMATCH', '❌ Сумма оплаты не совпадает с ожидаемой.'))
                 return
 
         # Calculate kopeks from stars
@@ -422,9 +456,10 @@ async def _handle_guest_purchase_payment(
 
         if result is True:
             await message.answer(
-                '🎁 <b>Подарочная подписка успешно оплачена!</b>\n\n'
-                f'⭐ Потрачено: {stars_amount} Stars\n\n'
-                'Подарок будет доставлен получателю.',
+                texts.t(
+                    'STARS_GIFT_PAID',
+                    '🎁 <b>Подарочная подписка успешно оплачена!</b>\n\n⭐ Потрачено: {stars} Stars\n\nПодарок будет доставлен получателю.',
+                ).format(stars=stars_amount),
                 parse_mode='HTML',
             )
             logger.info(
@@ -435,17 +470,21 @@ async def _handle_guest_purchase_payment(
             )
         else:
             logger.error('try_fulfill_guest_purchase returned None for Stars gift', payload=payload)
-            await message.answer('❌ Ошибка обработки платежа. Обратитесь в поддержку.')
+            await message.answer(
+                texts.t('STARS_GIFT_PROCESSING_ERROR', '❌ Ошибка обработки платежа. Обратитесь в поддержку.')
+            )
 
     except Exception as e:
         logger.error('Error handling guest purchase Stars payment', error=e, exc_info=True)
         await message.answer(
-            '❌ Произошла ошибка при обработке подарочной подписки. Обратитесь в поддержку.',
+            texts.t(
+                'STARS_GIFT_ERROR', '❌ Произошла ошибка при обработке подарочной подписки. Обратитесь в поддержку.'
+            ),
         )
 
 
 async def handle_pre_checkout_query(query: types.PreCheckoutQuery):
-    texts = get_texts(DEFAULT_LANGUAGE)
+    texts = get_texts(getattr(query.from_user, 'language_code', None) or DEFAULT_LANGUAGE)
 
     try:
         logger.info(
@@ -510,7 +549,7 @@ async def handle_pre_checkout_query(query: types.PreCheckoutQuery):
 
 
 async def handle_successful_payment(message: types.Message, db: AsyncSession, state: FSMContext, **kwargs):
-    texts = get_texts(DEFAULT_LANGUAGE)
+    texts = get_texts(getattr(message.from_user, 'language_code', None) or DEFAULT_LANGUAGE)
 
     try:
         payment = message.successful_payment

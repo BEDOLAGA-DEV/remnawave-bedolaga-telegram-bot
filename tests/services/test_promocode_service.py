@@ -79,9 +79,9 @@ async def test_activate_promo_group_promocode_success(
     # Verify usage recorded
     create_usage_mock.assert_awaited_once_with(mock_db_session, sample_promocode_promo_group.id, sample_user.id)
 
-    # Verify counter incremented: production uses an atomic SQL UPDATE that does
-    # not mutate the in-memory fixture, so read the +1 value from the returned envelope.
-    assert result['promocode']['current_uses'] == 21
+    # The response reports the refreshed database counter without adding another
+    # synthetic use. Real SQL increments and compensation are covered on PostgreSQL.
+    assert result['promocode']['current_uses'] == sample_promocode_promo_group.current_uses
     mock_db_session.commit.assert_awaited()
 
 
@@ -465,7 +465,9 @@ async def test_activate_trial_promocode_uses_all_available_squads_when_tariff_ha
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', AsyncMock(return_value=False))
     monkeypatch.setattr('app.database.crud.promocode.count_user_recent_activations', AsyncMock(return_value=0))
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=None))
-    monkeypatch.setattr('app.services.promocode_service.create_promocode_use', AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        'app.services.promocode_service.create_promocode_use', AsyncMock(return_value=SimpleNamespace(id=1))
+    )
     monkeypatch.setattr('app.database.crud.tariff.get_tariff_by_id', AsyncMock(return_value=trial_tariff))
     monkeypatch.setattr('app.database.crud.tariff.get_trial_tariff', AsyncMock(return_value=None))
     monkeypatch.setattr(
@@ -555,7 +557,9 @@ async def test_subscription_days_promo_keeps_trial_a_trial(monkeypatch):
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', AsyncMock(return_value=False))
     monkeypatch.setattr('app.database.crud.promocode.count_user_recent_activations', AsyncMock(return_value=0))
     monkeypatch.setattr('app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=trial_sub))
-    monkeypatch.setattr('app.services.promocode_service.create_promocode_use', AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        'app.services.promocode_service.create_promocode_use', AsyncMock(return_value=SimpleNamespace(id=1))
+    )
     extend_mock = AsyncMock(return_value=trial_sub)
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', extend_mock)
 
@@ -634,7 +638,9 @@ async def test_subscription_days_promo_revives_expired_sub_in_multi_tariff(monke
     monkeypatch.setattr(
         'app.database.crud.subscription.get_all_subscriptions_by_user_id', AsyncMock(return_value=[expired_sub])
     )
-    monkeypatch.setattr('app.services.promocode_service.create_promocode_use', AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        'app.services.promocode_service.create_promocode_use', AsyncMock(return_value=SimpleNamespace(id=1))
+    )
     extend_mock = AsyncMock(return_value=expired_sub)
     monkeypatch.setattr('app.services.promocode_service.extend_subscription', extend_mock)
 
@@ -696,7 +702,9 @@ async def test_activation_aborts_when_usage_slot_cannot_be_claimed(monkeypatch):
     monkeypatch.setattr('app.services.promocode_service.get_promocode_by_code', AsyncMock(return_value=promocode))
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', AsyncMock(return_value=False))
     monkeypatch.setattr('app.database.crud.promocode.count_user_recent_activations', AsyncMock(return_value=0))
-    monkeypatch.setattr('app.services.promocode_service.create_promocode_use', AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        'app.services.promocode_service.create_promocode_use', AsyncMock(return_value=SimpleNamespace(id=1))
+    )
     monkeypatch.setattr('app.services.promocode_service.add_user_balance', add_balance)
 
     service = PromoCodeService()
@@ -755,7 +763,9 @@ async def test_trial_promo_refunds_instead_of_fake_success_when_subscription_exi
     monkeypatch.setattr('app.services.promocode_service.get_promocode_by_code', AsyncMock(return_value=promocode))
     monkeypatch.setattr('app.services.promocode_service.check_user_promocode_usage', AsyncMock(return_value=False))
     monkeypatch.setattr('app.database.crud.promocode.count_user_recent_activations', AsyncMock(return_value=0))
-    monkeypatch.setattr('app.services.promocode_service.create_promocode_use', AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        'app.services.promocode_service.create_promocode_use', AsyncMock(return_value=SimpleNamespace(id=1))
+    )
     monkeypatch.setattr(
         'app.services.promocode_service.get_subscription_by_user_id', AsyncMock(return_value=existing_sub)
     )

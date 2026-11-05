@@ -101,7 +101,7 @@ def test_resolve_hwid_device_limit_for_payload_returns_subscription_limit(monkey
     assert resolve_hwid_device_limit_for_payload(subscription) == 42
 
 
-def test_resolve_hwid_device_limit_for_payload_ignores_non_positive(monkeypatch):
+def test_resolve_hwid_device_limit_for_payload_explicitly_removes_limit(monkeypatch):
     subscription = DummySubscription(device_limit=0)
 
     monkeypatch.setattr(
@@ -111,7 +111,7 @@ def test_resolve_hwid_device_limit_for_payload_ignores_non_positive(monkeypatch)
     )
 
     assert resolve_hwid_device_limit(subscription) is None
-    assert resolve_hwid_device_limit_for_payload(subscription) is None
+    assert resolve_hwid_device_limit_for_payload(subscription) == 0
 
 
 def test_resolve_hwid_device_limit_for_payload_prefers_forced_limit(monkeypatch):
@@ -238,7 +238,7 @@ def test_zero_device_limit_is_not_a_warning(monkeypatch):
     )
 
     with capture_logs() as records:
-        assert resolve_hwid_device_limit_for_payload(subscription) is None
+        assert resolve_hwid_device_limit_for_payload(subscription) == 0
 
     noisy = [record for record in records if record['log_level'] in {'warning', 'error'}]
     assert noisy == []

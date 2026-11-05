@@ -136,8 +136,11 @@ logger.debug(f'Webhook payload: {webhook_data}')
 # Открыть только необходимые порты
 ufw allow 80/tcp   # HTTP (redirect to HTTPS)
 ufw allow 443/tcp  # HTTPS
-ufw deny 8080/tcp  # Unified FastAPI сервер доступен только из внутренней сети
 ```
+
+⚠️ **Порт веб-API (`8080`) ufw не закрывает.** Docker публикует порт правилом DNAT в `nat/PREROUTING`, и дальше пакет идёт в контейнер через цепочку `FORWARD` (`DOCKER-USER`, `DOCKER-FORWARD`), а правила ufw стоят в `INPUT`. Правило `ufw deny 8080/tcp` видно в `ufw status`, но не срабатывает ни разу — порт остаётся открытым. Подробнее — [Docker and ufw](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-and-ufw).
+
+Поэтому порт закрывается адресом публикации: `docker-compose.yml` публикует его на `${WEB_API_BIND:-127.0.0.1}` — только для самого сервера. Reverse-proxy в docker-сети бота ходит к нему по имени сервиса (`bot:8080`), прокси на самом хосте — по `127.0.0.1:8080`. Проверка: `ss -tlnp | grep 8080` показывает `127.0.0.1`, а запрос к `http://<IP сервера>:8080/health` с другой машины не проходит.
 
 ### 📊 Мониторинг безопасности
 

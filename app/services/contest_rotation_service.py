@@ -1,4 +1,6 @@
 import asyncio
+import html
+from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -16,6 +18,7 @@ from app.database.crud.contest import (
 )
 from app.database.database import AsyncSessionLocal
 from app.database.models import ContestTemplate, SubscriptionStatus, User
+from app.localization.texts import get_texts
 from app.services.contests.enums import GameType, PrizeType
 from app.services.contests.games import get_game_strategy
 
@@ -261,34 +264,35 @@ class ContestRotationService:
         if not self.bot:
             return
 
-        from app.localization.texts import get_texts
+        def render_announcement(language: str) -> str:
+            texts = get_texts(language)
 
-        texts = get_texts('ru')  # Default to ru for announcements
+            # Format prize display based on prize_type
+            prize_type = tpl.prize_type or PrizeType.DAYS.value
+            prize_value = html.escape(str(tpl.prize_value or '1'))
 
-        # Format prize display based on prize_type
-        prize_type = tpl.prize_type or PrizeType.DAYS.value
-        prize_value = tpl.prize_value or '1'
+            if prize_type == PrizeType.DAYS.value:
+                prize_display = f'{prize_value} {texts.t("DAYS", "дн. подписки")}'
+            elif prize_type == PrizeType.BALANCE.value:
+                prize_display = texts.t('CONTEST_PRIZE_KOPEKS', '{value} коп.').format(value=prize_value)
+            elif prize_type == PrizeType.CUSTOM.value:
+                prize_display = prize_value
+            else:
+                prize_display = prize_value
 
-        if prize_type == PrizeType.DAYS.value:
-            prize_display = f'{prize_value} {texts.t("DAYS", "дн. подписки")}'
-        elif prize_type == PrizeType.BALANCE.value:
-            prize_display = f'{prize_value} коп.'
-        elif prize_type == PrizeType.CUSTOM.value:
-            prize_display = prize_value
-        else:
-            prize_display = prize_value
-
-        text = (
-            f'🎲 {texts.t("CONTEST_START_ANNOUNCEMENT", "Стартует игра")}: <b>{tpl.name}</b>\n'
-            f'{texts.t("CONTEST_PRIZE", "Приз")}: {prize_display} • {texts.t("CONTEST_WINNERS", "Победителей")}: {tpl.max_winners}\n'
-            f'{texts.t("CONTEST_ATTEMPTS", "Попыток/польз")}: {tpl.attempts_per_user}\n\n'
-            f'{texts.t("CONTEST_ELIGIBILITY", "Участвовать могут только с активной или триальной подпиской")}.\n'
-            f'💡 <b>{texts.t("REMINDER", "Напоминание")}:</b> {texts.t("CONTEST_REMINDER_TEXT", "Не забудьте участвовать в конкурсах для получения бонусов")}!'
-        )
+            return (
+                f'🎲 {texts.t("CONTEST_START_ANNOUNCEMENT", "Стартует игра")}: <b>{html.escape(tpl.name)}</b>\n'
+                f'{texts.t("CONTEST_PRIZE", "Приз")}: {prize_display} • {texts.t("CONTEST_WINNERS", "Победителей")}: {tpl.max_winners}\n'
+                f'{texts.t("CONTEST_ATTEMPTS", "Попыток/польз")}: {tpl.attempts_per_user}\n\n'
+                f'{texts.t("CONTEST_ELIGIBILITY", "Участвовать могут только с активной или триальной подпиской")}.\n'
+                f'💡 <b>{texts.t("REMINDER", "Напоминание")}:</b> {texts.t("CONTEST_REMINDER_TEXT", "Не забудьте участвовать в конкурсах для получения бонусов")}!'
+            )
 
         await asyncio.gather(
-            self._send_channel_announce(text),
-            self._broadcast_to_users(text),
+            self._send_channel_announce(render_announcement(settings.DEFAULT_LANGUAGE)),
+            self._broadcast_to_users(
+                render_announcement(settings.DEFAULT_LANGUAGE), render_message=render_announcement
+            ),
             return_exceptions=True,
         )
 
@@ -316,7 +320,12 @@ class ContestRotationService:
         if bot_username:
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text='🎲 Играть', url=f'https://t.me/{bot_username}?start=contests')]
+                    [
+                        InlineKeyboardButton(
+                            text=get_texts(settings.DEFAULT_LANGUAGE).t('CONTEST_PLAY_BUTTON', '🎲 Играть'),
+                            url=f'https://t.me/{bot_username}?start=contests',
+                        )
+                    ]
                 ]
             )
 
@@ -330,7 +339,7 @@ class ContestRotationService:
         except Exception as exc:
             logger.error('Не удалось отправить анонс в канал', channel_id=channel_id, exc=exc)
 
-    async def _broadcast_to_users(self, text: str) -> None:
+    async def _broadcast_to_users(self, text: str, *, render_message: Callable[[str], str] | None = None) -> None:
         """Отправляет анонс всем пользователям с активной/триальной подпиской."""
         if not self.bot or not settings.is_notifications_enabled():
             return
@@ -339,10 +348,6 @@ class ContestRotationService:
             batch_size = 500
             offset = 0
             sent = failed = 0
-
-            keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text='🎲 Играть', callback_data='contests_menu')]]
-            )
 
             while True:
                 async with AsyncSessionLocal() as db:
@@ -363,11 +368,22 @@ class ContestRotationService:
 
                     if not is_promo_offers_enabled(u):
                         return
+                    language = getattr(u, 'language', None) or settings.DEFAULT_LANGUAGE
+                    texts = get_texts(language)
+                    keyboard = InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text=texts.t('CONTEST_PLAY_BUTTON', '🎲 Играть'), callback_data='contests_menu'
+                                )
+                            ]
+                        ]
+                    )
                     async with semaphore:
                         try:
                             await self.bot.send_message(
                                 chat_id=u.telegram_id,
-                                text=text,
+                                text=render_message(language) if render_message else text,
                                 disable_web_page_preview=True,
                                 reply_markup=keyboard,
                             )

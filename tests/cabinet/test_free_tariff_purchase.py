@@ -114,6 +114,63 @@ async def test_free_tariff_can_be_purchased(monkeypatch, panel):
         assert subscription.status == SubscriptionStatus.ACTIVE.value
 
 
+@pytest.mark.parametrize('old_devices', [1, 5])
+@pytest.mark.parametrize('trial', [False, True])
+async def test_unlimited_tariff_clears_old_device_cap_without_addon_charge(monkeypatch, panel, old_devices, trial):
+    from app.cabinet.routes.subscription_modules.purchase import _build_tariff_response, purchase_tariff
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        user = await _seed_free_subscription(db, {'30': 0})
+        tariff = await db.get(Tariff, 1)
+        subscription = await db.get(Subscription, 10)
+        tariff.device_limit = 0
+        tariff.device_price_kopeks = 5000
+        subscription.device_limit = old_devices
+        subscription.is_trial = trial
+        subscription.status = SubscriptionStatus.TRIAL.value if trial else SubscriptionStatus.ACTIVE.value
+        user.balance_kopeks = 100000
+        await db.commit()
+
+        options = await _build_tariff_response(db, tariff, user=user, subscription=subscription)
+        assert options['device_limit'] == 0
+        assert options['extra_devices_count'] == 0
+
+        response = await purchase_tariff(TariffPurchaseRequest(tariff_id=1, period_days=30), user, db)
+
+        assert response['success'] is True
+        await db.refresh(subscription)
+        await db.refresh(user)
+        assert subscription.device_limit == 0
+        assert user.balance_kopeks == 100000
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('trial', [False, True])
+async def test_unlimited_tariff_checkout_on_postgres(postgres_database, monkeypatch, panel, trial):
+    from app.cabinet.routes.subscription_modules.purchase import purchase_tariff
+    from tests.fixtures.postgres_db import postgres_session
+
+    async with postgres_session(postgres_database, TABLES) as db:
+        user = await _seed_free_subscription(db, {'30': 0})
+        tariff = await db.get(Tariff, 1)
+        subscription = await db.get(Subscription, 10)
+        tariff.device_limit = 0
+        tariff.device_price_kopeks = 5000
+        subscription.device_limit = 5
+        subscription.is_trial = trial
+        subscription.status = SubscriptionStatus.TRIAL.value if trial else SubscriptionStatus.ACTIVE.value
+        user.balance_kopeks = 100000
+        await db.commit()
+
+        response = await purchase_tariff(TariffPurchaseRequest(tariff_id=1, period_days=30), user, db)
+
+        assert response['success'] is True
+        await db.refresh(subscription)
+        await db.refresh(user)
+        assert subscription.device_limit == 0
+        assert user.balance_kopeks == 100000
+
+
 @pytest.mark.asyncio
 async def test_unpriced_period_is_still_rejected(monkeypatch, panel):
     """Цена периода не проставлена (None) — это как раз неверная настройка."""

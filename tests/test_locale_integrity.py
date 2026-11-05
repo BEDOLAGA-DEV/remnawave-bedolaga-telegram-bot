@@ -128,3 +128,24 @@ def test_t_calls_with_static_default_exist_in_ru(locales):
 )
 def test_invite_only_keys_exist_in_every_locale(locales, key):
     assert all(key in locales[lang] for lang in LANGS)
+
+
+def test_admin_keyboard_wrapper_keys_exist_in_all_locales(locales):
+    """The _t(texts, key, fallback) wrapper must not bypass the locale guard."""
+    path = APP_DIR / 'keyboards' / 'admin.py'
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    keys = {
+        node.args[1].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == '_t'
+        and len(node.args) > 1
+        and isinstance(node.args[1], ast.Constant)
+        and isinstance(node.args[1].value, str)
+    }
+    from app.keyboards.admin import BROADCAST_BUTTONS
+
+    keys.update(config['text_key'] for config in BROADCAST_BUTTONS.values())
+    for language in LANGS:
+        assert not (keys - locales[language].keys()), (language, sorted(keys - locales[language].keys()))

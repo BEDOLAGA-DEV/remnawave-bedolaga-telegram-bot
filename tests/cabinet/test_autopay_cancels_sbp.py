@@ -19,6 +19,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.cabinet.routes.subscription_modules import autopay as route
 from app.cabinet.schemas.subscription import AutopayUpdateRequest
 from app.database.models import User
@@ -134,3 +136,14 @@ async def test_enable_autopay_rejected_for_trial_does_not_cancel_sbp(monkeypatch
 
     mock_cancel.assert_not_awaited()
     db.commit.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
+    """These scenarios have no CisPay consent; live-agreement guards use real PostgreSQL tests."""
+    from unittest.mock import AsyncMock
+
+    from app.services import cispay_recurrent_guard
+
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_conflicting_cispay', AsyncMock(return_value=False))

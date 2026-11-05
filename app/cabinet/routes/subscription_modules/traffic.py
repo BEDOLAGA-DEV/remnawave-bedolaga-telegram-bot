@@ -168,8 +168,8 @@ async def purchase_traffic(
             detail='Subscription purchases are restricted for this account',
         )
 
-    from app.database.crud.subscription import add_subscription_traffic
     from app.database.crud.tariff import get_tariff_by_id
+    from app.services.traffic_purchase_service import add_subscription_traffic
     from app.utils.pricing_utils import calculate_prorated_price
 
     subscription = await resolve_subscription(db, user, subscription_id)
@@ -280,6 +280,13 @@ async def purchase_traffic(
 
     # Lock user row to prevent TOCTOU on promo-offer state
     from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+    try:
+        subscription, accounting_panel = await prepare_traffic_purchase(db, subscription, requested_gb=request.gb)
+    except Exception as error:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail='Traffic accounting is temporarily unavailable') from error
 
     user = await lock_user_for_pricing(db, user.id)
 
@@ -342,20 +349,32 @@ async def purchase_traffic(
         traffic_description = f'Докупка {request.gb} ГБ трафика'
 
     # Списываем баланс
-    success = await subtract_user_balance(db, user, final_price, traffic_description)
+    success = await subtract_user_balance(db, user, final_price, traffic_description, commit=False)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Failed to charge balance',
         )
 
-    # Добавляем трафик (add_subscription_traffic обновляет purchased_traffic_gb, traffic_reset_at и коммитит)
-    await add_subscription_traffic(db, subscription, request.gb)
+    # Выдача пакета и его остатка фиксируется вместе со списанием.
+    await add_subscription_traffic(db, subscription, request.gb, panel=accounting_panel, commit=False)
 
     # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
     from app.database.crud.subscription import reactivate_subscription
 
-    await reactivate_subscription(db, subscription)
+    await reactivate_subscription(db, subscription, commit=False)
+    payment_transaction = await create_transaction(
+        db=db,
+        user_id=user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=final_price,
+        description=traffic_description,
+        commit=False,
+    )
+    await db.commit()
+    from app.services.traffic_purchase_service import finish_traffic_purchase
+
+    await finish_traffic_purchase(db, subscription, payment_transaction)
 
     # Синхронизируем с RemnaWave с ограничением по времени: товар (трафик) уже
     # зафиксирован в БД выше, и медленная/недоступная панель не должна держать
@@ -388,15 +407,6 @@ async def purchase_traffic(
             user_id=user.id,
             action='create' if _should_create else 'update',
         )
-
-    # Создаём транзакцию
-    await create_transaction(
-        db=db,
-        user_id=user.id,
-        type=TransactionType.SUBSCRIPTION_PAYMENT,
-        amount_kopeks=final_price,
-        description=traffic_description,
-    )
 
     await db.refresh(user)
     await db.refresh(subscription)
@@ -596,6 +606,12 @@ async def switch_traffic_package(
             detail='Traffic management is only available for paid subscriptions',
         )
 
+    from app.services.traffic_purchase_service import prepare_user_tariff_switch
+
+    subscription, accounting_panel = await prepare_user_tariff_switch(db, subscription)
+    if subscription.user_id != user.id or subscription.is_trial:
+        raise HTTPException(status_code=403, detail='Traffic management is unavailable for this subscription')
+    ensure_subscription_has_tariff(subscription)
     current_traffic = subscription.traffic_limit_gb or 0
     new_traffic = request.gb
 
@@ -620,6 +636,7 @@ async def switch_traffic_package(
     current_price = current_pkg['price'] if current_pkg else 0
     new_price = new_pkg['price']
 
+    payment_transaction = None
     if new_price > current_price:
         # Upgrade - charge difference
         price_diff = new_price - current_price
@@ -646,7 +663,7 @@ async def switch_traffic_package(
 
         # Charge balance
         description = f'Traffic upgrade from {current_traffic}GB to {new_traffic}GB'
-        success = await subtract_user_balance(db, user, final_price, description)
+        success = await subtract_user_balance(db, user, final_price, description, commit=False)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -654,12 +671,13 @@ async def switch_traffic_package(
             )
 
         # Create transaction
-        await create_transaction(
+        payment_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=final_price,
             description=description,
+            commit=False,
         )
 
         charged = final_price
@@ -677,10 +695,23 @@ async def switch_traffic_package(
     subscription.purchased_traffic_gb = 0  # Reset purchased traffic on switch
     subscription.traffic_reset_at = None  # Reset traffic reset date
     subscription.updated_at = datetime.now(UTC)
+    if accounting_panel is not None:
+        from uuid import uuid4
+
+        from app.services.traffic_accounting_service import change_managed_tariff_locked
+
+        operation = str(payment_transaction.id) if payment_transaction is not None else uuid4().hex
+        await change_managed_tariff_locked(
+            db, subscription, accounting_panel, operation_key=f'classic-traffic:{operation}', reset_base=False
+        )
     await db.commit()
+    from app.services.traffic_purchase_service import finish_traffic_purchase
+
+    await finish_traffic_purchase(db, subscription, payment_transaction)
 
     # Sync with RemnaWave (time-bounded — see REMNAWAVE_SYNC_TIMEOUT; product is
     # already committed, defer slow syncs to remnawave_retry_queue).
+    _should_create = False
     try:
         subscription_service = SubscriptionService()
         _should_create = await should_create_panel_account(db, subscription, user)
@@ -753,6 +784,8 @@ async def refresh_traffic(
     Refresh traffic usage from RemnaWave panel.
     Rate limited to 1 request per 60 seconds.
     """
+    from .helpers import _load_traffic_accounting_fields
+
     subscription = await resolve_subscription(db, user, subscription_id)
     if not subscription:
         raise HTTPException(
@@ -784,6 +817,7 @@ async def refresh_traffic(
                 'rate_limited': True,
                 'retry_after_seconds': TRAFFIC_REFRESH_RATE_WINDOW,
                 **cached_data,
+                **await _load_traffic_accounting_fields(db, subscription),
             }
 
         raise HTTPException(
@@ -794,6 +828,22 @@ async def refresh_traffic(
 
     # Fetch traffic from RemnaWave
     try:
+        service = SubscriptionService()
+        if await service._persisted_traffic_mode(db, subscription) in {'managed', 'migrating'}:
+            refreshed = await service.sync_subscription_usage(db, subscription)
+            if not refreshed:
+                # A failed observation must not leave partial pending grants in this request.
+                await db.rollback()
+                subscription = await resolve_subscription(db, user, subscription_id)
+            traffic_data = await _load_traffic_accounting_fields(db, subscription)
+            traffic_cache_key = cache_key('traffic', cache_suffix)
+            await cache.set(traffic_cache_key, traffic_data, TRAFFIC_CACHE_TTL)
+            return {
+                'success': True,
+                'cached': False,
+                'source': 'remnawave' if refreshed else 'database',
+                **traffic_data,
+            }
         remnawave_service = RemnaWaveService()
 
         # Resolve panel user id for traffic lookup
@@ -829,6 +879,7 @@ async def refresh_traffic(
                 'cached': False,
                 'source': 'database',
                 **traffic_data,
+                **await _load_traffic_accounting_fields(db, subscription),
             }
 
         # Update subscription with fresh data
@@ -855,6 +906,8 @@ async def refresh_traffic(
             'lifetime_used_bytes': traffic_stats.get('lifetime_used_traffic_bytes', 0),
             'lifetime_used_gb': round(traffic_stats.get('lifetime_used_traffic_gb', 0), 2),
         }
+
+        traffic_data.update(await _load_traffic_accounting_fields(db, subscription))
 
         # Cache the result
         traffic_cache_key = cache_key('traffic', cache_suffix)
