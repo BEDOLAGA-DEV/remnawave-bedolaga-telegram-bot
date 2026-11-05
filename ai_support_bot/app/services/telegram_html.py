@@ -4,6 +4,20 @@ from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 
+def _client_download_link(url: str) -> str:
+    try:
+        parsed = urlsplit(url if '://' in url else f'https://{url}')
+        if (
+            parsed.scheme.lower() in {'http', 'https'}
+            and parsed.hostname in {'happ.agency', 'www.happ.agency'}
+            and not parsed.username
+        ):
+            return 'https://happ.su/'
+    except ValueError:
+        pass
+    return url
+
+
 def _bot_deep_link(url: str) -> str:
     if re.fullmatch(r'https://t\.me/SligVPN_bot/?', url, flags=re.IGNORECASE):
         return 'https://t.me/SligVPN_bot?start=ai_support'
@@ -25,6 +39,9 @@ def _is_service_bot_url(url: str) -> bool:
 def _link_in_text(match: re.Match, inside_anchor: bool = False) -> str:
     original = match.group()
     url = original.rstrip('.,;!):]')
+    canonical = _client_download_link(url)
+    if canonical != url:
+        return canonical + escape(original[len(url):], quote=False)
     if not _is_service_bot_url(url):
         return escape(original, quote=False)
     label = 'https://t.me/SligVPN_bot'
@@ -44,7 +61,7 @@ class _TelegramHTML(HTMLParser):
             self.parts.append(f'<{tag}>')
             self.stack.append(tag)
         elif tag == 'a':
-            href = _bot_deep_link(dict(attrs).get('href') or '')
+            href = _bot_deep_link(_client_download_link(dict(attrs).get('href') or ''))
             try:
                 parsed = urlsplit(href)
                 valid = parsed.scheme == 'https' and parsed.hostname and not parsed.username and not any(ord(c) < 32 for c in href)
@@ -67,7 +84,11 @@ class _TelegramHTML(HTMLParser):
 
     def handle_data(self, data):
         offset = 0
-        for match in re.finditer(r'https://[^\s<>\"\']+', data, flags=re.IGNORECASE):
+        pattern = (
+            r'https?://[^\s<>\"\']+'
+            r'|(?<![\w@/.:?=&%\-])(?:www\.)?happ\.agency(?![\w.\-])(?:[/?#][^\s<>\"\']*)?'
+        )
+        for match in re.finditer(pattern, data, flags=re.IGNORECASE):
             self.parts.append(escape(data[offset:match.start()], quote=False))
             self.parts.append(_link_in_text(match, inside_anchor='a' in self.stack or 'code' in self.stack))
             offset = match.end()

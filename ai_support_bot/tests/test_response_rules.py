@@ -38,6 +38,38 @@ def test_telegram_html_preserves_safe_clickable_links():
     assert sanitize_telegram_html('<a href="https://web.slig.app/balance">Баланс</a>') == '<a href="https://web.slig.app/balance">Баланс</a>'
 
 
+@pytest.mark.parametrize('url', [
+    'happ.agency', 'HAPP.AGENCY', 'www.happ.agency',
+    'https://happ.agency', 'http://www.happ.agency/download?platform=windows',
+    'https://happ.agency/download#windows',
+])
+def test_wrong_happ_download_domain_is_replaced_in_text_and_anchor(url):
+    assert sanitize_telegram_html(f'Скачайте Happ: {url}') == 'Скачайте Happ: https://happ.su/'
+    assert sanitize_telegram_html(f'<a href="{url}">{url}</a>') == (
+        '<a href="https://happ.su/">https://happ.su/</a>'
+    )
+    assert sanitize_telegram_html(f'<a href="{url}">Скачать Happ</a>') == (
+        '<a href="https://happ.su/">Скачать Happ</a>'
+    )
+
+
+def test_happ_replacement_keeps_sentence_punctuation():
+    assert sanitize_telegram_html('Скачайте (https://happ.agency/download).') == (
+        'Скачайте (https://happ.su/).'
+    )
+
+
+@pytest.mark.parametrize('text', [
+    'https://happ.su/', 'https://happ.info/',
+    'https://web.slig.app/subscriptions?token=happ.agency',
+    'https://example.com/happ.agency/download',
+    'https://happ.agency.example.com/download',
+    'happ.agency.example.com', 'contact@happ.agency',
+])
+def test_happ_replacement_preserves_other_links_and_addresses(text):
+    assert sanitize_telegram_html(text) == text
+
+
 @pytest.mark.parametrize('url', ['javascript:alert(1)', 'https://user:password@example.com', 'file:///etc/passwd'])
 def test_telegram_html_removes_unsafe_links(url):
     assert sanitize_telegram_html(f'<a href="{url}">Текст</a>') == 'Текст'

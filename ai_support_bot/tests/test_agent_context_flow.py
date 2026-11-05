@@ -907,12 +907,16 @@ async def test_existing_database_adds_multiple_attachment_column_on_startup(flow
     'Для скачивания в апп стор нет ни incy, ни happ. Есть ли веб версия? Как подключиться к впн без приложения?',
     'В AppStore Incy недоступен в России',
 ])
-async def test_missing_ios_clients_offer_belarus_store_region(flow, monkeypatch, question):
+async def test_missing_ios_clients_offer_app_store_region_instructions(flow, monkeypatch, question):
     captured, agent_mod, Session = flow
     monkeypatch.setattr(agent_mod, 'build_user_context', AsyncMock(side_effect=AssertionError('Unnecessary account read')))
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, question)
-    assert 'Беларусь' in result['answer']
+    assert 'Казахстан или США' in result['answer']
+    assert 'иконку профиля' in result['answer']
+    assert '«Нет», если этот вариант доступен' in result['answer']
+    assert '294J+W6' in result['answer']
+    assert 'значения не проверены' in result['answer']
     assert 'Страна/регион' in result['answer']
     assert 'https://support.apple.com/ru-ru/118283' in result['answer']
     assert 'позже' not in result['answer']
