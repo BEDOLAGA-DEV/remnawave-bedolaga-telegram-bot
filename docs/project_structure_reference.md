@@ -548,8 +548,8 @@
   Классы: `PromoGroupInfo`, `ServerListItem`, `ServerListResponse`, `ServerDetailResponse`, `ServerUpdateRequest`, `ServerToggleResponse`, `ServerTrialToggleResponse`, `ServerStatsResponse`, `ServerSyncResponse`, `ServerSyncRequest`
   Функции: нет
 - `app/cabinet/schemas/subscription.py` — Python-модуль
-  Классы: не разобран (IndentationError)
-  Функции: не разобраны
+  Классы: `ServerInfo`, `TrafficPurchaseInfo`, `PremiumTrafficInfo`, `TrafficAccountingData`, `SubscriptionData`, `SubscriptionStatusResponse`, `RenewalOptionResponse`, `RenewalRequest`, `TrafficPackageResponse`, `PremiumTrafficPackage`, `PremiumTrafficOptionsResponse`, `PremiumTrafficPurchaseRequest`, `TrafficPurchaseRequest`, `DevicePurchaseRequest`, `AutopayUpdateRequest`, `TrialActivateRequest`, `TrialInfoResponse`, `PurchaseSelectionRequest`, `PurchasePreviewRequest`, `TariffPurchasePreviewRequest`, `TariffPurchaseRequest`, `TariffCheckoutRequest` (1 методов)
+  Функции: нет
 - `app/cabinet/schemas/tariffs.py` — Python-модуль
   Классы: `PeriodPrice` (1 методов), `ServerTrafficLimit`, `ServerInfo`, `PromoGroupInfo`, `TariffListItem`, `TariffListResponse`, `TariffDetailResponse`, `ExternalSquadInfoResponse`, `TariffCreateRequest` (1 методов), `TariffUpdateRequest` (1 методов), `TariffSortOrderRequest`, `TariffToggleResponse`, `TariffTrialResponse`, `TariffStatsResponse`, `SyncSquadsResponse`
   Функции: нет
