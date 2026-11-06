@@ -222,3 +222,24 @@ async def test_tagged_main_converts_its_trial_without_disabling_addon_trial(monk
         assert [item.id for item in killed] == [main_trial.id]
         await db.refresh(addon_trial)
         assert addon_trial.status == SubscriptionStatus.TRIAL.value
+
+
+@pytest.mark.asyncio
+async def test_trial_conversion_does_not_hide_another_live_main(monkeypatch):
+    """Даже допустимый trial не маскирует вторую живую Main-подписку."""
+    async with memory_session(monkeypatch, TABLES) as db:
+        trial_tariff = Tariff(name='Main Trial', entitlement_family='main')
+        paid_tariff = Tariff(name='Main Paid', entitlement_family='main')
+        target = Tariff(name='Main Upgrade', entitlement_family='main')
+        db.add_all([trial_tariff, paid_tariff, target])
+        await db.flush()
+
+        trial = _subscription(69, trial_tariff.id, SubscriptionStatus.TRIAL)
+        paid = _subscription(69, paid_tariff.id, SubscriptionStatus.ACTIVE)
+        db.add_all([trial, paid])
+        await db.flush()
+
+        with pytest.raises(ActiveTariffFamilyConflict, match='смените тариф'):
+            await require_available_entitlement_family(
+                db, user_id=69, tariff_id=target.id, conversion_trial_id=trial.id
+            )
