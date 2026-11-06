@@ -518,7 +518,7 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
             v20=subs_count,
             v21=f'📝 {html.escape(tariff.description)}' if tariff.description else '',
         )
-    ) + f"\n🏷️ Семейство: {html.escape(getattr(tariff, 'entitlement_family', None) or 'не назначено')}"
+    ) + f'\n🏷️ Семейство: {html.escape(getattr(tariff, "entitlement_family", None) or "не назначено")}'
 
 
 @admin_required
