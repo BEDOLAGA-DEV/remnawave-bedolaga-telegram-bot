@@ -1452,7 +1452,11 @@ async def purchase_tariff(
                     connected_squads=squads,
                     paid_traffic_reset=False,
                     reset_used_traffic=reset_used_traffic,
-                    **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase or family_atomic else {}),
+                    **(
+                        {'commit': False}
+                        if is_daily_tariff or device_checkout or managed_purchase or family_atomic
+                        else {}
+                    ),
                 )
             else:
                 # Create new subscription (или конверсия исключённого выше триала)
