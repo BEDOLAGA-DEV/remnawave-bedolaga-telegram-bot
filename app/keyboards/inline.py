@@ -601,7 +601,7 @@ def _build_cabinet_main_menu_keyboard(
     if is_moderator and not is_admin:
         keyboard_rows.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
 
-    keyboard_rows.append([_esim_promo_button()])
+    #keyboard_rows.append([_esim_promo_button()])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
