@@ -2024,6 +2024,7 @@
   "CHANGE_TARIFF_BUTTON": "📦 Тариф",
   "TARIFF_PURCHASE_AFTER_PAYMENT_LINE": "\nПісля оплати: {amount}",
   "TARIFF_PURCHASE_ALREADY_ACTIVE": "Тариф «{name}» вже активний ({days} дн.). Продовжте через «Мої підписки».",
+  "TARIFF_FAMILY_CONFLICT": "❌ У вас уже є активна підписка цієї групи. Змініть її тариф.",
   "TARIFF_PURCHASE_ALREADY_ACTIVE_SUB": "❌ У вас вже є активна підписка на цей тариф",
   "TARIFF_PURCHASE_CART_CORRUPTED": "❌ Дані кошика пошкоджено",
   "TARIFF_PURCHASE_CART_RESTORED": "✅ Кошик відновлено!",
