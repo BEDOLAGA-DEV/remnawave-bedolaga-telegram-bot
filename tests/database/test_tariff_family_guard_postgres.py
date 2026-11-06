@@ -138,17 +138,13 @@ async def test_family_conflict_undoes_wallet_charge_in_same_transaction(postgres
         await first.commit()
 
         original_balance = await second.scalar(select(User.balance_kopeks).where(User.id == user_id))
-        await first.execute(
-            update(User).where(User.id == user_id).values(balance_kopeks=User.balance_kopeks - 250)
-        )
+        await first.execute(update(User).where(User.id == user_id).values(balance_kopeks=User.balance_kopeks - 250))
         first.add(_sub(user_id, premium_id, 'wallet_conflict'))
         with pytest.raises(IntegrityError, match='active entitlement family conflict'):
             await first.flush()
         await first.rollback()
 
         stored_balance = await second.scalar(select(User.balance_kopeks).where(User.id == user_id))
-        stored_subscriptions = (
-            await second.scalars(select(Subscription).where(Subscription.user_id == user_id))
-        ).all()
+        stored_subscriptions = (await second.scalars(select(Subscription).where(Subscription.user_id == user_id))).all()
         assert stored_balance == original_balance
         assert [item.tariff_id for item in stored_subscriptions] == [basic_id]
