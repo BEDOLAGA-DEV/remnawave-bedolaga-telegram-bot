@@ -1027,6 +1027,36 @@ async def purchase_tariff(
         # logging "Тариф уже активен" — the exact production scenario
         # the bot-side fix already closed (commit 5cd53e4c).
         existing_subscription = await _resolve_tariff_purchase_target(db, user, tariff, request)
+        family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(tariff, 'entitlement_family', None))
+        if family_atomic:
+            from app.database.crud.subscription import resolve_trial_conversion_candidate
+            from app.services.tariff_family_policy import (
+                ActiveTariffFamilyConflict,
+                require_available_entitlement_family,
+            )
+
+            conversion = (
+                await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+                if existing_subscription is None or existing_subscription.is_trial
+                else None
+            )
+            try:
+                await require_available_entitlement_family(
+                    db,
+                    user_id=user.id,
+                    tariff_id=tariff.id,
+                    current_subscription_id=(
+                        existing_subscription.id
+                        if existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+                        else None
+                    ),
+                    conversion_trial_id=conversion.id if conversion is not None else None,
+                )
+            except ActiveTariffFamilyConflict as error:
+                raise HTTPException(
+                    status_code=409, detail={'code': 'entitlement_family_conflict', 'message': str(error)}
+                ) from error
+
         if (
             is_daily_tariff
             and existing_subscription is not None
@@ -1216,7 +1246,7 @@ async def purchase_tariff(
         if promo_offer_discount_value > 0:
             description += f' (промо -{promo_offer_discount_percent}%)'
         managed_purchase = getattr(subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
-        atomic_charge = bool(checkout_external_id) or is_daily_tariff or managed_purchase
+        atomic_charge = bool(checkout_external_id) or is_daily_tariff or managed_purchase or family_atomic
         saved_promo = (
             user.promo_offer_discount_percent,
             user.promo_offer_discount_source,
@@ -1245,11 +1275,11 @@ async def purchase_tariff(
                     {'external_id': checkout_external_id, 'is_completed': False, 'commit': False}
                     if checkout_external_id
                     else {'commit': False}
-                    if is_daily_tariff or managed_purchase
+                    if is_daily_tariff or managed_purchase or family_atomic
                     else {}
                 ),
             )
-            if checkout_external_id and not device_checkout and not managed_purchase:
+            if checkout_external_id and not device_checkout and not managed_purchase and not family_atomic:
                 await db.commit()
         except Exception:
             if atomic_charge:
@@ -1270,7 +1300,7 @@ async def purchase_tariff(
             Сбои возврата только логируем (CRITICAL): исходную ошибку покупки
             маскировать нельзя, а двойного списания здесь быть не может.
             """
-            if is_daily_tariff or device_checkout or managed_purchase:
+            if is_daily_tariff or device_checkout or managed_purchase or family_atomic:
                 # Debit/product/ledger were rolled back together.
                 return
             try:
@@ -1421,7 +1451,7 @@ async def purchase_tariff(
                     connected_squads=squads,
                     paid_traffic_reset=False,
                     reset_used_traffic=reset_used_traffic,
-                    **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase else {}),
+                    **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase or family_atomic else {}),
                 )
             else:
                 # Create new subscription (или конверсия исключённого выше триала)
@@ -1455,7 +1485,7 @@ async def purchase_tariff(
                 if device_checkout:
                     subscription.daily_devices_billing_version = 1
                 subscription.is_daily_paused = False
-                if not device_checkout:
+                if not device_checkout and not family_atomic:
                     await db.commit()
                     await db.refresh(subscription)
         except HTTPException:
@@ -1479,6 +1509,11 @@ async def purchase_tariff(
                 detail='Failed to process tariff purchase',
             )
 
+        if family_atomic and _bonus_seconds > 0:
+            subscription.end_date += timedelta(seconds=_bonus_seconds)
+            subscription.pending_panel_expire_at = subscription.end_date
+            _bonus_seconds = 0
+
         if device_checkout:
             if _bonus_seconds > 0:
                 subscription.end_date += timedelta(seconds=_bonus_seconds)
@@ -1496,7 +1531,7 @@ async def purchase_tariff(
                 )
             )
 
-        if checkout_external_id or managed_purchase:
+        if checkout_external_id or managed_purchase or family_atomic:
             transaction.is_completed = True
             transaction.completed_at = datetime.now(UTC)
             await db.commit()
@@ -1523,7 +1558,7 @@ async def purchase_tariff(
                 subscription_id=subscription.id,
             )
 
-        if is_daily_tariff:
+        if is_daily_tariff and not (checkout_external_id or managed_purchase or family_atomic):
             await emit_transaction_side_effects(
                 db,
                 transaction,
