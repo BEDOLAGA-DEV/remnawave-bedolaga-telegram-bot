@@ -607,7 +607,7 @@ def _build_cabinet_main_menu_keyboard(
 
 
 def get_main_menu_keyboard(
-    language: str = DEFAULT_LANGUAGE,
+    language: str = DEFAULT_LANGUAGE,f
     is_admin: bool = False,
     has_had_paid_subscription: bool = False,
     has_active_subscription: bool = False,
@@ -849,7 +849,7 @@ def get_main_menu_keyboard(
     if (not is_admin) and is_moderator:
         keyboard.append([InlineKeyboardButton(text='🧑‍⚖️ Модерация', callback_data='moderator_panel')])
 
-    keyboard.append([_esim_promo_button()])
+    #keyboard.append([_esim_promo_button()])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

@@ -1244,7 +1244,7 @@ class MenuLayoutService:
 
         from app.keyboards.inline import _esim_promo_button
 
-        keyboard_rows.append([_esim_promo_button()])
+        #keyboard_rows.append([_esim_promo_button()])
 
         return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
