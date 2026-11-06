@@ -988,6 +988,7 @@
   "CHANGE_TARIFF_BUTTON": "📦 تعرفه",
   "TARIFF_PURCHASE_AFTER_PAYMENT_LINE": "\nپس از پرداخت: {amount}",
   "TARIFF_PURCHASE_ALREADY_ACTIVE": "تعرفه «{name}» هم‌اکنون فعال است ({days} روز). از طریق «اشتراک‌های من» تمدید کنید.",
+  "TARIFF_FAMILY_CONFLICT": "❌ شما در این گروه تعرفه، اشتراک فعالی دارید. به‌جای خرید جدید، تعرفه اشتراک موجود را تغییر دهید.",
   "TARIFF_PURCHASE_ALREADY_ACTIVE_SUB": "❌ شما هم‌اکنون اشتراک فعالی برای این تعرفه دارید",
   "TARIFF_PURCHASE_CART_CORRUPTED": "❌ داده‌های سبد خرید خراب است",
   "TARIFF_PURCHASE_CART_RESTORED": "✅ سبد خرید بازیابی شد!",
