@@ -124,12 +124,47 @@ def ensure_subscription_has_tariff(subscription: Any) -> None:
         )
 
 
+def _traffic_accounting_response_fields(subscription: Subscription, summary: dict[str, Any]) -> dict[str, Any]:
+    """Project settled quota into public fields without leaking panel ceilings."""
+    fields = {
+        key: summary[key]
+        for key in (
+            'traffic_accounting_mode',
+            'traffic_remaining_gb',
+            'base_traffic_remaining_gb',
+            'next_traffic_refresh_at',
+        )
+    }
+    if summary['traffic_accounting_mode'] == 'managed':
+        limit = subscription.traffic_limit_gb or 0
+        remaining = summary['traffic_remaining_gb']
+        # Nullable remaining is authoritative during a pending mode transition.
+        # Compatibility usage fields must not leak the physical panel counter.
+        used = max(0.0, limit - remaining) if limit and remaining is not None else 0.0
+        fields.update(
+            traffic_limit_gb=limit,
+            traffic_used_gb=round(used, 2),
+            traffic_used_percent=round(min(100, used / limit * 100), 1) if limit else 0,
+            traffic_limit_bytes=int(limit * 1024**3),
+            traffic_used_bytes=int(used * 1024**3),
+            is_unlimited=limit == 0,
+        )
+    return fields
+
+
+async def _load_traffic_accounting_fields(db: AsyncSession, subscription: Subscription) -> dict[str, Any]:
+    from app.services.traffic_accounting_service import traffic_accounting_summary
+
+    return _traffic_accounting_response_fields(subscription, await traffic_accounting_summary(db, subscription.id))
+
+
 def _subscription_to_response(
     subscription: Subscription,
     servers: list[ServerInfo] | None = None,
     tariff_name: str | None = None,
     traffic_purchases: list[dict[str, Any]] | None = None,
     user: User | None = None,
+    traffic_accounting: dict[str, Any] | None = None,
 ) -> SubscriptionResponse:
     """Convert Subscription model to response."""
     now = datetime.now(UTC)
@@ -194,10 +229,10 @@ def _subscription_to_response(
         daily_price_kopeks = getattr(subscription.tariff, 'daily_price_kopeks', None)
         # Ровно то, что списывается каждый день: только скидка группы. Промокод —
         # разовый, при покупке; вкладывать его в «цену за день» было бы обманом.
-        if daily_price_kopeks and daily_price_kopeks > 0 and user:
+        if daily_price_kopeks and daily_price_kopeks > 0:
             from app.services.pricing_engine import PricingEngine
 
-            daily_price_kopeks, _ = PricingEngine.daily_group_price(daily_price_kopeks, user)
+            daily_price_kopeks = PricingEngine.daily_subscription_price(subscription, subscription.tariff, user)
         if not tariff_name:  # Only set if not passed as parameter
             tariff_name = getattr(subscription.tariff, 'name', None)
         traffic_reset_mode = (
@@ -222,7 +257,7 @@ def _subscription_to_response(
     # показывает автоплатёж (правило одно на бота и кабинет).
     requires_tariff_selection = is_legacy_subscription(subscription)
 
-    return SubscriptionResponse(
+    response = SubscriptionResponse(
         id=subscription.id,
         status=actual_status,  # Use actual_status instead of raw status
         is_trial=is_trial_subscription,
@@ -255,3 +290,7 @@ def _subscription_to_response(
         traffic_reset_mode=traffic_reset_mode,
         requires_tariff_selection=requires_tariff_selection,
     )
+    if traffic_accounting is not None:
+        fields = _traffic_accounting_response_fields(subscription, traffic_accounting)
+        response = response.model_copy(update={k: v for k, v in fields.items() if k in type(response).model_fields})
+    return response

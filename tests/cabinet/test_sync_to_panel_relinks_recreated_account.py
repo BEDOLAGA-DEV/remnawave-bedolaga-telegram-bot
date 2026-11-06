@@ -44,6 +44,7 @@ def _panel_user(user_id: int, short_uuid: str):
 def _api() -> AsyncMock:
     """Панель, в которой записанной учётки уже нет."""
     api = AsyncMock()
+    api.get_user_devices_all.return_value = {'total': 0, 'devices': []}
     not_found = RemnaWaveAPIError('User not found', 404, {'errorCode': 'A063'})
     # Клиент на 404 возвращает None, а не бросает — так и записано в журнале issue.
     api.get_user_by_id.return_value = None

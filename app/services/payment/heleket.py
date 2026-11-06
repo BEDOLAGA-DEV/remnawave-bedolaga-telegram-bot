@@ -11,7 +11,8 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database.models import PaymentMethod, TransactionType
+from app.database.models import HeleketPayment, PaymentMethod, TransactionType
+from app.localization.texts import get_texts
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
 
@@ -431,19 +432,29 @@ class HeleketPaymentMixin:
 
                     exchange_rate_value = updated_payment.exchange_rate or 0
                     rate_text = (
-                        f'💱 Курс: 1 RUB = {1 / exchange_rate_value:.4f} {updated_payment.payer_currency}'
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t('PAYMENT_NOTICE_001', '💱 Курс: 1 RUB = {v0:.4f} {v1}')
+                        .format(v0=1 / exchange_rate_value, v1=updated_payment.payer_currency)
                         if exchange_rate_value and updated_payment.payer_currency
                         else None
                     )
 
                     message_lines = [
-                        '✅ <b>Пополнение успешно!</b>',
-                        f'💰 Сумма: {settings.format_price(amount_kopeks)}',
-                        '💳 Способ: Heleket',
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                            'PAYMENT_NOTICE_002', '✅ <b>Пополнение успешно!</b>'
+                        ),
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t('PAYMENT_NOTICE_003', '💰 Сумма: {v0}')
+                        .format(v0=settings.format_price(amount_kopeks)),
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE).t(
+                            'PAYMENT_NOTICE_004', '💳 Способ: Heleket'
+                        ),
                     ]
                     if updated_payment.payer_amount and updated_payment.payer_currency:
                         message_lines.append(
-                            f'🪙 Оплата: {updated_payment.payer_amount} {updated_payment.payer_currency}'
+                            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                            .t('PAYMENT_NOTICE_005', '🪙 Оплата: {v0} {v1}')
+                            .format(v0=updated_payment.payer_amount, v1=updated_payment.payer_currency)
                         )
                     if rate_text:
                         message_lines.append(rate_text)

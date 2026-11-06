@@ -11,21 +11,16 @@ permissions:
 
 jobs:
   pytest:
-    name: pytest (PostgreSQL ${{ matrix.postgres }})
+    name: pytest (PostgreSQL ${{ matrix.postgres }}, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
 
-    # 18 — тот же образ, что и в docker-compose.yml: на нём весь прогон.
-    # 15 — версия до перехода (make pg-upgrade): пока пользователи могут на неё
-    # откатиться, гоняем на ней тесты с меткой postgres — только они зависят
-    # от версии сервера.
+    # Each shard gets its own PostgreSQL service: no shared test schemas.
+    # Stable nodeid partitions preserve the complete suite on both versions.
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - postgres: '18'
-            full_suite: true
-          - postgres: '15'
-            full_suite: false
+        postgres: ['18', '15']
+        shard: [0, 1, 2, 3]
 
     # Проверки блокировок строк, ограничений VARCHAR и TIMESTAMPTZ имеют смысл
     # только против настоящего PostgreSQL: на SQLite они молча проходят,
@@ -69,8 +64,12 @@ jobs:
       # Отдельным шагом и первыми: если инфраструктура PostgreSQL сломалась,
       # это должно быть видно сразу, а не утонуть в общем прогоне.
       - name: Run PostgreSQL tests
-        run: uv run pytest -m postgres -q
+        run: >-
+          uv run --frozen python -m pytest -p tests.pytest_pg_shard -m postgres -q
+          --pg-shard-index=${{ matrix.shard }} --pg-shard-count=4
 
-      - name: Run full test suite
-        if: matrix.full_suite
-        run: uv run pytest -q
+      # PostgreSQL cases already ran above; the two marker partitions together
+      # cover the full suite without repeating expensive database setup.
+      - name: Run remaining test suite
+        if: matrix.postgres == '18' && matrix.shard == 0
+        run: uv run --frozen pytest -m 'not postgres' -q

@@ -1,406 +1,244 @@
-"""Тесты для сценариев cisPay в PaymentService.
+"""CisPay orchestration contracts with strict synthetic provider records.
 
-Покрывают создание платежа (маппинг sub-методов на CARD/SBP, лимиты сумм),
-обработку вебхука (зачисление, несовпадение суммы, идемпотентность, стики
-терминальных статусов) и проверку HMAC-подписи вебхука.
+SQL locking/rollback/concurrent credit are covered by test_cispay_payments_postgres.py;
+these tests retain create, validation, replay, terminal and HMAC scenarios without
+mocking the removed CRUD-finalize split. A rejected payload leaves a retryable invoice,
+instead of permanently poisoning it with the old amount_mismatch marker.
 """
 
 import hashlib
 import hmac
-import sys
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-
-ROOT_DIR = Path(__file__).resolve().parents[2]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
-import app.database.crud.cispay as cispay_crud_module
-import app.services.payment.cispay as cispay_mixin_module
+import app.services.payment.cispay as core
 from app.config import settings
+from app.database.models import CisPayPayment, User
 from app.services.cispay_service import CisPayService
 from app.services.payment_service import PaymentService
 
 
+class Session:
+    """In-memory unit double; deliberately makes no claims about DB atomicity."""
+
+    def __init__(self, payment=None):
+        self.payment = payment
+        self.user = SimpleNamespace(
+            id=77,
+            telegram_id=123456,
+            status='active',
+            restriction_topup=False,
+            balance_kopeks=100,
+            has_made_first_topup=False,
+        )
+        self.commit = AsyncMock()
+        self.rollback = AsyncMock()
+
+    async def get(self, model, _key, **_kwargs):
+        return self.user if model is User else self.payment
+
+    async def scalar(self, statement):
+        return self.user if statement.column_descriptions[0]['entity'] is User else self.payment
+
+
+def payment(**overrides):
+    values = dict(
+        id=7,
+        user_id=77,
+        order_id='cis_masked',
+        cispay_payment_id=None,
+        amount_kopeks=50000,
+        currency='RUB',
+        payment_method='CARD',
+        status='pending',
+        is_paid=False,
+        is_sandbox=False,
+        metadata_json={'store_id': 'masked-shop'},
+        transaction_id=None,
+        expires_at=None,
+        next_check_at=None,
+    )
+    return CisPayPayment(**(values | overrides))
+
+
+def payload(**overrides):
+    return (
+        dict(
+            id='masked-invoice',
+            store_id='masked-shop',
+            order_id='cis_masked',
+            payment_method='CARD',
+            status='PAID',
+            amount=50000,
+            currency='RUB',
+            charged_amount=51750,
+            is_sandbox=False,
+        )
+        | overrides
+    )
+
+
 @pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+def service(monkeypatch):
+    instance = PaymentService.__new__(PaymentService)
+    instance.bot = None
+    instance._after_cispay_payment = AsyncMock()
+    monkeypatch.setattr(core, 'create_transaction', AsyncMock(return_value=SimpleNamespace(id=9)))
+    return instance
 
 
-class DummySession:
-    async def commit(self) -> None:
-        return None
+@pytest.fixture
+def creation(monkeypatch):
+    for key, value in dict(
+        CISPAY_ENABLED=True,
+        CISPAY_SHOP_ID='masked-shop',
+        CISPAY_API_KEY='synthetic-key',
+        CISPAY_CARD_ENABLED=True,
+        CISPAY_SBP_ENABLED=True,
+        CISPAY_CRYPTO_ENABLED=False,
+    ).items():
+        monkeypatch.setattr(settings, key, value)
+    db = Session()
+    config = SimpleNamespace(shop_id='masked-shop')
 
-    async def refresh(self, *_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    async def flush(self) -> None:
-        return None
-
-
-class DummyLocalPayment:
-    def __init__(self, payment_id: int = 501) -> None:
-        self.id = payment_id
-        self.created_at = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
-
-
-class FakeCisPayPayment:
-    def __init__(
-        self,
-        *,
-        status: str = 'pending',
-        is_paid: bool = False,
-        amount_kopeks: int = 50000,
-    ) -> None:
-        self.id = 7
-        self.user_id = 77
-        self.order_id = 'cis123_abc123'
-        self.cispay_payment_id = None
-        self.amount_kopeks = amount_kopeks
-        self.charged_amount_kopeks = None
-        self.status = status
-        self.is_paid = is_paid
-        self.paid_at = None
-        self.updated_at = None
-        self.callback_payload = None
-        self.metadata_json = {}
-        self.transaction_id = None
-
-
-class StubCisPayService:
-    def __init__(self, response: dict[str, Any] | None = None) -> None:
-        self.response = response or {
-            'id': '0198c0de-uuid',
-            'order_id': 'echo',
-            'status': 'PENDING',
-            'amount': 50000,
-            'charged_amount': 51750,
-            'payment_url': 'https://pay.cispay.app/p/xyz',
-            'created_at': '2026-07-19T10:00:00+00:00',
+    async def policy(_db, _user, selected):
+        method = core.resolve_cispay_method(selected)
+        return {
+            'selected_method': method,
+            'min_amount_kopeks': 10000,
+            'max_amount_kopeks': 10000000,
+            'options': [{'id': 'card'}, {'id': 'sbp'}],
         }
-        self.calls: list[dict[str, Any]] = []
 
-    async def create_payment(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append(kwargs)
-        return self.response
+    monkeypatch.setattr('app.services.payment_method_config_service.get_cispay_checkout_policy', policy)
 
+    async def create_record(_db, **values):
+        db.payment = payment(**values)
+        await db.commit()
+        return db.payment
 
-def _make_service() -> PaymentService:
-    service = PaymentService.__new__(PaymentService)  # type: ignore[call-arg]
-    service.bot = None
-    return service
+    monkeypatch.setattr(core, 'create_record', create_record)
 
+    async def create_remote(**kwargs):
+        assert db.commit.await_count == 1  # invoice is durable before POST
+        return {
+            'id': 'masked-invoice',
+            'order_id': kwargs['order_id'],
+            'status': 'PENDING',
+            'amount': kwargs['amount_kopeks'],
+            'charged_amount': 51750,
+            'payment_url': 'https://pay.example/invoice',
+        }
 
-def _enable_cispay(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, 'CISPAY_ENABLED', True, raising=False)
-    monkeypatch.setattr(settings, 'CISPAY_SHOP_ID', '0198c0de-shop', raising=False)
-    monkeypatch.setattr(settings, 'CISPAY_API_KEY', 'cis_sec_test', raising=False)
-    monkeypatch.setattr(settings, 'CISPAY_MIN_AMOUNT_KOPEKS', 10000, raising=False)
-    monkeypatch.setattr(settings, 'CISPAY_MAX_AMOUNT_KOPEKS', 10000000, raising=False)
-
-
-# ---------------------------------------------------------------------------
-# create_cispay_payment
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio('asyncio')
-async def test_create_cispay_payment_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    _enable_cispay(monkeypatch)
-    stub = StubCisPayService()
-    monkeypatch.setattr(cispay_mixin_module, 'cispay_service', stub)
-
-    async def fake_get_user_by_id(_db: Any, _user_id: int) -> Any:
-        class _User:
-            telegram_id = 123456
-
-        return _User()
-
-    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user_by_id, raising=False)
-
-    captured: dict[str, Any] = {}
-
-    async def fake_create_cispay_payment(**kwargs: Any) -> DummyLocalPayment:
-        captured.update(kwargs)
-        return DummyLocalPayment(payment_id=999)
-
-    monkeypatch.setattr(cispay_crud_module, 'create_cispay_payment', fake_create_cispay_payment)
-
-    service = _make_service()
-    result = await service.create_cispay_payment(
-        db=DummySession(),
-        user_id=77,
-        amount_kopeks=50000,
-        description='Пополнение баланса',
+    remote = SimpleNamespace(
+        snapshot=lambda: config,
+        get_store_capabilities=AsyncMock(
+            return_value={
+                'store_id': config.shop_id,
+                'is_active': True,
+                'payment_methods': [{'payment_method': m, 'is_active': True} for m in ('CARD', 'SBP')],
+            }
+        ),
+        create_payment=AsyncMock(side_effect=create_remote),
     )
+    monkeypatch.setattr(core, 'cispay_service', remote)
+    return db, remote
 
-    assert result is not None
-    assert result['local_payment_id'] == 999
-    assert result['payment_url'] == 'https://pay.cispay.app/p/xyz'
+
+async def test_create_cispay_payment_success(service, creation):
+    db, remote = creation
+    result = await service.create_cispay_payment(db, user_id=77, amount_kopeks=50000)
+    assert result['local_payment_id'] == 7
+    assert result['payment_url'] == 'https://pay.example/invoice'
     assert result['amount_kopeks'] == 50000
-    assert result['order_id'].startswith('cis123456_')
-
-    api_call = stub.calls[0]
-    assert api_call['amount_kopeks'] == 50000
-    assert api_call['payment_method'] == 'CARD'  # дефолт без sub-метода
-    assert api_call['customer_id'] == '123456'
-    assert captured['payment_method'] == 'CARD'
-    assert captured['charged_amount_kopeks'] == 51750
+    assert result['order_id'].startswith('cis_')
+    assert len(result['order_id']) == 36  # opaque UUID, no Telegram identity
+    assert remote.create_payment.await_args.kwargs['payment_method'] == 'CARD'
+    assert remote.create_payment.await_args.kwargs['customer_id'] == '123456'
+    assert db.payment.charged_amount_kopeks == 51750
+    assert result['expires_at'] is None  # create schema promises no expiry
 
 
-@pytest.mark.anyio('asyncio')
-async def test_create_cispay_payment_sbp_sub_method(monkeypatch: pytest.MonkeyPatch) -> None:
-    _enable_cispay(monkeypatch)
-    stub = StubCisPayService()
-    monkeypatch.setattr(cispay_mixin_module, 'cispay_service', stub)
-
-    async def fake_get_user_by_id(_db: Any, _user_id: int) -> None:
-        return None
-
-    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user_by_id, raising=False)
-
-    async def fake_create_cispay_payment(**_kwargs: Any) -> DummyLocalPayment:
-        return DummyLocalPayment()
-
-    monkeypatch.setattr(cispay_crud_module, 'create_cispay_payment', fake_create_cispay_payment)
-
-    service = _make_service()
-    result = await service.create_cispay_payment(
-        db=DummySession(),
-        user_id=77,
-        amount_kopeks=50000,
-        payment_method_type='sbp',
-    )
-
+async def test_create_cispay_payment_sbp_sub_method(service, creation):
+    db, remote = creation
+    result = await service.create_cispay_payment(db, user_id=77, amount_kopeks=50000, payment_method_type='sbp')
     assert result is not None
-    assert stub.calls[0]['payment_method'] == 'SBP'
-
-
-@pytest.mark.anyio('asyncio')
-async def test_create_cispay_payment_respects_amount_limits(monkeypatch: pytest.MonkeyPatch) -> None:
-    _enable_cispay(monkeypatch)
-    monkeypatch.setattr(cispay_mixin_module, 'cispay_service', StubCisPayService())
-
-    service = _make_service()
-    result_low = await service.create_cispay_payment(db=DummySession(), user_id=77, amount_kopeks=9999)
-    result_high = await service.create_cispay_payment(db=DummySession(), user_id=77, amount_kopeks=10000001)
-
-    assert result_low is None
-    assert result_high is None
-
-
-@pytest.mark.anyio('asyncio')
-async def test_create_cispay_payment_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, 'CISPAY_ENABLED', False, raising=False)
-
-    service = _make_service()
-    result = await service.create_cispay_payment(db=DummySession(), user_id=77, amount_kopeks=50000)
-
-    assert result is None
-
-
-# ---------------------------------------------------------------------------
-# process_cispay_callback
-# ---------------------------------------------------------------------------
-
-
-def _patch_callback_crud(monkeypatch: pytest.MonkeyPatch, payment: FakeCisPayPayment) -> AsyncMock:
-    async def fake_get_by_order_id(_db: Any, _order_id: str) -> FakeCisPayPayment:
-        return payment
-
-    async def fake_get_for_update(_db: Any, _payment_id: int) -> FakeCisPayPayment:
-        return payment
-
-    update_mock = AsyncMock(return_value=payment)
-    monkeypatch.setattr(cispay_crud_module, 'get_cispay_payment_by_order_id', fake_get_by_order_id)
-    monkeypatch.setattr(cispay_crud_module, 'get_cispay_payment_by_id_for_update', fake_get_for_update)
-    monkeypatch.setattr(cispay_crud_module, 'update_cispay_payment_status', update_mock)
-    return update_mock
-
-
-def _paid_webhook_payload(amount: int = 50000) -> dict[str, Any]:
-    return {
-        'id': '0198c0de-uuid',
-        'store_id': '0198c0de-shop',
-        'order_id': 'cis123_abc123',
-        'payment_method': 'CARD',
-        'status': 'PAID',
-        'amount': amount,
-        'currency': 'RUB',
-        'charged_amount': 51750,
-        'merchant_revenue': 48250,
-        'paid_at': '2026-07-19T10:00:00+00:00',
-        'timestamp': '2026-07-19T10:00:01+00:00',
-    }
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_paid_finalizes(monkeypatch: pytest.MonkeyPatch) -> None:
-    payment = FakeCisPayPayment()
-    _patch_callback_crud(monkeypatch, payment)
-
-    service = _make_service()
-    finalize_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, '_finalize_cispay_payment', finalize_mock, raising=False)
-
-    result = await service.process_cispay_callback(DummySession(), _paid_webhook_payload())
-
-    assert result is True
-    assert payment.is_paid is True
-    assert payment.status == 'success'
-    assert payment.cispay_payment_id == '0198c0de-uuid'
-    assert payment.charged_amount_kopeks == 51750
-    finalize_mock.assert_awaited_once()
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_amount_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    payment = FakeCisPayPayment(amount_kopeks=50000)
-    update_mock = _patch_callback_crud(monkeypatch, payment)
-
-    service = _make_service()
-    finalize_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, '_finalize_cispay_payment', finalize_mock, raising=False)
-
-    result = await service.process_cispay_callback(DummySession(), _paid_webhook_payload(amount=49999))
-
-    assert result is False
-    finalize_mock.assert_not_awaited()
-    assert update_mock.await_args.kwargs['status'] == 'amount_mismatch'
-    assert update_mock.await_args.kwargs['is_paid'] is False
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_already_paid_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
-    payment = FakeCisPayPayment(status='success', is_paid=True)
-    _patch_callback_crud(monkeypatch, payment)
-
-    service = _make_service()
-    finalize_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, '_finalize_cispay_payment', finalize_mock, raising=False)
-
-    result = await service.process_cispay_callback(DummySession(), _paid_webhook_payload())
-
-    assert result is True
-    finalize_mock.assert_not_awaited()
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_sticky_terminal_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Провайдер не может «починить» отклонённый платёж повторным вебхуком."""
-    payment = FakeCisPayPayment(status='declined')
-    update_mock = _patch_callback_crud(monkeypatch, payment)
-
-    service = _make_service()
-    finalize_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, '_finalize_cispay_payment', finalize_mock, raising=False)
-
-    result = await service.process_cispay_callback(DummySession(), _paid_webhook_payload())
-
-    assert result is True
-    finalize_mock.assert_not_awaited()
-    update_mock.assert_not_awaited()
-    assert payment.is_paid is False
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_missing_amount_does_not_credit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """PAID без amount: зачислять нечего сверять — платёж остаётся pending под ретрай."""
-    payment = FakeCisPayPayment()
-    update_mock = _patch_callback_crud(monkeypatch, payment)
-
-    service = _make_service()
-    finalize_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, '_finalize_cispay_payment', finalize_mock, raising=False)
-
-    payload = _paid_webhook_payload()
-    del payload['amount']
-    result = await service.process_cispay_callback(DummySession(), payload)
-
-    assert result is False  # не-2xx -> cisPay повторит вебхук
-    finalize_mock.assert_not_awaited()
-    update_mock.assert_not_awaited()
-    assert payment.is_paid is False
-    assert payment.status == 'pending'  # не терминальный — ретрай ещё может закрыть платёж
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_unparseable_amount_is_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    payment = FakeCisPayPayment()
-    update_mock = _patch_callback_crud(monkeypatch, payment)
-
-    service = _make_service()
-    finalize_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, '_finalize_cispay_payment', finalize_mock, raising=False)
-
-    payload = _paid_webhook_payload()
-    payload['amount'] = 'not-a-number'
-    result = await service.process_cispay_callback(DummySession(), payload)
-
-    assert result is False
-    finalize_mock.assert_not_awaited()
-    assert update_mock.await_args.kwargs['status'] == 'amount_mismatch'
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_missing_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    service = _make_service()
-    result = await service.process_cispay_callback(DummySession(), {'id': 'x'})
-    assert result is False
-
-
-@pytest.mark.anyio('asyncio')
-async def test_process_cispay_callback_non_paid_status_updates(monkeypatch: pytest.MonkeyPatch) -> None:
-    payment = FakeCisPayPayment()
-    update_mock = _patch_callback_crud(monkeypatch, payment)
-
-    service = _make_service()
-    finalize_mock = AsyncMock(return_value=True)
-    monkeypatch.setattr(service, '_finalize_cispay_payment', finalize_mock, raising=False)
-
-    payload = _paid_webhook_payload()
-    payload['status'] = 'EXPIRED'
-    result = await service.process_cispay_callback(DummySession(), payload)
-
-    assert result is True
-    finalize_mock.assert_not_awaited()
-    assert update_mock.await_args.kwargs['status'] == 'expired'
-
-
-# ---------------------------------------------------------------------------
-# verify_webhook_signature
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio('asyncio')
-async def test_generic_method_falls_back_to_sbp_when_card_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SBP-only магазин: генерик-метод обязан слать SBP, иначе cisPay отклонит платёж."""
-    _enable_cispay(monkeypatch)
-    monkeypatch.setattr(settings, 'CISPAY_SBP_ENABLED', True, raising=False)
-    monkeypatch.setattr(settings, 'CISPAY_CARD_ENABLED', False, raising=False)
-
-    stub = StubCisPayService()
-    monkeypatch.setattr(cispay_mixin_module, 'cispay_service', stub)
-
-    async def fake_get_user_by_id(_db: Any, _user_id: int) -> None:
-        return None
-
-    monkeypatch.setattr('app.services.payment_service.get_user_by_id', fake_get_user_by_id, raising=False)
-
-    async def fake_create_cispay_payment(**_kwargs: Any) -> DummyLocalPayment:
-        return DummyLocalPayment()
-
-    monkeypatch.setattr(cispay_crud_module, 'create_cispay_payment', fake_create_cispay_payment)
-
-    service = _make_service()
-    await service.create_cispay_payment(db=DummySession(), user_id=77, amount_kopeks=50000)
-
-    assert stub.calls[0]['payment_method'] == 'SBP'
+    assert remote.create_payment.await_args.kwargs['payment_method'] == 'SBP'
+
+
+async def test_create_cispay_payment_respects_amount_limits(service, creation):
+    db, remote = creation
+    for amount in (9999, 10000001, True, 10000.1):
+        assert await service.create_cispay_payment(db, user_id=77, amount_kopeks=amount) is None
+    remote.create_payment.assert_not_awaited()
+
+
+async def test_create_cispay_payment_disabled(service, monkeypatch):
+    monkeypatch.setattr(settings, 'CISPAY_ENABLED', False)
+    assert await service.create_cispay_payment(Session(), user_id=77, amount_kopeks=50000) is None
+
+
+async def test_process_cispay_callback_paid_finalizes(service):
+    db = Session(payment())
+    assert await service.process_cispay_callback(db, payload())
+    assert db.payment.is_paid and db.payment.status == 'success'
+    assert db.payment.cispay_payment_id == 'masked-invoice'
+    assert db.user.balance_kopeks == 50100
+    assert db.payment.transaction_id == 9
+    service._after_cispay_payment.assert_awaited_once_with(db, 'topup', 77, 7, 100)
+
+
+@pytest.mark.parametrize('amount', [49999, 'not-a-number', True, 50000.1, None])
+async def test_process_cispay_callback_bad_amount_does_not_credit(service, amount):
+    db = Session(payment())
+    data = payload(amount=amount)
+    if amount is None:
+        del data['amount']
+    with pytest.raises(core.CisPayValidationError):
+        await service.process_cispay_callback(db, data)
+    assert not db.payment.is_paid and db.payment.status == 'pending'
+    assert db.user.balance_kopeks == 100
+    service._after_cispay_payment.assert_not_awaited()
+
+
+async def test_process_cispay_callback_already_paid_is_idempotent(service):
+    db = Session(payment(status='success', is_paid=True, transaction_id=9))
+    assert await service.process_cispay_callback(db, payload())
+    assert db.user.balance_kopeks == 100
+    core.create_transaction.assert_not_awaited()
+    service._after_cispay_payment.assert_not_awaited()
+
+
+async def test_process_cispay_callback_terminal_cannot_bypass_validation(service):
+    # Old unconditional sticky early return hid mismatched identity/amount.
+    # A later authoritative PAID may supersede declined; it must still validate.
+    db = Session(payment(status='declined'))
+    with pytest.raises(core.CisPayValidationError):
+        await service.process_cispay_callback(db, payload(amount=49999))
+    assert not db.payment.is_paid and db.payment.status == 'declined'
+    service._after_cispay_payment.assert_not_awaited()
+
+
+async def test_process_cispay_callback_missing_fields(service):
+    with pytest.raises(core.CisPayValidationError):
+        await service.process_cispay_callback(Session(), {'id': 'masked'})
+
+
+async def test_process_cispay_callback_non_paid_status_updates(service):
+    db = Session(payment())
+    assert await service.process_cispay_callback(db, payload(status='EXPIRED'))
+    assert db.payment.status == 'expired' and not db.payment.is_paid
+    core.create_transaction.assert_not_awaited()
+    service._after_cispay_payment.assert_not_awaited()
+
+
+async def test_generic_method_falls_back_to_sbp_when_card_disabled(service, creation, monkeypatch):
+    monkeypatch.setattr(settings, 'CISPAY_CARD_ENABLED', False)
+    db, remote = creation
+    assert await service.create_cispay_payment(db, user_id=77, amount_kopeks=50000)
+    assert remote.create_payment.await_args.kwargs['payment_method'] == 'SBP'
 
 
 def test_is_cispay_enabled_rejects_blank_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -458,3 +296,58 @@ def test_verify_webhook_signature_tampered_body(monkeypatch: pytest.MonkeyPatch)
     tampered = raw_body.replace(b'50000', b'99999')
 
     assert service.verify_webhook_signature(tampered, signature) is False
+
+
+@pytest.mark.parametrize('previous_status', ['declined', 'expired'])
+async def test_valid_late_payment_can_settle_unpaid_invoice(service, previous_status):
+    db = Session(payment(status=previous_status))
+    assert await service.process_cispay_callback(db, payload())
+    assert db.payment.is_paid and db.user.balance_kopeks == 50100
+    core.create_transaction.assert_awaited_once()
+
+
+async def test_unpaid_refunded_invoice_cannot_be_credited_by_late_paid(service):
+    db = Session(payment(status='refunded'))
+    assert await service.process_cispay_callback(db, payload())
+    assert not db.payment.is_paid and db.payment.status == 'refunded'
+    assert db.user.balance_kopeks == 100
+    core.create_transaction.assert_not_awaited()
+
+
+async def test_capabilities_disable_creation_before_post(service, creation):
+    db, remote = creation
+    remote.get_store_capabilities.return_value['is_active'] = False
+    assert await service.create_cispay_payment(db, user_id=77, amount_kopeks=50000) is None
+    remote.create_payment.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+async def test_generic_method_uses_active_sbp_capability(service, creation):
+    db, remote = creation
+    remote.get_store_capabilities.return_value['payment_methods'] = [{'payment_method': 'SBP', 'is_active': True}]
+    assert await service.create_cispay_payment(db, user_id=77, amount_kopeks=50000)
+    assert remote.create_payment.await_args.kwargs['payment_method'] == 'SBP'
+
+
+async def test_email_only_customer_uses_stable_database_identity(service, creation):
+    db, remote = creation
+    db.user.telegram_id = None
+    assert await service.create_cispay_payment(db, user_id=77, amount_kopeks=50000)
+    assert remote.create_payment.await_args.kwargs['customer_id'] == 'customer-77'
+
+
+async def test_generic_sbp_fallback_uses_sbp_minimum(service, creation, monkeypatch):
+    db, remote = creation
+
+    async def policy(_db, _user, selected):
+        return {
+            'selected_method': 'SBP' if selected == 'sbp' else 'CARD',
+            'min_amount_kopeks': 1000 if selected == 'sbp' else 5000,
+            'max_amount_kopeks': 10000000,
+            'options': [{'id': 'card'}, {'id': 'sbp'}],
+        }
+
+    monkeypatch.setattr('app.services.payment_method_config_service.get_cispay_checkout_policy', policy)
+    remote.get_store_capabilities.return_value['payment_methods'] = [{'payment_method': 'SBP', 'is_active': True}]
+    assert await service.create_cispay_payment(db, user_id=77, amount_kopeks=1000)
+    assert remote.create_payment.await_args.kwargs['payment_method'] == 'SBP'

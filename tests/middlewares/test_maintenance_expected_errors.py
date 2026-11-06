@@ -25,7 +25,7 @@ def _mk_callback(answer_error) -> MagicMock:
 
 def _activate_maintenance(monkeypatch) -> None:
     monkeypatch.setattr(mw.maintenance_service, 'is_maintenance_active', lambda: True)
-    monkeypatch.setattr(mw.maintenance_service, 'get_maintenance_message', lambda: 'техработы')
+    monkeypatch.setattr(mw.maintenance_service, 'get_maintenance_message', lambda language=None: 'техработы')
     monkeypatch.setattr(type(settings), 'is_admin', lambda self, uid: False)
     monkeypatch.setattr(
         'app.services.support_settings_service.SupportSettingsService.is_moderator', staticmethod(lambda uid: False)

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.localization.texts import get_texts
 from app.services.cloudpayments_service import CloudPaymentsAPIError
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -448,6 +449,7 @@ class CloudPaymentsPaymentMixin:
                         await self._send_cloudpayments_fail_notification(
                             telegram_id=user.telegram_id,
                             message=card_holder_message,
+                            language=getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE,
                         )
         except Exception as error:
             logger.exception('Ошибка отправки уведомления о неуспешном платеже', error=error)
@@ -512,6 +514,7 @@ class CloudPaymentsPaymentMixin:
         self,
         telegram_id: int,
         message: str,
+        language: str = 'ru',
     ) -> None:
         """Send failure notification to user via Telegram."""
         if not settings.is_notifications_enabled():
@@ -519,7 +522,7 @@ class CloudPaymentsPaymentMixin:
 
         from app.bot_factory import create_bot
 
-        text = f'❌ <b>Оплата не прошла</b>\n\n{message}'
+        text = get_texts(language).t('PAYMENT_NOTICE_020', '❌ <b>Оплата не прошла</b>\n\n{v0}').format(v0=message)
 
         async with create_bot() as bot:
             try:

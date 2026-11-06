@@ -371,6 +371,7 @@ async def test_cancel_safe_wiring_proof_multi_tariff_delete_subscription(monkeyp
 
     db = AsyncMock()
     db.delete = AsyncMock()
+    db.get.return_value = subscription  # The row still exists after the final grace guard.
 
     result = await multi_tariff.delete_subscription(subscription_id=42, user=user, db=db)
 
@@ -446,6 +447,7 @@ async def test_cancel_safe_wiring_proof_my_subscriptions_delete_execute(monkeypa
     db_user = SimpleNamespace(id=1)
     db = AsyncMock()
     db.delete = AsyncMock()
+    db.get.return_value = subscription  # The row still exists after the final grace guard.
     state = AsyncMock()
 
     await my_subscriptions.handle_subscription_delete_execute(callback, db_user, db, state)
@@ -619,3 +621,14 @@ async def test_delete_user_from_db_cancels_platega_for_each_subscription(monkeyp
     assert recorded_cashera == [(db, 21), (db, 22)]
     db.delete.assert_awaited_once_with(user)
     db.commit.assert_awaited_once()
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
+    """These scenarios have no CisPay consent; live-agreement guards use real PostgreSQL tests."""
+    from unittest.mock import AsyncMock
+
+    from app.services import cispay_recurrent_guard
+
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_conflicting_cispay', AsyncMock(return_value=False))

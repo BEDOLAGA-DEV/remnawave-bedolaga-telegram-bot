@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
 from app.database.crud import subscription as subscription_crud
 
 
@@ -316,3 +318,13 @@ def test_subscription_property_ignores_pending_trial_draft():
     assert _user(active, pending_trial).subscription is active
     # истёкшая подписка (для продления) показывается, черновик триала — нет
     assert _user(pending_trial, expired).subscription is expired
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
+    """These scenarios have no CisPay consent; live-agreement guards use real PostgreSQL tests."""
+    from unittest.mock import AsyncMock
+
+    from app.services import cispay_recurrent_guard
+
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))

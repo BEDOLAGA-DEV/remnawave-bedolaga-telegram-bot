@@ -5,6 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.database.database import AsyncSessionLocal
+from app.localization.texts import get_texts
 from app.services.payment_method_config_service import (
     DEFAULT_QUICK_AMOUNTS,
     MAX_QUICK_AMOUNT_KOPEKS,
@@ -32,14 +33,15 @@ def _format_rubles(amount_kopeks: int) -> str:
     return f'{amount_kopeks / 100:.2f}'
 
 
-def _format_amounts_line(quick_amounts: list[int] | None) -> str:
+def _format_amounts_line(quick_amounts: list[int] | None, language: str = 'ru') -> str:
+    texts = get_texts(language)
     if quick_amounts:
         return ', '.join(f'{_format_rubles(amount)} ₽' for amount in quick_amounts)
     if quick_amounts is not None:
         # Пустой список — кнопки отключены админом (None = дефолты)
-        return '🚫 отключены'
+        return texts.t('ADMIN_QUICK_DISABLED')
     defaults = ', '.join(f'{_format_rubles(amount)} ₽' for amount in DEFAULT_QUICK_AMOUNTS)
-    return f'{defaults} (по умолчанию)'
+    return texts.t('ADMIN_QUICK_DEFAULT').format(amounts=defaults)
 
 
 def _method_title(config, defaults: dict) -> str:
@@ -47,7 +49,8 @@ def _method_title(config, defaults: dict) -> str:
     return config.display_name or method_def.get('default_display_name', config.method_id)
 
 
-def _list_keyboard(configs: list, defaults: dict) -> InlineKeyboardMarkup:
+def _list_keyboard(configs: list, defaults: dict, language: str = 'ru') -> InlineKeyboardMarkup:
+    texts = get_texts(language)
     buttons = []
     for config in configs:
         if config.quick_amounts:
@@ -64,63 +67,60 @@ def _list_keyboard(configs: list, defaults: dict) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    buttons.append([InlineKeyboardButton(text='◀️ Назад', callback_data='admin_submenu_settings')])
+    buttons.append([InlineKeyboardButton(text=texts.t('ADMIN_QUICK_BACK'), callback_data='admin_submenu_settings')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _view_keyboard(method_id: str, quick_amounts: list[int] | None) -> InlineKeyboardMarkup:
-    buttons = [[InlineKeyboardButton(text='✏️ Изменить', callback_data=f'qamounts:edit:{method_id}')]]
+def _view_keyboard(method_id: str, quick_amounts: list[int] | None, language: str = 'ru') -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+    buttons = [[InlineKeyboardButton(text=texts.t('ADMIN_QUICK_EDIT'), callback_data=f'qamounts:edit:{method_id}')]]
     if quick_amounts != []:
         buttons.append(
-            [InlineKeyboardButton(text='🚫 Отключить кнопки', callback_data=f'qamounts:disable:{method_id}')]
+            [InlineKeyboardButton(text=texts.t('ADMIN_QUICK_DISABLE'), callback_data=f'qamounts:disable:{method_id}')]
         )
     if quick_amounts is not None:
         buttons.append(
-            [InlineKeyboardButton(text='♻️ Сбросить к умолчанию', callback_data=f'qamounts:reset:{method_id}')]
+            [InlineKeyboardButton(text=texts.t('ADMIN_QUICK_RESET'), callback_data=f'qamounts:reset:{method_id}')]
         )
-    buttons.append([InlineKeyboardButton(text='◀️ К списку', callback_data='qamounts:list')])
+    buttons.append([InlineKeyboardButton(text=texts.t('ADMIN_QUICK_LIST_BACK'), callback_data='qamounts:list')])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _view_text(config, defaults: dict) -> str:
-    return (
-        f'💸 <b>Быстрые суммы: {_method_title(config, defaults)}</b>\n\n'
-        f'<b>Текущие суммы:</b> {_format_amounts_line(config.quick_amounts)}\n\n'
-        'Кнопки с этими суммами показываются пользователю при пополнении баланса. '
-        'Если кнопки отключены, пользователь вводит сумму вручную.'
+def _view_text(config, defaults: dict, language: str = 'ru') -> str:
+    texts = get_texts(language)
+    return texts.t('ADMIN_QUICK_VIEW').format(
+        method=_method_title(config, defaults), amounts=_format_amounts_line(config.quick_amounts, language)
     )
 
 
 @router.callback_query(F.data == 'qamounts:list')
 @admin_required
 async def show_quick_amounts_list(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    texts = get_texts(getattr(kwargs.get('db_user'), 'language', 'ru'))
     await state.clear()
     async with AsyncSessionLocal() as db:
         configs = await get_all_configs(db)
     defaults = _get_method_defaults()
-    text = (
-        '💸 <b>Быстрые суммы пополнения</b>\n\n'
-        'Выберите способ оплаты, чтобы настроить кнопки быстрого выбора суммы.\n'
-        '⚙️ — заданы свои суммы, ▫️ — значения по умолчанию.'
-    )
-    await callback.message.edit_text(text, reply_markup=_list_keyboard(configs, defaults))
+    text = texts.t('ADMIN_QUICK_OVERVIEW')
+    await callback.message.edit_text(text, reply_markup=_list_keyboard(configs, defaults, texts.language))
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith('qamounts:view:'))
 @admin_required
 async def view_quick_amounts(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    texts = get_texts(getattr(kwargs.get('db_user'), 'language', 'ru'))
     await state.clear()
     method_id = callback.data.split(':', 2)[2]
     async with AsyncSessionLocal() as db:
         config = await get_config_by_method_id(db, method_id)
     if not config:
-        await callback.answer('Способ оплаты не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_QUICK_NOT_FOUND'), show_alert=True)
         return
     defaults = _get_method_defaults()
     await callback.message.edit_text(
-        _view_text(config, defaults),
-        reply_markup=_view_keyboard(method_id, config.quick_amounts),
+        _view_text(config, defaults, texts.language),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts, texts.language),
     )
     await callback.answer()
 
@@ -129,32 +129,34 @@ async def view_quick_amounts(callback: CallbackQuery, state: FSMContext, **kwarg
 @admin_required
 async def disable_quick_amounts(callback: CallbackQuery, **kwargs) -> None:
     """Полностью убирает кнопки быстрых сумм: пользователь вводит сумму вручную."""
+    texts = get_texts(getattr(kwargs.get('db_user'), 'language', 'ru'))
     method_id = callback.data.split(':', 2)[2]
     async with AsyncSessionLocal() as db:
         config = await update_config(db, method_id, {'quick_amounts': []})
     if not config:
-        await callback.answer('Способ оплаты не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_QUICK_NOT_FOUND'), show_alert=True)
         return
-    await callback.answer('Кнопки быстрых сумм отключены', show_alert=True)
+    await callback.answer(texts.t('ADMIN_QUICK_DISABLED_NOTICE'), show_alert=True)
     defaults = _get_method_defaults()
     await callback.message.edit_text(
-        _view_text(config, defaults),
-        reply_markup=_view_keyboard(method_id, config.quick_amounts),
+        _view_text(config, defaults, texts.language),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts, texts.language),
     )
 
 
 @router.callback_query(F.data.startswith('qamounts:edit:'))
 @admin_required
 async def start_edit_quick_amounts(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    texts = get_texts(getattr(kwargs.get('db_user'), 'language', 'ru'))
     method_id = callback.data.split(':', 2)[2]
     await state.set_state(QuickAmountsStates.waiting_amounts)
     await state.update_data(quick_amounts_method_id=method_id)
     await callback.message.edit_text(
-        '💸 <b>Новые быстрые суммы</b>\n\n'
-        'Отправьте суммы в рублях через запятую, например: <code>100, 300, 500, 1000</code>\n'
-        f'Не более {MAX_QUICK_AMOUNTS} значений. Дробные суммы — через точку.',
+        texts.t('ADMIN_QUICK_PROMPT').format(limit=MAX_QUICK_AMOUNTS),
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text='◀️ Отмена', callback_data=f'qamounts:view:{method_id}')]]
+            inline_keyboard=[
+                [InlineKeyboardButton(text=texts.t('ADMIN_QUICK_CANCEL'), callback_data=f'qamounts:view:{method_id}')]
+            ]
         ),
     )
     await callback.answer()
@@ -163,25 +165,27 @@ async def start_edit_quick_amounts(callback: CallbackQuery, state: FSMContext, *
 @router.callback_query(F.data.startswith('qamounts:reset:'))
 @admin_required
 async def reset_quick_amounts(callback: CallbackQuery, **kwargs) -> None:
+    texts = get_texts(getattr(kwargs.get('db_user'), 'language', 'ru'))
     method_id = callback.data.split(':', 2)[2]
     async with AsyncSessionLocal() as db:
         config = await update_config(db, method_id, {'quick_amounts': None})
     if not config:
-        await callback.answer('Способ оплаты не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_QUICK_NOT_FOUND'), show_alert=True)
         return
-    await callback.answer('Суммы сброшены к значениям по умолчанию', show_alert=True)
+    await callback.answer(texts.t('ADMIN_QUICK_RESET_NOTICE'), show_alert=True)
     defaults = _get_method_defaults()
     await callback.message.edit_text(
-        _view_text(config, defaults),
-        reply_markup=_view_keyboard(method_id, config.quick_amounts),
+        _view_text(config, defaults, texts.language),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts, texts.language),
     )
 
 
 @router.message(QuickAmountsStates.waiting_amounts)
 @admin_required
 async def process_quick_amounts(message: Message, state: FSMContext, **kwargs) -> None:
+    texts = get_texts(getattr(kwargs.get('db_user'), 'language', 'ru'))
     if not message.text:
-        await message.answer('Отправьте текстовое сообщение с суммами через запятую.')
+        await message.answer(texts.t('ADMIN_QUICK_TEXT_REQUIRED'))
         return
 
     amounts_kopeks: list[int] = []
@@ -198,9 +202,7 @@ async def process_quick_amounts(message: Message, state: FSMContext, **kwargs) -
             raise ValueError(message.text)
     except (ValueError, OverflowError):
         await message.answer(
-            f'❌ Неверный формат. Отправьте до {MAX_QUICK_AMOUNTS} положительных сумм в рублях через запятую '
-            f'(не более {MAX_QUICK_AMOUNT_KOPEKS // 100} ₽ каждая), '
-            'например: <code>100, 300, 500, 1000</code>'
+            texts.t('ADMIN_QUICK_INVALID').format(limit=MAX_QUICK_AMOUNTS, maximum=MAX_QUICK_AMOUNT_KOPEKS // 100)
         )
         return
 
@@ -209,7 +211,7 @@ async def process_quick_amounts(message: Message, state: FSMContext, **kwargs) -
 
     if not method_id:
         await state.clear()
-        await message.answer('❌ Способ оплаты не выбран. Откройте раздел заново.')
+        await message.answer(texts.t('ADMIN_QUICK_NO_METHOD'))
         return
 
     async with AsyncSessionLocal() as db:
@@ -217,20 +219,21 @@ async def process_quick_amounts(message: Message, state: FSMContext, **kwargs) -
             config = await update_config(db, method_id, {'quick_amounts': amounts_kopeks})
         except ValueError as error:
             logger.warning('Некорректные быстрые суммы', method_id=method_id, error=error)
-            await message.answer('❌ Не удалось сохранить суммы. Проверьте формат и попробуйте ещё раз.')
+            await message.answer(texts.t('ADMIN_QUICK_SAVE_ERROR'))
             return
 
     await state.clear()
 
     if not config:
-        await message.answer('❌ Способ оплаты не найден.')
+        await message.answer(texts.t('ADMIN_QUICK_MISSING'))
         return
 
     defaults = _get_method_defaults()
     await message.answer(
-        f'✅ Быстрые суммы для <b>{_method_title(config, defaults)}</b> обновлены: '
-        f'{_format_amounts_line(config.quick_amounts)}',
-        reply_markup=_view_keyboard(method_id, config.quick_amounts),
+        texts.t('ADMIN_QUICK_SUCCESS').format(
+            method=_method_title(config, defaults), amounts=_format_amounts_line(config.quick_amounts, texts.language)
+        ),
+        reply_markup=_view_keyboard(method_id, config.quick_amounts, texts.language),
     )
 
 

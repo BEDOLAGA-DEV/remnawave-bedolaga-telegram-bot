@@ -124,7 +124,7 @@ def test_overlong_values_are_cut() -> None:
 def test_platega_metadata_has_both_string_fields() -> None:
     metadata = payer_from_user(_record(username='neo')).platega_metadata()
 
-    assert metadata == {'userId': '555', 'userName': '@neo'}
+    assert metadata == {'userId': '555', 'userName': '@neo', 'user_email': '555@telegram.org'}
 
 
 # --- гость лендинга ----------------------------------------------------------
@@ -133,7 +133,8 @@ def test_platega_metadata_has_both_string_fields() -> None:
 def test_guest_with_email_contact() -> None:
     payer = payer_from_guest(TOKEN, contact_type='email', contact_value=' guest@example.com ')
 
-    assert payer.user_id == GUEST_ID
+    assert payer.user_id.startswith('guest-')
+    assert payer.user_id != GUEST_ID
     assert payer.user_name == 'guest@example.com'
     assert payer.contact == 'guest@example.com'
 
@@ -164,7 +165,7 @@ async def test_resolve_user_payer_reads_the_user(monkeypatch) -> None:
 
         payer = await resolve_user_payer(db, 7)
 
-    assert payer == PayerIdentity(user_id='555', user_name='@neo', contact='555')
+    assert payer == PayerIdentity(user_id='555', user_name='@neo', contact='555', platega_email='555@telegram.org')
 
 
 @pytest.mark.asyncio
@@ -207,7 +208,8 @@ async def test_resolve_guest_payer_reads_the_purchase(monkeypatch) -> None:
 
         payer = await resolve_guest_payer(db, TOKEN)
 
-    assert payer == PayerIdentity(user_id=GUEST_ID, user_name='guest@example.com', contact='guest@example.com')
+    assert payer.contact == 'guest@example.com'
+    assert payer.platega_metadata()['user_email'] == 'guest@example.com'
 
 
 @pytest.mark.asyncio
@@ -217,3 +219,54 @@ async def test_resolve_guest_payer_without_the_purchase_is_still_filled(monkeypa
 
     assert payer.user_id == GUEST_ID
     _assert_filled(payer)
+
+
+@pytest.mark.parametrize(
+    'telegram_id,email,expected',
+    [
+        (555, None, '555@telegram.org'),
+        (555, 'buyer@example.com', '555@telegram.org'),
+        (None, 'Buyer+tag@example.com', 'Buyer+tag@example.com'),
+        (None, None, 'user-7@gmail.com'),
+    ],
+)
+def test_platega_required_email(telegram_id, email, expected):
+    payer = payer_from_user(_record(telegram_id=telegram_id, email=email))
+    assert payer.platega_metadata()['user_email'] == expected
+
+
+@pytest.mark.parametrize(
+    'contact_type,contact_value',
+    [
+        ('email', 'buyer@example.com'),
+    ],
+)
+def test_platega_guest_identity_is_stable_between_orders(contact_type, contact_value):
+    first = payer_from_guest('order-a', contact_type=contact_type, contact_value=contact_value).platega_metadata()
+    second = payer_from_guest('order-b', contact_type=contact_type, contact_value=contact_value).platega_metadata()
+    assert first == second
+    assert first['user_email']
+    if contact_type == 'email':
+        assert first['user_email'] == contact_value
+    else:
+        assert not first['user_email'].endswith('@telegram.org')
+
+
+@pytest.mark.parametrize('bad_email', ['broken', 'a@example.com\n', 'a\x00@example.com', 'a' * 256 + '@example.com'])
+def test_platega_rejects_invalid_email_without_rewriting_it(bad_email):
+    payer = payer_from_guest(TOKEN, contact_type='email', contact_value=bad_email)
+    with pytest.raises(ValueError):
+        payer.platega_metadata()
+
+
+def test_platega_rejects_guest_without_stable_identity():
+    payer = payer_from_guest(TOKEN, contact_type=None, contact_value=None)
+    with pytest.raises(ValueError):
+        payer.platega_metadata()
+
+
+def test_platega_guest_username_is_not_a_permanent_identifier():
+    payer = payer_from_guest(TOKEN, contact_type='telegram', contact_value='@buyer')
+    assert payer.contact == '@buyer'  # MulenPay keeps its existing contact contract.
+    with pytest.raises(ValueError):
+        payer.platega_metadata()

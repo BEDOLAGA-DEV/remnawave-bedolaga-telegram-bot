@@ -2,6 +2,8 @@
 
 import html
 
+from app.localization.texts import get_texts
+
 
 def safe_html_name(name: str | None) -> str:
     """HTML-escape a display name for Telegram HTML messages."""
@@ -16,11 +18,12 @@ def user_html_link(user) -> str:
     return f'<b>{safe}</b>'
 
 
-def format_traffic(gb: int) -> str:
-    """Форматирует трафик."""
+def format_traffic(gb: int, language: str = 'ru') -> str:
+    """Format traffic, preserving Russian output for existing callers."""
+    texts = get_texts(language)
     if gb == 0:
-        return 'Безлимит'
-    return f'{gb} ГБ'
+        return texts.t('FORMAT_TRAFFIC_UNLIMITED', 'Безлимит')
+    return texts.t('FORMAT_TRAFFIC_GB', '{value} ГБ').format(value=gb)
 
 
 def format_price_kopeks(kopeks: int, compact: bool = False) -> str:
@@ -34,16 +37,14 @@ def format_price_kopeks(kopeks: int, compact: bool = False) -> str:
     return f'{rubles:.2f} ₽'
 
 
-def format_period(days: int) -> str:
-    """Форматирует период."""
+def format_period(days: int, language: str = 'ru') -> str:
+    """Format a day count using the requested language's plural rules."""
+    code = (language or 'ru').replace('_', '-').split('-')[0].lower()
     mod100 = days % 100
     mod10 = days % 10
-    if 11 <= mod100 <= 19:
-        word = 'дней'
-    elif mod10 == 1:
-        word = 'день'
-    elif 2 <= mod10 <= 4:
-        word = 'дня'
+    if code in {'ru', 'ua', 'uk'}:
+        form = 'MANY' if 11 <= mod100 <= 19 else 'ONE' if mod10 == 1 else 'FEW' if 2 <= mod10 <= 4 else 'MANY'
     else:
-        word = 'дней'
-    return f'{days} {word}'
+        form = 'ONE' if days == 1 else 'MANY'
+    defaults = {'ONE': '{count} день', 'FEW': '{count} дня', 'MANY': '{count} дней'}
+    return get_texts(language).t(f'FORMAT_PERIOD_DAYS_{form}', defaults[form]).format(count=days)

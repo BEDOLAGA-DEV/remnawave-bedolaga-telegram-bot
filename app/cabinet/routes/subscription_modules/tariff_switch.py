@@ -11,7 +11,6 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query as QueryParam, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -19,7 +18,7 @@ from app.database.crud.tariff import get_tariff_by_id
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, TransactionType, User
-from app.services.pricing_engine import pricing_engine
+from app.services.pricing_engine import TariffSwitchPricingUnavailableError, pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
 from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
@@ -32,6 +31,28 @@ from .helpers import _subscription_to_response, resolve_subscription
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
+
+
+async def _resolve_switch_subscription(
+    db: AsyncSession, user: User, subscription_id: int | None
+) -> Subscription | None:
+    """Never guess which subscription a multi-subscription switch will charge."""
+    if subscription_id is not None and subscription_id <= 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Subscription not found')
+    if settings.is_multi_tariff_enabled() and subscription_id is None:
+        from app.database.crud.subscription import get_active_subscriptions_by_user_id
+
+        subscriptions = await get_active_subscriptions_by_user_id(db, user.id)
+        if len(subscriptions) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    'code': 'subscription_selection_required',
+                    'message': 'Select the subscription to switch',
+                },
+            )
+        return subscriptions[0] if subscriptions else None
+    return await resolve_subscription(db, user, subscription_id)
 
 
 @router.post('/tariff/switch/preview')
@@ -48,7 +69,7 @@ async def preview_tariff_switch(
             detail='Tariffs mode is not enabled',
         )
 
-    subscription = await resolve_subscription(db, user, subscription_id)
+    subscription = await _resolve_switch_subscription(db, user, subscription_id)
 
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
@@ -136,12 +157,15 @@ async def preview_tariff_switch(
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate switch cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        switch_result = pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except TariffSwitchPricingUnavailableError as error:
+        raise HTTPException(status_code=400, detail='Tariff pricing is unavailable') from error
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
 
@@ -206,7 +230,7 @@ async def switch_tariff(
             detail='Tariffs mode is not enabled',
         )
 
-    resolved = await resolve_subscription(db, user, subscription_id)
+    resolved = await _resolve_switch_subscription(db, user, subscription_id)
 
     if not resolved or not resolved.tariff_id:
         raise HTTPException(
@@ -225,14 +249,22 @@ async def switch_tariff(
                 detail='You already have an active subscription for the target tariff',
             )
 
-    # Lock subscription row to prevent concurrent tariff switches
-    locked_result = await db.execute(
-        select(Subscription)
-        .where(Subscription.id == resolved.id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    subscription = locked_result.scalar_one()
+    from app.database.crud.user import lock_user_for_pricing
+    from app.services.traffic_purchase_service import prepare_user_tariff_switch
+
+    try:
+        subscription, accounting_panel = await prepare_user_tariff_switch(db, resolved)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    user = await lock_user_for_pricing(db, user.id)
+    if subscription.user_id != user.id:
+        raise HTTPException(status_code=404, detail='Subscription not found')
+    if settings.is_multi_tariff_enabled():
+        from app.database.crud.subscription import get_subscription_by_user_and_tariff
+
+        existing_target = await get_subscription_by_user_and_tariff(db, user.id, request.tariff_id)
+        if existing_target and existing_target.id != subscription.id:
+            raise HTTPException(status_code=409, detail='You already have an active subscription for the target tariff')
 
     # Use actual_status for correct status check (handles time-based expiration)
     actual_status = subscription.actual_status
@@ -309,10 +341,12 @@ async def switch_tariff(
             detail='Tariff not available',
         )
 
-    # Lock user BEFORE price computation to prevent TOCTOU on promo offer
-    from app.database.crud.user import lock_user_for_pricing
+    from app.services.checkout_squad_validation import CheckoutSquadsUnavailableError, validate_checkout_squads
 
-    user = await lock_user_for_pricing(db, user.id)
+    try:
+        await validate_checkout_squads(new_tariff.allowed_squads)
+    except CheckoutSquadsUnavailableError as error:
+        raise HTTPException(status_code=409, detail={'code': error.code, 'message': error.message}) from error
 
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo
@@ -321,12 +355,15 @@ async def switch_tariff(
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
     # Calculate cost (PricingEngine handles all cases: periodic<->periodic, daily->periodic, periodic->daily)
-    switch_result = pricing_engine.calculate_tariff_switch_cost(
-        current_tariff,
-        new_tariff,
-        remaining_days,
-        user=user,
-    )
+    try:
+        switch_result = pricing_engine.calculate_tariff_switch_cost(
+            current_tariff,
+            new_tariff,
+            remaining_days,
+            user=user,
+        )
+    except TariffSwitchPricingUnavailableError as error:
+        raise HTTPException(status_code=400, detail='Tariff pricing is unavailable') from error
     upgrade_cost = switch_result.upgrade_cost
     is_upgrade = switch_result.is_upgrade
     base_upgrade_cost = switch_result.raw_cost
@@ -431,7 +468,7 @@ async def switch_tariff(
     else:
         # Free switch (downgrade) — record in history
         description = f"Переход на тариф '{new_tariff.name}'"
-        await create_transaction(
+        switch_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
@@ -448,21 +485,17 @@ async def switch_tariff(
     from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
     from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
 
-    # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила бы
-    # списывать сумму СТАРОГО тарифа со старым каденсом. Отменяем привязку до
-    # мутаций — юзер переподключит СБП-автопродление под новый тариф (нужна
-    # новая банковская авторизация, молча пересоздать нельзя).
+    # Cancel recurring bindings only after the complete switch has committed.
     from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
 
-    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
-
-    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
-    await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
     # Re-load subscription to avoid MissingGreenlet from expired lazy relationship
     # (subtract_user_balance re-selects User with populate_existing=True which expires relationships)
     await db.refresh(subscription)
 
+    subscription.daily_devices_billing_version = 0
     subscription.tariff_id = new_tariff.id
+    if accounting_panel is not None:
+        subscription.tariff = new_tariff
     subscription.traffic_limit_gb = new_tariff.traffic_limit_gb
     subscription.device_limit = calc_device_limit_on_tariff_switch(
         current_device_limit=subscription.device_limit,
@@ -484,20 +517,37 @@ async def switch_tariff(
     # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение — иначе прыжок
     # туда-обратно по бесплатному направлению давал новую квоту каждый раз.
     reset_used_traffic = should_reset_used_traffic(upgrade_cost)
-    if reset_used_traffic:
+    if reset_used_traffic and accounting_panel is None:
         subscription.traffic_used_gb = 0.0
 
     if switching_to_daily:
         # Switching TO daily - reset end_date to 1 day, set last_daily_charge_at
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
+        subscription.pending_panel_expire_at = subscription.end_date
         subscription.last_daily_charge_at = datetime.now(UTC)
         subscription.is_daily_paused = False
     elif switching_from_daily:
         subscription.end_date = datetime.now(UTC) + timedelta(days=new_period_days)
+        subscription.pending_panel_expire_at = subscription.end_date
         subscription.is_daily_paused = False
 
     subscription.updated_at = datetime.now(UTC)
+    if accounting_panel is not None:
+        from app.services.traffic_accounting_service import change_managed_tariff_locked
+
+        await change_managed_tariff_locked(
+            db,
+            subscription,
+            accounting_panel,
+            operation_key=f'user-switch:{switch_transaction.id}',
+            reset_base=reset_used_traffic,
+        )
     await db.commit()
+
+    await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
+    await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+    await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
 
     # Emit deferred side-effects after atomic commit
     if upgrade_cost > 0 and switch_transaction:
@@ -513,7 +563,7 @@ async def switch_tariff(
         )
 
     # Sync with RemnaWave (optionally reset traffic based on admin setting)
-    should_reset_traffic = reset_used_traffic
+    should_reset_traffic = reset_used_traffic and accounting_panel is None
     # Refresh subscription after commit (all objects are expired)
     await db.refresh(subscription)
 
@@ -607,11 +657,14 @@ async def switch_tariff(
     # so the central purchase event fired by the SUBSCRIPTION_PAYMENT sees the
     # CID and does not race it (#558449). Nothing to do here.
 
+    from app.services.traffic_accounting_service import traffic_accounting_summary
+
+    accounting = await traffic_accounting_summary(db, subscription.id)
     response: dict[str, Any] = {
         'success': True,
         'message': f"Switched from '{old_tariff_name}' to '{new_tariff.name}'"
         + (' (devices reset)' if devices_reset else ''),
-        'subscription': _subscription_to_response(subscription, user=user),
+        'subscription': _subscription_to_response(subscription, user=user, traffic_accounting=accounting),
         'old_tariff_name': old_tariff_name,
         'new_tariff_id': new_tariff.id,
         'new_tariff_name': new_tariff.name,

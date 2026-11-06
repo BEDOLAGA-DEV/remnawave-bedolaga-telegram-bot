@@ -62,6 +62,7 @@ def harness(monkeypatch):
         status=SubscriptionStatus.EXPIRED.value,
     )
     api = AsyncMock()
+    api.get_user_devices_all.return_value = {'total': 0, 'devices': []}
     batches = [[subscription], []]
 
     async def fake_batch(db, offset=0, limit=500):

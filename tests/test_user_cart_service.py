@@ -1,10 +1,11 @@
 import pytest
 
 from app.services.user_cart_service import UserCartService
+from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 
 
 # Мок для Redis клиента
-class MockRedis:
+class MockRedis(SequentialPipelineMixin):
     def __init__(self):
         self.storage = {}
 
@@ -20,6 +21,11 @@ class MockRedis:
             del self.storage[key]
             return 1
         return 0
+
+    async def scan(self, cursor=0, match='*', count=50):
+        import fnmatch
+
+        return 0, [key for key in self.storage if fnmatch.fnmatch(key, match)]
 
     async def exists(self, key):
         return 1 if key in self.storage else 0
@@ -197,3 +203,21 @@ async def test_has_topup_intent_false_when_redis_down():
     service._initialized = True
 
     assert await service.has_topup_intent(777) is False
+
+
+async def test_tariff_checkout_identity_survives_repricing_but_not_new_checkout(user_cart_service):
+    cart = {'cart_mode': 'tariff_purchase', 'tariff_id': 1, 'subscription_id': 10, 'total_price': 100}
+    assert await user_cart_service.save_user_cart(12345, cart)
+    first = await user_cart_service.get_user_cart(12345)
+    assert first['tariff_checkout_id']
+    first['total_price'] = 200
+    assert await user_cart_service.save_user_cart(12345, first)
+    restored = await user_cart_service.get_user_cart(12345)
+    assert restored['tariff_checkout_id'] == first['tariff_checkout_id']
+    per_sub = await user_cart_service.get_subscription_cart(12345, 10)
+    assert per_sub['tariff_checkout_id'] == first['tariff_checkout_id']
+    assert await user_cart_service.save_user_cart(12345, dict(cart, tariff_checkout_id='new-explicit-checkout'))
+    assert (await user_cart_service.get_user_cart(12345))['tariff_checkout_id'] != first['tariff_checkout_id']
+    fresh = {key: value for key, value in cart.items() if key != 'tariff_checkout_id'}
+    assert await user_cart_service.save_user_cart(12345, fresh)
+    assert (await user_cart_service.get_user_cart(12345))['tariff_checkout_id'] != first['tariff_checkout_id']

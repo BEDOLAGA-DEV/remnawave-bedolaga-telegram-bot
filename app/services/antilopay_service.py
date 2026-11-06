@@ -1,8 +1,10 @@
-"""Сервис для работы с API Antilopay (lk.antilopay.com/api/v2)."""
+"""Сервис для работы с API Antilopay (lk.antilopay.com/api/v1)."""
 
 import base64
 import json
+from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlsplit
 
 import aiohttp
 import structlog
@@ -15,7 +17,21 @@ from app.config import settings
 
 logger = structlog.get_logger(__name__)
 
-API_BASE_URL = 'https://lk.antilopay.com/api/v2'
+API_BASE_URL = 'https://lk.antilopay.com/api/v1'
+
+
+def validate_amount(value: Any) -> int:
+    """Convert a finite, positive RUB amount into exact kopeks; never round."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        raise ValueError('Invalid Antilopay amount')
+    try:
+        amount = Decimal(str(value))
+        kopeks = amount * 100
+        if not amount.is_finite() or amount <= 0 or kopeks != kopeks.to_integral_value():
+            raise ValueError('Invalid Antilopay amount')
+        return int(kopeks)
+    except InvalidOperation as error:
+        raise ValueError('Invalid Antilopay amount') from error
 
 
 class AntilopayAPIError(Exception):
@@ -26,6 +42,47 @@ class AntilopayAPIError(Exception):
         self.message = message
         self.api_code = code
         super().__init__(f'Antilopay API error ({status_code}): {message}')
+
+    @property
+    def creation_rejected(self) -> bool:
+        # Documented creation refusals. Duplicate order (5), server errors,
+        # unknown/malformed replies and transport timeouts are ambiguous.
+        return (
+            self.status_code in (200, 400, 401, 403, 422)
+            and type(self.api_code) is int
+            and self.api_code
+            in {
+                1,
+                2,
+                3,
+                4,
+                6,
+                7,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                25,
+                26,
+                27,
+                29,
+                30,
+                31,
+                32,
+                100,
+            }
+        )
 
 
 class AntilopayService:
@@ -102,11 +159,14 @@ class AntilopayService:
         Создает платеж через API Antilopay.
         POST /payment/create
         """
+        validate_amount(amount_rubles)
+        if settings.ANTILOPAY_CURRENCY.upper() != 'RUB':
+            raise ValueError('Antilopay supports RUB only')
         payload: dict[str, Any] = {
             'project_identificator': self.project_id,
             'amount': amount_rubles,
             'order_id': order_id,
-            'currency': settings.ANTILOPAY_CURRENCY.lower(),
+            'currency': settings.ANTILOPAY_CURRENCY.upper(),
             'product_name': product_name,
             'product_type': product_type,
             'description': description,
@@ -119,8 +179,7 @@ class AntilopayService:
         if customer_phone:
             customer['phone'] = customer_phone
         if not customer:
-            # Fallback email, чтобы API не отказал
-            customer['email'] = 'user@vpn.bot'
+            raise ValueError('Antilopay requires customer email or phone')
         payload['customer'] = customer
 
         if prefer_methods:
@@ -147,26 +206,36 @@ class AntilopayService:
                 f'{API_BASE_URL}/payment/create',
                 data=json_body,
                 headers=self._build_headers(json_body),
+                allow_redirects=False,
             ) as response:
                 data = await response.json(content_type=None)
 
+                if not isinstance(data, dict):
+                    raise AntilopayAPIError(response.status, 'Invalid response format')
                 api_code = data.get('code')
-                if response.status == 200 and api_code == 0:
+                if response.status == 200 and type(api_code) is int and api_code == 0:
+                    payment_url = data.get('payment_url')
+                    if not isinstance(data.get('payment_id'), str) or not data['payment_id']:
+                        raise AntilopayAPIError(response.status, 'Missing payment id')
+                    if (
+                        not isinstance(payment_url, str)
+                        or urlsplit(payment_url).scheme != 'https'
+                        or not urlsplit(payment_url).hostname
+                    ):
+                        raise AntilopayAPIError(response.status, 'Invalid payment URL')
                     logger.info(
                         'Antilopay API payment created',
                         order_id=order_id,
                         payment_id=data.get('payment_id'),
-                        payment_url=data.get('payment_url'),
                     )
                     return data
 
-                error_msg = data.get('message') or data.get('error') or str(data)
+                error_msg = data.get('message') or data.get('error') or 'Unspecified API error'
                 logger.error(
                     'Antilopay create_payment error',
                     status_code=response.status,
                     api_code=api_code,
                     error_msg=error_msg,
-                    response_data=data,
                 )
                 raise AntilopayAPIError(response.status, error_msg, api_code)
 
@@ -198,19 +267,20 @@ class AntilopayService:
                 f'{API_BASE_URL}/payment/check',
                 data=json_body,
                 headers=self._build_headers(json_body),
+                allow_redirects=False,
             ) as response:
                 data = await response.json(content_type=None)
 
-                if response.status == 200:
+                if not isinstance(data, dict):
+                    raise AntilopayAPIError(response.status, 'Invalid response format')
+                api_code = data.get('code')
+                if response.status == 200 and type(api_code) is int and api_code == 0:
                     return data
 
-                error_msg = data.get('message') or data.get('error') or str(data)
-                logger.error(
-                    'Antilopay check_payment error',
-                    status_code=response.status,
-                    error_msg=error_msg,
-                )
-                raise AntilopayAPIError(response.status, error_msg)
+                error_msg = data.get('message') or data.get('error') or 'Unspecified API error'
+                # The caller knows whether this is an unresolved local order and
+                # applies retry policy. Do not emit a second context-free alert here.
+                raise AntilopayAPIError(response.status, error_msg, api_code)
 
         except aiohttp.ClientError as e:
             logger.exception('Antilopay API connection error', error=e)

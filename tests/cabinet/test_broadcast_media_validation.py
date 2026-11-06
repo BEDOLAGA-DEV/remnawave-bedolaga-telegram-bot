@@ -71,3 +71,10 @@ def test_media_file_id_must_look_like_a_telegram_file_id() -> None:
         BroadcastMediaRequest(type='photo', file_id='https://example.com/photo.png')
     with pytest.raises(ValidationError):
         BroadcastMediaRequest(type='photo', file_id='')
+
+
+@pytest.mark.parametrize('text', ['<b>' + 'x' * 1024 + '</b>', '&amp;' * 1024], ids=['tags', 'entities'])
+def test_caption_limit_counts_visible_text_not_html(text):
+    from app.cabinet.routes.admin_broadcasts import _ensure_media_caption_fits
+
+    _ensure_media_caption_fits(text)

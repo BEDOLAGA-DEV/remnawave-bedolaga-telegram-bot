@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database.models import (
     AdvertisingCampaignRegistration,
+    AnorePayment,
     ButtonClickLog,
     CabinetRefreshToken,
     CloudPaymentsPayment,
@@ -348,6 +349,7 @@ class BlockedUsersService:
             await db.execute(delete(HeleketPayment).where(HeleketPayment.user_id == user.id))
             await db.execute(delete(MulenPayPayment).where(MulenPayPayment.user_id == user.id))
             await db.execute(delete(Pal24Payment).where(Pal24Payment.user_id == user.id))
+            await db.execute(delete(AnorePayment).where(AnorePayment.user_id == user.id))
             await db.execute(delete(WataPayment).where(WataPayment.user_id == user.id))
             await db.execute(delete(PlategaPayment).where(PlategaPayment.user_id == user.id))
             await db.execute(delete(CloudPaymentsPayment).where(CloudPaymentsPayment.user_id == user.id))

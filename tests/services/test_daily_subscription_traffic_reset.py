@@ -28,17 +28,22 @@ from app.services.subscription_service import SubscriptionService
 _GB = 1024 * 1024 * 1024
 
 
-def _make_db(subscription: SimpleNamespace) -> MagicMock:
-    """AsyncSession-мок: 1-й execute → подписка, 2-й → активные докупки (нет)."""
+def _make_db(subscription: SimpleNamespace, purchases=None) -> MagicMock:
+    """Subscription lock, fresh expired packages, remaining active packages."""
     res_sub = MagicMock()
     res_sub.scalar_one_or_none.return_value = subscription
+    res_expired = MagicMock()
+    res_expired.scalars.return_value.all.return_value = purchases or _recently_expired()
     res_remaining = MagicMock()
     res_remaining.scalars.return_value.all.return_value = []
 
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[res_sub, res_remaining])
+    db.execute = AsyncMock(side_effect=[res_sub, res_expired, res_remaining])
+    db.get = AsyncMock(return_value=subscription)
     db.delete = AsyncMock()
     db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    db.refresh = AsyncMock()
     return db
 
 
@@ -85,7 +90,7 @@ async def test_defers_drop_when_panel_resets_and_user_over_limit():
     fake_ss = _make_fake_subscription_service(130 * _GB)
 
     with patch('app.services.subscription_service.SubscriptionService', return_value=fake_ss):
-        await service._reset_subscription_traffic(db, sub.id, _recently_expired())
+        await service._reset_subscription_traffic(db, sub.id, [10])
 
     # Лимит не тронут, докупки не удалены, в панель ничего не синкали
     assert sub.traffic_limit_gb == 150
@@ -101,7 +106,7 @@ async def test_applies_drop_cleanly_when_user_under_limit():
     fake_ss = _make_fake_subscription_service(40 * _GB)
 
     with patch('app.services.subscription_service.SubscriptionService', return_value=fake_ss):
-        await service._reset_subscription_traffic(db, sub.id, _recently_expired())
+        await service._reset_subscription_traffic(db, sub.id, [10])
 
     assert sub.traffic_limit_gb == 100
     db.delete.assert_awaited()
@@ -117,7 +122,7 @@ async def test_no_reset_tariff_resets_used_when_over_limit():
     fake_ss = _make_fake_subscription_service(130 * _GB)
 
     with patch('app.services.subscription_service.SubscriptionService', return_value=fake_ss):
-        await service._reset_subscription_traffic(db, sub.id, _recently_expired())
+        await service._reset_subscription_traffic(db, sub.id, [10])
 
     assert sub.traffic_limit_gb == 100
     assert fake_ss.update_remnawave_user.await_count == 2
@@ -130,13 +135,13 @@ async def test_no_reset_tariff_resets_used_when_over_limit():
 async def test_forces_drop_after_grace_even_if_panel_resets():
     """MONTH, но докупка просрочена >40д → не ждём вечно: понижаем + добиваем used."""
     sub = _make_subscription('MONTH')
-    db = _make_db(sub)
     service = _make_service(panel_used_gb=130.0)  # не вызовется: grace закорачивает defer
     fake_ss = _make_fake_subscription_service(130 * _GB)
     long_overdue = [SimpleNamespace(traffic_gb=50, id=10, expires_at=datetime.now(UTC) - timedelta(days=50))]
+    db = _make_db(sub, long_overdue)
 
     with patch('app.services.subscription_service.SubscriptionService', return_value=fake_ss):
-        await service._reset_subscription_traffic(db, sub.id, long_overdue)
+        await service._reset_subscription_traffic(db, sub.id, [10])
 
     assert sub.traffic_limit_gb == 100
     assert fake_ss.update_remnawave_user.await_count == 2
@@ -166,3 +171,21 @@ async def test_traffic_reset_only_loop_runs_processor(monkeypatch):
     await service.start_traffic_reset_monitoring()
 
     assert calls == [1]
+
+
+async def test_managed_expiry_never_resets_spent_traffic_or_defers_expiry():
+    sub = _make_subscription('MONTH')
+    sub.traffic_accounting_mode = 'managed'
+    db = _make_db(sub)
+    db.get = AsyncMock(return_value=sub)
+    service = _make_service(panel_used_gb=130.0)
+    fake_ss = _make_fake_subscription_service(130 * _GB)
+    with (
+        patch('app.services.subscription_service.SubscriptionService', return_value=fake_ss),
+        patch('app.services.traffic_accounting_service.refresh_managed_account', new_callable=AsyncMock),
+    ):
+        count = await service._expire_traffic_purchases(db, sub.id, [10])
+    assert count == 1
+    assert sub.traffic_limit_gb == 100
+    assert sub.traffic_used_gb == 130.0
+    assert all(not call.kwargs.get('reset_traffic') for call in fake_ss.update_remnawave_user.await_args_list)

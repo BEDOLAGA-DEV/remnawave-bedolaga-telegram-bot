@@ -147,3 +147,50 @@ async def test_invalid_amount_alerts_immediately(monkeypatch):
 
     callback.answer.assert_awaited_once_with('❌ Некорректная сумма', show_alert=True)
     route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repeated_taps_are_acknowledged_while_provider_is_still_waiting(monkeypatch):
+    import asyncio
+
+    callbacks = [_callback(), _callback()]
+    reached = []
+    both_started = asyncio.Event()
+    release_provider = asyncio.Event()
+
+    async def route(message, db_user, amount_kopeks, st, method):
+        reached.append(message)
+        if len(reached) == 2:
+            both_started.set()
+        await release_provider.wait()
+        return True
+
+    monkeypatch.setattr(balance_main, 'route_payment_by_method', route)
+    tasks = [
+        asyncio.create_task(balance_main.handle_topup_amount_callback(callback, _user(), _state()))
+        for callback in callbacks
+    ]
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        assert all(not task.done() for task in tasks)
+        assert [callback.answer.await_count for callback in callbacks] == [1, 1]
+        release_provider.set()
+        await asyncio.gather(*tasks)
+        assert [callback.answer.await_count for callback in callbacks] == [1, 1]
+    finally:
+        release_provider.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_already_expired_tap_does_not_create_payment(monkeypatch):
+    callback = _callback()
+    callback.answer.side_effect = _stale()
+    provider = AsyncMock(return_value=True)
+    monkeypatch.setattr(balance_main, 'route_payment_by_method', provider)
+
+    await balance_main.handle_topup_amount_callback(callback, _user(), _state())
+
+    provider.assert_not_awaited()
+    assert callback.answer.await_count == 1
+    callback.message.answer.assert_not_awaited()

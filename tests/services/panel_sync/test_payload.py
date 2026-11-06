@@ -54,6 +54,15 @@ def test_gigabytes_become_bytes():
     assert payload.traffic_limit_bytes == 50 * 1024**3
 
 
+def test_unlimited_devices_are_explicit_in_create_and_update(monkeypatch):
+    from app.utils import subscription_utils
+
+    monkeypatch.setattr(subscription_utils, 'settings', SimpleNamespace(is_devices_selection_enabled=lambda: True))
+    payload = build_panel_payload(_user(), _sub(device_limit=0), multi_tariff=False, now=NOW)
+    assert payload.create_kwargs(now=NOW)['hwid_device_limit'] == 0
+    assert payload.update_kwargs(user_id=123, now=NOW)['hwid_device_limit'] == 0
+
+
 def test_zero_gigabytes_mean_unlimited():
     payload = build_panel_payload(_user(), _sub(traffic_limit_gb=0), multi_tariff=False, now=NOW)
 
@@ -323,3 +332,31 @@ def test_create_of_a_limited_subscription_sends_limited_status():
     )
 
     assert payload.create_kwargs(now=NOW)['status'] is UserStatus.LIMITED
+
+
+def test_managed_payload_requires_settled_account_and_never_uses_nominal_quota():
+    import pytest
+
+    from app.external.remnawave_api import TrafficLimitStrategy
+    from app.services.traffic_accounting import AccountingConflict, Allowance, TrafficAccount
+
+    sub = _sub(traffic_accounting_mode='managed')
+    with pytest.raises(AccountingConflict):
+        build_panel_payload(_user(), sub, multi_tariff=False, now=NOW)
+    account = TrafficAccount('epoch', 200, 150, (Allowance('purchase:1', 20, NOW + timedelta(days=1)),))
+    payload = build_panel_payload(_user(), sub, multi_tariff=False, now=NOW, accounting_account=account)
+    assert payload.traffic_limit_bytes == 170
+    assert payload.traffic_limit_strategy == TrafficLimitStrategy.NO_RESET
+    empty = TrafficAccount('epoch', 0, 0, ())
+    payload = build_panel_payload(_user(), sub, multi_tariff=False, now=NOW, accounting_account=empty)
+    assert payload.traffic_limit_bytes == 1
+    assert payload.status == UserStatus.DISABLED
+
+
+def test_migrating_account_cannot_return_to_autonomous_panel_reset():
+    import pytest
+
+    from app.services.traffic_accounting import AccountingConflict
+
+    with pytest.raises(AccountingConflict):
+        build_panel_payload(_user(), _sub(traffic_accounting_mode='migrating'), multi_tariff=False, now=NOW)

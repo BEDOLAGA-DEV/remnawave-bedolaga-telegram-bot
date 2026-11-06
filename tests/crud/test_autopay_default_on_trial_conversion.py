@@ -158,3 +158,13 @@ def test_classic_purchase_paths_apply_the_default_on_conversion():
         assert source.count('apply_trial_conversion_defaults(') == expected, (
             f'{path}: конверсия триала должна применять дефолт автоплатежа (ожидалось вызовов: {expected})'
         )
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
+    """These scenarios have no CisPay consent; live-agreement guards use real PostgreSQL tests."""
+    from unittest.mock import AsyncMock
+
+    from app.services import cispay_recurrent_guard
+
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))

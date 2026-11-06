@@ -245,28 +245,8 @@ def _status_mapper(status_code: int) -> str:
 
 
 @pytest.mark.anyio
-async def test_route_returns_200_on_valid_sign(monkeypatch: pytest.MonkeyPatch) -> None:
-    data = {'id': 1, 'amount': '100.00', 'currency': 'rub', 'uuid': 'u', 'payment_status': 'success'}
-    payload = {**data, 'sign': _sign(data)}
-    body = json.dumps(payload).encode('utf-8')
-
-    signed_service = SimpleNamespace(process_mulenpay_callback=AsyncMock(return_value=True))
-
-    async def fake_callback(svc, payload_arg, method):
-        return await svc.process_mulenpay_callback(None, payload_arg)
-
-    monkeypatch.setattr(payments, '_process_payment_service_callback', fake_callback)
-
-    router = create_payment_router(DummyBot(), signed_service)
-    assert router is not None
-    route = _get_route(router, '/mulen')
-
-    response = await route.endpoint(_build_request(body))
-
-    assert response.status_code == 200
-    assert json.loads(response.body.decode('utf-8'))['status'] == 'ok'
-    signed_service.process_mulenpay_callback.assert_awaited_once()
-
+@pytest.mark.parametrize('signed', [False, True])
+async def test_route_verifies_callbacks_through_provider_api(monkeypatch: pytest.MonkeyPatch, signed: bool) -> None:
     db = SimpleNamespace()
     local_payment = SimpleNamespace(
         mulen_payment_id=123,
@@ -315,6 +295,9 @@ async def test_route_returns_200_on_valid_sign(monkeypatch: pytest.MonkeyPatch) 
         'uuid': 'merchant-side-uuid',
         'payment_status': 'success',
     }
+
+    if signed:
+        unsigned_payload['sign'] = _sign(unsigned_payload)
 
     unsigned_response = await unsigned_route.endpoint(_build_request(json.dumps(unsigned_payload).encode('utf-8')))
 
@@ -449,7 +432,10 @@ async def test_route_returns_401_for_json_that_is_not_an_object(body: bytes) -> 
 
 
 @pytest.mark.anyio
-async def test_unsigned_callback_for_a_paid_payment_does_not_call_the_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('signed', [False, True])
+async def test_callback_for_a_paid_payment_does_not_call_the_provider(
+    monkeypatch: pytest.MonkeyPatch, signed: bool
+) -> None:
     """Id платежей идут подряд, а путь без sign не требует секрета: без этой проверки
     перебор id заставлял бы бота ходить в API MulenPay за каждым давно оплаченным платежом."""
     provider = SimpleNamespace(get_payment=AsyncMock())
@@ -469,10 +455,64 @@ async def test_unsigned_callback_for_a_paid_payment_does_not_call_the_provider(m
     monkeypatch.setattr(payments, 'get_db', fake_get_db)
     monkeypatch.setattr(payments, 'get_mulenpay_payment_by_mulen_id', fake_lookup)
     route = _get_route(create_payment_router(DummyBot(), payment_service), '/mulen')
-    body = json.dumps({'id': 123, 'amount': '100.00', 'currency': 'rub', 'payment_status': 'success'}).encode('utf-8')
+    payload = {'id': 123, 'amount': '100.00', 'currency': 'rub', 'payment_status': 'success'}
+    if signed:
+        payload['sign'] = _sign(payload)
+    body = json.dumps(payload).encode('utf-8')
 
     response = await route.endpoint(_build_request(body))
 
     assert response.status_code == 200
     provider.get_payment.assert_not_awaited()
     payment_service.process_mulenpay_callback.assert_not_awaited()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ('remote_changes', 'expected_status', 'expected_payment_status'),
+    [
+        ({'id': 124}, 401, None),
+        ({'amount': '101.00'}, 401, None),
+        ({'currency': 'USD'}, 401, None),
+        ({'status': 99}, 401, None),
+        ({'status': 1}, 200, 'processing'),
+    ],
+)
+async def test_signed_callback_uses_authenticated_identity_amount_and_status(
+    monkeypatch, remote_changes, expected_status, expected_payment_status
+):
+    remote = {'id': 123, 'amount': '100.00', 'currency': 'RUB', 'status': 3, **remote_changes}
+    provider = SimpleNamespace(get_payment=AsyncMock(return_value={'success': True, 'payment': remote}))
+    delivered = []
+
+    async def process_callback(_db, verified_payload):
+        delivered.append(verified_payload)
+        return True
+
+    service = SimpleNamespace(
+        mulenpay_service=provider,
+        _map_mulenpay_status=_status_mapper,
+        process_mulenpay_callback=process_callback,
+    )
+
+    async def fake_get_db():
+        yield SimpleNamespace()
+
+    async def fake_lookup(_db, _provider_id):
+        return SimpleNamespace(mulen_payment_id=123, amount_kopeks=10_000, currency='RUB', is_paid=False)
+
+    monkeypatch.setattr(payments, 'get_db', fake_get_db)
+    monkeypatch.setattr(payments, 'get_mulenpay_payment_by_mulen_id', fake_lookup)
+    route = _get_route(create_payment_router(DummyBot(), service), '/mulen')
+    payload = {'id': 123, 'amount': '100.00', 'currency': 'RUB', 'payment_status': 'success'}
+    payload['sign'] = _sign(payload)
+
+    response = await route.endpoint(_build_request(json.dumps(payload).encode('utf-8')))
+
+    assert response.status_code == expected_status
+    if expected_payment_status is None:
+        assert delivered == []
+    else:
+        assert delivered == [
+            {'id': 123, 'amount': '100.00', 'currency': 'RUB', 'payment_status': expected_payment_status}
+        ]

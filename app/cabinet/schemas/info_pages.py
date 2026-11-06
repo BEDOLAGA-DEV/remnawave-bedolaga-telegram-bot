@@ -80,3 +80,24 @@ class ReorderRequest(BaseModel):
     """Request to bulk-reorder info pages."""
 
     items: list[ReorderItem] = Field(..., min_length=1)
+
+
+class LegacyFaqResponse(BaseModel):
+    """A bot FAQ page, kept in its original language and ID namespace."""
+
+    id: int
+    language: str
+    title: str
+    content: str
+    display_order: int
+    is_active: bool
+    is_enabled: bool = True
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LegacyFaqUpdateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    content: str
+    display_order: int = Field(ge=0)
+    is_active: bool

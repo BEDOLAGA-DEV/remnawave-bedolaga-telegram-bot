@@ -68,8 +68,8 @@ def _format_contest_summary(contest, texts, tz: ZoneInfo) -> str:
     summary_times = contest.daily_summary_times or summary_time
     parts = [
         f'{status}',
-        f'Период: <b>{period}</b>',
-        f'Дневная сводка: <b>{summary_times}</b>',
+        texts.t('ADMIN_CONTEST_UI_002', 'Период: <b>{value1}</b>').format(value1=period),
+        texts.t('ADMIN_CONTEST_UI_003', 'Дневная сводка: <b>{value1}</b>').format(value1=summary_times),
     ]
     if contest.prize_text:
         parts.append(texts.t('ADMIN_CONTEST_PRIZE', 'Приз: {prize}').format(prize=html.escape(contest.prize_text)))
@@ -291,6 +291,7 @@ async def toggle_contest(
     db_user,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     if not settings.is_contests_enabled():
         await callback.answer(
             get_texts(db_user.language).t('ADMIN_CONTESTS_DISABLED', 'Конкурсы отключены.'),
@@ -302,7 +303,7 @@ async def toggle_contest(
     contest = await get_referral_contest(db, contest_id)
 
     if not contest:
-        await callback.answer('Конкурс не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_053', 'Конкурс не найден'), show_alert=True)
         return
 
     await toggle_referral_contest(db, contest, not contest.is_active)
@@ -668,6 +669,7 @@ async def show_detailed_stats(
     db_user,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     if not settings.is_contests_enabled():
         await callback.answer(
             get_texts(db_user.language).t('ADMIN_CONTESTS_DISABLED', 'Конкурсы отключены.'),
@@ -679,7 +681,7 @@ async def show_detailed_stats(
     contest = await get_referral_contest(db, contest_id)
 
     if not contest:
-        await callback.answer('Конкурс не найден.', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_054', 'Конкурс не найден.'), show_alert=True)
         return
 
     from app.services.referral_contest_service import referral_contest_service
@@ -691,23 +693,39 @@ async def show_detailed_stats(
 
     # Общее сообщение с основной статистикой
     general_lines = [
-        '📈 <b>Статистика конкурса</b>',
+        texts.t('ADMIN_CONTEST_UI_004', '📈 <b>Статистика конкурса</b>'),
         f'🏆 {html.escape(contest.title)}',
         '',
-        f'👥 Участников (рефереров): <b>{stats["total_participants"]}</b>',
-        f'📨 Приглашено рефералов: <b>{stats["total_invited"]}</b>',
+        texts.t('ADMIN_CONTEST_UI_005', '👥 Участников (рефереров): <b>{value1}</b>').format(
+            value1=stats['total_participants']
+        ),
+        texts.t('ADMIN_CONTEST_UI_006', '📨 Приглашено рефералов: <b>{value1}</b>').format(
+            value1=stats['total_invited']
+        ),
         '',
-        f'💳 Рефералов оплатили: <b>{stats.get("paid_count", 0)}</b>',
-        f'❌ Рефералов не оплатили: <b>{stats.get("unpaid_count", 0)}</b>',
+        texts.t('ADMIN_CONTEST_UI_007', '💳 Рефералов оплатили: <b>{value1}</b>').format(
+            value1=stats.get('paid_count', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_008', '❌ Рефералов не оплатили: <b>{value1}</b>').format(
+            value1=stats.get('unpaid_count', 0)
+        ),
         '',
-        '<b>💰 СУММЫ:</b>',
-        f'   🛒 Покупки подписок: <b>{stats.get("subscription_total", 0) // 100} руб.</b>',
-        f'   📥 Пополнения баланса: <b>{stats.get("deposit_total", 0) // 100} руб.</b>',
+        texts.t('ADMIN_CONTEST_UI_009', '<b>💰 СУММЫ:</b>'),
+        texts.t('ADMIN_CONTEST_UI_010', '   🛒 Покупки подписок: <b>{value1} руб.</b>').format(
+            value1=stats.get('subscription_total', 0) // 100
+        ),
+        texts.t('ADMIN_CONTEST_UI_011', '   📥 Пополнения баланса: <b>{value1} руб.</b>').format(
+            value1=stats.get('deposit_total', 0) // 100
+        ),
     ]
 
     if virtual_count > 0:
         general_lines.append('')
-        general_lines.append(f'👻 Виртуальных: <b>{virtual_count}</b> (рефералов: {virtual_referrals})')
+        general_lines.append(
+            texts.t('ADMIN_CONTEST_UI_040', '👻 Виртуальных: <b>{value1}</b> (рефералов: {value2})').format(
+                value1=virtual_count, value2=virtual_referrals
+            )
+        )
 
     await callback.message.edit_text(
         '\n'.join(general_lines),
@@ -729,6 +747,7 @@ async def show_detailed_stats_page(
     page: int = 1,
     stats: dict = None,
 ):
+    texts = get_texts(db_user.language)
     if contest_id is None or stats is None:
         # Парсим из callback.data: admin_contest_detailed_stats_page_{contest_id}_page_{page}
         parts = callback.data.split('_')
@@ -749,15 +768,21 @@ async def show_detailed_stats_page(
     offset = (page - 1) * PAGE_SIZE
     page_participants = participants[offset : offset + PAGE_SIZE]
 
-    lines = [f'📊 По участникам (страница {page}/{total_pages}):']
+    lines = [
+        texts.t('ADMIN_CONTEST_UI_012', '📊 По участникам (страница {value1}/{value2}):').format(
+            value1=page, value2=total_pages
+        )
+    ]
     for p in page_participants:
         lines.extend(
             [
                 f'• <b>{html.escape(p["full_name"] or "")}</b>',
-                f'  📨 Приглашено: {p["total_referrals"]}',
-                f'  💰 Оплатили: {p["paid_referrals"]}',
-                f'  ❌ Не оплатили: {p["unpaid_referrals"]}',
-                f'  💵 Сумма: {p["total_paid_amount"] // 100} руб.',
+                texts.t('ADMIN_CONTEST_UI_055', '  📨 Приглашено: {value1}').format(value1=p['total_referrals']),
+                texts.t('ADMIN_CONTEST_UI_056', '  💰 Оплатили: {value1}').format(value1=p['paid_referrals']),
+                texts.t('ADMIN_CONTEST_UI_057', '  ❌ Не оплатили: {value1}').format(value1=p['unpaid_referrals']),
+                texts.t('ADMIN_CONTEST_UI_058', '  💵 Сумма: {value1} руб.').format(
+                    value1=p['total_paid_amount'] // 100
+                ),
                 '',  # Пустая строка для разделения
             ]
         )
@@ -785,6 +810,7 @@ async def sync_contest(
     db_user,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     """Синхронизировать события конкурса с реальными платежами."""
     if not settings.is_contests_enabled():
         await callback.answer(
@@ -797,10 +823,10 @@ async def sync_contest(
     contest = await get_referral_contest(db, contest_id)
 
     if not contest:
-        await callback.answer('Конкурс не найден.', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_054', 'Конкурс не найден.'), show_alert=True)
         return
 
-    await callback.answer('🔄 Синхронизация запущена...', show_alert=False)
+    await callback.answer(texts.t('ADMIN_CONTEST_UI_041', '🔄 Синхронизация запущена...'), show_alert=False)
 
     from app.services.referral_contest_service import referral_contest_service
 
@@ -809,7 +835,7 @@ async def sync_contest(
 
     if 'error' in cleanup_stats:
         await callback.message.answer(
-            f'❌ Ошибка очистки:\n{cleanup_stats["error"]}',
+            texts.t('ADMIN_CONTEST_UI_059', '❌ Ошибка очистки:\n{value1}').format(value1=cleanup_stats['error']),
         )
         return
 
@@ -818,7 +844,7 @@ async def sync_contest(
 
     if 'error' in stats:
         await callback.message.answer(
-            f'❌ Ошибка синхронизации:\n{stats["error"]}',
+            texts.t('ADMIN_CONTEST_UI_060', '❌ Ошибка синхронизации:\n{value1}').format(value1=stats['error']),
         )
         return
 
@@ -828,38 +854,64 @@ async def sync_contest(
     end_str = stats.get('contest_end', contest.end_at.isoformat())
 
     lines = [
-        '✅ <b>Синхронизация завершена!</b>',
+        texts.t('ADMIN_CONTEST_UI_013', '✅ <b>Синхронизация завершена!</b>'),
         '',
-        f'📊 <b>Конкурс:</b> {html.escape(contest.title)}',
-        f'📅 <b>Период:</b> {format_local_datetime(contest.start_at, "%d.%m.%Y")} - {format_local_datetime(contest.end_at, "%d.%m.%Y")}',
-        '🔍 <b>Фильтр транзакций:</b>',
+        texts.t('ADMIN_CONTEST_UI_014', '📊 <b>Конкурс:</b> {value1}').format(value1=html.escape(contest.title)),
+        texts.t('ADMIN_CONTEST_UI_015', '📅 <b>Период:</b> {value1} - {value2}').format(
+            value1=format_local_datetime(contest.start_at, '%d.%m.%Y'),
+            value2=format_local_datetime(contest.end_at, '%d.%m.%Y'),
+        ),
+        texts.t('ADMIN_CONTEST_UI_016', '🔍 <b>Фильтр транзакций:</b>'),
         f'   <code>{start_str}</code>',
         f'   <code>{end_str}</code>',
         '',
-        '🧹 <b>ОЧИСТКА:</b>',
-        f'   🗑 Удалено невалидных событий: <b>{cleanup_stats.get("deleted", 0)}</b>',
-        f'   ✅ Осталось валидных событий: <b>{cleanup_stats.get("remaining", 0)}</b>',
-        f'   📊 Было событий до очистки: <b>{cleanup_stats.get("total_before", 0)}</b>',
+        texts.t('ADMIN_CONTEST_UI_017', '🧹 <b>ОЧИСТКА:</b>'),
+        texts.t('ADMIN_CONTEST_UI_018', '   🗑 Удалено невалидных событий: <b>{value1}</b>').format(
+            value1=cleanup_stats.get('deleted', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_019', '   ✅ Осталось валидных событий: <b>{value1}</b>').format(
+            value1=cleanup_stats.get('remaining', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_020', '   📊 Было событий до очистки: <b>{value1}</b>').format(
+            value1=cleanup_stats.get('total_before', 0)
+        ),
         '',
-        '📊 <b>СИНХРОНИЗАЦИЯ:</b>',
-        f'   📝 Рефералов в периоде: <b>{stats.get("total_events", 0)}</b>',
-        f'   ⚠️ Отфильтровано (вне периода): <b>{stats.get("filtered_out_events", 0)}</b>',
-        f'   🔄 Обновлено сумм: <b>{stats.get("updated", 0)}</b>',
-        f'   ⏭ Без изменений: <b>{stats.get("skipped", 0)}</b>',
+        texts.t('ADMIN_CONTEST_UI_021', '📊 <b>СИНХРОНИЗАЦИЯ:</b>'),
+        texts.t('ADMIN_CONTEST_UI_022', '   📝 Рефералов в периоде: <b>{value1}</b>').format(
+            value1=stats.get('total_events', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_023', '   ⚠️ Отфильтровано (вне периода): <b>{value1}</b>').format(
+            value1=stats.get('filtered_out_events', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_024', '   🔄 Обновлено сумм: <b>{value1}</b>').format(value1=stats.get('updated', 0)),
+        texts.t('ADMIN_CONTEST_UI_025', '   ⏭ Без изменений: <b>{value1}</b>').format(value1=stats.get('skipped', 0)),
         '',
-        f'💳 Рефералов оплатили: <b>{stats.get("paid_count", 0)}</b>',
-        f'❌ Рефералов не оплатили: <b>{stats.get("unpaid_count", 0)}</b>',
+        texts.t('ADMIN_CONTEST_UI_007', '💳 Рефералов оплатили: <b>{value1}</b>').format(
+            value1=stats.get('paid_count', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_008', '❌ Рефералов не оплатили: <b>{value1}</b>').format(
+            value1=stats.get('unpaid_count', 0)
+        ),
         '',
-        '<b>💰 СУММЫ:</b>',
-        f'   🛒 Покупки подписок: <b>{stats.get("subscription_total", 0) // 100} руб.</b>',
-        f'   📥 Пополнения баланса: <b>{stats.get("deposit_total", 0) // 100} руб.</b>',
+        texts.t('ADMIN_CONTEST_UI_009', '<b>💰 СУММЫ:</b>'),
+        texts.t('ADMIN_CONTEST_UI_010', '   🛒 Покупки подписок: <b>{value1} руб.</b>').format(
+            value1=stats.get('subscription_total', 0) // 100
+        ),
+        texts.t('ADMIN_CONTEST_UI_011', '   📥 Пополнения баланса: <b>{value1} руб.</b>').format(
+            value1=stats.get('deposit_total', 0) // 100
+        ),
     ]
 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     back_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='⬅️ Назад к конкурсу', callback_data=f'admin_contest_view_{contest_id}')]
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_CONTEST_UI_077', '⬅️ Назад к конкурсу'),
+                    callback_data=f'admin_contest_view_{contest_id}',
+                )
+            ]
         ]
     )
 
@@ -873,14 +925,27 @@ async def sync_contest(
     detailed_stats = await referral_contest_service.get_detailed_contest_stats(db, contest_id)
     general_lines = [
         f'🏆 <b>{html.escape(contest.title)}</b>',
-        f'📅 Период: {format_local_datetime(contest.start_at, "%d.%m.%Y")} - {format_local_datetime(contest.end_at, "%d.%m.%Y")}',
+        texts.t('ADMIN_CONTEST_UI_026', '📅 Период: {value1} - {value2}').format(
+            value1=format_local_datetime(contest.start_at, '%d.%m.%Y'),
+            value2=format_local_datetime(contest.end_at, '%d.%m.%Y'),
+        ),
         '',
-        f'👥 Участников (рефереров): <b>{detailed_stats["total_participants"]}</b>',
-        f'📨 Приглашено рефералов: <b>{detailed_stats["total_invited"]}</b>',
+        texts.t('ADMIN_CONTEST_UI_005', '👥 Участников (рефереров): <b>{value1}</b>').format(
+            value1=detailed_stats['total_participants']
+        ),
+        texts.t('ADMIN_CONTEST_UI_006', '📨 Приглашено рефералов: <b>{value1}</b>').format(
+            value1=detailed_stats['total_invited']
+        ),
         '',
-        f'💳 Рефералов оплатили: <b>{detailed_stats.get("paid_count", 0)}</b>',
-        f'❌ Рефералов не оплатили: <b>{detailed_stats.get("unpaid_count", 0)}</b>',
-        f'🛒 Покупки подписок: <b>{detailed_stats["total_paid_amount"] // 100} руб.</b>',
+        texts.t('ADMIN_CONTEST_UI_007', '💳 Рефералов оплатили: <b>{value1}</b>').format(
+            value1=detailed_stats.get('paid_count', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_008', '❌ Рефералов не оплатили: <b>{value1}</b>').format(
+            value1=detailed_stats.get('unpaid_count', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_027', '🛒 Покупки подписок: <b>{value1} руб.</b>').format(
+            value1=detailed_stats['total_paid_amount'] // 100
+        ),
     ]
 
     await callback.message.edit_text(
@@ -898,6 +963,7 @@ async def debug_contest_transactions(
     db_user,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     """Показать транзакции рефералов конкурса для отладки."""
     if not settings.is_contests_enabled():
         await callback.answer(
@@ -910,72 +976,97 @@ async def debug_contest_transactions(
     contest = await get_referral_contest(db, contest_id)
 
     if not contest:
-        await callback.answer('Конкурс не найден.', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_054', 'Конкурс не найден.'), show_alert=True)
         return
 
-    await callback.answer('🔍 Загружаю данные...', show_alert=False)
+    await callback.answer(texts.t('ADMIN_CONTEST_UI_042', '🔍 Загружаю данные...'), show_alert=False)
 
     from app.database.crud.referral_contest import debug_contest_transactions as debug_txs
 
     debug_data = await debug_txs(db, contest_id, limit=10)
 
     if 'error' in debug_data:
-        await callback.message.answer(f'❌ Ошибка: {debug_data["error"]}')
+        await callback.message.answer(
+            texts.t('ADMIN_CONTEST_UI_061', '❌ Ошибка: {value1}').format(value1=debug_data['error'])
+        )
         return
 
     deposit_total = debug_data.get('deposit_total_kopeks', 0) // 100
     subscription_total = debug_data.get('subscription_total_kopeks', 0) // 100
 
     lines = [
-        '🔍 <b>Отладка транзакций конкурса</b>',
+        texts.t('ADMIN_CONTEST_UI_028', '🔍 <b>Отладка транзакций конкурса</b>'),
         '',
-        f'📊 <b>Конкурс:</b> {html.escape(contest.title)}',
-        '📅 <b>Период фильтрации:</b>',
-        f'   Начало: <code>{debug_data.get("contest_start")}</code>',
-        f'   Конец: <code>{debug_data.get("contest_end")}</code>',
-        f'👥 <b>Рефералов в периоде:</b> {debug_data.get("referral_count", 0)}',
-        f'⚠️ <b>Отфильтровано (вне периода):</b> {debug_data.get("filtered_out", 0)}',
-        f'📊 <b>Всего событий в БД:</b> {debug_data.get("total_all_events", 0)}',
+        texts.t('ADMIN_CONTEST_UI_014', '📊 <b>Конкурс:</b> {value1}').format(value1=html.escape(contest.title)),
+        texts.t('ADMIN_CONTEST_UI_029', '📅 <b>Период фильтрации:</b>'),
+        texts.t('ADMIN_CONTEST_UI_030', '   Начало: <code>{value1}</code>').format(
+            value1=debug_data.get('contest_start')
+        ),
+        texts.t('ADMIN_CONTEST_UI_031', '   Конец: <code>{value1}</code>').format(value1=debug_data.get('contest_end')),
+        texts.t('ADMIN_CONTEST_UI_032', '👥 <b>Рефералов в периоде:</b> {value1}').format(
+            value1=debug_data.get('referral_count', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_033', '⚠️ <b>Отфильтровано (вне периода):</b> {value1}').format(
+            value1=debug_data.get('filtered_out', 0)
+        ),
+        texts.t('ADMIN_CONTEST_UI_034', '📊 <b>Всего событий в БД:</b> {value1}').format(
+            value1=debug_data.get('total_all_events', 0)
+        ),
         '',
-        '<b>💰 СУММЫ:</b>',
-        f'   📥 Пополнения баланса: <b>{deposit_total}</b> руб.',
-        f'   🛒 Покупки подписок: <b>{subscription_total}</b> руб.',
+        texts.t('ADMIN_CONTEST_UI_009', '<b>💰 СУММЫ:</b>'),
+        texts.t('ADMIN_CONTEST_UI_035', '   📥 Пополнения баланса: <b>{value1}</b> руб.').format(value1=deposit_total),
+        texts.t('ADMIN_CONTEST_UI_036', '   🛒 Покупки подписок: <b>{value1}</b> руб.').format(
+            value1=subscription_total
+        ),
         '',
     ]
 
     # Показываем транзакции В периоде
     txs_in = debug_data.get('transactions_in_period', [])
     if txs_in:
-        lines.append(f'✅ <b>Транзакции в периоде</b> (первые {len(txs_in)}):')
+        lines.append(
+            texts.t('ADMIN_CONTEST_UI_043', '✅ <b>Транзакции в периоде</b> (первые {value1}):').format(
+                value1=len(txs_in)
+            )
+        )
         for tx in txs_in[:5]:  # Показываем максимум 5
             lines.append(
                 f'  • {tx["created_at"][:10]} | {tx["type"]} | {tx["amount_kopeks"] // 100}₽ | user={tx["user_id"]}'
             )
         if len(txs_in) > 5:
-            lines.append(f'  ... и ещё {len(txs_in) - 5}')
+            lines.append(texts.t('ADMIN_CONTEST_UI_062', '  ... и ещё {value1}').format(value1=len(txs_in) - 5))
     else:
-        lines.append('✅ <b>Транзакций в периоде:</b> 0')
+        lines.append(texts.t('ADMIN_CONTEST_UI_044', '✅ <b>Транзакций в периоде:</b> 0'))
 
     lines.append('')
 
     # Показываем транзакции ВНЕ периода
     txs_out = debug_data.get('transactions_outside_period', [])
     if txs_out:
-        lines.append(f'❌ <b>Транзакции вне периода</b> (первые {len(txs_out)}):')
+        lines.append(
+            texts.t('ADMIN_CONTEST_UI_045', '❌ <b>Транзакции вне периода</b> (первые {value1}):').format(
+                value1=len(txs_out)
+            )
+        )
         for tx in txs_out[:5]:
             lines.append(
                 f'  • {tx["created_at"][:10]} | {tx["type"]} | {tx["amount_kopeks"] // 100}₽ | user={tx["user_id"]}'
             )
         if len(txs_out) > 5:
-            lines.append(f'  ... и ещё {len(txs_out) - 5}')
+            lines.append(texts.t('ADMIN_CONTEST_UI_062', '  ... и ещё {value1}').format(value1=len(txs_out) - 5))
     else:
-        lines.append('❌ <b>Транзакций вне периода:</b> 0')
+        lines.append(texts.t('ADMIN_CONTEST_UI_046', '❌ <b>Транзакций вне периода:</b> 0'))
 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     back_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text='⬅️ Назад к конкурсу', callback_data=f'admin_contest_view_{contest_id}')]
+            [
+                InlineKeyboardButton(
+                    text=texts.t('ADMIN_CONTEST_UI_077', '⬅️ Назад к конкурсу'),
+                    callback_data=f'admin_contest_view_{contest_id}',
+                )
+            ]
         ]
     )
 
@@ -996,29 +1087,39 @@ async def show_virtual_participants(
     db_user,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     contest_id = int(callback.data.split('_')[-1])
     contest = await get_referral_contest(db, contest_id)
     if not contest:
-        await callback.answer('Конкурс не найден.', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_054', 'Конкурс не найден.'), show_alert=True)
         return
 
     vps = await list_virtual_participants(db, contest_id)
 
-    lines = [f'👻 <b>Виртуальные участники</b> — {html.escape(contest.title)}', '']
+    lines = [
+        texts.t('ADMIN_CONTEST_UI_037', '👻 <b>Виртуальные участники</b> — {value1}').format(
+            value1=html.escape(contest.title)
+        ),
+        '',
+    ]
     if vps:
         for vp in vps:
-            lines.append(f'• {html.escape(vp.display_name)} — {vp.referral_count} реф.')
+            lines.append(
+                texts.t('ADMIN_CONTEST_UI_063', '• {value1} — {value2} реф.').format(
+                    value1=html.escape(vp.display_name), value2=vp.referral_count
+                )
+            )
     else:
-        lines.append('Пока нет виртуальных участников.')
+        lines.append(texts.t('ADMIN_CONTEST_UI_047', 'Пока нет виртуальных участников.'))
 
     rows = [
         [
             types.InlineKeyboardButton(
-                text='➕ Добавить',
+                text=texts.t('ADMIN_CONTEST_UI_069', '➕ Добавить'),
                 callback_data=f'admin_contest_vp_add_{contest_id}',
             ),
             types.InlineKeyboardButton(
-                text='🎭 Массовка',
+                text=texts.t('ADMIN_CONTEST_UI_070', '🎭 Массовка'),
                 callback_data=f'admin_contest_vp_mass_{contest_id}',
             ),
         ],
@@ -1040,7 +1141,7 @@ async def show_virtual_participants(
     rows.append(
         [
             types.InlineKeyboardButton(
-                text='⬅️ Назад',
+                text=texts.t('ADMIN_CONTEST_UI_071', '⬅️ Назад'),
                 callback_data=f'admin_contest_view_{contest_id}',
             ),
         ]
@@ -1061,14 +1162,20 @@ async def start_add_virtual_participant(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     contest_id = int(callback.data.split('_')[-1])
     await state.set_state(AdminStates.adding_virtual_participant_name)
     await state.update_data(vp_contest_id=contest_id)
     await callback.message.edit_text(
-        '👻 Введите отображаемое имя виртуального участника:',
+        texts.t('ADMIN_CONTEST_UI_048', '👻 Введите отображаемое имя виртуального участника:'),
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin_contest_vp_{contest_id}')],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_CONTEST_UI_078', '❌ Отмена'),
+                        callback_data=f'admin_contest_vp_{contest_id}',
+                    )
+                ],
             ]
         ),
     )
@@ -1083,13 +1190,20 @@ async def process_virtual_participant_name(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     name = message.text.strip()
     if not name or len(name) > 200:
-        await message.answer('Имя должно быть от 1 до 200 символов. Попробуйте ещё раз:')
+        await message.answer(
+            texts.t('ADMIN_CONTEST_UI_064', 'Имя должно быть от 1 до 200 символов. Попробуйте ещё раз:')
+        )
         return
     await state.update_data(vp_name=name)
     await state.set_state(AdminStates.adding_virtual_participant_count)
-    await message.answer(f'Имя: <b>{name}</b>\n\nВведите количество рефералов (число):')
+    await message.answer(
+        texts.t('ADMIN_CONTEST_UI_049', 'Имя: <b>{value1}</b>\n\nВведите количество рефералов (число):').format(
+            value1=name
+        )
+    )
 
 
 @admin_required
@@ -1100,12 +1214,13 @@ async def process_virtual_participant_count(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     try:
         count = int(message.text.strip())
         if count < 1:
             raise ValueError
     except (ValueError, TypeError):
-        await message.answer('Введите положительное целое число:')
+        await message.answer(texts.t('ADMIN_CONTEST_UI_072', 'Введите положительное целое число:'))
         return
 
     data = await state.get_data()
@@ -1115,11 +1230,24 @@ async def process_virtual_participant_count(
 
     vp = await add_virtual_participant(db, contest_id, display_name, count)
     await message.answer(
-        f'✅ Виртуальный участник добавлен:\nИмя: <b>{vp.display_name}</b>\nРефералов: <b>{vp.referral_count}</b>',
+        texts.t(
+            'ADMIN_CONTEST_UI_050',
+            '✅ Виртуальный участник добавлен:\nИмя: <b>{value1}</b>\nРефералов: <b>{value2}</b>',
+        ).format(value1=vp.display_name, value2=vp.referral_count),
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='👻 К списку', callback_data=f'admin_contest_vp_{contest_id}')],
-                [types.InlineKeyboardButton(text='⬅️ К конкурсу', callback_data=f'admin_contest_view_{contest_id}')],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_CONTEST_UI_079', '👻 К списку'),
+                        callback_data=f'admin_contest_vp_{contest_id}',
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_CONTEST_UI_080', '⬅️ К конкурсу'),
+                        callback_data=f'admin_contest_view_{contest_id}',
+                    )
+                ],
             ]
         ),
     )
@@ -1132,6 +1260,7 @@ async def delete_virtual_participant_handler(
     db_user,
     db: AsyncSession,
 ):
+    texts = get_texts(db_user.language)
     vp_id = int(callback.data.split('_')[-1])
 
     # Получим contest_id до удаления
@@ -1144,31 +1273,44 @@ async def delete_virtual_participant_handler(
     )
     vp = result.scalar_one_or_none()
     if not vp:
-        await callback.answer('Участник не найден.', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_065', 'Участник не найден.'), show_alert=True)
         return
 
     contest_id = vp.contest_id
     deleted = await delete_virtual_participant(db, vp_id)
     if deleted:
-        await callback.answer('✅ Удалён', show_alert=False)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_066', '✅ Удалён'), show_alert=False)
     else:
-        await callback.answer('Не удалось удалить.', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_067', 'Не удалось удалить.'), show_alert=True)
 
     # Вернуться к списку
     vps = await list_virtual_participants(db, contest_id)
     contest = await get_referral_contest(db, contest_id)
 
-    lines = [f'👻 <b>Виртуальные участники</b> — {html.escape(contest.title)}', '']
+    lines = [
+        texts.t('ADMIN_CONTEST_UI_037', '👻 <b>Виртуальные участники</b> — {value1}').format(
+            value1=html.escape(contest.title)
+        ),
+        '',
+    ]
     if vps:
         for v in vps:
-            lines.append(f'• {html.escape(v.display_name)} — {v.referral_count} реф.')
+            lines.append(
+                texts.t('ADMIN_CONTEST_UI_063', '• {value1} — {value2} реф.').format(
+                    value1=html.escape(v.display_name), value2=v.referral_count
+                )
+            )
     else:
-        lines.append('Пока нет виртуальных участников.')
+        lines.append(texts.t('ADMIN_CONTEST_UI_047', 'Пока нет виртуальных участников.'))
 
     rows = [
         [
-            types.InlineKeyboardButton(text='➕ Добавить', callback_data=f'admin_contest_vp_add_{contest_id}'),
-            types.InlineKeyboardButton(text='🎭 Массовка', callback_data=f'admin_contest_vp_mass_{contest_id}'),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_CONTEST_UI_069', '➕ Добавить'), callback_data=f'admin_contest_vp_add_{contest_id}'
+            ),
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_CONTEST_UI_070', '🎭 Массовка'), callback_data=f'admin_contest_vp_mass_{contest_id}'
+            ),
         ],
     ]
     if vps:
@@ -1181,7 +1323,13 @@ async def delete_virtual_participant_handler(
                     types.InlineKeyboardButton(text='🗑', callback_data=f'admin_contest_vp_del_{v.id}'),
                 ]
             )
-    rows.append([types.InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin_contest_view_{contest_id}')])
+    rows.append(
+        [
+            types.InlineKeyboardButton(
+                text=texts.t('ADMIN_CONTEST_UI_071', '⬅️ Назад'), callback_data=f'admin_contest_view_{contest_id}'
+            )
+        ]
+    )
 
     await callback.message.edit_text(
         '\n'.join(lines),
@@ -1197,31 +1345,27 @@ async def start_mass_virtual_participants(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     """Начинает массовое создание виртуальных участников (массовка)."""
     contest_id = int(callback.data.split('_')[-1])
     await state.set_state(AdminStates.adding_mass_virtual_count)
     await state.update_data(mass_vp_contest_id=contest_id)
 
-    text = """
-🎭 <b>Массовка — массовое создание виртуальных участников</b>
-
-<i>Для чего это нужно?</i>
-Виртуальные участники (призраки) позволяют создать видимость активности в конкурсе. Они отображаются в таблице лидеров наравне с реальными участниками, но помечаются значком 👻.
-
-Это помогает:
-• Мотивировать реальных участников соревноваться
-• Задать планку для участия
-• Сделать конкурс более живым
-
-<b>Введите количество призраков для создания:</b>
-<i>(от 1 до 50)</i>
-"""
+    text = texts.t(
+        'ADMIN_CONTEST_UI_000',
+        '\n🎭 <b>Массовка — массовое создание виртуальных участников</b>\n\n<i>Для чего это нужно?</i>\nВиртуальные участники (призраки) позволяют создать видимость активности в конкурсе. Они отображаются в таблице лидеров наравне с реальными участниками, но помечаются значком 👻.\n\nЭто помогает:\n• Мотивировать реальных участников соревноваться\n• Задать планку для участия\n• Сделать конкурс более живым\n\n<b>Введите количество призраков для создания:</b>\n<i>(от 1 до 50)</i>\n',
+    )
 
     await callback.message.edit_text(
         text,
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin_contest_vp_{contest_id}')],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_CONTEST_UI_078', '❌ Отмена'),
+                        callback_data=f'admin_contest_vp_{contest_id}',
+                    )
+                ],
             ]
         ),
     )
@@ -1236,25 +1380,35 @@ async def process_mass_virtual_count(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     """Обрабатывает количество призраков для массового создания."""
     try:
         count = int(message.text.strip())
         if count < 1 or count > 50:
             await message.answer(
-                '❌ Введите число от 1 до 50:',
+                texts.t('ADMIN_CONTEST_UI_073', '❌ Введите число от 1 до 50:'),
                 reply_markup=types.InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_referral')],
+                        [
+                            types.InlineKeyboardButton(
+                                text=texts.t('ADMIN_CONTEST_UI_078', '❌ Отмена'),
+                                callback_data='admin_contests_referral',
+                            )
+                        ],
                     ]
                 ),
             )
             return
     except ValueError:
         await message.answer(
-            '❌ Введите корректное число от 1 до 50:',
+            texts.t('ADMIN_CONTEST_UI_074', '❌ Введите корректное число от 1 до 50:'),
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='❌ Отмена', callback_data='admin_contests_referral')],
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('ADMIN_CONTEST_UI_078', '❌ Отмена'), callback_data='admin_contests_referral'
+                        )
+                    ],
                 ]
             ),
         )
@@ -1267,12 +1421,18 @@ async def process_mass_virtual_count(
     contest_id = data.get('mass_vp_contest_id')
 
     await message.answer(
-        f'✅ Будет создано <b>{count}</b> призраков.\n\n'
-        f'<b>Введите количество рефералов у каждого:</b>\n'
-        f'<i>(от 1 до 100)</i>',
+        texts.t(
+            'ADMIN_CONTEST_UI_051',
+            '✅ Будет создано <b>{value1}</b> призраков.\n\n<b>Введите количество рефералов у каждого:</b>\n<i>(от 1 до 100)</i>',
+        ).format(value1=count),
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin_contest_vp_{contest_id}')],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_CONTEST_UI_078', '❌ Отмена'),
+                        callback_data=f'admin_contest_vp_{contest_id}',
+                    )
+                ],
             ]
         ),
     )
@@ -1286,6 +1446,7 @@ async def process_mass_virtual_referrals(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     """Создаёт массовку призраков с рандомными именами."""
     import random
     import string
@@ -1293,10 +1454,10 @@ async def process_mass_virtual_referrals(
     try:
         referrals_count = int(message.text.strip())
         if referrals_count < 1 or referrals_count > 100:
-            await message.answer('❌ Введите число от 1 до 100:')
+            await message.answer(texts.t('ADMIN_CONTEST_UI_075', '❌ Введите число от 1 до 100:'))
             return
     except ValueError:
-        await message.answer('❌ Введите корректное число от 1 до 100:')
+        await message.answer(texts.t('ADMIN_CONTEST_UI_076', '❌ Введите корректное число от 1 до 100:'))
         return
 
     data = await state.get_data()
@@ -1316,21 +1477,17 @@ async def process_mass_virtual_referrals(
         created.append(vp)
 
     # Показываем результат
-    text = f"""
-✅ <b>Массовка создана!</b>
-
-📊 <b>Результат:</b>
-• Создано призраков: {len(created)}
-• Рефералов у каждого: {referrals_count}
-• Всего виртуальных рефералов: {len(created) * referrals_count}
-
-👻 <b>Созданные призраки:</b>
-"""
+    text = texts.t(
+        'ADMIN_CONTEST_UI_001',
+        '\n✅ <b>Массовка создана!</b>\n\n📊 <b>Результат:</b>\n• Создано призраков: {value1}\n• Рефералов у каждого: {value2}\n• Всего виртуальных рефералов: {value3}\n\n👻 <b>Созданные призраки:</b>\n',
+    ).format(value1=len(created), value2=referrals_count, value3=len(created) * referrals_count)
     for vp in created[:10]:
-        text += f'• {vp.display_name} — {vp.referral_count} реф.\n'
+        text += texts.t('ADMIN_CONTEST_UI_038', '• {value1} — {value2} реф.\n').format(
+            value1=vp.display_name, value2=vp.referral_count
+        )
 
     if len(created) > 10:
-        text += f'<i>... и ещё {len(created) - 10}</i>\n'
+        text += texts.t('ADMIN_CONTEST_UI_039', '<i>... и ещё {value1}</i>\n').format(value1=len(created) - 10)
 
     await message.answer(
         text,
@@ -1338,10 +1495,16 @@ async def process_mass_virtual_referrals(
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text='👻 К списку призраков', callback_data=f'admin_contest_vp_{contest_id}'
+                        text=texts.t('ADMIN_CONTEST_UI_081', '👻 К списку призраков'),
+                        callback_data=f'admin_contest_vp_{contest_id}',
                     )
                 ],
-                [types.InlineKeyboardButton(text='⬅️ К конкурсу', callback_data=f'admin_contest_view_{contest_id}')],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_CONTEST_UI_080', '⬅️ К конкурсу'),
+                        callback_data=f'admin_contest_view_{contest_id}',
+                    )
+                ],
             ]
         ),
     )
@@ -1355,6 +1518,7 @@ async def start_edit_virtual_participant(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     vp_id = int(callback.data.split('_')[-1])
 
     from sqlalchemy import select as sa_select
@@ -1366,18 +1530,24 @@ async def start_edit_virtual_participant(
     )
     vp = result.scalar_one_or_none()
     if not vp:
-        await callback.answer('Участник не найден.', show_alert=True)
+        await callback.answer(texts.t('ADMIN_CONTEST_UI_065', 'Участник не найден.'), show_alert=True)
         return
 
     await state.set_state(AdminStates.editing_virtual_participant_count)
     await state.update_data(vp_edit_id=vp_id, vp_edit_contest_id=vp.contest_id)
     await callback.message.edit_text(
-        f'✏️ <b>{vp.display_name}</b>\n'
-        f'Текущее кол-во рефералов: <b>{vp.referral_count}</b>\n\n'
-        f'Введите новое количество:',
+        texts.t(
+            'ADMIN_CONTEST_UI_052',
+            '✏️ <b>{value1}</b>\nТекущее кол-во рефералов: <b>{value2}</b>\n\nВведите новое количество:',
+        ).format(value1=vp.display_name, value2=vp.referral_count),
         reply_markup=types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin_contest_vp_{vp.contest_id}')],
+                [
+                    types.InlineKeyboardButton(
+                        text=texts.t('ADMIN_CONTEST_UI_078', '❌ Отмена'),
+                        callback_data=f'admin_contest_vp_{vp.contest_id}',
+                    )
+                ],
             ]
         ),
     )
@@ -1392,12 +1562,13 @@ async def process_edit_virtual_participant_count(
     db: AsyncSession,
     state: FSMContext,
 ):
+    texts = get_texts(db_user.language)
     try:
         count = int(message.text.strip())
         if count < 1:
             raise ValueError
     except (ValueError, TypeError):
-        await message.answer('Введите положительное целое число:')
+        await message.answer(texts.t('ADMIN_CONTEST_UI_072', 'Введите положительное целое число:'))
         return
 
     data = await state.get_data()
@@ -1408,15 +1579,22 @@ async def process_edit_virtual_participant_count(
     vp = await update_virtual_participant_count(db, vp_id, count)
     if vp:
         await message.answer(
-            f'✅ Обновлено: <b>{vp.display_name}</b> — {vp.referral_count} реф.',
+            texts.t('ADMIN_CONTEST_UI_068', '✅ Обновлено: <b>{value1}</b> — {value2} реф.').format(
+                value1=vp.display_name, value2=vp.referral_count
+            ),
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [types.InlineKeyboardButton(text='👻 К списку', callback_data=f'admin_contest_vp_{contest_id}')],
+                    [
+                        types.InlineKeyboardButton(
+                            text=texts.t('ADMIN_CONTEST_UI_079', '👻 К списку'),
+                            callback_data=f'admin_contest_vp_{contest_id}',
+                        )
+                    ],
                 ]
             ),
         )
     else:
-        await message.answer('Участник не найден.')
+        await message.answer(texts.t('ADMIN_CONTEST_UI_065', 'Участник не найден.'))
 
 
 def register_handlers(dp: Dispatcher):

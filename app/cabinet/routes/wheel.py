@@ -28,6 +28,7 @@ from app.database.crud.wheel import (
     get_wheel_prizes,
 )
 from app.database.models import User
+from app.localization.texts import get_texts
 from app.services.wheel_service import wheel_service
 
 
@@ -290,13 +291,16 @@ async def create_stars_invoice(
         from app.bot_factory import create_bot
 
         async with create_bot() as bot:
+            texts = get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
             invoice_url = await bot.create_invoice_link(
-                title='Колесо удачи',
-                description=f'Спин колеса удачи ({stars_amount} ⭐)',
+                title=texts.t('STARS_WHEEL_TITLE', 'Колесо удачи'),
+                description=texts.t('STARS_WHEEL_DESCRIPTION', 'Спин колеса удачи ({stars} ⭐)').format(
+                    stars=stars_amount
+                ),
                 payload=payload,
                 provider_token='',
                 currency='XTR',
-                prices=[LabeledPrice(label='Спин колеса', amount=stars_amount)],
+                prices=[LabeledPrice(label=texts.t('STARS_WHEEL_LABEL', 'Спин колеса'), amount=stars_amount)],
             )
 
         logger.info('Created Stars invoice for wheel spin: user=, stars', user_id=user.id, stars_amount=stars_amount)

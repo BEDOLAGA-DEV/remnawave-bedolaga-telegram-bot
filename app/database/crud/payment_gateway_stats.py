@@ -18,6 +18,7 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
+    AnorePayment,
     AntilopayPayment,
     AuraPayPayment,
     CasheraPayment,
@@ -36,7 +37,6 @@ from app.database.models import (
     Pal24Payment,
     ParityPayPayment,
     PaymentMethod,
-    PayPearPayment,
     PlategaPayment,
     RioPayPayment,
     RollyPayPayment,
@@ -62,7 +62,6 @@ _GATEWAY_REGISTRY: list[tuple[str, type, object]] = [
     (PaymentMethod.KASSA_AI.value, KassaAiPayment, KassaAiPayment.is_paid.is_(True)),
     (PaymentMethod.RIOPAY.value, RioPayPayment, RioPayPayment.is_paid.is_(True)),
     (PaymentMethod.SEVERPAY.value, SeverPayPayment, SeverPayPayment.is_paid.is_(True)),
-    (PaymentMethod.PAYPEAR.value, PayPearPayment, PayPearPayment.is_paid.is_(True)),
     (PaymentMethod.ROLLYPAY.value, RollyPayPayment, RollyPayPayment.is_paid.is_(True)),
     (PaymentMethod.OVERPAY.value, OverpayPayment, OverpayPayment.is_paid.is_(True)),
     (PaymentMethod.AURAPAY.value, AuraPayPayment, AuraPayPayment.is_paid.is_(True)),
@@ -71,8 +70,9 @@ _GATEWAY_REGISTRY: list[tuple[str, type, object]] = [
     (PaymentMethod.JUPITER.value, JupiterPayment, JupiterPayment.is_paid.is_(True)),
     (PaymentMethod.DONUT.value, DonutPayment, DonutPayment.is_paid.is_(True)),
     (PaymentMethod.LAVA.value, LavaPayment, LavaPayment.is_paid.is_(True)),
-    (PaymentMethod.CISPAY.value, CisPayPayment, CisPayPayment.is_paid.is_(True)),
+    (PaymentMethod.CISPAY.value, CisPayPayment, CisPayPayment.is_paid.is_(True) & CisPayPayment.is_sandbox.is_(False)),
     (PaymentMethod.CASHERA.value, CasheraPayment, CasheraPayment.is_paid.is_(True)),
+    (PaymentMethod.ANORE.value, AnorePayment, AnorePayment.is_paid.is_(True) & AnorePayment.is_test.is_(False)),
     (PaymentMethod.TABPAY.value, TabPayPayment, TabPayPayment.is_paid.is_(True)),
     (PaymentMethod.PARITYPAY.value, ParityPayPayment, ParityPayPayment.is_paid.is_(True)),
 ]
@@ -98,6 +98,8 @@ async def get_gateway_success_rates(
                 and_(
                     model.created_at >= period_start,
                     model.created_at <= period_end,
+                    AnorePayment.is_test.is_(False) if model is AnorePayment else True,
+                    CisPayPayment.is_sandbox.is_(False) if model is CisPayPayment else True,
                 )
             )
         )

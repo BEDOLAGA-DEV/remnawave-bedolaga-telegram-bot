@@ -23,10 +23,11 @@ from datetime import UTC, datetime
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNotFound
-from aiogram.types import InlineKeyboardMarkup, InputRichMessage
+from aiogram.types import InlineKeyboardMarkup
 
 from app.config import settings
 from app.utils.rich_buttons import render_keyboard_as_rich_html
+from app.utils.rich_media import prepare_rich_message
 from app.utils.rich_menu import _looks_like_unsupported
 from app.utils.timezone import format_local_datetime
 
@@ -50,8 +51,32 @@ _LEADING_TITLE_RE = re.compile(r'^(?P<title>[^\n]{1,160})[ \t]*\n+')
 # Сегментация по блочным тегам: внутри цитат переносы строк конвертируются в
 # <br>, pre-блоки не трогаются вовсе (сохраняют форматирование), остальной
 # текст — в абзацы.
-_BLOCK_SPLIT_RE = re.compile(r'(<blockquote>.*?</blockquote>|<pre>.*?</pre>)', re.IGNORECASE | re.DOTALL)
-_PRE_SPLIT_RE = re.compile(r'(<pre>.*?</pre>)', re.IGNORECASE | re.DOTALL)
+_BLOCK_TAG_RE = re.compile(r'</?(?:blockquote|pre)>', re.IGNORECASE)
+
+
+def _split_blocks(text: str, tags: frozenset[str]) -> list[str]:
+    """Split at the first matching close tag without rescanning unmatched tails."""
+    closes: dict[str, int] = {}
+    spans: list[tuple[int, int]] = []
+    for match in reversed(list(_BLOCK_TAG_RE.finditer(text))):
+        token = match.group().lower()
+        closing = token.startswith('</')
+        tag = token[2:-1] if closing else token[1:-1]
+        if tag not in tags:
+            continue
+        if closing:
+            closes[tag] = match.end()
+        elif tag in closes:
+            spans.append((match.start(), closes[tag]))
+    result: list[str] = []
+    position = 0
+    for start, end in reversed(spans):
+        if start < position:
+            continue
+        result.extend((text[position:start], text[start:end]))
+        position = end
+    result.append(text[position:])
+    return result
 
 
 def is_rich_admin_enabled() -> bool:
@@ -106,7 +131,7 @@ def _inline_newlines_to_rich(text: str) -> str:
     Пустая строка = граница абзаца (<p>), одиночный перенос = <br>; внутри
     blockquote — только <br> (цитата остаётся одним блоком).
     """
-    segments = _BLOCK_SPLIT_RE.split(text)
+    segments = _split_blocks(text, frozenset({'blockquote', 'pre'}))
     rendered: list[str] = []
     for segment in segments:
         if not segment or not segment.strip():
@@ -119,7 +144,7 @@ def _inline_newlines_to_rich(text: str) -> str:
         if lowered.startswith('<blockquote'):
             inner = segment[len('<blockquote>') : -len('</blockquote>')]
             pieces: list[str] = []
-            for piece in _PRE_SPLIT_RE.split(inner):
+            for piece in _split_blocks(inner, frozenset({'pre'})):
                 if not piece or not piece.strip():
                     continue
                 if piece.lower().startswith('<pre'):
@@ -192,7 +217,7 @@ async def try_send_rich_admin_message(
 
     kwargs: dict = {
         'chat_id': chat_id,
-        'rich_message': InputRichMessage(html=rich_html, skip_entity_detection=True),
+        'rich_message': prepare_rich_message(rich_html),
     }
     if thread_id:
         kwargs['message_thread_id'] = thread_id

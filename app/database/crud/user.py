@@ -672,12 +672,14 @@ async def add_user_balance_by_id(
 
 
 async def lock_user_for_pricing(db: AsyncSession, user_id: int) -> User:
-    """Lock user row with FOR UPDATE and return refreshed instance.
+    """Lock user row with FOR NO KEY UPDATE and return refreshed instance.
 
     Call BEFORE computing prices that depend on promo offer state
     to prevent TOCTOU race conditions where two concurrent requests
     both read the same promo offer discount and charge a discounted price.
     """
+    # Balance/discount changes never alter the User primary key. Allow ledger
+    # FK KEY SHARE while a recurring payment owns the subscription row.
     result = await db.execute(
         select(User)
         .where(User.id == user_id)
@@ -686,7 +688,7 @@ async def lock_user_for_pricing(db: AsyncSession, user_id: int) -> User:
             selectinload(User.promo_group),
             selectinload(User.subscriptions).selectinload(Subscription.tariff),
         )
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     return result.scalar_one()
@@ -1148,6 +1150,7 @@ def _users_list_conditions(
                             SubscriptionStatus.LIMITED.value,
                         )
                     ),
+                    Subscription.end_date > now,
                     Subscription.traffic_limit_gb > 0,
                     Subscription.traffic_used_gb >= Subscription.traffic_limit_gb * threshold,
                 )

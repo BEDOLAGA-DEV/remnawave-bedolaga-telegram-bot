@@ -188,7 +188,17 @@ def _row_subscription(subs: list[Subscription], highlight: str | None) -> Subscr
         return None
 
     if highlight == HIGHLIGHT_TRAFFIC:
-        with_limit = [s for s in subs if (s.traffic_limit_gb or 0) > 0]
+        # Те же кандидаты, что в traffic_low: старый/отключённый тариф с
+        # большим расходом не должен вытеснять подписку, по которой найден человек.
+        with_limit = [
+            s
+            for s in subs
+            if s.status
+            in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value, SubscriptionStatus.LIMITED.value)
+            and s.end_date is not None
+            and not s.is_expired
+            and (s.traffic_limit_gb or 0) > 0
+        ]
         if with_limit:
             return max(with_limit, key=lambda s: (s.traffic_used_gb or 0.0) / s.traffic_limit_gb)
     elif highlight and highlight.startswith(HIGHLIGHT_STATUS_PREFIX):
@@ -315,6 +325,7 @@ def _build_subscription_info(subscription: Subscription, tariff_name: str | None
 
     return UserSubscriptionInfo(
         id=subscription.id,
+        remnawave_id=subscription.remnawave_id,
         status=subscription.status,
         is_trial=subscription.is_trial,
         start_date=subscription.start_date,
@@ -455,7 +466,11 @@ async def _sync_subscription_to_panel(
             else:
                 logger.info('Updated user in Remnawave panel', user_id=user.id)
 
-            if reset_traffic and result.panel_user_id:
+            if (
+                reset_traffic
+                and result.panel_user_id
+                and getattr(subscription, 'traffic_accounting_mode', None) not in ('managed', 'migrating')
+            ):
                 try:
                     await api.reset_user_traffic(result.panel_user_id)
                     changes['traffic_reset'] = True
@@ -1289,6 +1304,15 @@ async def update_user_subscription(
     else:
         subscription = next((s for s in subs if s.is_active), subs[0] if subs else None)
 
+    if subscription is not None and request.action != 'create':
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        try:
+            await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
+        except ValueError as error:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=str(error)) from None
+
     if request.action == 'create':
         # In multi-tariff mode, allow creating additional subscriptions
         if subscription and not is_multi_tariff:
@@ -1463,19 +1487,6 @@ async def update_user_subscription(
                 detail='tariff_id parameter is required',
             )
 
-        # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила
-        # бы списывать СТАРУЮ сумму со СТАРЫМ каденсом. Отменяем привязку — юзер
-        # переподключит СБП-автопродление под новый тариф (нужна новая
-        # банковская авторизация, молча пересоздать нельзя).
-        if request.tariff_id != subscription.tariff_id:
-            from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
-            from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
-            from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
-
-            await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
-
-            await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
-            await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
         tariff = await get_tariff_by_id(db, request.tariff_id)
         if not tariff:
             raise HTTPException(
@@ -1496,13 +1507,24 @@ async def update_user_subscription(
                 )
 
         # Preserve extra purchased devices above the old tariff's base limit
-        from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+        from app.database.crud.subscription import calc_device_limit_on_admin_tariff_change
+        from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
+        from app.services.traffic_accounting_service import change_managed_tariff_locked
+
+        subscription, managed_panel = await prepare_admin_tariff_accounting(db, subscription)
+        if managed_panel is not None and subscription.tariff_id == tariff.id:
+            return UpdateSubscriptionResponse(success=True, message='Tariff already selected')
+        tariff_changed = subscription.tariff_id != tariff.id
 
         old_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
 
+        if subscription.tariff_id != request.tariff_id:
+            subscription.daily_devices_billing_version = 0
         subscription.tariff_id = request.tariff_id
+        if managed_panel is not None:
+            subscription.tariff = tariff
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
-        subscription.device_limit = calc_device_limit_on_tariff_switch(
+        subscription.device_limit = calc_device_limit_on_admin_tariff_change(
             current_device_limit=subscription.device_limit,
             old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
             new_tariff_device_limit=tariff.device_limit,
@@ -1526,13 +1548,13 @@ async def update_user_subscription(
         subscription.purchased_traffic_gb = 0
         subscription.traffic_reset_at = None
 
-        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+        if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH and managed_panel is None:
             subscription.traffic_used_gb = 0.0
 
         # Записываем транзакцию о смене тарифа
         from app.database.crud.transaction import create_transaction
 
-        await create_transaction(
+        change_transaction = await create_transaction(
             db=db,
             user_id=user.id,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
@@ -1541,8 +1563,31 @@ async def update_user_subscription(
             commit=False,
         )
 
+        if managed_panel is not None:
+            await change_managed_tariff_locked(
+                db,
+                subscription,
+                managed_panel,
+                operation_key=f'admin-switch:{change_transaction.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+            )
+
         await db.commit()
         await db.refresh(subscription)
+
+        # Смена тарифа делает СБП-привязку Platega несогласованной: она продолжила
+        # бы списывать СТАРУЮ сумму со СТАРЫМ каденсом. Отменяем привязку — юзер
+        # переподключит СБП-автопродление под новый тариф (нужна новая
+        # банковская авторизация, молча пересоздать нельзя).
+        if tariff_changed:
+            from app.services.cashera_recurring_cancel import cancel_cashera_recurring_for_subscription_safe
+            from app.services.payment.lava import cancel_lava_recurring_for_subscription_safe
+            from app.services.payment.platega import cancel_platega_recurring_for_subscription_safe
+
+            await cancel_platega_recurring_for_subscription_safe(db, subscription.id)
+
+            await cancel_lava_recurring_for_subscription_safe(db, subscription.id)
+            await cancel_cashera_recurring_for_subscription_safe(db, subscription.id)
 
         # Синхронизируем с RemnaWave (discovery/create + сброс трафика по админ-настройке)
         try:
@@ -1550,7 +1595,7 @@ async def update_user_subscription(
                 db,
                 user,
                 subscription,
-                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+                reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH and managed_panel is None,
                 reset_traffic_reason='смена тарифа (cabinet admin)',
             )
         except Exception as e:
@@ -1565,8 +1610,26 @@ async def update_user_subscription(
         )
 
     if request.action == 'set_traffic':
+        from secrets import token_hex
+
+        from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
+        from app.services.traffic_accounting_service import lock_accounting_subscription
+        from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+        subscription, _ = await lock_accounting_subscription(db, subscription.id)
+        managed = subscription.traffic_accounting_mode == 'managed'
+        if managed and request.traffic_used_gb is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='Managed traffic usage is measured by the panel and cannot be edited. Use reset_traffic to renew the base allowance.',
+            )
+        subscription, _ = await prepare_admin_tariff_accounting(db, subscription)
         if request.traffic_limit_gb is not None:
             subscription.traffic_limit_gb = request.traffic_limit_gb
+            if managed:
+                await stage_paid_base_grant(
+                    db, subscription, operation_key=f'admin:traffic:{token_hex(16)}', reset_base=False
+                )
 
         if request.traffic_used_gb is not None:
             subscription.traffic_used_gb = request.traffic_used_gb
@@ -1691,7 +1754,10 @@ async def update_user_subscription(
                     )
 
             await reset_subscription(db, subscription)
-            result = {'panel_disabled': panel_disabled}
+            expiry_extinguished = await SubscriptionService().extinguish_remnawave_expiry(
+                db, user, subscription, panel_user_id
+            )
+            result = {'panel_disabled': panel_disabled, 'panel_expiry_extinguished': expiry_extinguished}
         else:
             from app.services.subscription_service import reset_subscription_with_panel
 
@@ -1703,6 +1769,7 @@ async def update_user_subscription(
             user_id=user_id,
             subscription_id=subscription.id,
             panel_disabled=result.get('panel_disabled'),
+            panel_expiry_extinguished=result.get('panel_expiry_extinguished'),
         )
 
         return UpdateSubscriptionResponse(
@@ -1712,6 +1779,9 @@ async def update_user_subscription(
         )
 
     if request.action == 'activate':
+        from app.services.traffic_accounting_service import stage_authorized_activation
+
+        subscription = await stage_authorized_activation(db, subscription)
         # Проверка: нельзя активировать, если у пользователя уже есть
         # другая активная подписка с тем же тарифом
         if is_multi_tariff and subscription.tariff_id:
@@ -1728,6 +1798,7 @@ async def update_user_subscription(
         if subscription.end_date and subscription.end_date <= datetime.now(UTC):
             # Extend by 30 days if expired
             subscription.end_date = datetime.now(UTC) + timedelta(days=30)
+            subscription.pending_panel_expire_at = subscription.end_date
         await db.commit()
         await db.refresh(subscription)
 
@@ -1751,9 +1822,13 @@ async def update_user_subscription(
                 detail='traffic_gb parameter is required for add_traffic action',
             )
 
-        from app.database.crud.subscription import add_subscription_traffic, reactivate_subscription
+        from app.database.crud.subscription import reactivate_subscription
+        from app.services.traffic_purchase_service import add_subscription_traffic, prepare_traffic_purchase
 
-        await add_subscription_traffic(db, subscription, request.traffic_gb)
+        accounting_panel = None
+        if subscription.traffic_limit_gb:
+            subscription, accounting_panel = await prepare_traffic_purchase(db, subscription)
+        await add_subscription_traffic(db, subscription, request.traffic_gb, panel=accounting_panel)
 
         # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
         await reactivate_subscription(db, subscription)
@@ -1788,6 +1863,10 @@ async def update_user_subscription(
                 detail='traffic_purchase_id parameter is required for remove_traffic action',
             )
 
+        from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
+
+        subscription, accounting_panel = await prepare_admin_tariff_accounting(db, subscription)
+
         # Find the traffic purchase
         tp_query = select(TrafficPurchase).where(
             TrafficPurchase.id == request.traffic_purchase_id,
@@ -1802,6 +1881,11 @@ async def update_user_subscription(
             )
 
         removed_gb = traffic_purchase.traffic_gb
+
+        if accounting_panel is not None:
+            from app.services.traffic_accounting_service import revoke_purchase_locked
+
+            await revoke_purchase_locked(db, subscription, traffic_purchase.id, accounting_panel)
 
         # Decrement counters
         subscription.traffic_limit_gb = max(0, subscription.traffic_limit_gb - removed_gb)
@@ -1876,6 +1960,44 @@ async def update_user_subscription(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f'Unknown action: {request.action}',
     )
+
+
+@router.get('/{user_id}/subscriptions/{sub_id}/cispay-recurrent')
+async def get_user_cispay_recurring(
+    user_id: int,
+    sub_id: int,
+    admin: User = Depends(require_permission('users:read')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    from app.services.cispay_recurrent_checkout import get_cispay_agreement_state
+
+    try:
+        return await get_cispay_agreement_state(db, user_id=user_id, subscription_id=sub_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail='Subscription not found') from None
+
+
+@router.post('/{user_id}/subscriptions/{sub_id}/cispay-recurrent/cancel')
+async def cancel_user_cispay_recurring(
+    user_id: int,
+    sub_id: int,
+    admin: User = Depends(require_permission('users:subscription')),
+    db: AsyncSession = Depends(get_cabinet_db),
+):
+    from app.services.cispay_recurrent_service import cancel_cispay_agreement
+
+    try:
+        result = await cancel_cispay_agreement(db, user_id=user_id, subscription_id=sub_id, reason='admin')
+    except ValueError:
+        raise HTTPException(status_code=404, detail='Subscription not found') from None
+    logger.info(
+        'Admin requested CisPay cancellation',
+        admin_id=admin.id,
+        user_id=user_id,
+        subscription_id=sub_id,
+        operation_status=result['status'],
+    )
+    return result
 
 
 @router.post('/{user_id}/subscriptions/{sub_id}/cancel-sbp-recurring')

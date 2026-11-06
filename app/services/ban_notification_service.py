@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
+from app.localization.texts import get_texts
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -21,6 +22,15 @@ from app.services.remnawave_service import remnawave_service
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _get_notification_template(setting_name: str, language: str) -> str:
+    """Localize only the built-in default; keep operator templates verbatim."""
+    template = getattr(settings, setting_name)
+    default = type(settings).model_fields[setting_name].default
+    if template != default:
+        return template
+    return get_texts(language).t(f'BAN_DEFAULT_{setting_name.removeprefix("BAN_MSG_")}', default)
 
 
 def _format_notification_template(template: str, fallback: str, **values: object) -> str:
@@ -32,10 +42,17 @@ def _format_notification_template(template: str, fallback: str, **values: object
         return fallback.format(**values)
 
 
-def get_delete_keyboard() -> InlineKeyboardMarkup:
+def get_delete_keyboard(language: str | None = None) -> InlineKeyboardMarkup:
     """Клавиатура с кнопкой удаления уведомления"""
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text='🗑 Удалить', callback_data='ban_notify:delete')]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=get_texts(language or settings.DEFAULT_LANGUAGE).t('BAN_NOTICE_016', '🗑 Удалить'),
+                    callback_data='ban_notify:delete',
+                )
+            ]
+        ]
     )
 
 
@@ -113,31 +130,51 @@ class BanNotificationService:
 
         # Находим пользователя
         user = await self._find_user_by_identifier(db, user_identifier)
+        language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
         if not user:
             logger.warning('Пользователь не найден в базе данных', user_identifier=user_identifier)
             return False, f'Пользователь не найден: {user_identifier}', None
 
         # Формируем информацию о ноде (заметно выделяем)
-        node_info = f'🖥 <b>Нода:</b> <code>{html.escape(node_name)}</code>' if node_name else ''
+        node_info = (
+            get_texts(language)
+            .t('BAN_NOTICE_000', '🖥 <b>Нода:</b> <code>{v0}</code>')
+            .format(v0=html.escape(node_name))
+            if node_name
+            else ''
+        )
 
         # Формируем сообщение из настроек
         # Используем безопасное форматирование - если {node_info} отсутствует в шаблоне, не будет ошибки
         format_vars = {'ip_count': ip_count, 'limit': limit, 'ban_minutes': ban_minutes, 'node_info': node_info}
-        template = settings.BAN_MSG_REVOKE if revoke else settings.BAN_MSG_PUNISHMENT
+        template = (
+            _get_notification_template('BAN_MSG_REVOKE', language)
+            if revoke
+            else _get_notification_template('BAN_MSG_PUNISHMENT', language)
+        )
         message_text = _format_notification_template(
             template,
-            '🚫 <b>АККАУНТ ЗАБЛОКИРОВАН</b>\n\n{node_info}\n'
-            '📱 Устройств: <b>{ip_count}</b> из <b>{limit}</b>\n'
-            '⏱ Ограничение: <b>{ban_minutes} мин</b>',
+            get_texts(language).t(
+                'BAN_NOTICE_001',
+                '🚫 <b>АККАУНТ ЗАБЛОКИРОВАН</b>\n\n{node_info}\n📱 Устройств: <b>{ip_count}</b> из <b>{limit}</b>\n⏱ Ограничение: <b>{ban_minutes} мин</b>',
+            ),
             **format_vars,
         )
 
         # Handle email-only users via notification delivery service
         if not user.telegram_id:
-            action = 'Ключи доступа сброшены' if revoke else f'Бан на {ban_minutes} минут'
-            reason = f'IP лимит превышен: {ip_count}/{limit}. {action}.'
+            action = (
+                get_texts(language).t('BAN_NOTICE_010', 'Ключи доступа сброшены')
+                if revoke
+                else get_texts(language).t('BAN_NOTICE_011', 'Бан на {v0} минут').format(v0=ban_minutes)
+            )
+            reason = (
+                get_texts(language)
+                .t('BAN_NOTICE_002', 'IP лимит превышен: {v0}/{v1}. {v2}.')
+                .format(v0=ip_count, v1=limit, v2=action)
+            )
             if node_name:
-                reason += f' Нода: {node_name}'
+                reason += get_texts(language).t('BAN_NOTICE_012', ' Нода: {v0}').format(v0=node_name)
             success = await notification_delivery_service.notify_ban(
                 user=user,
                 reason=reason,
@@ -150,7 +187,10 @@ class BanNotificationService:
         # Отправляем сообщение с кнопкой удаления
         try:
             await self._bot.send_message(
-                chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
+                chat_id=user.telegram_id,
+                text=message_text,
+                parse_mode='HTML',
+                reply_markup=get_delete_keyboard(language),
             )
             logger.info(
                 'Уведомление о бане отправлено пользователю',
@@ -184,12 +224,13 @@ class BanNotificationService:
 
         # Находим пользователя
         user = await self._find_user_by_identifier(db, user_identifier)
+        language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
         if not user:
             logger.warning('Пользователь не найден в базе данных', user_identifier=user_identifier)
             return False, f'Пользователь не найден: {user_identifier}', None
 
         # Формируем сообщение из настроек
-        message_text = settings.BAN_MSG_ENABLED
+        message_text = _get_notification_template('BAN_MSG_ENABLED', language)
 
         # Handle email-only users via notification delivery service
         if not user.telegram_id:
@@ -202,7 +243,10 @@ class BanNotificationService:
         # Отправляем сообщение с кнопкой удаления
         try:
             await self._bot.send_message(
-                chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
+                chat_id=user.telegram_id,
+                text=message_text,
+                parse_mode='HTML',
+                reply_markup=get_delete_keyboard(language),
             )
             logger.info(
                 'Уведомление о разбане отправлено пользователю',
@@ -236,6 +280,7 @@ class BanNotificationService:
 
         # Находим пользователя
         user = await self._find_user_by_identifier(db, user_identifier)
+        language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
         if not user:
             logger.warning('Пользователь не найден в базе данных', user_identifier=user_identifier)
             return False, f'Пользователь не найден: {user_identifier}', None
@@ -243,8 +288,8 @@ class BanNotificationService:
         # Формируем сообщение из настроек
         safe_warning = html.escape(warning_message)
         message_text = _format_notification_template(
-            settings.BAN_MSG_WARNING,
-            '⚠️ <b>ПРЕДУПРЕЖДЕНИЕ</b>\n\n{warning_message}',
+            _get_notification_template('BAN_MSG_WARNING', language),
+            get_texts(language).t('BAN_NOTICE_003', '⚠️ <b>ПРЕДУПРЕЖДЕНИЕ</b>\n\n{warning_message}'),
             warning_message=safe_warning,
         )
 
@@ -264,7 +309,10 @@ class BanNotificationService:
         # Отправляем сообщение с кнопкой удаления
         try:
             await self._bot.send_message(
-                chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
+                chat_id=user.telegram_id,
+                text=message_text,
+                parse_mode='HTML',
+                reply_markup=get_delete_keyboard(language),
             )
             logger.info(
                 'Предупреждение отправлено пользователю',
@@ -304,31 +352,49 @@ class BanNotificationService:
 
         # Находим пользователя
         user = await self._find_user_by_identifier(db, user_identifier)
+        language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
         if not user:
             logger.warning('Пользователь не найден в базе данных', user_identifier=user_identifier)
             return False, f'Пользователь не найден: {user_identifier}', None
 
         # Формируем сообщение из настроек (заметно выделяем)
-        network_info = f'├ 🌐 Сеть: <b>{html.escape(network_type)}</b>\n' if network_type else ''
-        node_info = f'🖥 <b>Нода:</b> <code>{html.escape(node_name)}</code>' if node_name else ''
+        network_info = (
+            get_texts(language).t('BAN_NOTICE_004', '├ 🌐 Сеть: <b>{v0}</b>\n').format(v0=html.escape(network_type))
+            if network_type
+            else ''
+        )
+        node_info = (
+            get_texts(language)
+            .t('BAN_NOTICE_000', '🖥 <b>Нода:</b> <code>{v0}</code>')
+            .format(v0=html.escape(node_name))
+            if node_name
+            else ''
+        )
 
         logger.info('WiFi notification', node_name=repr(node_name), node_info=repr(node_info))
 
         # Безопасное форматирование
         format_vars = {'ban_minutes': ban_minutes, 'network_info': network_info, 'node_info': node_info}
         message_text = _format_notification_template(
-            settings.BAN_MSG_WIFI,
-            '🚫 <b>Блокировка за WiFi</b>\n\n{node_info}\n{network_info}⏱ Время блокировки: <b>{ban_minutes} мин</b>',
+            _get_notification_template('BAN_MSG_WIFI', language),
+            get_texts(language).t(
+                'BAN_NOTICE_005',
+                '🚫 <b>Блокировка за WiFi</b>\n\n{node_info}\n{network_info}⏱ Время блокировки: <b>{ban_minutes} мин</b>',
+            ),
             **format_vars,
         )
 
         # Handle email-only users via notification delivery service
         if not user.telegram_id:
-            reason = f'Использование WiFi сети запрещено. Бан на {ban_minutes} минут.'
+            reason = (
+                get_texts(language)
+                .t('BAN_NOTICE_006', 'Использование WiFi сети запрещено. Бан на {v0} минут.')
+                .format(v0=ban_minutes)
+            )
             if network_type:
-                reason += f' Сеть: {network_type}'
+                reason += get_texts(language).t('BAN_NOTICE_013', ' Сеть: {v0}').format(v0=network_type)
             if node_name:
-                reason += f' Нода: {node_name}'
+                reason += get_texts(language).t('BAN_NOTICE_012', ' Нода: {v0}').format(v0=node_name)
             success = await notification_delivery_service.notify_ban(
                 user=user,
                 reason=reason,
@@ -341,7 +407,10 @@ class BanNotificationService:
         # Отправляем сообщение с кнопкой удаления
         try:
             await self._bot.send_message(
-                chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
+                chat_id=user.telegram_id,
+                text=message_text,
+                parse_mode='HTML',
+                reply_markup=get_delete_keyboard(language),
             )
             logger.info(
                 'Уведомление о WiFi бане отправлено пользователю',
@@ -381,30 +450,47 @@ class BanNotificationService:
 
         # Находим пользователя
         user = await self._find_user_by_identifier(db, user_identifier)
+        language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
         if not user:
             logger.warning('Пользователь не найден в базе данных', user_identifier=user_identifier)
             return False, f'Пользователь не найден: {user_identifier}', None
 
         # Формируем сообщение из настроек (заметно выделяем)
-        network_info = f'├ 🌐 Сеть: <b>{html.escape(network_type)}</b>\n' if network_type else ''
-        node_info = f'🖥 <b>Нода:</b> <code>{html.escape(node_name)}</code>' if node_name else ''
+        network_info = (
+            get_texts(language).t('BAN_NOTICE_004', '├ 🌐 Сеть: <b>{v0}</b>\n').format(v0=html.escape(network_type))
+            if network_type
+            else ''
+        )
+        node_info = (
+            get_texts(language)
+            .t('BAN_NOTICE_000', '🖥 <b>Нода:</b> <code>{v0}</code>')
+            .format(v0=html.escape(node_name))
+            if node_name
+            else ''
+        )
 
         # Безопасное форматирование
         format_vars = {'ban_minutes': ban_minutes, 'network_info': network_info, 'node_info': node_info}
         message_text = _format_notification_template(
-            settings.BAN_MSG_MOBILE,
-            '🚫 <b>Блокировка за мобильную сеть</b>\n\n{node_info}\n{network_info}'
-            '⏱ Время блокировки: <b>{ban_minutes} мин</b>',
+            _get_notification_template('BAN_MSG_MOBILE', language),
+            get_texts(language).t(
+                'BAN_NOTICE_007',
+                '🚫 <b>Блокировка за мобильную сеть</b>\n\n{node_info}\n{network_info}⏱ Время блокировки: <b>{ban_minutes} мин</b>',
+            ),
             **format_vars,
         )
 
         # Handle email-only users via notification delivery service
         if not user.telegram_id:
-            reason = f'Использование мобильной сети запрещено. Бан на {ban_minutes} минут.'
+            reason = (
+                get_texts(language)
+                .t('BAN_NOTICE_008', 'Использование мобильной сети запрещено. Бан на {v0} минут.')
+                .format(v0=ban_minutes)
+            )
             if network_type:
-                reason += f' Сеть: {network_type}'
+                reason += get_texts(language).t('BAN_NOTICE_013', ' Сеть: {v0}').format(v0=network_type)
             if node_name:
-                reason += f' Нода: {node_name}'
+                reason += get_texts(language).t('BAN_NOTICE_012', ' Нода: {v0}').format(v0=node_name)
             success = await notification_delivery_service.notify_ban(
                 user=user,
                 reason=reason,
@@ -417,7 +503,10 @@ class BanNotificationService:
         # Отправляем сообщение с кнопкой удаления
         try:
             await self._bot.send_message(
-                chat_id=user.telegram_id, text=message_text, parse_mode='HTML', reply_markup=get_delete_keyboard()
+                chat_id=user.telegram_id,
+                text=message_text,
+                parse_mode='HTML',
+                reply_markup=get_delete_keyboard(language),
             )
             logger.info(
                 'Уведомление о Mobile бане отправлено пользователю',
@@ -468,28 +557,35 @@ class BanNotificationService:
             return False, f'Неизвестный тип бана: {notification_type}', None
 
         user = await self._find_user_by_identifier(db, user_identifier)
+        language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
         if not user:
             logger.warning('Пользователь не найден в базе данных', user_identifier=user_identifier)
             return False, f'Пользователь не найден: {user_identifier}', None
 
-        template = getattr(settings, template_name)
-        safe_reason = html.escape(reason or 'Детали нарушения не указаны')
-        node_info = f'🖥 <b>Нода:</b> <code>{html.escape(node_name)}</code>' if node_name else ''
+        template = _get_notification_template(template_name, language)
+        safe_reason = html.escape(reason or get_texts(language).t('BAN_NOTICE_014', 'Детали нарушения не указаны'))
+        node_info = (
+            get_texts(language)
+            .t('BAN_NOTICE_000', '🖥 <b>Нода:</b> <code>{v0}</code>')
+            .format(v0=html.escape(node_name))
+            if node_name
+            else ''
+        )
         message_text = _format_notification_template(
             template,
-            '🚫 <b>АККАУНТ ЗАБЛОКИРОВАН</b>\n\n{node_info}\n'
-            '📝 <b>Детали:</b> {reason}\n'
-            '⏱ <b>Время блокировки:</b> {ban_minutes} мин\n\n'
-            '🔄 Доступ восстановится автоматически после окончания блокировки.',
+            get_texts(language).t(
+                'BAN_NOTICE_009',
+                '🚫 <b>АККАУНТ ЗАБЛОКИРОВАН</b>\n\n{node_info}\n📝 <b>Детали:</b> {reason}\n⏱ <b>Время блокировки:</b> {ban_minutes} мин\n\n🔄 Доступ восстановится автоматически после окончания блокировки.',
+            ),
             ban_minutes=ban_minutes,
             reason=safe_reason,
             node_info=node_info,
         )
 
         if not user.telegram_id:
-            email_reason = reason or 'Нарушение правил сервиса'
+            email_reason = reason or get_texts(language).t('BAN_NOTICE_015', 'Нарушение правил сервиса')
             if node_name:
-                email_reason += f' Нода: {node_name}'
+                email_reason += get_texts(language).t('BAN_NOTICE_012', ' Нода: {v0}').format(v0=node_name)
             success = await notification_delivery_service.notify_ban(user=user, reason=email_reason)
             if success:
                 return True, 'Email уведомление отправлено', None
@@ -500,7 +596,7 @@ class BanNotificationService:
                 chat_id=user.telegram_id,
                 text=message_text,
                 parse_mode='HTML',
-                reply_markup=get_delete_keyboard(),
+                reply_markup=get_delete_keyboard(language),
             )
             logger.info(
                 'Типизированное уведомление о бане отправлено пользователю',

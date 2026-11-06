@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import fnmatch
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -20,8 +21,12 @@ from sqlalchemy import select
 from app.config import settings
 from app.database.models import Base, Subscription, TrafficPurchase, Transaction, TransactionType, User
 from app.services import subscription_auto_purchase_service as auto_service
+from app.services.traffic_accounting import Allowance, TrafficAccount
+from app.services.traffic_accounting_service import read_counters
+from app.services.traffic_accounting_store import initialize_account, load_account
 from app.services.user_cart_service import UserCartService
 from app.utils.pricing_utils import calculate_prorated_price
+from tests.fixtures.redis_pipeline import SequentialPipelineMixin
 from tests.fixtures.sqlite_memory import memory_session
 
 
@@ -30,9 +35,20 @@ SUB_ID = 42
 TRAFFIC_PRICE = 5000
 DEVICE_PRICE = 1000
 BALANCE = 100_000
+PANEL_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-class _MockRedis:
+def _panel_snapshot():
+    return SimpleNamespace(
+        id=123,
+        created_at=PANEL_CREATED_AT,
+        traffic_limit_strategy='NO_RESET',
+        traffic_limit_bytes=100 * 1024**3,
+        user_traffic=SimpleNamespace(used_traffic_bytes=0, lifetime_used_traffic_bytes=0),
+    )
+
+
+class _MockRedis(SequentialPipelineMixin):
     def __init__(self):
         self.storage: dict[str, str] = {}
 
@@ -54,7 +70,11 @@ class _MockRedis:
 
 
 class _PanelStub:
-    """Панель Remnawave в тесте недоступна — синхронизация считается успешной."""
+    """Only external panel IO is fake; accounting and purchase writes are real."""
+
+    @asynccontextmanager
+    async def get_api_client(self):
+        yield SimpleNamespace(get_user_by_id=AsyncMock(return_value=_panel_snapshot()))
 
     async def update_remnawave_user(self, db, subscription):
         return None
@@ -76,6 +96,15 @@ def cart_service(monkeypatch):
     service = UserCartService()
     service._redis_client = _MockRedis()
     service._initialized = True
+
+    # This suite tests purchase/dispatch, with a sequential Redis boundary.
+    # Atomic Lua semantics and replacement races run against real Valkey in
+    # test_cart_cleanup_redis.py; do not emulate the script in this fake.
+    async def completed_cart_cleanup(user_id, processed):
+        assert await service.get_user_cart(user_id) == processed
+        return await service.delete_user_cart(user_id)
+
+    service.delete_processed_cart = AsyncMock(side_effect=completed_cart_cleanup)
     monkeypatch.setattr(auto_service, 'user_cart_service', service)
     return service
 
@@ -92,6 +121,7 @@ def _classic_mode(monkeypatch):
     monkeypatch.setattr(type(settings), 'is_auto_purchase_after_topup_enabled', lambda self: True)
     monkeypatch.setattr(type(settings), 'is_notifications_enabled', lambda self: True)
     monkeypatch.setattr(auto_service, 'SubscriptionService', _PanelStub)
+    monkeypatch.setattr('app.services.traffic_purchase_service.SubscriptionService', _PanelStub)
     monkeypatch.setattr(auto_service, 'AdminNotificationService', _AdminNotifyStub)
 
 
@@ -110,6 +140,7 @@ async def _seed(db) -> tuple[User, Subscription]:
         status='active',
         language='ru',
         balance_kopeks=BALANCE,
+        remnawave_id=123,
         created_at=now,
     )
     subscription = Subscription(
@@ -120,10 +151,27 @@ async def _seed(db) -> tuple[User, Subscription]:
         start_date=now - timedelta(days=15),
         end_date=now + timedelta(days=15),
         traffic_limit_gb=100,
+        traffic_accounting_mode='managed',
         traffic_used_gb=0.0,
         device_limit=1,
     )
     db.add_all([user, subscription])
+    await db.flush()
+    state = await initialize_account(
+        db,
+        SUB_ID,
+        TrafficAccount(
+            read_counters(_panel_snapshot()).identity,
+            0,
+            0,
+            (Allowance('base:test', 100 * 1024**3, now + timedelta(days=30)),),
+        ),
+        strategy='MONTH',
+        timezone='UTC',
+        anchor=now,
+        next_refresh_at=now + timedelta(days=30),
+    )
+    state.phase = 'ready'
     await db.commit()
     return user, subscription
 
@@ -167,7 +215,9 @@ async def _state(db) -> SimpleNamespace:
         .all()
     )
     purchases = (await db.execute(select(TrafficPurchase))).scalars().all()
+    account, _ = await load_account(db, SUB_ID)
     return SimpleNamespace(
+        allowance_remaining=account.remaining_bytes(datetime.now(UTC)) / 1024**3,
         balance=user.balance_kopeks,
         traffic=subscription.traffic_limit_gb,
         devices=subscription.device_limit,
@@ -194,6 +244,7 @@ async def test_topup_really_buys_traffic_from_saved_cart(monkeypatch, cart_servi
 
     assert succeeded is True
     assert after.traffic == 200, 'гигабайты начислены'
+    assert after.allowance_remaining == 200
     assert BALANCE - after.balance == expected_price, 'списана пропорциональная цена пакета'
     # Списания хранятся со знаком минус.
     assert [abs(p.amount_kopeks) for p in after.payments] == [expected_price]
@@ -238,6 +289,7 @@ async def test_button_really_buys_traffic_and_says_so(monkeypatch, cart_service)
 
     assert succeeded is True
     assert after.traffic == 200
+    assert after.allowance_remaining == 200
     text = bot.send_message.call_args.kwargs['text']
     assert text.startswith('✅ <b>Трафик добавлен!</b>')
     assert 'автоматически' not in text
@@ -309,6 +361,7 @@ async def test_shared_topup_hook_buys_traffic_for_every_provider(monkeypatch, ca
         after = await _state(db)
 
     assert after.traffic == 200, 'докупка прошла через общий хук после зачисления'
+    assert after.allowance_remaining == 200
     assert after.balance < BALANCE
     assert await cart_service.get_user_cart(USER_ID) is None
 

@@ -8,6 +8,7 @@ from aiogram.types import InaccessibleMessage
 
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import AsyncSessionLocal
+from app.database.models import User
 from app.localization.texts import get_texts
 from app.services.gift_claim_service import (
     GiftClaimAlreadyOwnedError,
@@ -24,10 +25,11 @@ logger = structlog.get_logger(__name__)
 _GIFT_NOT_FOUND = 'Подарок не найден или недоступен.'
 
 
-async def handle_gift_activate(callback: types.CallbackQuery) -> None:
+async def handle_gift_activate(callback: types.CallbackQuery, db_user: User | None = None) -> None:
     """Handle gift_activate:{purchase_id} callback from Telegram notification."""
+    texts = get_texts(db_user.language if db_user else callback.from_user.language_code)
     if isinstance(callback.message, InaccessibleMessage):
-        await callback.answer('Сообщение устарело. Попробуйте /start.', show_alert=True)
+        await callback.answer(texts.t('GIFT_ACTIVATION_OBSOLETE_MESSAGE'), show_alert=True)
         return
 
     if not callback.data:
@@ -35,22 +37,22 @@ async def handle_gift_activate(callback: types.CallbackQuery) -> None:
 
     parts = callback.data.split(':', 1)
     if len(parts) != 2:
-        await callback.answer(_GIFT_NOT_FOUND, show_alert=True)
+        await callback.answer(texts.t('GIFT_ACTIVATION_NOT_FOUND'), show_alert=True)
         return
 
     try:
         purchase_id = int(parts[1])
     except ValueError:
-        await callback.answer(_GIFT_NOT_FOUND, show_alert=True)
+        await callback.answer(texts.t('GIFT_ACTIVATION_NOT_FOUND'), show_alert=True)
         return
 
     await callback.answer()
-    await callback.message.edit_text('⏳ Активируем подарок...', parse_mode=None)
+    await callback.message.edit_text(texts.t('GIFT_ACTIVATION_IN_PROGRESS'), parse_mode=None)
 
     async with AsyncSessionLocal() as db:
         user = await get_user_by_telegram_id(db, callback.from_user.id)
         if not user:
-            await callback.message.edit_text(_GIFT_NOT_FOUND, parse_mode=None)
+            await callback.message.edit_text(texts.t('GIFT_ACTIVATION_NOT_FOUND'), parse_mode=None)
             return
 
         texts = get_texts(user.language)

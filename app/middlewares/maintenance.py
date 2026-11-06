@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject, User as TgUser
 
 from app.config import settings
 from app.services.maintenance_service import maintenance_service
+from app.utils.support_access import is_support_handler
 from app.utils.telegram_delivery import is_user_unreachable
 
 
@@ -29,6 +30,9 @@ class MaintenanceMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        if is_support_handler(event, data):
+            return await handler(event, data)
+
         user: TgUser = None
         if isinstance(event, (Message, CallbackQuery)):
             user = event.from_user
@@ -51,7 +55,14 @@ class MaintenanceMiddleware(BaseMiddleware):
         if SupportSettingsService.is_moderator(user.id):
             return await handler(event, data)
 
-        maintenance_message = maintenance_service.get_maintenance_message()
+        db_user = data.get('db_user')
+        language = (
+            getattr(db_user, 'language', None) or getattr(user, 'language_code', None) or settings.DEFAULT_LANGUAGE
+        )
+        language = language.lower().split('-')[0]
+        if language == 'uk':
+            language = 'ua'
+        maintenance_message = maintenance_service.get_maintenance_message(language)
 
         try:
             if isinstance(event, Message):

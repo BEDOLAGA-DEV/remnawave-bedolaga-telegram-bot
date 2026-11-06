@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.crud.subscription import (
-    add_subscription_traffic,
     create_paid_subscription,
     extend_subscription,
     get_subscription_by_id,
@@ -35,6 +34,7 @@ from app.database.models import (
     User,
     UserPromoGroup,
 )
+from app.services.traffic_purchase_service import add_subscription_traffic
 from app.utils.subscription_time import local_days_until
 
 from ..dependencies import get_cabinet_db, require_permission
@@ -249,14 +249,26 @@ async def _do_activate_subscription(
             username=user.username,
         )
 
+    from app.services.cispay_recurrent_guard import require_no_cispay
+
+    try:
+        await require_no_cispay(db, user_id=user.id, subscription_id=sub.id)
+    except ValueError as error:
+        result = BulkUserResult(user_id=user.id, success=False, message=str(error), username=user.username)
+        await db.rollback()
+        return result
+
     # Оверлей грейса, осевший в подписке (v4.10–4.11), — не её срок: вернуть до расчёта.
     from app.services.grace_access_echo import undo_grace_overlay_echo
+    from app.services.traffic_accounting_service import stage_authorized_activation
 
+    sub = await stage_authorized_activation(db, sub)
     await undo_grace_overlay_echo(db, sub)
     sub.status = SubscriptionStatus.ACTIVE.value
     if sub.end_date and sub.end_date <= datetime.now(UTC):
         # Extend by 30 days if expired
         sub.end_date = datetime.now(UTC) + timedelta(days=30)
+        sub.pending_panel_expire_at = sub.end_date
     # Условия тарифа на новый срок: база тарифа + активные докупки.
     await reconcile_tariff_traffic_limit(db, sub)
     await db.commit()
@@ -304,14 +316,33 @@ async def _do_change_tariff(
             username=user.username,
         )
 
+    from app.services.cispay_recurrent_guard import require_no_cispay
+
+    try:
+        await require_no_cispay(db, user_id=user.id, subscription_id=sub.id)
+    except ValueError as error:
+        result = BulkUserResult(user_id=user.id, success=False, message=str(error), username=user.username)
+        await db.rollback()
+        return result
+
     # Preserve extra purchased devices above the old tariff's base limit
-    from app.database.crud.subscription import calc_device_limit_on_tariff_switch
+    from app.database.crud.subscription import calc_device_limit_on_admin_tariff_change
+    from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
+    from app.services.traffic_accounting_service import change_managed_tariff_locked
+
+    sub, managed_panel = await prepare_admin_tariff_accounting(db, sub)
+    if managed_panel is not None and sub.tariff_id == tariff.id:
+        return BulkUserResult(user_id=user.id, success=True, message='Tariff already selected', username=user.username)
 
     old_tariff = await get_tariff_by_id(db, sub.tariff_id) if sub.tariff_id else None
 
+    if sub.tariff_id != tariff.id:
+        sub.daily_devices_billing_version = 0
     sub.tariff_id = tariff.id
+    if managed_panel is not None:
+        sub.tariff = tariff
     sub.traffic_limit_gb = tariff.traffic_limit_gb
-    sub.device_limit = calc_device_limit_on_tariff_switch(
+    sub.device_limit = calc_device_limit_on_admin_tariff_change(
         current_device_limit=sub.device_limit,
         old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
         new_tariff_device_limit=tariff.device_limit,
@@ -332,13 +363,13 @@ async def _do_change_tariff(
     sub.purchased_traffic_gb = 0
     sub.traffic_reset_at = None
 
-    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
+    if settings.RESET_TRAFFIC_ON_TARIFF_SWITCH and managed_panel is None:
         sub.traffic_used_gb = 0.0
 
     # Record tariff change transaction
     from app.database.crud.transaction import create_transaction
 
-    await create_transaction(
+    change_transaction = await create_transaction(
         db=db,
         user_id=user.id,
         type=TransactionType.SUBSCRIPTION_PAYMENT,
@@ -346,6 +377,15 @@ async def _do_change_tariff(
         description=f"Смена тарифа (массовое действие) на '{tariff.name}'",
         commit=False,
     )
+
+    if managed_panel is not None:
+        await change_managed_tariff_locked(
+            db,
+            sub,
+            managed_panel,
+            operation_key=f'admin-switch:{change_transaction.id}',
+            reset_base=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+        )
 
     await db.commit()
     await db.refresh(sub)
@@ -356,7 +396,7 @@ async def _do_change_tariff(
             db,
             user,
             sub,
-            reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH,
+            reset_traffic=settings.RESET_TRAFFIC_ON_TARIFF_SWITCH and managed_panel is None,
             reset_traffic_reason='смена тарифа (bulk action)',
         )
     except Exception as e:
@@ -390,7 +430,12 @@ async def _do_add_traffic(
             username=user.username,
         )
 
-    await add_subscription_traffic(db, sub, traffic_gb)
+    from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+    accounting_panel = None
+    if sub.traffic_limit_gb:
+        sub, accounting_panel = await prepare_traffic_purchase(db, sub)
+    await add_subscription_traffic(db, sub, traffic_gb, panel=accounting_panel)
     # Reactivate subscription if it was LIMITED/EXPIRED
     await reactivate_subscription(db, sub)
     await db.refresh(sub)
@@ -511,6 +556,15 @@ async def _do_set_devices(
             message=f'Would set devices to {device_limit}',
             username=user.username,
         )
+
+    from app.services.cispay_recurrent_guard import require_no_cispay
+
+    try:
+        await require_no_cispay(db, user_id=user.id, subscription_id=sub.id)
+    except ValueError as error:
+        result = BulkUserResult(user_id=user.id, success=False, message=str(error), username=user.username)
+        await db.rollback()
+        return result
 
     sub.device_limit = device_limit
     await db.commit()

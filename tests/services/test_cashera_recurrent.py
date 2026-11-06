@@ -368,3 +368,43 @@ async def test_purchase_without_subscription_creates_expired_placeholder(monkeyp
 
     assert placeholder.status == SubscriptionStatus.EXPIRED.value
     assert result['redirect_url'] == 'https://pay.cashera.cash/sub'
+
+
+@pytest.mark.parametrize('reset_base', [True, False])
+@pytest.mark.parametrize('phase', ['ready', 'suspended'])
+async def test_managed_charge_persists_base_intent_even_if_panel_delivery_fails(monkeypatch, stub, reset_base, phase):
+    from app.database.models import TrafficBaseGrantIntent
+    from app.services.traffic_accounting import TrafficAccount
+    from app.services.traffic_accounting_store import initialize_account
+
+    async with memory_session(monkeypatch, TABLES) as db:
+        user_id, tariff, subscription = await _seed(db)
+        await _enable(db, stub, tariff, subscription, user_id)
+        monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', reset_base)
+        now = datetime.now(UTC)
+        state = await initialize_account(
+            db,
+            subscription.id,
+            TrafficAccount('1@local-test', 0, 0, ()),
+            strategy='MONTH',
+            timezone='UTC',
+            anchor=now,
+            next_refresh_at=None,
+        )
+        state.phase = phase
+        subscription.traffic_accounting_mode = 'managed'
+        await db.commit()
+        monkeypatch.setattr(
+            'app.services.subscription_service.SubscriptionService.update_remnawave_user',
+            AsyncMock(side_effect=TimeoutError('local panel failure')),
+        )
+        agent = cashera_module._CasheraRecurrentAgent()
+        assert await agent.process_cashera_webhook(db, _charge_event('managed-charge')) is True
+        intents = list((await db.scalars(select(TrafficBaseGrantIntent))).all())
+        assert len(intents) == 1
+        assert intents[0].state == 'pending'
+        assert intents[0].reset_base is reset_base
+        assert intents[0].base_bytes == tariff.traffic_limit_gb * 1024**3
+        assert intents[0].operation_key.startswith('cashera:payment:')
+        await agent.process_cashera_webhook(db, _charge_event('managed-charge'))
+        assert len(list((await db.scalars(select(TrafficBaseGrantIntent))).all())) == 1

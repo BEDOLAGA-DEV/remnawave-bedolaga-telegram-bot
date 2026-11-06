@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, ClassVar, Optional, Union, get_args, get_origin
 
@@ -23,10 +24,27 @@ from app.database.crud.system_setting import (
 )
 from app.database.database import AsyncSessionLocal
 from app.database.models import SystemSetting
+from app.localization.loader import DEFAULT_LANGUAGE
+from app.localization.texts import get_texts
 from app.services.web_api_token_service import ensure_default_web_api_token
 
 
 logger = structlog.get_logger(__name__)
+
+
+def normalize_settings_language(language: str | None, fallback: str | None = None) -> str:
+    """Resolve supported BCP-47 language tags without accepting locale paths."""
+    for candidate in (language, fallback, DEFAULT_LANGUAGE, 'ru'):
+        if not isinstance(candidate, str):
+            continue
+        tag = candidate.strip().lower()
+        if not re.fullmatch(r'[a-z]{2}(?:[-_][a-z0-9]{2,8})*', tag):
+            continue
+        base = re.split('[-_]', tag)[0]
+        base = 'ua' if base == 'uk' else base
+        if base in {'ru', 'en', 'ua', 'zh', 'fa'}:
+            return base
+    return 'ru'
 
 
 def _title_from_key(key: str) -> str:
@@ -129,6 +147,31 @@ class BotConfigurationService:
         return value
 
     CATEGORY_TITLES: dict[str, str] = {
+        'ABUSE': 'Проверка нарушений',
+        'APPLE': 'Покупки Apple',
+        'BAN': 'Система блокировок',
+        'BLACKLIST': 'Чёрный список',
+        'BOT': 'Работа бота',
+        'CABINET': 'Личный кабинет',
+        'CART': 'Корзина',
+        'CONTESTS': 'Конкурсы',
+        'DAILY': 'Суточные подписки',
+        'DISPOSABLE': 'Одноразовая почта',
+        'EMAIL': 'Электронная почта',
+        'MEDIA': 'Медиафайлы',
+        'MENU': 'Меню',
+        'NALOGO': 'Налоговые чеки',
+        'OAUTH': 'Внешняя авторизация',
+        'PRICE': 'Цены',
+        'PROXY': 'Прокси',
+        'S2S': 'Серверные уведомления',
+        'SERVER': 'Сервер',
+        'SERVICE': 'Сервис',
+        'SMTP': 'Отправка почты',
+        'SUBSCRIPTION': 'Управление подписками',
+        'TARIFF': 'Смена тарифа',
+        'TEST': 'Тестовые учётные записи',
+        'YANDEX': 'Конверсии Яндекса',
         'CORE': '🤖 Основные настройки',
         'SUPPORT': '💬 Поддержка и тикеты',
         'REGISTRATION_ACCESS': '🔐 Регистрация и доступ',
@@ -147,7 +190,6 @@ class BotConfigurationService:
         'KASSA_AI': '💳 KassaAI',
         'RIOPAY': '💳 RioPay',
         'SEVERPAY': '💳 SeverPay',
-        'PAYPEAR': '💳 PayPear',
         'ROLLYPAY': '💳 RollyPay',
         'OVERPAY': '💳 Overpay',
         'AURAPAY': '💳 AuraPay',
@@ -156,6 +198,7 @@ class BotConfigurationService:
         'JUPITER': '🪐 Jupiter',
         'CISPAY': '💳 CisPay',
         'CASHERA': '💳 Cashera',
+        'ANORE': '💳 Anore',
         'TABPAY': '💳 TabPay',
         'PARITYPAY': '💳 ParityPay',
         'DONUT': '🍩 Donut',
@@ -226,15 +269,15 @@ class BotConfigurationService:
         'FREEKASSA': 'Freekassa: ID магазина, API ключ, секретные слова и вебхуки.',
         'KASSA_AI': 'KassaAI: отдельная платёжка api.fk.life с СБП, картами и SberPay.',
         'RIOPAY': 'RioPay: платёжная система api.riopay.online с поддержкой карт и СБП.',
-        'PAYPEAR': 'PayPear: платёжная система api.paypear.ru с поддержкой карт, СБП, SberPay и T-Pay.',
         'ROLLYPAY': 'RollyPay: платёжный шлюз rollypay.io с СБП, картами и криптовалютой.',
         'OVERPAY': 'Overpay: платёжный шлюз pay.overpay.io с mTLS и поддержкой карт и СБП.',
         'AURAPAY': 'AuraPay: платёжный шлюз aurapay.tech с поддержкой карт и СБП.',
         'ANTILOPAY': 'Antilopay: lk.antilopay.com, оплата картой, СБП и SberPay.',
         'ETOPLATEZHI': 'Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.',
         'JUPITER': 'Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.',
-        'CISPAY': 'cisPay: api.cispay.app, H2H-оплата картой и СБП на хостинговой странице, вебхуки с HMAC-SHA256.',
+        'CISPAY': 'CisPay: карта, СБП и опциональная криптовалюта на странице провайдера; webhook HMAC-SHA256.',
         'CASHERA': 'Cashera: api.cashera.cash, СБП, карты, крипта и CryptoBot; ключ pk_, секрет sk_, методы оплаты.',
+        'ANORE': 'Anore: рублёвые счета, СБП, карты, ЮMoney и криптовалюта. Webhook HMAC-SHA256.',
         'TABPAY': 'TabPay: tabpay.org, СБП и карты с 3-D Secure; вебхуки подписаны HMAC-SHA256 (X-Signature-V2).',
         'PARITYPAY': 'ParityPay: api.paritypay.net v2, СБП и карты; уведомления подписаны HMAC-SHA256 (X-SIGNATURE).',
         'DONUT': 'Donut P2P: gw.donut.business, P2P-оплата картой, СБП по телефону и QR.',
@@ -503,7 +546,6 @@ class BotConfigurationService:
         'KASSA_AI_': 'KASSA_AI',
         'RIOPAY_': 'RIOPAY',
         'SEVERPAY_': 'SEVERPAY',
-        'PAYPEAR_': 'PAYPEAR',
         'ROLLYPAY_': 'ROLLYPAY',
         'OVERPAY_': 'OVERPAY',
         'AURAPAY_': 'AURAPAY',
@@ -512,6 +554,7 @@ class BotConfigurationService:
         'JUPITER_': 'JUPITER',
         'CISPAY_': 'CISPAY',
         'CASHERA_': 'CASHERA',
+        'ANORE_': 'ANORE',
         'TABPAY_': 'TABPAY',
         'PARITYPAY_': 'PARITYPAY',
         'DONUT_': 'DONUT',
@@ -713,6 +756,15 @@ class BotConfigurationService:
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
+        'CISPAY_RECURRENT_ENABLED': {
+            'description': 'Автопродление тарифов через СБП CisPay в боте и кабинете.',
+            'format': 'Булево значение (да/нет).',
+            'example': 'false',
+            'warning': 'Первое подтверждение оплачивает период. CisPay должен разрешить подписки магазину. '
+            'Поддерживаются периоды от 7 до 360 дней. Выключение скрывает новое подключение, '
+            'но не отменяет действующие автоплатежи: отключайте их в карточке подписки.',
+            'dependencies': 'CISPAY_ENABLED, CISPAY_SBP_ENABLED, CISPAY_SHOP_ID, CISPAY_API_KEY',
+        },
         'SUPPORT_ADMIN_TICKET_NOTIFICATIONS_ENABLED': {
             'description': 'Сообщать администраторам в Telegram о новых тикетах и ответах пользователей.',
             'format': 'Булево значение (да/нет).',
@@ -1153,11 +1205,15 @@ class BotConfigurationService:
         },
         'AUTO_PURCHASE_AFTER_TOPUP_ENABLED': {
             'description': (
-                'При достаточном балансе автоматически оформляет сохранённую подписку сразу после пополнения.'
+                'При достаточном балансе автоматически оформляет сохранённую подписку '
+                'или возобновляет приостановленный из-за нехватки средств суточный тариф сразу после пополнения.'
             ),
             'format': 'Булево значение.',
             'example': 'true',
-            'warning': ('Используйте с осторожностью: средства будут списаны мгновенно, если корзина найдена.'),
+            'warning': (
+                'Используйте с осторожностью: средства будут списаны мгновенно, если найдена корзина '
+                'или суточная подписка для возобновления. Подписки на паузе пользователя не возобновляются.'
+            ),
         },
         'SUPPORT_TICKET_SLA_MINUTES': {
             'description': 'Лимит времени для ответа модераторов на тикет в минутах.',
@@ -1595,8 +1651,21 @@ class BotConfigurationService:
     }
 
     @classmethod
-    def get_category_description(cls, category_key: str) -> str:
+    def _metadata_text(cls, key: str, default: str, language: str | None) -> str:
+        if language is None or not default:
+            return default
+        return get_texts(normalize_settings_language(language)).t(key, default)
+
+    @classmethod
+    def get_category_label(cls, category_key: str, language: str | None = None) -> str:
+        label = cls.CATEGORY_TITLES.get(category_key, category_key.capitalize())
+        label = cls._metadata_text(f'SETTINGS_CATEGORY_{category_key}_LABEL', label, language)
+        return cls._format_dynamic_copy(category_key, label)
+
+    @classmethod
+    def get_category_description(cls, category_key: str, language: str | None = None) -> str:
         description = cls.CATEGORY_DESCRIPTIONS.get(category_key, '')
+        description = cls._metadata_text(f'SETTINGS_CATEGORY_{category_key}_DESCRIPTION', description, language)
         return cls._format_dynamic_copy(category_key, description)
 
     @classmethod
@@ -1617,7 +1686,7 @@ class BotConfigurationService:
         return cls._is_env_override(key)
 
     @classmethod
-    def _format_numeric_with_unit(cls, key: str, value: float) -> str | None:
+    def _format_numeric_with_unit(cls, key: str, value: float, language: str | None = None) -> str | None:
         if isinstance(value, bool):
             return None
         upper_key = key.upper()
@@ -1630,18 +1699,16 @@ class BotConfigurationService:
                 return f'{value}'
         if upper_key.endswith('_PERCENT') or 'PERCENT' in upper_key:
             return f'{value}%'
-        if upper_key.endswith('_HOURS'):
-            return f'{value} ч'
-        if upper_key.endswith('_MINUTES'):
-            return f'{value} мин'
-        if upper_key.endswith('_SECONDS'):
-            return f'{value} сек'
-        if upper_key.endswith('_DAYS'):
-            return f'{value} дн'
-        if upper_key.endswith('_GB'):
-            return f'{value} ГБ'
-        if upper_key.endswith('_MB'):
-            return f'{value} МБ'
+        for unit, label in (
+            ('HOURS', 'ч'),
+            ('MINUTES', 'мин'),
+            ('SECONDS', 'сек'),
+            ('DAYS', 'дн'),
+            ('GB', 'ГБ'),
+            ('MB', 'МБ'),
+        ):
+            if upper_key.endswith(f'_{unit}'):
+                return cls._metadata_text(f'SETTINGS_VALUE_{unit}', '{value} ' + label, language).format(value=value)
         return None
 
     @classmethod
@@ -1653,23 +1720,27 @@ class BotConfigurationService:
         return parts or None
 
     @classmethod
-    def format_value_human(cls, key: str, value: Any) -> str:
+    def format_value_human(cls, key: str, value: Any, language: str | None = None) -> str:
         if key == 'SIMPLE_SUBSCRIPTION_SQUAD_UUID':
             if value is None:
-                return 'Любой доступный'
+                return cls._metadata_text('SETTINGS_VALUE_ANY_AVAILABLE', 'Любой доступный', language)
             if isinstance(value, str):
                 cleaned_value = value.strip()
                 if not cleaned_value:
-                    return 'Любой доступный'
+                    return cls._metadata_text('SETTINGS_VALUE_ANY_AVAILABLE', 'Любой доступный', language)
 
         if value is None:
             return '—'
 
         if isinstance(value, bool):
-            return '✅ ВКЛЮЧЕНО' if value else '❌ ВЫКЛЮЧЕНО'
+            return (
+                cls._metadata_text('SETTINGS_VALUE_ENABLED', '✅ ВКЛЮЧЕНО', language)
+                if value
+                else cls._metadata_text('SETTINGS_VALUE_DISABLED', '❌ ВЫКЛЮЧЕНО', language)
+            )
 
         if isinstance(value, (int, float)):
-            formatted = cls._format_numeric_with_unit(key, value)
+            formatted = cls._format_numeric_with_unit(key, value, language)
             return formatted or str(value)
 
         if isinstance(value, str):
@@ -1697,24 +1768,55 @@ class BotConfigurationService:
         return str(value)
 
     @classmethod
-    def get_setting_guidance(cls, key: str) -> dict[str, str]:
+    def get_setting_guidance(cls, key: str, language: str | None = None) -> dict[str, str]:
         definition = cls.get_definition(key)
         original = cls.get_original_value(key)
         type_label = definition.type_label
         hints = dict(cls.SETTING_HINTS.get(key, {}))
+        for field, value in hints.items():
+            # Only maintained static copy is translated. Example values and dependency
+            # keys remain verbatim unless the source itself contains explanatory prose.
+            if re.search('[А-Яа-я]', value):
+                hints[field] = cls._metadata_text(f'SETTINGS_HINT_{key}_{field.upper()}', value, language)
+            # These two display-name slots belong to our copy. Other braces are
+            # documentation for operator templates (e.g. {telegram_id}), not format
+            # arguments. Substitute once so braces inside a custom brand stay data.
+            hints[field] = re.sub(
+                r'\{(mulenpay_name|platega_name)\}',
+                lambda match: (
+                    settings.get_mulenpay_display_name()
+                    if match[1] == 'mulenpay_name'
+                    else settings.get_platega_display_name()
+                ),
+                hints[field],
+            )
 
-        base_description = (
-            hints.get('description')
-            or f'Параметр <b>{definition.display_name}</b> управляет категорией «{definition.category_label}».'
+        category_label = cls.get_category_label(definition.category_key, language)
+        default_description = (
+            cls._metadata_text(
+                'SETTINGS_HINT_DEFAULT_DESCRIPTION', 'Настройка категории «{category}».', language
+            ).format(category=category_label)
+            if language is not None
+            else f'Параметр <b>{definition.display_name}</b> управляет категорией «{definition.category_label}».'
         )
+
+        base_description = hints.get('description') or default_description
         base_format = hints.get('format') or (
-            'Булево значение (да/нет).'
+            cls._metadata_text('SETTINGS_HINT_DEFAULT_BOOL_FORMAT', 'Булево значение (да/нет).', language)
             if definition.python_type is bool
-            else 'Введите значение соответствующего типа (число или строку).'
+            else cls._metadata_text(
+                'SETTINGS_HINT_DEFAULT_VALUE_FORMAT',
+                'Введите значение соответствующего типа (число или строку).',
+                language,
+            )
         )
-        example = hints.get('example') or (cls.format_value_human(key, original) if original is not None else '—')
-        warning = hints.get('warning') or ('Неверные значения могут привести к некорректной работе бота.')
-        dependencies = hints.get('dependencies') or definition.category_label
+        example = hints.get('example') or (
+            cls.format_value_human(key, original, language) if original is not None else '—'
+        )
+        warning = hints.get('warning') or cls._metadata_text(
+            'SETTINGS_HINT_DEFAULT_WARNING', 'Неверные значения могут привести к некорректной работе бота.', language
+        )
+        dependencies = hints.get('dependencies') or category_label
 
         return {
             'description': base_description,
@@ -1917,14 +2019,31 @@ class BotConfigurationService:
         return cls.as_choice_key(value) in {cls.as_choice_key(option.value) for option in options}
 
     @classmethod
-    def get_choice_options(cls, key: str) -> list[ChoiceOption]:
+    def get_choice_options(cls, key: str, language: str | None = None) -> list[ChoiceOption]:
         cls.initialize_definitions()
-        dynamic = cls._get_dynamic_choice_options(key)
+        dynamic = cls._get_dynamic_choice_options(key, language)
         if dynamic is not None:
-            cls.CHOICES[key] = dynamic
-            cls._invalidate_choice_cache(key)
+            if language is None:
+                cls.CHOICES[key] = dynamic
+                cls._invalidate_choice_cache(key)
             return dynamic
-        return cls.CHOICES.get(key, [])
+        options = cls.CHOICES.get(key, [])
+        if language is None:
+            return options
+        localized = []
+        for option in options:
+            suffix = re.sub('[^A-Z0-9]+', '_', str(option.value).upper()).strip('_') or 'EMPTY'
+            prefix = f'SETTINGS_CHOICE_{key}_{suffix}'
+            localized.append(
+                ChoiceOption(
+                    option.value,
+                    cls._metadata_text(f'{prefix}_LABEL', option.label, language),
+                    cls._metadata_text(f'{prefix}_DESCRIPTION', option.description, language)
+                    if option.description
+                    else None,
+                )
+            )
+        return localized
 
     @classmethod
     def _invalidate_choice_cache(cls, key: str) -> None:
@@ -1932,17 +2051,17 @@ class BotConfigurationService:
         cls._choice_token_lookup.pop(key, None)
 
     @classmethod
-    def _get_dynamic_choice_options(cls, key: str) -> list[ChoiceOption] | None:
+    def _get_dynamic_choice_options(cls, key: str, language: str | None = None) -> list[ChoiceOption] | None:
         if key == 'SIMPLE_SUBSCRIPTION_PERIOD_DAYS':
-            return cls._build_simple_subscription_period_choices()
+            return cls._build_simple_subscription_period_choices(language)
         if key == 'SIMPLE_SUBSCRIPTION_DEVICE_LIMIT':
-            return cls._build_simple_subscription_device_choices()
+            return cls._build_simple_subscription_device_choices(language)
         if key == 'SIMPLE_SUBSCRIPTION_TRAFFIC_GB':
-            return cls._build_simple_subscription_traffic_choices()
+            return cls._build_simple_subscription_traffic_choices(language)
         return None
 
-    @staticmethod
-    def _build_simple_subscription_period_choices() -> list[ChoiceOption]:
+    @classmethod
+    def _build_simple_subscription_period_choices(cls, language: str | None = None) -> list[ChoiceOption]:
         raw_periods = str(getattr(settings, 'AVAILABLE_SUBSCRIPTION_PERIODS', '') or '')
         period_values: set[int] = set()
 
@@ -1971,7 +2090,7 @@ class BotConfigurationService:
             if not isinstance(price_value, int):
                 price_value = settings.BASE_SUBSCRIPTION_PRICE
 
-            label = f'{days} дн.'
+            label = cls._metadata_text('SETTINGS_CHOICE_DAYS', '{count} дн.', language).format(count=days)
             try:
                 if isinstance(price_value, int):
                     label = f'{label} — {settings.format_price(price_value)}'
@@ -1983,7 +2102,7 @@ class BotConfigurationService:
         return options
 
     @classmethod
-    def _build_simple_subscription_device_choices(cls) -> list[ChoiceOption]:
+    def _build_simple_subscription_device_choices(cls, language: str | None = None) -> list[ChoiceOption]:
         default_limit = getattr(settings, 'DEFAULT_DEVICE_LIMIT', 1) or 1
         try:
             default_limit = int(default_limit)
@@ -2008,14 +2127,20 @@ class BotConfigurationService:
         options: list[ChoiceOption] = []
         for count in range(1, upper_bound + 1):
             label = f'{count} {cls._pluralize_devices(count)}'
+            if language is not None:
+                label = cls._metadata_text('SETTINGS_CHOICE_DEVICES', 'Устройств: {count}', language).format(
+                    count=count
+                )
             if count == default_limit:
-                label = f'{label} (по умолчанию)'
+                label = cls._metadata_text('SETTINGS_CHOICE_DEFAULT', '{label} (по умолчанию)', language).format(
+                    label=label
+                )
             options.append(ChoiceOption(count, label))
 
         return options
 
-    @staticmethod
-    def _build_simple_subscription_traffic_choices() -> list[ChoiceOption]:
+    @classmethod
+    def _build_simple_subscription_traffic_choices(cls, language: str | None = None) -> list[ChoiceOption]:
         try:
             packages = settings.get_traffic_packages()
         except Exception as error:
@@ -2051,9 +2176,9 @@ class BotConfigurationService:
         options: list[ChoiceOption] = []
         for gb in sorted(traffic_values):
             if gb <= 0:
-                label = 'Безлимит'
+                label = cls._metadata_text('SETTINGS_CHOICE_UNLIMITED', 'Безлимит', language)
             else:
-                label = f'{gb} ГБ'
+                label = cls._metadata_text('SETTINGS_VALUE_GB', '{value} ГБ', language).format(value=gb)
 
             price_label = None
             for package in packages:
@@ -2235,7 +2360,7 @@ class BotConfigurationService:
         await cls.initialize()
 
     @classmethod
-    def deserialize_value(cls, key: str, raw_value: str | None) -> Any:
+    def deserialize_value(cls, key: str, raw_value: str | None, language: str | None = None) -> Any:
         if raw_value is None:
             return None
 
@@ -2248,13 +2373,29 @@ class BotConfigurationService:
                 return True
             if value_lower in {'0', 'false', 'off', 'no', 'нет'}:
                 return False
-            raise ValueError(f'Неверное булево значение: {raw_value}')
+            if language is None:
+                raise ValueError(f'Неверное булево значение: {raw_value}')
+            raise ValueError(
+                cls._metadata_text('BOT_SETTINGS_ERROR_BOOL', "Введите 'true' или 'false' (или 'да'/'нет')", language)
+            )
 
         if python_type is int:
-            return int(raw_value)
+            try:
+                return int(raw_value)
+            except ValueError as error:
+                if language is None:
+                    raise
+                raise ValueError(
+                    cls._metadata_text('BOT_SETTINGS_ERROR_INTEGER', 'Введите целое число.', language)
+                ) from error
 
         if python_type is float:
-            return float(raw_value)
+            try:
+                return float(raw_value)
+            except ValueError as error:
+                if language is None:
+                    raise
+                raise ValueError(cls._metadata_text('BOT_SETTINGS_ERROR_NUMBER', 'Введите число.', language)) from error
 
         return raw_value
 
@@ -2273,12 +2414,12 @@ class BotConfigurationService:
         return str(value)
 
     @classmethod
-    def parse_user_value(cls, key: str, user_input: str) -> Any:
+    def parse_user_value(cls, key: str, user_input: str, language: str | None = None) -> Any:
         definition = cls.get_definition(key)
         text = (user_input or '').strip()
 
         if text.lower() in {'отмена', 'cancel'}:
-            raise ValueError('Ввод отменен пользователем')
+            raise ValueError(cls._metadata_text('BOT_SETTINGS_ERROR_CANCELLED', 'Ввод отменен пользователем', language))
 
         if definition.is_optional and text.lower() in {'none', 'null', 'пусто', ''}:
             return None
@@ -2291,16 +2432,30 @@ class BotConfigurationService:
                 return True
             if lowered in {'0', 'false', 'off', 'no', 'нет', 'выкл', 'disable', 'disabled'}:
                 return False
-            raise ValueError("Введите 'true' или 'false' (или 'да'/'нет')")
+            raise ValueError(
+                cls._metadata_text('BOT_SETTINGS_ERROR_BOOL', "Введите 'true' или 'false' (или 'да'/'нет')", language)
+            )
 
         if python_type is int:
-            parsed_value: Any = int(text)
+            try:
+                parsed_value: Any = int(text)
+            except ValueError as error:
+                if language is None:
+                    raise
+                raise ValueError(
+                    cls._metadata_text('BOT_SETTINGS_ERROR_INTEGER', 'Введите целое число.', language)
+                ) from error
         elif python_type is float:
-            parsed_value = float(text.replace(',', '.'))
+            try:
+                parsed_value = float(text.replace(',', '.'))
+            except ValueError as error:
+                if language is None:
+                    raise
+                raise ValueError(cls._metadata_text('BOT_SETTINGS_ERROR_NUMBER', 'Введите число.', language)) from error
         else:
             parsed_value = text
 
-        choices = cls.get_choice_options(key)
+        choices = cls.get_choice_options(key, language)
         if choices:
             allowed_values = {option.value for option in choices}
             if python_type is str:
@@ -2310,10 +2465,18 @@ class BotConfigurationService:
                     parsed_value = normalized
                 elif parsed_value not in allowed_values:
                     readable = ', '.join(f'{option.label} ({cls.format_value(option.value)})' for option in choices)
-                    raise ValueError(f'Доступные значения: {readable}')
+                    raise ValueError(
+                        cls._metadata_text(
+                            'BOT_SETTINGS_ERROR_CHOICES', 'Доступные значения: {values}', language
+                        ).format(values=readable)
+                    )
             elif parsed_value not in allowed_values:
                 readable = ', '.join(f'{option.label} ({cls.format_value(option.value)})' for option in choices)
-                raise ValueError(f'Доступные значения: {readable}')
+                raise ValueError(
+                    cls._metadata_text('BOT_SETTINGS_ERROR_CHOICES', 'Доступные значения: {values}', language).format(
+                        values=readable
+                    )
+                )
 
         return parsed_value
 
@@ -2342,6 +2505,9 @@ class BotConfigurationService:
         if cls.is_read_only(key) and not force:
             raise ReadOnlySettingError(f'Setting {key} is read-only')
 
+        from app.services.cispay_recurrent_guard import guard_cispay_credentials
+
+        await guard_cispay_credentials(db, key, value)
         raw_value = cls.serialize_value(key, value)
         await upsert_system_setting(db, key, raw_value)
         if commit:
@@ -2378,6 +2544,9 @@ class BotConfigurationService:
         if cls.is_read_only(key) and not force:
             raise ReadOnlySettingError(f'Setting {key} is read-only')
 
+        from app.services.cispay_recurrent_guard import guard_cispay_credentials
+
+        await guard_cispay_credentials(db, key, cls.get_original_value(key))
         await delete_system_setting(db, key)
         if commit:
             await db.commit()
@@ -2484,7 +2653,7 @@ class BotConfigurationService:
             )
 
     @classmethod
-    def get_setting_summary(cls, key: str) -> dict[str, Any]:
+    def get_setting_summary(cls, key: str, language: str | None = None) -> dict[str, Any]:
         definition = cls.get_definition(key)
         current = cls.get_current_value(key)
         original = cls.get_original_value(key)
@@ -2493,11 +2662,11 @@ class BotConfigurationService:
         return {
             'key': key,
             'name': definition.display_name,
-            'current': cls.format_value_human(key, current),
-            'original': cls.format_value_human(key, original),
+            'current': cls.format_value_human(key, current, language),
+            'original': cls.format_value_human(key, original, language),
             'type': definition.type_label,
             'category_key': definition.category_key,
-            'category_label': definition.category_label,
+            'category_label': cls.get_category_label(definition.category_key, language),
             'has_override': has_override,
             'is_read_only': cls.is_read_only(key),
         }

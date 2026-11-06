@@ -97,6 +97,20 @@ async def check_user_promocode_usage(db: AsyncSession, user_id: int, promocode_i
 async def create_promocode_use(db: AsyncSession, promocode_id: int, user_id: int) -> PromoCodeUse | None:
     from sqlalchemy.exc import IntegrityError
 
+    if db.get_bind().dialect.name == 'sqlite':
+        from sqlalchemy.dialects.sqlite import insert
+
+        # A SAVEPOINT before SQLite's first write can commit independently of
+        # the session transaction. INSERT starts the real transaction, while
+        # ON CONFLICT preserves duplicate handling without a nested commit.
+        result = await db.execute(
+            insert(PromoCodeUse)
+            .values(promocode_id=promocode_id, user_id=user_id, used_at=datetime.now(UTC))
+            .on_conflict_do_nothing(index_elements=['user_id', 'promocode_id'])
+            .returning(PromoCodeUse)
+        )
+        return result.scalar_one_or_none()
+
     promocode_use = PromoCodeUse(promocode_id=promocode_id, user_id=user_id, used_at=datetime.now(UTC))
 
     try:

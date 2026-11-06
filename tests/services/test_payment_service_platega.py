@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -106,14 +107,23 @@ async def test_create_platega_payment_success(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(settings, 'PLATEGA_RETURN_URL', 'https://return', raising=False)
     monkeypatch.setattr(settings, 'PLATEGA_FAILED_URL', 'https://failed', raising=False)
 
-    result = await service.create_platega_payment(
-        db=db,
-        user_id=42,
-        amount_kopeks=50_000,
-        description='Пополнение счёта',
-        language='ru',
-        payment_method_code=11,
-    )
+    with capture_logs() as events:
+        result = await service.create_platega_payment(
+            db=db,
+            user_id=42,
+            amount_kopeks=50_000,
+            description='Пополнение счёта',
+            language='ru',
+            payment_method_code=11,
+        )
+
+    created = next(event for event in events if event.get('transaction_id') == 'trx-001')
+    assert 'пользователя 42' in created['event']
+    assert 'метод 11' in created['event']
+    assert '500.00 RUB' in created['event']
+    assert created['user_id'] == 42
+    assert created['payment_method_code'] == 11
+    assert created['amount_value'] == 500.0
 
     assert result is not None
     assert result['local_payment_id'] == 777

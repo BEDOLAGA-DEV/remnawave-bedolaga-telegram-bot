@@ -13,7 +13,6 @@ from app.database.crud.server_squad import get_effective_tariff_squad_uuids
 from app.database.crud.subscription import (
     add_subscription_devices,
     add_subscription_squad,
-    add_subscription_traffic,
     create_paid_subscription,
     create_trial_subscription,
     deactivate_subscription,
@@ -26,6 +25,7 @@ from app.database.crud.subscription import (
 from app.database.crud.user import get_user_by_id
 from app.database.models import Subscription, SubscriptionStatus
 from app.services.subscription_service import SubscriptionService
+from app.services.traffic_purchase_service import add_subscription_traffic
 
 from ..dependencies import get_db_session, require_api_token
 from ..schemas.subscriptions import (
@@ -312,7 +312,12 @@ async def add_subscription_traffic_endpoint(
     db: AsyncSession = Depends(get_db_session),
 ) -> SubscriptionResponse:
     subscription = await _get_subscription(db, subscription_id)
-    subscription = await add_subscription_traffic(db, subscription, payload.gb)
+    from app.services.traffic_purchase_service import prepare_traffic_purchase
+
+    accounting_panel = None
+    if subscription.traffic_limit_gb:
+        subscription, accounting_panel = await prepare_traffic_purchase(db, subscription)
+    subscription = await add_subscription_traffic(db, subscription, payload.gb, panel=accounting_panel)
 
     # Реактивируем подписку если она была DISABLED/EXPIRED (например, после LIMITED/EXPIRED в RemnaWave)
     await reactivate_subscription(db, subscription)

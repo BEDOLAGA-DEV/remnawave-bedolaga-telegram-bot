@@ -991,6 +991,7 @@ class TestLegacyImportPercent:
 
     def test_both_editors_import_identically(self, monkeypatch):
         """Результат не должен зависеть от того, откуда нажали кнопку."""
+        import ast
         import inspect
 
         from app.cabinet.routes import admin_partners
@@ -998,7 +999,16 @@ class TestLegacyImportPercent:
 
         for handler in (admin_partners.import_legacy_referral_settings, referral_levels.import_legacy_settings):
             source = inspect.getsource(handler)
-            assert 'legacy_percent_for_import()' in source
+            calls = [
+                node
+                for node in ast.walk(ast.parse(source))
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == 'legacy_percent_for_import'
+            ]
+            assert len(calls) == 1
+            assert not calls[0].args
+            assert all(keyword.arg == 'language' for keyword in calls[0].keywords)
             # Именно обращение к настройке, а не упоминание её имени в докстринге.
             assert 'settings.REFERRAL_COMMISSION_PERCENT' not in source, (
                 'ставка обязана браться общим расчётом, иначе два переноса разойдутся'
