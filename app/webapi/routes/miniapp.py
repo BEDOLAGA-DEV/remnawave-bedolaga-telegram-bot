@@ -6850,6 +6850,31 @@ async def purchase_tariff_endpoint(
         subscription = await get_subscription_by_user_id(db, user.id)
 
     managed_purchase = getattr(subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+    family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(tariff, 'entitlement_family', None))
+    if family_atomic:
+        from app.database.crud.subscription import resolve_trial_conversion_candidate
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        conversion = (
+            await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+            if subscription is None or subscription.is_trial
+            else None
+        )
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=user.id,
+                tariff_id=tariff.id,
+                current_subscription_id=subscription.id if subscription is not None else None,
+                conversion_trial_id=conversion.id if conversion is not None else None,
+            )
+        except ActiveTariffFamilyConflict as error:
+            raise HTTPException(
+                status_code=409, detail={'code': 'entitlement_family_conflict', 'message': str(error)}
+            ) from error
 
     # Списываем баланс
     if is_daily_tariff:
@@ -6865,7 +6890,7 @@ async def purchase_tariff_endpoint(
         description,
         consume_promo_offer=consume_promo_offer,
         mark_as_paid_subscription=True,
-        commit=not managed_purchase,
+        commit=not (managed_purchase or family_atomic),
     )
     if not success:
         raise HTTPException(
@@ -6938,6 +6963,7 @@ async def purchase_tariff_endpoint(
             device_limit=tariff.device_limit,
             connected_squads=squads,
             tariff_id=tariff.id,
+            commit=not (managed_purchase or family_atomic),
         )
 
     # Инициализация daily полей при покупке суточного тарифа
@@ -6948,10 +6974,11 @@ async def purchase_tariff_endpoint(
         # Для суточного тарифа end_date = сейчас + 1 день (первый день уже оплачен)
         subscription.end_date = datetime.now(UTC) + timedelta(days=1)
         subscription.pending_panel_expire_at = subscription.end_date
-        await db.commit()
-        await db.refresh(subscription)
+        if not (managed_purchase or family_atomic):
+            await db.commit()
+            await db.refresh(subscription)
 
-    if managed_purchase:
+    if managed_purchase or family_atomic:
         await db.commit()
         from app.database.crud.transaction import emit_transaction_side_effects
 

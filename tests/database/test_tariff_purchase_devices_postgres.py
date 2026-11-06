@@ -663,3 +663,53 @@ async def test_admin_daily_renewal_preserves_devices_it_charges(postgres_databas
         async with checkout.maker() as db:
             assert (await db.get(User, 1)).balance_kopeks == (100000 if price_changed else 98800)
             assert (await db.get(Subscription, 10)).device_limit == 3
+
+
+async def test_main_family_guard_rejects_second_main_before_balance_debit(postgres_database, monkeypatch):
+    """Cabinet rejects another live Main before creating any payment record."""
+    from datetime import UTC, datetime, timedelta
+
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        async with checkout.maker() as db:
+            (await db.get(Tariff, 7)).entitlement_family = 'main'
+            db.add(Tariff(id=8, name='Start', entitlement_family='main', is_active=True))
+            db.add(
+                Subscription(
+                    id=10,
+                    user_id=1,
+                    tariff_id=8,
+                    remnawave_short_id='main-start',
+                    is_trial=False,
+                    status='active',
+                    start_date=datetime.now(UTC),
+                    end_date=datetime.now(UTC) + timedelta(days=30),
+                )
+            )
+            await db.commit()
+
+        response = await checkout.send('/purchase-tariff', {'tariff_id': 7, 'period_days': 30})
+        assert response.status_code == 409, response.text
+        assert response.json()['detail']['code'] == 'entitlement_family_conflict'
+
+        async with checkout.maker() as db:
+            assert (await db.get(User, 1)).balance_kopeks == 100000
+            assert (await db.scalars(select(Transaction))).all() == []
+            subs = (await db.scalars(select(Subscription))).all()
+            assert [sub.tariff_id for sub in subs] == [8]
+
+
+async def test_main_family_cabinet_activation_failure_rolls_back_charge(postgres_database, monkeypatch):
+    """Tagged Main uses one atomic wallet+subscription transaction, unlike legacy."""
+    async with checkout_context(postgres_database, monkeypatch) as checkout:
+        async with checkout.maker() as db:
+            (await db.get(Tariff, 7)).entitlement_family = 'main'
+            await db.commit()
+
+        monkeypatch.setattr(purchase, 'create_paid_subscription', AsyncMock(side_effect=RuntimeError('activation failed')))
+        response = await checkout.send('/purchase-tariff', {'tariff_id': 7, 'period_days': 30})
+        assert response.status_code == 500, response.text
+
+        async with checkout.maker() as db:
+            assert (await db.get(User, 1)).balance_kopeks == 100000
+            assert (await db.scalars(select(Transaction))).all() == []
+            assert (await db.scalars(select(Subscription))).all() == []

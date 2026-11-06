@@ -977,6 +977,37 @@ async def _auto_purchase_tariff(
         )
         return False
 
+    # Both saved-cart auto purchase and Telegram checkout reach this shared
+    # path. Recheck under the wallet lock, before any debit or order record.
+    family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(tariff, 'entitlement_family', None))
+    if family_atomic:
+        from app.database.crud.subscription import resolve_trial_conversion_candidate
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        conversion = (
+            await resolve_trial_conversion_candidate(db, user.id, tariff_id)
+            if existing_subscription is None or existing_subscription.is_trial
+            else None
+        )
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=user.id,
+                tariff_id=tariff_id,
+                current_subscription_id=(
+                    existing_subscription.id
+                    if existing_subscription is not None and existing_subscription.tariff_id == tariff_id
+                    else None
+                ),
+                conversion_trial_id=conversion.id if conversion is not None else None,
+            )
+        except ActiveTariffFamilyConflict:
+            logger.info('Saved tariff checkout blocked by entitlement family', user_id=user.id, tariff_id=tariff_id)
+            return False
+
     if device_checkout:
         from types import SimpleNamespace
 
@@ -1102,7 +1133,7 @@ async def _auto_purchase_tariff(
             is_completed=False,
             commit=False,
         )
-        if not device_checkout and not managed_purchase:
+        if not device_checkout and not managed_purchase and not family_atomic:
             await db.commit()
         transaction_id = transaction.id
     except Exception as error:
@@ -1131,12 +1162,12 @@ async def _auto_purchase_tariff(
                 connected_squads=squads,
                 paid_traffic_reset=False,
                 reset_used_traffic=reset_used_traffic,
-                **({'commit': False} if device_checkout or managed_purchase else {}),
+                **({'commit': False} if device_checkout or managed_purchase or family_atomic else {}),
             )
             if was_trial_conversion:
                 subscription.is_trial = False
                 subscription.status = 'active'
-                if not device_checkout and not managed_purchase:
+                if not device_checkout and not managed_purchase and not family_atomic:
                     await db.commit()
         else:
             # Создаём новую подписку
@@ -1148,7 +1179,7 @@ async def _auto_purchase_tariff(
                 device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
-                **({'commit': False} if device_checkout or managed_purchase else {}),
+                **({'commit': False} if device_checkout or managed_purchase or family_atomic else {}),
             )
             was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
     except Exception as error:
@@ -1159,7 +1190,7 @@ async def _auto_purchase_tariff(
             exc_info=True,
         )
         await db.rollback()
-        if device_checkout or managed_purchase:
+        if device_checkout or managed_purchase or family_atomic:
             return False  # Debit, product and intent were rolled back together.
         # Refund and release this checkout only in the same committed transaction.
         try:
