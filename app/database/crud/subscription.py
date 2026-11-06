@@ -748,7 +748,9 @@ async def create_paid_subscription(
     if not is_trial:
         try:
             killed = await deactivate_user_trial_subscriptions(
-                db, user_id, exclude_subscription_id=subscription.id,
+                db,
+                user_id,
+                exclude_subscription_id=subscription.id,
                 target_tariff_id=tariff_id if settings.is_multi_tariff_enabled() else None,
             )
             if killed:
@@ -3560,7 +3562,9 @@ async def get_alive_trial_subscription(
         .limit(1)
     )
     if target_family is not None:
-        query = query.join(Tariff, Tariff.id == Subscription.tariff_id).where(Tariff.entitlement_family == target_family)
+        query = query.join(Tariff, Tariff.id == Subscription.tariff_id).where(
+            Tariff.entitlement_family == target_family
+        )
     return (await db.execute(query)).scalar_one_or_none()
 
 
