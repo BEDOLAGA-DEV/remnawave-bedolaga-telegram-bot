@@ -80,7 +80,11 @@ async def require_available_entitlement_family(
         tariff_id=tariff_id,
         current_subscription_id=current_subscription_id,
     )
-    if conflict is not None and (
-        conversion_trial_id is None or not conflict.is_trial or conflict.id != conversion_trial_id
-    ):
+    if conflict is not None and conversion_trial_id is not None and conflict.is_trial and conflict.id == conversion_trial_id:
+        # Разрешение конверсии одного trial не даёт права игнорировать другую
+        # живую Main-подписку того же семейства (например, старые нарушения).
+        conflict = await find_live_entitlement_family_conflict(
+            db, user_id=user_id, tariff_id=tariff_id, current_subscription_id=conversion_trial_id
+        )
+    if conflict is not None:
         raise ActiveTariffFamilyConflict('Уже есть живая подписка этого семейства; смените тариф существующей подписки')
