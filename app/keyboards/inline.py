@@ -607,7 +607,7 @@ def _build_cabinet_main_menu_keyboard(
 
 
 def get_main_menu_keyboard(
-    language: str = DEFAULT_LANGUAGE,f
+    language: str = DEFAULT_LANGUAGE,
     is_admin: bool = False,
     has_had_paid_subscription: bool = False,
     has_active_subscription: bool = False,
