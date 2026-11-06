@@ -2024,6 +2024,7 @@
   "CHANGE_TARIFF_BUTTON": "📦 套餐",
   "TARIFF_PURCHASE_AFTER_PAYMENT_LINE": "\n支付后：{amount}",
   "TARIFF_PURCHASE_ALREADY_ACTIVE": "套餐「{name}」已激活（剩余 {days} 天）。请通过「我的订阅」续订。",
+  "TARIFF_FAMILY_CONFLICT": "❌ 您在此套餐组中已有有效订阅，请更换现有订阅的套餐。",
   "TARIFF_PURCHASE_ALREADY_ACTIVE_SUB": "❌ 您已拥有该套餐的有效订阅",
   "TARIFF_PURCHASE_CART_CORRUPTED": "❌ 购物车数据已损坏",
   "TARIFF_PURCHASE_CART_RESTORED": "✅ 购物车已恢复！",
