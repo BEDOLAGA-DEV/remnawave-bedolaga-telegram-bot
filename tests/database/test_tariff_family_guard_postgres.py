@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.database.models import Subscription, SubscriptionStatus, Tariff, User
@@ -127,3 +127,28 @@ async def test_two_simultaneous_main_inserts_are_serialized(postgres_database):
         assert count == 1, 'конкурентные покупки создали два Main'
         assert accepted_second is False, 'вторая покупка прошла без семейного отказа'
         assert locked, 'PostgreSQL не наблюдал ожидания семейной блокировки'
+
+
+async def test_family_conflict_undoes_wallet_charge_in_same_transaction(postgres_database):
+    """Триггер не должен оставлять списание без продукта при общем COMMIT."""
+    async with postgres_sessions(postgres_database, TABLES, count=2) as (first, second):
+        user, basic, premium, _ = await _fixtures(first)
+        user_id, basic_id, premium_id = user.id, basic.id, premium.id
+        first.add(_sub(user_id, basic_id, 'wallet_main'))
+        await first.commit()
+
+        original_balance = await second.scalar(select(User.balance_kopeks).where(User.id == user_id))
+        await first.execute(
+            update(User).where(User.id == user_id).values(balance_kopeks=User.balance_kopeks - 250)
+        )
+        first.add(_sub(user_id, premium_id, 'wallet_conflict'))
+        with pytest.raises(IntegrityError, match='active entitlement family conflict'):
+            await first.flush()
+        await first.rollback()
+
+        stored_balance = await second.scalar(select(User.balance_kopeks).where(User.id == user_id))
+        stored_subscriptions = (
+            await second.scalars(select(Subscription).where(Subscription.user_id == user_id))
+        ).all()
+        assert stored_balance == original_balance
+        assert [item.tariff_id for item in stored_subscriptions] == [basic_id]
