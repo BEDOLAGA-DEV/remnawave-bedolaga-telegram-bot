@@ -1,6 +1,8 @@
 """Saved traffic carts may not guess a target or bypass disabled tariff top-ups."""
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -24,6 +26,26 @@ async def test_saved_traffic_respects_selection_and_tariff(postgres_database, mo
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
     monkeypatch.setattr(type(settings), 'get_traffic_topup_price', lambda self, gb: 1000)
     monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
+    from app.services.traffic_accounting import Allowance, TrafficAccount
+    from app.services.traffic_accounting_service import read_counters
+    from app.services.traffic_accounting_store import initialize_account
+
+    now = datetime.now(UTC)
+
+    def panel(panel_id):
+        return SimpleNamespace(
+            id=panel_id,
+            created_at=now,
+            traffic_limit_strategy='NO_RESET',
+            traffic_limit_bytes=100 * 1024**3,
+            user_traffic=SimpleNamespace(used_traffic_bytes=0, lifetime_used_traffic_bytes=0),
+        )
+
+    @asynccontextmanager
+    async def api_client(self):
+        yield SimpleNamespace(get_user_by_id=AsyncMock(side_effect=panel))
+
+    monkeypatch.setattr(SubscriptionService, 'get_api_client', api_client)
     sync = AsyncMock()
     monkeypatch.setattr(SubscriptionService, 'update_remnawave_user', sync)
     async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
@@ -51,10 +73,29 @@ async def test_saved_traffic_respects_selection_and_tariff(postgres_database, mo
                     traffic_limit_gb=100,
                     device_limit=3,
                     remnawave_short_id=f'masked-{sid}',
+                    remnawave_id=sid,
+                    traffic_accounting_mode='managed',
                     autopay_enabled=case != 'no_autopay' and (sid == 20 or case == 'two_autopay'),
                     end_date=datetime.now(UTC) + timedelta(days=30),
                 )
             )
+        await db.flush()
+        for sub in (await db.execute(select(Subscription))).scalars():
+            state = await initialize_account(
+                db,
+                sub.id,
+                TrafficAccount(
+                    read_counters(panel(sub.remnawave_id)).identity,
+                    0,
+                    0,
+                    (Allowance('base:test', 100 * 1024**3, now + timedelta(days=30)),),
+                ),
+                strategy='MONTH',
+                timezone='UTC',
+                anchor=now,
+                next_refresh_at=now + timedelta(days=30),
+            )
+            state.phase = 'ready'
         await db.commit()
         cart = {'cart_mode': 'add_traffic', 'traffic_gb': 10, 'price_kopeks': 1000}
         if case not in ['single_legacy', 'no_autopay', 'one_autopay', 'two_autopay']:

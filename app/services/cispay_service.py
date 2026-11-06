@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+from uuid import UUID
 
 import aiohttp
 
@@ -174,6 +175,89 @@ class CisPayService:
         if not isinstance(result.get('id'), str) or not result['id']:
             raise CisPayAPIError(201)
         return result
+
+    async def create_subscription(
+        self,
+        *,
+        amount_kopeks: int,
+        interval_days: int,
+        customer_id: str,
+        purpose: str,
+        success_url: str | None = None,
+        fail_url: str | None = None,
+        config: CisPayConfig | None = None,
+    ) -> dict[str, Any]:
+        """Create once: API has no documented idempotency key; timeout is ambiguous."""
+        from app.services.cispay_recurrent import resolve_cispay_period
+
+        resolve_cispay_period(interval_days, False)
+        if type(amount_kopeks) is not int or not 0 < amount_kopeks <= 2_147_483_647:
+            raise ValueError('Invalid CisPay minor-unit amount')
+        for name, value, limit in (('customer_id', customer_id, 40), ('subscription_purpose', purpose, 255)):
+            if not isinstance(value, str) or not value.strip() or len(value) > limit:
+                raise ValueError(f'Invalid CisPay {name}')
+        body = {
+            'amount': amount_kopeks,
+            'currency': 'RUB',
+            'payment_method': 'SBP',
+            'interval_days': interval_days,
+            'customer_id': customer_id,
+            'subscription_purpose': purpose,
+        }
+        for name, value in (('redirect_success_url', success_url), ('redirect_fail_url', fail_url)):
+            if value is not None:
+                if not isinstance(value, str) or not value or len(value) > 1024:
+                    raise ValueError('Invalid CisPay redirect')
+                body[name] = value
+        result = await self._request('POST', '/subscriptions', json_payload=body, config=config)
+        try:
+            UUID(result['id'])
+        except (KeyError, ValueError, TypeError, AttributeError):
+            raise CisPayAPIError(201) from None
+        return result
+
+    async def get_subscription(self, subscription_id: str, *, config: CisPayConfig | None = None) -> dict:
+        return await self._request('GET', f'/subscriptions/{UUID(subscription_id)}', config=config)
+
+    async def cancel_subscription(self, subscription_id: str, *, config: CisPayConfig | None = None) -> dict:
+        return await self._request('POST', f'/subscriptions/{UUID(subscription_id)}/cancel', config=config)
+
+    async def update_subscription(
+        self,
+        subscription_id: str,
+        *,
+        interval_days: int | None = None,
+        purpose: str | None = None,
+        config: CisPayConfig | None = None,
+    ) -> dict:
+        from app.services.cispay_recurrent import resolve_cispay_period
+
+        body = {}
+        if interval_days is not None:
+            body['interval_days'] = resolve_cispay_period(interval_days, False)
+        if purpose is not None:
+            if not isinstance(purpose, str) or not purpose.strip() or len(purpose) > 255:
+                raise ValueError('Invalid CisPay purpose')
+            body['subscription_purpose'] = purpose
+        if not body:
+            raise ValueError('No subscription changes')
+        return await self._request('PATCH', f'/subscriptions/{UUID(subscription_id)}', json_payload=body, config=config)
+
+    @staticmethod
+    def _page_params(limit: int, offset: int, status: str | None, allowed: tuple[str, ...]) -> dict:
+        if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
+            raise ValueError('Invalid CisPay pagination')
+        if status is not None and status not in allowed:
+            raise ValueError('Invalid CisPay status')
+        return {'limit': limit, 'offset': offset, **({'status': status} if status is not None else {})}
+
+    async def list_subscriptions(self, *, limit=20, offset=0, status=None, config: CisPayConfig | None = None) -> dict:
+        params = self._page_params(limit, offset, status, ('PENDING', 'ACTIVE', 'PAUSED', 'CANCELLED', 'FAILED'))
+        return await self._request('GET', '/subscriptions', params=params, config=config)
+
+    async def list_transactions(self, *, limit=20, offset=0, status=None, config: CisPayConfig | None = None) -> dict:
+        params = self._page_params(limit, offset, status, ('PENDING', 'PAID', 'FAILED', 'EXPIRED', 'REFUNDED'))
+        return await self._request('GET', '/transactions', params=params, config=config)
 
     async def check_payment(
         self, *, payment_id: str | None = None, order_id: str | None = None, config: CisPayConfig | None = None

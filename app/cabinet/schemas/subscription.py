@@ -1,6 +1,7 @@
 """Subscription schemas for cabinet."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -23,9 +24,19 @@ class TrafficPurchaseInfo(BaseModel):
     created_at: datetime
     days_remaining: int
     progress_percent: float
+    remaining_gb: float | None = None
 
 
-class SubscriptionData(BaseModel):
+class TrafficAccountingData(BaseModel):
+    """Settled balances; unknown historical allocations remain null."""
+
+    traffic_accounting_mode: Literal['legacy', 'managed'] = 'legacy'
+    traffic_remaining_gb: float | None = None
+    base_traffic_remaining_gb: float | None = None
+    next_traffic_refresh_at: datetime | None = None
+
+
+class SubscriptionData(TrafficAccountingData):
     """User subscription data."""
 
     id: int

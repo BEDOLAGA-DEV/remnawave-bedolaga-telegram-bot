@@ -174,12 +174,12 @@ async def process_promocode(message: types.Message, db_user: User, state: FSMCon
             buttons.append(
                 [
                     types.InlineKeyboardButton(
-                        text=f'{name} ({days} дн.)',
+                        text=texts.t('PROMOCODE_SUBSCRIPTION_OPTION').format(name=name, days=days),
                         callback_data=f'promo_sub:{sub["id"]}:{promo_code}',
                     )
                 ]
             )
-        buttons.append([types.InlineKeyboardButton(text='❌ Отмена', callback_data='back_to_menu')])
+        buttons.append([types.InlineKeyboardButton(text=texts.CANCEL, callback_data='back_to_menu')])
         await message.answer(
             texts.t(
                 'PROMOCODE_SELECT_SUBSCRIPTION',
@@ -242,19 +242,19 @@ async def handle_promo_subscription_select(
     callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext
 ):
     """Handle subscription selection for promocode with days in multi-tariff."""
+    texts = get_texts(db_user.language)
     parts = (callback.data or '').split(':')
     if len(parts) < 3:
-        await callback.answer('Неверный формат', show_alert=True)
+        await callback.answer(texts.t('PROMOCODE_INVALID_SELECTION'), show_alert=True)
         return
 
     try:
         sub_id = int(parts[1])
         code = ':'.join(parts[2:])  # code may contain colons
     except (ValueError, IndexError):
-        await callback.answer('Ошибка', show_alert=True)
+        await callback.answer(texts.t('PROMOCODE_INVALID_SELECTION'), show_alert=True)
         return
 
-    texts = get_texts(db_user.language)
     result = await activate_promocode_for_registration(db, db_user.id, code, callback.bot, subscription_id=sub_id)
 
     if result['success']:

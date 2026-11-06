@@ -1225,3 +1225,9 @@ async def test_auto_purchase_skipped_without_topup_intent(monkeypatch):
     result = await auto_purchase_saved_cart_after_topup(db_session, user, bot=AsyncMock())
 
     assert result is False
+
+
+@pytest.fixture(autouse=True)
+def _no_existing_cispay_agreement(monkeypatch):
+    # These legacy fake-DB scenarios have no bank recurring agreement.
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))

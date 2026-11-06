@@ -42,6 +42,7 @@ async def calculate_recurrent_purchase_terms(tariff, provider, device_limit, sub
 
     if provider not in ('platega', 'lava', 'cashera'):
         raise ValueError('invalid_provider')
+    lava_amount: int | None = None
     if provider == 'lava':
         from app.services.lava_recurrent import resolve_product_charge_days
         from app.services.payment.lava import _lava_amount_to_kopeks
@@ -52,7 +53,7 @@ async def calculate_recurrent_purchase_terms(tariff, provider, device_limit, sub
             raise ValueError('Продукт Lava недоступен')
         charge_days = resolve_product_charge_days(product)
         interval = str(product.get('period') or f'{charge_days}_days')
-        amount = _lava_amount_to_kopeks(product.get('price'))
+        lava_amount = _lava_amount_to_kopeks(product.get('price'))
     else:
         period = (
             resolve_autopay_period_candidate(getattr(subscription, 'autopay_period_days', None), tariff)
@@ -66,9 +67,10 @@ async def calculate_recurrent_purchase_terms(tariff, provider, device_limit, sub
         tariff, charge_days, device_limit=device_limit, daily_devices_billing_version=1 if tariff.is_daily else 0
     )
     true_amount = int(pricing.final_total)
-    if provider == 'lava':
-        if true_amount - amount > 1:
+    if lava_amount is not None:
+        if true_amount - lava_amount > 1:
             raise ValueError('Продукт Lava дешевле продления с выбранными устройствами — оплатите с баланса')
+        amount = lava_amount
     else:
         amount = round_up_to_rubles(true_amount) if provider == 'cashera' else true_amount
     if not 0 < amount <= 2_147_483_647:

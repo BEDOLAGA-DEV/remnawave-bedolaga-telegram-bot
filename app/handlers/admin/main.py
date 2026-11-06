@@ -45,12 +45,14 @@ async def show_admin_panel(callback: types.CallbackQuery, db_user: User, db: Asy
         users_today = system_stats.get('users_last_day', 0)
         users_week = system_stats.get('users_last_week', 0)
         admin_text = admin_text.replace(
-            '\n\nВыберите раздел для управления:',
+            get_texts(db_user.language).t('ADMIN_MAIN_UI_006', '\n\nВыберите раздел для управления:'),
             (
-                f'\n\n- 🟢 Онлайн сейчас: {users_online}'
-                f'\n- 📅 Онлайн сегодня: {users_today}'
-                f'\n- 🗓️ На этой неделе: {users_week}'
-                '\n\nВыберите раздел для управления:'
+                get_texts(db_user.language)
+                .t(
+                    'ADMIN_MAIN_UI_007',
+                    '\n\n- 🟢 Онлайн сейчас: {v0}\n- 📅 Онлайн сегодня: {v1}\n- 🗓️ На этой неделе: {v2}\n\nВыберите раздел для управления:',
+                )
+                .format(v0=users_online, v1=users_today, v2=users_week)
             ),
         )
     except Exception as e:
@@ -206,14 +208,22 @@ async def show_support_audit(callback: types.CallbackQuery, db_user: User, db: A
                 'unblock_user': texts.t('ADMIN_SUPPORT_AUDIT_ACTION_UNBLOCK', 'Снятие блока'),
             }
             action_text = action_map.get(log.action, log.action)
-            ticket_part = f' тикет #{log.ticket_id}' if log.ticket_id else ''
+            ticket_part = (
+                get_texts(db_user.language).t('ADMIN_MAIN_UI_010', ' тикет #{v0}').format(v0=log.ticket_id)
+                if log.ticket_id
+                else ''
+            )
             details = log.details or {}
             extra = ''
             if log.action == 'block_user_timed' and 'minutes' in details:
-                extra = f' ({details["minutes"]} мин)'
+                extra = get_texts(db_user.language).t('ADMIN_MAIN_UI_011', ' ({v0} мин)').format(v0=details['minutes'])
             elif log.action == 'close_all_tickets' and 'count' in details:
                 extra = f' ({details["count"]})'
-            actor_id_display = log.actor_telegram_id or f'user#{log.actor_user_id}' if log.actor_user_id else 'unknown'
+            actor_id_display = (
+                log.actor_telegram_id or f'user#{log.actor_user_id}'
+                if log.actor_user_id
+                else texts.t('ADMIN_MAIN_UNKNOWN_ACTOR', 'неизвестен')
+            )
             lines.append(f'{ts} • {role} <code>{actor_id_display}</code> — {action_text}{ticket_part}{extra}')
 
     # keyboard with pagination
@@ -273,8 +283,10 @@ async def clear_rules_command(message: types.Message, db_user: User, db: AsyncSe
 
         if stats['total_active'] == 0:
             await message.reply(
-                'ℹ️ <b>Правила уже очищены</b>\n\n'
-                'В системе нет активных правил. Используются стандартные правила по умолчанию.'
+                get_texts(db_user.language).t(
+                    'ADMIN_MAIN_UI_014',
+                    'ℹ️ <b>Правила уже очищены</b>\n\nВ системе нет активных правил. Используются стандартные правила по умолчанию.',
+                )
             )
             return
 
@@ -284,26 +296,33 @@ async def clear_rules_command(message: types.Message, db_user: User, db: AsyncSe
             clear_rules_cache()
 
             await message.reply(
-                f'✅ <b>Правила успешно очищены!</b>\n\n'
-                f'📊 <b>Статистика:</b>\n'
-                f'• Очищено правил: {stats["total_active"]}\n'
-                f'• Язык: {db_user.language}\n'
-                f'• Выполнил: {html.escape(db_user.full_name or "")}\n\n'
-                f'Теперь используются стандартные правила по умолчанию.'
+                get_texts(db_user.language)
+                .t(
+                    'ADMIN_MAIN_UI_015',
+                    '✅ <b>Правила успешно очищены!</b>\n\n📊 <b>Статистика:</b>\n• Очищено правил: {v0}\n• Язык: {v1}\n• Выполнил: {v2}\n\nТеперь используются стандартные правила по умолчанию.',
+                )
+                .format(v0=stats['total_active'], v1=db_user.language, v2=html.escape(db_user.full_name or ''))
             )
 
             logger.info(
                 'Правила очищены командой администратором', telegram_id=db_user.telegram_id, full_name=db_user.full_name
             )
         else:
-            await message.reply('⚠️ <b>Нет правил для очистки</b>\n\nАктивные правила не найдены.')
+            await message.reply(
+                get_texts(db_user.language).t(
+                    'ADMIN_MAIN_UI_016', '⚠️ <b>Нет правил для очистки</b>\n\nАктивные правила не найдены.'
+                )
+            )
 
     except Exception as e:
         logger.error('Ошибка при очистке правил командой', error=e)
         await message.reply(
-            '❌ <b>Ошибка при очистке правил</b>\n\n'
-            f'Произошла ошибка: {e!s}\n'
-            'Попробуйте через админ-панель или повторите позже.'
+            get_texts(db_user.language)
+            .t(
+                'ADMIN_MAIN_UI_017',
+                '❌ <b>Ошибка при очистке правил</b>\n\nПроизошла ошибка: {v0!s}\nПопробуйте через админ-панель или повторите позже.',
+            )
+            .format(v0=e)
         )
 
 
@@ -314,51 +333,73 @@ async def rules_stats_command(message: types.Message, db_user: User, db: AsyncSe
         stats = await get_rules_statistics(db)
 
         if 'error' in stats:
-            await message.reply(f'❌ Ошибка получения статистики: {stats["error"]}')
+            await message.reply(
+                get_texts(db_user.language)
+                .t('ADMIN_MAIN_UI_018', '❌ Ошибка получения статистики: {v0}')
+                .format(v0=stats['error'])
+            )
             return
 
-        text = '📊 <b>Статистика правил сервиса</b>\n\n'
-        text += '📋 <b>Общая информация:</b>\n'
-        text += f'• Активных правил: {stats["total_active"]}\n'
-        text += f'• Всего в истории: {stats["total_all_time"]}\n'
-        text += f'• Поддерживаемых языков: {stats["total_languages"]}\n\n'
+        text = get_texts(db_user.language).t('ADMIN_MAIN_UI_001', '📊 <b>Статистика правил сервиса</b>\n\n')
+        text += get_texts(db_user.language).t('ADMIN_MAIN_UI_002', '📋 <b>Общая информация:</b>\n')
+        text += (
+            get_texts(db_user.language)
+            .t('ADMIN_MAIN_UI_003', '• Активных правил: {v0}\n')
+            .format(v0=stats['total_active'])
+        )
+        text += (
+            get_texts(db_user.language)
+            .t('ADMIN_MAIN_UI_004', '• Всего в истории: {v0}\n')
+            .format(v0=stats['total_all_time'])
+        )
+        text += (
+            get_texts(db_user.language)
+            .t('ADMIN_MAIN_UI_005', '• Поддерживаемых языков: {v0}\n\n')
+            .format(v0=stats['total_languages'])
+        )
 
         if stats['languages']:
-            text += '🌐 <b>По языкам:</b>\n'
+            text += get_texts(db_user.language).t('ADMIN_MAIN_UI_008', '🌐 <b>По языкам:</b>\n')
             for lang, lang_stats in stats['languages'].items():
-                text += f'• <code>{lang}</code>: {lang_stats["active_count"]} правил, '
-                text += f'{lang_stats["content_length"]} символов\n'
+                text += (
+                    get_texts(db_user.language)
+                    .t('ADMIN_MAIN_UI_012', '• <code>{v0}</code>: {v1} правил, ')
+                    .format(v0=lang, v1=lang_stats['active_count'])
+                )
+                text += (
+                    get_texts(db_user.language)
+                    .t('ADMIN_MAIN_UI_013', '{v0} символов\n')
+                    .format(v0=lang_stats['content_length'])
+                )
                 if lang_stats['last_updated']:
-                    text += f'  Обновлено: {format_local_datetime(lang_stats["last_updated"], "%d.%m.%Y %H:%M")}\n'
+                    text += (
+                        get_texts(db_user.language)
+                        .t('ADMIN_MAIN_UI_019', '  Обновлено: {v0}\n')
+                        .format(v0=format_local_datetime(lang_stats['last_updated'], '%d.%m.%Y %H:%M'))
+                    )
         else:
-            text += 'ℹ️ Активных правил нет - используются правила по умолчанию'
+            text += get_texts(db_user.language).t(
+                'ADMIN_MAIN_UI_009', 'ℹ️ Активных правил нет - используются правила по умолчанию'
+            )
 
         await message.reply(text)
 
     except Exception as e:
         logger.error('Ошибка при получении статистики правил', error=e)
-        await message.reply(f'❌ <b>Ошибка получения статистики</b>\n\nПроизошла ошибка: {e!s}')
+        await message.reply(
+            get_texts(db_user.language)
+            .t('ADMIN_MAIN_UI_020', '❌ <b>Ошибка получения статистики</b>\n\nПроизошла ошибка: {v0!s}')
+            .format(v0=e)
+        )
 
 
 @admin_required
 @error_handler
 async def admin_commands_help(message: types.Message, db_user: User, db: AsyncSession):
-    help_text = """
-🔧 <b>Доступные админские команды:</b>
-
-<b>📋 Управление правилами:</b>
-• <code>/clear_rules</code> - очистить все правила
-• <code>/rules_stats</code> - статистика правил
-
-<b>ℹ️ Справка:</b>
-• <code>/admin_help</code> - это сообщение
-
-<b>📱 Панель управления:</b>
-Используйте кнопку "Админ панель" в главном меню для полного доступа ко всем функциям.
-
-<b>⚠️ Важно:</b>
-Все команды логируются и требуют админских прав.
-"""
+    help_text = get_texts(db_user.language).t(
+        'ADMIN_MAIN_UI_000',
+        '\n🔧 <b>Доступные админские команды:</b>\n\n<b>📋 Управление правилами:</b>\n• <code>/clear_rules</code> - очистить все правила\n• <code>/rules_stats</code> - статистика правил\n\n<b>ℹ️ Справка:</b>\n• <code>/admin_help</code> - это сообщение\n\n<b>📱 Панель управления:</b>\nИспользуйте кнопку "Админ панель" в главном меню для полного доступа ко всем функциям.\n\n<b>⚠️ Важно:</b>\nВсе команды логируются и требуют админских прав.\n',
+    )
 
     await message.reply(help_text)
 

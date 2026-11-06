@@ -34,8 +34,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 # вызова. Комментарий утверждал, что функции нет нигде в проекте; это было
 # неверно, и запись в базе мешала вернуть строку обратно.
 KNOWN: dict[str, set[str]] = {
-    'app/handlers/start.py': {'User'},
-    'app/services/payment/heleket.py': {'HeleketPayment'},
     'app/services/payment_method_config_service.py': {'User'},
     'app/services/pricing_engine.py': {'PromoGroup'},
 }

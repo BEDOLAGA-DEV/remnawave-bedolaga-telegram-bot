@@ -38,6 +38,7 @@ from app.database.crud.user import add_user_balance, get_user_by_id, subtract_us
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, Subscription, Tariff, Transaction, TransactionType, User
 from app.localization.texts import get_texts
+from app.services.cispay_recurrent import get_cispay_recurrent_policy
 from app.services.notification_delivery_service import (
     NotificationType,
     notification_delivery_service,
@@ -482,6 +483,9 @@ async def get_purchase_options(
                 # подписки, если фича включена.
                 'lava_recurrent_enabled': settings.is_lava_recurrent_enabled(),
                 'cashera_recurrent_enabled': settings.is_cashera_recurrent_enabled(),
+                'cispay_recurrent_enabled': (await get_cispay_recurrent_policy(db, user=user, channel='cabinet'))[
+                    'enabled'
+                ],
             }
 
         # Classic mode - return periods
@@ -792,6 +796,13 @@ async def _resolve_tariff_purchase_target(
         from app.database.crud.subscription import resolve_trial_conversion_candidate
 
         existing_subscription = await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+    if existing_subscription is not None:
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        try:
+            await require_no_cispay(db, user_id=user.id, subscription_id=existing_subscription.id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
     return existing_subscription
 
 
@@ -1204,7 +1215,8 @@ async def purchase_tariff(
             description += f' (скидка {discount_percent}%)'
         if promo_offer_discount_value > 0:
             description += f' (промо -{promo_offer_discount_percent}%)'
-        atomic_charge = bool(checkout_external_id) or is_daily_tariff
+        managed_purchase = getattr(subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+        atomic_charge = bool(checkout_external_id) or is_daily_tariff or managed_purchase
         saved_promo = (
             user.promo_offer_discount_percent,
             user.promo_offer_discount_source,
@@ -1233,11 +1245,11 @@ async def purchase_tariff(
                     {'external_id': checkout_external_id, 'is_completed': False, 'commit': False}
                     if checkout_external_id
                     else {'commit': False}
-                    if is_daily_tariff
+                    if is_daily_tariff or managed_purchase
                     else {}
                 ),
             )
-            if checkout_external_id and not device_checkout:
+            if checkout_external_id and not device_checkout and not managed_purchase:
                 await db.commit()
         except Exception:
             if atomic_charge:
@@ -1258,7 +1270,7 @@ async def purchase_tariff(
             Сбои возврата только логируем (CRITICAL): исходную ошибку покупки
             маскировать нельзя, а двойного списания здесь быть не может.
             """
-            if is_daily_tariff or device_checkout:
+            if is_daily_tariff or device_checkout or managed_purchase:
                 # Debit/product/ledger were rolled back together.
                 return
             try:
@@ -1407,8 +1419,9 @@ async def purchase_tariff(
                     traffic_limit_gb=traffic_limit_gb,
                     device_limit=effective_device_limit,
                     connected_squads=squads,
+                    paid_traffic_reset=False,
                     reset_used_traffic=reset_used_traffic,
-                    **({'commit': False} if is_daily_tariff or device_checkout else {}),
+                    **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase else {}),
                 )
             else:
                 # Create new subscription (или конверсия исключённого выше триала)
@@ -1422,7 +1435,7 @@ async def purchase_tariff(
                         connected_squads=squads,
                         tariff_id=tariff.id,
                         conversion_trial=_conversion_trial,
-                        **({'commit': False} if is_daily_tariff or device_checkout else {}),
+                        **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase else {}),
                     )
                 except IntegrityError:
                     # Partial unique index violation: user already has active subscription for this tariff
@@ -1483,7 +1496,7 @@ async def purchase_tariff(
                 )
             )
 
-        if checkout_external_id:
+        if checkout_external_id or managed_purchase:
             transaction.is_completed = True
             transaction.completed_at = datetime.now(UTC)
             await db.commit()

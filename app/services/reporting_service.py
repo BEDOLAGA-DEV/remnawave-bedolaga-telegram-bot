@@ -26,6 +26,7 @@ from app.database.models import (
     TransactionType,
     User,
 )
+from app.localization.texts import Texts, get_texts
 
 
 logger = structlog.get_logger(__name__)
@@ -101,11 +102,13 @@ class ReportingService:
         *,
         report_date: date | None = None,
         send_to_topic: bool = False,
+        language: str | None = None,
     ) -> str:
-        report_text = await self._build_report(period, report_date)
+        texts = get_texts(language or settings.DEFAULT_LANGUAGE)
+        report_text = await self._build_report(period, report_date, texts=texts)
 
         if send_to_topic:
-            await self._deliver_report(report_text)
+            await self._deliver_report(report_text, texts=texts)
 
         return report_text
 
@@ -153,13 +156,14 @@ class ReportingService:
         report_date = (candidate - timedelta(days=1)).date()
         return candidate.astimezone(UTC), report_date
 
-    async def _deliver_report(self, report_text: str) -> None:
+    async def _deliver_report(self, report_text: str, texts: Texts | None = None) -> None:
+        texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
         if not self.bot:
-            raise ReportingServiceError('Бот не инициализирован для отправки отчета')
+            raise ReportingServiceError(texts.t('ADMIN_REPORT_UI_026', 'Бот не инициализирован для отправки отчета'))
 
         chat_id = settings.get_reports_chat_id()
         if not chat_id:
-            raise ReportingServiceError('Не задан чат для отправки отчета')
+            raise ReportingServiceError(texts.t('ADMIN_REPORT_UI_027', 'Не задан чат для отправки отчета'))
 
         topic_id = settings.get_reports_topic_id()
 
@@ -168,7 +172,7 @@ class ReportingService:
         try:
             from app.utils.rich_admin import classic_admin_html_to_rich, try_send_rich_admin_message
 
-            rich_html = classic_admin_html_to_rich(report_text, footer_label='Отчёт')
+            rich_html = classic_admin_html_to_rich(report_text, footer_label=texts.t('ADMIN_REPORT_UI_029', 'Отчёт'))
             if await try_send_rich_admin_message(self.bot, chat_id, rich_html, thread_id=topic_id):
                 logger.info('Rich-отчёт отправлен в чат', chat_id=chat_id)
                 return
@@ -184,7 +188,7 @@ class ReportingService:
             )
         except (TelegramBadRequest, TelegramForbiddenError) as exc:
             logger.error('Не удалось отправить отчет', exc=exc)
-            raise ReportingServiceError('Не удалось отправить отчет в чат') from exc
+            raise ReportingServiceError(texts.t('ADMIN_REPORT_UI_030', 'Не удалось отправить отчет в чат')) from exc
 
     # ---------- referral helpers ----------
 
@@ -242,15 +246,22 @@ class ReportingService:
         self,
         period: ReportPeriod,
         report_date: date | None,
+        texts: Texts | None = None,
     ) -> str:
-        period_range = self._get_period_range(period, report_date)
+        texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
+        try:
+            period_range = self._get_period_range(period, report_date)
+        except ReportingServiceError as exc:
+            raise ReportingServiceError(
+                texts.t('ADMIN_REPORT_UI_032', 'Неизвестный период отчета: {value1}').format(value1=period)
+            ) from exc
         start_utc = period_range.start_msk.astimezone(UTC)
         end_utc = period_range.end_msk.astimezone(UTC)
 
         async with AsyncSessionLocal() as session:
             totals = await self._collect_current_totals(session)
             stats = await self._collect_period_stats(session, start_utc, end_utc)
-            top_referrers = await self._get_top_referrers(session, start_utc, end_utc, limit=5)
+            top_referrers = await self._get_top_referrers(session, start_utc, end_utc, limit=5, texts=texts)
             usage = await self._get_user_usage_stats(session)
 
         conversion_rate = (
@@ -259,73 +270,94 @@ class ReportingService:
 
         lines: list[str] = []
         header = (
-            f'📊 <b>Отчет за {period_range.label}</b>'
+            texts.t('ADMIN_REPORT_UI_004', '📊 <b>Отчет за {value1}</b>').format(value1=period_range.label)
             if period == ReportPeriod.DAILY
-            else f'📊 <b>Отчет за период {period_range.label}</b>'
+            else texts.t('ADMIN_REPORT_UI_005', '📊 <b>Отчет за период {value1}</b>').format(value1=period_range.label)
         )
         lines += [header, '']
 
         # TL;DR
         lines += [
-            '🧭 <b>Итог по периоду</b>',
-            f'• Новых пользователей: <b>{stats["new_users"]}</b>',
-            f'• Новых триалов: <b>{stats["new_trials"]}</b>',
+            texts.t('ADMIN_REPORT_UI_006', '🧭 <b>Итог по периоду</b>'),
+            texts.t('ADMIN_REPORT_UI_007', '• Новых пользователей: <b>{value1}</b>').format(value1=stats['new_users']),
+            texts.t('ADMIN_REPORT_UI_008', '• Новых триалов: <b>{value1}</b>').format(value1=stats['new_trials']),
             (
-                f'• Конверсий триал → платная: <b>{stats["trial_to_paid_conversions"]}</b> '
-                f'(<i>{conversion_rate:.1f}%</i>)'
+                texts.t(
+                    'ADMIN_REPORT_UI_009', '• Конверсий триал → платная: <b>{value1}</b> (<i>{value2:.1f}%</i>)'
+                ).format(value1=stats['trial_to_paid_conversions'], value2=conversion_rate)
             ),
-            f'• Новых платных (всего): <b>{stats["new_paid_subscriptions"]}</b>',
-            f'• Поступления всего (только пополнения): <b>{self._format_amount(stats["deposits_amount"])}</b>',
+            texts.t('ADMIN_REPORT_UI_010', '• Новых платных (всего): <b>{value1}</b>').format(
+                value1=stats['new_paid_subscriptions']
+            ),
+            texts.t('ADMIN_REPORT_UI_011', '• Поступления всего (только пополнения): <b>{value1}</b>').format(
+                value1=self._format_amount(stats['deposits_amount'])
+            ),
             '',
         ]
 
         # Подписки
         lines += [
-            '💎 <b>Подписки</b>',
-            f'• Активные триалы сейчас: {totals["active_trials"]}',
-            f'• Активные платные сейчас: {totals["active_paid"]}',
+            texts.t('ADMIN_REPORT_UI_012', '💎 <b>Подписки</b>'),
+            texts.t('ADMIN_REPORT_UI_013', '• Активные триалы сейчас: {value1}').format(value1=totals['active_trials']),
+            texts.t('ADMIN_REPORT_UI_014', '• Активные платные сейчас: {value1}').format(value1=totals['active_paid']),
             '',
         ]
 
         # Финансы
         lines += [
-            '💰 <b>Финансы</b>',
+            texts.t('ADMIN_REPORT_UI_015', '💰 <b>Финансы</b>'),
             (
-                '• Оплаты подписок: '
-                f'{stats["subscription_payments_count"]} на сумму {self._format_amount(stats["subscription_payments_amount"])}'
+                texts.t('ADMIN_REPORT_UI_016', '• Оплаты подписок: {value1} на сумму {value2}').format(
+                    value1=stats['subscription_payments_count'],
+                    value2=self._format_amount(stats['subscription_payments_amount']),
+                )
             ),
-            (f'• Пополнения: {stats["deposits_count"]} на сумму {self._format_amount(stats["deposits_amount"])}'),
             (
-                '<i>Примечание: «Поступления всего» учитывают только пополнения; покупки подписок и реферальные бонусы '
-                'исключены.</i>'
+                texts.t('ADMIN_REPORT_UI_017', '• Пополнения: {value1} на сумму {value2}').format(
+                    value1=stats['deposits_count'], value2=self._format_amount(stats['deposits_amount'])
+                )
+            ),
+            (
+                texts.t(
+                    'ADMIN_REPORT_UI_018',
+                    '<i>Примечание: «Поступления всего» учитывают только пополнения; покупки подписок и реферальные бонусы исключены.</i>',
+                )
             ),
             '',
         ]
 
         # Поддержка
         lines += [
-            '🎟️ <b>Поддержка</b>',
-            f'• Новых тикетов: {stats["new_tickets"]}',
-            f'• Активных тикетов сейчас: {totals["open_tickets"]}',
+            texts.t('ADMIN_REPORT_UI_019', '🎟️ <b>Поддержка</b>'),
+            texts.t('ADMIN_REPORT_UI_020', '• Новых тикетов: {value1}').format(value1=stats['new_tickets']),
+            texts.t('ADMIN_REPORT_UI_021', '• Активных тикетов сейчас: {value1}').format(value1=totals['open_tickets']),
             '',
         ]
 
         # Активность пользователей
         lines += [
-            '👤 <b>Активность пользователей</b>',
-            f'• Пользователей с активной платной подпиской: {usage["active_paid_users"]}',
-            f'• Пользователей, ни разу не подключившихся: {usage["never_connected_users"]}',
+            texts.t('ADMIN_REPORT_UI_022', '👤 <b>Активность пользователей</b>'),
+            texts.t('ADMIN_REPORT_UI_023', '• Пользователей с активной платной подпиской: {value1}').format(
+                value1=usage['active_paid_users']
+            ),
+            texts.t('ADMIN_REPORT_UI_024', '• Пользователей, ни разу не подключившихся: {value1}').format(
+                value1=usage['never_connected_users']
+            ),
             '',
         ]
 
         # Топ по рефералам
-        lines += ['🤝 <b>Топ по рефералам (за период)</b>']
+        lines += [texts.t('ADMIN_REPORT_UI_025', '🤝 <b>Топ по рефералам (за период)</b>')]
         if top_referrers:
             for index, row in enumerate(top_referrers, 1):
                 referrer_label = escape(row['referrer_label'], quote=False)
-                lines.append(f'{index}. {referrer_label}: {row["count"]} приглашений')
+                lines.append(
+                    texts.t('ADMIN_REPORT_UI_031', '{value1}. {value2}: {value3} приглашений').format(
+                        value1=index, value2=referrer_label, value3=row['count']
+                    )
+                )
         else:
-            lines.append('— данных нет')
+            lines.append(texts.t('ADMIN_REPORT_UI_028', '— данных нет'))
 
         return '\n'.join(lines)
 
@@ -505,7 +537,9 @@ class ReportingService:
         start_utc: datetime,
         end_utc: datetime,
         limit: int = 5,
+        texts: Texts | None = None,
     ) -> list[dict]:
+        texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
         rows = await session.execute(
             select(
                 User.referred_by_id,
@@ -528,9 +562,14 @@ class ReportingService:
         if ref_ids:
             urows = await session.execute(select(User).where(User.id.in_(ref_ids)))
             for user in urows.scalars().all():
-                users_map[user.id] = self._user_label(user)
+                users_map[user.id] = self._user_label(user, texts=texts)
         return [
-            {'referrer_label': users_map.get(ref_id, f'User #{ref_id}'), 'count': int(count or 0)}
+            {
+                'referrer_label': users_map.get(
+                    ref_id, texts.t('ADMIN_REPORT_UI_003', 'User #{value1}').format(value1=ref_id)
+                ),
+                'count': int(count or 0),
+            }
             for ref_id, count in rows
         ]
 
@@ -562,7 +601,8 @@ class ReportingService:
             'never_connected_users': never_connected_users,
         }
 
-    def _user_label(self, user: User) -> str:
+    def _user_label(self, user: User, texts: Texts | None = None) -> str:
+        texts = texts or get_texts(settings.DEFAULT_LANGUAGE)
         if getattr(user, 'username', None):
             return f'@{user.username}'
         parts = []
@@ -572,7 +612,7 @@ class ReportingService:
             parts.append(user.last_name)
         if parts:
             return ' '.join(parts)
-        return f'User #{getattr(user, "id", "?")}'
+        return texts.t('ADMIN_REPORT_UI_003', 'User #{value1}').format(value1=getattr(user, 'id', '?'))
 
     def _format_period_label(self, start: datetime, end: datetime) -> str:
         start_date = start.astimezone(self._moscow_tz).date()

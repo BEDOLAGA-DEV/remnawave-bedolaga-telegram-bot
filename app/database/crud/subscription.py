@@ -558,6 +558,7 @@ async def _convert_trial_subscription_to_paid(
         device_limit=device_limit if device_limit is not None else settings.DEFAULT_DEVICE_LIMIT,
         connected_squads=final_squads or None,
         reset_used_traffic=True if trial_subscription.status == SubscriptionStatus.EXPIRED.value else None,
+        paid_traffic_reset=True,
         commit=commit,
     )
 
@@ -916,7 +917,9 @@ async def _lock_subscription_row(db: AsyncSession, subscription: Subscription) -
     """
     await db.execute(select(Subscription.id).where(Subscription.id == subscription.id).with_for_update())
     # Подтягиваем поля, которые могут быть обновлены конкурентным add_subscription_traffic
-    await db.refresh(subscription, ['traffic_limit_gb', 'purchased_traffic_gb', 'traffic_reset_at'])
+    await db.refresh(
+        subscription, ['traffic_limit_gb', 'purchased_traffic_gb', 'traffic_reset_at', 'traffic_accounting_mode']
+    )
 
 
 async def _housekeep_expired_purchases(
@@ -1284,7 +1287,9 @@ async def extend_subscription(
     connected_squads: list[str] | None = None,
     convert_trial: bool = True,
     reset_used_traffic: bool | None = None,
+    paid_traffic_reset: bool | None = None,
     commit: bool = True,
+    provider_charge: bool = False,
 ) -> Subscription:
     """Продлевает подписку на указанное количество дней.
 
@@ -1314,6 +1319,12 @@ async def extend_subscription(
     # Повторный lock в той же транзакции — noop (SubscriptionRenewalService уже мог
     # взять lock через with_for_update).
     await _lock_subscription_row(db, subscription)
+    if not provider_charge:
+        from app.services.cispay_recurrent_guard import has_live_cispay
+
+        if await has_live_cispay(db, subscription.id):
+            raise ValueError('Сначала отключите автоплатёж CisPay и дождитесь подтверждения отключения.')
+    original_base_gb = max(0, (subscription.traffic_limit_gb or 0) - (subscription.purchased_traffic_gb or 0))
 
     if days > 0:
         # Оверлей грейса, осевший в подписке (v4.10–4.11 принимали его за продление
@@ -1614,6 +1625,43 @@ async def extend_subscription(
         subscription.pending_panel_expire_at = subscription.end_date
     subscription.updated_at = current_time
 
+    # Only a caller's explicit paid/reset decision creates an entitlement.
+    # Bonus/promocode/day-only callers leave the default None, even when the
+    # global payment-reset setting is enabled. Persist before either commit mode.
+    requested_base_reset = reset_used_traffic is True or (reset_used_traffic is None and paid_traffic_reset is True)
+    current_base_gb = max(0, (subscription.traffic_limit_gb or 0) - (subscription.purchased_traffic_gb or 0))
+    account_suspended = False
+    if getattr(subscription, 'traffic_accounting_mode', None) == 'managed':
+        from app.database.models import TrafficAccountingState
+
+        account_suspended = (
+            await db.scalar(
+                select(TrafficAccountingState.phase).where(TrafficAccountingState.subscription_id == subscription.id)
+            )
+            == 'suspended'
+        )
+    # None means a day-only bonus, False an explicit paid extension without
+    # reset, True a paid reset. Bonus days cannot re-arm a retired zero limit.
+    rearm_suspended = account_suspended and days > 0 and paid_traffic_reset is not None
+    if (
+        rearm_suspended
+        or requested_base_reset
+        or is_tariff_change
+        or current_base_gb != original_base_gb
+        or (was_trial and not subscription.is_trial)
+    ):
+        from uuid import uuid4
+
+        from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+        await stage_paid_base_grant(
+            db, subscription, operation_key=f'extend:{uuid4().hex}', reset_base=requested_base_reset
+        )
+
+    from app.services.traffic_accounting_sync import stage_managed_sync
+
+    if not account_suspended:
+        await stage_managed_sync(db, subscription)
     if commit:
         await db.commit()
         await db.refresh(subscription, ['tariff'])
@@ -1673,66 +1721,6 @@ async def extend_subscription(
     return subscription
 
 
-async def add_subscription_traffic(db: AsyncSession, subscription: Subscription, gb: int) -> Subscription:
-    # Lock subscription row — защита от lost-update гонки с housekeeping в extend_subscription
-    # (см. _apply_base_limit_preserving_active_purchases / _housekeep_expired_purchases).
-    # Без lock'а одновременный renewal + topup могут затереть друг друга.
-    await _lock_subscription_row(db, subscription)
-
-    subscription.add_traffic(gb)
-    subscription.updated_at = datetime.now(UTC)
-
-    # Создаём новую запись докупки с индивидуальной датой истечения (30 дней)
-    from app.database.models import TrafficPurchase
-
-    new_expires_at = datetime.now(UTC) + timedelta(days=30)
-    new_purchase = TrafficPurchase(subscription_id=subscription.id, traffic_gb=gb, expires_at=new_expires_at)
-    db.add(new_purchase)
-
-    # Обновляем общий счетчик докупленного трафика
-    current_purchased = getattr(subscription, 'purchased_traffic_gb', 0) or 0
-    subscription.purchased_traffic_gb = current_purchased + gb
-
-    # Устанавливаем traffic_reset_at на ближайшую дату истечения из всех активных докупок
-    now = datetime.now(UTC)
-    active_purchases_query = (
-        select(TrafficPurchase)
-        .where(TrafficPurchase.subscription_id == subscription.id)
-        .where(TrafficPurchase.expires_at > now)
-    )
-    active_purchases_result = await db.execute(active_purchases_query)
-    active_purchases = active_purchases_result.scalars().all()
-
-    if active_purchases:
-        # Добавляем только что созданную покупку к списку
-        all_active = list(active_purchases) + [new_purchase]
-        earliest_expiry = min(p.expires_at for p in all_active)
-        subscription.traffic_reset_at = earliest_expiry
-    else:
-        # Первая докупка
-        subscription.traffic_reset_at = new_expires_at
-
-    await db.commit()
-    await db.refresh(subscription)
-
-    logger.info(
-        '📈 К подписке пользователя добавлено ГБ трафика (истекает )',
-        user_id=subscription.user_id,
-        gb=gb,
-        new_expires_at=new_expires_at.strftime('%d.%m.%Y'),
-    )
-
-    # В классическом режиме докупленный трафик входит в цену продления
-    # (_calculate_classic_mode передаёт purchased_traffic_gb) — привязка с
-    # прежней суммой её больше не покрывает. В тарифном режиме цена не
-    # меняется, и хелпер молча выйдет по совпадению сумм.
-    from app.services.recurrent_amount import sync_recurrent_bindings_after_price_change
-
-    await sync_recurrent_bindings_after_price_change(db, subscription.id)
-
-    return subscription
-
-
 async def add_subscription_devices(db: AsyncSession, subscription: Subscription, devices: int) -> Subscription:
     # Lock subscription to prevent concurrent modifications
     locked_result = await db.execute(
@@ -1769,6 +1757,10 @@ async def add_subscription_devices(db: AsyncSession, subscription: Subscription,
         )
         new_limit = tariff_max
 
+    if subscription.device_limit != new_limit:
+        from app.services.cispay_recurrent_guard import stage_cispay_cancellation
+
+        await stage_cispay_cancellation(db, subscription.id, reason='price_changed')
     subscription.device_limit = new_limit
     subscription.updated_at = datetime.now(UTC)
 
@@ -1969,6 +1961,14 @@ async def reactivate_subscription(db: AsyncSession, subscription: Subscription, 
     Активирует если подписка была DISABLED или EXPIRED и ещё не истекла по времени.
     Не логирует если реактивация не требуется.
     """
+    # A managed quota disable is LIMITED. DISABLED belongs to an administrator
+    # or another policy and must never be lifted by buying an allowance.
+    if (
+        getattr(subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+        and subscription.status == SubscriptionStatus.DISABLED.value
+    ):
+        return subscription
+
     now = datetime.now(UTC)
 
     # Тихо выходим если реактивация не нужна (уже активна или другой статус)
@@ -3292,6 +3292,8 @@ async def pause_daily_subscription(
 async def resume_daily_subscription(
     db: AsyncSession,
     subscription: Subscription,
+    *,
+    commit: bool = True,
 ) -> Subscription:
     """Возобновляет суточную подписку (списание продолжится)."""
     if not subscription.is_daily_tariff:
@@ -3318,8 +3320,11 @@ async def resume_daily_subscription(
             previous_status=previous_status,
         )
 
-    await db.commit()
-    await db.refresh(subscription)
+    if commit:
+        await db.commit()
+        await db.refresh(subscription)
+    else:
+        await db.flush()
 
     logger.info(
         '▶️ Суточная подписка возобновлена пользователем', subscription_id=subscription.id, user_id=subscription.user_id

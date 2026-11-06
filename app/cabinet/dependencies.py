@@ -244,7 +244,8 @@ async def get_current_cabinet_user(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     'code': 'maintenance',
-                    'message': maintenance_service.get_maintenance_message() or 'Service is under maintenance',
+                    'message': maintenance_service.get_maintenance_message(user.language)
+                    or 'Service is under maintenance',
                     'reason': status_info.get('reason'),
                 },
             )

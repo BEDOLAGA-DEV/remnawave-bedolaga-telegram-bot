@@ -9,7 +9,7 @@ from tests.database.test_retired_gateway_migration_postgres import _load
 
 
 def test_migration_preserves_existing_rows_and_rejects_loss():
-    migration = _load('0139_tariff_entitlement_family.py')
+    migration = _load('0141_tariff_entitlement_family.py')
     engine = sa.create_engine('sqlite://')
     with engine.begin() as connection:
         connection.execute(sa.text('CREATE TABLE tariffs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)'))

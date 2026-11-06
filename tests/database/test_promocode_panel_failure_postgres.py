@@ -174,6 +174,41 @@ async def test_existing_subscription_promo_survives_panel_rollback(postgres_data
         )
         db.add_all([sub, promo])
         await db.commit()
+        if promo.traffic_gb:
+            # Exercise a completed accounting preflight and real ledger writes;
+            # this regression injects failure only AFTER the grant commits.
+            from app.services.traffic_accounting import Allowance, TrafficAccount
+            from app.services.traffic_accounting_service import lock_accounting_subscription, read_counters
+            from app.services.traffic_accounting_store import initialize_account
+
+            panel = SimpleNamespace(
+                id=9001,
+                created_at=now - timedelta(days=1),
+                user_traffic=SimpleNamespace(used_traffic_bytes=0, lifetime_used_traffic_bytes=0),
+                traffic_limit_strategy='NO_RESET',
+            )
+            state = await initialize_account(
+                db,
+                sub.id,
+                TrafficAccount(read_counters(panel).identity, 0, 0, (Allowance('base:initial', 100 * 1024**3, end),)),
+                strategy='NO_RESET',
+                timezone='UTC',
+                anchor=panel.created_at,
+                next_refresh_at=None,
+            )
+            state.phase = 'ready'
+            state.base_budget_bytes = 100 * 1024**3
+            sub.traffic_accounting_mode = 'managed'
+            await db.commit()
+
+            async def prepared(session, target, **kwargs):
+                locked, _ = await lock_accounting_subscription(session, target.id)
+                return locked, panel
+
+            monkeypatch.setattr('app.services.traffic_purchase_service.prepare_traffic_purchase', prepared)
+            monkeypatch.setattr(
+                'app.services.traffic_accounting_service.schedule_projection_after_commit', lambda *_: None
+            )
         user = await get_user_by_id(db, 1)
         result = await PromoCodeService().activate_promocode(db, 1, 'GRANT3', subscription_id=1)
         assert result['success'], result

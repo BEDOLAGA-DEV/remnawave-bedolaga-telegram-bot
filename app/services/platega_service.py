@@ -91,8 +91,8 @@ class PlategaService:
                 'amount': round(amount, 2),
                 'currency': currency,
             },
-            # docs.platega.io: metadata.userId / userName обязательны для части
-            # категорий магазинов — без userId отключается антифрод и приём платежей.
+            # docs.platega.io: user_email обязателен; userId — для части категорий.
+            # Один покупатель должен передаваться с одним идентификатором.
             'metadata': payer.platega_metadata(),
         }
 

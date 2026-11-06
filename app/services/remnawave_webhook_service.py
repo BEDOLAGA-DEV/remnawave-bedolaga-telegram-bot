@@ -1230,12 +1230,64 @@ class RemnaWaveWebhookService:
             subscription=subscription,
         )
 
+    async def _reconcile_managed_status_event(self, db, subscription):
+        """Treat a managed status webhook as a hint to fetch current state.
+
+        Quota owns LIMITED locally and its DISABLED panel overlay. Neither a
+        delayed enable nor an old limit event may overwrite an admin disable.
+        """
+        mode = getattr(subscription, 'traffic_accounting_mode', None)
+        if mode not in ('managed', 'migrating'):
+            return None
+        from app.services.subscription_service import SubscriptionService
+        from app.services.traffic_accounting import AccountingConflict
+        from app.services.traffic_accounting_service import (
+            _fresh_panel,
+            lock_accounting_subscription,
+            reconcile_account_locked,
+            schedule_projection_after_commit,
+        )
+        from app.services.traffic_accounting_store import load_account
+
+        if mode == 'migrating':
+            raise AccountingConflict('Traffic accounting migration is not complete')
+        subscription, grace_open = await lock_accounting_subscription(db, subscription.id)
+        async with SubscriptionService().get_api_client() as api:
+            panel = await _fresh_panel(db, api, subscription)
+        account = await reconcile_account_locked(db, subscription, panel)
+        _, accounting = await load_account(db, subscription.id)
+        new_limited_candidate = False
+        if not grace_open and not accounting.grace_excluded:
+            current_status = getattr(panel.status, 'value', panel.status)
+            if current_status == 'DISABLED' and not accounting.quota_disabled:
+                subscription.status = SubscriptionStatus.DISABLED.value
+            elif (
+                accounting.phase == 'ready'
+                and account.remaining_bytes(datetime.now(UTC)) == 0
+                and subscription.status in (SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIAL.value)
+            ):
+                subscription.status = SubscriptionStatus.LIMITED.value
+                subscription.grace_candidate_reason = GraceReason.LIMITED.value
+                subscription.grace_candidate_at = datetime.now(UTC)
+                new_limited_candidate = True
+            # Recovery belongs to post-commit delivery. A local administrative
+            # DISABLED (or a banned User) is never lifted by a panel event.
+        self._stamp_webhook_update(subscription)
+        schedule_projection_after_commit(db, subscription.id)
+        await db.commit()
+        if new_limited_candidate:
+            await grace_access_runtime.consider_candidate(subscription.id, GraceReason.LIMITED, source='webhook')
+        return panel
+
     async def _handle_user_disabled(
         self, db: AsyncSession, user: User, subscription: Subscription | None, data: dict
     ) -> None:
         if not subscription:
             # Подписка уже удалена из БД — фантомный хук от панели, игнорируем
             logger.info('Webhook user.disabled: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
+            return
+
+        if await self._reconcile_managed_status_event(db, subscription) is not None:
             return
 
         # Суточные подписки управляются DailySubscriptionService — не деактивируем
@@ -1287,6 +1339,9 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.enabled: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        if await self._reconcile_managed_status_event(db, subscription) is not None:
+            return
+
         self._stamp_webhook_update(subscription)
         if subscription.status in (SubscriptionStatus.DISABLED.value, SubscriptionStatus.LIMITED.value):
             await reactivate_subscription(db, subscription)
@@ -1303,6 +1358,9 @@ class RemnaWaveWebhookService:
     ) -> None:
         if not subscription:
             logger.info('Webhook user.limited: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
+            return
+
+        if await self._reconcile_managed_status_event(db, subscription) is not None:
             return
 
         candidate_at = datetime.now(UTC)
@@ -1337,6 +1395,20 @@ class RemnaWaveWebhookService:
             logger.info('Webhook user.traffic_reset: подписка не найдена в БД (уже удалена), пропуск', user_id=user.id)
             return
 
+        mode = getattr(subscription, 'traffic_accounting_mode', None)
+        if mode in ('managed', 'migrating'):
+            from app.services.traffic_accounting import AccountingConflict
+            from app.services.traffic_accounting_service import refresh_managed_account
+
+            if mode == 'migrating':
+                raise AccountingConflict('Traffic accounting migration is not complete')
+            # Webhooks may be duplicated or delayed. Read actual cumulative usage;
+            # a counter reset is never an entitlement grant or an enable request.
+            await refresh_managed_account(db, subscription)
+            self._stamp_webhook_update(subscription)
+            await db.commit()
+            return
+
         self._stamp_webhook_update(subscription)
         await update_subscription_usage(db, subscription, 0.0)
         # Re-enable if was disabled/limited due to traffic limit
@@ -1365,6 +1437,12 @@ class RemnaWaveWebhookService:
         """Sync subscription fields from webhook payload without notifying user."""
         if not subscription:
             return
+
+        current_panel = await self._reconcile_managed_status_event(db, subscription)
+        if current_panel is not None:
+            # Metadata may still synchronize, but never from an out-of-order
+            # webhook snapshot. Managed projection masks nominal quota/status.
+            data = current_panel
 
         grace_open = subscription.id in await get_open_grace_subscription_ids(db)
 

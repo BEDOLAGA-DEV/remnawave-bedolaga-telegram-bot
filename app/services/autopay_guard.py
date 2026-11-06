@@ -63,7 +63,10 @@ async def lock_autopay_target(
                 and ends_within_days(subscription.end_date, min(subscription.autopay_days_before or 3, 3), now)
             )
         if allowed:
-            return user, subscription
+            from app.services.cispay_recurrent_guard import has_conflicting_cispay
+
+            if not await has_conflicting_cispay(db, user_id=user.id, subscription_id=subscription.id):
+                return user, subscription
     # No billing mutations have occurred: release the read locks without
     # expiring the caller's user object (used by the top-up response).
     await db.commit()

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, TransactionType
+from app.localization.texts import get_texts
 from app.services.pricing_engine import RenewalPricing, pricing_engine
 from app.services.subscription_renewal_service import (
     RenewalPaymentDescriptor,
@@ -362,12 +363,18 @@ class CryptoBotPaymentMixin:
                     try:
                         keyboard = await self.build_topup_success_keyboard(user)
                         message_text = (
-                            '✅ <b>Пополнение успешно!</b>\n\n'
-                            f'💰 Сумма: {settings.format_price(amount_kopeks)}\n'
-                            f'🪙 Платеж: {updated_payment.amount} {updated_payment.asset}\n'
-                            f'💱 Курс: 1 USD = {conversion_rate:.2f}₽\n'
-                            f'🆔 Транзакция: {invoice_id[:8]}...\n\n'
-                            'Баланс пополнен автоматически!'
+                            get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                            .t(
+                                'PAYMENT_NOTICE_019',
+                                '✅ <b>Пополнение успешно!</b>\n\n💰 Сумма: {v0}\n🪙 Платеж: {v1} {v2}\n💱 Курс: 1 USD = {v3:.2f}₽\n🆔 Транзакция: {v4}...\n\nБаланс пополнен автоматически!',
+                            )
+                            .format(
+                                v0=settings.format_price(amount_kopeks),
+                                v1=updated_payment.amount,
+                                v2=updated_payment.asset,
+                                v3=conversion_rate,
+                                v4=invoice_id[:8],
+                            )
                         )
                         if settings.is_notifications_enabled():
                             user_notification = _UserNotificationPayload(

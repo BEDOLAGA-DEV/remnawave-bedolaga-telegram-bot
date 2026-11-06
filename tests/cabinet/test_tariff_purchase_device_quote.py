@@ -128,3 +128,9 @@ async def test_single_mode_returns_existing_paid_limit(context, monkeypatch):
     assert response.status_code == 200
     assert response.json()['device_selection']['effective_limit'] == 4
     assert not response.json()['device_selection']['selectable']
+
+
+@pytest.fixture(autouse=True)
+def _no_existing_cispay_agreement(monkeypatch):
+    # These legacy fake-DB scenarios have no bank recurring agreement.
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))

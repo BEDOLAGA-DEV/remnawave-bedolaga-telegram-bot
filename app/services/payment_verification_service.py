@@ -1032,6 +1032,13 @@ async def _fetch_antilopay_payments(db: AsyncSession, cutoff: datetime) -> list[
     for payment in result.scalars().all():
         if not _is_antilopay_pending(payment):
             continue
+        retry_at = (payment.metadata_json or {}).get('antilopay_check_after')
+        if isinstance(retry_at, str):
+            try:
+                if datetime.fromisoformat(retry_at) > datetime.now(UTC):
+                    continue
+            except (ValueError, TypeError):
+                pass  # Bad historical metadata must not prevent recovery.
         record = _build_record(
             PaymentMethod.ANTILOPAY,
             payment,

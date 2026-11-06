@@ -14,7 +14,7 @@ pytestmark = pytest.mark.postgres
 
 
 async def test_family_migration_preserves_values_and_blocks_loss(postgres_database):
-    migration = _load('0139_tariff_entitlement_family.py')
+    migration = _load('0141_tariff_entitlement_family.py')
     async with postgres_engine(postgres_database, list(Base.metadata.sorted_tables)) as engine:
         async with engine.begin() as connection:
 

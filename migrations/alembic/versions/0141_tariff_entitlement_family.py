@@ -1,7 +1,7 @@
 """Необязательная коммерческая группа тарифов (пока только метаданные).
 
-Revision ID: 0139
-Revises: 0138
+Revision ID: 0141
+Revises: 0140
 
 NULL сохраняет существующее поведение всех инсталляций. Миграция не
 назначает legacy-тарифам группу и не блокирует создание подписок.
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = '0139'
-down_revision = '0138'
+revision = '0141'
+down_revision = '0140'
 branch_labels = None
 depends_on = None
 

@@ -47,6 +47,8 @@ async def test_unlimited_tariff_does_not_charge_device_addons(current, days, dai
 
 @pytest.mark.parametrize(('new_base', 'cap', 'expected'), [(0, 2, 0), (2, 5, 5)])
 async def test_admin_tariff_change_preserves_unlimited(monkeypatch, new_base, cap, expected):
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr('app.services.cispay_recurrent_guard.has_conflicting_cispay', AsyncMock(return_value=False))
     from app.database.crud import transaction
     from app.handlers.admin import users as m
 
@@ -60,6 +62,10 @@ async def test_admin_tariff_change_preserves_unlimited(monkeypatch, new_base, ca
     monkeypatch.setattr(m, 'get_tariff_by_id', AsyncMock(side_effect=[tariff, old]))
     monkeypatch.setattr(m, '_resolve_admin_subscription', AsyncMock(return_value=subscription))
     monkeypatch.setattr(transaction, 'create_transaction', AsyncMock())
+    monkeypatch.setattr(
+        'app.services.paid_traffic_reset_service.prepare_admin_tariff_accounting',
+        AsyncMock(return_value=(subscription, None)),
+    )
     sync = AsyncMock(return_value=True)
     monkeypatch.setattr(m.SubscriptionService, 'update_remnawave_user', sync)
     callback = SimpleNamespace(

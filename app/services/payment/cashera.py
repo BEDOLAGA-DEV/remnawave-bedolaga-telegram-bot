@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, TransactionType
+from app.localization.texts import get_texts
 from app.services import cashera_recurring_cancel as cashera_cancel
 from app.services.cashera_service import cashera_service, normalize_payment_url
 from app.utils.payment_logger import payment_logger as logger
@@ -568,11 +569,16 @@ class CasheraPaymentMixin:
                 await self.bot.send_message(
                     user.telegram_id,
                     (
-                        '✅ <b>Пополнение успешно!</b>\n\n'
-                        f'\U0001f4b0 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
-                        f'\U0001f4b3 Способ: {settings.get_cashera_display_name_html()}\n'
-                        f'\U0001f194 Транзакция: {transaction.id}\n\n'
-                        'Баланс пополнен автоматически!'
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t(
+                            'PAYMENT_NOTICE_000',
+                            '✅ <b>Пополнение успешно!</b>\n\n💰 Сумма: {v0}\n💳 Способ: {v1}\n🆔 Транзакция: {v2}\n\nБаланс пополнен автоматически!',
+                        )
+                        .format(
+                            v0=settings.format_price(payment.amount_kopeks),
+                            v1=settings.get_cashera_display_name_html(),
+                            v2=transaction.id,
+                        )
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
@@ -754,6 +760,9 @@ class CasheraPaymentMixin:
         validate_recurrent_setup_terms(subscription, 'cashera', amount_kopeks, charge_days, interval)
 
         external_id = cr.build_subscription_external_id(subscription.id, uuid.uuid4().hex[:12])
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         response = await cashera_service.create_subscription(
             amount_kopeks=amount_kopeks,
             external_id=external_id,
@@ -1009,6 +1018,15 @@ class CasheraPaymentMixin:
                 external_id=charge_id,
                 commit=False,
             )
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(
+                db,
+                subscription,
+                operation_key=f'cashera:payment:{tx.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_PAYMENT,
+            )
+
             await db.commit()
 
             await emit_transaction_side_effects(

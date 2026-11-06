@@ -8,6 +8,7 @@ from app.database.crud.user import add_user_balance, get_user_by_id
 from app.database.database import AsyncSessionLocal
 from app.database.models import PaymentMethod, TransactionType
 from app.external.tribute import TributeService
+from app.localization.texts import get_texts
 
 
 logger = structlog.get_logger(__name__)
@@ -142,8 +143,9 @@ async def handle_successful_payment(message: types.Message):
                         )
 
                         await message.answer(
-                            f'✅ Баланс успешно пополнен на {settings.format_price(amount_kopeks)}!\n\n'
-                            'Средства зачислены на ваш баланс!'
+                            get_texts(user.language)
+                            .t('BALANCE_TOPUP_CONFIRMED')
+                            .format(amount=settings.format_price(amount_kopeks))
                         )
 
                         logger.info(

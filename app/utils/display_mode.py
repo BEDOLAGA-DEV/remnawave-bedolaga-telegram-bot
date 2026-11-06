@@ -1,3 +1,6 @@
+from app.localization.texts import get_texts
+
+
 DISPLAY_MODE_BOT = 'bot'
 DISPLAY_MODE_WEB = 'web'
 DISPLAY_MODE_BOTH = 'both'
@@ -34,5 +37,6 @@ def next_display_mode(value: str | None) -> str:
     return _CYCLE_ORDER[(index + 1) % len(_CYCLE_ORDER)]
 
 
-def display_mode_label(value: str | None) -> str:
-    return _DISPLAY_MODE_LABELS[normalize_display_mode(value)]
+def display_mode_label(value: str | None, language: str = 'ru') -> str:
+    mode = normalize_display_mode(value)
+    return get_texts(language).t(f'DISPLAY_MODE_LABEL_{mode.upper()}', _DISPLAY_MODE_LABELS[mode])

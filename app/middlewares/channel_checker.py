@@ -23,6 +23,7 @@ from app.services.channel_subscription_service import channel_subscription_servi
 from app.services.subscription_service import SubscriptionService
 from app.utils.cache import cache
 from app.utils.check_reg_process import is_registration_process
+from app.utils.support_access import is_support_handler
 from app.utils.telegram_delivery import is_user_unreachable
 
 
@@ -93,6 +94,9 @@ class ChannelCheckerMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        if is_support_handler(event, data):
+            return await handler(event, data)
+
         # Runtime check (supports toggling without restart)
         if not settings.CHANNEL_IS_REQUIRED_SUB:
             return await handler(event, data)

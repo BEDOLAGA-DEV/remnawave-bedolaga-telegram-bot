@@ -31,7 +31,7 @@ class ServerStatusError(Exception):
 class ServerStatusService:
     _LATENCY_PATTERN = re.compile(r'xray_proxy_latency_ms\{(?P<labels>[^}]*)\}\s+(?P<value>[-+]?\d+(?:\.\d+)?)')
     _STATUS_PATTERN = re.compile(r'xray_proxy_status\{(?P<labels>[^}]*)\}\s+(?P<value>[-+]?\d+(?:\.\d+)?)')
-    _LABEL_PATTERN = re.compile(r'(?P<key>[a-zA-Z_][a-zA-Z0-9_]*)=\"(?P<value>(?:\\.|[^\"])*)\"')
+    _LABEL_PATTERN = re.compile(r'(?<![a-zA-Z0-9_])(?P<key>[a-zA-Z_][a-zA-Z0-9_]*+)="(?P<value>(?:\\.|[^"\\])*+)"')
     _FLAG_PATTERN = re.compile(r'^([\U0001F1E6-\U0001F1FF]{2})\s*(.*)$')
 
     def __init__(self) -> None:

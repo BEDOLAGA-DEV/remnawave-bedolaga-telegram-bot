@@ -317,7 +317,7 @@ async def test_panel_snapshot_does_not_recreate_deleted_account(postgres_databas
         assert result['created'] == 0
         assert result['errors'] == 0
         assert list((await sync_db.scalars(select(Subscription))).all()) == []
-        deleted_panel.assert_awaited_once_with(9001)
+        deleted_panel.assert_awaited_once_with(9001, db=delete_db)
 
 
 async def test_refreshing_owner_does_not_discard_previous_account_update(postgres_database, monkeypatch):

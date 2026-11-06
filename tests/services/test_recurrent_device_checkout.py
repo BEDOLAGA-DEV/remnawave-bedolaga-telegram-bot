@@ -107,3 +107,13 @@ async def test_lava_rejects_invoice_amount_changed_after_consent(monkeypatch):
                 db, user_id=user.id, subscription=subscription, tariff=tariff
             )
         remote.unsubscribe_recurrent.assert_awaited_once_with(subscription_id='example', order_id=None)
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
+    """These scenarios have no CisPay consent; live-agreement guards use real PostgreSQL tests."""
+    from unittest.mock import AsyncMock
+
+    from app.services import cispay_recurrent_guard
+
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))

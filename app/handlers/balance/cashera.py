@@ -11,6 +11,7 @@ from app.config import settings
 from app.database.models import User
 from app.keyboards.inline import get_back_keyboard
 from app.keyboards.topup_amounts import get_topup_amount_keyboard
+from app.localization.loader import DEFAULT_LANGUAGE
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.states import BalanceStates
@@ -32,14 +33,24 @@ def _restriction_keyboard(texts) -> types.InlineKeyboardMarkup:
     keyboard = []
     support_url = settings.get_support_contact_url()
     if support_url:
-        keyboard.append([types.InlineKeyboardButton(text='🆘 Обжаловать', url=support_url)])
+        keyboard.append(
+            [
+                types.InlineKeyboardButton(
+                    text=texts.t('USER_RESTRICTION_APPEAL_BUTTON', '🆘 Обжаловать'), url=support_url
+                )
+            ]
+        )
     keyboard.append([types.InlineKeyboardButton(text=texts.BACK, callback_data='menu_balance')])
     return types.InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def _restriction_text(db_user: User) -> str:
-    reason = html.escape(getattr(db_user, 'restriction_reason', None) or 'Действие ограничено администратором')
-    return f'🚫 <b>Пополнение ограничено</b>\n\n{reason}\n\nЕсли вы считаете это ошибкой, вы можете обжаловать решение.'
+    texts = get_texts(db_user.language)
+    reason = html.escape(
+        getattr(db_user, 'restriction_reason', None)
+        or texts.t('USER_RESTRICTION_DEFAULT_REASON', 'Действие ограничено администратором')
+    )
+    return texts.t('USER_RESTRICTION_TOPUP_BLOCKED').format(reason=reason)
 
 
 async def _prompt_amount(message: types.Message, db_user: User, state: FSMContext, method_code: str) -> None:
@@ -141,9 +152,12 @@ async def start_cashera_payment(callback: types.CallbackQuery, db_user: User, st
 
 @error_handler
 async def handle_cashera_method_selection(callback: types.CallbackQuery, db_user: User, state: FSMContext):
+    texts = get_texts(db_user.language)
     method_code = callback.data.removeprefix(METHOD_CALLBACK_PREFIX)
     if method_code not in _get_active_methods():
-        await callback.answer('⚠️ Этот способ сейчас недоступен', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_UI_METHOD_UNAVAILABLE', '⚠️ Этот способ сейчас недоступен'), show_alert=True
+        )
         return
     await _prompt_amount(callback.message, db_user, state, method_code)
     await callback.answer()
@@ -152,11 +166,14 @@ async def handle_cashera_method_selection(callback: types.CallbackQuery, db_user
 @error_handler
 async def start_cashera_direct_method(callback: types.CallbackQuery, db_user: User, state: FSMContext):
     """Метод выбран прямо на экране способов пополнения (CASHERA_INLINE_METHODS)."""
+    texts = get_texts(db_user.language)
     method_code = callback.data.removeprefix(DIRECT_CALLBACK_PREFIX)
     if not await _guard(callback, db_user):
         return
     if method_code not in _get_active_methods():
-        await callback.answer('⚠️ Этот способ сейчас недоступен', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_UI_METHOD_UNAVAILABLE', '⚠️ Этот способ сейчас недоступен'), show_alert=True
+        )
         return
     await _prompt_amount(callback.message, db_user, state, method_code)
     await callback.answer()
@@ -335,27 +352,40 @@ def _render_qr(payload: str):
 
 
 @error_handler
-async def check_cashera_payment_status(callback: types.CallbackQuery, db: AsyncSession):
+async def check_cashera_payment_status(callback: types.CallbackQuery, db: AsyncSession, db_user: User | None = None):
+    texts = get_texts(
+        getattr(db_user, 'language', None)
+        or getattr(getattr(callback, 'from_user', None), 'language_code', None)
+        or DEFAULT_LANGUAGE
+    )
+    if db_user is None:
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
+        return
     try:
         local_payment_id = int(callback.data.rsplit('_', 1)[-1])
     except ValueError:
-        await callback.answer('❌ Некорректный идентификатор платежа', show_alert=True)
+        await callback.answer(
+            texts.t('PAYMENT_UI_INVALID_ID', '❌ Некорректный идентификатор платежа'), show_alert=True
+        )
         return
 
     try:
+        from app.database.crud.cashera import get_cashera_payment_by_id
+
+        payment = await get_cashera_payment_by_id(db, local_payment_id)
+        if not payment or payment.user_id != db_user.id:
+            await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND', '❌ Платеж не найден'), show_alert=True)
+            return
+
         status_info = await PaymentService(callback.bot).get_cashera_payment_status(db, local_payment_id)
     except Exception as error:
         logger.exception('Ошибка проверки статуса Cashera', error=error)
-        await callback.answer('⚠️ Ошибка проверки статуса', show_alert=True)
+        await callback.answer(texts.t('PAYMENT_UI_STATUS_ERROR_WARNING', '⚠️ Ошибка проверки статуса'), show_alert=True)
         return
 
     if not status_info:
-        await callback.answer('⚠️ Платёж не найден', show_alert=True)
+        await callback.answer(texts.t('PAYMENT_UI_NOT_FOUND_WARNING', '⚠️ Платёж не найден'), show_alert=True)
         return
-
-    payment = status_info.get('payment')
-    user = getattr(payment, 'user', None)
-    texts = get_texts(getattr(user, 'language', None) or 'ru')
 
     if status_info.get('is_paid'):
         await callback.answer(texts.t('CASHERA_PAYMENT_ALREADY_CONFIRMED', '✅ Платёж уже зачислен'), show_alert=True)

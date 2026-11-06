@@ -40,6 +40,7 @@ def _subscription(subscription_id: int, user_id: int, *, panel_id: int | None) -
         status='active',
         end_date=datetime.now(UTC) + timedelta(days=10),
         traffic_limit_gb=100,
+        traffic_accounting_mode='legacy',
         traffic_used_gb=1.5,
         device_limit=2,
     )
@@ -85,6 +86,17 @@ def ownership_boundary(monkeypatch, owned_subscription, foreign_subscription):
         get_owned_subscription,
     )
     monkeypatch.setattr('app.database.crud.user.get_user_by_id', AsyncMock(return_value=user))
+
+    async def lock_accounting(_db, subscription_id):
+        assert subscription_id == OWNED_ID, 'Accounting must not receive a foreign subscription'
+        return owned_subscription, False
+
+    async def prepare_accounting(_db, subscription):
+        assert subscription is owned_subscription, 'Accounting must use the ownership-checked row'
+        return subscription, None
+
+    monkeypatch.setattr('app.services.traffic_accounting_service.lock_accounting_subscription', lock_accounting)
+    monkeypatch.setattr('app.services.paid_traffic_reset_service.prepare_admin_tariff_accounting', prepare_accounting)
     return user
 
 
@@ -605,3 +617,14 @@ async def test_subscription_actions_reject_foreign_or_absent_ids_before_mutation
     sync.assert_not_awaited()
     reset.assert_not_awaited()
     db.commit.assert_not_awaited()
+
+
+@pytest.fixture(autouse=True)
+def no_cispay_binding_in_legacy_unit_scenarios(monkeypatch):
+    """These scenarios have no CisPay consent; live-agreement guards use real PostgreSQL tests."""
+    from unittest.mock import AsyncMock
+
+    from app.services import cispay_recurrent_guard
+
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_live_cispay', AsyncMock(return_value=False))
+    monkeypatch.setattr(cispay_recurrent_guard, 'has_conflicting_cispay', AsyncMock(return_value=False))

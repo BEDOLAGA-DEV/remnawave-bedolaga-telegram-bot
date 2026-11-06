@@ -144,7 +144,7 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
         if referee_bonus:
             referral_text += '\n' + texts.t(
                 'REFERRAL_REWARD_NEW_USER_LEVELS',
-                '• Новый пользователь получает: <b>{bonus}</b>',
+                '• Новый пользователь дополнительно получает: <b>{bonus}</b>',
             ).format(bonus=referee_bonus)
 
         # В режиме рангов лестница без отметки «вы здесь» не отвечает на главный
@@ -158,7 +158,7 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
     if not levels_scheme and settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS > 0:
         referral_text += '\n' + texts.t(
             'REFERRAL_REWARD_NEW_USER',
-            '• Новый пользователь получает: <b>{bonus}</b> при первом пополнении от <b>{minimum}</b>',
+            '• Новый пользователь дополнительно получает: <b>{bonus}</b> при первом пополнении от <b>{minimum}</b>',
         ).format(
             bonus=texts.format_price(settings.REFERRAL_FIRST_TOPUP_BONUS_KOPEKS),
             minimum=texts.format_price(settings.REFERRAL_MINIMUM_TOPUP_KOPEKS),
@@ -370,7 +370,8 @@ async def show_referral_qr(
     qr_dir = Path('data') / 'referral_qr'
     qr_dir.mkdir(parents=True, exist_ok=True)
 
-    link_hash = hashlib.md5(bot_referral_link.encode()).hexdigest()[:8]
+    # Cache identity only: changing the link must generate a different QR image.
+    link_hash = hashlib.sha256(bot_referral_link.encode()).hexdigest()
     file_path = qr_dir / f'{db_user.id}_{link_hash}.png'
     if not file_path.exists():
         img = qrcode.make(bot_referral_link)
@@ -794,7 +795,7 @@ async def start_withdrawal_request(callback: types.CallbackQuery, db_user: User,
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=texts.t('REFERRAL_WITHDRAWAL_ALL', f'Вывести всё ({available / 100:.0f}₽)'),
+                    text=texts.t('REFERRAL_WITHDRAWAL_ALL').format(amount=f'{available / 100:.0f}'),
                     callback_data=f'referral_withdrawal_amount_{available}',
                 )
             ],

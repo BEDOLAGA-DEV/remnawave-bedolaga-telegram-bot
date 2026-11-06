@@ -13,6 +13,7 @@ from app.config import settings
 from app.lib.nalogo import Client
 from app.lib.nalogo.dto.income import IncomeClient, IncomeType
 from app.lib.nalogo.exceptions import UnauthorizedException
+from app.localization.texts import get_texts
 from app.utils.cache import cache
 from app.utils.proxy import mask_proxy_url, sanitize_proxy_error
 
@@ -926,9 +927,24 @@ async def send_nalogo_receipt_notifications(
 
     from aiogram import types
 
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text='🧾 Открыть чек', url=receipt_url)]]
-    )
+    recipient_language = settings.DEFAULT_LANGUAGE
+    recipient_data = None
+    if telegram_user_id:
+        try:
+            from app.database.crud.user import get_user_by_telegram_id
+            from app.database.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                receipt_user = await get_user_by_telegram_id(session, telegram_user_id)
+                if receipt_user:
+                    recipient_language = getattr(receipt_user, 'language', None) or settings.DEFAULT_LANGUAGE
+                    recipient_data = {
+                        name: getattr(receipt_user, name, None)
+                        for name in ('first_name', 'last_name', 'username', 'email')
+                    }
+        except Exception as lookup_error:
+            logger.warning('Не удалось загрузить получателя чека NaloGO', error=lookup_error)
+    user_texts = get_texts(recipient_language)
     amount_text = settings.format_price(amount_kopeks)
 
     # Пытаемся отправить чек файлом (см. _download_receipt_file); при неудаче
@@ -956,12 +972,18 @@ async def send_nalogo_receipt_notifications(
             error=sanitize_proxy_error(download_error),
         )
 
-    async def _deliver(chat_id: int, caption: str, thread_id: int | None = None) -> bool:
+    async def _deliver(chat_id: int, caption: str, thread_id: int | None = None, *, texts=None) -> bool:
         """Отправляет чек файлом (если скачался) или текстом со ссылкой.
 
         Возвращает True, если получателю ушёл сам файл чека, и False, если
         досталась только ссылка (файла не было либо Telegram его отверг).
         """
+        texts = texts or user_texts
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text=texts.t('NALOGO_OPEN_RECEIPT', '🧾 Открыть чек'), url=receipt_url)]
+            ]
+        )
         if receipt_file is not None:
             from aiogram.exceptions import TelegramBadRequest, TelegramEntityTooLarge
 
@@ -1011,11 +1033,10 @@ async def send_nalogo_receipt_notifications(
         try:
             file_delivered = await _deliver(
                 telegram_user_id,
-                (
-                    '🧾 <b>Чек по вашему платежу сформирован</b>\n\n'
-                    f'💰 Сумма: {amount_text}\n\n'
-                    'Чек зарегистрирован в ФНС через сервис «Мой налог».'
-                ),
+                user_texts.t(
+                    'NALOGO_USER_RECEIPT',
+                    '🧾 <b>Чек по вашему платежу сформирован</b>\n\n💰 Сумма: {amount}\n\nЧек зарегистрирован в ФНС через сервис «Мой налог».',
+                ).format(amount=amount_text),
             )
             # Ссылка вместо файла — для клиента под VPN это не доставка:
             # lknpd.nalog.ru у него не открывается (см. _download_receipt_file).
@@ -1070,23 +1091,8 @@ async def send_nalogo_receipt_notifications(
     # дойти до покупателя хотя бы одним каналом. ---
     if not tg_delivered:
         recipient_email = (user_email or '').strip()
-        recipient_language = 'ru'
-        if not recipient_email and telegram_user_id:
-            try:
-                from app.database.crud.user import get_user_by_telegram_id
-                from app.database.database import AsyncSessionLocal
-
-                async with AsyncSessionLocal() as session:
-                    email_user = await get_user_by_telegram_id(session, telegram_user_id)
-                if email_user and email_user.email:
-                    recipient_email = email_user.email.strip()
-                    recipient_language = getattr(email_user, 'language', None) or 'ru'
-            except Exception as lookup_error:
-                logger.warning(
-                    'Не удалось найти почту пользователя для отправки чека NaloGO',
-                    telegram_user_id=telegram_user_id,
-                    error=lookup_error,
-                )
+        if not recipient_email and recipient_data and recipient_data['email']:
+            recipient_email = recipient_data['email'].strip()
         if recipient_email:
             try:
                 if await _send_receipt_email(
@@ -1105,46 +1111,61 @@ async def send_nalogo_receipt_notifications(
     if chat_id:
         topic_id = settings.ADMIN_NOTIFICATIONS_NALOG_TOPIC_ID
 
-        # Подгружаем данные пользователя для подробного блока «Получатель»
-        recipient_lines: list[str] = []
-        if telegram_user_id:
+        admin_language = settings.DEFAULT_LANGUAGE
+        if int(chat_id) > 0 and not topic_id:
             try:
                 from app.database.crud.user import get_user_by_telegram_id
                 from app.database.database import AsyncSessionLocal
 
                 async with AsyncSessionLocal() as session:
-                    db_user = await get_user_by_telegram_id(session, telegram_user_id)
+                    admin_user = await get_user_by_telegram_id(session, int(chat_id))
+                    admin_language = getattr(admin_user, 'language', None) or settings.DEFAULT_LANGUAGE
+            except Exception as lookup_error:
+                logger.warning('Не удалось определить язык получателя админского чека', error=lookup_error)
+        admin_texts = get_texts(admin_language)
+        from html import escape as html_escape
 
-                if db_user:
-                    from html import escape as html_escape
-
-                    recipient_lines.append(f'🆔 Telegram ID: <code>{telegram_user_id}</code>')
-                    full_name = ' '.join(filter(None, [db_user.first_name, db_user.last_name])).strip()
-                    if full_name:
-                        recipient_lines.append(f'📛 Имя: <code>{html_escape(full_name)}</code>')
-                    if db_user.username:
-                        recipient_lines.append(f'👤 Username: @{db_user.username}')
-                    if db_user.email:
-                        recipient_lines.append(f'📧 Почта: <code>{html_escape(db_user.email)}</code>')
-                else:
-                    recipient_lines.append(f'🆔 Telegram ID: <code>{telegram_user_id}</code>')
-            except Exception as user_error:
-                logger.warning(
-                    'Не удалось загрузить данные пользователя для уведомления о чеке',
-                    telegram_user_id=telegram_user_id,
-                    error=user_error,
-                )
-                recipient_lines.append(f'🆔 Telegram ID: <code>{telegram_user_id}</code>')
+        recipient_lines: list[str] = []
+        if telegram_user_id:
+            recipient_lines.append(
+                admin_texts.t('NALOGO_RECIPIENT_ID', '🆔 Telegram ID: <code>{id}</code>').format(id=telegram_user_id)
+            )
+            if recipient_data:
+                full_name = ' '.join(filter(None, [recipient_data['first_name'], recipient_data['last_name']])).strip()
+                if full_name:
+                    recipient_lines.append(
+                        admin_texts.t('NALOGO_RECIPIENT_NAME', '📛 Имя: <code>{name}</code>').format(
+                            name=html_escape(full_name)
+                        )
+                    )
+                if recipient_data['username']:
+                    recipient_lines.append(
+                        admin_texts.t('NALOGO_RECIPIENT_USERNAME', '👤 Username: @{username}').format(
+                            username=html_escape(recipient_data['username'])
+                        )
+                    )
+                if recipient_data['email']:
+                    recipient_lines.append(
+                        admin_texts.t('NALOGO_RECIPIENT_EMAIL', '📧 Почта: <code>{email}</code>').format(
+                            email=html_escape(recipient_data['email'])
+                        )
+                    )
         else:
-            recipient_lines.append('👤 Получатель: без Telegram (email/гость)')
+            recipient_lines.append(admin_texts.t('NALOGO_RECIPIENT_GUEST', '👤 Получатель: без Telegram (email/гость)'))
 
         recipient_block = '\n'.join(recipient_lines)
-        context_line = f'\nℹ️ {context_label}' if context_label else ''
+        if context_label == 'Источник: YooKassa':
+            context_label = admin_texts.t('NALOGO_SOURCE_YOOKASSA', 'Источник: YooKassa')
+        context_line = f'\nℹ️ {html_escape(context_label)}' if context_label else ''
         try:
             await _deliver(
                 chat_id,
-                f'🧾 <b>Новый чек NaloGO создан</b>\n\n💰 Сумма: {amount_text}\n{recipient_block}{context_line}',
+                admin_texts.t(
+                    'NALOGO_ADMIN_RECEIPT',
+                    '🧾 <b>Новый чек NaloGO создан</b>\n\n💰 Сумма: {amount}\n{recipient}{context}',
+                ).format(amount=amount_text, recipient=recipient_block, context=context_line),
                 thread_id=topic_id,
+                texts=admin_texts,
             )
         except Exception as error:
             logger.warning(

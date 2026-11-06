@@ -210,7 +210,7 @@ async def test_try_send_remembers_live_menu_only_when_enabled(monkeypatch, env):
 
 def test_live_menu_fingerprint_tracks_only_visible_changes():
     """Меню показывает целые ГБ: доли гигабайта не повод править сообщение."""
-    texts = SimpleNamespace(format_traffic=Texts.format_traffic)
+    texts = SimpleNamespace(format_traffic=Texts('ru').format_traffic)
     now = datetime.now(UTC)
 
     def fingerprint(used_gb=31.2, balance_kopeks=125_000, extra_days=0, **changes):

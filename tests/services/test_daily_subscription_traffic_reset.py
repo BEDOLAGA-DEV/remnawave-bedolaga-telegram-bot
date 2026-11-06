@@ -39,6 +39,7 @@ def _make_db(subscription: SimpleNamespace, purchases=None) -> MagicMock:
 
     db = MagicMock()
     db.execute = AsyncMock(side_effect=[res_sub, res_expired, res_remaining])
+    db.get = AsyncMock(return_value=subscription)
     db.delete = AsyncMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
@@ -170,3 +171,21 @@ async def test_traffic_reset_only_loop_runs_processor(monkeypatch):
     await service.start_traffic_reset_monitoring()
 
     assert calls == [1]
+
+
+async def test_managed_expiry_never_resets_spent_traffic_or_defers_expiry():
+    sub = _make_subscription('MONTH')
+    sub.traffic_accounting_mode = 'managed'
+    db = _make_db(sub)
+    db.get = AsyncMock(return_value=sub)
+    service = _make_service(panel_used_gb=130.0)
+    fake_ss = _make_fake_subscription_service(130 * _GB)
+    with (
+        patch('app.services.subscription_service.SubscriptionService', return_value=fake_ss),
+        patch('app.services.traffic_accounting_service.refresh_managed_account', new_callable=AsyncMock),
+    ):
+        count = await service._expire_traffic_purchases(db, sub.id, [10])
+    assert count == 1
+    assert sub.traffic_limit_gb == 100
+    assert sub.traffic_used_gb == 130.0
+    assert all(not call.kwargs.get('reset_traffic') for call in fake_ss.update_remnawave_user.await_args_list)

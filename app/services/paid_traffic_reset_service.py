@@ -105,7 +105,11 @@ def _valid(user, sub, intent) -> bool:
         and not sub.is_daily_paused
         and not sub.grace_session_open
         and sub.end_date > datetime.now(UTC)
-        and sub.last_daily_charge_at == intent.charge_at
+        and (
+            sub.end_date == intent.charge_at
+            if str(getattr(intent, 'operation_key', '')).startswith('cispay:payment:')
+            else sub.last_daily_charge_at == intent.charge_at
+        )
     )
 
 
@@ -248,6 +252,16 @@ async def _reconcile_attempted(db, user, sub, intent) -> bool:
 async def deliver_daily_reset(db: AsyncSession, intent_id: int) -> bool:
     """Canonical panel sync must have succeeded first. Never charges the user."""
     from app.services.subscription_service import SubscriptionService
+    from app.services.traffic_accounting import AccountingConflict
+    from app.services.traffic_accounting_service import lock_accounting_subscription, refresh_managed_account
+
+    address = await db.get(PaidTrafficResetIntent, intent_id)
+    candidate = await db.get(Subscription, address.subscription_id) if address and address.subscription_id else None
+    mode = getattr(candidate, 'traffic_accounting_mode', None)
+    if mode == 'migrating':
+        raise AccountingConflict('Traffic accounting migration is not complete')
+    if mode == 'managed':
+        await lock_accounting_subscription(db, candidate.id)
 
     locked = await _locked(db, intent_id)
     if locked is None:
@@ -256,6 +270,8 @@ async def deliver_daily_reset(db: AsyncSession, intent_id: int) -> bool:
     if intent is None:
         await db.rollback()
         return False
+    if getattr(sub, 'traffic_accounting_mode', None) in ('managed', 'migrating') and mode != 'managed':
+        raise AccountingConflict('Traffic accounting mode changed during reset delivery')
     if intent.state == 'attempted' or (intent.state == 'blocked' and intent.attempted_at is not None):
         return await _reconcile_attempted(db, user, sub, intent)
     if intent.state not in OPEN_STATES:
@@ -287,6 +303,17 @@ async def deliver_daily_reset(db: AsyncSession, intent_id: int) -> bool:
         _block(intent, 'panel_identity_changed')
         await db.commit()
         return False
+    if getattr(sub, 'traffic_accounting_mode', None) == 'managed':
+        # The paid operation is durable already. Its key replaces only the base
+        # bucket once; package remainders and physical counters remain intact.
+        await refresh_managed_account(db, sub, operation_key=f'paid-reset:{intent.operation_key}')
+        intent.state = 'confirmed'
+        intent.confirmed_at = datetime.now(UTC)
+        intent.activation_pending = False
+        intent.last_error = None
+        await db.commit()
+        return True
+
     other_target = (
         await db.scalars(
             select(PaidTrafficResetIntent.id)
@@ -497,3 +524,92 @@ async def process_pending_daily_resets(session_factory, *, limit: int = 25) -> N
                 )
                 await db.commit()
                 logger.warning('Paid daily traffic reset recovery deferred', intent_id=intent_id, exc_info=True)
+
+
+async def purchase_managed_reset(db, subscription_id: int, *, user_id: int, operation_key: str, price):
+    """Commit balance debit, transaction and base grant together, without panel writes.
+
+    The transport supplies a stable confirmation key, not a fresh UUID per retry.
+    Returns (transaction, newly_charged); projection happens only after commit.
+    """
+    from app.database.crud.transaction import create_transaction
+    from app.database.crud.user import subtract_user_balance
+    from app.database.models import Transaction, TransactionType
+    from app.services.subscription_service import SubscriptionService
+    from app.services.traffic_accounting import AccountingConflict
+    from app.services.traffic_accounting_service import (
+        _fresh_panel,
+        lock_accounting_subscription,
+        refresh_paid_base_locked,
+    )
+
+    if not operation_key or len(operation_key) > 140:
+        raise AccountingConflict('A stable reset confirmation key is required')
+    try:
+        subscription, grace_open = await lock_accounting_subscription(db, subscription_id)
+        if grace_open:
+            raise AccountingConflict('Paid traffic reset is unavailable during grace')
+        if (
+            subscription.user_id != user_id
+            or subscription.traffic_accounting_mode != 'managed'
+            or subscription.is_trial
+            or subscription.traffic_limit_gb <= 0
+            or subscription.user.status != 'active'
+        ):
+            raise AccountingConflict('Reset subscription ownership or eligibility changed')
+        existing = await db.scalar(
+            select(Transaction).where(
+                Transaction.user_id == user_id,
+                Transaction.external_id == operation_key,
+                Transaction.type == TransactionType.SUBSCRIPTION_PAYMENT.value,
+            )
+        )
+        if existing is not None:
+            await db.commit()
+            return existing, False
+        amount = price(subscription)
+        if not isinstance(amount, int) or amount < 0:
+            raise AccountingConflict('Invalid reset price')
+        async with SubscriptionService().get_api_client() as api:
+            panel = await _fresh_panel(db, api, subscription)
+        if not await subtract_user_balance(db, subscription.user, amount, 'Сброс трафика', commit=False):
+            raise AccountingConflict('Insufficient balance for traffic reset')
+        transaction = await create_transaction(
+            db,
+            user_id=user_id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=amount,
+            description='Сброс трафика',
+            external_id=operation_key,
+            commit=False,
+        )
+        await refresh_paid_base_locked(db, subscription, panel, operation_key=f'paid:{operation_key}')
+        await db.commit()
+        return transaction, True
+    except BaseException:
+        await db.rollback()
+        raise
+
+
+async def prepare_admin_tariff_accounting(db, subscription):
+    """Settle the old tariff before an administrator changes nominal rights."""
+    from app.services.subscription_service import SubscriptionService
+    from app.services.traffic_accounting import AccountingConflict
+    from app.services.traffic_accounting_service import (
+        _fresh_panel,
+        lock_accounting_subscription,
+        reconcile_account_locked,
+    )
+
+    subscription, grace_open = await lock_accounting_subscription(db, subscription.id)
+    mode = getattr(subscription, 'traffic_accounting_mode', None)
+    if mode == 'migrating':
+        raise AccountingConflict('Traffic accounting migration is not complete')
+    if mode != 'managed':
+        return subscription, None
+    if grace_open:
+        raise AccountingConflict('Tariff changes are unavailable during grace')
+    async with SubscriptionService().get_api_client() as api:
+        panel = await _fresh_panel(db, api, subscription)
+    await reconcile_account_locked(db, subscription, panel)
+    return subscription, panel

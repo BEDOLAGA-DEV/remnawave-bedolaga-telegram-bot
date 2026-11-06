@@ -39,6 +39,13 @@ async def update_autopay(
         )
 
     if request.enabled:
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        try:
+            await require_no_cispay(db, user_id=user.id, subscription_id=subscription.id)
+        except ValueError as error:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail=str(error)) from None
         # Classic subscriptions cannot use autopay when tariff mode is enabled
         from app.config import settings
 

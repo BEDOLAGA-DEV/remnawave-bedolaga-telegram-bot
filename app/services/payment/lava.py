@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import PaymentMethod, Subscription, TransactionType
+from app.localization.texts import get_texts
 from app.services.lava_service import lava_service
 from app.utils.payment_logger import payment_logger as logger
 from app.utils.user_utils import format_referrer_info
@@ -542,11 +543,12 @@ class LavaPaymentMixin:
                 await self.bot.send_message(
                     user.telegram_id,
                     (
-                        '✅ <b>Пополнение успешно!</b>\n\n'
-                        f'\U0001f4b0 Сумма: {settings.format_price(payment.amount_kopeks)}\n'
-                        f'\U0001f4b3 Способ: {display_name}\n'
-                        f'\U0001f194 Транзакция: {transaction.id}\n\n'
-                        'Баланс пополнен автоматически!'
+                        get_texts(getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE)
+                        .t(
+                            'PAYMENT_NOTICE_000',
+                            '✅ <b>Пополнение успешно!</b>\n\n💰 Сумма: {v0}\n💳 Способ: {v1}\n🆔 Транзакция: {v2}\n\nБаланс пополнен автоматически!',
+                        )
+                        .format(v0=settings.format_price(payment.amount_kopeks), v1=display_name, v2=transaction.id)
                     ),
                     parse_mode='HTML',
                     reply_markup=keyboard,
@@ -796,6 +798,9 @@ class LavaPaymentMixin:
             logger.warning('Lava: consumer/create не подтверждён', consumer_id=consumer_id, error=str(error))
 
         order_id = build_recurrent_order_id(subscription.id, uuid.uuid4().hex)
+        from app.services.cispay_recurrent_guard import require_no_cispay
+
+        await require_no_cispay(db, user_id=user_id, subscription_id=subscription.id)
         response = await lava_service.subscribe_recurrent(
             product_id=product_id,
             consumer_id=consumer_id,
@@ -1125,6 +1130,15 @@ class LavaPaymentMixin:
                 payment_method=PaymentMethod.LAVA,
                 external_id=charge_id,
                 commit=False,
+            )
+
+            from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+            await stage_paid_base_grant(
+                db,
+                subscription,
+                operation_key=f'lava:payment:{tx.id}',
+                reset_base=settings.RESET_TRAFFIC_ON_PAYMENT,
             )
 
             await db.commit()

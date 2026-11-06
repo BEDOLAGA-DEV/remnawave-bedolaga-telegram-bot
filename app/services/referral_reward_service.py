@@ -1745,7 +1745,7 @@ def format_reward_total(money_kopeks: int, days: int, language: str | None = Non
     return settings.format_price(money)
 
 
-def legacy_percent_for_import() -> tuple[int, list[str]]:
+def legacy_percent_for_import(language: str = 'ru') -> tuple[int, list[str]]:
     """Процент для переносимого уровня и то, о чём нужно предупредить.
 
     Общий на два интерфейса: перенос из бота и из кабинета обязан давать один и
@@ -1761,6 +1761,9 @@ def legacy_percent_for_import() -> tuple[int, list[str]]:
       рефералов. Одним уровнем она невыразима вовсе, поэтому о ней сообщается
       прямо: молча потерять ступени хуже, чем не перенести их с предупреждением.
     """
+    from app.localization.texts import get_texts
+
+    texts = get_texts(language)
     notes: list[str] = []
 
     percent = settings.REFERRAL_COMMISSION_PERCENT
@@ -1768,14 +1771,18 @@ def legacy_percent_for_import() -> tuple[int, list[str]]:
     if first_payment is not None:
         percent = first_payment
         notes.append(
-            f'Взят процент первого платежа ({first_payment}%), а не общий '
-            f'({settings.REFERRAL_COMMISSION_PERCENT}%) — повод уровня «первое пополнение».'
+            texts.t(
+                'ADMIN_REFERRAL_LEVEL_LEGACY_FIRST',
+                'Взят процент первого платежа ({first_payment}%), а не общий ({general_percent}%) — повод уровня «первое пополнение».',
+            ).format(first_payment=first_payment, general_percent=settings.REFERRAL_COMMISSION_PERCENT)
         )
 
     if (settings.REFERRAL_RECURRING_COMMISSION_TIERS or '').strip():
         notes.append(
-            'Ступени комиссии (REFERRAL_RECURRING_COMMISSION_TIERS) НЕ перенесены: '
-            'у уровня одна ставка, лестницы по числу рефералов в нём нет.'
+            texts.t(
+                'ADMIN_REFERRAL_LEVEL_LEGACY_TIERS',
+                'Ступени комиссии (REFERRAL_RECURRING_COMMISSION_TIERS) НЕ перенесены: у уровня одна ставка, лестницы по числу рефералов в нём нет.',
+            )
         )
 
     return max(0, min(100, int(percent or 0))), notes
