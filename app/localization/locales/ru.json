@@ -988,6 +988,7 @@
   "CHANGE_TARIFF_BUTTON": "📦 Тариф",
   "TARIFF_PURCHASE_AFTER_PAYMENT_LINE": "\nПосле оплаты: {amount}",
   "TARIFF_PURCHASE_ALREADY_ACTIVE": "Тариф «{name}» уже активен ({days} дн.). Продлите через \"Мои подписки\".",
+  "TARIFF_FAMILY_CONFLICT": "❌ У вас уже есть действующая подписка этой группы. Смените её тариф.",
   "TARIFF_PURCHASE_ALREADY_ACTIVE_SUB": "❌ У вас уже есть активная подписка на этот тариф",
   "TARIFF_PURCHASE_CART_CORRUPTED": "❌ Данные корзины повреждены",
   "TARIFF_PURCHASE_CART_RESTORED": "✅ Корзина восстановлена!",
