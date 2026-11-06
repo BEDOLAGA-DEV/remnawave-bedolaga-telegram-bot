@@ -2027,6 +2027,7 @@
   "CHANGE_TARIFF_BUTTON": "📦 Plan",
   "TARIFF_PURCHASE_AFTER_PAYMENT_LINE": "\nAfter payment: {amount}",
   "TARIFF_PURCHASE_ALREADY_ACTIVE": "Plan \"{name}\" is already active ({days} days). Renew it via \"My subscriptions\".",
+  "TARIFF_FAMILY_CONFLICT": "❌ You already have an active subscription in this plan group. Switch the existing plan instead.",
   "TARIFF_PURCHASE_ALREADY_ACTIVE_SUB": "❌ You already have an active subscription for this plan",
   "TARIFF_PURCHASE_CART_CORRUPTED": "❌ Cart data is corrupted",
   "TARIFF_PURCHASE_CART_RESTORED": "✅ Cart restored!",
