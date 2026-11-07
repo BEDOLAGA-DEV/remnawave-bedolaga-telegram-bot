@@ -287,7 +287,6 @@ def test_family_purchase_defers_each_product_and_ledger_commit(path, handler, ca
             )
 
 
-
 def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
     """Внешняя оплата не должна автоматически создавать второй Main."""
     source = (Path(__file__).resolve().parents[2] / 'app/services/guest_purchase_service.py').read_text(
