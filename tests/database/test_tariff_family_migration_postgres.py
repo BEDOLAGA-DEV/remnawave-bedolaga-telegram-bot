@@ -6,6 +6,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from app.database.models import Base, Tariff
+from app.database.tariff_family_schema import PG_FAMILY_DDL, PG_FAMILY_DROP_DDL
 from tests.database.test_retired_gateway_migration_postgres import _load
 from tests.fixtures.postgres_db import postgres_engine
 
@@ -19,6 +20,10 @@ async def test_family_migration_preserves_values_and_blocks_loss(postgres_databa
         async with engine.begin() as connection:
 
             def exercise(sync):
+                # Проверяем миграцию метаданных отдельно: guard из 0142 зависит
+                # от колонки и при корректном downgrade сперва снимается.
+                for statement in PG_FAMILY_DROP_DDL:
+                    sync.exec_driver_sql(statement)
                 sync.execute(Tariff.__table__.insert().values(id=1, name='Тариф'))
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.downgrade()
@@ -32,5 +37,7 @@ async def test_family_migration_preserves_values_and_blocks_loss(postgres_databa
                     migration.downgrade()
                     assert 'entitlement_family' not in {c['name'] for c in sa.inspect(sync).get_columns('tariffs')}
                     migration.upgrade()
+                    for statement in PG_FAMILY_DDL:
+                        sync.exec_driver_sql(statement)
 
             await connection.run_sync(exercise)
