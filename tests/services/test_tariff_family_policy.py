@@ -253,6 +253,11 @@ async def test_trial_conversion_does_not_hide_another_live_main(monkeypatch):
     [
         ('app/cabinet/routes/subscription_modules/purchase.py', 'purchase_tariff', ('create_paid_subscription',)),
         (
+            'app/handlers/admin/users.py',
+            'admin_buy_tariff_execute',
+            ('subtract_user_balance', 'create_transaction', 'extend_subscription', 'create_paid_subscription'),
+        ),
+        (
             'app/webapi/routes/miniapp.py',
             'purchase_tariff_endpoint',
             ('create_transaction', 'extend_subscription', 'create_paid_subscription'),
