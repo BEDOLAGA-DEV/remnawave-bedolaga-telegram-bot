@@ -270,23 +270,17 @@ def test_family_purchase_defers_each_product_and_ledger_commit(path, handler, ca
     """
     source = (Path(__file__).resolve().parents[2] / path).read_text(encoding='utf-8')
     tree = ast.parse(source)
-    function = next(
-        node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == handler
-    )
+    function = next(node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == handler)
     for callee in calls:
         matches = [
             node
             for node in ast.walk(function)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == callee
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee
         ]
         assert matches, f'{path}: {callee} больше не вызывается в {handler}'
         for call in matches:
             commit_controls = [
-                ast.unparse(keyword.value)
-                for keyword in call.keywords
-                if keyword.arg in ('commit', None)
+                ast.unparse(keyword.value) for keyword in call.keywords if keyword.arg in ('commit', None)
             ]
             assert commit_controls and any('family_atomic' in control for control in commit_controls), (
                 f'{path}: {callee} не передаёт commit=False для family_atomic'
@@ -296,15 +290,14 @@ def test_family_purchase_defers_each_product_and_ledger_commit(path, handler, ca
 
 def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
     """Внешняя оплата не должна автоматически создавать второй Main."""
-    source = (
-        Path(__file__).resolve().parents[2] / 'app/services/guest_purchase_service.py'
-    ).read_text(encoding='utf-8')
+    source = (Path(__file__).resolve().parents[2] / 'app/services/guest_purchase_service.py').read_text(
+        encoding='utf-8'
+    )
     tree = ast.parse(source)
     functions = {
         node.name: ast.get_source_segment(source, node)
         for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef)
-        and node.name in {'fulfill_purchase', 'activate_purchase'}
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in {'fulfill_purchase', 'activate_purchase'}
     }
     fulfill = functions['fulfill_purchase']
     activate = functions['activate_purchase']
@@ -312,7 +305,5 @@ def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
         'GuestPurchaseStatus.PENDING_ACTIVATION'
     )
     assert 'family_conflict is not None' in fulfill
-    assert activate.index('require_available_entitlement_family') < activate.index(
-        'create_paid_subscription('
-    )
+    assert activate.index('require_available_entitlement_family') < activate.index('create_paid_subscription(')
     assert "'An active subscription in this family already exists; switch its tariff instead'" in activate
