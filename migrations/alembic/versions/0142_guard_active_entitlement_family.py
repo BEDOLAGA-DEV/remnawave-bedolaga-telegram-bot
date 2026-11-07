@@ -42,7 +42,7 @@ def upgrade() -> None:
         )
     )
     if conflicts:
-        raise RuntimeError(f'Миграция 0133: обнаружены конфликты live семейства: {conflicts}')
+        raise RuntimeError(f'Миграция 0142: обнаружены конфликты live семейства: {conflicts}')
 
     # На свежей схеме create_all мог уже установить эти триггеры.
     for statement in PG_FAMILY_DROP_DDL:
