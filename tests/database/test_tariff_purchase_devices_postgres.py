@@ -705,7 +705,9 @@ async def test_main_family_cabinet_activation_failure_rolls_back_charge(postgres
             (await db.get(Tariff, 7)).entitlement_family = 'main'
             await db.commit()
 
-        monkeypatch.setattr(purchase, 'create_paid_subscription', AsyncMock(side_effect=RuntimeError('activation failed')))
+        monkeypatch.setattr(
+            purchase, 'create_paid_subscription', AsyncMock(side_effect=RuntimeError('activation failed'))
+        )
         response = await checkout.send('/purchase-tariff', {'tariff_id': 7, 'period_days': 30})
         assert response.status_code == 500, response.text
 
