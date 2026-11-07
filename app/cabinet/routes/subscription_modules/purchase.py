@@ -1470,7 +1470,7 @@ async def purchase_tariff(
                         connected_squads=squads,
                         tariff_id=tariff.id,
                         conversion_trial=_conversion_trial,
-                        **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase else {}),
+                        **({'commit': False} if is_daily_tariff or device_checkout or managed_purchase or family_atomic else {}),
                     )
                 except IntegrityError:
                     # Partial unique index violation: user already has active subscription for this tariff
