@@ -308,7 +308,6 @@ def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
     assert "'An active subscription in this family already exists; switch its tariff instead'" in activate
 
 
-
 def test_daily_telegram_purchase_checks_family_before_wallet_debit():
     """Прямой суточный checkout проверяет семейство после User lock, до списания.
 
