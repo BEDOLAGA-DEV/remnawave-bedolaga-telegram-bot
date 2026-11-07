@@ -2371,6 +2371,39 @@ async def confirm_daily_tariff_purchase(
             show_alert=True,
         )
         return
+    # The daily path does not go through the shared saved-cart purchase guard.
+    # Refuse a second live family before touching the wallet, under the User lock.
+    if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+        from app.database.crud.subscription import resolve_trial_conversion_candidate
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        conversion = (
+            await resolve_trial_conversion_candidate(db, db_user.id, tariff.id)
+            if existing_subscription is None or existing_subscription.is_trial
+            else None
+        )
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=db_user.id,
+                tariff_id=tariff.id,
+                current_subscription_id=(
+                    existing_subscription.id
+                    if existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+                    else None
+                ),
+                conversion_trial_id=conversion.id if conversion is not None else None,
+            )
+        except ActiveTariffFamilyConflict:
+            await callback.answer(
+                texts.t('TARIFF_FAMILY_CONFLICT', '❌ У вас уже есть подписка этой группы. Смените её тариф.'),
+                show_alert=True,
+            )
+            return
+
     # Capture the saved revision before payment/panel work. The subscription ID
     # assigned to a fresh purchase is not the source ID of its saved cart.
     checkout_cart = None
