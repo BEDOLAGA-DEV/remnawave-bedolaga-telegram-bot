@@ -247,7 +247,6 @@ async def test_trial_conversion_does_not_hide_another_live_main(monkeypatch):
             )
 
 
-
 @pytest.mark.parametrize(
     ('path', 'handler', 'calls'),
     [
