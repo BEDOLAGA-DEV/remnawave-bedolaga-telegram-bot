@@ -262,7 +262,7 @@ def get_tariff_view_keyboard(
             ),
         ]
     )
-    buttons.append([InlineKeyboardButton(text='🏷️ Семейство', callback_data=f'admin_tariff_edit_family:{tariff.id}')])
+    buttons.append([InlineKeyboardButton(text=get_texts(language).t('ADMIN_TARIFF_FAMILY_BUTTON', '🏷️ Семейство'), callback_data=f'admin_tariff_edit_family:{tariff.id}')])
     buttons.append(
         [
             InlineKeyboardButton(
@@ -518,7 +518,12 @@ def format_tariff_info(tariff: Tariff, language: str, subs_count: int = 0) -> st
             v20=subs_count,
             v21=f'📝 {html.escape(tariff.description)}' if tariff.description else '',
         )
-    ) + f'\n🏷️ Семейство: {html.escape(getattr(tariff, "entitlement_family", None) or "не назначено")}'
+    ) + get_texts(language).t('ADMIN_TARIFF_FAMILY_LABEL', '\n🏷️ Семейство: {family}').format(
+        family=html.escape(
+            getattr(tariff, 'entitlement_family', None)
+            or get_texts(language).t('ADMIN_TARIFF_FAMILY_UNASSIGNED', 'не назначено')
+        )
+    )
 
 
 @admin_required
@@ -1278,19 +1283,22 @@ async def start_edit_tariff_entitlement_family(
     tariff_id = int(callback.data.split(':')[1])
     tariff = await get_tariff_by_id(db, tariff_id)
     if not tariff:
-        await callback.answer('Тариф не найден', show_alert=True)
+        await callback.answer(texts.t('ADMIN_TARIFF_FAMILY_NOT_FOUND', 'Тариф не найден'), show_alert=True)
         return
 
     await state.set_state(AdminStates.editing_tariff_entitlement_family)
     await state.update_data(tariff_id=tariff_id)
-    current = html.escape(tariff.entitlement_family or 'не назначено')
+    current = html.escape(tariff.entitlement_family or texts.t('ADMIN_TARIFF_FAMILY_UNASSIGNED', 'не назначено'))
     await callback.message.edit_text(
-        f'🏷️ <b>Коммерческое семейство тарифа «{html.escape(tariff.name)}»</b>\n\n'
-        f'Текущее значение: <code>{current}</code>\n\n'
-        'Введите идентификатор семейства, например <code>main</code> или '
-        '<code>metered_bypass</code>; <code>-</code> удалит метку.\n\n'
-        'Допустимы строчные латинские буквы, цифры, _ и -, до 64 символов. '
-        'Это пока только метаданные: ограничения покупки не включаются.',
+        texts.t(
+            'ADMIN_TARIFF_FAMILY_PROMPT',
+            '🏷️ <b>Коммерческое семейство тарифа «{name}»</b>\n\n'
+            'Текущее значение: <code>{current}</code>\n\n'
+            'Введите идентификатор семейства, например <code>main</code> или '
+            '<code>metered_bypass</code>; <code>-</code> удалит метку.\n\n'
+            'Допустимы строчные латинские буквы, цифры, _ и -, до 64 символов. '
+            'Это пока только метаданные: ограничения покупки не включаются.',
+        ).format(name=html.escape(tariff.name), current=current),
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text=texts.CANCEL, callback_data=f'admin_tariff_view:{tariff_id}')]]
         ),
@@ -1312,7 +1320,7 @@ async def process_edit_tariff_entitlement_family(
     tariff_id = data.get('tariff_id')
     tariff = await get_tariff_by_id(db, tariff_id)
     if not tariff:
-        await message.answer('Тариф не найден')
+        await message.answer(get_texts(db_user.language).t('ADMIN_TARIFF_FAMILY_NOT_FOUND', 'Тариф не найден'))
         await state.clear()
         return
 
@@ -1320,14 +1328,15 @@ async def process_edit_tariff_entitlement_family(
     try:
         family = normalize_entitlement_family(None if raw == '-' else raw)
     except ValueError:
-        await message.answer('Введите ключ вида main, metered_bypass или vpn-2 (до 64 символов), либо - для сброса.')
+        await message.answer(get_texts(db_user.language).t('ADMIN_TARIFF_FAMILY_INVALID', 'Введите ключ вида main, metered_bypass или vpn-2 (до 64 символов), либо - для сброса.'))
         return
 
     tariff = await update_tariff(db, tariff, entitlement_family=family)
     await state.clear()
     subs_count = await get_tariff_subscriptions_count(db, tariff_id)
     await message.answer(
-        '✅ Семейство обновлено!\n\n' + format_tariff_info(tariff, db_user.language, subs_count),
+        get_texts(db_user.language).t('ADMIN_TARIFF_FAMILY_UPDATED', '✅ Семейство обновлено!\n\n')
+        + format_tariff_info(tariff, db_user.language, subs_count),
         reply_markup=get_tariff_view_keyboard(tariff, db_user.language),
         parse_mode='HTML',
     )
