@@ -4318,7 +4318,7 @@
   Функции: `test_restore_validates_and_requotes`
 - `tests/database/test_tariff_family_guard_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `test_one_main_and_separate_addon_allowed_but_second_main_denied`, `test_trial_and_limited_are_live_but_disabled_is_not`, `test_family_change_cannot_make_two_live_subscriptions_conflict`, `test_two_simultaneous_main_inserts_are_serialized`, `test_family_conflict_undoes_wallet_charge_in_same_transaction` — Триггер не должен оставлять списание без продукта при общем COMMIT.
+  Функции: `test_one_main_and_separate_addon_allowed_but_second_main_denied`, `test_trial_and_limited_are_live_but_disabled_is_not`, `test_family_change_cannot_make_two_live_subscriptions_conflict`, `test_two_simultaneous_main_inserts_are_serialized`, `test_family_conflict_undoes_wallet_charge_in_same_transaction` — Триггер не должен оставлять списание без продукта при общем COMMIT., `test_guard_migration_0142_installs_xor_on_existing_database` — Upgrade 0142 must enforce Main XOR, not only Base.metadata.create_all.
 - `tests/database/test_tariff_family_migration_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_family_migration_preserves_values_and_blocks_loss`
