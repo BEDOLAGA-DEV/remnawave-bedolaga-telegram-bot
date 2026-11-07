@@ -526,9 +526,7 @@ async def fulfill_purchase(
         if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
             from app.services.tariff_family_policy import find_live_entitlement_family_conflict
 
-            family_conflict = await find_live_entitlement_family_conflict(
-                db, user_id=user.id, tariff_id=tariff.id
-            )
+            family_conflict = await find_live_entitlement_family_conflict(db, user_id=user.id, tariff_id=tariff.id)
         if family_conflict is not None or (
             existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift)
         ):
