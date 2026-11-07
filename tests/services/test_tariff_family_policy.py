@@ -1,6 +1,8 @@
 """Регрессии поиска конфликтов семейства; не заменяют конкурентный PG-тест."""
 
+import ast
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -242,4 +244,46 @@ async def test_trial_conversion_does_not_hide_another_live_main(monkeypatch):
         with pytest.raises(ActiveTariffFamilyConflict, match='смените тариф'):
             await require_available_entitlement_family(
                 db, user_id=69, tariff_id=target.id, conversion_trial_id=trial.id
+            )
+
+
+
+@pytest.mark.parametrize(
+    ('path', 'handler', 'calls'),
+    [
+        ('app/cabinet/routes/subscription_modules/purchase.py', 'purchase_tariff', ('create_paid_subscription',)),
+        (
+            'app/webapi/routes/miniapp.py',
+            'purchase_tariff_endpoint',
+            ('create_transaction', 'extend_subscription', 'create_paid_subscription'),
+        ),
+    ],
+)
+def test_family_purchase_defers_each_product_and_ledger_commit(path, handler, calls):
+    """Контракт: tagged Main не может зафиксировать списание без продукта.
+
+    Это source-pin; PostgreSQL rollback/конкуренцию отдельно проверяют DB-тесты.
+    """
+    source = (Path(__file__).resolve().parents[2] / path).read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    function = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == handler
+    )
+    for callee in calls:
+        matches = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == callee
+        ]
+        assert matches, f'{path}: {callee} больше не вызывается в {handler}'
+        for call in matches:
+            commit_controls = [
+                ast.unparse(keyword.value)
+                for keyword in call.keywords
+                if keyword.arg in ('commit', None)
+            ]
+            assert commit_controls and any('family_atomic' in control for control in commit_controls), (
+                f'{path}: {callee} не передаёт commit=False для family_atomic'
             )
