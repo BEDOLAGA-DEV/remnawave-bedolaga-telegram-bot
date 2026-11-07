@@ -6908,7 +6908,7 @@ async def purchase_tariff_endpoint(
         type=TransactionType.SUBSCRIPTION_PAYMENT,
         amount_kopeks=price_kopeks,
         description=description,
-        commit=not managed_purchase,
+        commit=not (managed_purchase or family_atomic),
     )
 
     # Получаем список серверов из тарифа
