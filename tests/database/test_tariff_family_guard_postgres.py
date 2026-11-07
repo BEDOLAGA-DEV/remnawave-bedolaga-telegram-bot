@@ -11,7 +11,10 @@ from alembic.operations import Operations
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from app.database.models import Subscription, SubscriptionStatus, Tariff, User
+from app.database.crud.subscription import create_paid_subscription
+from app.database.crud.transaction import create_transaction
+from app.database.crud.user import subtract_user_balance
+from app.database.models import PaymentMethod, Subscription, SubscriptionStatus, Tariff, Transaction, TransactionType, User
 from tests.database.test_retired_gateway_migration_postgres import _load
 from tests.fixtures.postgres_db import lock_waiter_appeared, postgres_sessions
 
@@ -176,3 +179,45 @@ async def test_guard_migration_0142_installs_xor_on_existing_database(postgres_d
         with pytest.raises(IntegrityError, match='active entitlement family conflict'):
             await second.flush()
         await second.rollback()
+
+
+async def test_real_balance_crud_and_subscription_creation_roll_back_together(postgres_database):
+    """Списанные деньги и финансовая запись должны исчезнуть после отказа XOR.
+
+    В отличие от SQL-only теста проверяет реальные CRUD-примитивы покупки с
+    commit=False на выделенной PostgreSQL-транзакции.
+    """
+    async with postgres_sessions(postgres_database, TABLES + [Transaction.__table__], count=2) as (first, second):
+        user, basic, premium, _ = await _fixtures(first)
+        user_id, basic_id, premium_id = user.id, basic.id, premium.id
+        first.add(_sub(user_id, basic_id, 'existing_main'))
+        await first.commit()
+
+        original_balance = await second.scalar(select(User.balance_kopeks).where(User.id == user_id))
+        assert await subtract_user_balance(
+            first, user, 250, 'Покупка Main', mark_as_paid_subscription=True, commit=False
+        )
+        await create_transaction(
+            first,
+            user_id=user_id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=250,
+            description='Покупка Main',
+            payment_method=PaymentMethod.BALANCE,
+            commit=False,
+        )
+        with pytest.raises(IntegrityError, match='active entitlement family conflict'):
+            await create_paid_subscription(
+                first,
+                user_id=user_id,
+                duration_days=30,
+                tariff_id=premium_id,
+                connected_squads=[],
+                commit=False,
+            )
+        await first.rollback()
+
+        assert await second.scalar(select(User.balance_kopeks).where(User.id == user_id)) == original_balance
+        assert await second.scalar(select(Transaction.id).where(Transaction.user_id == user_id)) is None
+        ids = (await second.scalars(select(Subscription.tariff_id).where(Subscription.user_id == user_id))).all()
+        assert ids == [basic_id]
