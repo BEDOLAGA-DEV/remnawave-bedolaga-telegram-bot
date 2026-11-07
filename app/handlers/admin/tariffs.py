@@ -262,7 +262,14 @@ def get_tariff_view_keyboard(
             ),
         ]
     )
-    buttons.append([InlineKeyboardButton(text=get_texts(language).t('ADMIN_TARIFF_FAMILY_BUTTON', '🏷️ Семейство'), callback_data=f'admin_tariff_edit_family:{tariff.id}')])
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                text=texts.t('ADMIN_TARIFF_FAMILY_BUTTON', '🏷️ Семейство'),
+                callback_data=f'admin_tariff_edit_family:{tariff.id}',
+            )
+        ]
+    )
     buttons.append(
         [
             InlineKeyboardButton(
@@ -1328,7 +1335,12 @@ async def process_edit_tariff_entitlement_family(
     try:
         family = normalize_entitlement_family(None if raw == '-' else raw)
     except ValueError:
-        await message.answer(get_texts(db_user.language).t('ADMIN_TARIFF_FAMILY_INVALID', 'Введите ключ вида main, metered_bypass или vpn-2 (до 64 символов), либо - для сброса.'))
+        await message.answer(
+            get_texts(db_user.language).t(
+                'ADMIN_TARIFF_FAMILY_INVALID',
+                'Введите ключ вида main, metered_bypass или vpn-2 (до 64 символов), либо - для сброса.',
+            )
+        )
         return
 
     tariff = await update_tariff(db, tariff, entitlement_family=family)
