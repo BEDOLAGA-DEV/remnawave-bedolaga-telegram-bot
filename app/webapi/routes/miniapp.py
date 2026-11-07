@@ -6949,7 +6949,7 @@ async def purchase_tariff_endpoint(
             connected_squads=squads,
             paid_traffic_reset=False,
             reset_used_traffic=reset_used_traffic,
-            commit=not managed_purchase,
+            commit=not (managed_purchase or family_atomic),
         )
     else:
         # Создание новой подписки
