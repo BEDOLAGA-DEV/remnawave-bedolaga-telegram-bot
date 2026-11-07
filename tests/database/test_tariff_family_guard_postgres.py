@@ -6,10 +6,13 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.database.models import Subscription, SubscriptionStatus, Tariff, User
+from tests.database.test_retired_gateway_migration_postgres import _load
 from tests.fixtures.postgres_db import lock_waiter_appeared, postgres_sessions
 
 
@@ -148,3 +151,29 @@ async def test_family_conflict_undoes_wallet_charge_in_same_transaction(postgres
         stored_subscriptions = (await second.scalars(select(Subscription).where(Subscription.user_id == user_id))).all()
         assert stored_balance == original_balance
         assert [item.tariff_id for item in stored_subscriptions] == [basic_id]
+
+
+
+async def test_guard_migration_0142_installs_xor_on_existing_database(postgres_database):
+    """Upgrade 0142 must enforce Main XOR, not only Base.metadata.create_all."""
+    migration = _load('0142_guard_active_entitlement_family.py')
+    async with postgres_sessions(postgres_database, TABLES, count=2) as (first, second):
+        user, basic, premium, _ = await _fixtures(first)
+        user_id, basic_id, premium_id = user.id, basic.id, premium.id
+        first.add(_sub(user_id, basic_id, 'migrated_main'))
+        await first.commit()
+
+        connection = await first.connection()
+
+        def reinstall(sync):
+            with Operations.context(MigrationContext.configure(sync)):
+                migration.downgrade()
+                migration.upgrade()
+
+        await connection.run_sync(reinstall)
+        await first.commit()
+
+        second.add(_sub(user_id, premium_id, 'migrated_second'))
+        with pytest.raises(IntegrityError, match='active entitlement family conflict'):
+            await second.flush()
+        await second.rollback()
