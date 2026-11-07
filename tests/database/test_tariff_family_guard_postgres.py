@@ -14,7 +14,15 @@ from sqlalchemy.exc import IntegrityError
 from app.database.crud.subscription import create_paid_subscription
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
-from app.database.models import PaymentMethod, Subscription, SubscriptionStatus, Tariff, Transaction, TransactionType, User
+from app.database.models import (
+    PaymentMethod,
+    Subscription,
+    SubscriptionStatus,
+    Tariff,
+    Transaction,
+    TransactionType,
+    User,
+)
 from tests.database.test_retired_gateway_migration_postgres import _load
 from tests.fixtures.postgres_db import lock_waiter_appeared, postgres_sessions
 
