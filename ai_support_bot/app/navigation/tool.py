@@ -176,6 +176,15 @@ async def build_prompt_block(
 async def answer_request(query: str, language: str = 'ru', ttl_seconds: int = 0) -> str | None:
     if is_connection_problem(query):
         return None
+    # Menu shortcuts must not answer personal reward recovery requests.
+    target = navigation_target(query)
+    if target == 'web_wheel_history' and not re.search(r'истори|последни\w* вращен', query, re.IGNORECASE):
+        return None
+    if target == 'promocode' and (
+        not re.search(r'активир|ввес|ввод|примен|использов', query, re.IGNORECASE)
+        or re.search(r'потер|пропал|скопир|не успел|выигр|восстанов|верну', query, re.IGNORECASE)
+    ):
+        return None
     if not re.search(r'как|где|инструкци|покажи|какие разделы', query, re.IGNORECASE):
         return None
     if re.search(r'не работает|не продл|не приш|не поступ|не зачис|сколько|почему', query, re.IGNORECASE):

@@ -21,6 +21,28 @@ CLIENTS = {
 }
 
 
+APP_STORE_REGION_HELP = (
+    'Если Incy или Happ недоступны в вашем App Store, попробуйте сменить регион Apple Account:\n\n'
+    '1️⃣ Откройте App Store и нажмите на иконку профиля.\n'
+    '2️⃣ Нажмите на своё имя или учётную запись.\n'
+    '3️⃣ Выберите «Страна/регион».\n'
+    '4️⃣ Нажмите «Изменить страну или регион».\n'
+    '5️⃣ Выберите нужную страну, например Казахстан или США.\n'
+    '6️⃣ Если потребуется способ оплаты, выберите «Нет», если этот вариант доступен.\n'
+    '7️⃣ Если потребуется адрес, заполните данные выбранной страны.\n\n'
+    'Пример формата полей (значения не проверены как действительный платёжный адрес):\n'
+    '➖ Улица / Адрес: Нур-Султан / 294J+W6\n'
+    '➖ Город: Нур-Султан / Alaska\n'
+    '➖ Регион / Штат: Pavlodar / Аляска\n'
+    '➖ Почтовый индекс: 101000 / 99756\n'
+    '➖ Телефон: 9999999999\n'
+    'Для своего аккаунта используйте действительные адрес и телефон; город, регион и индекс должны соответствовать выбранной стране.\n\n'
+    'Затем снова откройте ссылку App Store в инструкции вашей подписки и попробуйте установить Incy или Happ. '
+    'Меняется регион магазина Apple Account, а не язык или регион iPhone.\n\n'
+    'Смене региона могут мешать остаток средств, подписки Apple или семейный доступ. '
+    'Условия и инструкция Apple: https://support.apple.com/ru-ru/118283'
+)
+
 def boundary_answer(question: str) -> str | None:
     if re.search(r'(?:покажи|раскрой|пришли|выведи|напиши|повтори).*?(?:системн\w* (?:промпт|инструкц)|внутренн\w* инструкц)', question, re.IGNORECASE):
         return 'Внутренние инструкции не раскрываю. Могу помочь с вопросами по SligVPN.'
@@ -76,6 +98,10 @@ def starts_new_topic(question: str, history: list, state: dict) -> bool:
     if is_context_followup(question) or is_channel_followup(question) or re.search(r'\b(?:это|этим|этот|эта|этой|его|её|ее|там|тогда)\b|вс[её] равно', question, re.IGNORECASE):
         return False
     current = conversation_topic(question)
+    if current is None and state.get('issue') in {'payment_missing', 'payment_activation', 'wheel_reward'}:
+        return False
+    if state.get('issue') == 'wheel_reward' and current in {None, 'promocode', 'web_wheel_history'}:
+        return False
     previous = 'payment' if state.get('issue') == 'payment_missing' else next(
         (topic for item in reversed(history) if item.role == 'user' and (topic := conversation_topic(item.content or ''))), None,
     )
@@ -278,10 +304,10 @@ def handoff_answer(reason: str, question: str) -> str:
 def apps_answer(question: str, history: list) -> str | None:
     text = question.casefold()
     previous = ' '.join(getattr(item, 'content', '') or '' for item in history[-4:]).casefold()
-    store_context = bool(re.search(r'app\s*store|апп\s*стор|апстор|эпп\s*стор', text))
+    store_context = bool(re.search(r'app\s*store|апп\s*стор|апстор|эпп\s*стор|iphone|ipad|ios|айфон|айпад', text + ' ' + previous))
     missing = (
         bool(re.search(r'\b(?:happ|incy)\b', text + ' ' + previous))
-        and bool(re.search(r'нет|недоступ|не (?:найти|вижу|отображ|доступ|могу скачать)', text))
+        and bool(re.search(r'нет|недоступ|не (?:найти|вижу|отображ|доступ|могу (?:скачать|установить|найти))|не (?:скачива|устанавлива|наход)|не получается (?:скачать|установить|найти)', text))
         and store_context
     )
     app_request = bool(re.search(r'каки\w* приложени|како\w* (?:приложени|клиент)|что скачать|приложени\w* скачать', text))
@@ -293,30 +319,34 @@ def apps_answer(question: str, history: list) -> str | None:
             'Для подключения этой VPN-подписки на iPhone нужен VPN-клиент. Веб-кабинет не заменяет приложение.\n\n'
             if re.search(r'без приложени|веб.?верси|web.?верси', text) else ''
         )
-        return prefix + (
-            'Если Incy или Happ недоступны в вашем App Store, попробуйте сменить регион Apple Account:\n\n'
-            '1️⃣ Откройте App Store и нажмите на иконку профиля.\n'
-            '2️⃣ Нажмите на своё имя или учётную запись.\n'
-            '3️⃣ Выберите «Страна/регион».\n'
-            '4️⃣ Нажмите «Изменить страну или регион».\n'
-            '5️⃣ Выберите нужную страну, например Казахстан или США.\n'
-            '6️⃣ Если потребуется способ оплаты, выберите «Нет», если этот вариант доступен.\n'
-            '7️⃣ Если потребуется адрес, заполните данные выбранной страны.\n\n'
-            'Пример формата полей (значения не проверены как действительный платёжный адрес):\n'
-            '➖ Улица / Адрес: Нур-Султан / 294J+W6\n'
-            '➖ Город: Нур-Султан / Alaska\n'
-            '➖ Регион / Штат: Pavlodar / Аляска\n'
-            '➖ Почтовый индекс: 101000 / 99756\n'
-            '➖ Телефон: 9999999999\n'
-            'Для своего аккаунта используйте действительные адрес и телефон; город, регион и индекс должны соответствовать выбранной стране.\n\n'
-            'Затем снова откройте ссылку App Store в инструкции вашей подписки и попробуйте установить Incy или Happ. '
-            'Меняется регион магазина Apple Account, а не язык или регион iPhone.\n\n'
-            'Смене региона могут мешать остаток средств, подписки Apple или семейный доступ. '
-            'Условия и инструкция Apple: https://support.apple.com/ru-ru/118283'
-        )
+        return prefix + APP_STORE_REGION_HELP
     patterns = {'Android': r'android|андроид', 'iPhone/iPad': r'iphone|ipad|ios|айфон', 'Windows': r'windows|виндов', 'macOS': r'macos|макбук|mac\b'}
     platforms = [platform for platform, pattern in patterns.items() if re.search(pattern, text)] or list(CLIENTS)
     return '\n'.join(f'{platform}: {", ".join(CLIENTS[platform])}.' for platform in platforms)
+
+
+def wheel_reward_request(question: str, history: list, state: dict) -> bool:
+    text = question.casefold()
+    context = ' '.join(item.content or '' for item in history[-8:]).casefold()
+    wheel = bool(re.search(r'колес|wheel|вращен|выигр|выпал\w*.*(?:код|приз)', text + ' ' + context))
+    reward = bool(re.search(r'промо|промик|\bкод\w*|приз', text + ' ' + context))
+    recovery = bool(re.search(r'не успел|потер|пропал|исчез|скопир|восстанов|скин|пришл|получ|забрать|где.*(?:посмотр|найти|код)|покаж|верн', text))
+    return (wheel and reward and recovery) or (state.get('issue') == 'wheel_reward' and bool(re.search(r'нет|скрин|код|где|пришл|повтор|найти', text)))
+
+
+def paid_access_request(question: str) -> bool:
+    text = question.casefold()
+    paid = bool(re.search(r'оплатил|оплач|заплатил|(?:оплат\w*|плат[её]ж).*(?:произвед|прош[её]л|прошла|соверш)|деньги.*спис', text))
+    access = bool(re.search(r'включ|активир|доступ|не работ|не подключ|не продл|ист[её]к|не обнов|0\s*дн|нет.*подпис', text))
+    installation = bool(re.search(r'установ|скач|app\s*store|апп.?стор', text))
+    return paid and access and not installation and not is_topup_without_renewal(question)
+
+
+def initial_greeting(answer: str, first_reply: bool) -> str:
+    visible = re.sub(r'<[^>]*>', '', answer).lstrip()
+    if first_reply and not re.match(r'здравств|привет|добр(?:ый|ое|ой)\b|hello\b|hi\b', visible, re.IGNORECASE):
+        return 'Здравствуйте!\n\n' + answer
+    return answer
 
 
 def is_payment_missing(question: str) -> bool:

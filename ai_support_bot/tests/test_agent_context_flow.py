@@ -131,7 +131,7 @@ async def test_marker_at_end_triggers_escalation_and_is_stripped(flow):
 
     assert result['escalate'] is True
     assert ESCALATION_MARKER not in result['answer']
-    assert result['answer'] == 'Уточняю этот вопрос, подождите.'
+    assert result['answer'] == 'Здравствуйте!\n\nУточняю этот вопрос, подождите.'
 
 
 @pytest.mark.asyncio
@@ -422,7 +422,7 @@ async def test_duplicate_model_instruction_is_not_sent_twice(flow):
     captured['reply'] = instruction + '\n' + instruction
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'VPN не работает на iPhone в Incy')
-    assert result['answer'] == instruction
+    assert result['answer'] == 'Здравствуйте!\n\n' + instruction
 
 
 @pytest.mark.asyncio
@@ -503,7 +503,7 @@ async def test_payment_statement_answer_overrides_multiple_model_questions(flow)
     ]
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Не пришли деньги. Выписку уже отправил.')
-    assert result['answer'] == 'Где вы оплачивали: на сайте или в Telegram-боте?'
+    assert result['answer'] == 'Здравствуйте!\n\nГде вы оплачивали: на сайте или в Telegram-боте?'
     assert not result['escalate']
 
 
@@ -544,7 +544,7 @@ async def test_technical_issue_does_not_continue_previous_payment_intake(flow):
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'VPN не работает на iPhone в Incy')
         conversation = await agent_mod.crud.get_or_create_conversation(db, 4242)
         assert conversation.support_state == {'issue': 'other'}
-    assert result['answer'] == captured['reply']
+    assert result['answer'] == 'Здравствуйте!\n\n' + captured['reply']
     assert 'регистрировались' not in result['answer']
 
 
@@ -715,7 +715,7 @@ async def test_missing_payment_marker_cannot_escalate_incomplete_intake(flow):
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Не пришли деньги. Выписку уже отправил.')
     assert not result['escalate']
-    assert result['answer'] == 'Где вы оплачивали: на сайте или в Telegram-боте?'
+    assert result['answer'] == 'Здравствуйте!\n\nГде вы оплачивали: на сайте или в Telegram-боте?'
 
 
 @pytest.mark.asyncio
@@ -1007,7 +1007,7 @@ async def test_connected_but_no_traffic_uses_diagnostics_instead_of_navigation(f
             'Здравствуйте! Сейчас есть какие-то проблемы с подключением к vpn? '
             'Не могу с вечера в ТГ зайти. VPN обновляется, подключается, но ничего не открывается')
     assert captured['prompts']
-    assert result['answer'] == captured['reply']
+    assert result['answer'] == 'Здравствуйте!\n\n' + captured['reply']
     assert 'ГЛАВНОЕ МЕНЮ' not in result['answer']
 
 
@@ -1075,3 +1075,244 @@ async def test_summary_request_does_not_hold_sqlite_writer(flow, monkeypatch):
     async with Session() as db:
         result = await agent_mod.support_agent.generate_answer(db, 4242, 'Вопрос по работе нестандартного VPN-клиента')
     assert result['answer']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('question', [
+    'В колесе выиграл промокод, не успел скопировать, можете скинуть?',
+    'Приз из колеса пропал, где найти мой код?',
+    'Потерял промик после вращения, восстановите пожалуйста',
+])
+async def test_wheel_recovery_returns_only_verified_reward_and_skips_navigation(flow, monkeypatch, question):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    read = AsyncMock(return_value={'status': 'ok', 'rewards': [{
+        'code': 'CUSTOM_OWN_CODE', 'won_at': '06.11.2026', 'valid_until': None, 'usable': True,
+    }]})
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', read)
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+    assert 'CUSTOM_OWN_CODE' in result['answer']
+    assert not result['escalate']
+    assert not captured['prompts']
+    read.assert_awaited_once_with(4242, 'wheel', None)
+
+
+@pytest.mark.asyncio
+async def test_wheel_missing_reward_and_no_screenshot_stay_in_recovery(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'ok', 'rewards': []}))
+    for question in ('Выиграл промокод в колесе и потерял его', 'Где посмотреть?', 'Скрина нет'):
+        async with Session() as db:
+            result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+        assert result['escalate']
+        assert 'присылать потерянный код' in result['answer']
+        assert 'ГЛАВНОЕ МЕНЮ' not in result['answer']
+    assert not captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_wheel_semantic_tool_handles_new_wording_and_overrides_hallucination(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    captured['responses'] = [_tool_reply('recover_wheel_rewards', {}), {'content': 'Ваш код RANDOM_FAKE!'}]
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Подарок закрылся прежде, чем я его сохранил')
+    assert result['escalate']
+    assert 'RANDOM_FAKE' not in result['answer']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('question', [
+    'Здравствуйте, включите впн оплата произведена',
+    'Деньги списаны, а подписка истекла. Активируйте доступ',
+    'Заплатила за VPN, но он не работает',
+])
+async def test_paid_but_inactive_access_requests_receipt_not_connect_button(flow, monkeypatch, question):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={
+        'status': 'ok', 'active_paid_subscription': False, 'multiple_subscriptions': False,
+    }))
+    captured['reply'] = 'Нажмите кнопку подключения.'
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+    assert 'чек или выписку' in result['answer']
+    assert 'Нажмите кнопку подключения' not in result['answer']
+    assert not result['escalate']
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'happ')
+    assert 'чек или выписку' in result['answer']
+    assert not result['answer'].startswith('Здравствуйте')
+
+
+@pytest.mark.asyncio
+async def test_active_paid_access_does_not_demand_unnecessary_receipt(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={
+        'status': 'ok', 'active_paid_subscription': True, 'multiple_subscriptions': False,
+    }))
+    captured['reply'] = 'Подписка активна. Попробуйте другой сервер в Happ.'
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатила, но VPN не работает')
+    assert 'другой сервер' in result['answer']
+    assert 'чек' not in result['answer']
+
+
+@pytest.mark.asyncio
+async def test_receipt_for_paid_access_is_not_requested_twice(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатила, включите впн')
+    captured['responses'] = [
+        _tool_reply('save_support_details', {'receipt_reported': True, 'purchase_channel': 'telegram'}),
+        {'content': 'Пришлите ещё один чек.'},
+    ]
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Вот чек, платила в боте', image_url='https://example.invalid/receipt')
+    assert result['escalate']
+    assert 'чек' not in result['answer']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('question', [
+    'Не могу установить на айфон INCY но подписка оплачена',
+    'На iPhone не получается скачать Happ',
+    'Incy не устанавливается на iOS',
+])
+async def test_ios_installation_keeps_full_instructions_without_payment_intake(flow, monkeypatch, question):
+    from ai_support_bot.app.services import dialogue_tools
+    _, agent_mod, Session = flow
+    read = AsyncMock()
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', read)
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+    assert '1️⃣' in result['answer'] and '7️⃣' in result['answer']
+    assert 'Казахстан' in result['answer'] and 'США' in result['answer']
+    assert '294J+W6' in result['answer'] and '9999999999' in result['answer']
+    assert 'чек' not in result['answer']
+    read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_region_help_tool_preserves_full_text_for_image_request(flow):
+    captured, agent_mod, Session = flow
+    captured['responses'] = [_tool_reply('app_store_region_help', {}), {'content': 'Выберите другую страну.'}]
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'В магазине пишет вот это', image_url='https://example.invalid/image')
+    assert '294J+W6' in result['answer'] and '7️⃣' in result['answer']
+    assert not result['escalate']
+
+
+@pytest.mark.asyncio
+async def test_greeting_added_once_for_navigation_and_not_on_topic_switch(flow):
+    _, agent_mod, Session = flow
+    async with Session() as db:
+        first = await agent_mod.support_agent.generate_answer(db, 4242, 'Как продлить подписку?')
+    async with Session() as db:
+        second = await agent_mod.support_agent.generate_answer(db, 4242, 'Какие приложения для Android?')
+    assert first['answer'].startswith('Здравствуйте!\n\n')
+    assert 'Подписка' in first['answer']
+    assert not second['answer'].startswith('Здравствуйте')
+
+
+@pytest.mark.asyncio
+async def test_greeting_returns_after_day_without_losing_case_context(flow):
+    from datetime import UTC, datetime, timedelta
+    _, agent_mod, Session = flow
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4242, 'Как продлить подписку?')
+        await db.execute(text("UPDATE messages SET created_at = :old WHERE role = 'assistant'"),
+                         {'old': (datetime.now(UTC) - timedelta(days=2)).isoformat()})
+        await db.commit()
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как продлить подписку?')
+    assert result['answer'].startswith('Здравствуйте!\n\n')
+
+
+@pytest.mark.asyncio
+async def test_semantic_paid_access_tool_checks_arbitrary_wording(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    captured['responses'] = [_tool_reply('check_paid_access', {}), {'content': 'Просто включите приложение.'}]
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Заказ завершён, а услуга всё ещё не появилась')
+    assert 'чек или выписку' in result['answer']
+
+
+@pytest.mark.asyncio
+async def test_paid_access_multiple_subscriptions_do_not_loop_before_handoff(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={
+        'status': 'ok', 'active_paid_subscription': False, 'multiple_subscriptions': True,
+    }))
+    async with Session() as db:
+        first = await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите впн')
+    assert 'чек или выписку' in first['answer']
+    captured['responses'] = [_tool_reply('save_support_details', {'receipt_reported': True, 'purchase_channel': 'telegram'}),
+                             {'content': 'Для какой подписки?'}]
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Вот чек оплаты в боте')
+    assert result['escalate']
+
+
+@pytest.mark.asyncio
+async def test_wheel_request_with_foreign_email_keeps_account_scope(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    _, agent_mod, Session = flow
+    read = AsyncMock(return_value={'status': 'unverified'})
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', read)
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Восстановите промокод из колеса, аккаунт stranger@example.com')
+    read.assert_awaited_once_with(4242, 'wheel', 'stranger@example.com')
+    assert result['escalate']
+
+
+@pytest.mark.asyncio
+async def test_cannot_provide_receipt_for_paid_access_hands_off(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    _, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите VPN')
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Нет чека')
+    assert result['escalate']
+    assert result['escalation_reason'] == 'payment_review'
+
+
+@pytest.mark.asyncio
+async def test_paid_access_short_question_keeps_case_and_receipt_request(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    _, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    async with Session() as db:
+        await agent_mod.support_agent.generate_answer(db, 4242, 'Оплатил, включите VPN')
+        original = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        original_id = original.id
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как включить?')
+        current = await agent_mod.crud.get_or_create_conversation(db, 4242)
+    assert current.id == original_id
+    assert 'чек или выписку' in result['answer']
+
+
+@pytest.mark.asyncio
+async def test_semantic_reward_classification_always_reads_verified_prize(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    read = AsyncMock(return_value={'status': 'ok', 'rewards': []})
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', read)
+    captured['responses'] = [_tool_reply('save_support_details', {'issue': 'wheel_reward'}),
+                             {'content': 'Скопируйте выдуманный код FAKE.'}]
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Тот подарок исчез раньше, чем я его сохранил')
+    assert result['escalate'] and 'FAKE' not in result['answer']
+    read.assert_awaited_once()

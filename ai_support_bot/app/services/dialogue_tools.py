@@ -1,17 +1,18 @@
 import json
 import re
 
-from ai_support_bot.app.services.response_rules import is_payment_missing
+from ai_support_bot.app.services.account_support import read_account_support
+from ai_support_bot.app.services.response_rules import APP_STORE_REGION_HELP, is_payment_missing
 from ai_support_bot.app.services.user_data import build_user_context
 
 
 _EMAIL_RE = re.compile(r'[A-Z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+', re.IGNORECASE)
 _ENUMS = {
-    'issue': {'payment_missing', 'other', 'resolved'},
+    'issue': {'payment_missing', 'payment_activation', 'wheel_reward', 'other', 'resolved'},
     'purchase_channel': {'site', 'telegram', 'unknown'},
     'registration_method': {'email', 'telegram', 'other', 'unknown'},
 }
-_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason'}
+_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason', '_wheel_result', '_access_result', '_store_help'}
 
 
 def extract_reported_email(text: str) -> str | None:
@@ -55,6 +56,30 @@ def extract_registration_method(text: str, history: list) -> str | None:
     return None
 
 SUPPORT_TOOLS = [
+    {
+        'type': 'function',
+        'function': {
+            'name': 'app_store_region_help',
+            'description': 'Полная утверждённая инструкция смены региона App Store с примерами полей. Для недоступных Incy/Happ на iPhone/iPad, включая скриншоты и любые формулировки. Не сокращай и не заменяй списком клиентов.',
+            'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'recover_wheel_rewards',
+            'description': 'Прочитай личные промокоды, выигранные текущим пользователем в колесе. Используй при потере кода, просьбе вернуть/показать приз, если не успел скопировать. Не нужны код, скриншот или префикс. Не выпускает новых кодов и не ищет чужие.',
+            'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'check_paid_access',
+            'description': 'Проверь доступ по подписке, когда пользователь сообщает об оплате, но просит включить/активировать VPN, срок не обновился или доступ не появился. Отдельно от проблем установки приложения и обычного пополнения баланса. При неподтверждённом доступе нужен чек для проверки, не повторная оплата.',
+            'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+        },
+    },
     {
         'type': 'function',
         'function': {
@@ -116,6 +141,19 @@ async def execute_support_tool(name: str, raw_arguments: str, telegram_id: int, 
         return {'error': 'Некорректный JSON аргументов.'}
     if not isinstance(args, dict):
         return {'error': 'Ожидался объект аргументов.'}
+    if name == 'app_store_region_help':
+        if args:
+            return {'error': 'Параметры не нужны.'}
+        state['_store_help'] = True
+        return {'instruction': APP_STORE_REGION_HELP}
+    if name in {'recover_wheel_rewards', 'check_paid_access'}:
+        if args:
+            return {'error': 'Параметры не нужны: разрешён только текущий аккаунт.'}
+        wheel = name == 'recover_wheel_rewards'
+        result = await read_account_support(telegram_id, 'wheel' if wheel else 'access', state.get('email'))
+        state['issue'] = 'wheel_reward' if wheel else 'payment_activation'
+        state['_wheel_result' if wheel else '_access_result'] = result
+        return result
     if name == 'save_support_details':
         allowed = {*_ENUMS, 'email', 'receipt_reported', 'new_case'}
         if args.keys() - allowed:

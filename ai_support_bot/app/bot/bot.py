@@ -341,6 +341,8 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
             'subscription_cancellation': 'запрос на отмену подписки или автоматических списаний',
             'unrecognized_charge': 'пользователь сообщает о незнакомых списаниях без подключения услуги',
             'diagnostics_failed': 'диагностика не помогла, требуется ручная проверка',
+            'wheel_reward_review': 'не удалось подтвердить доступный личный промокод из колеса',
+            'payment_review': 'требуется ручная проверка оплаты и доступа по подписке',
         }.get(result.get('escalation_reason'), reason)
         notify_text = (
             '⚠️ <b>Внимание: Обращение требует внимания оператора!</b>\n\n'

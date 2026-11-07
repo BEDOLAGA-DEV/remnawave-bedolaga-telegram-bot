@@ -154,7 +154,7 @@ async def test_lite_inline_controls_do_not_require_full_settings(node_id, compon
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('query', [
-    'Где на сайте найти выигранный код колеса?',
+    'Где на сайте посмотреть последние вращения колеса?',
     'Как продлить подписку на сайте?',
     'Как изменить email на сайте?',
     'Где пополнить баланс на сайте?',
@@ -175,3 +175,15 @@ async def test_public_navigation_never_copies_internal_hints(query, monkeypatch)
     assert 'INTERNAL_ONLY' not in answer
     assert 'не обещай' not in answer
     assert 'не предлагай' not in answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('query', [
+    'Как вернуть награду за вращение?',
+    'Где на сайте найти выигранный код колеса?',
+    'Где получить мой промокод?',
+    'Как использовать промокод, который потерял?',
+])
+async def test_personal_reward_requests_are_not_replaced_with_menu_shortcuts(query):
+    from ai_support_bot.app.navigation import tool
+    assert await tool.answer_request(query) is None

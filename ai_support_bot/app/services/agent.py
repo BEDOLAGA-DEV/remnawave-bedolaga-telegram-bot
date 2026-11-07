@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import time
+from datetime import UTC, datetime, timedelta
 from weakref import WeakValueDictionary
 
 import structlog
@@ -12,6 +13,7 @@ from ai_support_bot.app.db import crud
 from ai_support_bot.app.navigation import tool as navigation_tool
 from ai_support_bot.app.navigation.query import contextual_navigation_query, is_context_followup
 from ai_support_bot.app.services import settings_store
+from ai_support_bot.app.services.account_support import wheel_reward_answer
 from ai_support_bot.app.services.dialogue_tools import (
     SUPPORT_TOOLS,
     capture_payment_details,
@@ -25,6 +27,7 @@ from ai_support_bot.app.services.knowledge_parser import compute_content_hash
 from ai_support_bot.app.services.openai_client import openai_client
 from ai_support_bot.app.services.rag_service import rag_service
 from ai_support_bot.app.services.response_rules import (
+    APP_STORE_REGION_HELP,
     HAPP_RECOVERY,
     NOTICE,
     apps_answer,
@@ -34,11 +37,13 @@ from ai_support_bot.app.services.response_rules import (
     deduplicate_answer,
     handoff_answer,
     happ_recovery_step,
+    initial_greeting,
     is_payment_missing,
     is_topup_without_renewal,
     keeps_account_scope,
     mandatory_handoff,
     manual_review_followup,
+    paid_access_request,
     payment_next_step,
     repeated_diagnostics,
     smalltalk_answer,
@@ -47,6 +52,7 @@ from ai_support_bot.app.services.response_rules import (
     subscription_restricted,
     topic_switch_question,
     unsupported_price,
+    wheel_reward_request,
 )
 from ai_support_bot.app.services.service_catalog import build_service_catalog, build_user_offers
 from ai_support_bot.app.services.summary_service import summary_service
@@ -377,6 +383,13 @@ class SupportAgent:
 
         context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 8
         history = await crud.get_conversation_context(db, conversation.id, context_limit)
+        first_reply = not summary and not conversation.user_turns_since_summary and not any(item.role == 'assistant' for item in history)
+        last_reply = next((item for item in reversed(history) if item.role == 'assistant'), None)
+        if last_reply and last_reply.created_at:
+            replied_at = last_reply.created_at
+            if replied_at.tzinfo is None:
+                replied_at = replied_at.replace(tzinfo=UTC)
+            first_reply = first_reply or datetime.now(UTC) - replied_at >= timedelta(days=1)
         switched_question = topic_switch_question(question)
         if switched_question is not None or starts_new_topic(question, history, support_state):
             conversation = await crud.start_conversation(db, telegram_id)
@@ -405,13 +418,28 @@ class SupportAgent:
             elif recovery_reason:
                 forced_reason = recovery_reason
         direct_answer = recovery_answer or (None if forced_reason or image_url else boundary_answer(question) or apps_answer(question, history))
+        if direct_answer and support_state.get('issue') == 'payment_activation':
+            support_state = {'issue': 'other'}
+        if not forced_reason and wheel_reward_request(question, history, support_state):
+            if scope_email := extract_reported_email(question):
+                support_state['email'] = scope_email
+            await execute_support_tool('recover_wheel_rewards', '{}', telegram_id, support_state, question)
+            direct_answer, handoff = wheel_reward_answer(support_state['_wheel_result'])
+            if handoff:
+                forced_reason = 'wheel_reward_review'
+        if not forced_reason and not direct_answer and not smalltalk and (
+            paid_access_request(question) or support_state.get('issue') == 'payment_activation'
+        ):
+            if scope_email := extract_reported_email(question):
+                support_state['email'] = scope_email
+            await execute_support_tool('check_paid_access', '{}', telegram_id, support_state, question)
         if switched_question == '' and not image_url:
             direct_answer = 'Напишите ваш новый вопрос.'
         if smalltalk and not forced_reason and not direct_answer:
             direct_answer = smalltalk_answer(question)
         if not forced_reason and image_url and not settings_store.get_bool('VISION_ENABLED') and not question.strip():
             direct_answer = 'Анализ изображений сейчас отключён. Опишите, что показано на фото, и какую проблему нужно решить.'
-        if not forced_reason and not direct_answer and not image_url and not is_payment_missing(question) and settings_store.get_bool('NAVIGATION_ENABLED'):
+        if not forced_reason and not direct_answer and not image_url and not is_payment_missing(question) and support_state.get('issue') not in {'payment_activation', 'wheel_reward'} and settings_store.get_bool('NAVIGATION_ENABLED'):
             nav_query = build_nav_query(question, history, summary)
             if is_topup_without_renewal(question):
                 surface = navigation_tool.resolve_surface(nav_query)
@@ -431,7 +459,7 @@ class SupportAgent:
                 pending_email = support_state.get('email')
                 support_state = {'issue': 'payment_missing', **({'email': pending_email} if pending_email else {})}
             smalltalk = False
-        elif (direct_answer or starts_technical_issue(question)) and (support_state.get('issue') == 'payment_missing' or support_state.get('email') or support_state.get('attachment_file_id')):
+        elif (direct_answer or starts_technical_issue(question)) and (support_state.get('issue') == 'payment_missing' or support_state.get('email') or support_state.get('attachment_file_id')) and not support_state.keys() & {'_wheel_result', '_access_result'}:
             support_state = {'issue': 'other'}
         if forced_reason == 'partnership':
             support_state = {'issue': 'other'}
@@ -439,7 +467,7 @@ class SupportAgent:
             support_state['diagnostics'] = recovery_state['diagnostics']
         if forced_reason in {'subscription_cancellation', 'unrecognized_charge'}:
             support_state['manual_review_reason'] = forced_reason
-        if support_state.get('issue') == 'payment_missing':
+        if support_state.get('issue') in {'payment_missing', 'payment_activation'}:
             capture_payment_details(question, support_state)
             if all(support_state.get(key) for key in ('payment_amount', 'payment_time', 'payment_operation_id')):
                 if supplied_email := extract_reported_email(question):
@@ -448,7 +476,7 @@ class SupportAgent:
                 direct_answer = None
 
         registration_refresh = None
-        if support_state.get('issue') == 'payment_missing' and not forced_reason and not direct_answer:
+        if support_state.get('issue') in {'payment_missing', 'payment_activation'} and not forced_reason and not direct_answer:
             if cannot_provide_payment_details(question, history):
                 forced_reason = 'payment_review'
             elif support_state.get('purchase_channel') == 'site':
@@ -461,14 +489,14 @@ class SupportAgent:
                     registration_refresh = saved.get('refresh', {}).get('account_data')
 
         reported_email = extract_reported_email(question)
-        if support_state.get('issue') != 'payment_missing' and support_state.get('email') and not reported_email and not keeps_account_scope(question):
+        if support_state.get('issue') not in {'payment_missing', 'payment_activation', 'wheel_reward'} and support_state.get('email') and not reported_email and not keeps_account_scope(question):
             support_state = {'issue': 'other'}
         email = reported_email or support_state.get('email')
         user_context = ''
         if not smalltalk and not forced_reason and not direct_answer:
             user_context = registration_refresh or (await build_user_context(telegram_id, email=email) if email else await build_user_context(telegram_id))
         if email and ('Нет подтверждённой связи' in user_context or 'не подтверждены' in user_context):
-            if support_state.get('issue') == 'payment_missing':
+            if support_state.get('issue') in {'payment_missing', 'payment_activation'}:
                 support_state['email'] = email
                 if payment_next_step(support_state)[1]:
                     forced_reason = 'payment_review'
@@ -568,6 +596,28 @@ class SupportAgent:
                 _response_cache.set(cache_key, answer_text)
 
         escalate = has_escalation_marker(answer_text)
+        if not forced_reason and support_state.get('_store_help'):
+            answer_text, escalate = APP_STORE_REGION_HELP, False
+            support_state['issue'] = 'other'
+        if not forced_reason and not smalltalk and support_state.get('issue') == 'wheel_reward' and '_wheel_result' not in support_state:
+            await execute_support_tool('recover_wheel_rewards', '{}', telegram_id, support_state, question)
+        if not forced_reason and '_wheel_result' in support_state:
+            answer_text, escalate = wheel_reward_answer(support_state['_wheel_result'])
+            escalation_reason = 'wheel_reward_review' if escalate else None
+            if escalate:
+                forced_reason = escalation_reason
+        if not forced_reason and not smalltalk and support_state.get('issue') == 'payment_activation':
+            access = support_state.get('_access_result')
+            if access is None:
+                await execute_support_tool('check_paid_access', '{}', telegram_id, support_state, question)
+                access = support_state['_access_result']
+            if not access.get('active_paid_subscription') and not escalate:
+                if support_state.get('receipt_reported'):
+                    answer_text, escalate = payment_next_step(support_state)
+                else:
+                    answer_text = ('Проверяю доступ после оплаты. Пришлите чек или выписку по этой операции, '
+                                   'где видны сумма, время и идентификатор платежа. '
+                                   'Данные карты и остальные операции можно скрыть. Повторно оплачивать не нужно.')
         if not forced_reason and not direct_answer and support_state.get('issue') == 'payment_missing':
             answer_text, escalate = payment_next_step(support_state)
         answer_text = deduplicate_answer(strip_escalation_marker(answer_text))
@@ -599,6 +649,7 @@ class SupportAgent:
         if not re.sub(r'<[^>]*>', '', answer_text).strip():
             answer_text = NOTICE
             escalate = True
+        answer_text = initial_greeting(answer_text, first_reply)
         user_message = await crud.add_message(
             db,
             conversation_id=conversation.id,
@@ -613,6 +664,9 @@ class SupportAgent:
         if media_file_id:
             support_state['attachment_message_id'] = user_message.id
             support_state.pop('attachment_file_id', None)
+        support_state.pop('_wheel_result', None)
+        support_state.pop('_access_result', None)
+        support_state.pop('_store_help', None)
         conversation.support_state = dict(support_state)
         support_photo = await crud.get_support_photo(db, conversation.id, telegram_id, support_state) if escalate else None
         support_photos = await crud.get_support_photos(db, conversation.id, telegram_id, support_state) if escalate else []
