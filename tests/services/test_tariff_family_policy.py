@@ -292,3 +292,28 @@ def test_family_purchase_defers_each_product_and_ledger_commit(path, handler, ca
             assert commit_controls and any('family_atomic' in control for control in commit_controls), (
                 f'{path}: {callee} не передаёт commit=False для family_atomic'
             )
+
+
+
+def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
+    """Внешняя оплата не должна автоматически создавать второй Main."""
+    source = (
+        Path(__file__).resolve().parents[2] / 'app/services/guest_purchase_service.py'
+    ).read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    functions = {
+        node.name: ast.get_source_segment(source, node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name in {'fulfill_purchase', 'activate_purchase'}
+    }
+    fulfill = functions['fulfill_purchase']
+    activate = functions['activate_purchase']
+    assert fulfill.index('find_live_entitlement_family_conflict') < fulfill.index(
+        'GuestPurchaseStatus.PENDING_ACTIVATION'
+    )
+    assert 'family_conflict is not None' in fulfill
+    assert activate.index('require_available_entitlement_family') < activate.index(
+        'create_paid_subscription('
+    )
+    assert "'An active subscription in this family already exists; switch its tariff instead'" in activate
