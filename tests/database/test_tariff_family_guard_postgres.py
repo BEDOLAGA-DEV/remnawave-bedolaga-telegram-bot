@@ -153,7 +153,6 @@ async def test_family_conflict_undoes_wallet_charge_in_same_transaction(postgres
         assert [item.tariff_id for item in stored_subscriptions] == [basic_id]
 
 
-
 async def test_guard_migration_0142_installs_xor_on_existing_database(postgres_database):
     """Upgrade 0142 must enforce Main XOR, not only Base.metadata.create_all."""
     migration = _load('0142_guard_active_entitlement_family.py')
