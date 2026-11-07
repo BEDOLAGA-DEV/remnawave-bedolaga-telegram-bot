@@ -306,3 +306,39 @@ def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
     assert 'family_conflict is not None' in fulfill
     assert activate.index('require_available_entitlement_family') < activate.index('create_paid_subscription(')
     assert "'An active subscription in this family already exists; switch its tariff instead'" in activate
+
+
+
+def test_daily_telegram_purchase_checks_family_before_wallet_debit():
+    """Прямой суточный checkout проверяет семейство после User lock, до списания.
+
+    Это структурная защита entrypoint; поведение policy и откат проверены
+    отдельно SQLite/PostgreSQL-тестами.
+    """
+    source = (Path(__file__).resolve().parents[2] / 'app/handlers/subscription/tariff_purchase.py').read_text(
+        encoding='utf-8'
+    )
+    tree = ast.parse(source)
+    handler = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == 'confirm_daily_tariff_purchase'
+    )
+
+    def call_named(name):
+        return next(
+            node
+            for node in ast.walk(handler)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
+        )
+
+    user_lock = call_named('lock_user_for_pricing')
+    guard = call_named('require_available_entitlement_family')
+    debit = call_named('subtract_user_balance')
+    assert user_lock.lineno < guard.lineno < debit.lineno
+    assert 'conversion_trial_id' in {keyword.arg for keyword in guard.keywords}
+    assert 'current_subscription_id' in {keyword.arg for keyword in guard.keywords}
+    handler_source = ast.get_source_segment(source, handler)
+    assert 'settings.is_multi_tariff_enabled()' in handler_source
+    assert 'except ActiveTariffFamilyConflict:' in handler_source
+    assert "'TARIFF_FAMILY_CONFLICT'" in handler_source
