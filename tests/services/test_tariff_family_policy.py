@@ -463,6 +463,7 @@ async def test_instant_switch_rejects_family_conflict_before_debit(monkeypatch):
         message=SimpleNamespace(edit_text=AsyncMock()),
     )
     db = AsyncMock()
+    db.scalar = AsyncMock(return_value=subscription)
     monkeypatch.setattr(handlers, 'get_tariff_by_id', AsyncMock(return_value=new_tariff))
     monkeypatch.setattr(handlers, '_resolve_switch_subscription', AsyncMock(return_value=(subscription, 101)))
     monkeypatch.setattr(user_crud, 'lock_user_for_pricing', AsyncMock(return_value=user))
