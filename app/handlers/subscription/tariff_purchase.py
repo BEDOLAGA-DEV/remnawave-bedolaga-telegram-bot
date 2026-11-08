@@ -4366,6 +4366,27 @@ async def confirm_daily_tariff_switch(
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
+    family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(tariff, 'entitlement_family', None))
+    if family_atomic:
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=db_user.id,
+                tariff_id=tariff.id,
+                current_subscription_id=subscription.id,
+            )
+        except ActiveTariffFamilyConflict:
+            await callback.answer(
+                texts.t('TARIFF_FAMILY_CONFLICT', '❌ У вас уже есть подписка этой группы. Смените её тариф.'),
+                show_alert=True,
+            )
+            return
+
     # Проверяем разрешение на смену в данном направлении
     if subscription.tariff_id and subscription.tariff_id != tariff_id:
         cur_tariff_daily = await get_tariff_by_id(db, subscription.tariff_id)
@@ -4407,15 +4428,19 @@ async def confirm_daily_tariff_switch(
     except Exception:
         pass
 
+    payment_description = f'Смена на суточный тариф {tariff.name} (первый день)'
+    family_committed = False
+
     try:
         # Списываем первый день сразу
         success = await subtract_user_balance(
             db,
             db_user,
             final_daily_price,
-            f'Смена на суточный тариф {tariff.name} (первый день)',
+            payment_description,
             consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
+            commit=not family_atomic,
         )
         if not success:
             try:
@@ -4462,8 +4487,31 @@ async def confirm_daily_tariff_switch(
         if reset_used_traffic:
             subscription.traffic_used_gb = 0.0
 
+        family_transaction = None
+        if family_atomic:
+            family_transaction = await create_transaction(
+                db,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=final_daily_price,
+                description=payment_description,
+                commit=False,
+            )
         await db.commit()
+        family_committed = family_atomic
         await db.refresh(subscription)
+
+        if family_transaction is not None:
+            from app.database.crud.transaction import emit_transaction_side_effects
+
+            await emit_transaction_side_effects(
+                db,
+                family_transaction,
+                amount_kopeks=final_daily_price,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                description=payment_description,
+            )
 
         # Обновляем пользователя в Remnawave (сброс трафика по админ-настройке)
         try:
@@ -4527,14 +4575,15 @@ async def confirm_daily_tariff_switch(
             except Exception as e:
                 logger.error('Ошибка сброса устройств при смене тарифа', error=e)
 
-        # Создаем транзакцию
-        await create_transaction(
-            db,
-            user_id=db_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_daily_price,
-            description=f'Смена на суточный тариф {tariff.name} (первый день)',
-        )
+        # Legacy-ветка сохраняет прежний порядок финансовых событий.
+        if not family_atomic:
+            await create_transaction(
+                db,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                amount_kopeks=final_daily_price,
+                description=payment_description,
+            )
 
         # Отправляем уведомление админу
         try:
@@ -4591,34 +4640,43 @@ async def confirm_daily_tariff_switch(
     except Exception as e:
         logger.error('Ошибка при смене на суточный тариф', error=e, exc_info=True)
         await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            refund_success = await add_user_balance(
-                db,
-                db_user,
-                final_daily_price,
-                'Возврат: ошибка смены на суточный тариф',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-                commit=False,
-            )
-            if not refund_success:
-                await _persist_failed_refund(
-                    user_id=db_user.id,
-                    amount_kopeks=final_daily_price,
-                    reason='Возврат: ошибка смены на суточный тариф',
-                    error=Exception('add_user_balance returned False'),
-                )
-            await db.commit()
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: не удалось вернуть средства после ошибки смены на суточный тариф',
+        if family_atomic and family_committed:
+            logger.warning(
+                'Daily family switch committed; post-commit failure must not trigger a refund',
                 user_id=db_user.id,
-                price_kopeks=final_daily_price,
-                refund_error=refund_error,
+                subscription_id=subscription.id,
             )
+            return
+        # Только legacy-ветка могла зафиксировать списание раньше подписки.
+        if not family_atomic:
+            # Compensating refund: balance was already committed by subtract_user_balance
+            try:
+                from app.database.crud.user import add_user_balance
+
+                refund_success = await add_user_balance(
+                    db,
+                    db_user,
+                    final_daily_price,
+                    'Возврат: ошибка смены на суточный тариф',
+                    create_transaction=True,
+                    transaction_type=TransactionType.REFUND,
+                    commit=False,
+                )
+                if not refund_success:
+                    await _persist_failed_refund(
+                        user_id=db_user.id,
+                        amount_kopeks=final_daily_price,
+                        reason='Возврат: ошибка смены на суточный тариф',
+                        error=Exception('add_user_balance returned False'),
+                    )
+                await db.commit()
+            except Exception as refund_error:
+                logger.critical(
+                    'CRITICAL: не удалось вернуть средства после ошибки смены на суточный тариф',
+                    user_id=db_user.id,
+                    price_kopeks=final_daily_price,
+                    refund_error=refund_error,
+                )
         try:
             await callback.message.edit_text(
                 texts.t('TARIFF_SWITCH_ERROR', '❌ Произошла ошибка при переключении тарифа')
