@@ -429,7 +429,8 @@ def test_daily_switch_family_wallet_and_subscription_commit_atomically():
     resolver = call_named('_resolve_switch_subscription')
     guard = call_named('require_available_entitlement_family')
     locked_read = next(
-        node for node in ast.walk(handler)
+        node
+        for node in ast.walk(handler)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == 'scalar'
@@ -607,13 +608,15 @@ def test_instant_switch_reloads_source_under_lock_before_family_policy():
     )
     tree = ast.parse(source)
     handler = next(
-        node for node in ast.walk(tree)
+        node
+        for node in ast.walk(tree)
         if isinstance(node, ast.AsyncFunctionDef) and node.name == 'confirm_instant_switch'
     )
 
     def call_named(name):
         return next(
-            node for node in ast.walk(handler)
+            node
+            for node in ast.walk(handler)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
         )
 
@@ -621,7 +624,8 @@ def test_instant_switch_reloads_source_under_lock_before_family_policy():
     resolver = call_named('_resolve_switch_subscription')
     guard = call_named('require_available_entitlement_family')
     locked_read = next(
-        node for node in ast.walk(handler)
+        node
+        for node in ast.walk(handler)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == 'scalar'
