@@ -300,6 +300,9 @@ def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
     }
     fulfill = functions['fulfill_purchase']
     activate = functions['activate_purchase']
+    assert fulfill.index('await lock_user_for_pricing(db, user.id)') < fulfill.index(
+        'find_live_entitlement_family_conflict'
+    )
     assert fulfill.index('find_live_entitlement_family_conflict') < fulfill.index(
         'GuestPurchaseStatus.PENDING_ACTIVATION'
     )
