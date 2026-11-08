@@ -441,6 +441,7 @@ def test_daily_switch_family_wallet_and_subscription_commit_atomically():
     assert 'family_atomic' in ast.unparse(debit_control)
     assert ast.unparse(ledger_control) == 'False'
 
+
 @pytest.mark.asyncio
 async def test_instant_switch_rejects_family_conflict_before_debit(monkeypatch):
     """Мгновенное переключение на занятую Main-семью отказывает до списания."""
