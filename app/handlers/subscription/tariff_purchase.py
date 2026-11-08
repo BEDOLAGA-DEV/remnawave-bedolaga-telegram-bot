@@ -4386,6 +4386,23 @@ async def confirm_daily_tariff_switch(
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
+    # Refresh the selected FROM subscription after taking the User lock.
+    # Panel hooks may update its status/period independently of wallet operations.
+    from sqlalchemy.orm import selectinload
+
+    from app.database.models import Subscription
+
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(Subscription.id == subscription.id, Subscription.user_id == db_user.id)
+        .options(selectinload(Subscription.tariff))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if subscription is None:
+        await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+        return
+
     family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(tariff, 'entitlement_family', None))
     if family_atomic:
         from app.services.tariff_family_policy import (
