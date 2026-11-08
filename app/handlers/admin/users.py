@@ -6549,6 +6549,38 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
         )
         return
 
+    family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(tariff, 'entitlement_family', None))
+    if family_atomic:
+        from app.database.crud.subscription import resolve_trial_conversion_candidate
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        conversion = (
+            await resolve_trial_conversion_candidate(db, target_user.id, tariff.id)
+            if existing_subscription is None or existing_subscription.is_trial
+            else None
+        )
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=target_user.id,
+                tariff_id=tariff.id,
+                current_subscription_id=(
+                    existing_subscription.id
+                    if existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+                    else None
+                ),
+                conversion_trial_id=conversion.id if conversion is not None else None,
+            )
+        except ActiveTariffFamilyConflict:
+            await callback.answer(
+                texts.t('TARIFF_FAMILY_CONFLICT', '❌ У вас уже есть подписка этой группы. Смените её тариф.'),
+                show_alert=True,
+            )
+            return
+
     try:
         from app.database.crud.subscription import (
             create_paid_subscription,
@@ -6566,7 +6598,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             price_kopeks,
             f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
             mark_as_paid_subscription=True,
-            commit=not managed_purchase,
+            commit=not (managed_purchase or family_atomic),
         )
 
         if not success:
@@ -6597,7 +6629,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 connected_squads=squads,
                 paid_traffic_reset=False,
                 reset_used_traffic=reset_traffic,
-                commit=not managed_purchase,
+                commit=not (managed_purchase or family_atomic),
             )
         else:
             # Создаем новую подписку
@@ -6609,6 +6641,7 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
                 device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
+                commit=not (managed_purchase or family_atomic),
             )
 
         # Создаем транзакцию
@@ -6618,10 +6651,10 @@ async def admin_buy_tariff_execute(callback: types.CallbackQuery, db_user: User,
             type=TransactionType.SUBSCRIPTION_PAYMENT,
             amount_kopeks=price_kopeks,
             description=f'Покупка тарифа {tariff.name} на {period} дней (администратор)',
-            commit=not managed_purchase,
+            commit=not (managed_purchase or family_atomic),
         )
 
-        if managed_purchase:
+        if managed_purchase or family_atomic:
             await db.commit()
             from app.database.crud.transaction import emit_transaction_side_effects
 

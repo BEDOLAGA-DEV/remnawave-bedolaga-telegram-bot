@@ -196,9 +196,18 @@ async def test_instant_confirm_refuses_free_source_and_never_charges(monkeypatch
     charge = AsyncMock()
     monkeypatch.setattr(tp, 'subtract_user_balance', charge)
 
-    callback = _mk_callback(f'instant_sw_confirm:{PAID_TARIFF.id}')
-    await tp.confirm_instant_switch(callback, db_user, AsyncMock(), _mk_state())
+    # The resolver may have seen a paid subscription before acquiring the
+    # row lock. The confirmation must use the refreshed free source instead.
+    cached_sub = _free_sub()
+    cached_sub.tariff_id = PAID_TARIFF.id
+    tp._resolve_switch_subscription.return_value = (cached_sub, cached_sub.id)
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=_free_sub())
 
+    callback = _mk_callback(f'instant_sw_confirm:{PAID_TARIFF.id}')
+    await tp.confirm_instant_switch(callback, db_user, db, _mk_state())
+
+    db.scalar.assert_awaited_once()
     switch_list.assert_awaited_once()
     charge.assert_not_called()
 

@@ -495,7 +495,7 @@ async def fulfill_purchase(
         # or promo codes may have altered the price at purchase time. The amount
         # was validated server-side in validate_and_calculate() and the payment
         # provider confirmed the charged amount.
-        expected_price = tariff.get_price_for_period(purchase.period_days)
+        expected_price = tariff.get_purchasable_price_for_period(purchase.period_days)
         if expected_price is None:
             logger.error(
                 'Price no longer configured for period — aborting fulfillment',
@@ -506,6 +506,18 @@ async def fulfill_purchase(
             purchase.status = GuestPurchaseStatus.FAILED.value
             await db.commit()
             return purchase
+
+        # A paid guest purchase must hold the same User row lock as wallet-based
+        # checkouts before reading live family entitlements. Otherwise two
+        # concurrent purchases can both pass the preflight before the DB trigger.
+        if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+            from app.database.crud.user import lock_user_for_pricing
+
+            # _find_or_create_user may have changed credentials or verification
+            # on this existing account. Lock helper uses populate_existing=True,
+            # so flush first: refresh must not erase uncommitted account changes.
+            await db.flush()
+            user = await lock_user_for_pricing(db, user.id)
 
         # Check if user already has a subscription
         if settings.is_multi_tariff_enabled():
@@ -518,8 +530,19 @@ async def fulfill_purchase(
             )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
-        if existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift):
-            # Active subscription or gift with any existing subscription — hold for manual activation
+
+        # Деньги уже поступили через внешний шлюз: нельзя пытаться выдать
+        # второй Main и падать на DB-триггере. Сохраняем оплаченную покупку
+        # в PENDING_ACTIVATION для явной смены/продления без повторной оплаты.
+        family_conflict = None
+        if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+            from app.services.tariff_family_policy import find_live_entitlement_family_conflict
+
+            family_conflict = await find_live_entitlement_family_conflict(db, user_id=user.id, tariff_id=tariff.id)
+        if family_conflict is not None or (
+            existing_subscription is not None and (existing_subscription.is_active or purchase.is_gift)
+        ):
+            # Не создавать второй Main после внешней оплаты — удерживать заказ.
             purchase.status = GuestPurchaseStatus.PENDING_ACTIVATION.value
             purchase.user_id = user.id
             if recipient_type == 'email' and not purchase.is_gift and is_new_account:
@@ -1546,6 +1569,12 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
     if user is None:
         raise GuestPurchaseError('User not found', status_code=500)
 
+    # Serialize pending paid activations against other Main checkouts.
+    if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+        from app.database.crud.user import lock_user_for_pricing
+
+        user = await lock_user_for_pricing(db, user.id)
+
     # Ensure email users have cabinet access
     is_new_account = False
     if user.auth_type == 'email' and not user.password_hash:
@@ -1579,6 +1608,32 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
             )
         else:
             existing_subscription = await get_subscription_by_user_id(db, user.id)
+
+        # Повторно проверяем семейство при ручной активации уже оплаченного
+        # заказа. Конфликт не должен изменить покупку или новую подписку.
+        if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+            from app.services.tariff_family_policy import (
+                ActiveTariffFamilyConflict,
+                require_available_entitlement_family,
+            )
+
+            try:
+                await require_available_entitlement_family(
+                    db,
+                    user_id=user.id,
+                    tariff_id=tariff.id,
+                    current_subscription_id=(
+                        existing_subscription.id
+                        if existing_subscription is not None and existing_subscription.tariff_id == tariff.id
+                        else None
+                    ),
+                )
+            except ActiveTariffFamilyConflict as error:
+                raise GuestPurchaseError(
+                    'An active subscription in this family already exists; switch its tariff instead',
+                    status_code=409,
+                ) from error
+
         is_tariff_renewal = (
             not purchase.is_gift and existing_subscription is not None and existing_subscription.tariff_id == tariff.id
         )

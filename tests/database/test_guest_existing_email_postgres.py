@@ -158,3 +158,173 @@ async def test_etoplatezhi_guest_purchase_reaches_email_owner(
                 assert paid[0].id == 7  # Convert the trial in place, including the legacy tariff-less case.
         await db.refresh(payment)
         assert payment.is_paid and payment.status == 'success'
+
+
+async def test_paid_guest_main_conflict_is_held_without_provisioning(postgres_database, monkeypatch):
+    """Оплаченный Main сохраняется для активации, не выдаёт второй Main."""
+    monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+    monkeypatch.setattr(cache, 'get', AsyncMock(return_value=None))
+    for name in (
+        'send_guest_notification',
+        '_send_admin_notification',
+        '_create_nalogo_receipt_for_purchase',
+        '_attribute_purchase_campaign',
+    ):
+        monkeypatch.setattr(guest, name, AsyncMock())
+    provision = AsyncMock()
+    monkeypatch.setattr(guest.SubscriptionService, 'create_remnawave_user', provision)
+
+    async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
+        db.add(
+            User(
+                id=42,
+                email='main-buyer@example.com',
+                auth_type='email',
+                password_hash=None,
+                email_verified=False,
+                language='ru',
+                status='active',
+                balance_kopeks=500,
+            )
+        )
+        db.add_all(
+            [
+                Tariff(
+                    id=1,
+                    name='Main Basic',
+                    is_active=True,
+                    entitlement_family='main',
+                    period_prices={'30': 29900},
+                    allowed_squads=['test-squad'],
+                ),
+                Tariff(
+                    id=2,
+                    name='Main Premium',
+                    is_active=True,
+                    entitlement_family='main',
+                    period_prices={'30': 39900},
+                    allowed_squads=['test-squad'],
+                ),
+            ]
+        )
+        await db.commit()
+        db.add(
+            Subscription(
+                id=7,
+                user_id=42,
+                tariff_id=1,
+                status='active',
+                is_trial=False,
+                start_date=datetime.now(UTC) - timedelta(days=1),
+                end_date=datetime.now(UTC) + timedelta(days=29),
+                connected_squads=['test-squad'],
+            )
+        )
+        db.add(
+            GuestPurchase(
+                token='m' * 64,
+                tariff_id=2,
+                period_days=30,
+                amount_kopeks=39900,
+                contact_type='email',
+                contact_value='main-buyer@example.com',
+                payment_method='etoplatezhi',
+                payment_id='paid-main-conflict',
+                is_gift=False,
+                status='paid',
+            )
+        )
+        await db.commit()
+
+        result = await guest.fulfill_purchase(db, 'm' * 64)
+        assert result.status == 'pending_activation'
+        assert result.user_id == 42
+        # A row-lock refresh must not lose pending registration credentials.
+        existing_user = await db.get(User, 42)
+        await db.refresh(existing_user)
+        assert existing_user.password_hash
+        assert existing_user.email_verified is True
+        provision.assert_not_awaited()
+        subscriptions = (await db.scalars(select(Subscription).where(Subscription.user_id == 42))).all()
+        assert len(subscriptions) == 1 and subscriptions[0].tariff_id == 1
+
+        with pytest.raises(guest.GuestPurchaseError) as error:
+            await guest.activate_purchase(db, 'm' * 64)
+        assert error.value.status_code == 409
+        await db.rollback()
+        await db.refresh(result)
+        assert result.status == 'pending_activation'
+        assert (await db.scalar(select(User.balance_kopeks).where(User.id == 42))) == 500
+        provision.assert_not_awaited()
+
+
+async def test_paid_daily_guest_order_uses_purchasable_price(postgres_database, monkeypatch):
+    """Суточная оплаченная покупка не отвергается из-за пустого period_prices."""
+    monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+    monkeypatch.setattr(cache, 'get', AsyncMock(return_value=None))
+    for name in (
+        'send_guest_notification',
+        '_send_admin_notification',
+        '_create_nalogo_receipt_for_purchase',
+        '_attribute_purchase_campaign',
+    ):
+        monkeypatch.setattr(guest, name, AsyncMock())
+
+    async def provision(_self, db, subscription, **kwargs):
+        subscription.subscription_url = 'https://vpn.example/sub/daily'
+        await db.commit()
+        return SimpleNamespace(id=9001)
+
+    monkeypatch.setattr(guest.SubscriptionService, 'create_remnawave_user', provision)
+
+    async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
+        db.add(
+            User(
+                id=43,
+                email='daily-buyer@example.com',
+                auth_type='email',
+                password_hash='test-only-hash',
+                email_verified=True,
+                language='ru',
+                status='active',
+                balance_kopeks=100,
+            )
+        )
+        db.add(
+            Tariff(
+                id=3,
+                name='Main Daily',
+                entitlement_family='main',
+                is_active=True,
+                is_daily=True,
+                daily_price_kopeks=5000,
+                period_prices={},
+                allowed_squads=['test-squad'],
+            )
+        )
+        db.add(
+            GuestPurchase(
+                token='d' * 64,
+                tariff_id=3,
+                period_days=1,
+                amount_kopeks=5000,
+                contact_type='email',
+                contact_value='daily-buyer@example.com',
+                payment_method='etoplatezhi',
+                payment_id='paid-daily',
+                status='paid',
+                is_gift=False,
+            )
+        )
+        await db.commit()
+
+        result = await guest.fulfill_purchase(db, 'd' * 64)
+        assert result.status == 'delivered'
+        assert result.subscription_url == 'https://vpn.example/sub/daily'
+        subscriptions = (await db.scalars(select(Subscription).where(Subscription.user_id == 43))).all()
+        assert len(subscriptions) == 1
+        assert subscriptions[0].tariff_id == 3
+        assert subscriptions[0].status == 'active'
+        assert (await db.scalar(select(User.balance_kopeks).where(User.id == 43))) == 100
