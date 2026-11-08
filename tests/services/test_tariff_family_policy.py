@@ -375,6 +375,7 @@ async def test_daily_switch_rejects_family_conflict_before_debit(monkeypatch):
         message=SimpleNamespace(edit_text=AsyncMock()),
     )
     db = AsyncMock()
+    db.scalar = AsyncMock(return_value=subscription)
     monkeypatch.setattr(user_crud, 'lock_user_for_pricing', AsyncMock(return_value=user))
     monkeypatch.setattr(handlers, 'get_tariff_by_id', AsyncMock(return_value=tariff))
     monkeypatch.setattr(handlers, '_reject_unavailable_tariff', AsyncMock(return_value=False))
@@ -422,7 +423,19 @@ def test_daily_switch_family_wallet_and_subscription_commit_atomically():
         )
 
     user_lock = call_named('lock_user_for_pricing')
+    resolver = call_named('_resolve_switch_subscription')
     guard = call_named('require_available_entitlement_family')
+    locked_read = next(
+        node for node in ast.walk(handler)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == 'scalar'
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == 'db'
+    )
+    query = ast.unparse(locked_read)
+    assert '.with_for_update()' in query
+    assert '.execution_options(populate_existing=True)' in query
     debit = call_named('subtract_user_balance')
     ledger = call_named('create_transaction')
     first_commit = min(
@@ -434,7 +447,7 @@ def test_daily_switch_family_wallet_and_subscription_commit_atomically():
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id == 'db'
     )
-    assert user_lock.lineno < guard.lineno < debit.lineno
+    assert user_lock.lineno < resolver.lineno < locked_read.lineno < guard.lineno < debit.lineno
     assert debit.lineno < ledger.lineno < first_commit
     debit_control = next(keyword.value for keyword in debit.keywords if keyword.arg == 'commit')
     ledger_control = next(keyword.value for keyword in ledger.keywords if keyword.arg == 'commit')
