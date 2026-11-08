@@ -5527,6 +5527,27 @@ async def confirm_instant_switch(
     if await _reject_unavailable_tariff(callback, new_tariff, db_user, texts):
         return
 
+    family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(new_tariff, 'entitlement_family', None))
+    if family_atomic:
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=db_user.id,
+                tariff_id=new_tariff.id,
+                current_subscription_id=subscription.id,
+            )
+        except ActiveTariffFamilyConflict:
+            await callback.answer(
+                texts.t('TARIFF_FAMILY_CONFLICT', '❌ У вас уже есть подписка этой группы. Смените её тариф.'),
+                show_alert=True,
+            )
+            return
+
     # Recompute upgrade_cost under lock (FSM-stored value may be stale)
     current_tariff = await get_tariff_by_id(db, subscription.tariff_id) if subscription.tariff_id else None
     if not current_tariff:
@@ -5600,6 +5621,8 @@ async def confirm_instant_switch(
     except Exception:
         pass
 
+    family_committed = False
+
     try:
         # Списываем баланс если это upgrade
         # upgrade_cost includes both group + offer discounts from PricingEngine
@@ -5611,6 +5634,7 @@ async def confirm_instant_switch(
                 f'Переключение на тариф {new_tariff.name}',
                 consume_promo_offer=consume_promo,
                 mark_as_paid_subscription=True,
+                commit=not family_atomic,
             )
             if not success:
                 try:
@@ -5668,6 +5692,12 @@ async def confirm_instant_switch(
 
             # Списываем первый день если ещё не списано (upgrade_cost был 0)
             if upgrade_cost == 0 and daily_price > 0:
+                if family_atomic and user_balance < daily_price:
+                    await db.rollback()
+                    await callback.message.edit_text(
+                        texts.t('TARIFF_PURCHASE_INSUFFICIENT_FUNDS', '❌ Недостаточно средств')
+                    )
+                    return
                 if user_balance >= daily_price:
                     success = await subtract_user_balance(
                         db,
@@ -5676,6 +5706,7 @@ async def confirm_instant_switch(
                         f'Переключение на суточный тариф {new_tariff.name} (первый день)',
                         consume_promo_offer=consume_promo_for_daily,
                         mark_as_paid_subscription=True,
+                        commit=not family_atomic,
                     )
                     if not success:
                         try:
@@ -5685,29 +5716,30 @@ async def confirm_instant_switch(
                         except Exception:
                             pass
                         return
-                    await create_transaction(
-                        db,
-                        user_id=db_user.id,
-                        type=TransactionType.SUBSCRIPTION_PAYMENT,
-                        amount_kopeks=daily_price,
-                        description=f'Переключение на суточный тариф {new_tariff.name} (первый день)',
-                    )
-
-                    # Уведомление админу о списании за первый день суточного тарифа
-                    try:
-                        admin_notification_service = AdminNotificationService(callback.bot)
-                        await admin_notification_service.send_subscription_purchase_notification(
+                    if not family_atomic:
+                        await create_transaction(
                             db,
-                            db_user,
-                            subscription,
-                            None,
-                            1,
-                            was_trial_conversion=False,
+                            user_id=db_user.id,
+                            type=TransactionType.SUBSCRIPTION_PAYMENT,
                             amount_kopeks=daily_price,
-                            purchase_type='tariff_switch',
+                            description=f'Переключение на суточный тариф {new_tariff.name} (первый день)',
                         )
-                    except Exception as e:
-                        logger.error('Ошибка отправки уведомления админу', error=e)
+
+                        # Legacy оставляет уведомление в прежнем месте.
+                        try:
+                            admin_notification_service = AdminNotificationService(callback.bot)
+                            await admin_notification_service.send_subscription_purchase_notification(
+                                db,
+                                db_user,
+                                subscription,
+                                None,
+                                1,
+                                was_trial_conversion=False,
+                                amount_kopeks=daily_price,
+                                purchase_type='tariff_switch',
+                            )
+                        except Exception as e:
+                            logger.error('Ошибка отправки уведомления админу', error=e)
 
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
             subscription.pending_panel_expire_at = subscription.end_date
@@ -5715,8 +5747,57 @@ async def confirm_instant_switch(
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = datetime.now(UTC)
 
+        family_transaction = None
+        family_payment_amount = 0
+        family_payment_description = ''
+        if family_atomic:
+            if is_upgrade and upgrade_cost > 0:
+                family_payment_amount = upgrade_cost
+                family_payment_description = f'Переключение на тариф {new_tariff.name}'
+            elif is_new_daily and upgrade_cost == 0 and daily_price > 0:
+                family_payment_amount = daily_price
+                family_payment_description = f'Переключение на суточный тариф {new_tariff.name} (первый день)'
+            if family_payment_amount > 0:
+                family_transaction = await create_transaction(
+                    db,
+                    user_id=db_user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    amount_kopeks=family_payment_amount,
+                    description=family_payment_description,
+                    commit=False,
+                )
+
         await db.commit()
+        family_committed = family_atomic
         await db.refresh(subscription)
+
+        if family_transaction is not None:
+            from app.database.crud.transaction import emit_transaction_side_effects
+
+            await emit_transaction_side_effects(
+                db,
+                family_transaction,
+                amount_kopeks=family_payment_amount,
+                user_id=db_user.id,
+                type=TransactionType.SUBSCRIPTION_PAYMENT,
+                description=family_payment_description,
+            )
+
+        if family_atomic and is_new_daily and upgrade_cost == 0 and daily_price > 0:
+            try:
+                admin_notification_service = AdminNotificationService(callback.bot)
+                await admin_notification_service.send_subscription_purchase_notification(
+                    db,
+                    db_user,
+                    subscription,
+                    None,
+                    1,
+                    was_trial_conversion=False,
+                    amount_kopeks=daily_price,
+                    purchase_type='tariff_switch',
+                )
+            except Exception as error:
+                logger.error('Ошибка отправки уведомления админу', error=error)
 
         # Обновляем пользователя в Remnawave (сброс трафика по админ-настройке)
         try:
@@ -5784,13 +5865,14 @@ async def confirm_instant_switch(
 
         # Создаем транзакцию если была оплата
         if is_upgrade and upgrade_cost > 0:
-            await create_transaction(
-                db,
-                user_id=db_user.id,
-                type=TransactionType.SUBSCRIPTION_PAYMENT,
-                amount_kopeks=upgrade_cost,
-                description=f'Переключение на тариф {new_tariff.name}',
-            )
+            if not family_atomic:
+                await create_transaction(
+                    db,
+                    user_id=db_user.id,
+                    type=TransactionType.SUBSCRIPTION_PAYMENT,
+                    amount_kopeks=upgrade_cost,
+                    description=f'Переключение на тариф {new_tariff.name}',
+                )
 
             # Отправляем уведомление админу
             try:
@@ -5887,6 +5969,15 @@ async def confirm_instant_switch(
 
     except Exception as e:
         logger.error('Ошибка при мгновенном переключении тарифа', error=e, exc_info=True)
+        if family_atomic:
+            await db.rollback()
+            if family_committed:
+                logger.warning(
+                    'Instant family switch committed; post-commit failure must not trigger a second charge',
+                    user_id=db_user.id,
+                    subscription_id=subscription.id,
+                )
+                return
         try:
             await callback.message.edit_text(
                 texts.t('TARIFF_SWITCH_ERROR', '❌ Произошла ошибка при переключении тарифа')
