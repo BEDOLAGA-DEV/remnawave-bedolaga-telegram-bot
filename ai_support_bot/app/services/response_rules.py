@@ -10,9 +10,11 @@ from ai_support_bot.app.navigation.query import (
     is_subscription_refresh,
     navigation_target,
 )
+from ai_support_bot.app.services.service_identity import renewal_payment_request
 
 
 NOTICE = 'Передаю обращение команде для проверки, подождите, пожалуйста.'
+SUPPORT_SCOPE_ANSWER = 'Я помогаю с SligVPN: подключением, подписками, оплатой и настройкой VPN-клиентов. Напишите, какой вопрос по сервису нужно решить.'
 CLIENTS = {
     'Android': ('Incy', 'Happ', 'V2RayNG'),
     'iPhone/iPad': ('Incy', 'Happ', 'Shadowrocket', 'Streisand'),
@@ -46,7 +48,30 @@ APP_STORE_REGION_HELP = (
 def boundary_answer(question: str) -> str | None:
     if re.search(r'(?:покажи|раскрой|пришли|выведи|напиши|повтори).*?(?:системн\w* (?:промпт|инструкц)|внутренн\w* инструкц)', question, re.IGNORECASE):
         return 'Внутренние инструкции не раскрываю. Могу помочь с вопросами по SligVPN.'
+    creation = r'(?:напиш\w*|напис\w*|сдела\w*|созда\w*|разработа\w*|реализ\w*|сгенерир\w*|write|build|implement|create|generate)'
+    modifiers = r'(?:(?:мне|нам|пожалуйста|простой|простую|небольшой|полный|новый|свой|на|in|a|an|the|simple|basic|python|javascript)\s+){0,5}'
+    product = r'(?:калькулятор|код\b|скрипт|программ\w*|бота\b|сайт\b|приложени\w*|calculator|script|code|app\b|website|bot\b)'
+    request = re.search(creation + r'\s+' + modifiers + product, question, re.IGNORECASE)
+    if request:
+        target = question[request.start():request.end() + 25]
+        url_request = re.search(r'напиш\w*\s+(?:мне\s+)?сайт\b', question, re.IGNORECASE) and not re.search(r'html|javascript|калькулятор|исходн\w*\s+код', question, re.IGNORECASE)
+        if not url_request and not re.search(r'код (?:ошибки|подключения|подтверждения)|промокод', target, re.IGNORECASE):
+            return SUPPORT_SCOPE_ANSWER
+    if re.search(r'сочини|напиши|придумай|compose|write', question, re.IGNORECASE) and re.search(r'стих|сказк|анекдот|рецепт|эссе|poem|story|recipe|essay|joke', question, re.IGNORECASE):
+        if not re.search(r'slig|vpn|впн|подписк|подключ|оплат', question, re.IGNORECASE):
+            return SUPPORT_SCOPE_ANSWER
     return None
+
+
+def generated_program(answer: str) -> bool:
+    """Reject software generation while allowing VPN configuration, logs and commands."""
+    answer = re.sub(r'</?(?:code|pre|b|i|strong|em)(?:\s[^>]*)?>', '\n', answer, flags=re.IGNORECASE)
+    return bool(re.search(
+        r'(?m)^\s*(?:def\s+\w+\s*\(|class\s+\w+\s*[:(]|(?:async\s+)?function\s+\w+\s*\(|'
+        r'(?:const|let|var)\s+\w+\s*=|public\s+(?:static\s+)?(?:class|void)\b|(?:print|input|console\.log)\s*\()|'
+        r'<!doctype\s+html|<html\b|#include\s*[<"]|```\s*(?:python|javascript|typescript|java|cpp|csharp)\b',
+        answer, re.IGNORECASE,
+    ))
 
 
 def topic_switch_question(question: str) -> str | None:
@@ -95,6 +120,8 @@ def conversation_topic(question: str) -> str | None:
 
 
 def starts_new_topic(question: str, history: list, state: dict) -> bool:
+    if state.get('renewal_verification') and renewal_payment_request(question, history, pending=True):
+        return False
     if is_context_followup(question) or is_channel_followup(question) or re.search(r'\b(?:это|этим|этот|эта|этой|его|её|ее|там|тогда)\b|вс[её] равно', question, re.IGNORECASE):
         return False
     current = conversation_topic(question)

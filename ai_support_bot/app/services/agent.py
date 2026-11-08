@@ -30,11 +30,13 @@ from ai_support_bot.app.services.response_rules import (
     APP_STORE_REGION_HELP,
     HAPP_RECOVERY,
     NOTICE,
+    SUPPORT_SCOPE_ANSWER,
     apps_answer,
     boundary_answer,
     cannot_provide_payment_details,
     compact_knowledge,
     deduplicate_answer,
+    generated_program,
     handoff_answer,
     happ_recovery_step,
     initial_greeting,
@@ -55,6 +57,11 @@ from ai_support_bot.app.services.response_rules import (
     wheel_reward_request,
 )
 from ai_support_bot.app.services.service_catalog import build_service_catalog, build_user_offers
+from ai_support_bot.app.services.service_identity import (
+    renewal_navigation_request,
+    renewal_payment_request,
+    renewal_verification_answer,
+)
 from ai_support_bot.app.services.summary_service import summary_service
 from ai_support_bot.app.services.support_policy import SUPPORT_POLICY
 from ai_support_bot.app.services.telegram_html import sanitize_telegram_html
@@ -207,12 +214,15 @@ class SupportAgent:
     async def _complete_with_tools(
         self, messages: list[dict], model: str, max_tokens: int, temperature: float,
         telegram_id: int, state: dict, evidence: str, enable_tools: bool,
+        force_service_check: bool = False,
     ) -> dict:
         usage = {'tokens_prompt': 0, 'tokens_completion': 0}
         tools_used = False
         executed = 0
         for round_number in range(3):
             options = {'tools': SUPPORT_TOOLS, 'tool_choice': 'none' if round_number == 2 else 'auto'} if enable_tools else {}
+            if enable_tools and force_service_check and round_number == 0:
+                options['tool_choice'] = {'type': 'function', 'function': {'name': 'verify_service_source'}}
             result = await openai_client.chat_completion(
                 messages=messages, model=model, max_tokens=max_tokens, temperature=temperature, **options,
             )
@@ -383,6 +393,8 @@ class SupportAgent:
 
         context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 8
         history = await crud.get_conversation_context(db, conversation.id, context_limit)
+        if support_state.get('renewal_verification') and renewal_navigation_request(question) and not renewal_payment_request(question, []):
+            support_state = {'issue': 'other'}
         first_reply = not summary and not conversation.user_turns_since_summary and not any(item.role == 'assistant' for item in history)
         last_reply = next((item for item in reversed(history) if item.role == 'assistant'), None)
         if last_reply and last_reply.created_at:
@@ -407,6 +419,9 @@ class SupportAgent:
         await db.commit()
 
         forced_reason = mandatory_handoff(question, history)
+        if not forced_reason and renewal_payment_request(question, history, support_state.get('renewal_verification', False)):
+            support_state['renewal_verification'] = True
+            support_state['issue'] = 'payment_activation'
         if forced_reason is None and support_state.get('manual_review_reason') and manual_review_followup(question):
             forced_reason = support_state['manual_review_reason']
         recovery_answer = None
@@ -417,7 +432,8 @@ class SupportAgent:
                 recovery_answer, forced_reason = candidate, None
             elif recovery_reason:
                 forced_reason = recovery_reason
-        direct_answer = recovery_answer or (None if forced_reason or image_url else boundary_answer(question) or apps_answer(question, history))
+        scope_answer = boundary_answer(question)
+        direct_answer = (None if forced_reason else scope_answer) or recovery_answer or (None if forced_reason or image_url else apps_answer(question, history))
         if direct_answer and support_state.get('issue') == 'payment_activation':
             support_state = {'issue': 'other'}
         if not forced_reason and wheel_reward_request(question, history, support_state):
@@ -531,6 +547,12 @@ class SupportAgent:
         details = support_state_block(support_state)
         if details:
             system_prompt += '\n\n' + details
+        if image_urls and settings_store.get_bool('VISION_ENABLED'):
+            system_prompt += (
+                '\nПеред выводами об оплате или продлении по изображению вызови verify_service_source. '
+                'Прочитай продавца в самом подтверждении, название бота и домен. '
+                'Отделяй их от названия VPN-клиента и рекламы. Не перепечатывай ключ подключения из скриншота.'
+            )
 
         messages: list[dict] = [{'role': 'system', 'content': system_prompt}]
         for item in history:
@@ -587,6 +609,11 @@ class SupportAgent:
             result = await self._complete_with_tools(
                 messages=messages, model=model, max_tokens=max_tokens, temperature=temperature,
                 telegram_id=telegram_id, state=support_state, evidence=evidence, enable_tools=not smalltalk,
+                force_service_check=bool(image_urls and vision_enabled and (
+                    support_state.get('issue') in {'payment_missing', 'payment_activation'}
+                    or support_state.get('renewal_verification')
+                    or re.search(r'оплат|проплат|заплат|плат[её]ж|чек|продл|квитанц|выписк', question, re.IGNORECASE)
+                )),
             )
             answer_text = result['content']
             model_used = result['model']
@@ -620,6 +647,10 @@ class SupportAgent:
                                    'Данные карты и остальные операции можно скрыть. Повторно оплачивать не нужно.')
         if not forced_reason and not direct_answer and support_state.get('issue') == 'payment_missing':
             answer_text, escalate = payment_next_step(support_state)
+        if not forced_reason and not smalltalk and support_state.get('renewal_verification'):
+            answer_text, escalate = renewal_verification_answer(support_state.get('service_source'), support_state)
+            if escalate:
+                forced_reason = 'payment_review'
         answer_text = deduplicate_answer(strip_escalation_marker(answer_text))
         escalation_reason = forced_reason
         if not escalate and subscription_restricted(answer_text):
@@ -642,6 +673,9 @@ class SupportAgent:
                 answer_text = notice or 'Уточняю этот вопрос, подождите, пожалуйста.'
                 logger.info('Hedged answer replaced with escalation notice', telegram_id=telegram_id)
 
+        if (scope_answer and not forced_reason) or generated_program(answer_text):
+            answer_text = scope_answer or SUPPORT_SCOPE_ANSWER
+            escalate, hedged, escalation_reason = False, False, None
         answer_text = convert_markdown_to_html(answer_text)
         if not escalate and unsupported_price(re.sub(r'<[^>]*>', '', answer_text), question, catalog_block):
             answer_text = NOTICE

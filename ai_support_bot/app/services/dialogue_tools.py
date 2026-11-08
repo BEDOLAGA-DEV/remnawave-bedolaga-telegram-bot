@@ -3,6 +3,7 @@ import re
 
 from ai_support_bot.app.services.account_support import read_account_support
 from ai_support_bot.app.services.response_rules import APP_STORE_REGION_HELP, is_payment_missing
+from ai_support_bot.app.services.service_identity import classify_service_source
 from ai_support_bot.app.services.user_data import build_user_context
 
 
@@ -12,7 +13,7 @@ _ENUMS = {
     'purchase_channel': {'site', 'telegram', 'unknown'},
     'registration_method': {'email', 'telegram', 'other', 'unknown'},
 }
-_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason', '_wheel_result', '_access_result', '_store_help'}
+_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason', '_wheel_result', '_access_result', '_store_help', 'service_source', 'renewal_verification'}
 
 
 def extract_reported_email(text: str) -> str | None:
@@ -56,6 +57,31 @@ def extract_registration_method(text: str, history: list) -> str | None:
     return None
 
 SUPPORT_TOOLS = [
+    {
+        'type': 'function',
+        'function': {
+            'name': 'check_subscription_renewal',
+            'description': 'Проверь обращение о том, добавились ли купленные/оплаченные дни или месяцы к прежней подписке. Используй для любых перефразировок просьбы зачесть новый платёж или перенести оплаченный срок. Активная подписка не доказывает продление: результат не подтверждает связь платежа с изменением срока. Нужно определить продавца и при необходимости передать на ручную проверку.',
+            'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'verify_service_source',
+            'description': 'Сопоставь название продавца и адрес из сообщения/скриншота оплаты с SligVPN. Обязательно перед выводом о принадлежности платежа или продлении по скриншоту. Передавай только видимые сведения, не догадки. Happ/Incy/v2RayTun — клиенты, реклама и названия приложений не определяют продавца. Это не подтверждает зачисление или продление.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'seller_name': {'type': 'string', 'description': 'Видимое название сервиса-продавца; пусто, если не видно.'},
+                    'seller_url': {'type': 'string', 'description': 'Адрес продавца или подключения на подтверждении; пусто, если нет. Не адрес из рекламы.'},
+                    'location': {'type': 'string', 'enum': ['payment_confirmation', 'merchant', 'seller_chat', 'client', 'advertisement', 'unknown']},
+                },
+                'required': ['seller_name', 'seller_url', 'location'],
+                'additionalProperties': False,
+            },
+        },
+    },
     {
         'type': 'function',
         'function': {
@@ -115,12 +141,19 @@ SUPPORT_TOOLS = [
 def support_state_block(state: dict) -> str:
     if not state:
         return ''
-    return (
+    block = (
         '<support_details>\nСведения со слов пользователя, не подтверждённые факты об аккаунте. '
         'Используй для текущей темы; не возвращайся к старому вопросу при смене темы.\n'
         + json.dumps({key: value for key, value in state.items() if key not in _INTERNAL_FIELDS}, ensure_ascii=False)
         + '\n</support_details>'
     )
+    if state.get('service_source'):
+        block += (
+            '\n<service_source>\nСопоставление источника оплаты по сведениям сообщения/скриншота. '
+            'Это не подтверждение платежа или продления; текущая дата подписки не доказывает изменение срока.\n'
+            + json.dumps(state['service_source'], ensure_ascii=False) + '\n</service_source>'
+        )
+    return block
 
 
 def _valid_email(value: object, evidence: str, state: dict) -> bool:
@@ -141,18 +174,33 @@ async def execute_support_tool(name: str, raw_arguments: str, telegram_id: int, 
         return {'error': 'Некорректный JSON аргументов.'}
     if not isinstance(args, dict):
         return {'error': 'Ожидался объект аргументов.'}
+    if name == 'verify_service_source':
+        if set(args) != {'seller_name', 'seller_url', 'location'} or any(not isinstance(v, str) for v in args.values()):
+            return {'error': 'Нужны seller_name, seller_url и location строками.'}
+        if args['location'] not in {'payment_confirmation', 'merchant', 'seller_chat', 'client', 'advertisement', 'unknown'}:
+            return {'error': 'Неизвестное расположение сведений.'}
+        owned = await read_account_support(telegram_id, 'identity', state.get('email'))
+        result = classify_service_source(args['seller_name'], args['seller_url'], args['location'], owned.get('subscription_hosts', []))
+        if result['status'] != 'irrelevant':
+            state['service_source'] = result
+            if args['location'] in {'payment_confirmation', 'merchant'}:
+                state['renewal_verification'] = True
+        return {**result, 'payment_confirmed': False, 'renewal_confirmed': False}
     if name == 'app_store_region_help':
         if args:
             return {'error': 'Параметры не нужны.'}
         state['_store_help'] = True
         return {'instruction': APP_STORE_REGION_HELP}
-    if name in {'recover_wheel_rewards', 'check_paid_access'}:
+    if name in {'recover_wheel_rewards', 'check_paid_access', 'check_subscription_renewal'}:
         if args:
             return {'error': 'Параметры не нужны: разрешён только текущий аккаунт.'}
         wheel = name == 'recover_wheel_rewards'
         result = await read_account_support(telegram_id, 'wheel' if wheel else 'access', state.get('email'))
         state['issue'] = 'wheel_reward' if wheel else 'payment_activation'
         state['_wheel_result' if wheel else '_access_result'] = result
+        if name == 'check_subscription_renewal':
+            state['renewal_verification'] = True
+            return {**result, 'renewal_confirmed': False}
         return result
     if name == 'save_support_details':
         allowed = {*_ENUMS, 'email', 'receipt_reported', 'new_case'}

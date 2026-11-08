@@ -1,6 +1,7 @@
 """Read personal support evidence using the authenticated Telegram identity only."""
 from datetime import UTC, datetime
 from html import escape
+from urllib.parse import urlsplit
 
 import structlog
 from sqlalchemy import text
@@ -33,6 +34,19 @@ async def read_account_support(telegram_id: int, kind: str, email: str | None = 
         ), {'tid': telegram_id, **({'email': email} if email else {})})).mappings().first()
         if not user:
             return {'status': 'unverified'}
+        if kind == 'identity':
+            rows = (await session.execute(text(
+                'SELECT subscription_url FROM subscriptions WHERE user_id = :uid'
+            ), {'uid': user['id']})).mappings().all()
+            hosts = set()
+            for row in rows:
+                try:
+                    parsed = urlsplit(row['subscription_url'] or '')
+                    if parsed.scheme == 'https' and parsed.hostname and not parsed.username:
+                        hosts.add(parsed.hostname.lower().rstrip('.'))
+                except ValueError:
+                    continue
+            return {'status': 'ok', 'subscription_hosts': sorted(hosts)}
         if kind == 'wheel':
             rows = (await session.execute(text(
                 'SELECT s.id AS spin_id, s.created_at AS won_at, s.is_applied, '

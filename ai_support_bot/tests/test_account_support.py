@@ -17,7 +17,7 @@ async def accounts(monkeypatch, tmp_path):
             'CREATE TABLE users (id INTEGER PRIMARY KEY, telegram_id INTEGER, email TEXT)',
             'CREATE TABLE promocodes (id INTEGER PRIMARY KEY, code TEXT, is_active BOOLEAN, current_uses INTEGER, max_uses INTEGER, valid_from TEXT, valid_until TEXT)',
             'CREATE TABLE wheel_spins (id INTEGER PRIMARY KEY, user_id INTEGER, generated_promocode_id INTEGER, prize_type TEXT, created_at TEXT, is_applied BOOLEAN)',
-            'CREATE TABLE subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, end_date TEXT, is_trial BOOLEAN, created_at TEXT)',
+            'CREATE TABLE subscriptions (id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT, end_date TEXT, is_trial BOOLEAN, created_at TEXT, subscription_url TEXT)',
         ]:
             await db.execute(text(sql))
         await db.execute(text("INSERT INTO users VALUES (1, 42, 'owner@example.com'), (2, 99, 'other@example.com')"))
@@ -87,10 +87,21 @@ async def test_missing_or_unapplied_reward_is_handed_off(accounts):
 ])
 async def test_paid_access_requires_current_nontrial_subscription(accounts, status, trial, offset, active):
     async with accounts() as db:
-        await db.execute(text('INSERT INTO subscriptions VALUES (1, 1, :status, :end, :trial, :now)'), {
+        await db.execute(text('INSERT INTO subscriptions (id, user_id, status, end_date, is_trial, created_at) VALUES (1, 1, :status, :end, :trial, :now)'), {
             'status': status, 'end': (datetime.now(UTC) + timedelta(days=offset)).isoformat(),
             'trial': trial, 'now': datetime.now(UTC).isoformat(),
         })
         await db.commit()
     result = await account_support.read_account_support(42, 'access')
     assert result['active_paid_subscription'] is active
+
+
+@pytest.mark.asyncio
+async def test_identity_hosts_are_only_from_verified_owner_and_never_include_key(accounts):
+    async with accounts() as db:
+        await db.execute(text('INSERT INTO subscriptions (id, user_id, subscription_url) VALUES (1, 1, :own), (2, 2, :foreign)'),
+                         {'own': 'https://custom.example/private-key?secret=123', 'foreign': 'https://foreign.example/private-other'})
+        await db.commit()
+    result = await account_support.read_account_support(42, 'identity')
+    assert result == {'status': 'ok', 'subscription_hosts': ['custom.example']}
+    assert await account_support.read_account_support(42, 'identity', 'other@example.com') == {'status': 'unverified'}

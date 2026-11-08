@@ -59,7 +59,7 @@ class OpenAIClient:
 
     async def chat_completion(
         self, messages: list[dict[str, Any]], model: str, max_tokens: int, temperature: float,
-        tools: list[dict] | None = None, tool_choice: str = 'auto',
+        tools: list[dict] | None = None, tool_choice: str | dict = 'auto',
     ) -> dict[str, Any]:
         payload = {
             'model': model,
