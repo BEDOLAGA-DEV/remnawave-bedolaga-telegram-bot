@@ -513,6 +513,10 @@ async def fulfill_purchase(
         if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
             from app.database.crud.user import lock_user_for_pricing
 
+            # _find_or_create_user may have changed credentials or verification
+            # on this existing account. Lock helper uses populate_existing=True,
+            # so flush first: refresh must not erase uncommitted account changes.
+            await db.flush()
             user = await lock_user_for_pricing(db, user.id)
 
         # Check if user already has a subscription

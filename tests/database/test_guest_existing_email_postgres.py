@@ -181,8 +181,8 @@ async def test_paid_guest_main_conflict_is_held_without_provisioning(postgres_da
                 id=42,
                 email='main-buyer@example.com',
                 auth_type='email',
-                password_hash='test-only-hash',
-                email_verified=True,
+                password_hash=None,
+                email_verified=False,
                 language='ru',
                 status='active',
                 balance_kopeks=500,
@@ -240,6 +240,11 @@ async def test_paid_guest_main_conflict_is_held_without_provisioning(postgres_da
         result = await guest.fulfill_purchase(db, 'm' * 64)
         assert result.status == 'pending_activation'
         assert result.user_id == 42
+        # A row-lock refresh must not lose pending registration credentials.
+        existing_user = await db.get(User, 42)
+        await db.refresh(existing_user)
+        assert existing_user.password_hash
+        assert existing_user.email_verified is True
         provision.assert_not_awaited()
         subscriptions = (await db.scalars(select(Subscription).where(Subscription.user_id == 42))).all()
         assert len(subscriptions) == 1 and subscriptions[0].tariff_id == 1
