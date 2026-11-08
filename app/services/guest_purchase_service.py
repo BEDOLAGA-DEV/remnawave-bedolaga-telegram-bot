@@ -507,6 +507,14 @@ async def fulfill_purchase(
             await db.commit()
             return purchase
 
+        # A paid guest purchase must hold the same User row lock as wallet-based
+        # checkouts before reading live family entitlements. Otherwise two
+        # concurrent purchases can both pass the preflight before the DB trigger.
+        if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+            from app.database.crud.user import lock_user_for_pricing
+
+            user = await lock_user_for_pricing(db, user.id)
+
         # Check if user already has a subscription
         if settings.is_multi_tariff_enabled():
             from app.database.crud.subscription import get_subscription_by_user_and_tariff
