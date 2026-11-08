@@ -495,7 +495,7 @@ async def fulfill_purchase(
         # or promo codes may have altered the price at purchase time. The amount
         # was validated server-side in validate_and_calculate() and the payment
         # provider confirmed the charged amount.
-        expected_price = tariff.get_price_for_period(purchase.period_days)
+        expected_price = tariff.get_purchasable_price_for_period(purchase.period_days)
         if expected_price is None:
             logger.error(
                 'Price no longer configured for period — aborting fulfillment',
@@ -1564,6 +1564,12 @@ async def activate_purchase(db: AsyncSession, purchase_token: str, *, skip_notif
     user = user_result.scalars().first()
     if user is None:
         raise GuestPurchaseError('User not found', status_code=500)
+
+    # Serialize pending paid activations against other Main checkouts.
+    if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+        from app.database.crud.user import lock_user_for_pricing
+
+        user = await lock_user_for_pricing(db, user.id)
 
     # Ensure email users have cabinet access
     is_new_account = False

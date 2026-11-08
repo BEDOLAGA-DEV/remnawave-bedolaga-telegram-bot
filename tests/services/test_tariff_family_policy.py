@@ -307,6 +307,9 @@ def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
         'GuestPurchaseStatus.PENDING_ACTIVATION'
     )
     assert 'family_conflict is not None' in fulfill
+    assert activate.index('await lock_user_for_pricing(db, user.id)') < activate.index(
+        'require_available_entitlement_family'
+    )
     assert activate.index('require_available_entitlement_family') < activate.index('create_paid_subscription(')
     assert "'An active subscription in this family already exists; switch its tariff instead'" in activate
 

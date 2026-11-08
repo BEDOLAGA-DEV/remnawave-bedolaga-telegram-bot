@@ -4129,7 +4129,7 @@
   Функции: `test_second_selection_while_first_result_waits_has_separate_idempotent_payment`
 - `tests/database/test_guest_existing_email_postgres.py` — Python-модуль
   Классы: нет
-  Функции: `test_etoplatezhi_guest_purchase_reaches_email_owner`
+  Функции: `test_etoplatezhi_guest_purchase_reaches_email_owner`, `test_paid_guest_main_conflict_is_held_without_provisioning` — Оплаченный Main сохраняется для активации, не выдаёт второй Main., `test_paid_daily_guest_order_uses_purchasable_price` — Суточная оплаченная покупка не отвергается из-за пустого period_prices.
 - `tests/database/test_guest_purchase_gift_idempotency.py` — Python-модуль
   Классы: нет
   Функции: `test_guest_purchase_model_has_idempotency_key_column` — GuestPurchase model must have idempotency_key column and ux_guest_purchases_idempotency_key index., `test_multiple_null_idempotency_keys_are_allowed` — Multiple legacy guest purchases with NULL idempotency_key must be allowed., `test_duplicate_non_null_idempotency_key_is_rejected` — Duplicate non-null idempotency_key must trigger uniqueness violation., `test_migration_0107_upgrade_downgrade_upgrade_lifecycle` — Verify revision 0107 upgrade, downgrade, and upgrade on a SQLite database with legacy null rows.
