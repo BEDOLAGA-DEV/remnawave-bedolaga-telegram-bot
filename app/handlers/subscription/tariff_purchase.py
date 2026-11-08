@@ -5624,6 +5624,12 @@ async def confirm_instant_switch(
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = datetime.now(UTC)
 
+        # Новый тариф дал трафик — снять «трафик кончился», иначе открытый
+        # грейс удержит Telegram-only оверлей в панели.
+        from app.services.tariff_switch_policy import lift_traffic_limit_after_switch
+
+        lift_traffic_limit_after_switch(subscription)
+
         await db.commit()
         await db.refresh(subscription)
 

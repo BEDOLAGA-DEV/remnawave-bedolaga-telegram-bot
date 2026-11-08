@@ -7396,6 +7396,12 @@ async def switch_tariff_endpoint(
         else:
             logger.info('🔄 Смена с суточного на обычный тариф: очищены daily поля')
 
+    # Новый тариф дал трафик — снять «трафик кончился», иначе открытый
+    # грейс удержит Telegram-only оверлей в панели.
+    from app.services.tariff_switch_policy import lift_traffic_limit_after_switch
+
+    lift_traffic_limit_after_switch(subscription)
+
     if accounting_panel is not None:
         from app.services.traffic_accounting_service import change_managed_tariff_locked
 

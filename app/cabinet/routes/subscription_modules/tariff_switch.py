@@ -21,7 +21,11 @@ from app.database.models import PaymentMethod, Subscription, TransactionType, Us
 from app.services.pricing_engine import TariffSwitchPricingUnavailableError, pricing_engine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
-from app.services.tariff_switch_policy import remaining_days_for_switch, should_reset_used_traffic
+from app.services.tariff_switch_policy import (
+    lift_traffic_limit_after_switch,
+    remaining_days_for_switch,
+    should_reset_used_traffic,
+)
 
 from ...dependencies import get_cabinet_db, get_current_cabinet_user
 from ...schemas.subscription import TariffPurchaseRequest
@@ -530,6 +534,10 @@ async def switch_tariff(
         subscription.end_date = datetime.now(UTC) + timedelta(days=new_period_days)
         subscription.pending_panel_expire_at = subscription.end_date
         subscription.is_daily_paused = False
+
+    # Новый тариф дал трафик — снять «трафик кончился», иначе открытый
+    # грейс удержит Telegram-only оверлей в панели.
+    lift_traffic_limit_after_switch(subscription)
 
     subscription.updated_at = datetime.now(UTC)
     if accounting_panel is not None:

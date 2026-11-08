@@ -11,7 +11,12 @@
   бесплатным прыжком это давало неограниченный трафик: A → B → A, и счётчик
   каждый раз с нуля.
 
-Здесь оба правила в одном месте, чтобы четвёртый флоу не завёл их заново.
+* после переключения подписка оставалась в статусе ``limited``, даже если
+  новый тариф давал трафик с запасом. При открытом грейсе (Telegram-only)
+  обычное обновление панели такой статус бережёт, и человек, оплативший
+  тариф больше, оставался в грейсе до его конца.
+
+Здесь эти правила в одном месте, чтобы четвёртый флоу не завёл их заново.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.config import settings
+from app.database.models import SubscriptionStatus
 
 
 def remaining_days_for_switch(end_date: datetime | None, now: datetime | None = None) -> int:
@@ -60,3 +66,37 @@ def should_reset_used_traffic(upgrade_cost_kopeks: int) -> bool:
     if not settings.RESET_TRAFFIC_ON_TARIFF_SWITCH:
         return False
     return upgrade_cost_kopeks > 0
+
+
+def lift_traffic_limit_after_switch(subscription, now: datetime | None = None) -> bool:
+    """Снять статус «трафик кончился», если новый тариф даёт трафик.
+
+    Вызывать после того, как переключение выставило новый лимит, счётчик
+    и дату окончания. Трогает только ``limited``: ``disabled`` ставит
+    администратор или другая политика, ``expired`` лечится покупкой, а не
+    переключением. Подписки в режиме учёта трафика ``managed``/``migrating``
+    статус квоты получают от учёта трафика, их не трогаем.
+
+    Возвращает True, если статус изменён.
+    """
+    if subscription.status != SubscriptionStatus.LIMITED.value:
+        return False
+    if getattr(subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating'):
+        return False
+
+    moment = now or datetime.now(UTC)
+    end_date = subscription.end_date
+    if end_date is None:
+        return False
+    if end_date.tzinfo is None:
+        end_date = end_date.replace(tzinfo=UTC)
+    if end_date <= moment:
+        return False
+
+    limit_gb = subscription.traffic_limit_gb or 0
+    used_gb = subscription.traffic_used_gb or 0.0
+    if limit_gb > 0 and used_gb >= limit_gb:
+        return False
+
+    subscription.status = SubscriptionStatus.ACTIVE.value
+    return True
