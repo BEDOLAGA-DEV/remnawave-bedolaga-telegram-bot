@@ -341,3 +341,101 @@ def test_daily_telegram_purchase_checks_family_before_wallet_debit():
     assert 'settings.is_multi_tariff_enabled()' in handler_source
     assert 'except ActiveTariffFamilyConflict:' in handler_source
     assert "'TARIFF_FAMILY_CONFLICT'" in handler_source
+
+@pytest.mark.asyncio
+async def test_daily_switch_rejects_family_conflict_before_debit(monkeypatch):
+    """Переключение addon -> Main не оплачивается при уже существующем Main."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.config import settings
+    from app.database.crud import user as user_crud
+    from app.handlers.subscription import tariff_purchase as handlers
+    from app.services import tariff_family_policy as family_policy
+    from app.services.pricing_engine import pricing_engine
+
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: True)
+    user = SimpleNamespace(id=42, language='ru', balance_kopeks=1000)
+    tariff = SimpleNamespace(
+        id=9,
+        name='Main Daily',
+        is_active=True,
+        is_daily=True,
+        daily_price_kopeks=100,
+        entitlement_family='main',
+        allowed_squads=['squad-1'],
+        device_limit=1,
+        traffic_limit_gb=100,
+    )
+    subscription = SimpleNamespace(id=101, user_id=42, tariff_id=None)
+    callback = SimpleNamespace(
+        data='daily_switch_confirm:9',
+        answer=AsyncMock(),
+        message=SimpleNamespace(edit_text=AsyncMock()),
+    )
+    db = AsyncMock()
+    monkeypatch.setattr(user_crud, 'lock_user_for_pricing', AsyncMock(return_value=user))
+    monkeypatch.setattr(handlers, 'get_tariff_by_id', AsyncMock(return_value=tariff))
+    monkeypatch.setattr(handlers, '_reject_unavailable_tariff', AsyncMock(return_value=False))
+    monkeypatch.setattr(handlers, '_reject_unavailable_checkout_squads', AsyncMock(return_value=False))
+    monkeypatch.setattr(handlers, '_resolve_switch_subscription', AsyncMock(return_value=(subscription, 101)))
+    monkeypatch.setattr(
+        pricing_engine,
+        'calculate_tariff_purchase_price',
+        AsyncMock(return_value=SimpleNamespace(final_total=100, breakdown={})),
+    )
+    guard = AsyncMock(side_effect=ActiveTariffFamilyConflict('switch existing Main instead'))
+    monkeypatch.setattr(family_policy, 'require_available_entitlement_family', guard)
+    debit = AsyncMock(side_effect=AssertionError('wallet must not be charged on family conflict'))
+    monkeypatch.setattr(handlers, 'subtract_user_balance', debit)
+
+    handler = handlers.confirm_daily_tariff_switch
+    while hasattr(handler, '__wrapped__'):
+        handler = handler.__wrapped__
+    await handler(callback, user, db, SimpleNamespace())
+
+    guard.assert_awaited_once_with(db, user_id=42, tariff_id=9, current_subscription_id=101)
+    debit.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    callback.answer.assert_awaited_once()
+    assert callback.answer.await_args.kwargs['show_alert'] is True
+
+
+def test_daily_switch_family_wallet_and_subscription_commit_atomically():
+    """Нельзя коммитить суточное списание до ledger и смены подписки."""
+    source = (Path(__file__).resolve().parents[2] / 'app/handlers/subscription/tariff_purchase.py').read_text(
+        encoding='utf-8'
+    )
+    tree = ast.parse(source)
+    handler = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == 'confirm_daily_tariff_switch'
+    )
+
+    def call_named(name):
+        return next(
+            node
+            for node in ast.walk(handler)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
+        )
+
+    user_lock = call_named('lock_user_for_pricing')
+    guard = call_named('require_available_entitlement_family')
+    debit = call_named('subtract_user_balance')
+    ledger = call_named('create_transaction')
+    first_commit = min(
+        node.lineno
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == 'commit'
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == 'db'
+    )
+    assert user_lock.lineno < guard.lineno < debit.lineno
+    assert debit.lineno < ledger.lineno < first_commit
+    debit_control = next(keyword.value for keyword in debit.keywords if keyword.arg == 'commit')
+    ledger_control = next(keyword.value for keyword in ledger.keywords if keyword.arg == 'commit')
+    assert 'family_atomic' in ast.unparse(debit_control)
+    assert ast.unparse(ledger_control) == 'False'
