@@ -229,3 +229,38 @@ async def test_real_balance_crud_and_subscription_creation_roll_back_together(po
         assert await second.scalar(select(Transaction.id).where(Transaction.user_id == user_id)) is None
         ids = (await second.scalars(select(Subscription.tariff_id).where(Subscription.user_id == user_id))).all()
         assert ids == [basic_id]
+
+
+async def test_guard_migration_0142_rejects_existing_duplicates(postgres_database):
+    """Миграция отказывает до включения триггера, если уже существуют два Main."""
+    migration = _load('0142_guard_active_entitlement_family.py')
+    async with postgres_sessions(postgres_database, TABLES, count=2) as (first, second):
+        user, basic, premium, _ = await _fixtures(first)
+        user_id = user.id
+
+        # Simulate a legacy database where family labels predate guard 0142.
+        connection = await first.connection()
+
+        def uninstall(sync):
+            with Operations.context(MigrationContext.configure(sync)):
+                migration.downgrade()
+
+        await connection.run_sync(uninstall)
+        await first.commit()
+        first.add_all([_sub(user_id, basic.id, 'legacy_main_1'), _sub(user_id, premium.id, 'legacy_main_2')])
+        await first.commit()
+
+        connection = await first.connection()
+
+        def upgrade(sync):
+            with Operations.context(MigrationContext.configure(sync)):
+                migration.upgrade()
+
+        with pytest.raises(RuntimeError, match='конфликты live семейства'):
+            await connection.run_sync(upgrade)
+        await first.rollback()
+        remaining = await second.scalar(
+            text("SELECT count(*) FROM subscriptions WHERE user_id = :user_id AND status = 'active'"),
+            {'user_id': user_id},
+        )
+        assert remaining == 2, 'failed migration must not delete or rewrite subscriptions'

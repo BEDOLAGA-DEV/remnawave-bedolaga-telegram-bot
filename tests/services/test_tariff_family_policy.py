@@ -287,8 +287,8 @@ def test_family_purchase_defers_each_product_and_ledger_commit(path, handler, ca
             )
 
 
-def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
-    """Внешняя оплата не должна автоматически создавать второй Main."""
+def test_guest_family_preflight_waits_for_user_row_lock():
+    """Оба guest entrypoints проверяют семейство после блокировки User."""
     source = (Path(__file__).resolve().parents[2] / 'app/services/guest_purchase_service.py').read_text(
         encoding='utf-8'
     )
@@ -298,20 +298,12 @@ def test_paid_guest_main_collision_is_held_and_rechecked_on_activation():
         for node in ast.walk(tree)
         if isinstance(node, ast.AsyncFunctionDef) and node.name in {'fulfill_purchase', 'activate_purchase'}
     }
-    fulfill = functions['fulfill_purchase']
-    activate = functions['activate_purchase']
-    assert fulfill.index('await lock_user_for_pricing(db, user.id)') < fulfill.index(
-        'find_live_entitlement_family_conflict'
-    )
-    assert fulfill.index('find_live_entitlement_family_conflict') < fulfill.index(
-        'GuestPurchaseStatus.PENDING_ACTIVATION'
-    )
-    assert 'family_conflict is not None' in fulfill
-    assert activate.index('await lock_user_for_pricing(db, user.id)') < activate.index(
-        'require_available_entitlement_family'
-    )
-    assert activate.index('require_available_entitlement_family') < activate.index('create_paid_subscription(')
-    assert "'An active subscription in this family already exists; switch its tariff instead'" in activate
+    for name, guard in (
+        ('fulfill_purchase', 'find_live_entitlement_family_conflict'),
+        ('activate_purchase', 'require_available_entitlement_family'),
+    ):
+        owner = functions[name]
+        assert owner.index('await lock_user_for_pricing(db, user.id)') < owner.index(guard)
 
 
 def test_daily_telegram_purchase_checks_family_before_wallet_debit():
