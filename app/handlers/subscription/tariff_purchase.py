@@ -4023,6 +4023,26 @@ async def confirm_tariff_switch(
         await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
         return
 
+    if settings.is_multi_tariff_enabled() and getattr(tariff, 'entitlement_family', None):
+        from app.services.tariff_family_policy import (
+            ActiveTariffFamilyConflict,
+            require_available_entitlement_family,
+        )
+
+        try:
+            await require_available_entitlement_family(
+                db,
+                user_id=db_user.id,
+                tariff_id=tariff.id,
+                current_subscription_id=subscription.id,
+            )
+        except ActiveTariffFamilyConflict:
+            await callback.answer(
+                texts.t('TARIFF_FAMILY_CONFLICT', '❌ У вас уже есть подписка этой группы. Смените её тариф.'),
+                show_alert=True,
+            )
+            return
+
     # Проверяем разрешение на смену в данном направлении
     if subscription.tariff_id and subscription.tariff_id != tariff_id:
         cur_tariff_obj = await get_tariff_by_id(db, subscription.tariff_id)
@@ -5514,17 +5534,33 @@ async def confirm_instant_switch(
         await callback.answer(texts.t('TARIFF_PURCHASE_UNAVAILABLE', 'Тариф недоступен'), show_alert=True)
         return
 
-    # Проверяем подписку (switched FROM — resolved via FSM state)
-    subscription, _isw_confirm_sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
-    if not subscription:
-        await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
-        return
-
     from app.database.crud.user import lock_user_for_pricing
 
     db_user = await lock_user_for_pricing(db, db_user.id)
 
     if await _reject_unavailable_tariff(callback, new_tariff, db_user, texts):
+        return
+
+    # Resolve FROM after the user lock; then refresh the subscription under its
+    # own row lock, so concurrent switches/webhooks cannot leave stale pricing.
+    subscription, _isw_confirm_sub_id = await _resolve_switch_subscription(callback, db_user, db, state)
+    if not subscription:
+        await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
+        return
+
+    from sqlalchemy.orm import selectinload
+
+    from app.database.models import Subscription
+
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(Subscription.id == subscription.id, Subscription.user_id == db_user.id)
+        .options(selectinload(Subscription.tariff))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if subscription is None:
+        await callback.answer(texts.t('SUBSCRIPTION_NOT_FOUND', '❌ Подписка не найдена'), show_alert=True)
         return
 
     family_atomic = settings.is_multi_tariff_enabled() and bool(getattr(new_tariff, 'entitlement_family', None))
