@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import re
 from typing import Any
 
 import structlog
@@ -9,6 +10,57 @@ from app.config import settings
 
 
 logger = structlog.get_logger(__name__)
+
+# Цифровой товар Tribute: покупка `new_digital_product`, возврат `digital_product_refunded`
+# (в списке событий вики те же события названы newDigitalProduct / digitalProductRefund —
+# сравниваем без регистра и подчёркиваний, чтобы принять оба написания).
+DIGITAL_PURCHASE = 'purchase'
+DIGITAL_REFUND = 'refund'
+_DIGITAL_EVENT_KINDS = {
+    'newdigitalproduct': DIGITAL_PURCHASE,
+    'digitalproductrefunded': DIGITAL_REFUND,
+    'digitalproductrefund': DIGITAL_REFUND,
+}
+# Зачисляем только рубли: amount у Tribute — в наименьших единицах валюты (копейки/центы),
+# курс бот не знает, поэтому 5 USD нельзя записать как 5 ₽.
+DIGITAL_ACCEPTED_CURRENCY = 'rub'
+
+
+def digital_product_event_kind(event_name: Any) -> str | None:
+    """'purchase' / 'refund' для событий цифрового товара, иначе None."""
+    if not isinstance(event_name, str):
+        return None
+    return _DIGITAL_EVENT_KINDS.get(event_name.replace('_', '').lower())
+
+
+def parse_product_links(raw: str | None) -> dict[int, str]:
+    """`100=https://…,300=https://…` (сумма в рублях) → `{копейки: ссылка}`, по возрастанию суммы.
+
+    Разделители — запятая, точка с запятой, пробел, перенос строки (в ссылках их нет). Битые записи
+    пропускаются с предупреждением: одна опечатка не должна ронять оплату целиком.
+    """
+    links: dict[int, str] = {}
+    for item in re.split(r'[,;\s]+', raw.strip() if isinstance(raw, str) else ''):
+        if not item:
+            continue
+        amount_part, separator, url = item.partition('=')
+        try:
+            rubles = int(amount_part)
+        except ValueError:
+            rubles = 0
+        if not separator or rubles <= 0 or not url.startswith('https://'):
+            logger.warning('Tribute: запись TRIBUTE_PRODUCT_LINKS пропущена, ожидается «рубли=https://ссылка»')
+            continue
+        links[rubles * 100] = url
+    return dict(sorted(links.items()))
+
+
+def get_product_links() -> dict[int, str]:
+    return parse_product_links(settings.TRIBUTE_PRODUCT_LINKS)
+
+
+def format_product_amounts(links: dict[int, str]) -> str:
+    return ', '.join(str(kopeks // 100) for kopeks in sorted(links))
 
 
 class TributeService:
@@ -22,6 +74,14 @@ class TributeService:
         if not settings.TRIBUTE_ENABLED:
             logger.warning('Tribute платежи отключены')
             return None
+
+        products = get_product_links()
+        if products:
+            # цифровой товар: цена фиксирована, ссылка выбирается по точной сумме; нет такой суммы — None
+            payment_url = products.get(int(amount_kopeks or 0))
+            if not payment_url:
+                logger.warning('Tribute: нет товара для суммы', amount_kopeks=amount_kopeks)
+            return payment_url
 
         try:
             payment_url = f'{self.donate_link}&user_id={user_id}'
@@ -53,6 +113,62 @@ class TributeService:
         except Exception as e:
             logger.error('Ошибка проверки подписи webhook', error=e)
             return False
+
+    @staticmethod
+    def _build_digital_product_result(kind: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        """Разбор `new_digital_product` / `digital_product_refunded`.
+
+        Ключ идемпотентности — `purchase_id` (одинаков у покупки и её возврата, стабилен при ретраях).
+        Без `purchase_id`, `telegram_user_id` (покупатель по email: trb_user_id `W-…`) или с неверной
+        суммой возвращаем None — сервис поднимет тревогу «зачислить вручную».
+        """
+        purchase_id = data.get('purchase_id')
+        trb_user_id = data.get('trb_user_id')
+        telegram_user_id = data.get('telegram_user_id')
+
+        if purchase_id is None:
+            logger.error('Tribute: у события цифрового товара нет purchase_id', trb_user_id=trb_user_id)
+            return None
+        if not telegram_user_id:
+            logger.error(
+                'Tribute: у события цифрового товара нет telegram_user_id',
+                purchase_id=purchase_id,
+                trb_user_id=trb_user_id,
+            )
+            return None
+        try:
+            telegram_user_id = int(telegram_user_id)
+            amount_kopeks = int(data.get('amount') or 0)
+        except (ValueError, TypeError):
+            logger.error('Tribute: некорректные поля цифрового товара', purchase_id=purchase_id)
+            return None
+        if amount_kopeks <= 0:
+            logger.error('Tribute: нулевая сумма цифрового товара', purchase_id=purchase_id)
+            return None
+
+        currency = str(data.get('currency') or '').lower()
+        payment_id = f'digital_{purchase_id}'
+
+        if currency != DIGITAL_ACCEPTED_CURRENCY:
+            status = 'unsupported_currency'
+        elif kind == DIGITAL_REFUND:
+            status = 'refunded'
+        else:
+            status = 'paid'
+
+        return {
+            'event_type': 'refund' if kind == DIGITAL_REFUND else 'payment',
+            'payment_id': payment_id,
+            'user_id': telegram_user_id,
+            'trb_user_id': trb_user_id,
+            'amount_kopeks': amount_kopeks,
+            'currency': currency,
+            'status': status,
+            'external_id': f'donation_{payment_id}',
+            'payment_system': 'tribute',
+            'product_id': data.get('product_id'),
+            'product_name': data.get('product_name'),
+        }
 
     async def process_webhook(self, payload_or_data) -> dict[str, Any] | None:
         try:
@@ -91,6 +207,14 @@ class TributeService:
             if not payment_id and 'name' in webhook_data:
                 event_name = webhook_data.get('name')
                 data = webhook_data.get('payload', {})
+
+                digital_kind = digital_product_event_kind(event_name)
+                if digital_kind:
+                    digital_result = self._build_digital_product_result(digital_kind, data)
+                    # не `event=`: в structlog это имя занято первым аргументом (TypeError «multiple values»)
+                    logger.info('Tribute webhook цифрового товара разобран', event_name=event_name, result=digital_result)
+                    return digital_result
+
                 amount_kopeks = data.get('amount', 0)
                 telegram_user_id = data.get('telegram_user_id')
                 trb_user_id = data.get('trb_user_id')

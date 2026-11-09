@@ -892,15 +892,32 @@ async def get_payment_methods(
         )
 
     if settings.TRIBUTE_ENABLED:
-        methods.append(
-            MiniAppPaymentMethod(
-                id='tribute',
-                icon='💎',
-                requires_amount=False,
-                currency='RUB',
-                integration_type=MiniAppPaymentIntegrationType.REDIRECT,
+        from app.external.tribute import get_product_links
+
+        tribute_products = get_product_links()
+        if tribute_products:
+            # цифровой товар: сумма вводится, но принимается только из списка (проверка в create_payment_link)
+            methods.append(
+                MiniAppPaymentMethod(
+                    id='tribute',
+                    icon='💎',
+                    requires_amount=True,
+                    currency='RUB',
+                    min_amount_kopeks=min(tribute_products),
+                    max_amount_kopeks=max(tribute_products),
+                    integration_type=MiniAppPaymentIntegrationType.REDIRECT,
+                )
             )
-        )
+        else:
+            methods.append(
+                MiniAppPaymentMethod(
+                    id='tribute',
+                    icon='💎',
+                    requires_amount=False,
+                    currency='RUB',
+                    integration_type=MiniAppPaymentIntegrationType.REDIRECT,
+                )
+            )
 
     order_map = {
         'stars': 1,
@@ -1510,6 +1527,15 @@ async def create_payment_link(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Payment method is unavailable')
         if not settings.BOT_TOKEN:
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail='Bot token is not configured')
+
+        from app.external.tribute import format_product_amounts, get_product_links
+
+        tribute_products = get_product_links()
+        if tribute_products and (amount_kopeks or 0) not in tribute_products:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f'Tribute accepts only fixed amounts: {format_product_amounts(tribute_products)} RUB',
+            )
 
         bot = create_bot()
         try:

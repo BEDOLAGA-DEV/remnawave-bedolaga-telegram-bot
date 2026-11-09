@@ -838,9 +838,10 @@ def register_balance_handlers(dp: Dispatcher):
 
     dp.callback_query.register(check_yookassa_payment_status, F.data.startswith('check_yookassa_'))
 
-    from .tribute import start_tribute_payment
+    from .tribute import TRIBUTE_PRODUCT_CALLBACK_PREFIX, start_tribute_payment, start_tribute_product_payment
 
     dp.callback_query.register(start_tribute_payment, F.data == 'topup_tribute')
+    dp.callback_query.register(start_tribute_product_payment, F.data.startswith(TRIBUTE_PRODUCT_CALLBACK_PREFIX))
 
     dp.callback_query.register(request_support_topup, F.data == 'topup_support')
 

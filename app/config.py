@@ -645,6 +645,10 @@ class Settings(BaseSettings):
     TRIBUTE_ENABLED: bool = False
     TRIBUTE_API_KEY: str | None = None
     TRIBUTE_DONATE_LINK: str | None = None
+    # Цифровые товары Tribute вместо доната: «сумма_в_рублях=ссылка», через запятую/пробел/перенос, например
+    # `100=https://t.me/tribute/app?startapp=pAAA,300=https://t.me/tribute/app?startapp=pBBB`.
+    # Задано — покупатель выбирает одну из сумм; пусто — прежний донат по TRIBUTE_DONATE_LINK.
+    TRIBUTE_PRODUCT_LINKS: str | None = None
     TRIBUTE_WEBHOOK_PATH: str = '/tribute-webhook'
     TRIBUTE_WEBHOOK_HOST: str = '0.0.0.0'
     TRIBUTE_WEBHOOK_PORT: int = 8081

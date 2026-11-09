@@ -5,6 +5,7 @@ from typing import Any
 import structlog
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database.crud.transaction import (
@@ -16,6 +17,7 @@ from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import get_db
 from app.database.models import PaymentMethod, TransactionType
 from app.external.tribute import TributeService as TributeAPI
+from app.external.tribute import digital_product_event_kind
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.utils.user_utils import format_referrer_info
@@ -87,9 +89,13 @@ class TributeService:
         processed_data = await self.tribute_api.process_webhook(webhook_data)
         if not processed_data:
             # Подпись уже проверена — это событие Tribute (например, анонимный донат без telegram_user_id).
-            # Тревожим только за донаты: отмена подписки и прочие события без денег — не повод.
+            # Тревожим только за деньги (донаты, покупки/возвраты цифровых товаров): отмена подписки
+            # и прочие события без денег — не повод.
             event_name = webhook_data.get('name')
-            if event_name not in (None, 'new_donation', 'recurrent_donation'):
+            if (
+                event_name not in (None, 'new_donation', 'recurrent_donation')
+                and digital_product_event_kind(event_name) is None
+            ):
                 return {'status': 'ignored', 'reason': 'invalid_data'}
             alert_logger.error(
                 'Tribute: событие без telegram_user_id, оплата могла не зачислиться — сверить в кабинете Tribute',
@@ -100,6 +106,18 @@ class TributeService:
 
         event_type = processed_data.get('event_type', 'payment')
         status = processed_data.get('status')
+
+        if status == 'unsupported_currency':
+            # Курс бот не знает — не зачисляем и не списываем, человек разберётся вручную.
+            alert_logger.error(
+                'Tribute: оплата/возврат не в рублях, баланс НЕ изменён — разобрать вручную',
+                event_type=event_type,
+                payment_id=processed_data.get('payment_id'),
+                user_telegram_id=processed_data.get('user_id'),
+                amount=processed_data.get('amount_kopeks'),
+                currency=processed_data.get('currency'),
+            )
+            return {'status': 'ignored', 'reason': 'unsupported_currency'}
 
         if event_type == 'payment' and status == 'paid':
             await self._handle_successful_payment(processed_data)
@@ -311,49 +329,103 @@ class TributeService:
             logger.error('Ошибка обработки неудачного Tribute платежа', error=e)
 
     async def _handle_refund(self, refund_data: dict[str, Any]):
+        """Возврат за цифровой товар (`digital_product_refunded`): списываем ранее зачисленное.
+
+        Идемпотентность — по `refund_<payment_id>` (payment_id = digital_<purchase_id>). Возврат без
+        найденного зачисления ничего не списывает. Если на балансе меньше суммы возврата (деньги уже
+        потрачены на подписку), баланс уходит в 0, остаток — громкая запись «разобрать вручную».
+        До коммита ошибка не глотается (ответ 5xx, Tribute повторит доставку), после — 200.
+        """
+        committed = False
         try:
-            user_id = refund_data['user_id']
+            user_telegram_id = refund_data['user_id']
             amount_kopeks = refund_data['amount_kopeks']
             payment_id = refund_data['payment_id']
             trb_user_id = refund_data.get('trb_user_id')
+            refund_external_id = f'refund_{payment_id}'
 
             async for session in get_db():
-                await create_transaction(
-                    db=session,
-                    user_id=user_id,
-                    type=TransactionType.REFUND,
-                    amount_kopeks=-amount_kopeks,
-                    description=f'Возврат Tribute платежа {payment_id}',
-                    payment_method=PaymentMethod.TRIBUTE,
-                    external_id=f'refund_{payment_id}',
-                    is_completed=True,
-                    commit=False,
+                original = await get_transaction_by_external_id(
+                    session, f'donation_{payment_id}', PaymentMethod.TRIBUTE
                 )
+                if not original:
+                    alert_logger.error(
+                        'Tribute: возврат без найденного зачисления — баланс НЕ изменён, разобрать вручную',
+                        user_telegram_id=user_telegram_id,
+                        amount_kopeks=amount_kopeks,
+                        payment_id=payment_id,
+                        trb_user_id=trb_user_id,
+                    )
+                    return
 
-                user = await get_user_by_telegram_id(session, user_id)
-                if user:
-                    # Lock user row to prevent concurrent balance race conditions
-                    from app.database.crud.user import lock_user_for_update
+                user = await get_user_by_telegram_id(session, user_telegram_id)
+                if not user:
+                    alert_logger.error(
+                        'Tribute: пользователь для возврата не найден — баланс НЕ изменён, разобрать вручную',
+                        user_telegram_id=user_telegram_id,
+                        amount_kopeks=amount_kopeks,
+                        payment_id=payment_id,
+                    )
+                    return
 
-                    user = await lock_user_for_update(session, user)
-                    if user.balance_kopeks >= amount_kopeks:
-                        user.balance_kopeks -= amount_kopeks
+                # Lock user row to prevent concurrent balance race conditions
+                from app.database.crud.user import lock_user_for_update
 
+                user = await lock_user_for_update(session, user)
                 language = getattr(user, 'language', None) or settings.DEFAULT_LANGUAGE
-                await session.commit()
+                deducted_kopeks = min(max(user.balance_kopeks, 0), amount_kopeks)
 
-                await self._send_refund_notification(user_id, amount_kopeks, language=language)
+                try:
+                    await create_transaction(
+                        db=session,
+                        user_id=user.id,
+                        type=TransactionType.REFUND,
+                        amount_kopeks=-amount_kopeks,
+                        description=f'Возврат Tribute платежа {payment_id}',
+                        payment_method=PaymentMethod.TRIBUTE,
+                        external_id=refund_external_id,
+                        is_completed=True,
+                        commit=False,
+                    )
+                except IntegrityError:
+                    # refund_<payment_id> уникален (uq_transaction_external_id_method): возврат уже учтён —
+                    # повтор доставки или гонка двух вебхуков. Баланс ещё не менялся, ничего не списываем.
+                    await session.rollback()
+                    logger.warning(
+                        'Tribute: возврат уже обработан ранее, повторное списание пропущено', payment_id=payment_id
+                    )
+                    return
+                user.balance_kopeks -= deducted_kopeks
+                user.updated_at = datetime.now(UTC)
+
+                await session.commit()
+                committed = True
+
+                if deducted_kopeks < amount_kopeks:
+                    alert_logger.error(
+                        'Tribute: возврат больше остатка на балансе — списан только остаток, разобрать вручную',
+                        user_telegram_id=user_telegram_id,
+                        payment_id=payment_id,
+                        refund_kopeks=amount_kopeks,
+                        deducted_kopeks=deducted_kopeks,
+                    )
+
+                await self._send_refund_notification(user_telegram_id, amount_kopeks, language=language)
 
                 logger.info(
                     'Обработан возврат Tribute: ₽ для пользователя',
                     amount_kopeks=amount_kopeks / 100,
-                    user_id=user_id,
+                    user_id=user_telegram_id,
                     trb_user_id=trb_user_id,
                 )
                 break
 
         except Exception as e:
-            logger.error('Ошибка обработки возврата Tribute', error=e)
+            if committed:
+                alert_logger.error('Tribute: возврат учтён, но обработка после него упала', error=e, exc_info=True)
+                return
+            alert_logger.error('Tribute: ошибка обработки возврата, ответ 5xx — Tribute повторит', error=e, exc_info=True)
+            raise
 
     async def _send_success_notification(self, user_id: int, amount_kopeks: int):
         if not settings.is_notifications_enabled():
