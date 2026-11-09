@@ -212,7 +212,9 @@ class TributeService:
                 if digital_kind:
                     digital_result = self._build_digital_product_result(digital_kind, data)
                     # не `event=`: в structlog это имя занято первым аргументом (TypeError «multiple values»)
-                    logger.info('Tribute webhook цифрового товара разобран', event_name=event_name, result=digital_result)
+                    logger.info(
+                        'Tribute webhook цифрового товара разобран', event_name=event_name, result=digital_result
+                    )
                     return digital_result
 
                 amount_kopeks = data.get('amount', 0)

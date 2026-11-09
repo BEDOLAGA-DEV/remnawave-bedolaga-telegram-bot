@@ -5,6 +5,7 @@ import pytest
 from app.config import settings
 from app.external.tribute import TributeService, format_product_amounts, get_product_links, parse_product_links
 
+
 LINK_100 = 'https://t.me/tribute/app?startapp=pAAA'
 LINK_300 = 'https://t.me/tribute/app?startapp=pBBB'
 

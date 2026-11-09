@@ -16,8 +16,7 @@ from app.database.crud.transaction import (
 from app.database.crud.user import get_user_by_telegram_id
 from app.database.database import get_db
 from app.database.models import PaymentMethod, TransactionType
-from app.external.tribute import TributeService as TributeAPI
-from app.external.tribute import digital_product_event_kind
+from app.external.tribute import TributeService as TributeAPI, digital_product_event_kind
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.utils.user_utils import format_referrer_info
@@ -424,7 +423,9 @@ class TributeService:
             if committed:
                 alert_logger.error('Tribute: возврат учтён, но обработка после него упала', error=e, exc_info=True)
                 return
-            alert_logger.error('Tribute: ошибка обработки возврата, ответ 5xx — Tribute повторит', error=e, exc_info=True)
+            alert_logger.error(
+                'Tribute: ошибка обработки возврата, ответ 5xx — Tribute повторит', error=e, exc_info=True
+            )
             raise
 
     async def _send_success_notification(self, user_id: int, amount_kopeks: int):

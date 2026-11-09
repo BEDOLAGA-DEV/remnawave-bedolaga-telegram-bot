@@ -106,6 +106,9 @@ def test_response_schema_defaults_to_free_input():
     method = PaymentMethodResponse(id='x', name='X', min_amount_kopeks=100, max_amount_kopeks=1000)
 
     assert method.fixed_amounts_only is False
-    assert PaymentMethodResponse(
-        id='x', name='X', min_amount_kopeks=100, max_amount_kopeks=1000, fixed_amounts_only=True
-    ).model_dump()['fixed_amounts_only'] is True
+    assert (
+        PaymentMethodResponse(
+            id='x', name='X', min_amount_kopeks=100, max_amount_kopeks=1000, fixed_amounts_only=True
+        ).model_dump()['fixed_amounts_only']
+        is True
+    )

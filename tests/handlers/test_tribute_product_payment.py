@@ -8,6 +8,7 @@ import pytest
 from app.config import settings
 from app.handlers.balance import tribute as handler
 
+
 LINK_100 = 'https://t.me/tribute/app?startapp=pAAA'
 LINK_300 = 'https://t.me/tribute/app?startapp=pBBB'
 
