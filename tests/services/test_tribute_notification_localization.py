@@ -80,6 +80,7 @@ async def test_handlers_capture_recipient_language_before_commit(service, monkey
     committed = False
 
     class User:
+        id = 7  # id в БД; транзакция возврата пишется на него, а не на Telegram ID
         balance_kopeks = 50000
 
         @property
@@ -120,6 +121,7 @@ async def test_handlers_capture_recipient_language_before_commit(service, monkey
         service._send_refund_notification.assert_awaited_once_with(123, 12345, language='fa')
         assert user.balance_kopeks == 37655
         assert create.await_args.kwargs['amount_kopeks'] == -12345
+        assert create.await_args.kwargs['user_id'] == 7
         assert create.await_args.kwargs['commit'] is False
     lookup.assert_awaited_once_with(session, 123)
     session.commit.assert_awaited_once()

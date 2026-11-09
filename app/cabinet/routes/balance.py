@@ -216,6 +216,7 @@ async def get_payment_methods(
                 is_available=True,
                 options=options,
                 quick_amounts=method_data.get('quick_amounts') or [],
+                fixed_amounts_only=bool(method_data.get('fixed_amounts_only', False)),
                 open_url_direct=bool(method_data.get('open_url_direct', False)),
             )
         )
@@ -764,14 +765,26 @@ async def create_topup(
                 )
 
         elif request.payment_method == 'tribute':
-            if not settings.TRIBUTE_ENABLED or not settings.TRIBUTE_DONATE_LINK:
+            from app.external.tribute import format_product_amounts, get_product_links
+
+            tribute_products = get_product_links()
+            if not settings.TRIBUTE_ENABLED or not (tribute_products or settings.TRIBUTE_DONATE_LINK):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail='Tribute payment method is unavailable',
                 )
 
             user_identifier = user.telegram_id or user.id
-            payment_url = f'{settings.TRIBUTE_DONATE_LINK}&user_id={user_identifier}'
+            if tribute_products:
+                # цифровой товар: цена фиксирована, платить можно только суммой из списка
+                payment_url = tribute_products.get(request.amount_kopeks)
+                if not payment_url:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f'Tribute accepts only fixed amounts: {format_product_amounts(tribute_products)} RUB',
+                    )
+            else:
+                payment_url = f'{settings.TRIBUTE_DONATE_LINK}&user_id={user_identifier}'
             payment_id = f'tribute_{user_identifier}_{request.amount_kopeks}'
 
         elif request.payment_method == 'severpay':

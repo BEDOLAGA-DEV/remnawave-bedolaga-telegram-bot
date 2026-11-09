@@ -936,8 +936,8 @@
   Классы: `TelegramStarsService` (6 методов)
   Функции: нет
 - `app/external/tribute.py` — Python-модуль
-  Классы: `TributeService` (6 методов)
-  Функции: нет
+  Классы: `TributeService` (7 методов)
+  Функции: `digital_product_event_kind` — 'purchase' / 'refund' для событий цифрового товара, иначе None., `parse_product_links` — `100=https://…,300=https://…` (сумма в рублях) → `{копейки: ссылка}`, по возрастанию суммы., `get_product_links`, `format_product_amounts`
 - `app/external/wata_webhook.py` — Python-модуль
   Классы: `WataPublicKeyProvider` (3 методов), `WataWebhookHandler` (5 методов)
   Функции: `create_wata_webhook_app`, `start_wata_webhook_server`
@@ -1234,7 +1234,7 @@
   Функции: `process_tabpay_payment_amount` — Обрабатывает сумму, введённую пользователем для TabPay., `start_tabpay_topup`, `start_tabpay_card_topup`, `start_tabpay_sbp_topup`
 - `app/handlers/balance/tribute.py` — Python-модуль
   Классы: нет
-  Функции: `start_tribute_payment`
+  Функции: `start_tribute_payment`, `start_tribute_product_payment` — Выбрана сумма цифрового товара (`tribute_pay_<копейки>`): показываем ссылку на оплату этого товара.
 - `app/handlers/balance/wata.py` — Python-модуль
   Классы: нет
   Функции: `start_wata_payment`, `process_wata_payment_amount`, `check_wata_payment_status`
@@ -4440,6 +4440,12 @@
 - `tests/external/test_remnawave_reset_single_attempt.py` — Python-модуль
   Классы: нет
   Функции: `test_reset_does_not_replay_unacknowledged_post`, `test_reset_connection_loss_is_one_attempt`, `test_raw_reset_ack_precedes_optional_enrichment`, `test_reset_marker_presence_is_not_confused_with_missing_or_invalid`, `test_invalid_reset_marker_is_rejected_before_it_can_be_used_as_baseline`
+- `tests/external/test_tribute_digital_product.py` — Python-модуль
+  Классы: нет
+  Функции: `test_event_kind`, `test_purchase_is_paid_with_purchase_id_key`, `test_purchase_camel_case_name_is_accepted`, `test_same_purchase_has_same_key_on_retry_and_other_purchase_differs`, `test_refund_has_same_payment_id_as_purchase`, `test_non_rub_is_not_paid`, `test_rub_in_upper_case_is_accepted`, `test_unusable_digital_events_return_none`, `test_donation_parsing_is_unchanged`, `test_unknown_event_is_still_unknown`
+- `tests/external/test_tribute_product_links.py` — Python-модуль
+  Классы: нет
+  Функции: `test_parse_basic_and_sorted_by_amount`, `test_parse_accepts_separators`, `test_parse_keeps_url_with_equals_and_query`, `test_parse_empty`, `test_parse_skips_bad_entries_but_keeps_good_ones`, `test_format_product_amounts`, `test_get_product_links_reads_settings`, `tribute`, `test_product_mode_returns_link_for_exact_amount`, `test_product_mode_rejects_amount_without_product`, `test_without_products_donation_link_is_used_as_before`, `test_all_entries_broken_falls_back_to_donation`
 - `tests/external/test_tribute_webhook_donation_id.py` — Python-модуль
   Классы: нет
   Функции: `test_distinct_donations_via_same_link_get_distinct_payment_ids` — Два разных доната через одну ссылку не должны схлопываться в один платёж., `test_replayed_webhook_keeps_identical_payment_id` — Повторная доставка того же события обязана дать тот же ключ (дедуп реплеев)., `test_same_second_donations_from_different_users_stay_distinct` — Одновременные донаты разных юзеров не должны делить ключ идемпотентности.
@@ -4933,6 +4939,9 @@
 - `tests/handlers/test_trial_deeplink_duration.py` — Python-модуль
   Классы: нет
   Функции: `free_trial`, `activate`, `test_deeplink_trial_matches_tariff_and_cabinet_preview`, `test_deeplink_trial_duration_persisted_on_postgres`, `test_deeplink_trial_keeps_activation_gates`
+- `tests/handlers/test_tribute_product_payment.py` — Python-модуль
+  Классы: нет
+  Функции: `tribute_settings`, `test_menu_shows_amount_buttons_in_product_mode`, `test_menu_in_donation_mode_is_unchanged`, `test_chosen_amount_opens_product_link`, `test_unknown_amount_shows_alert_and_menu_again`, `test_stale_button_after_switching_back_to_donation_does_not_pay`, `test_disabled_tribute_gives_alert_and_no_menu`, `test_restricted_user_gets_no_payment_link`
 - `tests/handlers/test_unlimited_device_callbacks.py` — Python-модуль
   Классы: нет
   Функции: `test_unlimited_callbacks_stop_before_pricing_or_debit`
@@ -5848,6 +5857,12 @@
 - `tests/services/test_traffic_queue_notice_localization.py` — Python-модуль
   Классы: `Session` (2 методов)
   Функции: `test_actual_traffic_notice_localizes_without_changing_threshold_or_cooldown`, `test_actual_queue_notification_language_and_existing_cooldown`
+- `tests/services/test_tribute_digital_service.py` — Python-модуль
+  Классы: нет
+  Функции: `service`, `test_purchase_goes_to_successful_payment`, `test_refund_goes_to_refund_handler`, `test_foreign_currency_is_alerted_and_not_processed`, `test_foreign_currency_refund_is_not_processed`, `test_email_buyer_without_telegram_id_raises_alert`, `test_non_money_event_without_user_does_not_alert`, `refund_env` — Подменяем БД: session, поиск транзакций и пользователя, создание транзакции., `refund_service`, `test_refund_deducts_balance_and_writes_refund_on_internal_user_id`, `test_refund_replay_hits_unique_constraint_and_changes_nothing`, `test_refund_without_original_credit_changes_nothing_and_alerts`, `test_refund_larger_than_balance_zeroes_balance_and_alerts`, `test_refund_for_unknown_user_changes_nothing_and_alerts`, `test_refund_error_before_commit_is_raised_so_tribute_retries`, `test_refund_error_after_commit_is_swallowed`
+- `tests/services/test_tribute_fixed_amounts.py` — Python-модуль
+  Классы: нет
+  Функции: `tribute_methods` — Вызов get_enabled_methods_for_user с настройками Tribute и одной строкой конфигурации., `test_products_define_amounts_limits_and_fixed_flag`, `test_products_override_db_quick_amounts_and_limits`, `test_donation_mode_keeps_free_input`, `test_all_links_broken_falls_back_to_donation_mode`, `test_method_is_listed_with_products_only_and_no_donation_link`, `test_method_is_hidden_without_donation_link_and_products`, `test_response_schema_defaults_to_free_input`
 - `tests/services/test_tribute_notification_localization.py` — Python-модуль
   Классы: нет
   Функции: `service`, `test_actual_notification_senders_keep_recipient_language_and_amount`, `test_existing_optional_sender_calls_and_disabled_notifications`, `test_handlers_capture_recipient_language_before_commit`
