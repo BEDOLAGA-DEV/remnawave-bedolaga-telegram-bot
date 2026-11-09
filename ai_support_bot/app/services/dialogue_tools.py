@@ -13,7 +13,7 @@ _ENUMS = {
     'purchase_channel': {'site', 'telegram', 'unknown'},
     'registration_method': {'email', 'telegram', 'other', 'unknown'},
 }
-_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason', '_wheel_result', '_access_result', '_store_help', 'service_source', 'renewal_verification'}
+_INTERNAL_FIELDS = {'attachment_file_id', 'attachment_message_id', 'diagnostics', 'manual_review_reason', '_wheel_result', '_access_result', '_store_help', 'service_source', 'renewal_verification', '_tariff_question'}
 
 
 def extract_reported_email(text: str) -> str | None:
@@ -75,7 +75,7 @@ SUPPORT_TOOLS = [
                 'properties': {
                     'seller_name': {'type': 'string', 'description': 'Видимое название сервиса-продавца; пусто, если не видно.'},
                     'seller_url': {'type': 'string', 'description': 'Адрес продавца или подключения на подтверждении; пусто, если нет. Не адрес из рекламы.'},
-                    'location': {'type': 'string', 'enum': ['payment_confirmation', 'merchant', 'seller_chat', 'client', 'advertisement', 'unknown']},
+                    'location': {'type': 'string', 'enum': ['payment_confirmation', 'merchant', 'seller_chat', 'client', 'advertisement', 'catalog', 'unknown']},
                 },
                 'required': ['seller_name', 'seller_url', 'location'],
                 'additionalProperties': False,
@@ -177,14 +177,12 @@ async def execute_support_tool(name: str, raw_arguments: str, telegram_id: int, 
     if name == 'verify_service_source':
         if set(args) != {'seller_name', 'seller_url', 'location'} or any(not isinstance(v, str) for v in args.values()):
             return {'error': 'Нужны seller_name, seller_url и location строками.'}
-        if args['location'] not in {'payment_confirmation', 'merchant', 'seller_chat', 'client', 'advertisement', 'unknown'}:
+        if args['location'] not in {'payment_confirmation', 'merchant', 'seller_chat', 'client', 'advertisement', 'catalog', 'unknown'}:
             return {'error': 'Неизвестное расположение сведений.'}
         owned = await read_account_support(telegram_id, 'identity', state.get('email'))
         result = classify_service_source(args['seller_name'], args['seller_url'], args['location'], owned.get('subscription_hosts', []))
         if result['status'] != 'irrelevant':
             state['service_source'] = result
-            if args['location'] in {'payment_confirmation', 'merchant'}:
-                state['renewal_verification'] = True
         return {**result, 'payment_confirmed': False, 'renewal_confirmed': False}
     if name == 'app_store_region_help':
         if args:
@@ -192,6 +190,8 @@ async def execute_support_tool(name: str, raw_arguments: str, telegram_id: int, 
         state['_store_help'] = True
         return {'instruction': APP_STORE_REGION_HELP}
     if name in {'recover_wheel_rewards', 'check_paid_access', 'check_subscription_renewal'}:
+        if name != 'recover_wheel_rewards' and state.get('_tariff_question'):
+            return {'error': 'Это вопрос об условиях тарифа, а не о совершённой оплате. Ответь про цену, период и устройства по каталогу/скриншоту.'}
         if args:
             return {'error': 'Параметры не нужны: разрешён только текущий аккаунт.'}
         wheel = name == 'recover_wheel_rewards'

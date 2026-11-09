@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 
 _SERVICE_HOSTS = {'slig.app', 'web.slig.app', 'sligvpn.ru', 'connect.sligvpn.ru'}
+_SERVICE_BOTS = {'sligvpn_bot', 'sligapp'}
 _CLIENT_NAME = re.compile(r'^(?:happ|incy|v2raytun|v2rayng|v2rayn|shadowrocket|streisand|v2box)$', re.IGNORECASE)
 
 
@@ -11,9 +12,11 @@ def classify_service_source(name: str, url: str, location: str, owned_hosts=()) 
     if location in {'client', 'advertisement'}:
         return {'status': 'irrelevant', 'location': location}
     name = name.strip()[:120]
-    own_name = bool(re.search(r'(?<![\w])slig\s*vpn(?![\w])|(?<![\w])slig\.app(?![\w.])', name, re.IGNORECASE))
+    own_name = bool(re.search(r'(?<![\w])slig\s*vpn(?![\w])|(?<![\w])slig\.?app(?![\w.])', name, re.IGNORECASE))
     host, bot = '', ''
     try:
+        if url.startswith('@'):
+            url = 'https://t.me/' + url[1:]
         parsed = urlsplit(url if '://' in url else 'https://' + url)
         if parsed.scheme.lower() == 'https' and not parsed.username and not parsed.password:
             host = (parsed.hostname or '').lower().rstrip('.')
@@ -23,11 +26,11 @@ def classify_service_source(name: str, url: str, location: str, owned_hosts=()) 
         pass
     own_url = bool(host) and (
         (host != 't.me' and host in _SERVICE_HOSTS | set(owned_hosts))
-        or (host == 't.me' and bot == 'sligvpn_bot')
+        or (host == 't.me' and bot in _SERVICE_BOTS)
     )
     other_name = bool(name) and not own_name and not _CLIENT_NAME.fullmatch(name)
     other_vpn = other_name and bool(re.search(r'vpn|впн', name, re.IGNORECASE))
-    seller_location = location in {'payment_confirmation', 'merchant', 'seller_chat'}
+    seller_location = location in {'payment_confirmation', 'merchant', 'seller_chat', 'catalog'}
     status = 'unknown'
     if seller_location:
         if (own_name and host and not own_url) or (own_url and other_name):
@@ -38,6 +41,25 @@ def classify_service_source(name: str, url: str, location: str, owned_hosts=()) 
             status = 'foreign'
     # Persist/display only the host, never a personal subscription token or query.
     return {'status': status, 'seller_name': name, 'host': host, 'location': location}
+
+
+def official_service_reference(text: str) -> dict | None:
+    match = re.search(r'(?<![\w/])@(?:sligapp|sligvpn_bot)(?![\w])|https://t\.me/(?:sligapp|sligvpn_bot)(?![\w/])', text, re.IGNORECASE)
+    if match:
+        return classify_service_source('', match.group(), 'seller_chat')
+    return None
+
+
+def tariff_question(question: str, history: list) -> bool:
+    def pricing(text):
+        return bool(re.search(r'тариф|пакет|цен|стоим|руб|₽|\d+\s*р\b', text, re.IGNORECASE)
+                    and re.search(r'устройств|сколько|за одно|за вс[её]|за 5|что входит|включ|стоит|стоим|цен', text, re.IGNORECASE)
+                    and not re.search(r'оплатил|заплатил|проплат|списал|чек|не зачис|не продл', text, re.IGNORECASE))
+    if pricing(question):
+        return True
+    if official_service_reference(question):
+        return any(pricing(item.content or '') for item in history[-6:] if item.role == 'user')
+    return False
 
 
 def renewal_navigation_request(question: str) -> bool:

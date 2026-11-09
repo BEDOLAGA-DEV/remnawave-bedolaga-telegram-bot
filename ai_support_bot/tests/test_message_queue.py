@@ -137,3 +137,18 @@ async def test_failed_request_does_not_block_queued_followup():
     assert isinstance(results[0], RuntimeError)
     assert results[1] is None
     assert batches == [[1], [2]]
+
+
+@pytest.mark.asyncio
+async def test_minimum_delay_keeps_burst_together_without_changing_regular_queue():
+    queue = MessageQueue(quiet_seconds=0, max_wait=0)
+    started = asyncio.get_running_loop().time()
+    batches = []
+    async def process(batch):
+        batches.append(batch)
+        assert asyncio.get_running_loop().time() - started >= 0.025
+    first = asyncio.create_task(queue.submit('business', 1, process, min_delay=0.03))
+    await asyncio.sleep(0.01)
+    second = asyncio.create_task(queue.submit('business', 2, process, min_delay=0.03))
+    await asyncio.gather(first, second)
+    assert batches == [[1, 2]]

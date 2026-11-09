@@ -67,3 +67,15 @@ def test_no_service_source_can_confirm_paid_months_were_added(source):
     assert 'уже добавлены' not in answer
     assert 'автоматически' not in answer
     assert 'https://' not in answer
+
+
+@pytest.mark.parametrize('reference', ['@SligApp', '@sligapp', 'https://t.me/SligApp', 'https://t.me/SligVPN_bot'])
+def test_official_bot_aliases_are_recognized(reference):
+    from ai_support_bot.app.services.service_identity import official_service_reference
+    assert official_service_reference('В телеграм боте ' + reference)['status'] == 'ours'
+
+
+@pytest.mark.parametrize('reference', ['@SligAppFake', 'https://t.me/SligAppFake', 'https://evil.example/t.me/SligApp'])
+def test_similar_names_do_not_become_official_bots(reference):
+    from ai_support_bot.app.services.service_identity import official_service_reference
+    assert official_service_reference(reference) is None

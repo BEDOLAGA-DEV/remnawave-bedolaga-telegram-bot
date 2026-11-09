@@ -460,3 +460,41 @@ async def test_operator_takeover_while_collecting_messages_suppresses_batch(serv
     await pending
     agent.assert_not_called()
     assert not any(isinstance(r, (SendMessage, ReadBusinessMessage)) for r in requests)
+
+
+@pytest.mark.asyncio
+async def test_operator_message_during_reply_delay_prevents_generation(service, monkeypatch):
+    bot, _, requests, agent = service
+    getter = bot_mod.settings_store.get_int
+    monkeypatch.setattr(bot_mod.settings_store, 'get_int', lambda key: 0.04 if key == 'BUSINESS_REPLY_DELAY_SECONDS' else getter(key))
+    incoming = asyncio.create_task(dispatch(bot, message()))
+    await asyncio.sleep(0.01)
+    await dispatch(bot, message(message_id=2, from_user={'id': 900, 'is_bot': False, 'first_name': 'Owner'}, text='Сейчас помогу'))
+    await incoming
+    agent.assert_not_called()
+    assert not any(isinstance(r, SendMessage) for r in requests)
+
+
+@pytest.mark.asyncio
+async def test_handoff_pauses_ai_until_explicit_resume(service):
+    bot, _, _, agent = service
+    agent.side_effect = None
+    agent.return_value = {'answer': 'Передаю команде', 'escalate': True}
+    await dispatch(bot, message())
+    control = await bot_mod.business_control.get_chat('business-1', 555, 900)
+    assert control.manual_pause
+    await dispatch(bot, message(message_id=2, text='Ещё сообщение'))
+    assert agent.call_count == 1
+    await control_callback(bot, 'resume', control.id)
+    agent.return_value = {'answer': 'Вернулся к помощи', 'escalate': False}
+    await dispatch(bot, message(message_id=3))
+    assert agent.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_operator_edit_also_pauses_ai(service):
+    bot, _, _, agent = service
+    edit = message(from_user={'id': 900, 'is_bot': False, 'first_name': 'Owner'}, edit_date=int(datetime.now(UTC).timestamp()))
+    await bot_mod.build_dispatcher().feed_update(bot, Update(update_id=10, edited_business_message=edit))
+    await dispatch(bot, message(message_id=2))
+    agent.assert_not_called()

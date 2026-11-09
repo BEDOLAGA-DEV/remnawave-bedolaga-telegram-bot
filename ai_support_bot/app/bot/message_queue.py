@@ -29,7 +29,8 @@ class MessageQueue:
         self._last_started: dict[Hashable, float] = {}
 
     async def submit(
-        self, key: Hashable, message: object, process: Callable[[list], Awaitable[None]], interval: float = 0
+        self, key: Hashable, message: object, process: Callable[[list], Awaitable[None]], interval: float = 0,
+        min_delay: float = 0,
     ):
         state = self._states.setdefault(key, _State(last_started=self._last_started.get(key, float('-inf'))))
         if len(state.entries) >= self.pending_limit:
@@ -38,10 +39,10 @@ class MessageQueue:
         done = loop.create_future()
         state.entries.append(_Entry(message, loop.time(), done))
         if state.task is None:
-            state.task = asyncio.create_task(self._run(key, state, process, max(0, interval)))
+            state.task = asyncio.create_task(self._run(key, state, process, max(0, interval), max(0, min_delay)))
         await done
 
-    async def _run(self, key, state, process, interval):
+    async def _run(self, key, state, process, interval, min_delay):
         loop = asyncio.get_running_loop()
         batch = []
         try:
@@ -50,7 +51,7 @@ class MessageQueue:
                     deadline = min(
                         state.entries[-1].arrived + self.quiet_seconds, state.entries[0].arrived + self.max_wait
                     )
-                    delay = max(deadline, state.last_started + interval) - loop.time()
+                    delay = max(deadline, state.entries[0].arrived + min_delay, state.last_started + interval) - loop.time()
                     if delay <= 0:
                         break
                     await asyncio.sleep(delay)

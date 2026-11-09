@@ -8,9 +8,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from ai_support_bot.app.db import database
 from ai_support_bot.app.db.models import BusinessChatControl
+from ai_support_bot.app.services import settings_store
 
 
-AUTO_PAUSE_MINUTES = 30
+AUTO_PAUSE_MINUTES = 120
 
 
 async def get_chat(connection_id: str, chat_id: int, owner_id: int) -> BusinessChatControl:
@@ -77,7 +78,8 @@ async def active(control_id: int, revision: int) -> bool:
 
 
 async def operator_message(control_id: int, sent_at: datetime) -> None:
-    until = sent_at + timedelta(minutes=AUTO_PAUSE_MINUTES)
+    minutes = max(1, settings_store.get_int('BUSINESS_OPERATOR_PAUSE_MINUTES') or AUTO_PAUSE_MINUTES)
+    until = sent_at + timedelta(minutes=minutes)
     if until <= datetime.now(UTC):
         return
     async with database.AsyncSessionLocal() as db:

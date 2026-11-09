@@ -1448,3 +1448,70 @@ async def test_scope_rule_survives_legacy_saved_prompt(flow):
         await agent_mod.support_agent.generate_answer(db, 4242, 'Как проверить конфигурацию подключения?')
     assert 'Границы поддержки:' in captured['prompts'][-1]
     assert 'не выполняй постороннюю часть' in captured['prompts'][-1]
+
+
+@pytest.mark.asyncio
+async def test_tariff_screenshot_does_not_start_payment_dispute(flow, monkeypatch):
+    from ai_support_bot.app.services import dialogue_tools
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(dialogue_tools, 'read_account_support', AsyncMock(return_value={'status': 'unavailable'}))
+    catalog = AsyncMock(return_value='Каталог: Стандарт, устройств=5, месяц=219 ₽')
+    monkeypatch.setattr(agent_mod.support_agent, '_build_catalog_block', catalog)
+    captured['responses'] = [_tool_reply('verify_service_source', {'seller_name': '', 'seller_url': '', 'location': 'merchant'}),
+                             {'content': 'По скриншоту 219 ₽ за месяц на 5 устройств, не за каждое отдельно.'}]
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Стандартный пакет 219 руб это за одно устройство или 5?', image_url='https://example.invalid/tariff')
+        current = await agent_mod.crud.get_or_create_conversation(db, 4242)
+    assert 'на 5 устройств' in result['answer']
+    assert 'где вы оплачивали' not in result['answer'].lower()
+    assert not current.support_state.get('renewal_verification')
+    catalog.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sligapp_reply_exits_stale_payment_loop_for_tariff_question(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    monkeypatch.setattr(agent_mod.support_agent, '_build_catalog_block', AsyncMock(return_value='Стандарт: 5 устройств'))
+    async with Session() as db:
+        current = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        current.support_state = {'issue': 'payment_activation', 'renewal_verification': True, 'service_source': {'status': 'unknown'}}
+        await agent_mod.crud.add_message(db, current.id, 4242, 'user', '219 руб это за одно устройство или 5?')
+        await agent_mod.crud.add_message(db, current.id, 4242, 'assistant', 'В каком боте вы оплачивали?')
+        await db.commit()
+    captured['reply'] = 'Стандарт рассчитан на 5 устройств.'
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'В телеграм боте @SligApp')
+    assert '5 устройств' in result['answer']
+    assert '@username' not in result['answer']
+    assert '"status": "ours"' in captured['prompts'][-1]
+
+
+@pytest.mark.asyncio
+async def test_human_request_works_even_during_identity_clarification(flow):
+    captured, agent_mod, Session = flow
+    async with Session() as db:
+        current = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        current.support_state = {'issue': 'payment_activation', 'renewal_verification': True}
+        await db.commit()
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'А может ответить не бот?')
+    assert result['escalate']
+    assert result['escalation_reason'] == 'human'
+    assert not captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_third_identical_clarification_is_replaced_with_handoff(flow):
+    captured, agent_mod, Session = flow
+    reply = 'В каком боте или на каком сайте вы оплачивали? Пришлите его username или адрес для проверки.'
+    async with Session() as db:
+        current = await agent_mod.crud.get_or_create_conversation(db, 4242)
+        for _ in range(2):
+            await agent_mod.crud.add_message(db, current.id, 4242, 'user', 'Я уже ответил')
+            await agent_mod.crud.add_message(db, current.id, 4242, 'assistant', reply)
+        await db.commit()
+    captured['reply'] = reply
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Посмотрите мой предыдущий ответ')
+    assert result['escalate']
+    assert result['escalation_reason'] == 'repeated_clarification'
+    assert result['answer'] != reply

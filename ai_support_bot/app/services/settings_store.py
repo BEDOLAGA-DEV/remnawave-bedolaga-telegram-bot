@@ -15,6 +15,8 @@ def _base_defaults() -> dict[str, Any]:
     return {
         'SYSTEM_PROMPT': settings.SYSTEM_PROMPT,
         'MODEL': settings.MODEL,
+        'BUSINESS_REPLY_DELAY_SECONDS': str(settings.BUSINESS_REPLY_DELAY_SECONDS),
+        'BUSINESS_OPERATOR_PAUSE_MINUTES': str(settings.BUSINESS_OPERATOR_PAUSE_MINUTES),
         'EMBEDDING_MODEL': settings.EMBEDDING_MODEL,
         'MAX_TOKENS': str(settings.MAX_TOKENS),
         'TEMPERATURE': str(settings.TEMPERATURE),

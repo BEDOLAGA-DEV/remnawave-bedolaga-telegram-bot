@@ -16,6 +16,7 @@ async def store(monkeypatch, tmp_path):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     monkeypatch.setattr(database, 'AsyncSessionLocal', async_sessionmaker(engine, expire_on_commit=False))
+    monkeypatch.setattr(control.settings_store, 'get_int', lambda key: 120)
     yield
     await engine.dispose()
 
@@ -42,10 +43,10 @@ async def test_operator_messages_extend_pause_but_stale_messages_do_not_shorten_
     await control.operator_message(chat.id, now - timedelta(minutes=10))
     first = await control.get_by_id(chat.id)
     assert control.paused(first)
-    assert first.pause_until.replace(tzinfo=UTC) == now + timedelta(minutes=20)
+    assert first.pause_until.replace(tzinfo=UTC) == now + timedelta(minutes=110)
     await control.operator_message(chat.id, now)
     renewed = await control.get_by_id(chat.id)
-    assert renewed.pause_until.replace(tzinfo=UTC) == now + timedelta(minutes=30)
+    assert renewed.pause_until.replace(tzinfo=UTC) == now + timedelta(minutes=120)
     await control.operator_message(chat.id, now - timedelta(minutes=20))
     await control.operator_message(chat.id, now - timedelta(hours=1))
     assert (await control.get_by_id(chat.id)).pause_until == renewed.pause_until
@@ -93,3 +94,13 @@ async def test_existing_chat_lookup_does_not_write_while_another_transaction_is_
         found = await asyncio.wait_for(control.get_chat('one', 555, 900), timeout=0.5)
         assert found.id == chat.id
         await writer.rollback()
+
+
+@pytest.mark.asyncio
+async def test_auto_pause_duration_can_be_configured(store, monkeypatch):
+    monkeypatch.setattr(control.settings_store, 'get_int', lambda key: 45)
+    chat = await control.get_chat('one', 555, 900)
+    now = datetime.now(UTC)
+    await control.operator_message(chat.id, now)
+    saved = await control.get_by_id(chat.id)
+    assert saved.pause_until.replace(tzinfo=UTC) == now + timedelta(minutes=45)

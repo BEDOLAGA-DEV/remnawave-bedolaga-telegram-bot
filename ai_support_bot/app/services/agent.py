@@ -47,6 +47,7 @@ from ai_support_bot.app.services.response_rules import (
     manual_review_followup,
     paid_access_request,
     payment_next_step,
+    repeated_clarification,
     repeated_diagnostics,
     smalltalk_answer,
     starts_new_topic,
@@ -58,9 +59,11 @@ from ai_support_bot.app.services.response_rules import (
 )
 from ai_support_bot.app.services.service_catalog import build_service_catalog, build_user_offers
 from ai_support_bot.app.services.service_identity import (
+    official_service_reference,
     renewal_navigation_request,
     renewal_payment_request,
     renewal_verification_answer,
+    tariff_question,
 )
 from ai_support_bot.app.services.summary_service import summary_service
 from ai_support_bot.app.services.support_policy import SUPPORT_POLICY
@@ -393,6 +396,11 @@ class SupportAgent:
 
         context_limit = settings_store.get_int('CONTEXT_MESSAGES') or 8
         history = await crud.get_conversation_context(db, conversation.id, context_limit)
+        pricing_question = tariff_question(question, history)
+        if pricing_question:
+            support_state = {'issue': 'other'}
+        if source := official_service_reference(question):
+            support_state['service_source'] = source
         if support_state.get('renewal_verification') and renewal_navigation_request(question) and not renewal_payment_request(question, []):
             support_state = {'issue': 'other'}
         first_reply = not summary and not conversation.user_turns_since_summary and not any(item.role == 'assistant' for item in history)
@@ -419,6 +427,8 @@ class SupportAgent:
         await db.commit()
 
         forced_reason = mandatory_handoff(question, history)
+        if pricing_question:
+            support_state['_tariff_question'] = True
         if not forced_reason and renewal_payment_request(question, history, support_state.get('renewal_verification', False)):
             support_state['renewal_verification'] = True
             support_state['issue'] = 'payment_activation'
@@ -532,7 +542,7 @@ class SupportAgent:
         catalog_block = ''
         if not smalltalk and not forced_reason and not direct_answer:
             navigation_block = await self._build_navigation_block(telegram_id, question, history, summary)
-            if re.search(r'цен|стоим|стоит|тариф|скидк|акци', question, re.IGNORECASE):
+            if pricing_question or re.search(r'цен|стоим|стоит|тариф|скидк|акци', question, re.IGNORECASE):
                 catalog_block = await self._build_catalog_block(telegram_id)
 
         system_prompt = self._build_system_prompt(
@@ -660,6 +670,9 @@ class SupportAgent:
             escalation_reason = 'repeated_diagnostics'
             answer_text, escalate = NOTICE, True
             logger.info('Repeated troubleshooting replaced with handoff', telegram_id=telegram_id)
+        if not escalate and repeated_clarification(answer_text, question, history):
+            escalation_reason = 'repeated_clarification'
+            answer_text, escalate = NOTICE, True
         if not answer_text:
             answer_text = NOTICE
             escalate = True
@@ -701,6 +714,7 @@ class SupportAgent:
         support_state.pop('_wheel_result', None)
         support_state.pop('_access_result', None)
         support_state.pop('_store_help', None)
+        support_state.pop('_tariff_question', None)
         conversation.support_state = dict(support_state)
         support_photo = await crud.get_support_photo(db, conversation.id, telegram_id, support_state) if escalate else None
         support_photos = await crud.get_support_photos(db, conversation.id, telegram_id, support_state) if escalate else []

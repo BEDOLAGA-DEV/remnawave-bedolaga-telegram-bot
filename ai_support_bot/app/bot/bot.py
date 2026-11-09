@@ -4,6 +4,7 @@ import io
 import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from html import escape
 
 import structlog
@@ -238,7 +239,10 @@ async def queue_message(message: Message, business_connection: BusinessConnectio
             await handle_message(ordered[-1], business_connection, message_batch=ordered)
 
     try:
-        await _message_queue.submit(key, message, process, interval=settings_store.get_int('THROTTLE_SECONDS'))
+        await _message_queue.submit(
+            key, message, process, interval=settings_store.get_int('THROTTLE_SECONDS'),
+            min_delay=settings_store.get_int('BUSINESS_REPLY_DELAY_SECONDS') if business_connection else 0,
+        )
     except OverflowError:
         await _answer_safely(message, 'Слишком много сообщений подряд. Дождитесь ответа на уже отправленные.')
 
@@ -326,6 +330,10 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
             logger.warning('Failed to mark business message as read', error=str(error), chat_id=message.chat.id)
 
     if result['escalate']:
+        if business_connection is not None:
+            turn = _business_turn.get()
+            if turn is not None:
+                await business_control.set_manual(turn[0], True)
         logger.info(
             'Escalating question to admins',
             telegram_id=telegram_id,
@@ -343,6 +351,7 @@ async def handle_message(message: Message, business_connection: BusinessConnecti
             'diagnostics_failed': 'диагностика не помогла, требуется ручная проверка',
             'wheel_reward_review': 'не удалось подтвердить доступный личный промокод из колеса',
             'payment_review': 'требуется ручная проверка оплаты и доступа по подписке',
+            'repeated_clarification': 'ИИ повторяет один уточняющий вопрос без продвижения обращения',
         }.get(result.get('escalation_reason'), reason)
         notify_text = (
             '⚠️ <b>Внимание: Обращение требует внимания оператора!</b>\n\n'
@@ -409,6 +418,22 @@ async def handle_business_message(message: Message) -> None:
         _business_turn.reset(token)
 
 
+async def handle_business_edit(message: Message) -> None:
+    if not message.business_connection_id or message.chat.type != 'private' or not message.from_user or message.from_user.is_bot:
+        return
+    try:
+        connection = await message.bot.get_business_connection(message.business_connection_id)
+    except TelegramAPIError as error:
+        logger.warning('Failed to get business connection for edit', error=str(error))
+        return
+    if message.from_user.id == connection.user.id:
+        control = await business_control.get_chat(connection.id, message.chat.id, connection.user.id)
+        sent_at = message.edit_date or message.date
+        if isinstance(sent_at, (int, float)):
+            sent_at = datetime.fromtimestamp(sent_at, tz=UTC)
+        await business_control.operator_message(control.id, sent_at)
+
+
 async def handle_control_callback(query: CallbackQuery) -> None:
     parts = (query.data or '').split(':')
     if len(parts) != 3 or parts[1] not in {'take', 'resume'} or not parts[2].isdigit():
@@ -429,6 +454,7 @@ def build_dispatcher() -> Dispatcher:
     dp.message.register(queue_message, F.text | F.photo | F.caption)
     dp.business_connection.register(handle_business_connection)
     dp.business_message.register(handle_business_message)
+    dp.edited_business_message.register(handle_business_edit)
     dp.callback_query.register(handle_control_callback, F.data.startswith('aisup:'))
     dp.shutdown.register(_message_queue.close)
     return dp

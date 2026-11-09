@@ -207,6 +207,8 @@ def mandatory_handoff(question: str, history: list) -> str | None:
     human = re.search(r'(?:позов\w*|зови|свяж\w*|соедин\w*|подключ\w*|хочу поговорить|нужен|нужна)\s+(?:меня\s+)?(?:с\s+)?(?:жив\w*\s+)?(?:человек\w*|оператор\w*|админ\w*|поддержк\w*)', text)
     if human and not re.search(r'не\s*$', text[:human.start()]):
         return 'human'
+    if re.search(r'(?:можно|может|хочу|пусть).{0,35}(?:ответит|ответить|поговорить).{0,20}(?:не\s+бот|человек|сотрудник)|(?:можно|хочу)\s+не\s+бота?\b', text):
+        return 'human'
     if re.search(r'передайте\s+(?:это\s+)?обращение|передайте\s+.*команде', text):
         return 'human'
     if re.search(r'(?:хочу|прошу|можно|нужно)\s+(?:сделать\s+)?(?:возврат|вернуть деньги)|верните\s+(?:мне\s+)?деньги|\bвоз[а-яё]{0,3}в?рат[а-яё]*\s+(?:денег|средств|оплат)', text) or re.fullmatch(r'\s*воз[а-яё]{0,3}в?рат[а-яё]*[.!?\s]*', text):
@@ -314,6 +316,18 @@ def repeated_diagnostics(answer: str, question: str, history: list, has_image: b
     current_actions = {i for i, pattern in enumerate(actions) if re.search(pattern, current)}
     prior_actions = {i for i, pattern in enumerate(actions) if re.search(pattern, prior)}
     return len(current_actions) >= 2 and current_actions <= prior_actions
+
+
+def repeated_clarification(answer: str, question: str, history: list) -> bool:
+    if re.search(r'повтор|ещ[её] раз|продублир', question, re.IGNORECASE):
+        return False
+    if not re.search(r'\?|(?:^|[.!]\s+|\n)\s*(?:пришлите|уточните|сообщите|напишите)', answer, re.IGNORECASE):
+        return False
+    def normalized(text):
+        return ' '.join(re.findall(r'[а-яёa-z0-9]+', unescape(re.sub(r'<[^>]*>', '', text)).casefold()))
+    current = normalized(answer)
+    previous = [normalized(item.content or '') for item in history if item.role == 'assistant'][-2:]
+    return len(current) >= 60 and len(previous) == 2 and all(SequenceMatcher(None, current, old).ratio() >= 0.9 for old in previous)
 
 
 def handoff_answer(reason: str, question: str) -> str:
