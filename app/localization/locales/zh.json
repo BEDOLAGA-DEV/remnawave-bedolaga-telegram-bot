@@ -3206,6 +3206,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_LABEL": "💳 Etoplatezhi",
   "SETTINGS_CATEGORY_JUPITER_LABEL": "🪐 Jupiter",
   "SETTINGS_CATEGORY_CISPAY_LABEL": "💳 CisPay",
+  "SETTINGS_CATEGORY_LIRPAY_LABEL": "💳 LirPay",
   "SETTINGS_CATEGORY_CASHERA_LABEL": "💳 Cashera",
   "SETTINGS_CATEGORY_ANORE_LABEL": "💳 Anore",
   "SETTINGS_CATEGORY_TABPAY_LABEL": "💳 TabPay",
@@ -3283,6 +3284,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_DESCRIPTION": "Etoplatezhi：paymentpage.etoplatezhi.ru，支持银行卡和 SBP。",
   "SETTINGS_CATEGORY_JUPITER_DESCRIPTION": "Jupiter（FPGate P2P v2.1）：app.juppiter.tech，采用 HMAC-SHA256 的 SBP 收单服务。",
   "SETTINGS_CATEGORY_CISPAY_DESCRIPTION": "CisPay：在服务商页面通过银行卡、SBP 或可选加密货币付款；Webhook 使用 HMAC-SHA256。",
+  "SETTINGS_CATEGORY_LIRPAY_DESCRIPTION": "LirPay：lirpay.org（SBP、加密货币、LolzTeam 余额）；Webhook 使用 HMAC-SHA256。",
   "SETTINGS_CATEGORY_CASHERA_DESCRIPTION": "Cashera：api.cashera.cash，支持 SBP、银行卡、加密货币和 CryptoBot；包括 pk_ 密钥、sk_ 私密密钥和付款方式设置。",
   "SETTINGS_CATEGORY_ANORE_DESCRIPTION": "Anore：卢布账单、SBP、银行卡、ЮMoney 和加密货币。Webhook 使用 HMAC-SHA256。",
   "SETTINGS_CATEGORY_TABPAY_DESCRIPTION": "TabPay：tabpay.org，支持 SBP 和带 3-D Secure 的银行卡；Webhook 使用 HMAC-SHA256 签名（X-Signature-V2）。",
@@ -7058,5 +7060,8 @@
   "RECURRENT_UI_LAVA_PRICE_MISMATCH": "Lava 产品价格为 {price} ₽，但订阅续费 {days} 天需要 {renewal} ₽。请创建价格正确的产品。",
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "此套餐未设置 {days} 天的价格，无法通过 SBP 自动续费",
   "WELCOME_FALLBACK_NAME": "朋友",
-  "STARS_TOPUP_DESCRIPTION": "充值 {amount}"
+  "STARS_TOPUP_DESCRIPTION": "充值 {amount}",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>通过 {name} 付款</b>\n\n金额：<b>{amount}₽</b>\n\n点击下方按钮打开付款页面。\n请在页面上选择付款方式。\n付款确认后余额将自动充值。",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>已通过 {name} 创建付款</b>\n\n金额：<b>{amount}₽</b>\n\n付款正在处理中。确认后将收到状态通知。",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>通过 {name} 充值</b>\n\n请输入充值金额（卢布）。\n\n最低：{min_amount}₽\n最高：{max_amount}₽"
 }

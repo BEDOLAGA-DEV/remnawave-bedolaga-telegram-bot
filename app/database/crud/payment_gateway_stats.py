@@ -32,6 +32,7 @@ from app.database.models import (
     JupiterPayment,
     KassaAiPayment,
     LavaPayment,
+    LirPayPayment,
     MulenPayPayment,
     OverpayPayment,
     Pal24Payment,
@@ -75,6 +76,7 @@ _GATEWAY_REGISTRY: list[tuple[str, type, object]] = [
     (PaymentMethod.ANORE.value, AnorePayment, AnorePayment.is_paid.is_(True) & AnorePayment.is_test.is_(False)),
     (PaymentMethod.TABPAY.value, TabPayPayment, TabPayPayment.is_paid.is_(True)),
     (PaymentMethod.PARITYPAY.value, ParityPayPayment, ParityPayPayment.is_paid.is_(True)),
+    (PaymentMethod.LIRPAY.value, LirPayPayment, LirPayPayment.is_paid.is_(True)),
 ]
 
 

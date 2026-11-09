@@ -3206,6 +3206,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_LABEL": "💳 Etoplatezhi",
   "SETTINGS_CATEGORY_JUPITER_LABEL": "🪐 Jupiter",
   "SETTINGS_CATEGORY_CISPAY_LABEL": "💳 CisPay",
+  "SETTINGS_CATEGORY_LIRPAY_LABEL": "💳 LirPay",
   "SETTINGS_CATEGORY_CASHERA_LABEL": "💳 Cashera",
   "SETTINGS_CATEGORY_ANORE_LABEL": "💳 Anore",
   "SETTINGS_CATEGORY_TABPAY_LABEL": "💳 TabPay",
@@ -3283,6 +3284,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_DESCRIPTION": "Etoplatezhi: paymentpage.etoplatezhi.ru, card and SBP payments.",
   "SETTINGS_CATEGORY_JUPITER_DESCRIPTION": "Jupiter (FPGate P2P v2.1): app.juppiter.tech, SBP acquiring with HMAC-SHA256.",
   "SETTINGS_CATEGORY_CISPAY_DESCRIPTION": "CisPay: cards, SBP, and optional cryptocurrency on the provider page; HMAC-SHA256 webhook.",
+  "SETTINGS_CATEGORY_LIRPAY_DESCRIPTION": "LirPay: lirpay.org (SBP, crypto, LolzTeam balance); HMAC-SHA256 webhooks.",
   "SETTINGS_CATEGORY_CASHERA_DESCRIPTION": "Cashera: api.cashera.cash, SBP, cards, cryptocurrency, and CryptoBot; pk_ key, sk_ secret, and payment methods.",
   "SETTINGS_CATEGORY_ANORE_DESCRIPTION": "Anore: ruble invoices, SBP, cards, YooMoney, and cryptocurrency. HMAC-SHA256 webhook.",
   "SETTINGS_CATEGORY_TABPAY_DESCRIPTION": "TabPay: tabpay.org, SBP and cards with 3-D Secure; HMAC-SHA256 signed webhooks (X-Signature-V2).",
@@ -7058,5 +7060,8 @@
   "RECURRENT_UI_LAVA_PRICE_MISMATCH": "The Lava product costs {price} ₽, but subscription renewal costs {renewal} ₽ for {days} days. Create a product with the current price.",
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "The tariff has no price for {days} days — SBP automatic renewal is unavailable",
   "WELCOME_FALLBACK_NAME": "friend",
-  "STARS_TOPUP_DESCRIPTION": "Balance top-up of {amount}"
+  "STARS_TOPUP_DESCRIPTION": "Balance top-up of {amount}",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>Payment via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nTap the button below to open the payment page.\nChoose the payment method on the page.\nYour balance will be topped up automatically after the payment is confirmed.",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>Payment created via {name}</b>\n\nAmount: <b>{amount}₽</b>\n\nThe payment is being processed. You will get a notification once it is confirmed.",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>Top up via {name}</b>\n\nEnter the top-up amount in rubles.\n\nMinimum: {min_amount}₽\nMaximum: {max_amount}₽"
 }

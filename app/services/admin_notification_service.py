@@ -2072,6 +2072,7 @@ class AdminNotificationService:
             'cispay': f'💳 {settings.get_cispay_display_name()}',
             'cashera': f'💳 {settings.get_cashera_display_name()}',
             'anore': f'💳 {settings.get_anore_display_name()}',
+            'lirpay': f'💳 {settings.get_lirpay_display_name()}',
             'tabpay': f'💳 {settings.get_tabpay_display_name()}',
             'paritypay': f'💳 {settings.get_paritypay_display_name()}',
             'manual': texts.t('ADMIN_NOTIFY_031', '🛠️ Вручную (админ)'),

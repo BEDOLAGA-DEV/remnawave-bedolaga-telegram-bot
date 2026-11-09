@@ -229,6 +229,7 @@ def create_unified_app(
         'apple_iap': settings.is_apple_iap_enabled(),
         'freekassa': settings.is_freekassa_enabled(),
         'riopay': settings.is_riopay_enabled(),
+        'lirpay': settings.is_lirpay_enabled(),
     }
 
     # Маршруты вебхуков фиксируются на старте по учётным данным, а флаги
