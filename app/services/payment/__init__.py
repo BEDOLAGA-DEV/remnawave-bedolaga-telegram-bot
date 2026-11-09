@@ -12,6 +12,7 @@ from .cryptobot import CryptoBotPaymentMixin
 from .freekassa import FreekassaPaymentMixin
 from .heleket import HeleketPaymentMixin
 from .kassa_ai import KassaAiPaymentMixin
+from .lirpay import LirPayPaymentMixin
 from .mulenpay import MulenPayPaymentMixin
 from .overpay import OverpayPaymentMixin
 from .pal24 import Pal24PaymentMixin
@@ -33,6 +34,7 @@ __all__ = [
     'FreekassaPaymentMixin',
     'HeleketPaymentMixin',
     'KassaAiPaymentMixin',
+    'LirPayPaymentMixin',
     'MulenPayPaymentMixin',
     'OverpayPaymentMixin',
     'Pal24PaymentMixin',

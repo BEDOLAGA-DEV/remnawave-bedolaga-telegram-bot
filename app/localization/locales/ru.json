@@ -3206,6 +3206,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_LABEL": "💳 Etoplatezhi",
   "SETTINGS_CATEGORY_JUPITER_LABEL": "🪐 Jupiter",
   "SETTINGS_CATEGORY_CISPAY_LABEL": "💳 CisPay",
+  "SETTINGS_CATEGORY_LIRPAY_LABEL": "💳 LirPay",
   "SETTINGS_CATEGORY_CASHERA_LABEL": "💳 Cashera",
   "SETTINGS_CATEGORY_ANORE_LABEL": "💳 Anore",
   "SETTINGS_CATEGORY_TABPAY_LABEL": "💳 TabPay",
@@ -3282,6 +3283,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_DESCRIPTION": "Etoplatezhi: paymentpage.etoplatezhi.ru, оплата картой и через СБП.",
   "SETTINGS_CATEGORY_JUPITER_DESCRIPTION": "Jupiter (FPGate P2P v2.1): app.juppiter.tech, эквайринг СБП с HMAC-SHA256.",
   "SETTINGS_CATEGORY_CISPAY_DESCRIPTION": "CisPay: карта, СБП и опциональная криптовалюта на странице провайдера; webhook HMAC-SHA256.",
+  "SETTINGS_CATEGORY_LIRPAY_DESCRIPTION": "LirPay: lirpay.org (СБП, крипта, баланс LolzTeam); вебхуки с HMAC-SHA256.",
   "SETTINGS_CATEGORY_CASHERA_DESCRIPTION": "Cashera: api.cashera.cash, СБП, карты, крипта и CryptoBot; ключ pk_, секрет sk_, методы оплаты.",
   "SETTINGS_CATEGORY_ANORE_DESCRIPTION": "Anore: рублёвые счета, СБП, карты, ЮMoney и криптовалюта. Webhook HMAC-SHA256.",
   "SETTINGS_CATEGORY_TABPAY_DESCRIPTION": "TabPay: tabpay.org, СБП и карты с 3-D Secure; вебхуки подписаны HMAC-SHA256 (X-Signature-V2).",
@@ -7058,5 +7060,8 @@
   "RECURRENT_UI_LAVA_PRICE_MISMATCH": "Продукт Lava стоит {price} ₽, а продление подписки — {renewal} ₽ за {days} дн. Заведите продукт с актуальной ценой.",
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "Тариф не имеет цены за период {days} дней — СБП-автопродление недоступно",
   "WELCOME_FALLBACK_NAME": "друг",
-  "STARS_TOPUP_DESCRIPTION": "Пополнение баланса на {amount}"
+  "STARS_TOPUP_DESCRIPTION": "Пополнение баланса на {amount}",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>Оплата через {name}</b>\n\nСумма: <b>{amount}₽</b>\n\nНажмите кнопку ниже, чтобы перейти на страницу оплаты.\nСпособ оплаты выберите на странице.\nБаланс будет пополнен автоматически после подтверждения платежа.",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>Платёж создан через {name}</b>\n\nСумма: <b>{amount}₽</b>\n\nПлатёж обрабатывается. Статус придёт уведомлением после подтверждения.",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>Пополнение через {name}</b>\n\nВведите сумму пополнения в рублях.\n\nМинимум: {min_amount}₽\nМаксимум: {max_amount}₽"
 }

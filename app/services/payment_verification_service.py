@@ -32,6 +32,7 @@ from app.database.models import (
     JupiterPayment,
     KassaAiPayment,
     LavaPayment,
+    LirPayPayment,
     MulenPayPayment,
     Pal24Payment,
     ParityPayPayment,
@@ -98,7 +99,8 @@ SUPPORTED_MANUAL_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.TABPAY,
         PaymentMethod.PARITYPAY,
         PaymentMethod.CASHERA,
-        # ETOPLATEZHI / JUPITER / DONUT / LAVA — webhook-driven,
+        PaymentMethod.LIRPAY,
+        # ETOPLATEZHI / ANTILOPAY / JUPITER / DONUT / LAVA — webhook-driven,
         # без API-метода синхронизации БД, manual check не реализован.
     }
 )
@@ -129,6 +131,7 @@ SUPPORTED_AUTO_CHECK_METHODS: frozenset[PaymentMethod] = frozenset(
         PaymentMethod.TABPAY,
         PaymentMethod.PARITYPAY,
         PaymentMethod.CASHERA,
+        PaymentMethod.LIRPAY,
     }
 )
 
@@ -182,6 +185,8 @@ def method_display_name(method: PaymentMethod) -> str:
         return settings.get_cashera_display_name()
     if method == PaymentMethod.ANORE:
         return settings.get_anore_display_name()
+    if method == PaymentMethod.LIRPAY:
+        return settings.get_lirpay_display_name()
     if method == PaymentMethod.TABPAY:
         return settings.get_tabpay_display_name()
     if method == PaymentMethod.PARITYPAY:
@@ -238,6 +243,8 @@ def _method_is_enabled(method: PaymentMethod) -> bool:
         return settings.is_cashera_enabled()
     if method == PaymentMethod.ANORE:
         return settings.is_anore_configured()
+    if method == PaymentMethod.LIRPAY:
+        return settings.is_lirpay_enabled()
     if method == PaymentMethod.TABPAY:
         return settings.is_tabpay_enabled()
     if method == PaymentMethod.PARITYPAY:
@@ -548,6 +555,12 @@ def _is_cispay_pending(payment: CisPayPayment) -> bool:
 
 
 def _is_cashera_pending(payment: CasheraPayment) -> bool:
+    if payment.is_paid:
+        return False
+    return (payment.status or '').lower() == 'pending'
+
+
+def _is_lirpay_pending(payment: LirPayPayment) -> bool:
     if payment.is_paid:
         return False
     return (payment.status or '').lower() == 'pending'
@@ -1157,6 +1170,32 @@ async def _fetch_paritypay_payments(db: AsyncSession, cutoff: datetime) -> list[
     return records
 
 
+async def _fetch_lirpay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
+    stmt = (
+        select(LirPayPayment)
+        .options(selectinload(LirPayPayment.user))
+        .where(LirPayPayment.created_at >= cutoff)
+        .order_by(desc(LirPayPayment.created_at))
+    )
+    result = await db.execute(stmt)
+    records: list[PendingPayment] = []
+    for payment in result.scalars().all():
+        if not _is_lirpay_pending(payment):
+            continue
+        record = _build_record(
+            PaymentMethod.LIRPAY,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+        if record:
+            records.append(record)
+    return records
+
+
 async def _fetch_tabpay_payments(db: AsyncSession, cutoff: datetime) -> list[PendingPayment]:
     stmt = (
         select(TabPayPayment)
@@ -1358,6 +1397,7 @@ async def list_recent_pending_payments(
         await _fetch_lava_payments(db, cutoff),
         await _fetch_cispay_payments(db, cutoff),
         await _fetch_cashera_payments(db, cutoff),
+        await _fetch_lirpay_payments(db, cutoff),
         await _fetch_tabpay_payments(db, cutoff),
         await _fetch_anore_payments(db, cutoff),
         await _fetch_paritypay_payments(db, cutoff),
@@ -1738,6 +1778,21 @@ async def get_payment_record(
             expires_at=getattr(payment, 'expires_at', None),
         )
 
+    if method == PaymentMethod.LIRPAY:
+        payment = await db.get(LirPayPayment, local_payment_id)
+        if not payment:
+            return None
+        await db.refresh(payment, attribute_names=['user'])
+        return _build_record(
+            method,
+            payment,
+            identifier=payment.order_id,
+            amount_kopeks=payment.amount_kopeks,
+            status=payment.status or '',
+            is_paid=bool(payment.is_paid),
+            expires_at=getattr(payment, 'expires_at', None),
+        )
+
     if method == PaymentMethod.CISPAY:
         payment = await db.get(CisPayPayment, local_payment_id)
         if not payment:
@@ -1879,6 +1934,13 @@ async def run_manual_check(
             cispay_payment = await db.get(CisPayPayment, local_payment_id)
             if cispay_payment:
                 result = await payment_service.check_cispay_payment_status(db, cispay_payment.order_id)
+                payment = result.get('payment') if result else None
+            else:
+                payment = None
+        elif method == PaymentMethod.LIRPAY:
+            lirpay_payment = await db.get(LirPayPayment, local_payment_id)
+            if lirpay_payment:
+                result = await payment_service.check_lirpay_payment_status(db, lirpay_payment.order_id)
                 payment = result.get('payment') if result else None
             else:
                 payment = None

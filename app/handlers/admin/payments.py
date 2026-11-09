@@ -60,6 +60,8 @@ def _method_display(method: PaymentMethod, language: str = 'ru') -> str:
         return settings.get_cashera_display_name()
     if method == PaymentMethod.ANORE:
         return settings.get_anore_display_name()
+    if method == PaymentMethod.LIRPAY:
+        return settings.get_lirpay_display_name()
     if method == PaymentMethod.TABPAY:
         return settings.get_tabpay_display_name()
     if method == PaymentMethod.PARITYPAY:

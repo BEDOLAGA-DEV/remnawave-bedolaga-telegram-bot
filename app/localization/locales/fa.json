@@ -3206,6 +3206,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_LABEL": "💳 Etoplatezhi",
   "SETTINGS_CATEGORY_JUPITER_LABEL": "🪐 Jupiter",
   "SETTINGS_CATEGORY_CISPAY_LABEL": "💳 CisPay",
+  "SETTINGS_CATEGORY_LIRPAY_LABEL": "💳 LirPay",
   "SETTINGS_CATEGORY_CASHERA_LABEL": "💳 Cashera",
   "SETTINGS_CATEGORY_ANORE_LABEL": "💳 Anore",
   "SETTINGS_CATEGORY_TABPAY_LABEL": "💳 TabPay",
@@ -3283,6 +3284,7 @@
   "SETTINGS_CATEGORY_ETOPLATEZHI_DESCRIPTION": "Etoplatezhi: نشانی paymentpage.etoplatezhi.ru، پرداخت با کارت و پرداخت سریع روسیه.",
   "SETTINGS_CATEGORY_JUPITER_DESCRIPTION": "Jupiter ‏(FPGate P2P v2.1): نشانی app.juppiter.tech، پذیرش پرداخت سریع روسیه با HMAC-SHA256.",
   "SETTINGS_CATEGORY_CISPAY_DESCRIPTION": "CisPay: کارت، پرداخت سریع روسیه و رمزارز اختیاری در صفحه ارائه‌دهنده؛ وب‌هوک HMAC-SHA256.",
+  "SETTINGS_CATEGORY_LIRPAY_DESCRIPTION": "LirPay: lirpay.org (پرداخت سریع روسیه، رمزارز، موجودی LolzTeam)؛ وبهوک HMAC-SHA256.",
   "SETTINGS_CATEGORY_CASHERA_DESCRIPTION": "Cashera: نشانی api.cashera.cash، پرداخت سریع روسیه، کارت، رمزارز و CryptoBot؛ کلید pk_، رمز sk_ و روش‌های پرداخت.",
   "SETTINGS_CATEGORY_ANORE_DESCRIPTION": "Anore: صورت‌حساب روبلی، پرداخت سریع روسیه، کارت، YooMoney و رمزارز. وب‌هوک HMAC-SHA256.",
   "SETTINGS_CATEGORY_TABPAY_DESCRIPTION": "TabPay: نشانی tabpay.org، پرداخت سریع روسیه و کارت با 3-D Secure؛ امضای وب‌هوک‌ها با HMAC-SHA256 ‏(X-Signature-V2).",
@@ -7058,5 +7060,8 @@
   "RECURRENT_UI_LAVA_PRICE_MISMATCH": "قیمت محصول Lava برابر {price} ₽ است، اما تمدید اشتراک برای {days} روز {renewal} ₽ هزینه دارد. محصولی با قیمت فعلی ایجاد کنید.",
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "این تعرفه برای دوره {days} روز قیمت ندارد؛ تمدید خودکار SBP در دسترس نیست",
   "WELCOME_FALLBACK_NAME": "دوست",
-  "STARS_TOPUP_DESCRIPTION": "شارژ موجودی به مبلغ {amount}"
+  "STARS_TOPUP_DESCRIPTION": "شارژ موجودی به مبلغ {amount}",
+  "LIRPAY_PAYMENT_CREATED": "💳 <b>پرداخت از طریق {name}</b>\n\nمبلغ: <b>{amount}₽</b>\n\nبرای رفتن به صفحه پرداخت، روی دکمه زیر بزنید.\nروش پرداخت را در همان صفحه انتخاب کنید.\nپس از تأیید پرداخت، موجودی به‌طور خودکار شارژ می‌شود.",
+  "LIRPAY_PAYMENT_PROCESSING": "💳 <b>پرداخت از طریق {name} ایجاد شد</b>\n\nمبلغ: <b>{amount}₽</b>\n\nپرداخت در حال پردازش است. پس از تأیید، پیام وضعیت دریافت می‌کنید.",
+  "LIRPAY_ENTER_AMOUNT": "💳 <b>شارژ از طریق {name}</b>\n\nمبلغ شارژ را به روبل وارد کنید.\n\nحداقل: {min_amount}₽\nحداکثر: {max_amount}₽"
 }
