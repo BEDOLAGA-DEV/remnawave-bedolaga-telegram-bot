@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.config import settings
+from app.utils.telegram_polling import start_polling_with_retry
 
 
 def _main_body():
@@ -91,7 +92,7 @@ async def _run_polling(enabled=True, delete_error=None):
     async def stage(*args, **kwargs):
         yield Mock()
 
-    bot = SimpleNamespace(delete_webhook=AsyncMock(side_effect=delete_webhook))
+    bot = SimpleNamespace(delete_webhook=AsyncMock(side_effect=delete_webhook), me=AsyncMock())
     dp = SimpleNamespace(start_polling=AsyncMock(side_effect=start_polling))
     tasks = []
 
@@ -107,6 +108,7 @@ async def _run_polling(enabled=True, delete_error=None):
                 'polling_enabled': enabled,
                 'bot': bot,
                 'dp': dp,
+                'start_polling_with_retry': start_polling_with_retry,
                 'timeline': SimpleNamespace(stage=stage),
                 'asyncio': SimpleNamespace(create_task=create_task),
             },
@@ -124,6 +126,12 @@ async def _run_polling(enabled=True, delete_error=None):
 async def test_switch_to_polling_receives_pending_updates_from_old_webhook():
     state, _, _ = await _run_polling()
     assert state['received'] == ['pending-start']
+
+
+@pytest.mark.asyncio
+async def test_polling_leaves_signals_to_the_main_loop():
+    _, bot, dp = await _run_polling()
+    dp.start_polling.assert_awaited_once_with(bot, handle_signals=False, skip_updates=False)
 
 
 @pytest.mark.asyncio
