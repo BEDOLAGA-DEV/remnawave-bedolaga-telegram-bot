@@ -86,7 +86,7 @@ async def _run_until_polling(dp: Dispatcher, bot: Bot, session: ScriptedSession)
     done, _ = await asyncio.wait({task, reached}, timeout=5, return_when=asyncio.FIRST_COMPLETED)
     if task in done:
         reached.cancel()
-        await task  # поднимет исключение упавшего запуска
+        task.result()  # поднимет исключение упавшего запуска
         pytest.fail('polling завершился, не дойдя до getUpdates')
     assert reached in done, 'polling не дошёл до getUpdates за 5 с'
     await dp.stop_polling()
@@ -208,7 +208,7 @@ async def _until_first_get_me(session: ScriptedSession, task: asyncio.Task[Any])
         while session.get_me_calls == 0 and not task.done():
             await asyncio.sleep(0)
     if task.done():
-        await task
+        task.result()
         pytest.fail('ожидание завершилось раньше первого запроса к Telegram')
 
 
