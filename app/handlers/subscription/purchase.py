@@ -157,13 +157,18 @@ from .devices import (
     get_servers_display_names,
     handle_all_devices_reset_from_management,
     handle_app_selection,
+    handle_block_device,
+    handle_blocked_devices,
     handle_change_devices,
+    handle_confirm_block_device,
+    handle_confirm_unban_device,
     handle_device_guide,
     handle_device_management,
     handle_devices_page,
     handle_reset_devices,
     handle_single_device_reset,
     handle_specific_app_guide,
+    handle_unban_device,
     show_device_connection_help,
 )
 from .happ import (
@@ -4752,6 +4757,14 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_all_devices_reset_from_management, F.data == 'reset_all_devices')
 
     dp.callback_query.register(show_device_connection_help, F.data == 'device_connection_help')
+
+    # Жёсткая блокировка устройств (hwid-blocker middleware)
+    dp.callback_query.register(handle_block_device, F.data.regexp(r'^ban_device_\d+_\d+$'))
+    dp.callback_query.register(handle_confirm_block_device, F.data.regexp(r'^confirm_block_device_\d+_\d+$'))
+    dp.callback_query.register(handle_blocked_devices, F.data == 'subscription_blocked_devices')
+    dp.callback_query.register(handle_blocked_devices, F.data.startswith('blocked_devices_page_'))
+    dp.callback_query.register(handle_unban_device, F.data.regexp(r'^unban_device_\d+$'))
+    dp.callback_query.register(handle_confirm_unban_device, F.data.regexp(r'^unban_confirm_\d+$'))
 
     # Регистрируем обработчики покупки по тарифам
     from .tariff_purchase import register_tariff_purchase_handlers

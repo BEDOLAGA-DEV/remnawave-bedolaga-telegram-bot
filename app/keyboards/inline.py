@@ -3471,7 +3471,10 @@ def get_devices_management_keyboard(
     language: str = DEFAULT_LANGUAGE,
     back_callback: str = 'subscription_settings',
 ) -> InlineKeyboardMarkup:
+    from app.config import settings
+
     texts = get_texts(language)
+    device_block_enabled = settings.is_device_block_enabled()
 
     keyboard = []
 
@@ -3491,15 +3494,21 @@ def get_devices_management_keyboard(
 
         # Ряд: pencil-кнопка переименования (компактная иконка) + сброс
         # устройства с его лейблом (исторический callback).
-        keyboard.append(
-            [
+        row = [
+            InlineKeyboardButton(
+                text=texts.t('DEVICE_RENAME_BUTTON', '✏️'),
+                callback_data=f'device_rename_{i}_{pagination.page}',
+            ),
+            InlineKeyboardButton(text=f'🔄 {device_info}', callback_data=f'reset_device_{i}_{pagination.page}'),
+        ]
+        if device_block_enabled:
+            row.append(
                 InlineKeyboardButton(
-                    text=texts.t('DEVICE_RENAME_BUTTON', '✏️'),
-                    callback_data=f'device_rename_{i}_{pagination.page}',
-                ),
-                InlineKeyboardButton(text=f'🔄 {device_info}', callback_data=f'reset_device_{i}_{pagination.page}'),
-            ]
-        )
+                    text=texts.t('DEVICE_BLOCK_BUTTON', '🚫'),
+                    callback_data=f'ban_device_{i}_{pagination.page}',
+                )
+            )
+        keyboard.append(row)
 
     if pagination.total_pages > 1:
         nav_row = []
@@ -3619,6 +3628,16 @@ def get_updated_subscription_settings_keyboard(
         ]
     )
 
+    if settings.is_device_block_enabled():
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=texts.t('BLOCKED_DEVICES_BUTTON', '🚫 Отключённые устройства'),
+                    callback_data='subscription_blocked_devices',
+                )
+            ]
+        )
+
     if settings.is_subscription_revoke_enabled():
         keyboard.append(
             [
@@ -3648,6 +3667,110 @@ def get_device_reset_confirm_keyboard(
                 )
             ],
             [InlineKeyboardButton(text=texts.CANCEL, callback_data=f'devices_page_{page}')],
+        ]
+    )
+
+
+def get_device_block_confirm_keyboard(
+    device_info: str, device_index: int, page: int, language: str = DEFAULT_LANGUAGE
+) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.t('DEVICE_BLOCK_CONFIRM_BUTTON', '✅ Yes, block this device'),
+                    callback_data=f'confirm_block_device_{device_index}_{page}',
+                )
+            ],
+            [InlineKeyboardButton(text=texts.CANCEL, callback_data=f'devices_page_{page}')],
+        ]
+    )
+
+
+def get_blocked_devices_keyboard(blocks: list, pagination, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+
+    keyboard = []
+
+    for block in blocks:
+        label = (block.device_label or block.hwid[:8]).strip()
+        if len(label) > 22:
+            label = label[:19] + '...'
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text=f'{texts.t("UNBAN_BUTTON", "✅ Включить")} {label}',
+                    callback_data=f'unban_device_{block.id}',
+                ),
+            ]
+        )
+
+    if pagination.total_pages > 1:
+        nav_row = []
+
+        if pagination.has_prev:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text=texts.t('PAGINATION_PREV', '⬅️'),
+                    callback_data=f'blocked_devices_page_{pagination.prev_page}',
+                )
+            )
+
+        nav_row.append(
+            InlineKeyboardButton(
+                text=f'{pagination.page}/{pagination.total_pages}', callback_data='current_page'
+            )
+        )
+
+        if pagination.has_next:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text=texts.t('PAGINATION_NEXT', '➡️'),
+                    callback_data=f'blocked_devices_page_{pagination.next_page}',
+                )
+            )
+
+        keyboard.append(nav_row)
+
+    keyboard.append([InlineKeyboardButton(text=texts.BACK, callback_data='subscription_settings')])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_device_block_success_keyboard(page: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text=texts.t('BLOCKED_DEVICES_BUTTON', '🚫 Отключённые устройства'),
+                callback_data='subscription_blocked_devices',
+            )
+        ],
+        [InlineKeyboardButton(text=texts.BACK, callback_data=f'devices_page_{page}')],
+    ]
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_unban_confirm_keyboard(block_id: int, language: str = DEFAULT_LANGUAGE) -> InlineKeyboardMarkup:
+    texts = get_texts(language)
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=texts.t('UNBAN_CONFIRM_BUTTON', '✅ Yes, include it back'),
+                    callback_data=f'unban_confirm_{block_id}',
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=texts.CANCEL, callback_data='subscription_blocked_devices'
+                )
+            ],
         ]
     )
 

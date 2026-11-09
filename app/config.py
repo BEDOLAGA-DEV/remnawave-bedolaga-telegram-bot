@@ -402,6 +402,12 @@ class Settings(BaseSettings):
     DEVICES_SELECTION_ENABLED: bool = True
     DEVICES_SELECTION_DISABLED_AMOUNT: int | None = None
 
+    # Hard device blocking (hwid-blocker middleware)
+    DEVICE_BLOCK_ENABLED: bool = False
+    MIDDLEWARE_URL: str = 'http://127.0.0.1:3020'
+    MIDDLEWARE_ADMIN_TOKEN: str = ''
+    MIDDLEWARE_PUSH_INTERVAL_MIN: int = 30
+
     BASE_PROMO_GROUP_PERIOD_DISCOUNTS_ENABLED: bool = False
     BASE_PROMO_GROUP_PERIOD_DISCOUNTS: str = ''
     # Сообщать человеку (в Telegram или на подтверждённую почту), что ему
@@ -2644,6 +2650,10 @@ class Settings(BaseSettings):
 
     def is_devices_selection_enabled(self) -> bool:
         return self.DEVICES_SELECTION_ENABLED
+
+    def is_device_block_enabled(self) -> bool:
+        """Жёсткая блокировка устройств через hwid-blocker middleware."""
+        return self.DEVICE_BLOCK_ENABLED
 
     def get_devices_selection_disabled_amount(self) -> int | None:
         raw_value = self.DEVICES_SELECTION_DISABLED_AMOUNT

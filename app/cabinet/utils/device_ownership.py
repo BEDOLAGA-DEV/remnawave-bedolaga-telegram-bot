@@ -97,3 +97,18 @@ async def verify_hwid_belongs_to_user(user: User, hwid: str) -> bool:
             error=str(remnawave_error)[:200],
         )
         return True
+
+
+def app_from_user_agent(user_agent: str | None) -> str | None:
+    """Best-effort client app name from a device userAgent.
+
+    RemnaWave device `userAgent` values look like ``"Happ/4.11.0/ios/..."`` —
+    the first token before ``/`` is the client app name. Browser UAs
+    (``"Mozilla/5.0 ..."``) don't yield a useful app, so we return None for them.
+    """
+    if not user_agent:
+        return None
+    token = user_agent.strip().split('/', 1)[0].strip()
+    if not token or token.lower() in {'mozilla', 'unknown'}:
+        return None
+    return token[:20]

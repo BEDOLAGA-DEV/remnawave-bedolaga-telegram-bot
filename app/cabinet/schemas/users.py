@@ -514,18 +514,47 @@ class DeviceInfo(BaseModel):
     hwid: str
     platform: str = ''
     device_model: str = ''
+    # Client app name derived from the device userAgent (e.g. "Happ").
+    app: str = ''
     created_at: str | None = None
     # User-set local alias (per `user_device_aliases`). None when the user
     # hasn't renamed this device — clients fall back to platform/device_model.
     local_name: str | None = None
 
 
+class DeviceBlockInfo(BaseModel):
+    """A hard-blocked (HWID) device row for a user."""
+
+    id: int
+    hwid: str
+    device_label: str | None = None
+    platform: str | None = None
+    banned_at: str | None = None
+    banned_by: str = 'user'
+
+
 class UserDevicesResponse(BaseModel):
-    """User devices from panel."""
+    """User devices from panel + hard-blocked (HWID) devices."""
 
     devices: list[DeviceInfo] = []
     total: int = 0
     device_limit: int = 0
+    blocks: list[DeviceBlockInfo] = []
+
+
+class BlockDeviceResponse(BaseModel):
+    """Result of an admin hard-block on a user's HWID device."""
+
+    success: bool
+    already_blocked: bool = False
+    hwid: str
+
+
+class BlockDeviceRequest(BaseModel):
+    """Optional metadata for an admin device hard-block (label/platform for display)."""
+
+    device_label: str | None = None
+    platform: str | None = None
 
 
 class DeleteDeviceResponse(BaseModel):

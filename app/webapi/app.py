@@ -17,6 +17,7 @@ from .routes import (
     campaigns,
     config,
     contests,
+    device_blocks,
     health,
     logs,
     main_menu_buttons,
@@ -163,10 +164,17 @@ OPENAPI_TAGS = [
         ),
     },
     {
-        'name': 'ban-notifications',
+        'name':         'ban-notifications',
         'description': (
             'Эндпоинты для приема уведомлений от системы мониторинга ban (Banhammer). '
             'Позволяет отправлять уведомления пользователям о блокировке и разблокировке.'
+        ),
+    },
+    {
+        'name': 'device-blocks',
+        'description': (
+            'Состояние жёстко заблокированных устройств (hwid-blocker middleware). '
+            'Используется middleware для bootstrap-pull при старте.'
         ),
     },
 ]
@@ -281,6 +289,7 @@ def create_web_api_app(lifespan: Any = None) -> FastAPI:
         prefix='/ban-notifications',
         tags=['ban-notifications'],
     )
+    app.include_router(device_blocks.router, tags=['device-blocks'])
 
     # Cabinet (Personal Account) routes
     if settings.is_cabinet_enabled():

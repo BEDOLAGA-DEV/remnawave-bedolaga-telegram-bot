@@ -10,9 +10,10 @@ from sqlalchemy import Integer, delete as sa_delete, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.cabinet.utils.device_ownership import verify_hwid_belongs_to_user
+from app.cabinet.utils.device_ownership import app_from_user_agent, verify_hwid_belongs_to_user
 from app.config import settings
 from app.database.crud.campaign import get_campaign_registration_by_user
+from app.database.crud.device_block import get_block_by_hwid, get_blocks_for_user
 from app.database.crud.subscription import (
     extend_subscription,
 )
@@ -52,6 +53,7 @@ from app.database.models import (
     UserPromoGroup,
     UserStatus,
 )
+from app.services.device_block_service import device_block_service
 from app.services.panel_sync import (
     ADMIN_PULL,
     GRACE_MARKER_FIELDS,
@@ -76,9 +78,12 @@ from ..schemas.users import (
     AdminUserGiftsResponse,
     AssignReferrerRequest,
     AssignReferrerResponse,
+    BlockDeviceRequest,
+    BlockDeviceResponse,
     DeleteDeviceResponse,
     DeleteUserRequest,
     DeleteUserResponse,
+    DeviceBlockInfo,
     DeviceInfo,
     DisableUserRequest,
     DisableUserResponse,
@@ -2758,6 +2763,17 @@ async def _would_create_referral_cycle(db: AsyncSession, user_id: int, referrer_
 # === Devices ===
 
 
+def _device_block_to_info(block) -> DeviceBlockInfo:
+    return DeviceBlockInfo(
+        id=block.id,
+        hwid=block.hwid,
+        device_label=block.device_label,
+        platform=block.platform,
+        banned_at=block.banned_at.isoformat() if block.banned_at else None,
+        banned_by=block.banned_by or 'user',
+    )
+
+
 @router.get('/{user_id}/devices', response_model=UserDevicesResponse)
 async def get_user_devices(
     user_id: int,
@@ -2765,10 +2781,16 @@ async def get_user_devices(
     db: AsyncSession = Depends(get_cabinet_db),
     subscription_id: int | None = Query(None, description='Subscription ID for multi-tariff'),
 ):
-    """Get user devices from Remnawave panel."""
+    """Get user devices from Remnawave panel + hard-blocked (HWID) devices."""
     user = await get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    # Hard-blocks are per-(user, hwid) and independent of the panel, so we read
+    # them even when the panel UUID is unknown/unconfigured.
+    blocks: list[DeviceBlockInfo] = []
+    if settings.is_device_block_enabled():
+        blocks = [_device_block_to_info(b) for b in await get_blocks_for_user(db, user_id)]
 
     # Resolve panel user id
     selected_subscription = None
@@ -2780,14 +2802,14 @@ async def get_user_devices(
         _dev_panel_user_id = user.remnawave_id
 
     if not _dev_panel_user_id:
-        return UserDevicesResponse()
+        return UserDevicesResponse(blocks=blocks)
 
     try:
         from app.services.remnawave_service import RemnaWaveService
 
         service = RemnaWaveService()
         if not service.is_configured:
-            return UserDevicesResponse()
+            return UserDevicesResponse(blocks=blocks)
 
         async with service.get_api_client() as api:
             response = await api.get_user_devices_all(_dev_panel_user_id)
@@ -2815,6 +2837,7 @@ async def get_user_devices(
                         hwid=hwid,
                         platform=d.get('platform') or d.get('platformType') or '',
                         device_model=d.get('deviceModel') or d.get('model') or d.get('name') or '',
+                        app=app_from_user_agent(d.get('userAgent')) or '',
                         created_at=d.get('updatedAt') or d.get('lastSeen') or d.get('createdAt'),
                         local_name=aliases.get(hwid) or None,
                     )
@@ -2830,11 +2853,12 @@ async def get_user_devices(
                 devices=devices,
                 total=response.get('total', len(devices)),
                 device_limit=device_limit,
+                blocks=blocks,
             )
 
     except Exception as e:
         logger.error('Error fetching devices for user', user_id=user_id, error=e)
-        return UserDevicesResponse()
+        return UserDevicesResponse(blocks=blocks)
 
 
 @router.delete('/{user_id}/devices/{hwid}', response_model=DeleteDeviceResponse)
@@ -2983,6 +3007,96 @@ async def reset_user_devices(
     except Exception as e:
         logger.error('Error resetting devices for user', user_id=user_id, error=e)
         return ResetDevicesResponse(success=False, message='Ошибка сброса устройств')
+
+
+@router.post('/{user_id}/devices/{hwid}/block', response_model=BlockDeviceResponse)
+async def block_user_device(
+    user_id: int,
+    hwid: str,
+    payload: BlockDeviceRequest | None = None,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+    subscription_id: int | None = Query(None, description='Subscription ID for multi-tariff'),
+) -> BlockDeviceResponse:
+    """Hard-block a device (HWID) for a user (admin override).
+
+    Mirrors the user-facing block: writes a `device_blocks` row scoped to
+    (user_id, hwid), bumps the middleware version and pushes state. The panel
+    device removal is best-effort — the middleware block is authoritative.
+    """
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    if not settings.is_device_block_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Device blocking is not enabled')
+
+    hwid = (hwid or '').strip()
+    if not hwid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='hwid is required')
+
+    existing = await get_block_by_hwid(db, hwid, user_id=user_id)
+    if existing is not None:
+        return BlockDeviceResponse(success=True, already_blocked=True, hwid=existing.hwid)
+
+    # Panel UUID is only used for best-effort panel removal + row metadata.
+    _blk_uuid = None
+    if settings.is_multi_tariff_enabled() and subscription_id:
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
+        if sub:
+            _blk_uuid = sub.remnawave_uuid
+    else:
+        _blk_uuid = user.remnawave_uuid
+
+    try:
+        await device_block_service.ban_device(
+            db,
+            user,
+            hwid,
+            remnawave_uuid=_blk_uuid,
+            device_label=(payload.device_label if payload else None),
+            platform=(payload.platform if payload else None),
+            banned_by=f'admin:{admin.id}',
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    logger.info('Admin blocked device for user', admin_id=admin.id, user_id=user_id, hwid_prefix=hwid[:8])
+    return BlockDeviceResponse(success=True, already_blocked=False, hwid=hwid)
+
+
+@router.delete('/{user_id}/devices/{hwid}/block', response_model=BlockDeviceResponse)
+async def unblock_user_device(
+    user_id: int,
+    hwid: str,
+    admin: User = Depends(require_permission('users:edit')),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> BlockDeviceResponse:
+    """Unblock a previously hard-blocked device (HWID) for a user."""
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+
+    if not settings.is_device_block_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Device blocking is not enabled')
+
+    hwid = (hwid or '').strip()
+    if not hwid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='hwid is required')
+
+    existing = await get_block_by_hwid(db, hwid, user_id=user_id)
+    if existing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Block not found')
+
+    # Pass the target user so the delete is scoped to that user's rows.
+    ok = await device_block_service.unban_device(db, user, existing.id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Block not found')
+
+    logger.info('Admin unblocked device for user', admin_id=admin.id, user_id=user_id, hwid_prefix=hwid[:8])
+    return BlockDeviceResponse(success=True, already_blocked=False, hwid=hwid)
 
 
 # === Delete User ===

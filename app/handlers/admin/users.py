@@ -1154,8 +1154,26 @@ async def _render_user_subscription_overview(
             keyboard.append(
                 [
                     types.InlineKeyboardButton(
-                        text=texts.t('ADMIN_USERS_PROFILE_061', 'Отключить автоплатёж CisPay'),
+                        text=texts.t('ADMIN_USERS_PROFILE_061', 'Отключить autoплатёж CisPay'),
                         callback_data=f'admin_cisrec_cancel:{user_id}:{subscription.id}',
+                    )
+                ]
+            )
+
+    # Блокировка устройств — показываем кнопку only if user has devices/blocks.
+    # подключённые устройства or already existing блокировки.
+    if settings.is_device_block_enabled():
+        try:
+            _devs, _blks = await _fetch_user_devices_brief(db, user_id, subscription_id)
+        except Exception as _dev_err:
+            logger.warning('Failed to preload devices for admin block button', user_id=user_id, error=str(_dev_err)[:200])
+            _devs, _blks = [], []
+        if _devs or _blks:
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text='📳 Блокировка устройств',
+                        callback_data=f'admin_user_devblock_{user_id}{_sid}',
                     )
                 ]
             )
@@ -4536,6 +4554,241 @@ async def refresh_server_selection_screen(
         logger.error('Ошибка обновления экрана серверов', error=e)
 
 
+def _app_from_user_agent(user_agent: str | None) -> str | None:
+    """Best-effort client app name from a device userAgent (shared helper)."""
+    from app.cabinet.utils.device_ownership import app_from_user_agent
+
+    return app_from_user_agent(user_agent)
+
+
+def _admin_device_label(dev: dict) -> str:
+    """Human label for an admin device button: local alias, else `model · app`."""
+    if dev.get('local_name'):
+        return dev['local_name'][:32]
+    primary = dev.get('device_model') or dev.get('platform') or (dev.get('hwid') or '')[:12]
+    app = dev.get('app')
+    label = f'{primary} · {app}' if (primary and app) else (primary or app or '')
+    return label[:32]
+
+
+async def _fetch_user_devices_brief(
+    db: AsyncSession, user_id: int, subscription_id: int | None = None
+) -> tuple[list[dict], list]:
+    """Connected devices + hard-blocks for an admin's target user.
+
+    `devices` is a list of {hwid, platform, device_model, local_name}; `blocks`
+    is a list of `DeviceBlock`. Panel errors degrade to an empty device list so
+    the block screen still renders (and unblocking stays possible).
+    """
+    from app.database.crud.device_block import get_blocks_for_user
+    from app.database.crud.subscription import get_subscription_by_id_for_user
+    from app.database.crud.user_device_alias import get_aliases_for_user
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        return [], []
+
+    uuid = None
+    if settings.is_multi_tariff_enabled() and subscription_id:
+        sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
+        if sub:
+            uuid = sub.remnawave_uuid
+    else:
+        uuid = user.remnawave_uuid
+
+    devices: list[dict] = []
+    if uuid:
+        try:
+            service = RemnaWaveService()
+            if service.is_configured:
+                async with service.get_api_client() as api:
+                    resp = await api.get_user_devices_all(uuid)
+                    try:
+                        aliases = await get_aliases_for_user(db, user_id)
+                    except Exception:
+                        aliases = {}
+                    for d in resp.get('devices', []):
+                        hwid = d.get('hwid') or d.get('deviceId') or d.get('id')
+                        if not hwid:
+                            continue
+                        devices.append(
+                            {
+                                'hwid': hwid,
+                                'platform': d.get('platform') or d.get('platformType') or '',
+                                'device_model': d.get('deviceModel') or d.get('model') or d.get('name') or '',
+                                'app': _app_from_user_agent(d.get('userAgent')),
+                                'local_name': aliases.get(hwid) or None,
+                            }
+                        )
+        except Exception as e:
+            logger.warning(
+                'Failed to load devices for admin block screen', user_id=user_id, error=str(e)[:200]
+            )
+
+    blocks = await get_blocks_for_user(db, user_id) if settings.is_device_block_enabled() else []
+    return devices, blocks
+
+
+@admin_required
+@error_handler
+async def show_user_devices_block(
+    callback: types.CallbackQuery,
+    db_user: User,
+    db: AsyncSession,
+    user_id: int | None = None,
+    subscription_id: int | None = None,
+):
+    """Admin: list a user's devices with Block / Unblock buttons."""
+    if user_id is None:
+        # Only the direct "📳 Блокировка устройств" button carries this in callback.data.
+        # Re-renders from block/unblock pass the ids explicitly (their callback.data has a
+        # different shape, so re-parsing it here would mis-read the index/block id as user_id).
+        user_id, subscription_id = _extract_admin_sub_context(callback.data)
+
+    devices, blocks = await _fetch_user_devices_brief(db, user_id, subscription_id)
+
+    _sid = f'_s{subscription_id}' if subscription_id else ''
+    back_cb = (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id and settings.is_multi_tariff_enabled()
+        else f'admin_user_subscription_{user_id}'
+    )
+
+    text = '📳 <b>Блокировка устройств</b>\n\n'
+    if not devices and not blocks:
+        text += 'У пользователя нет устройств.'
+    else:
+        if devices:
+            text += f'🔌 <b>Подключено:</b> {len(devices)}\n'
+        if blocks:
+            text += f'🚫 <b>Заблокировано:</b> {len(blocks)}\n'
+        if devices or blocks:
+            text += '\nНажмите <b>🚫</b>, чтобы заблокировать устройство, или <b>✅</b> — чтобы разблокировать.'
+
+    keyboard: list[list[types.InlineKeyboardButton]] = []
+    if devices:
+        for i, dev in enumerate(devices):
+            label = _admin_device_label(dev) or dev['hwid'][:12]
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=f'🚫 {label}',
+                        callback_data=f'admin_user_devblock_set_{user_id}{_sid}_{i}',
+                    )
+                ]
+            )
+    if blocks:
+        for b in blocks:
+            label = (b.device_label or b.platform or b.hwid[:12])[:24]
+            keyboard.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=f'✅ {label}',
+                        callback_data=f'admin_user_devunblock_{user_id}{_sid}_{b.id}',
+                    )
+                ]
+            )
+    keyboard.append([types.InlineKeyboardButton(text='⬅️ Назад', callback_data=back_cb)])
+
+    await callback.message.edit_text(
+        text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard), disable_web_page_preview=True
+    )
+    await callback.answer()
+
+
+def _parse_devblock_callback(callback_data: str) -> tuple[int, int | None, int]:
+    """Parse `admin_user_devblock_set_{user_id}{_sid}_{index}` / unblock variants.
+
+    Returns (user_id, subscription_id, tail) where `tail` is the index (block)
+    or block id (unblock).
+    """
+    parts = callback_data.split('_')
+    tail = int(parts[-1])
+    if parts[-2].startswith('s') and parts[-2][1:].isdigit():
+        subscription_id = int(parts[-2][1:])
+        user_id = int(parts[-3])
+    else:
+        subscription_id = None
+        user_id = int(parts[-2])
+    return user_id, subscription_id, tail
+
+
+@admin_required
+@error_handler
+async def block_user_device(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin: hard-block one of a user's connected devices (by index)."""
+    from app.database.crud.device_block import get_block_by_hwid
+    from app.services.device_block_service import device_block_service
+
+    user_id, subscription_id, index = _parse_devblock_callback(callback.data)
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        await callback.answer('Пользователь не найден', show_alert=True)
+        return
+
+    devices, _ = await _fetch_user_devices_brief(db, user_id, subscription_id)
+    if index >= len(devices):
+        await callback.answer('Устройство не найдено', show_alert=True)
+        return
+
+    dev = devices[index]
+    hwid = dev['hwid']
+
+    if await get_block_by_hwid(db, hwid, user_id=user_id) is None:
+        # Best-effort panel UUID so the block row can also drop it from the panel.
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        uuid = user.remnawave_uuid
+        if settings.is_multi_tariff_enabled() and subscription_id:
+            sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
+            if sub:
+                uuid = sub.remnawave_uuid
+
+        try:
+            await device_block_service.ban_device(
+                db,
+                user,
+                hwid,
+                remnawave_uuid=uuid,
+                device_label=_admin_device_label(dev) or None,
+                platform=dev.get('platform') or None,
+                banned_by=f'admin:{db_user.id}',
+            )
+        except ValueError as e:
+            await callback.answer(str(e), show_alert=True)
+            return
+
+    await show_user_devices_block(callback, db_user, db, user_id=user_id, subscription_id=subscription_id)
+
+
+@admin_required
+@error_handler
+async def unblock_user_device(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
+    """Admin: unblock one of a user's hard-blocked devices (by block id)."""
+    from sqlalchemy import select
+
+    from app.database.models import DeviceBlock
+    from app.services.device_block_service import device_block_service
+
+    user_id, _subscription_id, block_id = _parse_devblock_callback(callback.data)
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        await callback.answer('Пользователь не найден', show_alert=True)
+        return
+
+    result = await db.execute(select(DeviceBlock).where(DeviceBlock.id == block_id, DeviceBlock.user_id == user_id))
+    block = result.scalars().first()
+    if block is None:
+        await callback.answer('Блокировка не найдена', show_alert=True)
+        return
+
+    await device_block_service.unban_device(db, user, block.id)
+
+    await show_user_devices_block(callback, db_user, db, user_id=user_id, subscription_id=_subscription_id)
+
+
 @admin_required
 @error_handler
 async def start_devices_edit(callback: types.CallbackQuery, db_user: User, state: FSMContext):
@@ -7736,6 +7989,13 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(start_devices_edit, F.data.startswith('admin_user_devices_') & ~F.data.contains('set'))
 
     dp.callback_query.register(set_user_devices_button, F.data.startswith('admin_user_devices_set_'))
+
+    # Блокировка устройств (admin): список + block/unblock по индексу/id.
+    dp.callback_query.register(show_user_devices_block, F.data.startswith('admin_user_devblock_') & ~F.data.contains('_set_'))
+
+    dp.callback_query.register(block_user_device, F.data.startswith('admin_user_devblock_set_'))
+
+    dp.callback_query.register(unblock_user_device, F.data.startswith('admin_user_devunblock_'))
 
     # Смена тарифа пользователя
     dp.callback_query.register(show_admin_tariff_change, F.data.startswith('admin_sub_change_tariff_'))

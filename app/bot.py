@@ -311,6 +311,16 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
     except Exception as e:
         logger.error('Ошибка запуска RemnaWave retry queue', error=e)
 
+    if settings.is_device_block_enabled():
+        try:
+            from app.services.device_block_service import device_block_service
+
+            await device_block_service.startup_sync()
+            await device_block_service.start_periodic_sync()
+            logger.info('Синхронизация заблокированных устройств запущена')
+        except Exception as e:
+            logger.error('Ошибка запуска синхронизации заблокированных устройств', error=e)
+
     logger.info('Бот успешно настроен')
 
     return bot, dp
@@ -324,6 +334,14 @@ async def shutdown_bot():
         logger.info('RemnaWave retry queue остановлен')
     except Exception as e:
         logger.error('Ошибка остановки RemnaWave retry queue', error=e)
+
+    try:
+        from app.services.device_block_service import device_block_service
+
+        await device_block_service.stop_periodic_sync()
+        logger.info('Синхронизация заблокированных устройств остановлена')
+    except Exception as e:
+        logger.error('Ошибка остановки синхронизации заблокированных устройств', error=e)
 
     try:
         await maintenance_service.stop_monitoring()

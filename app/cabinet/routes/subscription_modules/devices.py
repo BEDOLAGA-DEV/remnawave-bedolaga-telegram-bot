@@ -34,7 +34,9 @@ from app.database.crud.user_device_alias import (
     normalize_alias,
     set_alias,
 )
-from app.database.models import Subscription, TransactionType, User
+from app.database.crud.device_block import get_block_by_hwid, get_blocks_for_user
+from app.database.models import Subscription, TransactionType, User, DeviceBlock
+from app.services.device_block_service import device_block_service
 from app.services.panel_sync import should_create_panel_account
 from app.services.subscription_service import SubscriptionService
 from app.services.user_cart_service import user_cart_service
@@ -1468,3 +1470,94 @@ async def reduce_devices(
         'new_device_limit': new_device_limit,
         'devices_removed': devices_removed_count,
     }
+
+
+# ---------------------------------------------------------------------------
+# HWID device hard-blocking (mirrors the Telegram bot device-block feature)
+# ---------------------------------------------------------------------------
+
+
+def _block_to_dict(block: DeviceBlock) -> dict[str, Any]:
+    return {
+        'id': block.id,
+        'hwid': block.hwid,
+        'device_label': block.device_label,
+        'platform': block.platform,
+        'banned_at': block.banned_at.isoformat() if block.banned_at else None,
+        'banned_by': block.banned_by,
+    }
+
+
+class BlockDeviceRequest(BaseModel):
+    """Optional metadata for a device hard-block (label/platform for display)."""
+
+    device_label: str | None = None
+    platform: str | None = None
+
+
+@router.get('/devices/blocks')
+async def get_blocked_devices(
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """List the current user's hard-blocked (HWID) devices."""
+    if not settings.is_device_block_enabled():
+        return {'blocks': [], 'total': 0}
+    blocks = await get_blocks_for_user(db, user.id)
+    return {'blocks': [_block_to_dict(b) for b in blocks], 'total': len(blocks)}
+
+
+@router.post('/devices/{hwid}/block')
+async def block_device(
+    hwid: str,
+    payload: BlockDeviceRequest | None = None,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """Hard-block a device (HWID) for the current user."""
+    if not settings.is_device_block_enabled():
+        raise HTTPException(status_code=404, detail='Device blocking is not enabled')
+    hwid = (hwid or '').strip()
+    if not hwid:
+        raise HTTPException(status_code=400, detail='hwid is required')
+
+    existing = await get_block_by_hwid(db, hwid, user_id=user.id)
+    if existing is not None:
+        return {'success': True, 'already_blocked': True, 'block': _block_to_dict(existing)}
+
+    subscription = await resolve_subscription(db, user, None)
+    remnawave_uuid = _resolve_panel_uuid(subscription, user)
+    try:
+        block = await device_block_service.ban_device(
+            db,
+            user,
+            hwid,
+            remnawave_uuid=remnawave_uuid,
+            device_label=(payload.device_label if payload else None),
+            platform=(payload.platform if payload else None),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {'success': True, 'already_blocked': False, 'block': _block_to_dict(block)}
+
+
+@router.delete('/devices/{hwid}/block')
+async def unblock_device(
+    hwid: str,
+    user: User = Depends(get_current_cabinet_user),
+    db: AsyncSession = Depends(get_cabinet_db),
+) -> dict[str, Any]:
+    """Unblock a device (HWID) for the current user."""
+    if not settings.is_device_block_enabled():
+        raise HTTPException(status_code=404, detail='Device blocking is not enabled')
+    hwid = (hwid or '').strip()
+    if not hwid:
+        raise HTTPException(status_code=400, detail='hwid is required')
+
+    existing = await get_block_by_hwid(db, hwid, user_id=user.id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail='Block not found')
+    ok = await device_block_service.unban_device(db, user, existing.id)
+    if not ok:
+        raise HTTPException(status_code=404, detail='Block not found')
+    return {'success': True, 'hwid': hwid}

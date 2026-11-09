@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database.crud import device_block as device_block_crud
 from app.database.crud.transaction import create_transaction
 from app.database.crud.user import lock_user_for_pricing, subtract_user_balance
 from app.database.crud.user_device_alias import (
@@ -19,19 +20,24 @@ from app.database.crud.user_device_alias import (
     normalize_alias,
     upsert_alias,
 )
-from app.database.models import Subscription, TransactionType, User
+from app.database.models import DeviceBlock, Subscription, TransactionType, User
 from app.keyboards.inline import (
     get_app_selection_keyboard,
     get_back_keyboard,
+    get_blocked_devices_keyboard,
     get_change_devices_keyboard,
     get_confirm_change_devices_keyboard,
     get_connection_guide_keyboard,
+    get_device_block_confirm_keyboard,
+    get_device_block_success_keyboard,
     get_device_management_help_keyboard,
     get_devices_management_keyboard,
     get_insufficient_balance_keyboard,
     get_specific_app_keyboard,
+    get_unban_confirm_keyboard,
 )
 from app.localization.texts import get_texts
+from app.services.device_block_service import device_block_service
 from app.services.pricing_engine import PricingEngine
 from app.services.remnawave_service import RemnaWaveService
 from app.services.subscription_service import SubscriptionService
@@ -2132,3 +2138,334 @@ async def show_device_connection_help(
         help_text, reply_markup=get_device_management_help_keyboard(db_user.language), parse_mode='HTML'
     )
     await callback.answer()
+
+
+# ==================== HARD DEVICE BLOCKING (hwid-blocker middleware) ====================
+
+
+def _device_display_label(device: dict) -> str:
+    """Label for a panel device dict: local alias first, then platform-model."""
+    local_name = (device.get('local_name') or '').strip()
+    if local_name:
+        return local_name
+    platform = device.get('platform', 'Unknown')
+    device_model = device.get('deviceModel', 'Unknown')
+    return f'{platform} - {device_model}'
+
+
+async def _fetch_panel_devices(remnawave_uuid: str) -> list[dict] | None:
+    """Fetch the current device list from the panel. None on failure."""
+    try:
+        service = RemnaWaveService()
+        async with service.get_api_client() as api:
+            response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
+            if response and 'response' in response:
+                return response['response'].get('devices', [])
+    except Exception as e:
+        logger.error('Ошибка получения списка устройств для блокировки', error=e)
+    return None
+
+
+async def handle_block_device(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """`ban_device_{i}_{page}` — show the confirm screen for blocking a device."""
+    if not settings.is_device_block_enabled():
+        await callback.answer()
+        return
+
+    texts = get_texts(db_user.language)
+    try:
+        parts = callback.data.split('_')
+        if len(parts) < 4:
+            raise ValueError('bad callback')
+        device_index = int(parts[2])
+        page = int(parts[3])
+    except (ValueError, IndexError) as e:
+        logger.error('❌ Ошибка парсинга callback_data', callback_data=callback.data, error=e)
+        await callback.answer(
+            texts.t('DEVICE_BLOCK_ERROR', '❌ Ошибка обработки запроса'), show_alert=True
+        )
+        return
+
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
+    if not remnawave_uuid:
+        await callback.answer(
+            texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'), show_alert=True
+        )
+        return
+
+    devices_list = await _fetch_panel_devices(remnawave_uuid)
+    if devices_list is None:
+        await callback.answer(
+            texts.t('DEVICE_FETCH_INFO_ERROR', '❌ Ошибка получения информации об устройствах'),
+            show_alert=True,
+        )
+        return
+
+    pagination = paginate_list(devices_list, page=page, per_page=5)
+    if device_index >= len(pagination.items):
+        await callback.answer(texts.t('DEVICE_RESET_NOT_FOUND', '❌ Устройство не найдено'), show_alert=True)
+        return
+
+    devices_list = await _enrich_devices_with_aliases(devices_list, db_user.id)
+    device = pagination.items[device_index]
+    if not (device.get('hwid') or '').strip():
+        await callback.answer(
+            texts.t('DEVICE_BLOCK_ERROR', '❌ У устройства нет идентификатора'), show_alert=True
+        )
+        return
+
+    label = _device_display_label(device)
+    confirm_text = texts.t(
+        'DEVICE_BLOCK_CONFIRM_TEXT',
+        (
+            '🚫 <b>{device}</b>\n\n'
+            'The device will be disconnected and will not be able to reconnect '
+            'until you include it back in the bot.'
+        ),
+    ).format(device=html_mod.escape(label))
+
+    await callback.message.edit_text(
+        confirm_text,
+        reply_markup=get_device_block_confirm_keyboard(label, device_index, page, db_user.language),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_confirm_block_device(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """`confirm_block_device_{i}_{page}` — block the device (re-fetch first)."""
+    if not settings.is_device_block_enabled():
+        await callback.answer()
+        return
+
+    texts = get_texts(db_user.language)
+    try:
+        parts = callback.data.split('_')
+        if len(parts) < 5:
+            raise ValueError('bad callback')
+        device_index = int(parts[3])
+        page = int(parts[4])
+    except (ValueError, IndexError) as e:
+        logger.error('❌ Ошибка парсинга callback_data', callback_data=callback.data, error=e)
+        await callback.answer(
+            texts.t('DEVICE_BLOCK_ERROR', '❌ Ошибка обработки запроса'), show_alert=True
+        )
+        return
+
+    subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
+    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
+    if not remnawave_uuid:
+        await callback.answer(
+            texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'), show_alert=True
+        )
+        return
+
+    devices_list = await _fetch_panel_devices(remnawave_uuid)
+    if devices_list is None:
+        await callback.answer(
+            texts.t('DEVICE_FETCH_INFO_ERROR', '❌ Ошибка получения информации об устройствах'),
+            show_alert=True,
+        )
+        return
+
+    devices_list = await _enrich_devices_with_aliases(devices_list, db_user.id)
+    pagination = paginate_list(devices_list, page=page, per_page=5)
+    if device_index >= len(pagination.items):
+        await callback.answer(texts.t('DEVICE_RESET_NOT_FOUND', '❌ Устройство не найдено'), show_alert=True)
+        return
+
+    device = pagination.items[device_index]
+    hwid = (device.get('hwid') or '').strip()
+    if not hwid:
+        await callback.answer(
+            texts.t('DEVICE_BLOCK_ERROR', '❌ У устройства нет идентификатора'), show_alert=True
+        )
+        return
+
+    label = _device_display_label(device)
+
+    # Already blocked — point to the section instead of a duplicate row.
+    existing = await device_block_crud.get_block_by_hwid(db, hwid, user_id=db_user.id)
+    if existing is not None:
+        await callback.answer(
+            texts.t('DEVICE_BLOCK_ALREADY', 'ℹ️ Это устройство уже отключено'), show_alert=True
+        )
+        await show_blocked_devices_page(callback, db_user, page=1)
+        return
+
+    try:
+        await device_block_service.ban_device(
+            db,
+            db_user,
+            hwid,
+            remnawave_uuid=remnawave_uuid,
+            device_label=label,
+            platform=device.get('platform'),
+        )
+    except Exception as e:
+        logger.error('Ошибка блокировки устройства', error=e)
+        await callback.answer(
+            texts.t('DEVICE_BLOCK_ERROR', '❌ Не удалось отключить device'), show_alert=True
+        )
+        return
+
+    logger.info(
+        '🚫 Пользователь заблокировал устройство',
+        telegram_id=db_user.telegram_id,
+        device_label=label,
+        hwid_prefix=hwid[:8],
+    )
+
+    success_text = texts.t(
+        'DEVICE_BLOCK_SUCCESS',
+        '🚫 <b>{device}</b> has been disconnected.\n\nIt will not be able to connect until you include it back in the bot.',
+    ).format(device=html_mod.escape(label))
+
+    await callback.message.edit_text(
+        success_text,
+        reply_markup=get_device_block_success_keyboard(page, db_user.language),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def show_blocked_devices_page(
+    callback: types.CallbackQuery, db_user: User, page: int = 1
+):
+    """Paginated list of the user's blocked devices."""
+    texts = get_texts(db_user.language)
+    from app.database.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        blocks = await device_block_crud.get_blocks_for_user(db, db_user.id)
+
+    pagination = paginate_list(blocks, page=page, per_page=5)
+
+    if not blocks:
+        text = texts.t('BLOCKED_DEVICES_EMPTY', '🚫 Отключённых устройств нет')
+    else:
+        text = texts.t(
+            'BLOCKED_DEVICES_TITLE',
+            '🚫 <b>Отключённые устройства</b>\n\nВсего: {total}\n',
+        ).format(total=len(blocks))
+        for block in pagination.items:
+            label = (block.device_label or block.hwid[:8]).strip()
+            date = block.banned_at.strftime('%d.%m.%Y %H:%M') if block.banned_at else '—'
+            text += texts.t(
+                'BLOCKED_DEVICES_LIST_ITEM',
+                '• {device} (hwid {hwid}…)\n   отключено: {date}\n',
+            ).format(
+                device=html_mod.escape(label),
+                hwid=html_mod.escape(block.hwid[:8]),
+                date=date,
+            )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_blocked_devices_keyboard(pagination.items, pagination, db_user.language),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_blocked_devices(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """`subscription_blocked_devices` / `blocked_devices_page_{n}` — the section."""
+    if not settings.is_device_block_enabled():
+        await callback.answer()
+        return
+
+    if callback.data.startswith('blocked_devices_page_'):
+        try:
+            page = int(callback.data.rsplit('_', 1)[1])
+        except ValueError:
+            page = 1
+    else:
+        page = 1
+
+    await show_blocked_devices_page(callback, db_user, page=page)
+
+
+async def handle_unban_device(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """`unban_device_{id}` — confirm screen for unblocking."""
+    if not settings.is_device_block_enabled():
+        await callback.answer()
+        return
+
+    texts = get_texts(db_user.language)
+    try:
+        block_id = int(callback.data.rsplit('_', 1)[1])
+    except ValueError as e:
+        logger.error('❌ Ошибка парсинга callback_data', callback_data=callback.data, error=e)
+        await callback.answer(
+            texts.t('UNBAN_ERROR', '❌ Ошибка обработки запроса'), show_alert=True
+        )
+        return
+
+    result = await db.execute(select(DeviceBlock).where(DeviceBlock.id == block_id))
+    block = result.scalars().first()
+    if block is None or (block.user_id is not None and block.user_id != db_user.id):
+        await callback.answer(
+            texts.t('UNBAN_ERROR', '❌ Устройство не найдено'), show_alert=True
+        )
+        await show_blocked_devices_page(callback, db_user, page=1)
+        return
+
+    confirm_text = texts.t(
+        'UNBAN_CONFIRM_TEXT',
+        '✅ <b>{device}</b> will be able to reconnect again?',
+    ).format(device=html_mod.escape(block.device_label or block.hwid[:8]))
+
+    await callback.message.edit_text(
+        confirm_text,
+        reply_markup=get_unban_confirm_keyboard(block_id, db_user.language),
+        parse_mode='HTML',
+    )
+    await callback.answer()
+
+
+async def handle_confirm_unban_device(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """`unban_confirm_{id}` — unblock the device and re-render the list."""
+    if not settings.is_device_block_enabled():
+        await callback.answer()
+        return
+
+    texts = get_texts(db_user.language)
+    try:
+        block_id = int(callback.data.rsplit('_', 1)[1])
+    except ValueError as e:
+        logger.error('❌ Ошибка парсинга callback_data', callback_data=callback.data, error=e)
+        await callback.answer(
+            texts.t('UNBAN_ERROR', '❌ Ошибка обработки запроса'), show_alert=True
+        )
+        return
+
+    try:
+        deleted = await device_block_service.unban_device(db, db_user, block_id)
+    except Exception as e:
+        logger.error('Ошибка разблокировки устройства', error=e)
+        deleted = False
+
+    if not deleted:
+        await callback.answer(
+            texts.t('UNBAN_ERROR', '❌ Не удалось включить device'), show_alert=True
+        )
+        await show_blocked_devices_page(callback, db_user, page=1)
+        return
+
+    logger.info('✅ Пользователь включил устройство обратно', telegram_id=db_user.telegram_id, block_id=block_id)
+
+    await callback.answer(
+        texts.t('UNBAN_SUCCESS', '✅ Устройство включено обратно.'), show_alert=True
+    )
+    await show_blocked_devices_page(callback, db_user, page=1)

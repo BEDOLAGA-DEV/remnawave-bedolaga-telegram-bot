@@ -2579,6 +2579,7 @@ class User(Base):
     user_promo_groups = relationship('UserPromoGroup', back_populates='user', cascade='all, delete-orphan')
     poll_responses = relationship('PollResponse', back_populates='user')
     admin_roles_rel = relationship('UserRole', foreign_keys='[UserRole.user_id]', back_populates='user')
+    device_blocks = relationship('DeviceBlock', back_populates='user')
     notification_settings = Column(JSONB, nullable=True, default=dict)
     last_pinned_message_id = Column(Integer, nullable=True)
 
@@ -5672,3 +5673,44 @@ class UserReminderState(Base):
     # Последний успех — по нему общий лимит «одно напоминание в сутки».
     last_success_at = Column(AwareDateTime(), nullable=True)
     dismissed_at = Column(AwareDateTime(), nullable=True)
+
+
+class DeviceBlock(Base):
+    """Жёсткая блокировка HWID-устройства (middleware-уровень).
+
+    В отличие от сброса устройства (которое просто переподключается), blocked
+    devices get an empty profile + announce message from the hwid-blocker
+    middleware and cannot reconnect until unblocked here.
+
+    Scope is per-(user, hwid, short_uuid): the ban only applies to the
+    subscription identified by `short_uuid` (the Remnawave public subscription
+    key in the /{key} URL). A device banned on one subscription can therefore
+    still connect on a different one (e.g. a freshly purchased one). An empty
+    `short_uuid` is a global ban (matches any subscription) — used for admin
+    raw-hwid bans and legacy rows.
+    """
+
+    __tablename__ = 'device_blocks'
+    __table_args__ = (
+        UniqueConstraint('user_id', 'hwid', 'short_uuid', name='uq_device_blocks_user_hwid_short'),
+        Index('ix_device_blocks_user_id', 'user_id'),
+        Index('ix_device_blocks_hwid', 'hwid'),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=True)
+    hwid = Column(String(64), nullable=False)
+    remnawave_uuid = Column(String(255), nullable=True)
+    short_uuid = Column(String(64), nullable=True)
+    device_label = Column(String(255), nullable=True)
+    platform = Column(String(64), nullable=True)
+    message = Column(Text, nullable=True)
+    banned_at = Column(AwareDateTime(), default=func.now(), server_default=func.now(), nullable=False)
+    banned_by = Column(String(20), default='user', nullable=False)
+    last_seen_at = Column(AwareDateTime(), nullable=True)
+    updated_at = Column(AwareDateTime(), default=func.now(), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship('User', back_populates='device_blocks')
+
+    def __repr__(self) -> str:
+        return f"<DeviceBlock id={self.id} user_id={self.user_id} hwid={self.hwid[:8]}…>"
