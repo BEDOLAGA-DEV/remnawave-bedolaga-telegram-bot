@@ -2459,6 +2459,9 @@
 - `app/utils/telegram_html.py` — Python-модуль
   Классы: нет
   Функции: `html_to_telegram`, `info_page_faq_to_telegram`, `stored_html_to_telegram_pages` — Сохранённый HTML страницы → куски, которые Telegram согласится разобрать., `trim_broken_markup` — Обрезает незакрытый тег или неполную HTML-сущность в конце куска., `split_telegram_text`
+- `app/utils/telegram_polling.py` — Python-модуль
+  Классы: нет
+  Функции: `wait_for_telegram` — Повторяет ``bot.me()``, пока Telegram не ответит; фатальные ошибки пробрасывает., `start_polling_with_retry` — ``dp.start_polling``, не завершающийся из-за временного сбоя сети на старте.
 - `app/utils/telegram_webapp.py` — Python-модуль
   Классы: `TelegramWebAppAuthError`
   Функции: `parse_webapp_init_data` — Validate and parse Telegram WebApp init data.
@@ -3392,6 +3395,9 @@
 - `tests/test_tariff_promo_group_eligibility.py` — Python-модуль
   Классы: нет
   Функции: `test_tariff_promo_group_authorization`, `test_stale_telegram_button_denied_before_checkout`, `test_api_purchase_denied_without_group`
+- `tests/test_telegram_polling.py` — Python-модуль
+  Классы: `ScriptedSession` (4 методов)
+  Функции: `test_transient_error_at_polling_start_is_retried`, `test_invalid_token_stays_fatal`, `test_network_error_during_get_updates_does_not_end_polling` — Страховка на обновление aiogram: сейчас этот участок он повторяет сам., `recorded_sleeps`, `test_retry_after_waits_as_long_as_telegram_asked`, `test_backoff_grows_and_is_capped`, `test_shutdown_cancels_retry_wait`, `test_main_starts_polling_through_retry_wrapper`
 - `tests/test_ticket_notification_keyboard.py` — Python-модуль
   Классы: нет
   Функции: `test_admin_gets_full_set_including_user_manage`, `test_moderator_omits_user_manage_but_keeps_actions`, `test_user_manage_uses_db_id_not_telegram_id`, `test_user_manage_hidden_when_no_db_id_even_for_admin`, `test_url_buttons_present_for_username_and_telegram_id`, `test_username_with_at_prefix_is_stripped`, `test_no_username_hides_dm_keeps_profile`, `test_email_user_without_telegram_id_has_no_url_buttons_but_keeps_callbacks`, `test_non_numeric_telegram_id_dropped_from_profile_url`, `test_blocked_user_shows_unblock_not_block_controls`, `test_closed_ticket_hides_reply_and_close`, `test_notification_keyboard_never_has_back_button`, `test_group_keyboard_omits_fsm_buttons_keeps_reliable`, `test_group_keyboard_omits_user_manage`, `test_group_keyboard_blocked_shows_unblock`, `test_group_keyboard_closed_ticket_leaves_only_block_forever`, `service_factory` — Build an AdminNotificationService with patched permission helpers., `test_role_admin`, `test_role_moderator`, `test_role_admin_takes_precedence_over_moderator`, `test_role_outsider_private_chat_is_none`, `test_role_group_or_channel_is_group`, `test_role_zero_chat_id_is_none`, `test_role_none_chat_id_is_none`, `test_role_string_username_chat_is_none`, `test_role_numeric_string_chat_id_is_resolved`, `cabinet_settings` — Configure settings for the cabinet deep-link button., `test_cabinet_button_none_when_not_cabinet_mode`, `test_cabinet_button_private_is_webapp_to_admin_ticket_path`, `test_cabinet_button_private_none_without_custom_url`, `test_cabinet_button_group_is_startapp_deeplink`, `test_cabinet_button_group_none_without_short_name`, `test_cabinet_button_group_none_without_bot_username`, `test_keyboard_places_cabinet_button_on_top`
