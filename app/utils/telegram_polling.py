@@ -5,13 +5,16 @@ getUpdates aiogram повторяет сам, но ``await bot.me()`` в нач�
 polling, а за ним и весь процесс. Поэтому личность бота получаем заранее и с
 повторами; ``Bot.me()`` кеширует ответ, и внутри polling сетевого вызова уже нет.
 
-Повторять ``start_polling`` целиком нельзя: первый запуск заменяет обработчики
-SIGTERM/SIGINT, и сигнал, пришедший в паузе между запусками, потерялся бы.
+Сигналами владеет главный цикл (``GracefulExit`` в ``main.py``), поэтому aiogram
+запускается с ``handle_signals=False``. Иначе ``loop.add_signal_handler`` заменяет
+его обработчик: SIGTERM молча гасит polling, ``killer.exit`` остаётся ложным, и
+процесс доживает до SIGKILL без корректного завершения.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Any, Final
 
 import aiohttp_socks
@@ -61,13 +64,37 @@ async def wait_for_telegram(bot: Bot, backoff_config: BackoffConfig = STARTUP_BA
         await asyncio.sleep(delay)
 
 
+async def wait_for_telegram_or_stop(
+    bot: Bot,
+    should_stop: Callable[[], bool],
+    backoff_config: BackoffConfig = STARTUP_BACKOFF,
+    *,
+    poll_interval: float = 0.2,
+) -> bool:
+    """``wait_for_telegram``, которую можно прервать; False значит «просили остановиться».
+
+    Обработчик сигнала только ставит флаг, а повторы бесконечны: без проверки флага
+    ``docker stop`` при недоступном Telegram дожидался бы SIGKILL.
+    """
+    waiter = asyncio.create_task(wait_for_telegram(bot, backoff_config))
+    while not waiter.done():
+        if should_stop():
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+            return False
+        await asyncio.wait({waiter}, timeout=poll_interval)
+    waiter.result()  # фатальная ошибка, например неверный токен
+    return True
+
+
 async def start_polling_with_retry(
     dp: Dispatcher,
     bot: Bot,
     *,
     startup_backoff: BackoffConfig = STARTUP_BACKOFF,
+    handle_signals: bool = False,
     **polling_kwargs: Any,
 ) -> None:
     """``dp.start_polling``, не завершающийся из-за временного сбоя сети на старте."""
     await wait_for_telegram(bot, startup_backoff)
-    await dp.start_polling(bot, **polling_kwargs)
+    await dp.start_polling(bot, handle_signals=handle_signals, **polling_kwargs)

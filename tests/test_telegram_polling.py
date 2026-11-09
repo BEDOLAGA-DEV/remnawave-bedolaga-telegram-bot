@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -31,7 +33,7 @@ from aiogram.types import User
 from aiogram.utils.backoff import BackoffConfig
 
 from app.utils import telegram_polling
-from app.utils.telegram_polling import start_polling_with_retry
+from app.utils.telegram_polling import start_polling_with_retry, wait_for_telegram_or_stop
 
 
 FAST_BACKOFF = BackoffConfig(min_delay=0.001, max_delay=0.002, factor=1.5, jitter=0.0)
@@ -198,3 +200,107 @@ def test_main_starts_polling_through_retry_wrapper() -> None:
 
     assert 'start_polling_with_retry(dp, bot' in source
     assert 'dp.start_polling(' not in source
+
+
+async def _until_first_get_me(session: ScriptedSession, task: asyncio.Task[Any]) -> None:
+    """Ждёт первый запрос; упавшая задача не должна подвешивать тест."""
+    async with asyncio.timeout(5):
+        while session.get_me_calls == 0 and not task.done():
+            await asyncio.sleep(0)
+    if task.done():
+        await task
+        pytest.fail('ожидание завершилось раньше первого запроса к Telegram')
+
+
+def test_main_waits_for_telegram_before_startup_calls() -> None:
+    source = (Path(__file__).resolve().parents[1] / 'main.py').read_text(encoding='utf-8')
+
+    assert 'wait_for_telegram_or_stop(bot, lambda: killer.exit)' in source
+    assert 'bot.get_me()' not in source
+
+
+@pytest.mark.asyncio
+async def test_startup_wait_survives_network_error_and_caches_identity() -> None:
+    error = TelegramNetworkError(method=GET_ME, message='ClientOSError: reset')
+    session = ScriptedSession(get_me_errors=[error, error])
+    _, bot = _make(session)
+
+    assert await asyncio.wait_for(wait_for_telegram_or_stop(bot, lambda: False, FAST_BACKOFF), timeout=5) is True
+
+    assert (await bot.me()).username == 'bot'
+    assert session.get_me_calls == 3
+
+
+@pytest.mark.asyncio
+async def test_startup_wait_keeps_invalid_token_fatal() -> None:
+    session = ScriptedSession(get_me_errors=[TelegramUnauthorizedError(method=GET_ME, message='Unauthorized')])
+    _, bot = _make(session)
+
+    with pytest.raises(TelegramUnauthorizedError):
+        await asyncio.wait_for(wait_for_telegram_or_stop(bot, lambda: False, FAST_BACKOFF), timeout=5)
+
+    assert session.get_me_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_wait_stops_during_long_backoff() -> None:
+    """docker stop, пока Telegram недоступен: ждать конца минутной паузы нельзя."""
+    error = TelegramNetworkError(method=GET_ME, message='ClientOSError: reset')
+    session = ScriptedSession(get_me_errors=[error] * 1000)
+    _, bot = _make(session)
+    slow = BackoffConfig(min_delay=60.0, max_delay=61.0, factor=1.1, jitter=0.0)
+    stop = False
+    task = asyncio.create_task(wait_for_telegram_or_stop(bot, lambda: stop, slow, poll_interval=0.01))
+    await _until_first_get_me(session, task)
+
+    stop = True
+
+    assert await asyncio.wait_for(task, timeout=1) is False
+
+
+class HangingSession(ScriptedSession):
+    """Запрос повис: сокет открыт, ответа нет."""
+
+    async def make_request(self, bot: Bot, method: Any, timeout: int | None = None) -> Any:
+        self.get_me_calls += 1
+        await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_startup_wait_stops_during_hung_request() -> None:
+    session = HangingSession(get_me_errors=[])
+    _, bot = _make(session)
+    stop = False
+    task = asyncio.create_task(wait_for_telegram_or_stop(bot, lambda: stop, FAST_BACKOFF, poll_interval=0.01))
+    await _until_first_get_me(session, task)
+
+    stop = True
+
+    assert await asyncio.wait_for(task, timeout=1) is False
+
+
+@pytest.mark.asyncio
+async def test_real_sigterm_reaches_handler_installed_before_polling() -> None:
+    """Без handle_signals=False aiogram забирает SIGTERM, и главный цикл его не видит."""
+    received: list[int] = []
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    for sig in previous:
+        signal.signal(sig, lambda signum, _frame: received.append(signum))
+    session = ScriptedSession(get_me_errors=[])
+    dp, bot = _make(session)
+    task = asyncio.create_task(start_polling_with_retry(dp, bot, backoff_config=FAST_BACKOFF))
+    loop = asyncio.get_running_loop()
+    try:
+        await asyncio.wait_for(session.polling_reached.wait(), timeout=5)
+
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.sleep(0.05)
+
+        assert received == [signal.SIGTERM]
+        assert not task.done(), 'polling остановился сам: главный цикл об этом не узнает'
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        for sig, handler in previous.items():
+            loop.remove_signal_handler(sig)
+            signal.signal(sig, handler)
