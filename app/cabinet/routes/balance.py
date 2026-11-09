@@ -216,6 +216,7 @@ async def get_payment_methods(
                 is_available=True,
                 options=options,
                 quick_amounts=method_data.get('quick_amounts') or [],
+                fixed_amounts_only=bool(method_data.get('fixed_amounts_only', False)),
                 open_url_direct=bool(method_data.get('open_url_direct', False)),
             )
         )

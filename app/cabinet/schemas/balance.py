@@ -58,6 +58,9 @@ class PaymentMethodResponse(BaseModel):
     is_available: bool = True
     options: list[dict[str, Any]] | None = None
     quick_amounts: list[int] = Field(default_factory=list)
+    # Если True — разрешены только суммы из quick_amounts (цифровые товары Tribute с фиксированной
+    # ценой), кабинет не показывает свободный ввод.
+    fixed_amounts_only: bool = False
     # Если True — кабинет, получив payment_url от провайдера, делает window.location.href
     # сразу (seamless flow внутри MiniApp WebView). Если False — показывает панель
     # "Открыть страницу оплаты" с кнопкой.

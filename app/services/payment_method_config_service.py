@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database.models import PaymentMethodConfig, PromoGroup
+from app.external.tribute import get_product_links
 
 
 logger = structlog.get_logger(__name__)
@@ -63,7 +64,9 @@ def _get_method_defaults(*, include_disabled_sub_options: bool = False) -> dict:
         },
         'tribute': {
             'default_display_name': 'Tribute',
-            'is_configured': settings.TRIBUTE_ENABLED and bool(getattr(settings, 'TRIBUTE_DONATE_LINK', '')),
+            # донат-ссылка ИЛИ цифровые товары (TRIBUTE_PRODUCT_LINKS): с одними товарами донат-ссылки нет
+            'is_configured': settings.TRIBUTE_ENABLED
+            and (bool(getattr(settings, 'TRIBUTE_DONATE_LINK', '')) or bool(get_product_links())),
             'default_min': 10000,
             'default_max': 10000000,
             'available_sub_options': None,
@@ -719,6 +722,19 @@ async def get_enabled_methods_for_user(
             if enabled_options:
                 options = enabled_options
 
+        quick_amounts = get_effective_quick_amounts(config.quick_amounts, min_amount, max_amount)
+        fixed_amounts_only = False
+        if method_id == 'tribute':
+            tribute_products = get_product_links()
+            if tribute_products:
+                # Цифровые товары Tribute: цена фиксирована, принимаются только суммы из
+                # TRIBUTE_PRODUCT_LINKS. Быстрые суммы и границы берём из них (настройки способа
+                # в БД не нужны), кабинет по флагу прячет свободный ввод.
+                quick_amounts = list(tribute_products)
+                min_amount = min(tribute_products)
+                max_amount = max(tribute_products)
+                fixed_amounts_only = True
+
         result.append(
             {
                 'id': method_id,
@@ -727,7 +743,9 @@ async def get_enabled_methods_for_user(
                 'min_amount_kopeks': min_amount,
                 'max_amount_kopeks': max_amount,
                 'options': options,
-                'quick_amounts': get_effective_quick_amounts(config.quick_amounts, min_amount, max_amount),
+                'quick_amounts': quick_amounts,
+                # True — разрешены только quick_amounts, свободный ввод суммы кабинет скрывает.
+                'fixed_amounts_only': fixed_amounts_only,
                 'sort_order': config.sort_order,
                 # Если True — кабинет, получив payment_url, делает
                 # window.location.href сразу вместо показа панели с ссылкой.
