@@ -5678,16 +5678,18 @@ class UserReminderState(Base):
 class DeviceBlock(Base):
     """Жёсткая блокировка HWID-устройства (middleware-уровень).
 
-    В отличие от сброса устройства (которое просто переподключается), blocked
-    devices get an empty profile + announce message from the hwid-blocker
-    middleware and cannot reconnect until unblocked here.
+        В отличие от сброса устройства (которое просто переподключается), 
+        заблокированные устройства получают пустой профиль и служебное сообщение от 
+        middleware hwid-blocker и не могут переподключиться, пока блокировка 
+        не будет снята здесь.
 
-    Scope is per-(user, hwid, short_uuid): the ban only applies to the
-    subscription identified by `short_uuid` (the Remnawave public subscription
-    key in the /{key} URL). A device banned on one subscription can therefore
-    still connect on a different one (e.g. a freshly purchased one). An empty
-    `short_uuid` is a global ban (matches any subscription) — used for admin
-    raw-hwid bans and legacy rows.
+        Область действия определяется парой (user, hwid, short_uuid): 
+        блокировка применяется только к подписке, идентифицируемой
+        short_uuid (публичному ключу подписки Remnawave в URL /{key}). 
+        Поэтому устройство, заблокированное по одной подписке, всё ещё может подключиться по другой
+        (например, только что купленной). Пустой short_uuid означает глобальную блокировку 
+        (действует на любую подписку) и используется для административных блокировок по сырому hwid 
+        и для записей старого формата.
     """
 
     __tablename__ = 'device_blocks'

@@ -1160,8 +1160,8 @@ async def _render_user_subscription_overview(
                 ]
             )
 
-    # Блокировка устройств — показываем кнопку only if user has devices/blocks.
-    # подключённые устройства or already existing блокировки.
+    # Блокировка устройств — показываем кнопку только если у пользователя есть
+    # подключённые устройства или текущие блокировки.
     if settings.is_device_block_enabled():
         try:
             _devs, _blks = await _fetch_user_devices_brief(db, user_id, subscription_id)
