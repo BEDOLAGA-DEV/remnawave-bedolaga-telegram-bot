@@ -3650,6 +3650,9 @@
 - `tests/cabinet/test_info_service.py` — Python-модуль
   Классы: нет
   Функции: `branded`, `test_contact_settings_exist` — Поля должны быть в модели, иначе .env их не задаст, а ручка снова врёт., `test_name_and_description_come_from_branding` — Источник тот же, что у мини-аппа — сервис не называется в двух местах по-разному., `test_unknown_and_dirty_language_codes_resolve` — Локали без брендинга берут дефолт, а хвост региона/пробелы не мешают., `test_contacts_are_returned`, `test_blank_contacts_are_null_not_empty_string` — Пустая переменная в .env — это «контакта нет», как и до правки., `test_name_is_never_the_old_hardcoded_stub` — Даже с пустым брендингом имя берётся из фолбэка брендинга, а не из ручки.
+- `tests/cabinet/test_google_oauth_token_request.py` — Python-модуль
+  Классы: нет
+  Функции: `test_google_exchange_code_sends_form_encoded_body`
 - `tests/cabinet/test_invite_only_auth.py` — Python-модуль
   Классы: нет
   Функции: `test_http_mapping_distinguishes_policy_and_infrastructure_errors`, `test_public_adapter_short_circuits_when_invite_only_is_disabled`, `test_cabinet_gate_forwards_verified_admin_identity`, `test_every_signed_telegram_arm_revives_its_own_deleted_account` — initData, widget and OIDC all prove the same identity, so all three must revive., `test_non_deleted_inactive_account_without_admin_proof_is_refused`
