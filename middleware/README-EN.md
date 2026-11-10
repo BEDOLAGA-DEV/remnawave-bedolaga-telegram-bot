@@ -21,7 +21,7 @@ state from the bot on startup.
 
 ```
 Data plane:
-  nginx (sub.domain) -> hwid-blocker :3020 -> subscription-page :3010 -> panel :3000
+  nginx (sub.domain) -> hwid-blocker :3020 -> subscription-page :3010
 
 Control plane:
   bot :8080  --PUT /v1/state-->  hwid-blocker
@@ -63,7 +63,7 @@ docker compose restart     # restart
 docker compose down        # stop
 ```
 
-## Install — Dockerless (no Docker)
+## Install — Dockerless
 
 Requires the Go toolchain (>= 1.24) on the host.
 
@@ -97,7 +97,7 @@ On the bot side, set (in the bot's `.env`):
 
 ```
 DEVICE_BLOCK_ENABLED=true
-MIDDLEWARE_URL=http://127.0.0.1:3020
+MIDDLEWARE_URL=http://127.0.0.1:3020 (have https support!)
 MIDDLEWARE_ADMIN_TOKEN=<same as this proxy's ADMIN_TOKEN>
 MIDDLEWARE_PUSH_INTERVAL_MIN=30
 ```
@@ -131,7 +131,7 @@ location / {
 |--------|---------------|-----------------|---------|
 | `GET`  | `/v1/health`  | —               | `{ok, version, count, uptime_s}` |
 | `PUT`  | `/v1/state`   | `X-Admin-Token` | Push full state `{version, devices[], updated_at}` |
-| `GET`  | `/{shortUUID}`| —               | Subscription fetch; blocked devices get a block page, others are proxied |
+| `GET`  | `/{shortUUID}` или `/path/{shortUUID}`| —               | Subscription fetch; blocked devices get a block page, others are proxied |
 
 A device is blocked when its `x-hwid` header + the path short-UUID matches a
 `(user_id, hwid, short_uuid)` entry in the current state.
