@@ -1,0 +1,9 @@
+# secrets / local env (never commit tokens)
+.env
+
+# runtime state snapshot
+data/
+
+# build artifacts
+bin/
+hwid-blocker

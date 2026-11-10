@@ -1,0 +1,19 @@
+# systemd unit for hwid-blocker (Dockerless / native deployment).
+#
+# install-service.sh substitutes the __PLACEHOLDERS__ below and installs this
+# to /etc/systemd/system/hwid-blocker.service. You can also install it manually.
+[Unit]
+Description=hwid-blocker - Remnawave HWID device-blocking proxy
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=__ENV_DIR__/hwid-blocker.env
+ExecStart=__INSTALL_DIR__/hwid-blocker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

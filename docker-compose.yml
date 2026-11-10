@@ -106,23 +106,16 @@ volumes:
     driver: local
   postgres_data:
     driver: local
-    driver_opts:
-      type: none
-      device: ./database/postgress
-      o: bind
   redis_data:
     driver: local
-    driver_opts:
-      type: none
-      device: ./database/redis
-      o: bind
+
 
 networks:
   bot_network:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.22.0.0/16
-          gateway: 172.22.0.1
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
     driver_opts:
       com.docker.network.driver.mtu: 1350

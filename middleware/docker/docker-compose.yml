@@ -1,0 +1,33 @@
+# hwid-blocker — Docker deployment.
+#
+# Run from THIS directory so the project dir (and thus .env + relative paths)
+# resolve correctly:
+#
+#   cd middleware/docker && docker compose up -d
+#
+# The build context is the middleware/ root (where go.mod + *.go live); the
+# Dockerfile lives here. State is kept in middleware/data/ (next to this dir).
+
+services:
+  hwid-blocker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: hwid-blocker:local
+    container_name: hwid_blocker
+    restart: always
+    network_mode: host  # needs host's 127.0.0.1:3010 (subscription-page) and 127.0.0.1:8080 (bot webapi)
+    volumes:
+      - ../data:/data
+    environment:
+      - LISTEN_ADDR=127.0.0.1:3020
+      # Secondary listener on the bot bridge gateway so the bot container
+      # (172.22.0.0/16) can push state without exposing 3020 on public
+      # interfaces. Must match the bot_network subnet in the bot compose.
+      - BOT_LISTEN_ADDR=172.22.0.1:3020
+      - UPSTREAM_URL=http://127.0.0.1:3010
+      - STATE_FILE=/data/state.json
+      - ADMIN_TOKEN=${MIDDLEWARE_ADMIN_TOKEN}
+      - BOT_API_URL=http://127.0.0.1:8080
+      - BOT_API_TOKEN=${BOT_API_TOKEN_FOR_MIDDLEWARE}
+      - FAIL_OPEN=true
