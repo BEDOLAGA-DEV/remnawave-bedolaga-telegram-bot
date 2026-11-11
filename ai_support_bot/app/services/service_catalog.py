@@ -130,7 +130,7 @@ async def _load_tariffs(session) -> list[str]:
     result = await session.execute(
         text(
             'SELECT name, traffic_limit_gb, device_limit, period_prices, is_daily, daily_price_kopeks, '
-            'custom_days_enabled, price_per_day_kopeks, traffic_topup_enabled '
+            'custom_days_enabled, price_per_day_kopeks, traffic_topup_enabled, device_price_kopeks, max_device_limit '
             'FROM tariffs WHERE is_active = true ORDER BY display_order ASC, id ASC LIMIT :limit'
         ),
         {'limit': _MAX_TARIFFS},
@@ -144,7 +144,13 @@ async def _load_tariffs(session) -> list[str]:
         parts = [f'трафик {_traffic_summary(row.get("traffic_limit_gb"))}']
         device_limit = row.get('device_limit')
         if device_limit:
-            parts.append(f'устройств {device_limit}')
+            parts.append(f'включено устройств {device_limit}')
+        elif device_limit == 0:
+            parts.append('включённый лимит устройств без ограничения')
+        if row.get('max_device_limit') is not None:
+            parts.append(f'максимальный настраиваемый лимит {row["max_device_limit"]}')
+        if row.get('device_price_kopeks') is not None:
+            parts.append(f'базовая цена места сверх включённого лимита {_money(row["device_price_kopeks"])}/мес; доступность и итог проверяются в форме изменения')
         periods = _period_summary(row.get('period_prices'))
         if periods:
             parts.append(f'периоды: {periods}')

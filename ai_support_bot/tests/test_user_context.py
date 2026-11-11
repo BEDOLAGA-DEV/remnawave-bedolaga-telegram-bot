@@ -49,3 +49,28 @@ async def test_payment_context_has_exact_time_identifier_and_completion_status(m
     assert '15.10.2026 12:34 UTC' in context
     assert 'статус=не завершена' in context
     assert 'идентификатор=payment-abc' in context
+
+
+@pytest.mark.asyncio
+async def test_user_context_distinguishes_configured_limit_and_included_free_places(monkeypatch):
+    user = Mock()
+    user.mappings.return_value.first.return_value = {'id': 7}
+    subs = Mock()
+    subs.mappings.return_value.all.return_value = [{
+        'id': 11, 'device_limit': 1, 'tariff_name': 'Стандарт',
+        'tariff_included_devices': 5, 'max_device_limit': 8, 'device_price_kopeks': 10000,
+    }]
+    tx = Mock()
+    tx.mappings.return_value.all.return_value = []
+    session = AsyncMock()
+    session.execute.side_effect = [user, subs, tx]
+    monkeypatch.setattr(user_data, 'get_main_session', AsyncMock(return_value=session))
+    monkeypatch.setattr(user_data.settings_store, 'get_bool', lambda key: False)
+    context = await user_data.build_user_context(42)
+    assert 'устройств=1 (настроенный лимит, не количество подключённых)' in context
+    assert 'включено мест=5' in context
+    assert 'максимум настраиваемых мест=8' in context
+    assert 'цена места сверх включённого лимита=100.00 ₽/мес' in context
+    assert 'увеличение до включённого числа не требует доплаты' in context
+    sql = str(session.execute.call_args_list[1].args[0])
+    assert 'LEFT JOIN tariffs' in sql and 's.user_id = :uid' in sql

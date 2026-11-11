@@ -1515,3 +1515,60 @@ async def test_third_identical_clarification_is_replaced_with_handoff(flow):
     assert result['escalate']
     assert result['escalation_reason'] == 'repeated_clarification'
     assert result['answer'] != reply
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('question', [
+    'Здравствуйте. Как добавить устройство. Сейчас занято 4 из 5. Как добавить 5-е?',
+    'Как подключить новый телефон к этой же подписке?',
+    'Как добавить ещё одно устройство, сейчас занято 2 из 7?',
+])
+async def test_free_device_slot_uses_existing_subscription_connection(flow, question):
+    captured, agent_mod, Session = flow
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, question)
+    assert 'ссылку той же подписки' in result['answer']
+    assert 'новом устройстве' in result['answer']
+    assert 'Докупить устройства' not in result['answer']
+    assert not result['escalate']
+    assert not captured['prompts']
+
+
+@pytest.mark.asyncio
+async def test_all_device_slots_used_is_not_answered_as_free_connection(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Все места заняты. Проверьте список и удалите только неиспользуемое устройство.'
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как добавить ещё устройство? Сейчас занято 5 из 5')
+    assert captured['prompts']
+    assert 'Все места заняты' in result['answer']
+    assert 'ссылку той же подписки' not in result['answer']
+
+
+@pytest.mark.asyncio
+async def test_explicit_device_limit_purchase_is_still_available(flow):
+    captured, agent_mod, Session = flow
+    captured['reply'] = 'Откройте Устройства → Докупить устройства. Итог зависит от включённых мест и текущего лимита.'
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как докупить устройства?')
+    assert 'Докупить устройства' in result['answer']
+    assert 'новом устройстве' not in result['answer']
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_add_device_checks_current_limit_and_tariff_included_places(flow, monkeypatch):
+    captured, agent_mod, Session = flow
+    context = ('Подписка Стандарт, устройств=1 (настроенный лимит, не количество подключённых). '
+               'Тариф: Стандарт; включено мест=5; максимум настраиваемых мест=5. '
+               'Увеличение до включённого количества не требует доплаты при доступности изменения.')
+    monkeypatch.setattr(agent_mod, 'build_user_context', AsyncMock(return_value=context))
+    captured['reply'] = ('Сейчас лимит настроен на 1 устройство, а тариф включает 5. '
+                         'Откройте Устройства → Докупить устройства, выберите 5 и проверьте итог 0 ₽ перед подтверждением.')
+    async with Session() as db:
+        result = await agent_mod.support_agent.generate_answer(db, 4242, 'Как добавить устройство? Сейчас 4 из 5. Как добавить 5-е?')
+    assert captured['prompts']
+    assert context in captured['prompts'][-1]
+    assert 'выберите 5' in result['answer']
+    assert 'итог 0 ₽' in result['answer']
+    assert 'занятых мест' not in result['answer']
+    assert not result['escalate']

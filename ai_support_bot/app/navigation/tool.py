@@ -6,7 +6,12 @@ from typing import Any
 import structlog
 
 from ai_support_bot.app.navigation import registry
-from ai_support_bot.app.navigation.query import is_connection_problem, navigation_target
+from ai_support_bot.app.navigation.query import (
+    device_action,
+    device_connection_intro,
+    is_connection_problem,
+    navigation_target,
+)
 from ai_support_bot.app.navigation.renderer import node_to_dict, render_matches, render_node, render_overview, web_url
 from ai_support_bot.app.navigation.schema import NavTree
 from ai_support_bot.app.navigation.search import search
@@ -174,7 +179,7 @@ async def build_prompt_block(
 
 
 async def answer_request(query: str, language: str = 'ru', ttl_seconds: int = 0) -> str | None:
-    if is_connection_problem(query):
+    if is_connection_problem(query) or device_action(query) in {'full', 'expand'}:
         return None
     # Menu shortcuts must not answer personal reward recovery requests.
     target = navigation_target(query)
@@ -213,4 +218,7 @@ async def answer_request(query: str, language: str = 'ru', ttl_seconds: int = 0)
     if surface != 'web' and node.available_in_bot:
         path = node_to_dict(tree, node, depth=0)['bot_path']
         blocks.append('В Telegram: <a href="https://t.me/SligVPN_bot?start=ai_support">https://t.me/SligVPN_bot</a>\n' + str(path))
-    return '\n\n'.join(blocks) or None
+    answer = '\n\n'.join(blocks)
+    if answer and device_action(query) == 'connect':
+        answer = device_connection_intro(query) + answer
+    return answer or None

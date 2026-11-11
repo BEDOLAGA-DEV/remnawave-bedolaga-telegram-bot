@@ -542,7 +542,7 @@ class SupportAgent:
         catalog_block = ''
         if not smalltalk and not forced_reason and not direct_answer:
             navigation_block = await self._build_navigation_block(telegram_id, question, history, summary)
-            if pricing_question or re.search(r'цен|стоим|стоит|тариф|скидк|акци', question, re.IGNORECASE):
+            if pricing_question or re.search(r'цен|стоим|стоит|тариф|скидк|акци|устройств|девайс', question, re.IGNORECASE):
                 catalog_block = await self._build_catalog_block(telegram_id)
 
         system_prompt = self._build_system_prompt(

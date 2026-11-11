@@ -191,3 +191,38 @@ async def test_registry_caches_tree_and_refreshes_on_demand():
     assert third is not first
     assert registry.is_ready('ru')
     assert registry.stats()['ru']['nodes'] == third.size
+
+
+@pytest.mark.parametrize(('query', 'expected'), [
+    ('Как добавить устройство? Сейчас занято 4 из 5, как добавить 5-е?', 'subscription_connect'),
+    ('Как подключить новый телефон к моей подписке?', 'subscription_connect'),
+    ('Хочу подключить ещё один девайс', 'subscription_connect'),
+    ('Нужно ли докупать устройства, если занято 2 из 7?', 'subscription_connect'),
+    ('Как докупить устройства?', 'subscription_add_devices'),
+    ('Как увеличить лимит устройств с 5 до 8?', 'subscription_add_devices'),
+    ('Подключено устройств 5 из 5, как подключить ещё устройство?', 'subscription_manage_devices'),
+    ('Лимит устройств 0 из 0, как подключить ещё устройство?', 'subscription_connect'),
+    ('Как подключить автопродление подписки на этом устройстве?', 'subscription_autopay'),
+])
+def test_device_connection_and_device_capacity_have_separate_routes(query, expected):
+    from ai_support_bot.app.navigation.query import navigation_target
+    assert navigation_target(query) == expected
+
+
+@pytest.mark.asyncio
+async def test_add_device_lookup_prefers_connection_instead_of_purchase(tree):
+    result = await lookup('Как добавить устройство, если занято 4 из 5?')
+    assert result['nodes'][0]['id'] == 'subscription_connect'
+    assert all(node['id'] != 'subscription_add_devices' for node in result['nodes'])
+    purchase = tree.get('subscription_add_devices')
+    assert 'добавить устройство' not in purchase.keywords
+
+
+@pytest.mark.parametrize('query', [
+    'Как добавить устройство? Сейчас 4 из 5',
+    'Хочу добавить ещё один девайс',
+])
+def test_add_device_without_explicit_occupancy_does_not_assume_configured_capacity(query):
+    from ai_support_bot.app.navigation.query import device_occupancy, navigation_target
+    assert device_occupancy(query) is None
+    assert navigation_target(query) is None

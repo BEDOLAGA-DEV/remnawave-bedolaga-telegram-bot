@@ -156,9 +156,11 @@ async def build_user_context(telegram_id: int, email: str | None = None) -> str:
 
                 subs = await session.execute(
                     text(
-                        'SELECT id, status, is_trial, end_date, traffic_limit_gb, traffic_used_gb, '
-                        'device_limit, autopay_enabled, subscription_url '
-                        'FROM subscriptions WHERE user_id = :uid ORDER BY created_at DESC LIMIT 5'
+                        'SELECT s.id, s.status, s.is_trial, s.end_date, s.traffic_limit_gb, s.traffic_used_gb, '
+                        's.device_limit, s.autopay_enabled, s.subscription_url, t.name AS tariff_name, '
+                        't.device_limit AS tariff_included_devices, t.device_price_kopeks, t.max_device_limit '
+                        'FROM subscriptions s LEFT JOIN tariffs t ON t.id = s.tariff_id '
+                        'WHERE s.user_id = :uid ORDER BY s.created_at DESC LIMIT 5'
                     ),
                     {'uid': user_row['id']},
                 )
@@ -189,9 +191,18 @@ async def build_user_context(telegram_id: int, email: str | None = None) -> str:
                             f'статус={sub.get("status")}, '
                             f'триал={"да" if sub.get("is_trial") else "нет"}, '
                             f'до {end_str}{left_str}, трафик={traffic}, '
-                            f'устройств={devices}, '
+                            f'устройств={devices} (настроенный лимит, не количество подключённых), '
                             f'автоплатеж={"вкл" if sub.get("autopay_enabled") else "выкл"}{url_str}'
                         )
+                        if sub.get('tariff_name'):
+                            included = sub.get('tariff_included_devices')
+                            lines.append(
+                                f'    Тариф: {sub["tariff_name"]}; включено мест={included}; '
+                                f'максимум настраиваемых мест={sub.get("max_device_limit")}; '
+                                f'цена места сверх включённого лимита={_format_price(sub["device_price_kopeks"]) + "/мес" if sub.get("device_price_kopeks") is not None else "не задана"}. '
+                                'Если положительный настроенный лимит меньше включённого, увеличение до включённого числа не требует доплаты '
+                                'при доступности изменения в интерфейсе. Итоговую сумму проверяют перед подтверждением.'
+                            )
                 else:
                     lines.append('Подписки: отсутствуют')
 
