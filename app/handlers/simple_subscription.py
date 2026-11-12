@@ -1,5 +1,6 @@
 """Обработчики для простой покупки подписки."""
 
+import asyncio
 import html
 from typing import Any
 
@@ -836,11 +837,13 @@ async def handle_simple_subscription_pay_with_balance(
             price_kopeks=price_kopeks / 100,
         )
 
-    except BaseException as error:
+    except asyncio.CancelledError:
         if atomic_purchase:
             await db.rollback()
-        if not isinstance(error, Exception):
-            raise
+        raise
+    except Exception as error:
+        if atomic_purchase:
+            await db.rollback()
         logger.error(
             'Ошибка оплаты простой подписки с баланса для пользователя',
             db_user_id=purchase_user_id,
@@ -3018,11 +3021,13 @@ async def confirm_simple_subscription_purchase(
             price_kopeks=price_kopeks / 100,
         )
 
-    except BaseException as error:
+    except asyncio.CancelledError:
         if atomic_purchase:
             await db.rollback()
-        if not isinstance(error, Exception):
-            raise
+        raise
+    except Exception as error:
+        if atomic_purchase:
+            await db.rollback()
         logger.error(
             'Ошибка подтверждения простой подписки с баланса для пользователя',
             db_user_id=purchase_user_id,

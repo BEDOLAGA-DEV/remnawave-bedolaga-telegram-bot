@@ -3,6 +3,7 @@ from app.services.pricing_engine import TariffSwitchPricingUnavailableError
 
 """Покупка подписки по тарифам."""
 
+import asyncio
 import html
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -4600,10 +4601,11 @@ async def confirm_daily_tariff_switch(
             parse_mode='HTML',
         )
 
-    except BaseException as e:
+    except asyncio.CancelledError:
         await db.rollback()
-        if not isinstance(e, Exception):
-            raise
+        raise
+    except Exception as e:
+        await db.rollback()
         logger.error('Ошибка при смене на суточный тариф', error=e, exc_info=True)
         try:
             await callback.message.edit_text(

@@ -1,3 +1,4 @@
+import asyncio
 import html
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -3084,11 +3085,13 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
             final_price=final_price / 100,
         )
 
-    except BaseException as e:
+    except asyncio.CancelledError:
         if atomic_purchase:
             await db.rollback()
-        if not isinstance(e, Exception):
-            raise
+        raise
+    except Exception as e:
+        if atomic_purchase:
+            await db.rollback()
         logger.error('Ошибка покупки подписки', error=e)
         await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(purchase_language))
 
@@ -5262,10 +5265,11 @@ async def _extend_existing_subscription(
             commit=False,
         )
         await db.commit()
-    except BaseException as error:
+    except asyncio.CancelledError:
         await db.rollback()
-        if not isinstance(error, Exception):
-            raise
+        raise
+    except Exception as error:
+        await db.rollback()
         logger.error('Ошибка сохранения продления подписки', error=error, exc_info=True)
         await callback.answer(texts.t('SUBSCRIPTION_UI_RENEW_FAILED', '⚠ Ошибка продления подписки'), show_alert=True)
         return

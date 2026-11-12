@@ -324,7 +324,7 @@ async def test_cancelled_startup_wait_cleans_up_request(monkeypatch):
     task.cancel()
     try:
         with pytest.raises(asyncio.CancelledError):
-            await task
+            assert await task is None
         assert finished.is_set(), 'startup request outlived its owner'
     finally:
         # Clean up the orphan on the unfixed implementation too.
@@ -364,7 +364,7 @@ async def test_transport_setup_retry_policy(operation, failure_kind, recorded_sl
     coroutine = telegram_polling.telegram_startup_request_or_stop(request, lambda: False, operation=operation)
     if failure_kind in ('unauthorized', 'bad-request'):
         with pytest.raises(type(errors[failure_kind])):
-            await coroutine
+            assert await coroutine is True
         assert request.await_count == 1
         assert recorded_sleeps == []
     else:

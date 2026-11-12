@@ -1,5 +1,6 @@
 """The registered classic quick-renewal handler must convert atomically."""
 
+import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.postgres
 
 
 @pytest.mark.parametrize('trial', [False, True])
-@pytest.mark.parametrize('fail', [False, True])
+@pytest.mark.parametrize('fail', [False, True, 'cancel'])
 async def test_classic_quick_trial_conversion(postgres_database, monkeypatch, fail, trial):
     async with checkout(postgres_database, monkeypatch) as c:
         monkeypatch.setattr(settings, 'SALES_MODE', 'classic')
@@ -33,12 +34,16 @@ async def test_classic_quick_trial_conversion(postgres_database, monkeypatch, fa
         monkeypatch.setattr('app.services.subscription_service.SubscriptionService', lambda: panel)
         if fail:
             monkeypatch.setattr(
-                'app.database.crud.transaction.create_transaction', AsyncMock(side_effect=RuntimeError('ledger failed'))
+                'app.database.crud.transaction.create_transaction',
+                AsyncMock(side_effect=asyncio.CancelledError() if fail == 'cancel' else RuntimeError('ledger failed')),
             )
         try:
             await purchase._extend_existing_subscription(
                 c.callback, c.user, c.db, c.sub, 30, 2 if trial else 5, 100, 'paid-squad'
             )
+        except asyncio.CancelledError:
+            assert fail == 'cancel'
+            assert not c.db.in_transaction()
         except RuntimeError:
             if not fail:
                 raise
@@ -46,7 +51,7 @@ async def test_classic_quick_trial_conversion(postgres_database, monkeypatch, fa
         await c.db.refresh(c.user)
         await c.db.refresh(c.sub)
         assert c.user.balance_kopeks == (400000 if fail else 399000)
-        assert c.sub.is_trial is (trial and fail)
+        assert c.sub.is_trial is bool(trial and fail)
         if fail:
             assert c.sub.end_date == c.end
             panel.update_remnawave_user.assert_not_awaited()
@@ -62,7 +67,7 @@ async def test_classic_quick_trial_conversion(postgres_database, monkeypatch, fa
             assert panel.update_remnawave_user.await_args.kwargs['reset_traffic'] is trial
 
 
-@pytest.mark.parametrize('fail', [False, True])
+@pytest.mark.parametrize('fail', [False, True, 'cancel'])
 async def test_trial_daily_switch_is_atomic_and_resets_usage(postgres_database, monkeypatch, fail):
     import inspect
 
@@ -93,13 +98,22 @@ async def test_trial_daily_switch_is_atomic_and_resets_usage(postgres_database, 
         monkeypatch.setattr(telegram, 'SubscriptionService', lambda: panel)
         monkeypatch.setattr(telegram, 'should_create_panel_account', AsyncMock(return_value=False))
         if fail:
-            monkeypatch.setattr(telegram, 'create_transaction', AsyncMock(side_effect=RuntimeError('ledger failed')))
-        await inspect.unwrap(telegram.confirm_daily_tariff_switch)(c.callback, c.user, c.db, c.state)
+            monkeypatch.setattr(
+                telegram,
+                'create_transaction',
+                AsyncMock(side_effect=asyncio.CancelledError() if fail == 'cancel' else RuntimeError('ledger failed')),
+            )
+        if fail == 'cancel':
+            with pytest.raises(asyncio.CancelledError):
+                await inspect.unwrap(telegram.confirm_daily_tariff_switch)(c.callback, c.user, c.db, c.state)
+            assert not c.db.in_transaction()
+        else:
+            await inspect.unwrap(telegram.confirm_daily_tariff_switch)(c.callback, c.user, c.db, c.state)
         await c.db.rollback()
         await c.db.refresh(c.user)
         await c.db.refresh(c.sub)
         assert c.user.balance_kopeks == (400000 if fail else 399900)
-        assert c.sub.is_trial is fail
+        assert c.sub.is_trial is bool(fail)
         if fail:
             assert c.sub.end_date == c.end
             panel.update_remnawave_user.assert_not_awaited()
