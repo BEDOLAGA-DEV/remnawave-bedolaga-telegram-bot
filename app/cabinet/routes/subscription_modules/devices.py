@@ -72,6 +72,13 @@ def _resolve_panel_user_id(subscription: Subscription | None, user: User) -> int
     return user.remnawave_id or (subscription.remnawave_id if subscription is not None else None)
 
 
+def _resolve_panel_uuid(subscription: Subscription | None, user: User) -> str | None:
+    """Resolve RemnaWave panel UUID: per-subscription in multi-tariff, user-level otherwise."""
+    if settings.is_multi_tariff_enabled() and subscription and subscription.remnawave_uuid:
+        return subscription.remnawave_uuid
+    return user.remnawave_uuid
+
+
 @router.post('/devices')
 async def purchase_devices_legacy(
     request: DevicePurchaseRequest,
@@ -1533,6 +1540,7 @@ async def block_device(
             user,
             hwid,
             remnawave_uuid=remnawave_uuid,
+            panel_user_id=_resolve_panel_user_id(subscription, user),
             device_label=(payload.device_label if payload else None),
             platform=(payload.platform if payload else None),
         )

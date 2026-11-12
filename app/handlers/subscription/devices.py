@@ -85,6 +85,11 @@ def _get_panel_user_id(subscription, db_user):
     return getattr(subscription, 'remnawave_id', None) or db_user.remnawave_id
 
 
+def _get_remnawave_uuid(subscription, db_user):
+    """Get remnawave_uuid from subscription (multi-tariff) or user (legacy)."""
+    return getattr(subscription, 'remnawave_uuid', None) or db_user.remnawave_uuid
+
+
 async def get_current_devices_detailed(db_user: User, subscription=None) -> dict:
     try:
         panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
@@ -2153,14 +2158,14 @@ def _device_display_label(device: dict) -> str:
     return f'{platform} - {device_model}'
 
 
-async def _fetch_panel_devices(remnawave_uuid: str) -> list[dict] | None:
+async def _fetch_panel_devices(panel_user_id: int) -> list[dict] | None:
     """Fetch the current device list from the panel. None on failure."""
     try:
         service = RemnaWaveService()
         async with service.get_api_client() as api:
-            response = await api._make_request('GET', f'/api/hwid/devices/{remnawave_uuid}')
-            if response and 'response' in response:
-                return response['response'].get('devices', [])
+            devices_info = await api.get_user_devices(panel_user_id)
+            if isinstance(devices_info, dict):
+                return devices_info.get('devices', [])
     except Exception as e:
         logger.error('Ошибка получения списка устройств для блокировки', error=e)
     return None
@@ -2189,14 +2194,14 @@ async def handle_block_device(
         return
 
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
-    remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
-    if not remnawave_uuid:
+    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    if not panel_user_id:
         await callback.answer(
             texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'), show_alert=True
         )
         return
 
-    devices_list = await _fetch_panel_devices(remnawave_uuid)
+    devices_list = await _fetch_panel_devices(panel_user_id)
     if devices_list is None:
         await callback.answer(
             texts.t('DEVICE_FETCH_INFO_ERROR', '❌ Ошибка получения информации об устройствах'),
@@ -2259,13 +2264,14 @@ async def handle_confirm_block_device(
 
     subscription, sub_id = await _resolve_subscription(callback, db_user, db, state)
     remnawave_uuid = _get_remnawave_uuid(subscription, db_user) if subscription else db_user.remnawave_uuid
-    if not remnawave_uuid:
+    panel_user_id = _get_panel_user_id(subscription, db_user) if subscription else db_user.remnawave_id
+    if not panel_user_id:
         await callback.answer(
             texts.t('DEVICE_UUID_NOT_FOUND', '❌ UUID пользователя не найден'), show_alert=True
         )
         return
 
-    devices_list = await _fetch_panel_devices(remnawave_uuid)
+    devices_list = await _fetch_panel_devices(panel_user_id)
     if devices_list is None:
         await callback.answer(
             texts.t('DEVICE_FETCH_INFO_ERROR', '❌ Ошибка получения информации об устройствах'),
@@ -2304,6 +2310,7 @@ async def handle_confirm_block_device(
             db_user,
             hwid,
             remnawave_uuid=remnawave_uuid,
+            panel_user_id=panel_user_id,
             device_label=label,
             platform=device.get('platform'),
         )

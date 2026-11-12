@@ -26,6 +26,10 @@ type Config struct {
 	BotAPIURL     string
 	BotAPIToken   string
 	FailOpen      bool
+	// BlockedFallbackServer is a vless:// link served as the single server of
+	// the synthetic blocked profile, so clients that reject an empty server
+	// list still receive a valid profile. Empty keeps the legacy empty profile.
+	BlockedFallbackServer string
 }
 
 type Server struct {
@@ -62,14 +66,15 @@ func loadConfig() (Config, error) {
 		return Config{}, errors.New("invalid UPSTREAM_URL: " + upstream)
 	}
 	cfg := Config{
-		ListenAddr:    env("LISTEN_ADDR", "127.0.0.1:3020"),
-		BotListenAddr: env("BOT_LISTEN_ADDR", ""),
-		UpstreamURL:   upstream,
-		StateFile:     env("STATE_FILE", "/data/state.json"),
-		AdminToken:    os.Getenv("ADMIN_TOKEN"),
-		BotAPIURL:     strings.TrimRight(env("BOT_API_URL", "http://127.0.0.1:8080"), "/"),
-		BotAPIToken:   os.Getenv("BOT_API_TOKEN"),
-		FailOpen:      envBool("FAIL_OPEN", true),
+		ListenAddr:            env("LISTEN_ADDR", "127.0.0.1:3020"),
+		BotListenAddr:         env("BOT_LISTEN_ADDR", ""),
+		UpstreamURL:           upstream,
+		StateFile:             env("STATE_FILE", "/data/state.json"),
+		AdminToken:            os.Getenv("ADMIN_TOKEN"),
+		BotAPIURL:             strings.TrimRight(env("BOT_API_URL", "http://127.0.0.1:8080"), "/"),
+		BotAPIToken:           os.Getenv("BOT_API_TOKEN"),
+		FailOpen:              envBool("FAIL_OPEN", true),
+		BlockedFallbackServer: strings.TrimSpace(os.Getenv("BLOCKED_FALLBACK_SERVER")),
 	}
 	return cfg, nil
 }
@@ -201,7 +206,7 @@ func (s *Server) handleConn(c net.Conn) {
 			if msg, userID, blocked := s.store.Lookup(hwid, shortUUID); blocked {
 				logf("BLOCKED hwid=%s short_uuid=%s user_id=%d path=%s ip=%s",
 					normHwid(hwid), shortUUID, userID, req.path(), req.header("x-real-ip"))
-				writeBlockedResponse(c, req, msg, s.store.Version())
+				writeBlockedResponse(c, req, msg, s.store.Version(), s.cfg.BlockedFallbackServer)
 				return
 			}
 		}
@@ -216,8 +221,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	log.Printf("hwid-blocker starting: listen=%s upstream=%s state=%s fail_open=%v",
-		cfg.ListenAddr, cfg.UpstreamURL, cfg.StateFile, cfg.FailOpen)
+	log.Printf("hwid-blocker starting: listen=%s upstream=%s state=%s fail_open=%v blocked_fallback_set=%v",
+		cfg.ListenAddr, cfg.UpstreamURL, cfg.StateFile, cfg.FailOpen, cfg.BlockedFallbackServer != "")
 
 	store, err := NewStore(cfg)
 	if err != nil {

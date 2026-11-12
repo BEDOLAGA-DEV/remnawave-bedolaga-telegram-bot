@@ -3041,14 +3041,17 @@ async def block_user_device(
 
     # Panel UUID is only used for best-effort panel removal + row metadata.
     _blk_uuid = None
+    _blk_panel_user_id = None
     if settings.is_multi_tariff_enabled() and subscription_id:
         from app.database.crud.subscription import get_subscription_by_id_for_user
 
         sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
         if sub:
             _blk_uuid = sub.remnawave_uuid
+            _blk_panel_user_id = sub.remnawave_id
     else:
         _blk_uuid = user.remnawave_uuid
+        _blk_panel_user_id = user.remnawave_id
 
     try:
         await device_block_service.ban_device(
@@ -3056,6 +3059,7 @@ async def block_user_device(
             user,
             hwid,
             remnawave_uuid=_blk_uuid,
+            panel_user_id=_blk_panel_user_id,
             device_label=(payload.device_label if payload else None),
             platform=(payload.platform if payload else None),
             banned_by=f'admin:{admin.id}',

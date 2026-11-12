@@ -78,17 +78,16 @@ func pathFormat(p string) string {
 }
 
 // writeBlockedResponse renders the synthetic 200 "blocked profile" response.
-func writeBlockedResponse(c net.Conn, req *rawRequest, message string, version int64) {
+// fallbackLink, when set, makes the profile carry a single server (that vless
+// link) instead of an empty list, so clients that reject an empty profile still
+// load a valid config.
+func writeBlockedResponse(c net.Conn, req *rawRequest, message string, version int64, fallbackLink string) {
 	hwid := normHwid(req.header("x-hwid"))
 	hwid8 := hwid
 	if len(hwid8) > 8 {
 		hwid8 = hwid8[:8]
 	}
-	t := blockedTemplates[""]
-	contentType, body := t[0], t[1]
-	if v, ok := blockedTemplates[pathFormat(req.path())]; ok {
-		contentType, body = v[0], v[1]
-	}
+	contentType, body := renderBlockedBody(pathFormat(req.path()), fallbackLink)
 	if strings.TrimSpace(message) == "" {
 		message = "Device disabled by account owner."
 	}

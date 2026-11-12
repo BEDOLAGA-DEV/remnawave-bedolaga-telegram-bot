@@ -71,6 +71,7 @@ class DeviceBlockService:
         hwid: str,
         *,
         remnawave_uuid: str | None = None,
+        panel_user_id: int | None = None,
         device_label: str | None = None,
         platform: str | None = None,
         banned_by: str = 'user',
@@ -107,8 +108,8 @@ class DeviceBlockService:
         # Best-effort: also remove the device from the RemnaWave panel so it
         # drops from the user's device list. Never raises — the middleware
         # block is authoritative.
-        if remnawave_uuid:
-            await self._remove_device_from_panel(remnawave_uuid, hwid)
+        if panel_user_id:
+            await self._remove_device_from_panel(panel_user_id, hwid)
 
         self.schedule_push()
         return block
@@ -302,13 +303,13 @@ class DeviceBlockService:
         except asyncio.CancelledError:
             raise
 
-    async def _remove_device_from_panel(self, remnawave_uuid: str, hwid: str) -> None:
+    async def _remove_device_from_panel(self, panel_user_id: int, hwid: str) -> None:
         try:
             from app.services.remnawave_service import RemnaWaveService
 
             service = RemnaWaveService()
             async with service.get_api_client() as api:
-                await api.remove_device(remnawave_uuid, hwid)
+                await api.remove_device(panel_user_id, hwid)
         except Exception as exc:
             logger.warning('Failed to remove blocked device from panel (best-effort)', error=str(exc)[:300])
 

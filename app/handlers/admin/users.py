@@ -49,6 +49,7 @@ from app.states import AdminStates
 from app.utils.decorators import admin_required, error_handler
 from app.utils.formatters import format_datetime, format_time_ago
 from app.utils.formatting import user_html_link
+from app.utils.pagination import paginate_list
 from app.utils.photo_message import safe_edit_or_resend
 from app.utils.subscription_time import format_time_left, local_days_until
 from app.utils.timezone import format_local_datetime
@@ -4571,38 +4572,57 @@ def _admin_device_label(dev: dict) -> str:
     return label[:32]
 
 
+ADMIN_DEVICES_PER_PAGE = 8
+
+
+async def _resolve_admin_panel_context(
+    db: AsyncSession, user_id: int, subscription_id: int | None
+) -> tuple[User | None, int | None, str | None]:
+    """Resolve (user, panel_user_id, remnawave_uuid) for the admin device screen.
+
+    `panel_user_id` is the *numeric* Remnawave panel user id — the devices
+    endpoint only accepts a number, not the UUID (a UUID there → 400).
+    `remnawave_uuid` is kept for short_uuid resolution on ban.
+    """
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        return None, None, None
+
+    panel_user_id = user.remnawave_id
+    remnawave_uuid = user.remnawave_uuid
+    if settings.is_multi_tariff_enabled() and subscription_id:
+        from app.database.crud.subscription import get_subscription_by_id_for_user
+
+        sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
+        if sub:
+            panel_user_id = sub.remnawave_id or panel_user_id
+            remnawave_uuid = sub.remnawave_uuid or remnawave_uuid
+    return user, panel_user_id, remnawave_uuid
+
+
 async def _fetch_user_devices_brief(
     db: AsyncSession, user_id: int, subscription_id: int | None = None
 ) -> tuple[list[dict], list]:
     """Connected devices + hard-blocks for an admin's target user.
 
-    `devices` is a list of {hwid, platform, device_model, local_name}; `blocks`
-    is a list of `DeviceBlock`. Panel errors degrade to an empty device list so
-    the block screen still renders (and unblocking stays possible).
+    `devices` is a list of {hwid, platform, device_model, app, local_name};
+    `blocks` is a list of `DeviceBlock`. Panel errors degrade to an empty
+    device list so the screen still renders (and unblocking stays possible).
     """
     from app.database.crud.device_block import get_blocks_for_user
-    from app.database.crud.subscription import get_subscription_by_id_for_user
     from app.database.crud.user_device_alias import get_aliases_for_user
 
-    user = await get_user_by_id(db, user_id)
+    user, panel_user_id, _remnawave_uuid = await _resolve_admin_panel_context(db, user_id, subscription_id)
     if not user:
         return [], []
 
-    uuid = None
-    if settings.is_multi_tariff_enabled() and subscription_id:
-        sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
-        if sub:
-            uuid = sub.remnawave_uuid
-    else:
-        uuid = user.remnawave_uuid
-
     devices: list[dict] = []
-    if uuid:
+    if panel_user_id:
         try:
             service = RemnaWaveService()
             if service.is_configured:
                 async with service.get_api_client() as api:
-                    resp = await api.get_user_devices_all(uuid)
+                    resp = await api.get_user_devices_all(panel_user_id)
                     try:
                         aliases = await get_aliases_for_user(db, user_id)
                     except Exception:
@@ -4629,6 +4649,69 @@ async def _fetch_user_devices_brief(
     return devices, blocks
 
 
+def _build_unified_devices(devices: list[dict], blocks: list) -> list[dict]:
+    """Merge panel (connected) devices + hard-blocks into one list with a status.
+
+    Each entry carries `hwid`, `label`, `blocked`, `block_id`, `banned_at`,
+    `banned_by` and `source` ('panel' | 'block'). Blocked entries are sorted to
+    the top (stable), so a block/unblock is visible on page 1 after re-render.
+    """
+    blocks_by_hwid: dict[str, object] = {}
+    for b in blocks:  # already ordered banned_at desc
+        blocks_by_hwid.setdefault(b.hwid, b)
+
+    unified: list[dict] = []
+    seen: set[str] = set()
+    for dev in devices:
+        hwid = dev['hwid']
+        if hwid in seen:
+            continue
+        seen.add(hwid)
+        block = blocks_by_hwid.get(hwid)
+        unified.append(
+            {
+                **dev,
+                'label': _admin_device_label(dev) or hwid[:12],
+                'blocked': block is not None,
+                'block_id': block.id if block is not None else None,
+                'banned_at': block.banned_at if block is not None else None,
+                'banned_by': block.banned_by if block is not None else None,
+                'source': 'panel',
+            }
+        )
+    for b in blocks:
+        hwid = b.hwid
+        if hwid in seen:
+            continue
+        seen.add(hwid)
+        unified.append(
+            {
+                'hwid': hwid,
+                'platform': b.platform or '',
+                'device_model': '',
+                'app': None,
+                'local_name': None,
+                'label': (b.device_label or hwid[:12]),
+                'blocked': True,
+                'block_id': b.id,
+                'banned_at': b.banned_at,
+                'banned_by': b.banned_by,
+                'source': 'block',
+            }
+        )
+
+    unified.sort(key=lambda item: not item['blocked'])  # blocked first, stable
+    return unified
+
+
+def _admin_device_back_cb(user_id: int, subscription_id: int | None) -> str:
+    return (
+        f'admin_user_sub_select_{user_id}_{subscription_id}'
+        if subscription_id and settings.is_multi_tariff_enabled()
+        else f'admin_user_subscription_{user_id}'
+    )
+
+
 @admin_required
 @error_handler
 async def show_user_devices_block(
@@ -4637,57 +4720,69 @@ async def show_user_devices_block(
     db: AsyncSession,
     user_id: int | None = None,
     subscription_id: int | None = None,
+    page: int = 1,
 ):
-    """Admin: list a user's devices with Block / Unblock buttons."""
+    """Admin: list ALL of a user's devices (connected + blocked) with a status.
+
+    A list-page callback (`admin_user_devblock_{uid}{_sid}` or
+    `admin_user_devblock_page_{uid}{_sid}_{n}`) lands here with user_id unset;
+    re-renders from block/unblock pass the ids and page explicitly.
+    """
     if user_id is None:
-        # Only the direct "📳 Блокировка устройств" button carries this in callback.data.
-        # Re-renders from block/unblock pass the ids explicitly (their callback.data has a
-        # different shape, so re-parsing it here would mis-read the index/block id as user_id).
-        user_id, subscription_id = _extract_admin_sub_context(callback.data)
+        user_id, subscription_id, page = _parse_devblock_list(callback.data)
 
     devices, blocks = await _fetch_user_devices_brief(db, user_id, subscription_id)
+    unified = _build_unified_devices(devices, blocks)
+    pagination = paginate_list(unified, page=page, per_page=ADMIN_DEVICES_PER_PAGE)
 
     _sid = f'_s{subscription_id}' if subscription_id else ''
-    back_cb = (
-        f'admin_user_sub_select_{user_id}_{subscription_id}'
-        if subscription_id and settings.is_multi_tariff_enabled()
-        else f'admin_user_subscription_{user_id}'
-    )
+    back_cb = _admin_device_back_cb(user_id, subscription_id)
+    blocked_count = sum(1 for d in unified if d['blocked'])
 
     text = '📳 <b>Блокировка устройств</b>\n\n'
-    if not devices and not blocks:
+    if not unified:
         text += 'У пользователя нет устройств.'
     else:
-        if devices:
-            text += f'🔌 <b>Подключено:</b> {len(devices)}\n'
-        if blocks:
-            text += f'🚫 <b>Заблокировано:</b> {len(blocks)}\n'
-        if devices or blocks:
-            text += '\nНажмите <b>🚫</b>, чтобы заблокировать устройство, или <b>✅</b> — чтобы разблокировать.'
+        text += f'Всего устройств: {len(unified)}'
+        if blocked_count:
+            text += f' · 🚫 заблокировано: {blocked_count}'
+        text += (
+            '\n\n🚫 — активное устройство (нажмите, чтобы заблокировать)\n'
+            '✅ — заблокированное устройство (нажмите, чтобы разблокировать)'
+        )
 
     keyboard: list[list[types.InlineKeyboardButton]] = []
-    if devices:
-        for i, dev in enumerate(devices):
-            label = _admin_device_label(dev) or dev['hwid'][:12]
-            keyboard.append(
-                [
-                    types.InlineKeyboardButton(
-                        text=f'🚫 {label}',
-                        callback_data=f'admin_user_devblock_set_{user_id}{_sid}_{i}',
-                    )
-                ]
+    for i, dev in enumerate(pagination.items):
+        label = (dev['label'] or dev['hwid'][:12])[:24]
+        if dev['blocked']:
+            button_text = f'✅ {label}'
+            callback_data = f'admin_user_devunblock_{user_id}{_sid}_{dev["block_id"]}'
+        else:
+            button_text = f'🚫 {label}'
+            callback_data = f'admin_user_devblock_set_{user_id}{_sid}_{page}_{i}'
+        keyboard.append([types.InlineKeyboardButton(text=button_text[:33], callback_data=callback_data)])
+
+    if pagination.total_pages > 1:
+        nav_row: list[types.InlineKeyboardButton] = []
+        if pagination.has_prev:
+            nav_row.append(
+                types.InlineKeyboardButton(
+                    text='⬅️', callback_data=f'admin_user_devblock_page_{user_id}{_sid}_{pagination.prev_page}'
+                )
             )
-    if blocks:
-        for b in blocks:
-            label = (b.device_label or b.platform or b.hwid[:12])[:24]
-            keyboard.append(
-                [
-                    types.InlineKeyboardButton(
-                        text=f'✅ {label}',
-                        callback_data=f'admin_user_devunblock_{user_id}{_sid}_{b.id}',
-                    )
-                ]
+        nav_row.append(
+            types.InlineKeyboardButton(
+                text=f'{pagination.page}/{pagination.total_pages}', callback_data='current_page'
             )
+        )
+        if pagination.has_next:
+            nav_row.append(
+                types.InlineKeyboardButton(
+                    text='➡️', callback_data=f'admin_user_devblock_page_{user_id}{_sid}_{pagination.next_page}'
+                )
+            )
+        keyboard.append(nav_row)
+
     keyboard.append([types.InlineKeyboardButton(text='⬅️ Назад', callback_data=back_cb)])
 
     await callback.message.edit_text(
@@ -4696,62 +4791,90 @@ async def show_user_devices_block(
     await callback.answer()
 
 
-def _parse_devblock_callback(callback_data: str) -> tuple[int, int | None, int]:
-    """Parse `admin_user_devblock_set_{user_id}{_sid}_{index}` / unblock variants.
+def _parse_devblock_ctx(callback_data: str, prefix: str) -> tuple[int, int | None, list[int]]:
+    """Parse `prefix{user_id}{_s{sid}}_{int}...` → (user_id, subscription_id, trailing_ints).
 
-    Returns (user_id, subscription_id, tail) where `tail` is the index (block)
-    or block id (unblock).
+    `user_id` is the first token; the optional `_s{sid}` token (starts with 's')
+    is the subscription id; every token after that is a trailing integer.
     """
-    parts = callback_data.split('_')
-    tail = int(parts[-1])
-    if parts[-2].startswith('s') and parts[-2][1:].isdigit():
-        subscription_id = int(parts[-2][1:])
-        user_id = int(parts[-3])
+    tokens = callback_data[len(prefix):].split('_')
+    try:
+        user_id = int(tokens[0])
+    except (ValueError, IndexError):
+        return 0, None, []
+    idx = 1
+    subscription_id: int | None = None
+    if idx < len(tokens) and tokens[idx].startswith('s') and tokens[idx][1:].isdigit():
+        subscription_id = int(tokens[idx][1:])
+        idx += 1
+    trailing: list[int] = []
+    for token in tokens[idx:]:
+        try:
+            trailing.append(int(token))
+        except ValueError:
+            pass
+    return user_id, subscription_id, trailing
+
+
+def _parse_devblock_list(callback_data: str) -> tuple[int, int | None, int]:
+    """`admin_user_devblock_{uid}{_sid}` (page 1) / `admin_user_devblock_page_{uid}{_sid}_{page}`."""
+    if callback_data.startswith('admin_user_devblock_page_'):
+        user_id, subscription_id, trailing = _parse_devblock_ctx(callback_data, 'admin_user_devblock_page_')
+        page = trailing[0] if trailing else 1
     else:
-        subscription_id = None
-        user_id = int(parts[-2])
-    return user_id, subscription_id, tail
+        user_id, subscription_id, _ = _parse_devblock_ctx(callback_data, 'admin_user_devblock_')
+        page = 1
+    return user_id, subscription_id, page
+
+
+def _parse_devblock_set(callback_data: str) -> tuple[int, int | None, int, int]:
+    """`admin_user_devblock_set_{uid}{_sid}_{page}_{index}` → (user_id, subscription_id, page, index)."""
+    user_id, subscription_id, trailing = _parse_devblock_ctx(callback_data, 'admin_user_devblock_set_')
+    page = trailing[0] if trailing else 1
+    index = trailing[1] if len(trailing) > 1 else 0
+    return user_id, subscription_id, page, index
+
+
+def _parse_devblock_unblock(callback_data: str) -> tuple[int, int | None, int]:
+    """`admin_user_devunblock_{uid}{_sid}_{block_id}` → (user_id, subscription_id, block_id)."""
+    user_id, subscription_id, trailing = _parse_devblock_ctx(callback_data, 'admin_user_devunblock_')
+    block_id = trailing[0] if trailing else 0
+    return user_id, subscription_id, block_id
 
 
 @admin_required
 @error_handler
 async def block_user_device(callback: types.CallbackQuery, db_user: User, db: AsyncSession):
-    """Admin: hard-block one of a user's connected devices (by index)."""
+    """Admin: hard-block a device from the paginated unified list (by page+index)."""
     from app.database.crud.device_block import get_block_by_hwid
     from app.services.device_block_service import device_block_service
 
-    user_id, subscription_id, index = _parse_devblock_callback(callback.data)
+    user_id, subscription_id, page, index = _parse_devblock_set(callback.data)
 
-    user = await get_user_by_id(db, user_id)
+    user, panel_user_id, remnawave_uuid = await _resolve_admin_panel_context(db, user_id, subscription_id)
     if not user:
         await callback.answer('Пользователь не найден', show_alert=True)
         return
 
-    devices, _ = await _fetch_user_devices_brief(db, user_id, subscription_id)
-    if index >= len(devices):
+    devices, blocks = await _fetch_user_devices_brief(db, user_id, subscription_id)
+    unified = _build_unified_devices(devices, blocks)
+    pagination = paginate_list(unified, page=page, per_page=ADMIN_DEVICES_PER_PAGE)
+    if index >= len(pagination.items):
         await callback.answer('Устройство не найдено', show_alert=True)
         return
 
-    dev = devices[index]
+    dev = pagination.items[index]
     hwid = dev['hwid']
 
-    if await get_block_by_hwid(db, hwid, user_id=user_id) is None:
-        # Best-effort panel UUID so the block row can also drop it from the panel.
-        from app.database.crud.subscription import get_subscription_by_id_for_user
-
-        uuid = user.remnawave_uuid
-        if settings.is_multi_tariff_enabled() and subscription_id:
-            sub = await get_subscription_by_id_for_user(db, subscription_id, user_id)
-            if sub:
-                uuid = sub.remnawave_uuid
-
+    if not dev['blocked'] and await get_block_by_hwid(db, hwid, user_id=user_id) is None:
         try:
             await device_block_service.ban_device(
                 db,
                 user,
                 hwid,
-                remnawave_uuid=uuid,
-                device_label=_admin_device_label(dev) or None,
+                remnawave_uuid=remnawave_uuid,
+                panel_user_id=panel_user_id,
+                device_label=dev.get('label') or None,
                 platform=dev.get('platform') or None,
                 banned_by=f'admin:{db_user.id}',
             )
@@ -4759,7 +4882,9 @@ async def block_user_device(callback: types.CallbackQuery, db_user: User, db: As
             await callback.answer(str(e), show_alert=True)
             return
 
-    await show_user_devices_block(callback, db_user, db, user_id=user_id, subscription_id=subscription_id)
+    await show_user_devices_block(
+        callback, db_user, db, user_id=user_id, subscription_id=subscription_id, page=1
+    )
 
 
 @admin_required
@@ -4771,7 +4896,7 @@ async def unblock_user_device(callback: types.CallbackQuery, db_user: User, db: 
     from app.database.models import DeviceBlock
     from app.services.device_block_service import device_block_service
 
-    user_id, _subscription_id, block_id = _parse_devblock_callback(callback.data)
+    user_id, subscription_id, block_id = _parse_devblock_unblock(callback.data)
 
     user = await get_user_by_id(db, user_id)
     if not user:
@@ -4786,7 +4911,9 @@ async def unblock_user_device(callback: types.CallbackQuery, db_user: User, db: 
 
     await device_block_service.unban_device(db, user, block.id)
 
-    await show_user_devices_block(callback, db_user, db, user_id=user_id, subscription_id=_subscription_id)
+    await show_user_devices_block(
+        callback, db_user, db, user_id=user_id, subscription_id=subscription_id, page=1
+    )
 
 
 @admin_required

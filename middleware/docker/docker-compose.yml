@@ -31,3 +31,7 @@ services:
       - BOT_API_URL=http://127.0.0.1:8080
       - BOT_API_TOKEN=${BOT_API_TOKEN_FOR_MIDDLEWARE}
       - FAIL_OPEN=true
+      # vless:// link served as the single server of the synthetic blocked
+      # profile (so clients that reject an empty server list still load a valid
+      # config). Leave empty to keep the legacy empty profile.
+      - BLOCKED_FALLBACK_SERVER=${BLOCKED_FALLBACK_SERVER}
