@@ -1896,7 +1896,7 @@
   Функции: `schedule_tariff_squad_sync` — Запустить синхронизацию в фоне; ссылка на задачу держится до её конца., `sync_tariff_squads_in_background` — Прогнать сквады тарифа по всем его живым подпискам со своей сессией БД.
 - `app/services/tariff_switch_policy.py` — Python-модуль
   Классы: нет
-  Функции: `remaining_days_for_switch` — Сколько дней остатка оплачивать при переключении тарифа., `should_reset_used_traffic` — Обнулять ли счётчик трафика при переключении тарифа.
+  Функции: `remaining_days_for_switch` — Сколько дней остатка оплачивать при переключении тарифа., `should_reset_used_traffic` — Обнулять ли счётчик трафика при переключении тарифа., `lift_traffic_limit_after_switch` — Снять статус «трафик кончился», если новый тариф даёт трафик.
 - `app/services/traffic_accounting.py` — Python-модуль
   Классы: `AccountingConflict`, `Allowance` (1 методов), `TrafficAccount` (4 методов)
   Функции: `observe_usage` — Settle the next sample, then expire remainders; never create a debt., `refresh_base` — Replace the base allowance once per period/operation, preserving packages., `migrate_preserving_available` — Bootstrap a finite account without increasing or reducing available bytes.
@@ -3308,6 +3308,9 @@
 - `tests/test_grace_env_example_stays_commented.py` — Python-модуль
   Классы: нет
   Функции: `test_no_grace_key_is_active_in_the_example`, `test_commented_values_match_the_code_defaults`
+- `tests/test_instant_switch_lifts_traffic_limit.py` — Python-модуль
+  Классы: нет
+  Функции: `test_limited_with_room_on_new_tariff_becomes_active`, `test_unlimited_new_tariff_becomes_active`, `test_new_tariff_still_exhausted_stays_limited`, `test_disabled_is_never_lifted`, `test_ended_subscription_is_not_lifted`, `test_naive_end_date_is_treated_as_utc`, `test_managed_accounting_owns_quota_status`
 - `tests/test_lazy_package_exports.py` — Python-модуль
   Классы: нет
   Функции: `test_package_declares_exports`, `test_every_exported_name_resolves`, `test_unknown_name_still_raises` — __getattr__ не должен выдавать что попало вместо AttributeError.
@@ -4119,6 +4122,9 @@
 - `tests/database/test_info_page_display_mode.py` — Python-модуль
   Классы: нет
   Функции: `test_model_has_display_mode_column_with_both_default`, `test_crud_update_whitelist_includes_display_mode`, `test_create_request_accepts_valid_display_mode`, `test_create_request_defaults_to_both`, `test_update_request_rejects_invalid_display_mode`, `test_response_schemas_expose_display_mode`
+- `tests/database/test_instant_switch_limited_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_switch_persists_recovered_status_without_free_traffic`, `test_switch_completes_grace_and_restores_new_tariff_on_panel`, `test_switch_entrypoints_validate_paid_term`, `test_telegram_stale_switch_button_cannot_charge_ineligible_subscription`, `test_miniapp_does_not_guess_between_active_and_limited_subscriptions`, `test_miniapp_preview_quotes_explicit_limited_subscription`
 - `tests/database/test_legacy_subscription_addons_refused_postgres.py` — Python-модуль
   Классы: нет
   Функции: `tariffs_mode_with_classic_prices` — Режим тарифов без мультитарифа; классические цены заданы — без сторожа продажа бы состоялась., `test_device_purchase_is_refused_for_legacy_subscription`, `test_legacy_device_endpoint_is_refused_for_legacy_subscription`, `test_device_price_is_refused_for_legacy_subscription`, `test_traffic_purchase_is_refused_for_legacy_subscription`, `test_traffic_packages_are_empty_for_legacy_subscription`

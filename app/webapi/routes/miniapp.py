@@ -7051,19 +7051,25 @@ async def preview_tariff_switch_endpoint(
         )
 
     subs = getattr(user, 'subscriptions', None) or []
-    active = [s for s in subs if s.is_active and s.tariff_id]
-    subscription = active[0] if len(active) == 1 else None
-    if not subscription:
-        # If multiple active or none, require explicit subscription_id
-        if hasattr(payload, 'subscription_id') and payload.subscription_id:
-            subscription = next((s for s in subs if s.id == payload.subscription_id), None)
+    if payload.subscription_id:
+        subscription = next((s for s in subs if s.id == payload.subscription_id), None)
+    else:
+        eligible = [
+            s
+            for s in subs
+            if s.tariff_id and s.status in ('active', 'trial', 'limited') and remaining_days_for_switch(s.end_date) > 0
+        ]
+        subscription = eligible[0] if len(eligible) == 1 else None
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'no_subscription', 'message': 'No active subscription with tariff'},
         )
 
-    if subscription.status not in ('active', 'trial'):
+    if (
+        subscription.status not in ('active', 'trial', 'limited')
+        or remaining_days_for_switch(subscription.end_date) == 0
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'subscription_inactive', 'message': 'Subscription is not active'},
@@ -7173,7 +7179,12 @@ async def switch_tariff_endpoint(
     if payload.subscription_id:
         subscription = next((s for s in subs if s.id == payload.subscription_id), None)
     else:
-        subscription = next((s for s in subs if s.is_active and s.tariff_id), None)
+        eligible = [
+            s
+            for s in subs
+            if s.tariff_id and s.status in ('active', 'trial', 'limited') and remaining_days_for_switch(s.end_date) > 0
+        ]
+        subscription = eligible[0] if len(eligible) == 1 else None
     if not subscription or not subscription.tariff_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -7194,7 +7205,10 @@ async def switch_tariff_endpoint(
         if existing_target and existing_target.id != subscription.id:
             raise HTTPException(status_code=409, detail='You already have an active subscription for the target tariff')
 
-    if subscription.status not in ('active', 'trial'):
+    if (
+        subscription.status not in ('active', 'trial', 'limited')
+        or remaining_days_for_switch(subscription.end_date) == 0
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={'code': 'subscription_inactive', 'message': 'Subscription is not active'},
@@ -7395,6 +7409,12 @@ async def switch_tariff_endpoint(
             )
         else:
             logger.info('🔄 Смена с суточного на обычный тариф: очищены daily поля')
+
+    # Новый тариф дал трафик — снять «трафик кончился», иначе открытый
+    # грейс удержит Telegram-only оверлей в панели.
+    from app.services.tariff_switch_policy import lift_traffic_limit_after_switch
+
+    lift_traffic_limit_after_switch(subscription)
 
     if accounting_panel is not None:
         from app.services.traffic_accounting_service import change_managed_tariff_locked

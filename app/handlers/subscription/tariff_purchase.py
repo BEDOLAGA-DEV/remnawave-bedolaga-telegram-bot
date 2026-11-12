@@ -5467,6 +5467,14 @@ async def confirm_instant_switch(
     await undo_grace_overlay_echo(db, subscription)
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
+    # An old confirmation button must not charge a trial or a subscription
+    # whose paid access was disabled/expired after opening the switch screen.
+    if subscription.is_trial or subscription.status not in ('active', 'limited') or remaining_days <= 0:
+        await callback.answer(
+            texts.t('TARIFF_SWITCH_ERROR', '❌ Произошла ошибка при переключении тарифа'), show_alert=True
+        )
+        return
+
     # Use full TariffSwitchResult to access offer_discount_pct for consume_promo_offer flag
     from app.services.pricing_engine import pricing_engine
 
@@ -5623,6 +5631,12 @@ async def confirm_instant_switch(
             subscription.is_trial = False
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = datetime.now(UTC)
+
+        # Новый тариф дал трафик — снять «трафик кончился», иначе открытый
+        # грейс удержит Telegram-only оверлей в панели.
+        from app.services.tariff_switch_policy import lift_traffic_limit_after_switch
+
+        lift_traffic_limit_after_switch(subscription)
 
         await db.commit()
         await db.refresh(subscription)
