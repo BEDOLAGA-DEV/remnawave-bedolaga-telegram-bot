@@ -424,6 +424,31 @@ class RemnawaveGracePanelGateway:
             return None
         return _panel_user_to_snapshot(panel_user)
 
+    async def _overlay_after_confirmed_deletion(self, api, current, overlay, *, now):
+        from app.services.grace_squad_recovery import overlay_after_confirmed_deletion
+
+        replacement = None
+        if self._db is not None and self._subscription_id is not None:
+            session = await SQLAlchemyGraceSessionStore(self._db, subscription_id=self._subscription_id).get_open(
+                self._subscription_id
+            )
+            if session is not None and session.overlay == overlay:
+                replacement = _build_policy().squad_for(session.reason)
+        return await overlay_after_confirmed_deletion(api, current, overlay, now=now, replacement=replacement)
+
+    async def repair_deleted_squad(self, session, replacement):
+        if (
+            session.state is GraceSessionState.PENDING
+            and session.overlay.squad_uuids == (replacement,)
+            and not session.last_error
+        ):
+            return session.overlay
+        from app.services.grace_squad_recovery import repair_deleted_grace_squad
+        from app.services.remnawave_service import remnawave_service
+
+        async with remnawave_service.get_api_client() as api:
+            return await repair_deleted_grace_squad(api, session, replacement)
+
     async def apply_overlay(self, remnawave_id: int, overlay: GracePanelOverlay) -> None:
         from app.services.remnawave_service import remnawave_service
 
@@ -482,6 +507,7 @@ class RemnawaveGracePanelGateway:
                 return GraceRestoreOutcome.ALREADY_RESTORED
 
             current = _panel_user_to_snapshot(current_user)
+            expected_overlay = await self._overlay_after_confirmed_deletion(api, current, expected_overlay, now=now)
             if self._db is not None and self._subscription_id is not None:
                 from app.services.traffic_accounting_service import restore_managed_grace
 
@@ -632,6 +658,7 @@ class RemnawaveGracePanelGateway:
                 if current_user is None:
                     raise GracePanelTransitionConflict('Canonical Remnawave user disappeared during LIMITED restore')
                 current = _panel_user_to_snapshot(current_user)
+                expected_overlay = await self._overlay_after_confirmed_deletion(api, current, expected_overlay, now=now)
                 if _panel_matches_target(current, target):
                     if _panel_user_matches_device_limit(current_user, target):
                         return
@@ -686,6 +713,7 @@ class RemnawaveGracePanelGateway:
         if current_user is None:
             raise GracePanelTransitionConflict('Canonical Remnawave user disappeared during EXPIRED restore')
         current = _panel_user_to_snapshot(current_user)
+        expected_overlay = await self._overlay_after_confirmed_deletion(api, current, expected_overlay, now=now)
         target = _build_billing_target(billing, now=now, panel_current=current.expire_at)
         if _panel_matches_target(current, target) and _panel_user_matches_device_limit(current_user, target):
             return
