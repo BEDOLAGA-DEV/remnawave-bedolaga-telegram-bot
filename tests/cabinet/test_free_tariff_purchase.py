@@ -233,17 +233,22 @@ async def test_free_tariff_renewal_option_is_offered(monkeypatch, panel):
 
 
 @pytest.mark.asyncio
-async def test_free_tariff_renewal_goes_through(monkeypatch, panel):
+@pytest.mark.postgres
+async def test_free_tariff_renewal_goes_through(monkeypatch, panel, postgres_database):
     """Продление бесплатного тарифа не должно падать «неверным периодом»."""
+    from uuid import uuid4
+
     from app.cabinet.routes.subscription_modules.renewal import renew_subscription
     from app.cabinet.schemas.subscription import RenewalRequest
+    from app.database.models import Base
+    from tests.fixtures.postgres_db import postgres_session
 
-    async with memory_session(monkeypatch, TABLES) as db:
+    async with postgres_session(postgres_database, list(Base.metadata.sorted_tables)) as db:
         user = await _seed_free_subscription(db, {'30': 0})
         before = (await db.get(Subscription, 10)).end_date
 
         response = await renew_subscription(
-            request=RenewalRequest(period_days=30),
+            request=RenewalRequest(period_days=30, operation_id=uuid4(), expected_end_date=before),
             user=user,
             db=db,
             subscription_id=10,

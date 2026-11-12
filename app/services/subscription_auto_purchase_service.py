@@ -3240,6 +3240,31 @@ async def _process_single_cart(
 
     cart_mode = cart_data.get('cart_mode') or cart_data.get('mode')
     cart_sub_id = _safe_int(cart_data.get('subscription_id'))
+    if cart_mode == 'extend' and cart_data.get('source') == 'cabinet' and not cart_data.get('renewal_operation_id'):
+        # Pre-upgrade carts have no consent snapshot: never guess an operation identity.
+        logger.info('Legacy cabinet renewal requires fresh confirmation', user_id=user.id)
+        return False
+    if cart_mode == 'extend' and cart_data.get('renewal_operation_id'):
+        # Cabinet retries and top-up recovery share the same durable operation.
+        from fastapi import HTTPException
+
+        from app.cabinet.routes.subscription_modules.renewal import renew_subscription
+        from app.cabinet.schemas.subscription import RenewalRequest
+
+        try:
+            request = RenewalRequest(
+                operation_id=cart_data['renewal_operation_id'],
+                expected_end_date=cart_data.get('renewal_expected_end_date'),
+                subscription_id=cart_sub_id,
+                period_days=cart_data.get('period_days'),
+            )
+            await renew_subscription(request, user=user, db=db, subscription_id=cart_sub_id)
+        except (HTTPException, ValueError) as error:
+            await db.rollback()
+            logger.info('Saved cabinet renewal not applied', reason=type(error).__name__)
+            return False
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return True
 
     if cart_mode in ('tariff_purchase', 'daily_tariff_purchase') and cart_data.get('selected_device_limit') is not None:
         # This contract validates the exact target and consent under the wallet

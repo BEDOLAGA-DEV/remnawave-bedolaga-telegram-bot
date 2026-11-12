@@ -350,7 +350,6 @@ class Settings(BaseSettings):
 
     TRIAL_WARNING_HOURS: int = 2
     ENABLE_NOTIFICATIONS: bool = True
-    NOTIFICATION_RETRY_ATTEMPTS: int = 3
     # Уведомления истёкшим и отписавшимся от канала — переключатели меню «Уведомления пользователям»
     # в админке бота и раздела настроек кабинета. Хранятся в базе (system_settings), а не в файле.
     NOTIFICATION_TRIAL_CHANNEL_UNSUBSCRIBED_ENABLED: bool = True
@@ -362,9 +361,6 @@ class Settings(BaseSettings):
     NOTIFICATION_EXPIRED_WAVE3_DISCOUNT_PERCENT: int = 20
     NOTIFICATION_EXPIRED_WAVE3_VALID_HOURS: int = 24
     NOTIFICATION_EXPIRED_WAVE3_TRIGGER_DAYS: int = 5
-
-    MONITORING_LOGS_RETENTION_DAYS: int = 30
-    NOTIFICATION_CACHE_HOURS: int = 24
 
     SERVER_STATUS_MODE: str = 'disabled'
     SERVER_STATUS_EXTERNAL_URL: str | None = None
@@ -455,7 +451,6 @@ class Settings(BaseSettings):
 
     REFERRAL_PROGRAM_ENABLED: bool = True
     REFERRAL_NOTIFICATIONS_ENABLED: bool = True
-    REFERRAL_NOTIFICATION_RETRY_ATTEMPTS: int = 3
 
     # Схема наград: 'legacy' — прежнее поведение на ключах REFERRAL_* выше,
     # 'levels' — таблица referral_reward_levels (деньги и/или дни, много уровней).

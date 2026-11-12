@@ -236,9 +236,16 @@ async def test_quick_tariff_renewal_price_variants(postgres_database, monkeypatc
         if entry == 'quick':
             await handle_simple_subscription_purchase(c.callback, c.state, c.user, c.db)
         else:
+            from uuid import uuid4
+
             from app.cabinet.routes.subscription_modules.renewal import RenewalRequest, renew_subscription
 
-            await renew_subscription(RenewalRequest(period_days=30), c.user, c.db, subscription_id=10)
+            await renew_subscription(
+                RenewalRequest(period_days=30, operation_id=uuid4(), expected_end_date=c.sub.end_date),
+                c.user,
+                c.db,
+                subscription_id=10,
+            )
         await c.db.refresh(c.user)
         await c.db.refresh(c.sub)
         assert c.user.balance_kopeks == 400000 - expected

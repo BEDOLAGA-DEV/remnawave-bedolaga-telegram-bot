@@ -179,3 +179,96 @@ async def test_create_sbp_payment_success(monkeypatch: pytest.MonkeyPatch) -> No
     assert result['id'] == 'sbp_001'
     assert result['confirmation_url'] == 'https://sbp/confirm'
     assert result['status'] == 'pending'
+
+
+@pytest.mark.anyio('asyncio')
+@pytest.mark.parametrize('card_kind', ['dict', 'object', 'partial', 'empty', 'none', 'absent'])
+async def test_payment_info_card_representation_does_not_hide_payment(monkeypatch, card_kind):
+    _prepare_config(monkeypatch)
+    monkeypatch.setattr(asyncio, 'get_running_loop', DummyLoop)
+    fields = {'first6': '555555', 'last4': '4444', 'card_type': 'Mir', 'expiry_month': '01', 'expiry_year': '2030'}
+    card = fields.copy()
+    if card_kind == 'object':
+        card = SimpleNamespace(**fields)
+    elif card_kind == 'partial':
+        card = {'last4': '4444'}
+    elif card_kind == 'empty':
+        card = {}
+    elif card_kind in {'none', 'absent'}:
+        card = None
+    method = SimpleNamespace(type='bank_card', id='method-example', saved=True)
+    if card_kind != 'absent':
+        method.card = card
+    response = SimpleNamespace(
+        id='payment-example',
+        status='succeeded',
+        paid=True,
+        amount=SimpleNamespace(value='140.00', currency='RUB'),
+        metadata={'user_id': '1'},
+        description='Test payment',
+        refundable=True,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        captured_at=datetime(2026, 1, 1, tzinfo=UTC),
+        payment_method=method,
+        test=True,
+    )
+    monkeypatch.setattr(YooKassaPayment, 'find_one', staticmethod(lambda _: response), raising=False)
+    result = await YooKassaService().get_payment_info('payment-example')
+    assert result is not None
+    assert result['status'] == 'succeeded'
+    assert result['paid'] is True
+    assert result['amount_value'] == 140.0
+    assert result['payment_method_saved'] is True
+    if card_kind in {'none', 'empty', 'absent'}:
+        assert result['payment_method_card'] is None
+    elif card_kind == 'partial':
+        assert result['payment_method_card'] == {key: '4444' if key == 'last4' else None for key in fields}
+    else:
+        assert result['payment_method_card'] == fields
+
+
+def test_real_sdk_payment_models_are_supported():
+    """Use a fresh interpreter: conftest replaces the SDK with a test stub."""
+    import subprocess
+    import textwrap
+
+    script = textwrap.dedent("""
+        import asyncio
+        from yookassa import Payment
+        from yookassa.domain.response.payment_response import PaymentResponse
+        from app.services.yookassa_service import YooKassaService
+
+        async def check():
+            service = YooKassaService.__new__(YooKassaService)
+            service.configured = True
+            for method in ('bank_card', 'sberbank', 'tinkoff_bank', 'alfa_pay', 'sbp'):
+                data = {
+                    'id': 'payment-example', 'status': 'succeeded', 'paid': True,
+                    'amount': {'value': '140.00', 'currency': 'RUB'},
+                    'created_at': '2026-01-01T00:00:00Z', 'refundable': True,
+                    'payment_method': {'type': method, 'id': 'method-example', 'saved': False},
+                }
+                if method != 'sbp':
+                    data['payment_method']['card'] = {
+                        'last4': '4444', 'expiry_month': '01', 'expiry_year': '2030', 'card_type': 'Mir',
+                    }
+                response = PaymentResponse(data)
+                if method == 'alfa_pay':
+                    assert isinstance(response.payment_method.card, dict)
+                Payment.find_one = staticmethod(lambda _: response)
+                result = await service.get_payment_info('payment-example')
+                assert result is not None, method
+                assert result['status'] == 'succeeded' and result['paid'] is True
+                assert result['amount_value'] == 140.0
+                if method == 'sbp':
+                    assert result['payment_method_card'] is None
+                else:
+                    assert result['payment_method_card']['first6'] is None
+                    assert result['payment_method_card']['last4'] == '4444'
+        asyncio.run(check())
+    """)
+    # Fixed local test code only; no external input or network calls.
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, '-c', script], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, result.stderr
