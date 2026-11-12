@@ -6984,5 +6984,6 @@
   "RECURRENT_UI_LAVA_PRICE_MISMATCH": "قیمت محصول Lava برابر {price} ₽ است، اما تمدید اشتراک برای {days} روز {renewal} ₽ هزینه دارد. محصولی با قیمت فعلی ایجاد کنید.",
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "این تعرفه برای دوره {days} روز قیمت ندارد؛ تمدید خودکار SBP در دسترس نیست",
   "WELCOME_FALLBACK_NAME": "دوست",
-  "STARS_TOPUP_DESCRIPTION": "شارژ موجودی به مبلغ {amount}"
+  "STARS_TOPUP_DESCRIPTION": "شارژ موجودی به مبلغ {amount}",
+  "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ متن پیام همگانی را به‌صورت یک پیام متنی معمولی ارسال کنید. در مرحله بعد می‌توانید عکس، ویدیو یا سند اضافه کنید."
 }

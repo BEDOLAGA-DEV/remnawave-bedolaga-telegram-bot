@@ -6984,5 +6984,6 @@
   "RECURRENT_UI_LAVA_PRICE_MISMATCH": "Продукт Lava стоит {price} ₽, а продление подписки — {renewal} ₽ за {days} дн. Заведите продукт с актуальной ценой.",
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "Тариф не имеет цены за период {days} дней — СБП-автопродление недоступно",
   "WELCOME_FALLBACK_NAME": "друг",
-  "STARS_TOPUP_DESCRIPTION": "Пополнение баланса на {amount}"
+  "STARS_TOPUP_DESCRIPTION": "Пополнение баланса на {amount}",
+  "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ Отправьте текст рассылки обычным текстовым сообщением. Фото, видео или документ можно добавить на следующем шаге."
 }

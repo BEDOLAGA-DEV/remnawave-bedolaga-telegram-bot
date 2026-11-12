@@ -887,6 +887,16 @@ async def process_broadcast_message(message: types.Message, db_user: User, state
     texts = get_texts(db_user.language)
     broadcast_text = message.text
 
+    # Без текста (медиа, документ, стикер) message.text равен None (#3169)
+    if not broadcast_text:
+        await message.answer(
+            texts.t(
+                'ADMIN_BROADCAST_TEXT_REQUIRED',
+                '❌ Отправьте текст рассылки обычным текстовым сообщением. Фото, видео или документ можно добавить на следующем шаге.',
+            )
+        )
+        return
+
     if len(broadcast_text) > 4000:
         await message.answer(
             texts.t(

@@ -6984,5 +6984,6 @@
   "RECURRENT_UI_LAVA_PRICE_MISMATCH": "Lava 产品价格为 {price} ₽，但订阅续费 {days} 天需要 {renewal} ₽。请创建价格正确的产品。",
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "此套餐未设置 {days} 天的价格，无法通过 SBP 自动续费",
   "WELCOME_FALLBACK_NAME": "朋友",
-  "STARS_TOPUP_DESCRIPTION": "充值 {amount}"
+  "STARS_TOPUP_DESCRIPTION": "充值 {amount}",
+  "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ 请以普通文本消息发送群发内容。您可以在下一步添加照片、视频或文档。"
 }
