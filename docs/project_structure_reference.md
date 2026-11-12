@@ -1945,6 +1945,9 @@
 - `app/services/trial_activation_service.py` — Python-модуль
   Классы: `TrialPaymentError`, `TrialPaymentInsufficientFunds` (1 методов), `TrialPaymentChargeFailed`, `TrialActivationReversionResult`
   Функции: `get_trial_activation_charge_amount` — Returns the configured activation charge in kopeks if payment is enabled., `preview_trial_activation_charge` — Validates that the user can afford the trial activation charge., `charge_trial_activation_if_required` — Charges the user's balance if paid trial activation is enabled., `refund_trial_activation_charge` — Refunds a previously charged trial activation amount back to the user., `rollback_trial_subscription_activation` — Attempts to undo a previously created trial subscription., `revert_trial_activation` — Rolls back a trial subscription and refunds any charged amount.
+- `app/services/trial_conversion_service.py` — Python-модуль
+  Классы: нет
+  Функции: `paid_trial_renewal_terms`
 - `app/services/tribute_service.py` — Python-модуль
   Классы: `TributeService` (14 методов)
   Функции: нет
@@ -2800,6 +2803,7 @@
 - `docs/telegram-command-menus.md` — файл
 - `docs/traffic-accounting.md` — файл
 - `docs/traffic-package-expiry.md` — файл
+- `docs/trial-to-paid.md` — файл
 - `docs/web-admin-integration-guide.md` — файл
 - `docs/web-admin-integration.md` — файл
 - `docs/websocket-and-webhooks.md` — файл
@@ -4090,6 +4094,9 @@
 - `tests/database/test_classic_device_migration_postgres.py` — Python-модуль
   Классы: `Panel` (4 методов)
   Функции: `test_selected_classic_devices_are_priced_and_preserved`, `test_classic_migration_limits`, `test_classic_migration_non_month_period_price`, `test_classic_custom_telegram_selected_purchase`, `test_cabinet_daily_classic_price_matches_charge`, `test_daily_selected_classic_devices`, `test_invalid_selected_classic_subscription_is_rejected_before_pricing`, `test_divergent_paid_pin_falls_back_to_requested_tariff_before_pricing`, `test_custom_fallback_prefers_active_tariff_over_later_disabled_record`, `test_daily_insufficient_balance_cart_replays_selected_classic`, `test_repeated_daily_purchase_does_not_charge_twice`, `test_daily_selected_trial_keeps_conversion_marker`, `test_saved_cart_return_keeps_selected_classic_and_requotes`, `test_custom_traffic_survives_saved_checkout`, `test_cart_distinguishes_default_from_explicit_base_traffic`, `test_restored_trial_keeps_conversion_notice`
+- `tests/database/test_classic_trial_checkout_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_classic_quick_trial_conversion`, `test_trial_daily_switch_is_atomic_and_resets_usage`
 - `tests/database/test_daily_auto_purchase_atomic_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_daily_auto_activation_is_atomic`, `test_daily_activation_mixed_entries_debit_once`, `test_daily_manual_failure_rolls_back_before_retry`, `test_daily_trial_conversion_and_auto_overlap`, `test_daily_single_subscription_manual_and_auto_overlap`
@@ -4122,7 +4129,7 @@
   Функции: `test_tariff_renewal_preserves_base_and_only_active_purchases`
 - `tests/database/test_expired_trial_conversion_postgres.py` — Python-модуль
   Классы: `Panel` (8 методов)
-  Функции: `test_expired_trial_purchase_preserves_identity`, `test_hwid_retry_completes_trial_traffic_reset_without_recharging`, `test_conversion_candidate_priority_and_exclusions`, `test_concurrent_purchases_do_not_convert_same_trial_twice`, `test_missing_trial_panel_account_is_recreated_without_a_second_database_row`
+  Функции: `test_expired_trial_purchase_preserves_identity`, `test_hwid_retry_completes_trial_traffic_reset_without_recharging`, `test_conversion_candidate_priority_and_exclusions`, `test_concurrent_purchases_do_not_convert_same_trial_twice`, `test_missing_trial_panel_account_is_recreated_without_a_second_database_row`, `test_trial_conversion_matrix`
 - `tests/database/test_gift_cart_completion_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_committed_gift_cleanup_preserves_new_cart_and_single_debit`
@@ -4210,6 +4217,9 @@
 - `tests/database/test_paid_reset_migration_postgres.py` — Python-модуль
   Классы: нет
   Функции: `test_reset_intent_migration_upgrade_downgrade_and_safety`
+- `tests/database/test_paid_trial_renewal_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_cabinet_trial_renewal_applies_paid_terms`, `test_trial_activation_then_tariff_purchase`, `test_expired_same_tariff_revival_applies_conversion_defaults`, `test_saved_tariff_trial_purchase_rolls_back_without_refund`
 - `tests/database/test_panel_account_reuse_postgres.py` — Python-модуль
   Классы: нет
   Функции: `multi_tariff`, `single_tariff`, `test_multi_tariff_row_with_panel_id_is_updated`, `test_multi_tariff_row_without_id_adopts_free_user_account` — Старая подписка без id, аккаунт у человека есть и свободен — привязать и обновить, не создавать., `test_multi_tariff_row_without_id_creates_when_user_account_is_taken` — Аккаунт человека уже у другой подписки — новой строке нужен свой аккаунт., `test_multi_tariff_row_without_any_account_creates`, `test_single_tariff_follows_user_account_only`, `test_single_tariff_adopts_subscription_account_when_user_has_none` — Аккаунт создан в мультитарифе (записан у подписки), оператор вернулся в одиночный режим:, `test_single_tariff_does_not_steal_account_held_by_another_user`

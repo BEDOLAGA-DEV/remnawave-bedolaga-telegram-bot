@@ -69,8 +69,11 @@ async def test_tariff_renewal_failure_does_not_leave_a_debit(postgres_database, 
 
 
 @pytest.mark.parametrize('multi', [False, True])
+@pytest.mark.parametrize('paid_device_limit', [0, 5])
 @pytest.mark.parametrize('trial', [False, True])
-async def test_tariff_renewal_commits_paid_days_even_when_panel_fails(postgres_database, monkeypatch, multi, trial):
+async def test_tariff_renewal_commits_paid_days_even_when_panel_fails(
+    postgres_database, monkeypatch, multi, trial, paid_device_limit
+):
     from datetime import timedelta
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -81,6 +84,13 @@ async def test_tariff_renewal_commits_paid_days_even_when_panel_fails(postgres_d
     async with checkout(postgres_database, monkeypatch) as c:
         monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
         c.sub.is_trial = trial
+        if trial:
+            from app.database.models import Tariff
+
+            (await c.db.get(Tariff, 1)).device_limit = paid_device_limit
+            c.sub.device_limit = 1
+            c.sub.connected_squads = ['trial-squad']
+            monkeypatch.setattr(telegram, '_reject_unavailable_checkout_squads', AsyncMock(return_value=False))
         await c.db.commit()
         c.callback.data = 'tariff_ext_confirm:10:1:30'
         panel = SimpleNamespace(update_remnawave_user=AsyncMock(side_effect=RuntimeError('panel unavailable')))
@@ -91,9 +101,15 @@ async def test_tariff_renewal_commits_paid_days_even_when_panel_fails(postgres_d
         await c.db.refresh(c.user)
         await c.db.refresh(c.sub)
         transactions = list(await c.db.scalars(select(Transaction)))
-        assert c.user.balance_kopeks == 370000
-        assert len(transactions) == 1 and transactions[0].amount_kopeks == -30000
+        # Trial conversion uses the included devices (also for unlimited),
+        # whereas the paid control retains its two purchased extra devices.
+        expected_charge = 20000 if trial else 30000
+        assert c.user.balance_kopeks == 400000 - expected_charge
+        assert len(transactions) == 1 and transactions[0].amount_kopeks == -expected_charge
         assert c.sub.is_trial is False
+        if trial:
+            assert c.sub.connected_squads == ['test-squad']
+            assert c.sub.device_limit == paid_device_limit
         assert c.sub.end_date >= c.now + timedelta(days=30)
         if not trial:
             assert c.sub.end_date == c.end + timedelta(days=30)

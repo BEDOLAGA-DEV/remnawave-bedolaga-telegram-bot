@@ -44,6 +44,7 @@ async def _manage(db, sub):
         'simple-confirm',
         'classic-confirm',
         'classic-trial',
+        'classic-legacy-trial',
         'admin-buy',
         'cabinet',
         'autocart',
@@ -53,7 +54,8 @@ async def _manage(db, sub):
 async def test_managed_checkout_intent_failure_rolls_back_money_and_period(postgres_database, monkeypatch, flow):
     async with switch_data(postgres_database, monkeypatch) as (db, user):
         sub = await db.get(Subscription, 11)
-        await _manage(db, sub)
+        if flow != 'classic-legacy-trial':
+            await _manage(db, sub)
         monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', True)
         monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', False)
         # Single-subscription entry points must resolve this exact account.
@@ -61,7 +63,10 @@ async def test_managed_checkout_intent_failure_rolls_back_money_and_period(postg
         await db.commit()
         old_end, old_balance = sub.end_date, user.balance_kopeks
         failure = AsyncMock(side_effect=RuntimeError('intent staging failure'))
-        monkeypatch.setattr(grants, 'stage_paid_base_grant', failure)
+        if flow == 'classic-legacy-trial':
+            monkeypatch.setattr('app.services.grace_access_echo.undo_grace_overlay_echo', failure)
+        else:
+            monkeypatch.setattr(grants, 'stage_paid_base_grant', failure)
         callback = SimpleNamespace(answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock()), bot=None)
         if flow.startswith('simple'):
             from app.handlers import simple_subscription as simple
@@ -94,11 +99,11 @@ async def test_managed_checkout_intent_failure_rolls_back_money_and_period(postg
                 else simple.handle_simple_subscription_pay_with_balance
             )
             operation = handler(callback, user, state, db)
-        elif flow in ('classic-confirm', 'classic-trial'):
+        elif flow in ('classic-confirm', 'classic-trial', 'classic-legacy-trial'):
             from app.handlers.subscription import purchase as classic
             from app.services.pricing_engine import PricingEngine, pricing_engine
 
-            if flow == 'classic-trial':
+            if flow in ('classic-trial', 'classic-legacy-trial'):
                 sub.is_trial = True
                 await db.commit()
             monkeypatch.setattr(settings, 'SALES_MODE', 'classic')

@@ -145,13 +145,15 @@ async def test_renewal_of_a_paid_subscription_does_not_touch_autopay():
 def test_classic_purchase_paths_apply_the_default_on_conversion():
     """В classic-режиме конверсию делает не CRUD, а обработчики — они тоже обязаны применить дефолт.
 
+    Быстрое продление теперь делегирует конвертацию в extend_subscription;
+    его поведение проверено в test_classic_trial_checkout_postgres.py.
     Проверка структурная: прогонять целиком оба хендлера здесь дороже, чем они
     того стоят, а забыть один из путей — ровно тот баг, который чинит #3191.
     """
     import pathlib
 
     for path, expected in (
-        ('app/handlers/subscription/purchase.py', 2),
+        ('app/handlers/subscription/purchase.py', 1),
         ('app/services/subscription_purchase_service.py', 1),
     ):
         source = pathlib.Path(path).read_text()

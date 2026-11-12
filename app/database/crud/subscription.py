@@ -403,13 +403,17 @@ async def _revive_paid_subscription(
     await undo_grace_overlay_echo(db, subscription)
     now = datetime.now(UTC)
     was_alive = subscription.end_date is not None and subscription.end_date > now
+    was_trial = subscription.is_trial
+    if was_trial:
+        apply_trial_conversion_defaults(subscription)
+        subscription._converted_from_trial = True
 
     subscription.is_trial = False
     subscription.status = SubscriptionStatus.ACTIVE.value
     subscription.traffic_limit_gb = traffic_limit_gb
     if device_limit is not None:
         subscription.device_limit = device_limit
-    if connected_squads:
+    if connected_squads is not None and (connected_squads or was_trial):
         subscription.connected_squads = list(connected_squads)
 
     base_date = subscription.end_date if was_alive else now
@@ -1286,6 +1290,7 @@ async def extend_subscription(
     device_limit: int | None = None,
     connected_squads: list[str] | None = None,
     convert_trial: bool = True,
+    paid_trial_conversion: bool = False,
     reset_used_traffic: bool | None = None,
     paid_traffic_reset: bool | None = None,
     commit: bool = True,
@@ -1306,6 +1311,8 @@ async def extend_subscription(
             False для бесплатного релейбла/смены тарифа без оплаты, иначе триал
             превратится в фантомную платную подписку и попадёт в авто-продление
             (баг #629889).
+        paid_trial_conversion: явная покупка после триала без смены тарифа;
+            не использовать для бонусов, промокодов или оплаты самого пробника.
         reset_used_traffic: решение вызывающего, обнулять ли израсходованный
             трафик при переданном ``traffic_limit_gb``. Вызывающий тем же решением
             сбрасывает (или нет) счётчик в панели — иначе бот показывает расход 0,
@@ -1345,6 +1352,7 @@ async def extend_subscription(
     # Определяем, происходит ли СМЕНА тарифа (а не продление того же)
     # Включает переход из классического режима (tariff_id=None) в тарифный
     was_trial = subscription.is_trial
+    is_trial_conversion = was_trial and convert_trial and (tariff_id is not None or paid_trial_conversion)
     is_tariff_change = tariff_id is not None and (subscription.tariff_id is None or tariff_id != subscription.tariff_id)
 
     # Флаг: была ли housekeeping-ветка вызвана. Если нет — в конце прогоним
@@ -1365,7 +1373,7 @@ async def extend_subscription(
     if days < 0:
         subscription.end_date = subscription.end_date + timedelta(days=days)
         logger.info('📅 Срок подписки уменьшен', abs=abs(days), end_date=subscription.end_date)
-    elif is_tariff_change:
+    elif is_tariff_change or is_trial_conversion:
         # При СМЕНЕ тарифа сохраняем оставшееся время активной подписки.
         # НЕ переносим дни, если исходная подписка — триал (без
         # TRIAL_ADD_REMAINING_DAYS_TO_PAID) ИЛИ бесплатный 0₽ тариф
@@ -1446,17 +1454,15 @@ async def extend_subscription(
         subscription.tariff_id = tariff_id
         logger.info('📦 Обновлен тариф подписки', old_tariff_id=old_tariff_id, tariff_id=tariff_id)
 
-        # При покупке тарифа сбрасываем триальный статус — но ТОЛЬКО для настоящих
-        # покупок. Бесплатный релейбл/смена тарифа без оплаты должны передавать
-        # convert_trial=False, иначе триал станет фантомной платной подпиской и
-        # попадёт в авто-продление (баг #629889).
-        if subscription.is_trial and convert_trial:
-            subscription.is_trial = False
-            # Transient marker (not persisted): lets purchase handlers report the
-            # payment as a trial→paid conversion without a signature change.
-            subscription._converted_from_trial = True
-            apply_trial_conversion_defaults(subscription)
-            logger.info('🎓 Подписка конвертирована из триала в платную', subscription_id=subscription.id)
+    if is_trial_conversion:
+        subscription.is_trial = False
+        subscription._converted_from_trial = True
+        apply_trial_conversion_defaults(subscription)
+        logger.info('🎓 Подписка конвертирована из триала в платную', subscription_id=subscription.id)
+        # The paid quota must not inherit usage from the trial, regardless of
+        # the ordinary renewal/switch reset toggles. Bonuses never enter here.
+        reset_used_traffic = True
+        subscription.traffic_used_gb = 0.0
 
     if traffic_limit_gb is not None:
         old_traffic = subscription.traffic_limit_gb
@@ -1553,7 +1559,7 @@ async def extend_subscription(
 
     if connected_squads is not None:
         # Не перезаписываем существующие сквады пустым списком
-        if connected_squads or not subscription.connected_squads:
+        if connected_squads or not subscription.connected_squads or is_trial_conversion:
             old_squads = subscription.connected_squads
             subscription.connected_squads = connected_squads
             logger.info('🌍 Обновлены сквады', old_squads=old_squads, connected_squads=connected_squads)
