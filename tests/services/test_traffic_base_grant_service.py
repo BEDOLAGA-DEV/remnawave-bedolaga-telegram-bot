@@ -48,7 +48,9 @@ async def test_committed_intent_is_applied_once_after_restart(monkeypatch, reset
             intent.expires_at = now - timedelta(seconds=1)
             expected_base = 0
         elif scenario == 'superseded':
-            state.last_base_operation_at = now + timedelta(milliseconds=500)
+            # Newer than the intent itself, not than the test start: creating the
+            # schema alone can take longer than any fixed margin on a slow machine.
+            state.last_base_operation_at = intent.requested_at + timedelta(milliseconds=500)
             expected_base = 0
         await db.commit()
         account, _ = await load_account(db, 1)
