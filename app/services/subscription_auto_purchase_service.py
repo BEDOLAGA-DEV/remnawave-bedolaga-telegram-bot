@@ -582,6 +582,18 @@ async def _auto_extend_subscription(
     except ValueError:
         await db.commit()
         return False
+    conversion_terms = {}
+    if subscription.is_trial:
+        from app.services.trial_conversion_service import paid_trial_renewal_terms
+
+        try:
+            conversion_terms = await paid_trial_renewal_terms(db, subscription, tariff_id=prepared.tariff_id)
+        except ValueError:
+            await db.rollback()
+            return False
+        prepared.device_limit = conversion_terms.get('device_limit', prepared.device_limit)
+        prepared.traffic_limit_gb = conversion_terms.get('traffic_limit_gb', prepared.traffic_limit_gb)
+        prepared.allowed_squads = conversion_terms.get('connected_squads', prepared.allowed_squads)
     effective_squads = prepared.allowed_squads if prepared.allowed_squads is not None else subscription.connected_squads
     if await _reject_unavailable_saved_squads(user, effective_squads, bot):
         return False
@@ -615,11 +627,14 @@ async def _auto_extend_subscription(
             db,
             subscription,
             prepared.period_days,
-            tariff_id=prepared.tariff_id if is_tariff_change else None,
+            tariff_id=(prepared.tariff_id or subscription.tariff_id) if is_tariff_change or was_trial else None,
             traffic_limit_gb=conversion_traffic_limit_gb if is_tariff_change or was_trial else None,
-            device_limit=prepared.device_limit if is_tariff_change else None,
+            device_limit=prepared.device_limit if is_tariff_change or was_trial else None,
+            connected_squads=prepared.allowed_squads if was_trial else None,
+            paid_trial_conversion=was_trial,
             paid_traffic_reset=(
-                settings.RESET_TRAFFIC_ON_TARIFF_SWITCH if is_tariff_change else settings.RESET_TRAFFIC_ON_PAYMENT
+                was_trial
+                or (settings.RESET_TRAFFIC_ON_TARIFF_SWITCH if is_tariff_change else settings.RESET_TRAFFIC_ON_PAYMENT)
             ),
             commit=False,
         )
@@ -657,7 +672,9 @@ async def _auto_extend_subscription(
 
     subscription_service = SubscriptionService()
     # Сброс трафика: при смене тарифа — по RESET_TRAFFIC_ON_TARIFF_SWITCH, при оплате — по RESET_TRAFFIC_ON_PAYMENT
-    if is_tariff_change:
+    if was_trial:
+        should_reset_traffic = True
+    elif is_tariff_change:
         should_reset_traffic = settings.RESET_TRAFFIC_ON_TARIFF_SWITCH
     else:
         should_reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT
@@ -1074,6 +1091,16 @@ async def _auto_purchase_tariff(
         return False
 
     managed_purchase = getattr(existing_subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+    conversion_candidate = None
+    if existing_subscription is None:
+        from app.database.crud.subscription import resolve_trial_conversion_candidate
+
+        conversion_candidate = await resolve_trial_conversion_candidate(db, user.id, tariff.id)
+    atomic_purchase = (
+        device_checkout
+        or managed_purchase
+        or bool((existing_subscription and existing_subscription.is_trial) or conversion_candidate)
+    )
     # Списываем баланс
     try:
         description = f'Покупка тарифа {tariff.name} на {format_days_declension(period_days)}'
@@ -1102,7 +1129,7 @@ async def _auto_purchase_tariff(
             is_completed=False,
             commit=False,
         )
-        if not device_checkout and not managed_purchase:
+        if not atomic_purchase:
             await db.commit()
         transaction_id = transaction.id
     except Exception as error:
@@ -1131,12 +1158,12 @@ async def _auto_purchase_tariff(
                 connected_squads=squads,
                 paid_traffic_reset=False,
                 reset_used_traffic=reset_used_traffic,
-                **({'commit': False} if device_checkout or managed_purchase else {}),
+                **({'commit': False} if atomic_purchase else {}),
             )
             if was_trial_conversion:
                 subscription.is_trial = False
                 subscription.status = 'active'
-                if not device_checkout and not managed_purchase:
+                if not atomic_purchase:
                     await db.commit()
         else:
             # Создаём новую подписку
@@ -1148,7 +1175,8 @@ async def _auto_purchase_tariff(
                 device_limit=device_limit,
                 connected_squads=squads,
                 tariff_id=tariff.id,
-                **({'commit': False} if device_checkout or managed_purchase else {}),
+                conversion_trial=conversion_candidate,
+                **({'commit': False} if atomic_purchase else {}),
             )
             was_trial_conversion = bool(getattr(subscription, '_converted_from_trial', False))
     except Exception as error:
@@ -1159,7 +1187,7 @@ async def _auto_purchase_tariff(
             exc_info=True,
         )
         await db.rollback()
-        if device_checkout or managed_purchase:
+        if atomic_purchase:
             return False  # Debit, product and intent were rolled back together.
         # Refund and release this checkout only in the same committed transaction.
         try:
@@ -1547,7 +1575,12 @@ async def _auto_purchase_daily_tariff(
             subscription.device_limit = effective_device_limit
             subscription.connected_squads = squads
             subscription.status = 'active'
+            if subscription.is_trial:
+                from app.database.crud.subscription import apply_trial_conversion_defaults
+
+                apply_trial_conversion_defaults(subscription)
             subscription.is_trial = False
+            subscription.traffic_used_gb = 0.0
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
             subscription.pending_panel_expire_at = subscription.end_date
         else:
@@ -3240,6 +3273,31 @@ async def _process_single_cart(
 
     cart_mode = cart_data.get('cart_mode') or cart_data.get('mode')
     cart_sub_id = _safe_int(cart_data.get('subscription_id'))
+    if cart_mode == 'extend' and cart_data.get('source') == 'cabinet' and not cart_data.get('renewal_operation_id'):
+        # Pre-upgrade carts have no consent snapshot: never guess an operation identity.
+        logger.info('Legacy cabinet renewal requires fresh confirmation', user_id=user.id)
+        return False
+    if cart_mode == 'extend' and cart_data.get('renewal_operation_id'):
+        # Cabinet retries and top-up recovery share the same durable operation.
+        from fastapi import HTTPException
+
+        from app.cabinet.routes.subscription_modules.renewal import renew_subscription
+        from app.cabinet.schemas.subscription import RenewalRequest
+
+        try:
+            request = RenewalRequest(
+                operation_id=cart_data['renewal_operation_id'],
+                expected_end_date=cart_data.get('renewal_expected_end_date'),
+                subscription_id=cart_sub_id,
+                period_days=cart_data.get('period_days'),
+            )
+            await renew_subscription(request, user=user, db=db, subscription_id=cart_sub_id)
+        except (HTTPException, ValueError) as error:
+            await db.rollback()
+            logger.info('Saved cabinet renewal not applied', reason=type(error).__name__)
+            return False
+        await _delete_cart_for_subscription(user.id, cart_data)
+        return True
 
     if cart_mode in ('tariff_purchase', 'daily_tariff_purchase') and cart_data.get('selected_device_limit') is not None:
         # This contract validates the exact target and consent under the wallet

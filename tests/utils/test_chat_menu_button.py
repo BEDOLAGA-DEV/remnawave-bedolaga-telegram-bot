@@ -66,3 +66,11 @@ async def test_empty_text_defaults(monkeypatch):
     assert await configure_chat_menu_button(bot) is True
     button = bot.set_chat_menu_button.await_args.kwargs['menu_button']
     assert button.text == 'Кабинет'
+
+
+async def test_network_error_does_not_break_startup(monkeypatch):
+    monkeypatch.setattr('app.utils.chat_menu_button.settings', _fake_settings())
+    bot = AsyncMock()
+    bot.set_chat_menu_button.side_effect = OSError('Connection reset by peer')
+
+    assert await configure_chat_menu_button(bot) is False

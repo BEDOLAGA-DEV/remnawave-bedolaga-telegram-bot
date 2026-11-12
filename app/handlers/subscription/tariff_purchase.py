@@ -3,6 +3,7 @@ from app.services.pricing_engine import TariffSwitchPricingUnavailableError
 
 """Покупка подписки по тарифам."""
 
+import asyncio
 import html
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -2462,7 +2463,12 @@ async def confirm_daily_tariff_purchase(
             subscription.device_limit = effective_device_limit
             subscription.connected_squads = squads
             subscription.status = 'active'
+            if subscription.is_trial:
+                from app.database.crud.subscription import apply_trial_conversion_defaults
+
+                apply_trial_conversion_defaults(subscription)
             subscription.is_trial = False
+            subscription.traffic_used_gb = 0.0
             subscription.end_date = datetime.now(UTC) + timedelta(days=1)
             subscription.pending_panel_expire_at = subscription.end_date
             from sqlalchemy import delete as sql_delete
@@ -3143,7 +3149,12 @@ async def confirm_tariff_extend(
         )
         return
 
-    actual_device_limit = subscription.device_limit or tariff.device_limit
+    conversion_terms = {}
+    if subscription.is_trial:
+        from app.services.trial_conversion_service import paid_trial_renewal_terms
+
+        conversion_terms = await paid_trial_renewal_terms(db, subscription, tariff_id=tariff.id)
+    actual_device_limit = conversion_terms.get('device_limit', subscription.device_limit or tariff.device_limit)
 
     # Calculate price via PricingEngine (handles per-category discounts: period + devices)
     from app.services.pricing_engine import pricing_engine
@@ -3170,7 +3181,8 @@ async def confirm_tariff_extend(
         )
         return
 
-    if await _reject_unavailable_checkout_squads(callback, subscription.connected_squads, texts):
+    checkout_squads = conversion_terms.get('connected_squads', subscription.connected_squads)
+    if await _reject_unavailable_checkout_squads(callback, checkout_squads, texts):
         return
 
     # Отвечаем на callback СРАЗУ — до тяжёлых операций (панель, транзакции),
@@ -3213,6 +3225,7 @@ async def confirm_tariff_extend(
                 tariff_id=tariff.id if was_trial else None,
                 traffic_limit_gb=tariff.traffic_limit_gb if was_trial else None,
                 device_limit=actual_device_limit if was_trial else None,
+                connected_squads=checkout_squads if was_trial else None,
                 paid_traffic_reset=settings.RESET_TRAFFIC_ON_PAYMENT or was_trial,
                 commit=False,
             )
@@ -4333,6 +4346,20 @@ async def confirm_daily_tariff_switch(
         await callback.answer(texts.t('NO_SUBSCRIPTION_ERROR', '❌ У вас нет активной подписки'), show_alert=True)
         return
 
+    from sqlalchemy import select
+
+    from app.database.models import Subscription
+
+    subscription = (
+        await db.execute(
+            select(Subscription)
+            .where(Subscription.id == subscription.id, Subscription.user_id == db_user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    was_trial = bool(subscription.is_trial)
+
     # Проверяем разрешение на смену в данном направлении
     if subscription.tariff_id and subscription.tariff_id != tariff_id:
         cur_tariff_daily = await get_tariff_by_id(db, subscription.tariff_id)
@@ -4383,8 +4410,10 @@ async def confirm_daily_tariff_switch(
             f'Смена на суточный тариф {tariff.name} (первый день)',
             consume_promo_offer=consume_promo,
             mark_as_paid_subscription=True,
+            commit=False,
         )
         if not success:
+            await db.rollback()
             try:
                 await callback.message.edit_text(texts.t('TARIFF_PURCHASE_CHARGE_ERROR', '❌ Ошибка списания баланса'))
             except Exception:
@@ -4400,15 +4429,23 @@ async def confirm_daily_tariff_switch(
             subscription.daily_devices_billing_version = 0
         subscription.tariff_id = tariff.id
         subscription.traffic_limit_gb = tariff.traffic_limit_gb
-        subscription.device_limit = calc_device_limit_on_tariff_switch(
-            current_device_limit=subscription.device_limit,
-            old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
-            new_tariff_device_limit=tariff.device_limit,
-            max_device_limit=getattr(tariff, 'max_device_limit', None),
+        subscription.device_limit = (
+            tariff.device_limit
+            if was_trial
+            else calc_device_limit_on_tariff_switch(
+                current_device_limit=subscription.device_limit,
+                old_tariff_device_limit=old_tariff.device_limit if old_tariff else None,
+                new_tariff_device_limit=tariff.device_limit,
+                max_device_limit=getattr(tariff, 'max_device_limit', None),
+            )
         )
         subscription.connected_squads = squads
         subscription.status = 'active'
-        subscription.is_trial = False  # Сбрасываем триальный статус
+        if was_trial:
+            from app.database.crud.subscription import apply_trial_conversion_defaults
+
+            apply_trial_conversion_defaults(subscription)
+        subscription.is_trial = False
         subscription.is_daily_paused = False
         subscription.last_daily_charge_at = datetime.now(UTC)
         # Для суточного тарифа ставим срок на 1 день
@@ -4425,12 +4462,30 @@ async def confirm_daily_tariff_switch(
         subscription.traffic_reset_at = None
 
         # Счётчик трафика обнуляет только ОПЛАЧЕННОЕ переключение (см. tariff_switch_policy).
-        reset_used_traffic = should_reset_used_traffic(final_daily_price)
+        reset_used_traffic = was_trial or should_reset_used_traffic(final_daily_price)
         if reset_used_traffic:
             subscription.traffic_used_gb = 0.0
 
+        transaction = await create_transaction(
+            db,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_daily_price,
+            description=f'Смена на суточный тариф {tariff.name} (первый день)',
+            commit=False,
+        )
         await db.commit()
         await db.refresh(subscription)
+        from app.database.crud.transaction import emit_transaction_side_effects
+
+        await emit_transaction_side_effects(
+            db,
+            transaction,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=final_daily_price,
+            description=f'Смена на суточный тариф {tariff.name} (первый день)',
+        )
 
         # Обновляем пользователя в Remnawave (сброс трафика по админ-настройке)
         try:
@@ -4494,15 +4549,6 @@ async def confirm_daily_tariff_switch(
             except Exception as e:
                 logger.error('Ошибка сброса устройств при смене тарифа', error=e)
 
-        # Создаем транзакцию
-        await create_transaction(
-            db,
-            user_id=db_user.id,
-            type=TransactionType.SUBSCRIPTION_PAYMENT,
-            amount_kopeks=final_daily_price,
-            description=f'Смена на суточный тариф {tariff.name} (первый день)',
-        )
-
         # Отправляем уведомление админу
         try:
             admin_notification_service = AdminNotificationService(callback.bot)
@@ -4512,7 +4558,7 @@ async def confirm_daily_tariff_switch(
                 subscription,
                 None,
                 1,  # 1 день
-                was_trial_conversion=False,
+                was_trial_conversion=was_trial,
                 amount_kopeks=final_daily_price,
                 purchase_type='tariff_switch',
             )
@@ -4555,37 +4601,12 @@ async def confirm_daily_tariff_switch(
             parse_mode='HTML',
         )
 
-    except Exception as e:
-        logger.error('Ошибка при смене на суточный тариф', error=e, exc_info=True)
+    except asyncio.CancelledError:
         await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            refund_success = await add_user_balance(
-                db,
-                db_user,
-                final_daily_price,
-                'Возврат: ошибка смены на суточный тариф',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-                commit=False,
-            )
-            if not refund_success:
-                await _persist_failed_refund(
-                    user_id=db_user.id,
-                    amount_kopeks=final_daily_price,
-                    reason='Возврат: ошибка смены на суточный тариф',
-                    error=Exception('add_user_balance returned False'),
-                )
-            await db.commit()
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: не удалось вернуть средства после ошибки смены на суточный тариф',
-                user_id=db_user.id,
-                price_kopeks=final_daily_price,
-                refund_error=refund_error,
-            )
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error('Ошибка при смене на суточный тариф', error=e, exc_info=True)
         try:
             await callback.message.edit_text(
                 texts.t('TARIFF_SWITCH_ERROR', '❌ Произошла ошибка при переключении тарифа')
@@ -5467,6 +5488,14 @@ async def confirm_instant_switch(
     await undo_grace_overlay_echo(db, subscription)
     remaining_days = remaining_days_for_switch(subscription.end_date)
 
+    # An old confirmation button must not charge a trial or a subscription
+    # whose paid access was disabled/expired after opening the switch screen.
+    if subscription.is_trial or subscription.status not in ('active', 'limited') or remaining_days <= 0:
+        await callback.answer(
+            texts.t('TARIFF_SWITCH_ERROR', '❌ Произошла ошибка при переключении тарифа'), show_alert=True
+        )
+        return
+
     # Use full TariffSwitchResult to access offer_discount_pct for consume_promo_offer flag
     from app.services.pricing_engine import pricing_engine
 
@@ -5623,6 +5652,12 @@ async def confirm_instant_switch(
             subscription.is_trial = False
             subscription.is_daily_paused = False
             subscription.last_daily_charge_at = datetime.now(UTC)
+
+        # Новый тариф дал трафик — снять «трафик кончился», иначе открытый
+        # грейс удержит Telegram-only оверлей в панели.
+        from app.services.tariff_switch_policy import lift_traffic_limit_after_switch
+
+        lift_traffic_limit_after_switch(subscription)
 
         await db.commit()
         await db.refresh(subscription)

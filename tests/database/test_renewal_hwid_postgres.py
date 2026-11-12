@@ -60,13 +60,16 @@ class Panel(RemnaWaveAPI):
 @pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('expired', [False, True])
 @pytest.mark.parametrize('trial', [False, True])
+@pytest.mark.parametrize(('carry_trial', 'reset_free_days'), [(False, False), (True, False), (True, True)])
 async def test_same_tariff_90_day_purchase_preserves_hwid(
-    postgres_database, monkeypatch, flow, reset_devices, multi, expired, trial
+    postgres_database, monkeypatch, flow, reset_devices, multi, expired, trial, carry_trial, reset_free_days
 ):
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
     monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
     monkeypatch.setattr(settings, 'RESET_DEVICES_ON_RENEWAL', reset_devices)
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', True)
+    monkeypatch.setattr(settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', carry_trial)
+    monkeypatch.setattr(settings, 'TARIFF_SWITCH_RESET_FREE_DAYS', reset_free_days)
     monkeypatch.setattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', False)
     monkeypatch.setattr(auto, '_delete_cart_for_subscription', AsyncMock())
     monkeypatch.setattr(auto, 'clear_subscription_checkout_draft', AsyncMock())
@@ -143,7 +146,8 @@ async def test_same_tariff_90_day_purchase_preserves_hwid(
         assert panel.devices[9002] == ['other']
         assert sub.status == 'active' and not sub.is_trial and sub.tariff_id == 1
         assert sub.device_limit == 2 and sub.traffic_used_gb == 0
-        expected_end = (now if expired else end) + timedelta(days=90)
+        discard_trial_days = trial and (not carry_trial or reset_free_days)
+        expected_end = (now if expired or discard_trial_days else end) + timedelta(days=90)
         assert abs((sub.end_date - expected_end).total_seconds()) < 10
         assert abs((panel.account.expire_at - sub.end_date).total_seconds()) < 1
         assert user.balance_kopeks == 9100

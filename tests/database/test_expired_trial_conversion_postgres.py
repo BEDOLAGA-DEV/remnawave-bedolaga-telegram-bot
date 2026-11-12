@@ -108,14 +108,23 @@ class Panel(RemnaWaveAPI):
 @pytest.mark.parametrize('flow', ['auto', 'cabinet', 'telegram'])
 @pytest.mark.parametrize('daily', [False, True])
 async def test_expired_trial_purchase_preserves_identity(
-    postgres_database, monkeypatch, flow, daily, missing=False, hwid_failure=False, prequeued=None
+    postgres_database,
+    monkeypatch,
+    flow,
+    daily,
+    missing=False,
+    hwid_failure=False,
+    prequeued=None,
+    trial_kind='other',
+    active_trial=False,
+    multi=True,
 ):
     monkeypatch.setattr(settings, 'ADMIN_NOTIFICATIONS_ENABLED', True)
     monkeypatch.setattr(
         'app.bot_factory.create_bot', lambda: SimpleNamespace(session=SimpleNamespace(close=AsyncMock()))
     )
     monkeypatch.setattr(settings, 'SALES_MODE', 'tariffs')
-    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', True)
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
     monkeypatch.setattr(settings, 'RESET_DEVICES_ON_RENEWAL', False)
     monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_TARIFF_SWITCH', False)
     monkeypatch.setattr(settings, 'TRIAL_ADD_REMAINING_DAYS_TO_PAID', False)
@@ -167,13 +176,13 @@ async def test_expired_trial_purchase_preserves_identity(
                 Subscription(
                     id=10,
                     user_id=1,
-                    tariff_id=2,
+                    tariff_id={'other': 2, 'legacy': None, 'same': 1}[trial_kind],
                     remnawave_id=9001,
                     remnawave_short_id='test-trial',
                     subscription_url='https://vpn.example/sub/test',
-                    status='expired',
+                    status='active' if active_trial else 'expired',
                     is_trial=True,
-                    end_date=now - timedelta(days=1),
+                    end_date=now + timedelta(days=2 if active_trial else -1),
                     traffic_used_gb=17,
                     device_limit=1,
                 ),
@@ -191,6 +200,10 @@ async def test_expired_trial_purchase_preserves_identity(
                 ),
             ]
         )
+        if not multi:
+            await db.flush()
+            await db.delete(await db.get(Subscription, 20))
+            (await db.get(User, 1)).remnawave_id = 9001
         await db.commit()
         user = await get_user_by_id(db, 1)
         if flow == 'auto':
@@ -233,7 +246,7 @@ async def test_expired_trial_purchase_preserves_identity(
             finally:
                 await engine.dispose()
         subs = (await db.scalars(select(Subscription).where(Subscription.user_id == 1))).all()
-        assert len(subs) == 2, 'Expired trial was left behind and a second paid row was inserted'
+        assert len(subs) == (2 if multi else 1), 'Expired trial was left behind and a second paid row was inserted'
         sub = await db.get(Subscription, 10)
         await db.refresh(sub)
         await db.refresh(user)
@@ -247,8 +260,9 @@ async def test_expired_trial_purchase_preserves_identity(
         assert user.balance_kopeks == 10000 - (100 if daily else 300)
         payments = (await db.scalars(select(Transaction))).all()
         assert len(payments) == 1 and payments[0].amount_kopeks == -(100 if daily else 300)
-        assert (await db.get(Subscription, 20)).end_date == now + timedelta(days=50)
-        assert (await db.get(Subscription, 20)).traffic_used_gb == 7
+        if multi:
+            assert (await db.get(Subscription, 20)).end_date == now + timedelta(days=50)
+            assert (await db.get(Subscription, 20)).traffic_used_gb == 7
         assert panel.traffic_used == 0
         attempts = 3 if hwid_failure else 1
         assert panel.creates == int(missing) and len(panel.patches) == (0 if missing else attempts)
@@ -391,3 +405,14 @@ async def test_missing_trial_panel_account_is_recreated_without_a_second_databas
     postgres_database, monkeypatch, flow
 ):
     await test_expired_trial_purchase_preserves_identity(postgres_database, monkeypatch, flow, False, missing=True)
+
+
+@pytest.mark.parametrize('flow', ['auto', 'cabinet', 'telegram'])
+@pytest.mark.parametrize('daily', [False, True])
+@pytest.mark.parametrize('trial_kind', ['legacy', 'same', 'other'])
+@pytest.mark.parametrize('active_trial', [False, True])
+@pytest.mark.parametrize('multi', [False, True])
+async def test_trial_conversion_matrix(postgres_database, monkeypatch, flow, daily, trial_kind, active_trial, multi):
+    await test_expired_trial_purchase_preserves_identity(
+        postgres_database, monkeypatch, flow, daily, trial_kind=trial_kind, active_trial=active_trial, multi=multi
+    )

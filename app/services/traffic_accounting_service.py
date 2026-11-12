@@ -144,13 +144,46 @@ async def lock_accounting_subscription(db, subscription_id: int):
     return subscription, bool(open_grace or subscription.grace_session_open)
 
 
-async def _check_migration_preconditions(db, subscription, grace_open):
+async def require_limited_grace_topup(db, subscription, *, require_exhausted_snapshot=False):
+    """Validate paid recovery under the existing User/grace/Subscription lease."""
+    from app.services.grace_access_runtime import SQLAlchemyGraceSessionStore, grace_access_runtime
+    from app.services.grace_access_service import GraceAccessMode, GraceReason, GraceSessionState
+
+    session = await SQLAlchemyGraceSessionStore(db, subscription_id=subscription.id).get_open(subscription.id)
+    now = datetime.now(UTC)
+    if (
+        grace_access_runtime.mode not in {GraceAccessMode.ACTIVE, GraceAccessMode.DRAIN}
+        or session is None
+        or session.reason is not GraceReason.LIMITED
+        or session.state is not GraceSessionState.ACTIVE
+        or subscription.is_trial
+        or subscription.user.status != 'active'
+        or subscription.status not in {'limited', 'active'}
+        or subscription.end_date is None
+        or subscription.end_date <= now
+        or session.billing_before.end_at != subscription.end_date
+        or (
+            require_exhausted_snapshot
+            and (
+                not session.panel_before.traffic_is_known
+                or session.panel_before.traffic_limit_bytes <= 0
+                or session.panel_before.used_traffic_bytes < session.panel_before.traffic_limit_bytes
+            )
+        )
+    ):
+        raise AccountingConflict('Traffic top-up requires active paid traffic-limited grace')
+    return session
+
+
+async def _check_migration_preconditions(db, subscription, grace_open, *, allow_limited_grace=False):
     from sqlalchemy import or_, select
 
     from app.database.models import PaidTrafficResetIntent
 
     if grace_open:
-        raise AccountingConflict('Cannot migrate an open grace overlay')
+        if not allow_limited_grace:
+            raise AccountingConflict('Cannot migrate an open grace overlay')
+        await require_limited_grace_topup(db, subscription, require_exhausted_snapshot=True)
     unresolved = await db.scalar(
         select(PaidTrafficResetIntent.id)
         .where(
@@ -235,7 +268,9 @@ async def _fresh_panel(db, api, subscription):
     return panel
 
 
-async def ensure_managed_account(session_factory, api, subscription_id: int, *, now=None, timezone='UTC'):
+async def ensure_managed_account(
+    session_factory, api, subscription_id: int, *, now=None, timezone='UTC', allow_limited_grace=False
+):
     """Durable, resumable preflight BEFORE opening the money transaction.
 
     Commits only sessions owned here. The prepared fence commits before changing
@@ -259,7 +294,7 @@ async def ensure_managed_account(session_factory, api, subscription_id: int, *, 
         loaded = await load_account(db, subscription_id)
         if loaded is not None and loaded[1].phase in {'ready', 'unlimited'}:
             return
-        await _check_migration_preconditions(db, subscription, grace_open)
+        await _check_migration_preconditions(db, subscription, grace_open, allow_limited_grace=allow_limited_grace)
         if loaded is None:
             panel = await _fresh_panel(db, api, subscription)
             counters = read_counters(panel)
@@ -270,7 +305,7 @@ async def ensure_managed_account(session_factory, api, subscription_id: int, *, 
                 next_refresh is None or abs((_aware(advertised) - next_refresh).total_seconds()) > 60
             ):
                 raise AccountingConflict('Panel traffic calendar disagrees with configured timezone')
-            await initialize_account(
+            state = await initialize_account(
                 db,
                 subscription_id,
                 TrafficAccount(counters.identity, counters.lifetime_bytes, counters.used_bytes, ()),
@@ -279,12 +314,13 @@ async def ensure_managed_account(session_factory, api, subscription_id: int, *, 
                 anchor=panel.created_at,
                 next_refresh_at=next_refresh,
             )
+            state.grace_excluded = grace_open
             subscription.traffic_accounting_mode = 'migrating'
 
     # A separate transaction makes the fence survive failed or timed-out writes.
     async with session_factory() as db, db.begin():
         subscription, grace_open = await lock_accounting_subscription(db, subscription_id)
-        await _check_migration_preconditions(db, subscription, grace_open)
+        await _check_migration_preconditions(db, subscription, grace_open, allow_limited_grace=allow_limited_grace)
         account, state = await load_account(db, subscription_id)
         if state.phase == 'ready':
             return
@@ -325,17 +361,28 @@ async def ensure_managed_account(session_factory, api, subscription_id: int, *, 
             Allowance('base:migration', base_gb * 1024**3, expiry),
             *(Allowance(f'purchase:{p.id}', p.traffic_gb * 1024**3, _aware(p.expires_at)) for p in purchases),
         )
-        migrated = migrate_preserving_available(
-            panel_identity=counters.identity,
-            lifetime_bytes=counters.lifetime_bytes,
-            used_bytes=counters.used_bytes,
-            panel_limit_bytes=panel.traffic_limit_bytes,
-            allowances=grants,
-            now=moment,
-            carry_expires_at=expiry,
-        )
+        if grace_open:
+            # The paid quota was exhausted before grace, including when grace
+            # reset the panel counter to zero. Never migrate the overlay ceiling.
+            migrated = TrafficAccount(
+                counters.identity,
+                counters.lifetime_bytes,
+                counters.used_bytes,
+                tuple(replace(grant, remaining_bytes=0) for grant in grants if grant.expires_at > moment),
+            )
+        else:
+            migrated = migrate_preserving_available(
+                panel_identity=counters.identity,
+                lifetime_bytes=counters.lifetime_bytes,
+                used_bytes=counters.used_bytes,
+                panel_limit_bytes=panel.traffic_limit_bytes,
+                allowances=grants,
+                now=moment,
+                carry_expires_at=expiry,
+            )
         await save_account(db, subscription_id, migrated, expected_revision=state.revision)
         state.phase = 'ready'
+        state.grace_excluded = grace_open
         state.next_refresh_at = next_refresh
         state.base_budget_bytes = base_gb * 1024**3
         state.last_base_operation_at = moment

@@ -1,3 +1,4 @@
+import asyncio
 import html
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -2586,7 +2587,22 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
         return
 
     purchase_completed = False
-    managed_purchase = getattr(db_user.subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+    from sqlalchemy import select
+
+    from app.database.models import Subscription
+
+    existing_subscription = db_user.subscription
+    if existing_subscription is not None:
+        existing_subscription = (
+            await db.execute(
+                select(Subscription)
+                .where(Subscription.id == existing_subscription.id, Subscription.user_id == db_user.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+    managed_purchase = getattr(existing_subscription, 'traffic_accounting_mode', None) in ('managed', 'migrating')
+    atomic_purchase = managed_purchase or bool(existing_subscription and existing_subscription.is_trial)
     purchase_language = db_user.language
 
     try:
@@ -2597,7 +2613,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
             f'Покупка подписки на {data["period_days"]} дней',
             consume_promo_offer=promo_offer_discount_value > 0,
             mark_as_paid_subscription=True,
-            commit=not managed_purchase,
+            commit=not atomic_purchase,
         )
 
         if not success:
@@ -2632,7 +2648,6 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
         # Multi-tariff note: confirm_purchase runs in classic (non-tariff) mode only.
         # In tariff mode, start_subscription_purchase redirects to show_tariffs_list.
         # db_user.subscription is the correct single subscription for trial conversion.
-        existing_subscription = db_user.subscription
         if devices_selection_enabled:
             selected_devices = devices_selected
         else:
@@ -2674,7 +2689,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                         payment_method='balance',
                         first_payment_amount_kopeks=final_price,
                         first_paid_period_days=period_days,
-                        commit=not managed_purchase,
+                        commit=not atomic_purchase,
                     )
                     logger.info(
                         'Записана конверсия: дн. триал → дн. платная за ₽',
@@ -2741,9 +2756,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
 
             existing_subscription.traffic_used_gb = 0.0
 
-            if managed_purchase:
-                from app.services.traffic_base_grant_service import stage_paid_base_grant
-
+            if atomic_purchase:
                 transaction = await create_transaction(
                     db=db,
                     user_id=db_user.id,
@@ -2752,9 +2765,12 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     description=f'Подписка на {period_days} дней ({months_in_period} мес)',
                     commit=False,
                 )
-                await stage_paid_base_grant(
-                    db, existing_subscription, operation_key=f'classic-purchase:{transaction.id}'
-                )
+                if managed_purchase:
+                    from app.services.traffic_base_grant_service import stage_paid_base_grant
+
+                    await stage_paid_base_grant(
+                        db, existing_subscription, operation_key=f'classic-purchase:{transaction.id}'
+                    )
 
             await db.commit()
             await db.refresh(existing_subscription)
@@ -2802,7 +2818,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 traffic_gb=final_traffic_gb,
             )
 
-        if managed_purchase:
+        if atomic_purchase:
             from app.database.crud.transaction import emit_transaction_side_effects
 
             await emit_transaction_side_effects(
@@ -2869,7 +2885,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     action='create',
                 )
 
-        if not managed_purchase:
+        if not atomic_purchase:
             transaction = await create_transaction(
                 db=db,
                 user_id=db_user.id,
@@ -3069,10 +3085,14 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
             final_price=final_price / 100,
         )
 
-    except Exception as e:
-        logger.error('Ошибка покупки подписки', error=e)
-        if managed_purchase:
+    except asyncio.CancelledError:
+        if atomic_purchase:
             await db.rollback()
+        raise
+    except Exception as e:
+        if atomic_purchase:
+            await db.rollback()
+        logger.error('Ошибка покупки подписки', error=e)
         await callback.message.edit_text(texts.ERROR, reply_markup=get_back_keyboard(purchase_language))
 
     if purchase_completed:
@@ -4643,8 +4663,9 @@ def register_handlers(dp: Dispatcher):
         F.data == 'clear_saved_cart',
     )
 
-    from .cispay_recurrent import handle_cispay_recurrent, purchase_cispay_from_tariff
+    from .cispay_recurrent import handle_cispay_recurrent, process_cispay_period, purchase_cispay_from_tariff
 
+    dp.message.register(process_cispay_period, SubscriptionStates.entering_cispay_period)
     dp.callback_query.register(handle_cispay_recurrent, F.data.startswith('cisrec:'))
     dp.callback_query.register(purchase_cispay_from_tariff, F.data.startswith('tariff_cispay:'))
     dp.callback_query.register(handle_autopay_menu, F.data == 'subscription_autopay')
@@ -5102,6 +5123,19 @@ async def _extend_existing_subscription(
     from app.services.subscription_service import SubscriptionService
 
     db_user = await lock_user_for_pricing(db, db_user.id)
+    from sqlalchemy import select
+
+    from app.database.crud.subscription import extend_subscription
+    from app.database.models import Subscription
+
+    current_subscription = (
+        await db.execute(
+            select(Subscription)
+            .where(Subscription.id == current_subscription.id, Subscription.user_id == db_user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
     texts = get_texts(db_user.language)
 
     # Рассчитываем цену подписки (group discounts per-category)
@@ -5187,95 +5221,71 @@ async def _extend_existing_subscription(
         await callback.answer()
         return
 
-    # Списываем средства
-    success = await subtract_user_balance(
-        db,
-        db_user,
-        price_kopeks,
-        f'Продление подписки на {period_days} дней',
-        consume_promo_offer=consume_promo,
-        mark_as_paid_subscription=True,
-    )
-
-    if not success:
-        await callback.answer(
-            texts.t('SUBSCRIPTION_UI_DEBIT_WARNING', '⚠ Ошибка списания средств'),
-            show_alert=True,
-        )
-        return
-
-    # Обновляем параметры подписки
-    current_time = datetime.now(UTC)
+    was_trial = bool(current_subscription.is_trial)
     old_end_date = current_subscription.end_date
-
-    # Обновляем параметры в зависимости от типа текущей подписки
-    if current_subscription.is_trial:
-        # При продлении триальной подписки переводим её в обычную
-        current_subscription.is_trial = False
-        apply_trial_conversion_defaults(current_subscription)
-        current_subscription.status = 'active'
-        # Убираем ограничения с триальной подписки
-        current_subscription.traffic_limit_gb = traffic_limit_gb
-        current_subscription.device_limit = device_limit
-        # Если указан squad_uuid, добавляем его к существующим серверам
-        if squad_uuid and squad_uuid not in current_subscription.connected_squads:
-            # Используем += для безопасного добавления в список SQLAlchemy
-            current_subscription.connected_squads = current_subscription.connected_squads + [squad_uuid]
-    else:
-        # Для обычной подписки просто продлеваем
-        # Обновляем трафик и устройства, если нужно
-        if traffic_limit_gb != 0:  # Если не безлимит, обновляем
-            current_subscription.traffic_limit_gb = traffic_limit_gb
-        current_subscription.device_limit = max(current_subscription.device_limit, device_limit)
-        # Если указан squad_uuid и его ещё нет в подписке, добавляем
-        if squad_uuid and squad_uuid not in current_subscription.connected_squads:
-            # Используем += для безопасного добавления в список SQLAlchemy
-            current_subscription.connected_squads = current_subscription.connected_squads + [squad_uuid]
-
-    # Продлеваем подписку
-    if current_subscription.end_date > current_time:
-        # Если подписка ещё активна, добавляем дни к текущей дате окончания
-        new_end_date = current_subscription.end_date + timedelta(days=period_days)
-    else:
-        # Если подписка уже истекла, начинаем от текущего времени
-        new_end_date = current_time + timedelta(days=period_days)
-
-    current_subscription.end_date = new_end_date
-    current_subscription.pending_panel_expire_at = current_subscription.end_date
-    current_subscription.updated_at = current_time
-
-    # Сохраняем изменения
+    reset_traffic = settings.RESET_TRAFFIC_ON_PAYMENT or was_trial
+    description = f'Продление подписки на {period_days} дней'
+    paid_squads = list(current_subscription.connected_squads or [])
+    if squad_uuid and squad_uuid not in paid_squads:
+        paid_squads.append(squad_uuid)
     try:
-        await db.commit()
-    except Exception as commit_error:
-        logger.error('Ошибка сохранения продления подписки', error=commit_error, exc_info=True)
-        await db.rollback()
-        # Compensating refund: balance was already committed by subtract_user_balance
-        try:
-            from app.database.crud.user import add_user_balance
-
-            await add_user_balance(
-                db,
-                db_user,
-                price_kopeks,
-                'Возврат: ошибка продления подписки',
-                create_transaction=True,
-                transaction_type=TransactionType.REFUND,
-            )
-        except Exception as refund_error:
-            logger.critical(
-                'CRITICAL: не удалось вернуть средства после ошибки продления',
-                user_id=db_user.id,
-                price_kopeks=price_kopeks,
-                refund_error=refund_error,
-            )
-        await callback.answer(
-            texts.t('SUBSCRIPTION_UI_RENEW_FAILED', '⚠ Ошибка продления подписки'),
-            show_alert=True,
+        success = await subtract_user_balance(
+            db,
+            db_user,
+            price_kopeks,
+            description,
+            consume_promo_offer=consume_promo,
+            mark_as_paid_subscription=True,
+            commit=False,
         )
+        if not success:
+            await db.rollback()
+            await callback.answer(
+                texts.t('SUBSCRIPTION_UI_DEBIT_WARNING', '⚠ Ошибка списания средств'), show_alert=True
+            )
+            return
+        current_subscription = await extend_subscription(
+            db,
+            current_subscription,
+            period_days,
+            paid_trial_conversion=was_trial,
+            traffic_limit_gb=traffic_limit_gb if was_trial or traffic_limit_gb != 0 else None,
+            device_limit=device_limit if was_trial else max(current_subscription.device_limit or 0, device_limit),
+            connected_squads=([squad_uuid] if squad_uuid else []) if was_trial else paid_squads,
+            reset_used_traffic=reset_traffic,
+            paid_traffic_reset=reset_traffic,
+            commit=False,
+        )
+        transaction = await create_transaction(
+            db=db,
+            user_id=db_user.id,
+            type=TransactionType.SUBSCRIPTION_PAYMENT,
+            amount_kopeks=price_kopeks,
+            description=description,
+            commit=False,
+        )
+        await db.commit()
+    except asyncio.CancelledError:
+        await db.rollback()
+        raise
+    except Exception as error:
+        await db.rollback()
+        logger.error('Ошибка сохранения продления подписки', error=error, exc_info=True)
+        await callback.answer(texts.t('SUBSCRIPTION_UI_RENEW_FAILED', '⚠ Ошибка продления подписки'), show_alert=True)
         return
     await db.refresh(current_subscription)
     await db.refresh(db_user)
+    new_end_date = current_subscription.end_date
+    from app.database.crud.transaction import emit_transaction_side_effects
+
+    await emit_transaction_side_effects(
+        db,
+        transaction,
+        user_id=db_user.id,
+        type=TransactionType.SUBSCRIPTION_PAYMENT,
+        amount_kopeks=price_kopeks,
+        description=description,
+    )
 
     # Обновляем пользователя в Remnawave
     subscription_service = SubscriptionService()
@@ -5283,7 +5293,7 @@ async def _extend_existing_subscription(
         remnawave_result = await subscription_service.update_remnawave_user(
             db,
             current_subscription,
-            reset_traffic=settings.RESET_TRAFFIC_ON_PAYMENT,
+            reset_traffic=reset_traffic,
             reset_reason='продление подписки',
         )
         if remnawave_result:
@@ -5299,15 +5309,6 @@ async def _extend_existing_subscription(
             user_id=db_user.id,
             action='update',
         )
-
-    # Создаём транзакцию
-    transaction = await create_transaction(
-        db=db,
-        user_id=db_user.id,
-        type=TransactionType.SUBSCRIPTION_PAYMENT,
-        amount_kopeks=price_kopeks,
-        description=f'Продление подписки на {period_days} дней',
-    )
 
     # Отправляем уведомление админу
     try:
@@ -5336,7 +5337,7 @@ async def _extend_existing_subscription(
     )
 
     # Если это была триальная подписка, добавляем информацию о преобразовании
-    if current_subscription.is_trial:
+    if was_trial:
         success_message += texts.t('SUBSCRIPTION_UI_TRIAL_CONVERTED', '\n🎯 Триальная подписка преобразована в платную')
 
     await callback.message.edit_text(success_message, reply_markup=get_back_keyboard(db_user.language))

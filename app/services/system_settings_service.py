@@ -90,6 +90,10 @@ class BotConfigurationService:
     # Ключи, удалённые в ходе миграций. Строки в system_settings остаются, но
     # больше ни на что не влияют — молчать об этом нельзя.
     _RETIRED_SETTINGS: ClassVar[dict[str, str]] = {
+        'NOTIFICATION_RETRY_ATTEMPTS': 'Удалена неработавшая настройка; замены нет, поведение не изменилось',
+        'NOTIFICATION_CACHE_HOURS': 'Удалена неработавшая настройка; замены нет, поведение не изменилось',
+        'MONITORING_LOGS_RETENTION_DAYS': 'Удалена неработавшая настройка; замены нет, поведение не изменилось',
+        'REFERRAL_NOTIFICATION_RETRY_ATTEMPTS': 'Удалена неработавшая настройка; замены нет, поведение не изменилось',
         'TRAFFIC_EXCLUDED_USER_UUIDS': 'TRAFFIC_EXCLUDED_USER_IDS (значения — числовые id панели, не UUID)',
     }
 
@@ -452,9 +456,6 @@ class BotConfigurationService:
         'RESET_DEVICES_ON_RENEWAL': 'SUBSCRIPTIONS_CORE',
         'LOW_BALANCE_ALERT_EXPIRY_DAYS': 'NOTIFICATIONS',
         'ENABLE_NOTIFICATIONS': 'NOTIFICATIONS',
-        'NOTIFICATION_RETRY_ATTEMPTS': 'NOTIFICATIONS',
-        'NOTIFICATION_CACHE_HOURS': 'NOTIFICATIONS',
-        'MONITORING_LOGS_RETENTION_DAYS': 'MONITORING',
         'MONITORING_INTERVAL': 'MONITORING',
         'TRAFFIC_MONITORING_ENABLED': 'MONITORING',
         'TRAFFIC_MONITORING_INTERVAL_HOURS': 'MONITORING',

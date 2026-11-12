@@ -94,6 +94,7 @@ async def test_classic_purchase_counts_trial_remainder_once(monkeypatch, flow, c
         operation = m.MiniAppSubscriptionPurchaseService().submit_purchase(db, context, pricing)
     elif flow == 'telegram':
         m = telegram_purchase
+        db.execute.return_value = SimpleNamespace(scalar_one=lambda: subscription)
         from app.services.pricing_engine import PricingEngine, pricing_engine
 
         monkeypatch.setattr(m, 'datetime', FrozenDateTime)

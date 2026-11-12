@@ -10,11 +10,13 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database.crud.tariff import get_tariff_by_id
-from app.database.models import PaymentMethod, SubscriptionStatus, User
+from app.database.models import PaymentMethod, Subscription, SubscriptionRenewalOperation, SubscriptionStatus, User
 from app.services.pricing_engine import pricing_engine
 from app.services.subscription_renewal_service import (
     SubscriptionRenewalChargeError,
@@ -122,13 +124,39 @@ async def renew_subscription(
     # Support subscription_id from both query param and body (backward compat)
     from .helpers import resolve_subscription
 
+    if subscription_id and request.subscription_id and subscription_id != request.subscription_id:
+        raise HTTPException(status_code=409, detail='Conflicting subscription identifiers')
     _sub_id = subscription_id or request.subscription_id
+    from app.database.crud.user import lock_user_for_pricing
+
+    user = await lock_user_for_pricing(db, user.id)
+    previous = await db.get(SubscriptionRenewalOperation, (user.id, str(request.operation_id)))
+    if previous is not None:
+        if (
+            previous.period_days != request.period_days
+            or previous.expected_end_date != request.expected_end_date
+            or (_sub_id is not None and previous.subscription_id != _sub_id)
+        ):
+            raise HTTPException(status_code=409, detail='Renewal operation parameters changed')
+        return previous.response
     subscription = await resolve_subscription(db, user, _sub_id)
     if not subscription:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='No subscription found',
         )
+
+    subscription = (
+        await db.execute(
+            select(Subscription)
+            .options(selectinload(Subscription.tariff))
+            .where(Subscription.id == subscription.id, Subscription.user_id == user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    if subscription.end_date != request.expected_end_date:
+        raise HTTPException(status_code=409, detail='Subscription changed; reload before renewing')
 
     # Classic subscriptions cannot be renewed when tariff mode is enabled
     if settings.is_tariffs_mode() and not subscription.tariff_id:
@@ -160,11 +188,6 @@ async def renew_subscription(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Selected renewal period is not available',
         )
-
-    # Lock user row to prevent TOCTOU on promo-offer state
-    from app.database.crud.user import lock_user_for_pricing
-
-    user = await lock_user_for_pricing(db, user.id)
 
     # Unified pricing via PricingEngine
     pricing = await pricing_engine.calculate_renewal_price(
@@ -213,6 +236,8 @@ async def renew_subscription(
         # Save cart for auto-purchase after balance top-up
         cart_data: dict[str, Any] = {
             'cart_mode': 'extend',
+            'renewal_operation_id': str(request.operation_id),
+            'renewal_expected_end_date': request.expected_end_date.isoformat(),
             'subscription_id': subscription.id,
             'tariff_id': tariff_id,
             'period_days': request.period_days,
@@ -261,14 +286,33 @@ async def renew_subscription(
     renewal_description = f'Продление подписки на {request.period_days} дней' + (f' ({tariff.name})' if tariff else '')
     renewal_service = SubscriptionRenewalService()
 
+    response: dict[str, Any] = {
+        'message': 'Subscription renewed successfully',
+        'amount_paid_kopeks': price_kopeks,
+    }
+    if promo_offer_discount_value > 0:
+        response.update(
+            promo_discount_percent=promo_offer_discount_percent,
+            promo_discount_amount_kopeks=promo_offer_discount_value,
+            original_price_kopeks=original_price_kopeks,
+        )
+    operation = SubscriptionRenewalOperation(
+        user_id=user.id,
+        operation_id=str(request.operation_id),
+        subscription_id=subscription.id,
+        period_days=request.period_days,
+        expected_end_date=request.expected_end_date,
+        response=response,
+    )
     try:
-        result = await renewal_service.finalize(
+        await renewal_service.finalize(
             db,
             user,
             subscription,
             pricing,
             description=renewal_description,
             payment_method=PaymentMethod.BALANCE,
+            renewal_operation=operation,
         )
     except SubscriptionRenewalChargeError:
         raise HTTPException(
@@ -292,16 +336,4 @@ async def renew_subscription(
     except Exception as yconv_err:
         logger.debug('yandex_conv purchase hook failed (non-fatal)', user_id=user.id, error=str(yconv_err))
 
-    response: dict[str, Any] = {
-        'message': 'Subscription renewed successfully',
-        'new_end_date': result.subscription.end_date.isoformat(),
-        'amount_paid_kopeks': price_kopeks,
-    }
-
-    # Add discount info to response
-    if promo_offer_discount_value > 0:
-        response['promo_discount_percent'] = promo_offer_discount_percent
-        response['promo_discount_amount_kopeks'] = promo_offer_discount_value
-        response['original_price_kopeks'] = original_price_kopeks
-
-    return response
+    return operation.response

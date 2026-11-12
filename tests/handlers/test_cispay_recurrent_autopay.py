@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.handlers.subscription import cispay_recurrent as handler
 
 
@@ -155,10 +157,105 @@ def test_unconnected_status_is_not_reported_as_still_loading():
 
 
 async def test_custom_period_navigation_keeps_owned_target(monkeypatch):
+    from app.states import SubscriptionStates
+
     callback, user, db, state = context('cisrec:select:42')
-    db.scalar.return_value = SimpleNamespace(id=42, tariff_id=3)
-    proceed = AsyncMock()
-    monkeypatch.setattr('app.handlers.subscription.tariff_purchase._proceed_with_selected_tariff', proceed)
+    db.scalar.return_value = SimpleNamespace(id=42, tariff_id=3, status='active')
+    db.get.return_value = custom_tariff()
+    monkeypatch.setattr(handler, 'get_cispay_recurrent_policy', AsyncMock(return_value={'enabled': True}))
     await handler.handle_cispay_recurrent(callback, user, db, state)
-    state.update_data.assert_awaited_once_with(target_subscription_id=42, active_subscription_id=42)
-    proceed.assert_awaited_once_with(callback, user, db, state, 3)
+    state.update_data.assert_awaited_once_with(cispay_period_subscription_id=42, cispay_consent=None)
+    state.set_state.assert_awaited_once_with(SubscriptionStates.entering_cispay_period)
+    assert '7' in callback.message.edit_text.await_args.args[0]
+    assert '360' in callback.message.edit_text.await_args.args[0]
+
+
+def custom_tariff(**changes):
+    values = dict(
+        is_active=True,
+        is_daily=False,
+        min_days=1,
+        max_days=10000,
+        get_available_periods=lambda: [30],
+        can_purchase_custom_days=lambda: True,
+    )
+    return SimpleNamespace(**(values | changes))
+
+
+@pytest.mark.parametrize('multi', [False, True])
+@pytest.mark.parametrize('trial', [False, True])
+@pytest.mark.parametrize('days', [7, 30, 360])
+async def test_custom_period_quotes_owned_target_without_new_purchase(monkeypatch, multi, trial, days):
+    from app.config import settings
+
+    monkeypatch.setattr(type(settings), 'is_multi_tariff_enabled', lambda self: multi)
+    _, user, db, state = context('unused')
+    state.get_data.return_value = {'cispay_period_subscription_id': 42}
+    db.scalar.return_value = SimpleNamespace(id=42, tariff_id=3, is_trial=trial, device_limit=5)
+    db.get.return_value = custom_tariff()
+    message = SimpleNamespace(text=str(days), answer=AsyncMock())
+    quote = AsyncMock(return_value={'quote_id': 'quote', 'amount_kopeks': 12300, 'period_days': days})
+    pay = AsyncMock()
+    monkeypatch.setattr(handler, 'quote_cispay_purchase', quote)
+    monkeypatch.setattr(handler, 'purchase_cispay_quote', pay)
+    await handler.process_cispay_period(message, user, db, state)
+    assert quote.await_args.kwargs == dict(
+        user=user, channel='telegram', tariff_id=3, period_days=days, device_limit=None, subscription_id=42
+    )
+    pay.assert_not_awaited()
+    state.set_state.assert_awaited_once_with(None)
+    assert '123' in message.answer.await_args.args[0]
+
+
+@pytest.mark.parametrize('value', [None, '', '3', '361', '10000', '7.5', '1e2', '-30'])
+async def test_invalid_custom_days_never_quote(monkeypatch, value):
+    _, user, db, state = context('unused')
+    state.get_data.return_value = {'cispay_period_subscription_id': 42}
+    db.scalar.return_value = SimpleNamespace(id=42, tariff_id=3)
+    db.get.return_value = custom_tariff()
+    quote = AsyncMock()
+    monkeypatch.setattr(handler, 'quote_cispay_purchase', quote)
+    message = SimpleNamespace(text=value, answer=AsyncMock())
+    await handler.process_cispay_period(message, user, db, state)
+    quote.assert_not_awaited()
+    state.set_state.assert_not_awaited()
+    message.answer.assert_awaited_once()
+
+
+async def test_custom_days_rechecks_ownership(monkeypatch):
+    _, user, db, state = context('unused')
+    state.get_data.return_value = {'cispay_period_subscription_id': 42}
+    db.scalar.return_value = None
+    quote = AsyncMock()
+    monkeypatch.setattr(handler, 'quote_cispay_purchase', quote)
+    await handler.process_cispay_period(SimpleNamespace(text='30', answer=AsyncMock()), user, db, state)
+    quote.assert_not_awaited()
+    statement = str(db.scalar.await_args.args[0])
+    assert 'subscriptions.user_id =' in statement
+
+
+async def test_back_leaves_custom_input_state(monkeypatch):
+    from app.states import SubscriptionStates
+
+    callback, user, db, state = context('cisrec:menu:42')
+    state.get_state.return_value = SubscriptionStates.entering_cispay_period.state
+    db.scalar.return_value = SimpleNamespace(id=42)
+    monkeypatch.setattr(handler, 'get_cispay_agreement_state', AsyncMock(return_value={'status': 'ACTIVE'}))
+    await handler.handle_cispay_recurrent(callback, user, db, state)
+    state.set_state.assert_awaited_once_with(None)
+
+
+@pytest.mark.parametrize('kind', ['disabled', 'daily', 'inactive', 'no-custom', 'out-of-range', 'off'])
+async def test_unavailable_custom_setup_never_opens_input(monkeypatch, kind):
+    callback, user, db, state = context('cisrec:select:42')
+    db.scalar.return_value = SimpleNamespace(id=42, tariff_id=3, status='disabled' if kind == 'disabled' else 'active')
+    db.get.return_value = custom_tariff(
+        is_daily=kind == 'daily',
+        is_active=kind != 'inactive',
+        min_days=400 if kind == 'out-of-range' else 1,
+        can_purchase_custom_days=lambda: kind != 'no-custom',
+    )
+    monkeypatch.setattr(handler, 'get_cispay_recurrent_policy', AsyncMock(return_value={'enabled': kind != 'off'}))
+    await handler.handle_cispay_recurrent(callback, user, db, state)
+    state.set_state.assert_not_awaited()
+    assert callback.answer.await_args.kwargs['show_alert'] is True

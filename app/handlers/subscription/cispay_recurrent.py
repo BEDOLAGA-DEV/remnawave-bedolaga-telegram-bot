@@ -15,6 +15,7 @@ from app.services.cispay_recurrent_checkout import (
     quote_cispay_purchase,
 )
 from app.services.cispay_recurrent_service import cancel_cispay_agreement
+from app.states import SubscriptionStates
 from app.utils.formatting import format_price_kopeks
 
 
@@ -82,11 +83,15 @@ async def cispay_menu_rows(db, user, subscription, texts):
 
 
 async def _show_quote(callback, user, db, state, **selection):
+    await _present_quote(callback.message.edit_text, user, db, state, **selection)
+
+
+async def _present_quote(reply, user, db, state, **selection):
     texts = get_texts(user.language)
     quote = await quote_cispay_purchase(db, user=user, channel='telegram', **selection)
     token = uuid4().hex[:16]
     await state.update_data(cispay_consent={'token': token, 'quote_id': quote['quote_id'], 'checkout_id': str(uuid4())})
-    await callback.message.edit_text(
+    await reply(
         texts.t(
             'CISREC_CONSENT',
             'Автоплатёж CisPay\n\nСейчас: {amount} за {days} дн.\nДалее: {amount} каждые {days} дн.\n\n'
@@ -154,6 +159,12 @@ async def handle_cispay_recurrent(callback, db_user, db, state):
     try:
         parts = callback.data.split(':')
         action = parts[1]
+        if (
+            action in ('menu', 'quote', 'cancel')
+            and await state.get_state() == SubscriptionStates.entering_cispay_period.state
+        ):
+            await state.set_state(None)
+            await state.update_data(cispay_period_subscription_id=None)
         if action == 'pay':
             consent = (await state.get_data()).get('cispay_consent') or {}
             if consent.get('token') != parts[2]:
@@ -172,10 +183,29 @@ async def handle_cispay_recurrent(callback, db_user, db, state):
             if action == 'cancel':
                 await cancel_cispay_agreement(db, user_id=db_user.id, subscription_id=target_id, reason='customer')
             elif action == 'select':
-                from app.handlers.subscription.tariff_purchase import _proceed_with_selected_tariff
-
-                await state.update_data(target_subscription_id=target.id, active_subscription_id=target.id)
-                await _proceed_with_selected_tariff(callback, db_user, db, state, target.tariff_id)
+                tariff = await db.get(Tariff, target.tariff_id) if target.tariff_id else None
+                policy = await get_cispay_recurrent_policy(db, user=db_user, channel='telegram')
+                if (
+                    not policy['enabled']
+                    or target.status == 'disabled'
+                    or not tariff_has_cispay_period(tariff)
+                    or not tariff.can_purchase_custom_days()
+                ):
+                    raise ValueError('period_unavailable')
+                minimum, maximum = max(7, tariff.min_days), min(360, tariff.max_days)
+                if minimum > maximum:
+                    raise ValueError('period_unavailable')
+                await state.update_data(cispay_period_subscription_id=target.id, cispay_consent=None)
+                await state.set_state(SubscriptionStates.entering_cispay_period)
+                await callback.message.edit_text(
+                    texts.t('CISREC_ENTER_DAYS', 'Введите целое число дней от {min} до {max}.').format(
+                        min=minimum, max=maximum
+                    ),
+                    reply_markup=types.InlineKeyboardMarkup(
+                        inline_keyboard=[[_button(texts.BACK, f'cisrec:menu:{target.id}')]]
+                    ),
+                )
+                await callback.answer()
                 return
             elif action == 'quote':
                 await _show_quote(
@@ -230,3 +260,44 @@ async def handle_cispay_recurrent(callback, db_user, db, state):
         )
         return
     await callback.answer()
+
+
+async def process_cispay_period(message, db_user, db, state):
+    """Custom recurring period for an owned subscription, not a new tariff purchase."""
+    texts = get_texts(db_user.language)
+    try:
+        target_id = (await state.get_data()).get('cispay_period_subscription_id')
+        target = await db.scalar(
+            select(Subscription).where(Subscription.id == target_id, Subscription.user_id == db_user.id)
+        )
+        if target is None:
+            raise ValueError('subscription_not_found')
+        tariff = await db.get(Tariff, target.tariff_id) if target.tariff_id else None
+        if not tariff_has_cispay_period(tariff) or not tariff.can_purchase_custom_days():
+            raise ValueError('period_unavailable')
+        minimum, maximum = max(7, tariff.min_days), min(360, tariff.max_days)
+        if minimum > maximum:
+            raise ValueError('period_unavailable')
+        value = (message.text or '').strip()
+        if not value.isdecimal() or len(value) > 3 or not minimum <= int(value) <= maximum:
+            await message.answer(
+                texts.t('CISREC_ENTER_DAYS', 'Введите целое число дней от {min} до {max}.').format(
+                    min=minimum, max=maximum
+                )
+            )
+            return
+        await _present_quote(
+            message.answer,
+            db_user,
+            db,
+            state,
+            tariff_id=target.tariff_id,
+            period_days=int(value),
+            device_limit=None,
+            subscription_id=target.id,
+        )
+        await state.set_state(None)
+        await state.update_data(cispay_period_subscription_id=None)
+    except (ValueError, KeyError, TypeError) as error:
+        await db.rollback()
+        await message.answer(cispay_error_text(texts, error))

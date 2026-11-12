@@ -79,7 +79,17 @@ async def add_subscription_traffic(
 
     await db.flush()
     if panel is not None:
-        await grant_purchase_locked(db, subscription, new_purchase, panel)
+        account = await grant_purchase_locked(db, subscription, new_purchase, panel)
+        if (
+            subscription.status == 'limited'
+            and subscription.user.status == 'active'
+            and subscription.end_date > datetime.now(UTC)
+            and account.remaining_bytes(datetime.now(UTC)) > 0
+        ):
+            subscription.status = 'active'
+        from app.services.traffic_accounting_service import schedule_projection_after_commit
+
+        schedule_projection_after_commit(db, subscription.id)
     if commit:
         await db.commit()
         await db.refresh(subscription)
@@ -159,6 +169,7 @@ async def prepare_traffic_purchase(db, subscription, *, requested_gb=None):
             api,
             subscription_id,
             timezone=getattr(settings, 'REMNAWAVE_TRAFFIC_RESET_TIMEZONE', 'UTC'),
+            allow_limited_grace=True,
         )
         subscription, grace_open = await lock_accounting_subscription(db, subscription_id)
         if (
@@ -169,7 +180,9 @@ async def prepare_traffic_purchase(db, subscription, *, requested_gb=None):
         if subscription.user_id != owner_id:
             raise AccountingConflict('Subscription ownership changed')
         if grace_open:
-            raise AccountingConflict('Finish temporary renewal access before adding traffic')
+            from app.services.traffic_accounting_service import require_limited_grace_topup
+
+            await require_limited_grace_topup(db, subscription)
         if not subscription.traffic_limit_gb:
             raise AccountingConflict('Subscription became unlimited')
         if requested_gb is not None and requested_gb > 0 and subscription.tariff is not None:

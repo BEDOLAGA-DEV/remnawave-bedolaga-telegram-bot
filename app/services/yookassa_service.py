@@ -417,6 +417,14 @@ class YooKassaService:
                 )
 
             if payment_info_yk:
+                card = getattr(payment_info_yk.payment_method, 'card', None)
+                # SDK methods may expose card metadata as a dict or a CreditCard model.
+                card_fields = ('first6', 'last4', 'card_type', 'expiry_month', 'expiry_year')
+                card_info = (
+                    {key: card.get(key) if isinstance(card, dict) else getattr(card, key, None) for key in card_fields}
+                    if card
+                    else None
+                )
                 logger.info(
                     'Информация о платеже YooKassa',
                     payment_id_in_yookassa=payment_id_in_yookassa,
@@ -445,17 +453,7 @@ class YooKassaService:
                     'payment_method_saved': payment_info_yk.payment_method.saved
                     if payment_info_yk.payment_method and hasattr(payment_info_yk.payment_method, 'saved')
                     else False,
-                    'payment_method_card': {
-                        'first6': payment_info_yk.payment_method.card.first6,
-                        'last4': payment_info_yk.payment_method.card.last4,
-                        'card_type': payment_info_yk.payment_method.card.card_type,
-                        'expiry_month': payment_info_yk.payment_method.card.expiry_month,
-                        'expiry_year': payment_info_yk.payment_method.card.expiry_year,
-                    }
-                    if payment_info_yk.payment_method
-                    and hasattr(payment_info_yk.payment_method, 'card')
-                    and payment_info_yk.payment_method.card
-                    else None,
+                    'payment_method_card': card_info,
                     'test_mode': payment_info_yk.test if hasattr(payment_info_yk, 'test') else None,
                 }
             logger.warning('Платеж не найден в YooKassa', payment_id_in_yookassa=payment_id_in_yookassa)

@@ -1,5 +1,6 @@
 """Every managed checkout must persist its base intent in the money transaction."""
 
+import asyncio
 import inspect
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -38,30 +39,40 @@ async def _manage(db, sub):
 
 
 @pytest.mark.parametrize(
-    'flow',
+    ('flow', 'cancel'),
     [
-        'simple-direct',
-        'simple-confirm',
-        'classic-confirm',
-        'classic-trial',
-        'admin-buy',
-        'cabinet',
-        'autocart',
-        'miniapp',
+        ('simple-direct', False),
+        ('simple-confirm', False),
+        ('classic-confirm', False),
+        ('classic-trial', False),
+        ('classic-legacy-trial', False),
+        ('admin-buy', False),
+        ('cabinet', False),
+        ('autocart', False),
+        ('miniapp', False),
+        ('simple-direct', True),
+        ('simple-confirm', True),
+        ('classic-legacy-trial', True),
     ],
 )
-async def test_managed_checkout_intent_failure_rolls_back_money_and_period(postgres_database, monkeypatch, flow):
+async def test_managed_checkout_intent_failure_rolls_back_money_and_period(
+    postgres_database, monkeypatch, flow, cancel
+):
     async with switch_data(postgres_database, monkeypatch) as (db, user):
         sub = await db.get(Subscription, 11)
-        await _manage(db, sub)
+        if flow != 'classic-legacy-trial':
+            await _manage(db, sub)
         monkeypatch.setattr(settings, 'RESET_TRAFFIC_ON_PAYMENT', True)
         monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', False)
         # Single-subscription entry points must resolve this exact account.
         await db.delete(await db.get(Subscription, 12))
         await db.commit()
         old_end, old_balance = sub.end_date, user.balance_kopeks
-        failure = AsyncMock(side_effect=RuntimeError('intent staging failure'))
-        monkeypatch.setattr(grants, 'stage_paid_base_grant', failure)
+        failure = AsyncMock(side_effect=asyncio.CancelledError() if cancel else RuntimeError('intent staging failure'))
+        if flow == 'classic-legacy-trial':
+            monkeypatch.setattr('app.services.grace_access_echo.undo_grace_overlay_echo', failure)
+        else:
+            monkeypatch.setattr(grants, 'stage_paid_base_grant', failure)
         callback = SimpleNamespace(answer=AsyncMock(), message=SimpleNamespace(edit_text=AsyncMock()), bot=None)
         if flow.startswith('simple'):
             from app.handlers import simple_subscription as simple
@@ -94,11 +105,11 @@ async def test_managed_checkout_intent_failure_rolls_back_money_and_period(postg
                 else simple.handle_simple_subscription_pay_with_balance
             )
             operation = handler(callback, user, state, db)
-        elif flow in ('classic-confirm', 'classic-trial'):
+        elif flow in ('classic-confirm', 'classic-trial', 'classic-legacy-trial'):
             from app.handlers.subscription import purchase as classic
             from app.services.pricing_engine import PricingEngine, pricing_engine
 
-            if flow == 'classic-trial':
+            if flow in ('classic-trial', 'classic-legacy-trial'):
                 sub.is_trial = True
                 await db.commit()
             monkeypatch.setattr(settings, 'SALES_MODE', 'classic')
@@ -165,8 +176,12 @@ async def test_managed_checkout_intent_failure_rolls_back_money_and_period(postg
             )
         try:
             await operation
+        except asyncio.CancelledError:
+            assert cancel
+            assert not db.in_transaction()
         except Exception:
-            pass  # HTTP/service callers propagate; Telegram handlers render their error.
+            assert not cancel
+            # HTTP/service callers propagate; Telegram handlers render their error.
         failure.assert_awaited_once()
         await db.rollback()
         actual_user = await db.get(User, 1, populate_existing=True)

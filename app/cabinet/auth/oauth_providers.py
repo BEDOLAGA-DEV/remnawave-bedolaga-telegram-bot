@@ -211,7 +211,7 @@ class GoogleProvider(OAuthProvider):
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(
                 self.TOKEN_URL,
-                json={
+                data={
                     'client_id': self.client_id,
                     'client_secret': self.client_secret,
                     'code': code,

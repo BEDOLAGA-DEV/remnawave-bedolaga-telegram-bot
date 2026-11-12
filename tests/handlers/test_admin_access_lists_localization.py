@@ -83,3 +83,39 @@ def test_blacklist_known_result_is_localized(language):
     result = blacklist._localize_blacklist_result(message, language)
     assert result != message
     assert '12' in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('language', ['ru', 'en', 'ua', 'zh', 'fa'])
+@pytest.mark.parametrize(
+    'scan_result', [None, {'blocked_count': 0, 'active_users': 12}, {'blocked_count': 3, 'active_users': 9}]
+)
+async def test_blocked_users_menu_opens_with_localized_description(language, scan_result):
+    import inspect
+    from unittest.mock import AsyncMock
+
+    from app.handlers.admin import blocked_users
+    from app.localization.texts import get_texts
+
+    callback = SimpleNamespace(message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
+    state = SimpleNamespace(get_data=AsyncMock(return_value={'blocked_users_scan_result': scan_result}))
+    await inspect.unwrap(blocked_users.show_blocked_users_menu)(callback, SimpleNamespace(language=language), state)
+
+    texts = get_texts(language)
+    rendered = callback.message.edit_text.await_args.args[0]
+    assert rendered.startswith(texts.t('ADMIN_BLOCKED_MENU_TITLE') + texts.t('ADMIN_BLOCKED_MENU_DESCRIPTION'))
+    if scan_result:
+        assert (
+            texts.t('ADMIN_BLOCKED_LAST_SCAN').format(
+                blocked=scan_result['blocked_count'], active=scan_result['active_users']
+            )
+            in rendered
+        )
+    buttons = [
+        button for row in callback.message.edit_text.await_args.kwargs['reply_markup'].inline_keyboard for button in row
+    ]
+    assert buttons[0].text == texts.t('ADMIN_BLOCKED_BUTTON_START_SCAN')
+    assert any(button.callback_data == 'admin_blocked_list' for button in buttons) == bool(
+        scan_result and scan_result['blocked_count']
+    )
+    callback.answer.assert_awaited_once_with()
