@@ -4643,8 +4643,9 @@ def register_handlers(dp: Dispatcher):
         F.data == 'clear_saved_cart',
     )
 
-    from .cispay_recurrent import handle_cispay_recurrent, purchase_cispay_from_tariff
+    from .cispay_recurrent import handle_cispay_recurrent, process_cispay_period, purchase_cispay_from_tariff
 
+    dp.message.register(process_cispay_period, SubscriptionStates.entering_cispay_period)
     dp.callback_query.register(handle_cispay_recurrent, F.data.startswith('cisrec:'))
     dp.callback_query.register(purchase_cispay_from_tariff, F.data.startswith('tariff_cispay:'))
     dp.callback_query.register(handle_autopay_menu, F.data == 'subscription_autopay')

@@ -6985,5 +6985,6 @@
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "The tariff has no price for {days} days — SBP automatic renewal is unavailable",
   "WELCOME_FALLBACK_NAME": "friend",
   "STARS_TOPUP_DESCRIPTION": "Balance top-up of {amount}",
-  "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ Send the broadcast text as a regular text message. You can add a photo, video or document in the next step."
+  "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ Send the broadcast text as a regular text message. You can add a photo, video or document in the next step.",
+  "CISREC_ENTER_DAYS": "Enter a whole number of days from {min} to {max}."
 }

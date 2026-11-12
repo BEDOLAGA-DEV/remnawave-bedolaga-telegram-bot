@@ -6985,5 +6985,6 @@
   "RECURRENT_UI_SBP_NO_PERIOD_PRICE": "此套餐未设置 {days} 天的价格，无法通过 SBP 自动续费",
   "WELCOME_FALLBACK_NAME": "朋友",
   "STARS_TOPUP_DESCRIPTION": "充值 {amount}",
-  "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ 请以普通文本消息发送群发内容。您可以在下一步添加照片、视频或文档。"
+  "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ 请以普通文本消息发送群发内容。您可以在下一步添加照片、视频或文档。",
+  "CISREC_ENTER_DAYS": "请输入 {min} 至 {max} 之间的整数天数。"
 }
