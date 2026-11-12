@@ -4236,6 +4236,9 @@
 - `tests/database/test_postgres_fixture_guard.py` — Python-модуль
   Классы: нет
   Функции: `test_missing_url_skips_by_default` — Окружение без PostgreSQL не должно ронять прогон., `test_missing_url_fails_when_postgres_is_required` — С поднятым флагом отсутствие базы — падение, а не пропуск., `test_requirement_flag_accepts_usual_spellings`, `test_requirement_flag_ignores_everything_else`, `test_blank_url_counts_as_absent` — Пустая переменная — это отсутствие базы, а не адрес из пробелов., `test_ci_workflow_runs_postgres_tests_for_real` — CI обязан поднимать базу и требовать, чтобы тесты на ней прошли.
+- `tests/database/test_promo_group_assignment_lock_release_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_notification_insert_after_promo_check_does_not_wait_for_webhook_close`, `test_deferred_transaction_does_not_commit_payment_or_run_promo_check`
 - `tests/database/test_promo_group_crud_schedules_recalculation_postgres.py` — Python-модуль
   Классы: нет
   Функции: `scheduled`, `test_creating_a_group_with_threshold_schedules_recalculation`, `test_only_a_threshold_change_schedules_recalculation_on_update`, `test_deleting_a_group_schedules_recalculation_while_thresholds_remain`, `test_refused_deletion_of_default_group_schedules_nothing`
@@ -5578,6 +5581,9 @@
 - `tests/services/test_platega_subscription_service.py` — Python-модуль
   Классы: нет
   Функции: `test_create_subscription_posts_method_6`, `test_create_subscription_uses_v2_endpoint_when_configured`, `test_create_subscription_omits_description_when_not_provided`, `test_create_subscription_truncates_long_cyrillic_description`, `test_get_subscription_is_unversioned`, `test_list_subscriptions_builds_query_params`, `test_list_subscriptions_omits_none_params`, `test_cancel_subscription_posts_cancel`, `test_format_amount_integer_and_decimal`, `test_recurrent_gate`, `test_reconcile_unconfigured_platega_is_noop` — Неконфигурированный Platega (нет мерчанта/секрета) — no-op до БД., `test_reconcile_cancelled_sweep_runs_with_recurrent_flag_off` — Cancelled-свип (ретрай недошедших отмен) обязан работать и при, `test_reconcile_marks_stuck_pending_as_failed` — Safety net: a PENDING record that never got a platega_subscription_id back, `test_reconcile_recancels_remotely_active_cancelled_record` — Контрольный свип отменённых: локальный CANCELLED, но remote-статус, `test_reconcile_skips_cancelled_record_confirmed_remotely` — CANCELLED-запись, у которой remote-статус тоже cancelled, — свип не, `test_create_subscription_raises_actionable_error_on_val0001` — VAL_0001 с key=paymentMethod (формат запроса совпадает с доками) =, `test_create_subscription_transport_failure_returns_none` — Транспортный сбой (status=None) — прежний контракт: None, без исключения., `test_create_subscription_sends_payer_metadata` — СБП-подписка — тот же POST /transaction/process: metadata обязательна и здесь.
+- `tests/services/test_promo_group_assignment_lock_release.py` — Python-модуль
+  Классы: нет
+  Функции: `session`, `test_lock_released_when_nothing_spent`, `test_lock_released_when_no_group_matches`, `anyio_backend`
 - `tests/services/test_promo_group_auto_assign_notify_user.py` — Python-модуль
   Классы: нет
   Функции: `delivery`, `test_discounts_skip_zero_and_junk_periods_and_sort`, `test_telegram_user_gets_escaped_message_with_discounts`, `test_email_only_user_goes_through_router_without_bot`, `test_group_without_discounts_uses_neutral_text`, `test_switch_off_sends_nothing_and_failures_never_raise`, `test_locale_keys_exist_and_format`, `test_email_template_escapes_and_lists_discounts`, `test_email_type_is_editable_in_cabinet`, `test_assignment_notifies_user_once_and_recalculation_stays_silent`, `test_recalculation_passes_notify_user_false`
