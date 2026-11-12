@@ -7607,7 +7607,12 @@ async def purchase_traffic_topup_endpoint(
         subscription, accounting_panel = await prepare_traffic_purchase(db, subscription, requested_gb=payload.gb)
     except Exception as error:
         await db.rollback()
-        raise HTTPException(status_code=503, detail='Traffic accounting is temporarily unavailable') from error
+        # Preflight failed before any charge or grant. Do not report an
+        # ambiguous gateway outcome to a client deciding whether to retry.
+        raise HTTPException(
+            status_code=409,
+            detail='Traffic purchase was not applied. No funds were charged. Please try again.',
+        ) from error
 
     user = await lock_user_for_pricing(db, user.id)
 
