@@ -51,6 +51,11 @@ from app.services.web_api_token_service import ensure_default_web_api_token
 from app.utils.log_handlers import ExcludePaymentFilter, LevelFilterHandler
 from app.utils.payment_logger import configure_payment_logger
 from app.utils.startup_timeline import StartupTimeline
+from app.utils.telegram_polling import (
+    start_polling_with_retry,
+    telegram_startup_request_or_stop,
+    wait_for_telegram_or_stop,
+)
 from app.webapi.server import WebAPIServer
 from app.webserver.unified_app import create_unified_app
 
@@ -357,7 +362,13 @@ async def main():
             bot, dp = await setup_bot()
             stage.log('Кеш и FSM подготовлены')
 
-        bot_user = await bot.get_me()
+        # Сетевой сбой здесь не должен завершать процесс: Docker перезапустит
+        # контейнер, и сбой превратится в цикл рестартов.
+        if not await wait_for_telegram_or_stop(bot, lambda: killer.exit):
+            logger.info('Остановка запрошена, пока Telegram был недоступен')
+            return
+
+        bot_user = await bot.me()
         command_menu_task = asyncio.create_task(
             CommandMenuSync(bot, CommandMenuStore(bot.id)).run(), name='telegram-command-menus'
         )
@@ -688,13 +699,18 @@ async def main():
                     stage.warning('WEBHOOK_URL не задан, пропускаем настройку webhook')
                 else:
                     allowed_updates = dp.resolve_used_update_types()
-                    await bot.set_webhook(
-                        url=webhook_url,
-                        secret_token=settings.WEBHOOK_SECRET_TOKEN,
-                        drop_pending_updates=False,  # Обрабатываем накопившиеся обновления
-                        allowed_updates=allowed_updates,
-                        **({'ip_address': settings.WEBHOOK_IP} if settings.WEBHOOK_IP else {}),
-                    )
+                    if not await telegram_startup_request_or_stop(
+                        lambda: bot.set_webhook(
+                            url=webhook_url,
+                            secret_token=settings.WEBHOOK_SECRET_TOKEN,
+                            drop_pending_updates=False,  # Обрабатываем накопившиеся обновления
+                            allowed_updates=allowed_updates,
+                            **({'ip_address': settings.WEBHOOK_IP} if settings.WEBHOOK_IP else {}),
+                        ),
+                        lambda: killer.exit,
+                        operation='setWebhook',
+                    ):
+                        return
                     stage.log(f'Webhook установлен: {webhook_url}')
                     stage.log(f'Allowed updates: {", ".join(sorted(allowed_updates)) if allowed_updates else "all"}')
                     stage.success('Telegram webhook активен')
@@ -802,8 +818,13 @@ async def main():
             if polling_enabled:
                 # A webhook survives process restarts and prevents getUpdates.
                 # Keep queued updates when changing the transport to polling.
-                await bot.delete_webhook(drop_pending_updates=False)
-                polling_task = asyncio.create_task(dp.start_polling(bot, skip_updates=False))
+                if not await telegram_startup_request_or_stop(
+                    lambda: bot.delete_webhook(drop_pending_updates=False),
+                    lambda: killer.exit,
+                    operation='deleteWebhook',
+                ):
+                    return
+                polling_task = asyncio.create_task(start_polling_with_retry(dp, bot, skip_updates=False))
                 stage.log('skip_updates=False — накопившиеся обновления будут обработаны')
             else:
                 polling_task = None
