@@ -80,8 +80,8 @@ func (s *vlessServer) allowInsecureTrue() bool {
 	return s.allowInsecure == "1" || strings.EqualFold(s.allowInsecure, "true")
 }
 
-// toLinkArray renders the standard subscription list format: a JSON array of
-// base64-encoded profile links (used by the base /{key} and /{key}/json paths).
+// toLinkArray renders the subscription list format: a JSON array of
+// base64-encoded profile links (used by the explicit /{key}/json path only).
 func (s *vlessServer) toLinkArray() string {
 	b64 := base64.StdEncoding.EncodeToString([]byte(s.raw))
 	return `["` + b64 + `"]`
@@ -294,8 +294,12 @@ func renderBlockedBody(format, fallbackLink string) (string, string) {
 		return "application/json", s.toV2RayJSON()
 	case "singbox", "singbox-legacy":
 		return "application/json", s.toSingboxJSON()
-	default: // "" and "json"
+	case "json":
 		return "application/json; charset=utf-8", s.toLinkArray()
+	default: // bare sub path (""): a plain-text vless:// link, no base64/JSON.
+		// This is the one shape every client (Happ, INCY, Shadowrocket, ...)
+		// parses, and it matches the real sub's text/plain content type.
+		return "text/plain; charset=utf-8", s.raw + "\n"
 	}
 }
 
