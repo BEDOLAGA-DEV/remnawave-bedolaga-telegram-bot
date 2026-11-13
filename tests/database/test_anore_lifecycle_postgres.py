@@ -24,7 +24,10 @@ pytestmark = pytest.mark.postgres
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('sandbox', [False, True])
-async def test_real_signed_early_payment_and_replay(postgres_database, monkeypatch, unused_tcp_port, sandbox):
+@pytest.mark.parametrize('customer_fee', [0, 4])
+async def test_real_signed_early_payment_and_replay(
+    postgres_database, monkeypatch, unused_tcp_port, sandbox, customer_fee
+):
     monkeypatch.setattr(settings, 'ANORE_ENABLED', True)
     monkeypatch.setattr(settings, 'ANORE_API_KEY', 'an_test_example' if sandbox else 'an_live_example')
     monkeypatch.setattr(settings, 'ANORE_SECRET_KEY', 'synthetic-secret')
@@ -55,12 +58,13 @@ async def test_real_signed_early_payment_and_replay(postgres_database, monkeypat
                 data = json.loads(raw)
                 assert data['amount'] == 100.01 and data['shopId'] == 7
                 assert data['methods'] == ['card']
+                assert data['email'] == '1@telegram.org'
                 event = {
                     'event': 'payment.succeeded',
                     'id': 'invoice-real-http',
                     'orderId': data['orderId'],
                     'amount': data['amount'],
-                    'rubAmount': data['amount'],
+                    'rubAmount': data['amount'] + customer_fee,
                     'currency': 'rub',
                     'status': 'paid',
                 }

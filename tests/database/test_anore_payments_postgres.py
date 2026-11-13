@@ -66,6 +66,107 @@ async def test_concurrent_callbacks_credit_once(postgres_database, service):
         assert service._after_anore_payment.await_count == 1
 
 
+@pytest.mark.parametrize('order', ['order-1', None])
+async def test_customer_fee_callback_and_poll_credit_only_invoice_once(postgres_database, service, monkeypatch, order):
+    async with postgres_sessions(postgres_database, list(Base.metadata.sorted_tables)) as (db, other):
+        await seed(db)
+        remote = payload(orderId=order, rubAmount=104.01)
+        monkeypatch.setattr(anore_service, 'get_payment', AsyncMock(return_value=remote))
+        result = await service.check_anore_payment_status(db, 'order-1')
+        assert result['is_paid']
+        assert await service.process_anore_callback(other, remote)
+        assert (await db.get(User, 1, populate_existing=True)).balance_kopeks == 10501
+        transactions = (await db.scalars(select(Transaction))).all()
+        assert len(transactions) == 1
+        assert transactions[0].amount_kopeks == 10001
+
+
+@pytest.mark.parametrize('missing_order', [False, True])
+async def test_concurrent_fee_callbacks_credit_once(postgres_database, service, missing_order):
+    async with postgres_sessions(postgres_database, list(Base.metadata.sorted_tables), count=3) as sessions:
+        await seed(sessions[0])
+        event = payload(rubAmount=104.01)
+        if missing_order:
+            event.pop('orderId')
+        await asyncio.gather(*(service.process_anore_callback(db, event) for db in sessions))
+        assert (await sessions[0].get(User, 1, populate_existing=True)).balance_kopeks == 10501
+        assert len((await sessions[0].scalars(select(Transaction))).all()) == 1
+
+
+async def test_missing_order_cannot_bind_unknown_invoice(postgres_database, service):
+    async with postgres_sessions(postgres_database, list(Base.metadata.sorted_tables)) as (db, other):
+        payment = await seed(db)
+        payment.anore_payment_id = None
+        await db.commit()
+        with pytest.raises(AnoreValidationError):
+            await service.process_anore_callback(db, payload(orderId=None))
+        assert (await other.get(User, 1)).balance_kopeks == 500
+
+
+@pytest.mark.parametrize(
+    'flow,email,telegram_id,expected',
+    [
+        ('user', 'buyer@example.com', 123, 'buyer@example.com'),
+        ('user', None, 123, '123@telegram.org'),
+        ('user', '   ', 123, '123@telegram.org'),
+        ('user', 'buyer@example.com', None, 'buyer@example.com'),
+        ('user', None, None, None),
+        ('explicit', 'stored@example.com', 123, 'explicit@example.com'),
+        ('guest_email', None, None, 'contact@example.com'),
+        ('guest_pending', None, None, 'contact@example.com'),
+        ('anonymous_gift', None, None, 'contact@example.com'),
+        ('gift', 'buyer@example.com', 123, 'buyer@example.com'),
+        ('gift', None, 123, '123@telegram.org'),
+        ('guest_telegram', None, None, None),
+    ],
+)
+async def test_invoice_resolves_payer_email_in_shared_creation(
+    postgres_database, service, monkeypatch, flow, email, telegram_id, expected
+):
+    monkeypatch.setattr(settings, 'ANORE_ENABLED', True)
+    monkeypatch.setattr(settings, 'ANORE_API_KEY', 'an_live_example')
+    monkeypatch.setattr(settings, 'ANORE_SECRET_KEY', 'example')
+    monkeypatch.setattr(settings, 'ANORE_SHOP_ID', 1)
+    async with postgres_sessions(postgres_database, list(Base.metadata.sorted_tables)) as (db, _):
+        db.add(User(id=1, telegram_id=telegram_id, email=email))
+        db.add(User(id=2, telegram_id=456, email='recipient@example.com'))
+        await db.flush()
+        metadata = None
+        if flow not in ('user', 'explicit'):
+            db.add(
+                GuestPurchase(
+                    token='guest-token',
+                    contact_type='email' if flow in ('guest_email', 'guest_pending', 'anonymous_gift') else 'telegram',
+                    contact_value='contact@example.com'
+                    if flow in ('guest_email', 'guest_pending', 'anonymous_gift')
+                    else '@unverified_username',
+                    is_gift=flow in ('gift', 'anonymous_gift'),
+                    gift_recipient_type='email' if flow == 'anonymous_gift' else None,
+                    gift_recipient_value='recipient@example.com' if flow == 'anonymous_gift' else None,
+                    buyer_user_id=1 if flow == 'gift' else None,
+                    user_id=2 if flow == 'gift' else None,
+                    period_days=30,
+                    amount_kopeks=10001,
+                )
+            )
+            metadata = {'purpose': 'guest_purchase', 'purchase_token': 'guest-token'}
+        if flow != 'guest_pending':
+            await db.commit()
+
+        async def create(**kwargs):
+            assert kwargs['email'] == expected
+            return {**payload(orderId=kwargs['order_id'], status='new'), 'paymentUrl': 'https://pay.example/invoice'}
+
+        monkeypatch.setattr(anore_service, 'create_payment', create)
+        assert await service.create_anore_payment(
+            db,
+            user_id=1 if flow in ('user', 'explicit') else None,
+            amount_kopeks=10001,
+            metadata=metadata,
+            email=' explicit@example.com ' if flow == 'explicit' else None,
+        )
+
+
 @pytest.mark.parametrize(
     'updates',
     [
@@ -73,9 +174,14 @@ async def test_concurrent_callbacks_credit_once(postgres_database, service):
         {'amount': 100.001},
         {'amount': 1},
         {'rubAmount': 100},
+        {'rubAmount': 'NaN'},
+        {'rubAmount': True},
+        {'amount': 99, 'rubAmount': 104.01},
         {'currency': 'USD'},
         {'id': 'foreign'},
         {'orderId': 'foreign'},
+        {'orderId': ''},
+        {'orderId': []},
         {'status': 'expired'},
         {'event': 'payment.expired'},
         {'id': None},

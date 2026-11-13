@@ -90,6 +90,18 @@ async def test_get_uses_saved_id_and_snapshot_credentials(anore_http):
     assert calls[0][2]['Authorization'] == 'Bearer an_live_synthetic'
 
 
+@pytest.mark.parametrize('email', ['buyer@example.com', '123@telegram.org'])
+@pytest.mark.asyncio
+async def test_invoice_transmits_email_in_signed_json(anore_http, email):
+    service, config, calls, _ = anore_http
+    await service.create_payment(
+        amount_kopeks=10001, description='Test', order_id='order-1', email=email, config=config
+    )
+    raw = calls[0][3]
+    assert json.loads(raw)['email'] == email
+    assert calls[0][2]['Anore-Signature'] == hmac.new(b'synthetic-secret', raw, hashlib.sha256).hexdigest()
+
+
 @pytest.mark.parametrize('code', [400, 401, 403, 404, 429, 503])
 @pytest.mark.asyncio
 async def test_errors_are_safe_and_creation_is_never_retried(anore_http, code):
