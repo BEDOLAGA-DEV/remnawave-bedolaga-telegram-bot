@@ -35,3 +35,9 @@ services:
       # profile (so clients that reject an empty server list still load a valid
       # config). Leave empty to keep the legacy empty profile.
       - BLOCKED_FALLBACK_SERVER=${BLOCKED_FALLBACK_SERVER}
+    # Resource limits (hard caps; tunable via .env).
+    deploy:
+      resources:
+        limits:
+          cpus: ${HWID_BLOCKER_CPUS:-5}
+          memory: ${HWID_BLOCKER_MEMORY:-128m}
