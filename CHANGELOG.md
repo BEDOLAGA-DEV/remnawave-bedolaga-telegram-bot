@@ -1,5 +1,40 @@
 # Changelog
 
+## [5.3.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.2.1...v5.3.0) (2026-11-13)
+
+
+### New Features
+
+* add HOT Pay RUB checkout and recurring billing ([f237ca0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f237ca0e63c514769f8e266fde621c7de0d27202))
+* add HOT Pay RUB checkout and recurring billing ([9b6efdc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b6efdc35b3b2dbb5130336e92f1006b6380e09c))
+* add HOT Pay RUB checkout and recurring billing ([1303155](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/13031558ec7df504449dd0e0ac0211f83c783a9a))
+* add HOT Pay RUB checkout and recurring billing ([4eefbe4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4eefbe40a3e7598c5775b47bb7341ac2aff33eae))
+* add HOT Pay RUB checkout and recurring billing ([de54d9a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/de54d9aa7914a7c5ff1d3712ea6413e83f1e601c))
+* add HOT Pay RUB checkout and recurring billing ([1e5d382](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1e5d382602f93a77b80987f6e21d0a93120f42af))
+* add HOT Pay RUB checkout and recurring billing ([a922bb4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a922bb42db76c159fb4897ecc73874a0dcde5440))
+* add subscription mirror selection across bot and cabinet ([f237ca0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f237ca0e63c514769f8e266fde621c7de0d27202))
+* add subscription mirror selection across bot and cabinet ([9b6efdc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b6efdc35b3b2dbb5130336e92f1006b6380e09c))
+* add subscription mirror selection across bot and cabinet ([1303155](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/13031558ec7df504449dd0e0ac0211f83c783a9a))
+* add subscription mirror selection across bot and cabinet ([4eefbe4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4eefbe40a3e7598c5775b47bb7341ac2aff33eae))
+* add subscription mirror selection across bot and cabinet ([de54d9a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/de54d9aa7914a7c5ff1d3712ea6413e83f1e601c))
+* add subscription mirror selection across bot and cabinet ([1e5d382](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1e5d382602f93a77b80987f6e21d0a93120f42af))
+* add subscription mirror selection across bot and cabinet ([a922bb4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a922bb42db76c159fb4897ecc73874a0dcde5440))
+* **subscription:** резервные ссылки подписки (SUBSCRIPTION_MIRROR_LINKS) ([3e71e8b](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/3e71e8b8fd9769c1ef39ee2e0ed8a16890299b77))
+
+
+### Bug Fixes
+
+* avoid recurring guard deadlock during traffic accounting migration ([cb9ef17](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/cb9ef176290b31a0e30e9ecada732999627c996e))
+* avoid recurring guard deadlock during traffic accounting migration ([9f262fd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9f262fda4e95dd60948d60015ea5afccaeb8a956))
+* avoid recurring guard deadlock during traffic accounting migration ([c67f218](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c67f218e40c95541f347d3ab0d2c6873998d189b))
+* reconcile Anore customer fees and payer email ([f237ca0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/f237ca0e63c514769f8e266fde621c7de0d27202))
+* reconcile Anore customer fees and payer email ([9b6efdc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b6efdc35b3b2dbb5130336e92f1006b6380e09c))
+* reconcile Anore customer fees and payer email ([1303155](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/13031558ec7df504449dd0e0ac0211f83c783a9a))
+* reconcile Anore customer fees and payer email ([4eefbe4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4eefbe40a3e7598c5775b47bb7341ac2aff33eae))
+* reconcile Anore customer fees and payer email ([de54d9a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/de54d9aa7914a7c5ff1d3712ea6413e83f1e601c))
+* reconcile Anore customer fees and payer email ([1e5d382](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/1e5d382602f93a77b80987f6e21d0a93120f42af))
+* reconcile Anore customer fees and payer email ([a922bb4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a922bb42db76c159fb4897ecc73874a0dcde5440))
+
 ## [5.2.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.2.0...v5.2.1) (2026-11-12)
 
 
