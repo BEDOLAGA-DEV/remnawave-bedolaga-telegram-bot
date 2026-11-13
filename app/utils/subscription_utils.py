@@ -77,6 +77,33 @@ def get_display_subscription_link(subscription: Subscription | None) -> str | No
     return base_link
 
 
+def build_subscription_mirror_links(subscription_url: str | None) -> list[tuple[str, str]]:
+    """Return (button text, url) for every SUBSCRIPTION_MIRROR_LINKS mirror of ``subscription_url``.
+
+    The mirror URL keeps the path and query of the original link and only swaps
+    scheme and host. Non-http(s) links (e.g. ``happ://crypt…``) and mirrors that
+    point at the same host as the original are skipped.
+    """
+    if not subscription_url:
+        return []
+
+    mirrors = settings.get_subscription_mirror_links()
+    if not mirrors:
+        return []
+
+    parsed = urlparse(subscription_url)
+    if parsed.scheme.lower() not in ('http', 'https') or not parsed.netloc:
+        return []
+
+    links: list[tuple[str, str]] = []
+    for label, origin in mirrors:
+        mirror = urlparse(origin)
+        if mirror.netloc == parsed.netloc.lower():
+            continue
+        links.append((label, urlunparse(parsed._replace(scheme=mirror.scheme, netloc=mirror.netloc))))
+    return links
+
+
 def get_happ_cryptolink_redirect_link(subscription_link: str | None) -> str | None:
     if not subscription_link:
         return None

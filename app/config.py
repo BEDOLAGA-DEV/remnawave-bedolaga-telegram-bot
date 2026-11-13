@@ -1259,6 +1259,16 @@ class Settings(BaseSettings):
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
+    # Зеркала подписки на других доменах: под кнопкой «Подключиться» появляется
+    # кнопка «Резервное подключение», открывающая ту же подписку через другой
+    # домен (зеркало страницы подписки). Одно зеркало открывается сразу,
+    # несколько — через меню, где у каждого зеркала свой текст.
+    # Формат: «Текст кнопки|https://mirror.example.com», несколько — через «;».
+    # Ссылка строится из subscription_url заменой схемы и домена; путь и query
+    # сохраняются, поэтому зеркало должно отдавать подписку по тому же пути.
+    # Зеркало на домене самой subscription_url в меню не показывается.
+    # Действует в режимах miniapp_subscription и link.
+    SUBSCRIPTION_MIRROR_LINKS: str = ''
     MINIAPP_CUSTOM_URL: str = ''
     MINIAPP_STATIC_PATH: str = 'miniapp'
     # Короткое имя Telegram Mini App (BotFather → /newapp), напр. 'cabinet'.
@@ -3736,6 +3746,30 @@ class Settings(BaseSettings):
     def get_happ_cryptolink_redirect_template(self) -> str | None:
         template = (self.HAPP_CRYPTOLINK_REDIRECT_TEMPLATE or '').strip()
         return template or None
+
+    def get_subscription_mirror_links(self) -> list[tuple[str, str]]:
+        """Parse SUBSCRIPTION_MIRROR_LINKS into (button text, origin) pairs.
+
+        Origin is normalized to ``scheme://host[:port]``; a bare host gets https.
+        Entries without text, with a non-http(s) scheme or without a host are skipped.
+        """
+        raw = (self.SUBSCRIPTION_MIRROR_LINKS or '').strip()
+        if not raw:
+            return []
+
+        mirrors: list[tuple[str, str]] = []
+        for entry in re.split(r'[;\n]', raw):
+            label, sep, target = entry.partition('|')
+            label, target = label.strip(), target.strip()
+            if not sep or not label or not target:
+                continue
+            if '://' not in target:
+                target = f'https://{target}'
+            parsed = urlparse(target)
+            if parsed.scheme.lower() not in ('http', 'https') or not parsed.netloc:
+                continue
+            mirrors.append((label, f'{parsed.scheme.lower()}://{parsed.netloc.lower()}'))
+        return mirrors
 
     def get_incy_provider_name(self) -> str | None:
         name = (self.INCY_CRYPTOLINK_PROVIDER_NAME or '').strip()

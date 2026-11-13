@@ -9,6 +9,8 @@ from app.keyboards.inline import (
     get_device_selection_keyboard,
     get_happ_cryptolink_keyboard,
     get_happ_download_button_row,
+    get_subscription_mirror_link_rows,
+    get_subscription_mirror_rows,
 )
 from app.localization.texts import get_texts
 from app.utils.subscription_time import local_days_until
@@ -108,6 +110,7 @@ async def handle_connect_subscription(
                         web_app=types.WebAppInfo(url=subscription_link),
                     )
                 ],
+                *get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts, subscription_id=sub_id),
                 [InlineKeyboardButton(text=texts.BACK, callback_data=back_cb)],
             ]
         )
@@ -159,6 +162,7 @@ async def handle_connect_subscription(
 
     elif connect_mode == 'link':
         rows = [[InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]]
+        rows.extend(get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts, subscription_id=sub_id))
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
@@ -258,6 +262,43 @@ async def handle_connect_subscription(
             parse_mode='HTML',
         )
 
+    await callback.answer()
+
+
+async def handle_subscription_mirrors(
+    callback: types.CallbackQuery, db_user: User, db: AsyncSession, state: FSMContext = None
+):
+    """Menu with every SUBSCRIPTION_MIRROR_LINKS mirror of the user's subscription."""
+    if isinstance(callback.message, InaccessibleMessage):
+        await callback.answer()
+        return
+
+    texts = get_texts(db_user.language)
+    subscription, _sub_id = await _resolve_subscription(callback, db_user, db, state)
+    if subscription is None:
+        return
+
+    rows = get_subscription_mirror_link_rows(getattr(subscription, 'subscription_url', None))
+    if not rows:
+        await callback.answer(
+            texts.t(
+                'SUBSCRIPTION_NO_ACTIVE_LINK',
+                '⚠ У вас нет активной подписки или ссылка еще генерируется',
+            ),
+            show_alert=True,
+        )
+        return
+
+    rows.append([InlineKeyboardButton(text=texts.BACK, callback_data='back_to_menu')])
+    await callback.message.edit_text(
+        texts.t(
+            'SUBSCRIPTION_MIRRORS_MESSAGE',
+            '🔁 <b>Резервное подключение</b>\n\n'
+            'Если основная кнопка «Подключиться» не открывается, выберите один из резервных вариантов:',
+        ),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode='HTML',
+    )
     await callback.answer()
 
 

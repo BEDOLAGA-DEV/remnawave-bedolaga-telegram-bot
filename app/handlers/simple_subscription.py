@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database.models import User
-from app.keyboards.inline import get_happ_download_button_row
+from app.keyboards.inline import get_happ_download_button_row, get_subscription_mirror_rows
 from app.localization.texts import get_texts
 from app.services.payment_service import PaymentService
 from app.services.subscription_purchase_service import SubscriptionPurchaseService
@@ -791,7 +791,7 @@ async def handle_simple_subscription_pay_with_balance(
         else:
             connect_row = [_fallback_connect_button()]
 
-        keyboard_rows = [connect_row]
+        keyboard_rows = [connect_row, *get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts)]
 
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
@@ -2975,7 +2975,7 @@ async def confirm_simple_subscription_purchase(
         else:
             connect_row = [_fallback_connect_button()]
 
-        keyboard_rows = [connect_row]
+        keyboard_rows = [connect_row, *get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts)]
 
         happ_row = get_happ_download_button_row(texts)
         if happ_row:

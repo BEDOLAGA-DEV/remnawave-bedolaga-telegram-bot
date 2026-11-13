@@ -33,6 +33,7 @@ from app.keyboards.inline import (
     get_subscription_confirm_keyboard,
     get_subscription_confirm_keyboard_with_cart,
     get_subscription_keyboard,
+    get_subscription_mirror_rows,
     get_subscription_period_keyboard,
     get_traffic_packages_keyboard,
     get_trial_keyboard,
@@ -173,7 +174,7 @@ from .happ import (
     handle_happ_download_platform_choice,
     handle_happ_download_request,
 )
-from .links import handle_connect_subscription, handle_open_subscription_link
+from .links import handle_connect_subscription, handle_open_subscription_link, handle_subscription_mirrors
 from .pricing import _build_subscription_period_prompt, _prepare_subscription_summary
 from .promo import (
     _build_promo_group_discount_text,
@@ -1230,6 +1231,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                                 web_app=types.WebAppInfo(url=subscription_link),
                             )
                         ],
+                        *get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts),
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
@@ -1274,6 +1276,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
                         )
                     ]
                 ]
+                rows.extend(get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts))
                 happ_row = get_happ_download_button_row(texts)
                 if happ_row:
                     rows.append(happ_row)
@@ -2977,6 +2980,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                                 web_app=types.WebAppInfo(url=subscription_link),
                             )
                         ],
+                        *get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts),
                         [
                             InlineKeyboardButton(
                                 text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
@@ -3016,6 +3020,7 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                 rows = [
                     [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
                 ]
+                rows.extend(get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts))
                 happ_row = get_happ_download_button_row(texts)
                 if happ_row:
                     rows.append(happ_row)
@@ -3897,6 +3902,7 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
                         web_app=types.WebAppInfo(url=subscription_link),
                     )
                 ],
+                *get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts),
                 [
                     InlineKeyboardButton(
                         text=texts.t('BACK_TO_MAIN_MENU_BUTTON', '⬅️ В главное меню'),
@@ -3934,6 +3940,7 @@ def _build_trial_success_keyboard(texts, subscription_link: str, connect_mode: s
                 )
             ]
         ]
+        rows.extend(get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts))
         happ_row = get_happ_download_button_row(texts)
         if happ_row:
             rows.append(happ_row)
@@ -4731,6 +4738,11 @@ def register_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_happ_download_back, F.data == 'happ_download_back')
 
     dp.callback_query.register(handle_connect_subscription, F.data.startswith('subscription_connect'))
+
+    dp.callback_query.register(
+        handle_subscription_mirrors,
+        (F.data == 'subscription_mirrors') | F.data.startswith('subscription_mirrors:'),
+    )
 
     dp.callback_query.register(handle_device_guide, F.data.startswith('device_guide_'))
 

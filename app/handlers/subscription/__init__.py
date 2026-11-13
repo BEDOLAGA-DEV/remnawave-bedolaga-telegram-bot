@@ -90,6 +90,7 @@ from .happ import (
 from .links import (
     handle_connect_subscription,
     handle_open_subscription_link,
+    handle_subscription_mirrors,
 )
 from .my_subscriptions import (
     handle_subscription_delete_confirm,
@@ -233,6 +234,7 @@ __all__ = [
     'handle_subscription_devices',
     'handle_subscription_extend',
     'handle_subscription_link',
+    'handle_subscription_mirrors',
     'handle_subscription_settings',
     'handle_subscription_traffic',
     'handle_switch_traffic',

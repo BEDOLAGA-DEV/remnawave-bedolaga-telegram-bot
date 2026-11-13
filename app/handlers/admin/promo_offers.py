@@ -40,7 +40,7 @@ from app.database.models import (
     User,
     UserStatus,
 )
-from app.keyboards.inline import get_happ_download_button_row
+from app.keyboards.inline import get_happ_download_button_row, get_subscription_mirror_rows
 from app.localization.texts import get_texts
 from app.services.user_service import UserService
 from app.states import AdminStates
@@ -2025,6 +2025,7 @@ def _build_connect_button_rows(user: User, texts) -> list[list[InlineKeyboardBut
                     )
                 ]
             )
+            rows.extend(get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts))
         else:
             rows.append([_fallback_button()])
     elif connect_mode == 'miniapp_custom':
@@ -2042,6 +2043,7 @@ def _build_connect_button_rows(user: User, texts) -> list[list[InlineKeyboardBut
     elif connect_mode == 'link':
         if subscription_link:
             rows.append([InlineKeyboardButton(text=button_text, url=subscription_link)])
+            rows.extend(get_subscription_mirror_rows(subscription_link, connect_mode, texts=texts))
         else:
             rows.append([_fallback_button()])
     elif connect_mode == 'happ_cryptolink':

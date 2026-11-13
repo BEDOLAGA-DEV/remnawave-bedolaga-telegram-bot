@@ -18,6 +18,7 @@ from app.utils.pricing_utils import (
     format_period_description,
 )
 from app.utils.subscription_utils import (
+    build_subscription_mirror_links,
     get_display_subscription_link,
     get_happ_cryptolink_redirect_link,
 )
@@ -641,6 +642,11 @@ def get_main_menu_keyboard(
                         )
                     ]
                 )
+                keyboard.extend(
+                    get_subscription_mirror_rows(
+                        subscription_link, connect_mode, texts=texts, subscription_id=getattr(subscription, 'id', None)
+                    )
+                )
             else:
                 keyboard.append([_fallback_connect_button()])
         elif connect_mode == 'miniapp_custom':
@@ -656,6 +662,11 @@ def get_main_menu_keyboard(
             if subscription_link:
                 keyboard.append(
                     [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
+                )
+                keyboard.extend(
+                    get_subscription_mirror_rows(
+                        subscription_link, connect_mode, texts=texts, subscription_id=getattr(subscription, 'id', None)
+                    )
                 )
             else:
                 keyboard.append([_fallback_connect_button()])
@@ -915,6 +926,60 @@ def get_info_menu_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+SUBSCRIPTION_MIRRORS_CALLBACK = 'subscription_mirrors'
+SUBSCRIPTION_MIRROR_MODES = ('miniapp_subscription', 'link')
+
+
+def get_subscription_mirror_link_rows(
+    subscription_link: str | None, connect_mode: str | None = None
+) -> list[list[InlineKeyboardButton]]:
+    """One button per SUBSCRIPTION_MIRROR_LINKS mirror, opened like the main connect button.
+
+    A Mini App in ``miniapp_subscription`` mode, a plain link in ``link`` mode.
+    Other modes do not open ``subscription_url`` directly, so they get no mirrors.
+    """
+    mode = connect_mode or settings.CONNECT_BUTTON_MODE
+    if mode not in SUBSCRIPTION_MIRROR_MODES:
+        return []
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for label, url in build_subscription_mirror_links(subscription_link):
+        if mode == 'miniapp_subscription':
+            button = InlineKeyboardButton(text=label, web_app=types.WebAppInfo(url=url))
+        else:
+            button = InlineKeyboardButton(text=label, url=url)
+        rows.append([button])
+    return rows
+
+
+def get_subscription_mirror_rows(
+    subscription_link: str | None,
+    connect_mode: str | None = None,
+    texts=None,
+    subscription_id: int | None = None,
+) -> list[list[InlineKeyboardButton]]:
+    """Row to put under «Подключиться» for SUBSCRIPTION_MIRROR_LINKS.
+
+    The main keyboard always gets a single «Резервное подключение» button: with
+    one mirror it opens that mirror directly, with several it opens a menu that
+    lists them (mirror texts from the setting are used inside that menu).
+    """
+    mirror_rows = get_subscription_mirror_link_rows(subscription_link, connect_mode)
+    if not mirror_rows:
+        return []
+
+    default_label = '🔁 Резервное подключение'
+    label = texts.t('SUBSCRIPTION_MIRRORS_BUTTON', default_label) if texts else default_label
+    if len(mirror_rows) == 1:
+        only = mirror_rows[0][0]
+        return [[InlineKeyboardButton(text=label, web_app=only.web_app, url=only.url)]]
+
+    callback_data = SUBSCRIPTION_MIRRORS_CALLBACK
+    if subscription_id is not None and settings.is_multi_tariff_enabled():
+        callback_data = f'{SUBSCRIPTION_MIRRORS_CALLBACK}:{subscription_id}'
+    return [[InlineKeyboardButton(text=label, callback_data=callback_data)]]
+
+
 def get_happ_download_button_row(texts) -> list[InlineKeyboardButton] | None:
     if not settings.is_happ_download_button_enabled():
         return None
@@ -1154,6 +1219,11 @@ def get_subscription_keyboard(
                         )
                     ]
                 )
+                keyboard.extend(
+                    get_subscription_mirror_rows(
+                        subscription_link, connect_mode, texts=texts, subscription_id=getattr(subscription, 'id', None)
+                    )
+                )
             elif connect_mode == 'miniapp_custom':
                 if settings.MINIAPP_CUSTOM_URL:
                     keyboard.append(
@@ -1176,6 +1246,11 @@ def get_subscription_keyboard(
             elif connect_mode == 'link':
                 keyboard.append(
                     [InlineKeyboardButton(text=texts.t('CONNECT_BUTTON', '🔗 Подключиться'), url=subscription_link)]
+                )
+                keyboard.extend(
+                    get_subscription_mirror_rows(
+                        subscription_link, connect_mode, texts=texts, subscription_id=getattr(subscription, 'id', None)
+                    )
                 )
             elif connect_mode == 'happ_cryptolink':
                 keyboard.append(

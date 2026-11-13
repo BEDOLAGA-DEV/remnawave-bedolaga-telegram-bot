@@ -489,6 +489,7 @@ class BotConfigurationService:
         'CABINET_BUTTON_STYLE': 'INTERFACE',
         'CONNECT_BUTTON_MODE': 'CONNECT_BUTTON',
         'MINIAPP_CUSTOM_URL': 'CONNECT_BUTTON',
+        'SUBSCRIPTION_MIRROR_LINKS': 'CONNECT_BUTTON',
         'ENABLE_DEEP_LINKS': 'ADDITIONAL',
         'APP_CONFIG_CACHE_TTL': 'ADDITIONAL',
         'INACTIVE_USER_DELETE_MONTHS': 'MAINTENANCE',
@@ -757,6 +758,16 @@ class BotConfigurationService:
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
+        'SUBSCRIPTION_MIRROR_LINKS': {
+            'description': 'Кнопка «Резервное подключение» под «Подключиться»: та же подписка через другой домен '
+            '(зеркало страницы подписки). Одно зеркало открывается сразу, несколько — через меню.',
+            'format': 'Текст кнопки|домен или https://домен; несколько зеркал — через «;».',
+            'example': '🌐 Резерв 1|https://mirror.example.com',
+            'warning': 'Ссылка строится из subscription_url заменой домена, путь сохраняется: зеркало должно '
+            'проксировать страницу подписки по тому же пути. Зеркало на домене самой подписки в меню не показывается. '
+            'Работает в режимах miniapp_subscription и link.',
+            'dependencies': 'CONNECT_BUTTON_MODE',
+        },
         'CISPAY_RECURRENT_ENABLED': {
             'description': 'Автопродление тарифов через СБП CisPay в боте и кабинете.',
             'format': 'Булево значение (да/нет).',
