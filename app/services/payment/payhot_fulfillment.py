@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import GuestPurchase, PayHotPayment, ReferralEarning, Transaction, TransactionType, User
-from app.services.payment.payhot import is_refund_review
+from app.services.payhot_payment_validation import is_refund_review
 
 
 logger = structlog.get_logger(__name__)

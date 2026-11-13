@@ -1724,6 +1724,9 @@
 - `app/services/partner_stats_service.py` — Python-модуль
   Классы: `PartnerStatsService` (12 методов)
   Функции: нет
+- `app/services/payhot_payment_validation.py` — Python-модуль
+  Классы: нет
+  Функции: `is_refund_review`
 - `app/services/payhot_recurrent_api.py` — Python-модуль
   Классы: `PayHotRecurrentAPI` (6 методов)
   Функции: `validate_opaque_reference`, `generate_opaque_reference`, `validate_charge_payload`
@@ -2215,7 +2218,7 @@
   Функции: `payer_from_user` — Плательщик-пользователь., `guest_payer_id` — Идентификатор гостя: сам токен покупки наружу не отдаём — по нему забирают подписку., `payer_from_guest` — Гость лендинга: аккаунта нет, есть контакт, который он оставил (почта или Telegram)., `resolve_user_payer` — Плательщик по id пользователя. Точечный select — это горячий путь оплаты., `resolve_guest_payer` — Плательщик-гость по токену покупки лендинга.
 - `app/services/payment/payhot.py` — Python-модуль
   Классы: `PayHotPaymentMixin` (6 методов)
-  Функции: `is_refund_review`
+  Функции: нет
 - `app/services/payment/payhot_fulfillment.py` — Python-модуль
   Классы: нет
   Функции: `fulfill_payhot_payment`

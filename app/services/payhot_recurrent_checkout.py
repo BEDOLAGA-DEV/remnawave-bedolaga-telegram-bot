@@ -275,6 +275,8 @@ async def _terms(db, *, user, tariff_id, period_days, device_limit, subscription
         else None,
         'new_subscription': target is None,
         'channel': channel,
+        # Fingerprint a provider-generated API key to detect credential rotation.
+        # This is not password authentication; keep existing consent hashes stable.
         'api_key_fingerprint': hashlib.sha256((settings.PAYHOT_API_KEY or '').encode()).hexdigest(),
     }
 

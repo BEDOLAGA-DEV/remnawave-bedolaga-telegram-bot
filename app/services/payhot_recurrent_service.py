@@ -35,6 +35,7 @@ TERMINAL_AGREEMENTS = ('CANCELLED', 'FAILED')
 
 def _config(agreement):
     config = payhot_service.snapshot()
+    # Compare the provider-key fingerprint, never authenticate a human password.
     expected = agreement.consent_snapshot.get('api_key_fingerprint')
     if expected and expected != hashlib.sha256(config.api_key.encode()).hexdigest():
         raise ValueError('credentials_changed')
@@ -282,7 +283,7 @@ async def _block_refunded_reset(db, operation_key):
 
 
 async def accept_enrollment_payment(db, payment_id, data, *, bot=None):
-    from app.services.payment.payhot import _validate_remote
+    from app.services.payhot_payment_validation import _validate_remote
 
     payment = await db.get(PayHotPayment, payment_id)
     if payment is None or (payment.metadata_json or {}).get('purpose') != 'payhot_recurring':
@@ -444,7 +445,7 @@ async def create_payhot_agreement(db, agreement_id, *, bot=None):
             response = await recurrent_api.create_enrollment_payment(
                 payment.request_payload, payment.order_id, config=config
             )
-        from app.services.payment.payhot import _validate_remote
+        from app.services.payhot_payment_validation import _validate_remote
 
         data = response['payment']
         payment.payhot_payment_id = _validate_remote(payment, data)

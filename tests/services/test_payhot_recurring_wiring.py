@@ -108,7 +108,7 @@ async def test_enrollment_poll_does_not_use_ordinary_creation_or_get(monkeypatch
 
     refresh = AsyncMock()
     monkeypatch.setattr(runtime, 'refresh_payhot_enrollment', refresh)
-    monkeypatch.setattr(payhot.payhot_service, 'snapshot', lambda: object())
+    monkeypatch.setattr(payhot.payhot_service, 'snapshot', object)
     remote = AsyncMock()
     monkeypatch.setattr(payhot.payhot_service, 'get_payment', remote)
     payment = SimpleNamespace(
