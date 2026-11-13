@@ -229,7 +229,10 @@ async def prepare_user_tariff_switch(db, subscription):
     from app.services.paid_traffic_reset_service import prepare_admin_tariff_accounting
     from app.services.traffic_accounting_service import reconcile_account_locked
 
-    await require_no_cispay(db, user_id=subscription.user_id, subscription_id=subscription.id)
+    # Migration below owns separate transactions and takes the same User lock.
+    # This early check must not retain that lock while waiting for migration.
+    # Recheck under the returned accounting lease before the caller can charge.
+    await require_no_cispay(db, user_id=subscription.user_id, subscription_id=subscription.id, lock_user=False)
 
     mode = getattr(subscription, 'traffic_accounting_mode', None) or 'legacy'
     if subscription.traffic_limit_gb > 0 and mode in ('legacy', 'migrating'):
@@ -243,9 +246,12 @@ async def prepare_user_tariff_switch(db, subscription):
         )
         if has_packages or mode == 'migrating':
             subscription, panel = await prepare_traffic_purchase(db, subscription)
+            await require_no_cispay(db, user_id=subscription.user_id, subscription_id=subscription.id)
             await reconcile_account_locked(db, subscription, panel)
             return subscription, panel
-    return await prepare_admin_tariff_accounting(db, subscription)
+    subscription, panel = await prepare_admin_tariff_accounting(db, subscription)
+    await require_no_cispay(db, user_id=subscription.user_id, subscription_id=subscription.id)
+    return subscription, panel
 
 
 async def lock_daily_accounting_subscription(db, subscription, user_id):

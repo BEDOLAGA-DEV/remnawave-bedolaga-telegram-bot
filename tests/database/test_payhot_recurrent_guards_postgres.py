@@ -206,3 +206,41 @@ async def test_merge_never_transfers_mandate_first_invoice(postgres_database):
         await db.commit()
         assert (await db.get(PayHotPayment, iid, populate_existing=True)).user_id == 1
         assert (await db.get(PayHotPayment, ordinary_id, populate_existing=True)).user_id == 2
+
+
+@pytest.mark.parametrize('multi', [False, True])
+async def test_tariff_switch_rechecks_agreement_created_during_unlocked_preflight(
+    postgres_database, monkeypatch, multi
+):
+    from datetime import UTC, datetime, timedelta
+
+    from app.database.models import TrafficPurchase, Transaction
+    from app.services import traffic_purchase_service as traffic
+
+    monkeypatch.setattr(settings, 'MULTI_TARIFF_ENABLED', multi)
+    async with postgres_sessions(postgres_database, list(Base.metadata.sorted_tables)) as (db, enrollment):
+        aid = await seed(db)
+        agreement = await db.get(PayHotAgreement, aid)
+        agreement.status = 'CANCELLED'
+        subscription = await db.get(Subscription, 1)
+        subscription.traffic_accounting_mode = 'legacy'
+        subscription.traffic_limit_gb = 10
+        db.add(TrafficPurchase(subscription_id=1, traffic_gb=1, expires_at=datetime.now(UTC) + timedelta(days=1)))
+        await db.commit()
+        balance = (await db.get(User, 1)).balance_kopeks
+
+        async def migrate(_db, target):
+            # An enrollment can win the account lock while migration owns its
+            # separate transactions. NOWAIT also catches the original self-deadlock.
+            await enrollment.scalar(select(User.id).where(User.id == 1).with_for_update(nowait=True))
+            current = await enrollment.get(PayHotAgreement, aid)
+            current.status = 'ACTIVE'
+            await enrollment.commit()
+            return target, None
+
+        monkeypatch.setattr(traffic, 'prepare_traffic_purchase', migrate)
+        with pytest.raises(ValueError, match='HOT Pay'):
+            await traffic.prepare_user_tariff_switch(db, subscription)
+        await db.rollback()
+        assert (await db.get(User, 1)).balance_kopeks == balance
+        assert list(await db.scalars(select(Transaction))) == []

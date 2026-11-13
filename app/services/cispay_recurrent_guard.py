@@ -49,11 +49,12 @@ async def has_conflicting_cispay(db, *, user_id: int, subscription_id: int) -> b
     ) or await has_conflicting_payhot(db, user_id=user_id, subscription_id=subscription_id)
 
 
-async def require_no_cispay(db, *, user_id: int, subscription_id: int):
+async def require_no_cispay(db, *, user_id: int, subscription_id: int, lock_user: bool = True):
+    """Reject live billing; unlocked preflight must be rechecked before mutation."""
     from app.services.payhot_recurrent_guard import require_no_payhot
 
     # Both providers reserve under the account lock, even when enrollment is disabled.
-    await require_no_payhot(db, user_id=user_id, subscription_id=subscription_id)
+    await require_no_payhot(db, user_id=user_id, subscription_id=subscription_id, lock_user=lock_user)
     if await _has_conflicting_cispay_only(db, user_id=user_id, subscription_id=subscription_id):
         raise ValueError('Сначала отключите автоплатёж CisPay и дождитесь подтверждения отключения.')
 
