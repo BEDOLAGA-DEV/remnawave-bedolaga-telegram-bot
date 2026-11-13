@@ -4315,6 +4315,9 @@
 - `tests/database/test_payhot_fulfillment_postgres.py` — Python-модуль
   Классы: нет
   Функции: `seed`, `test_legacy_commits_and_receipt_are_atomic_and_concurrent_once`, `test_referral_partial_commit_rolls_back_and_retry_has_no_duplicate`, `test_cart_crash_after_debit_never_automatically_repeats`, `test_unpaid_invoice_never_runs_financial_fulfillment`, `test_actual_referral_processor_commission_and_receipt_once`, `test_days_notice_is_localized_and_sent_after_atomic_receipt`, `test_owner_merge_between_snapshot_and_locks_defers_to_new_owner`
+- `tests/database/test_payhot_gateway_stats_postgres.py` — Python-модуль
+  Классы: нет
+  Функции: `test_payhot_dashboard_counts_paid_and_pending_without_sandbox_column`
 - `tests/database/test_payhot_guest_postgres.py` — Python-модуль
   Классы: нет
   Функции: `service`, `guest_seed`, `test_concurrent_guest_callbacks_commit_paid_proof_without_balance_credit`, `test_foreign_or_mismatched_guest_cannot_be_accepted`, `test_test_guest_events_are_rejected_without_paid_recovery_proof`

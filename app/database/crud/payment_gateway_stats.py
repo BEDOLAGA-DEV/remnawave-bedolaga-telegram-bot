@@ -100,7 +100,7 @@ async def get_gateway_success_rates(
                 and_(
                     model.created_at >= period_start,
                     model.created_at <= period_end,
-                    model.is_test.is_(False) if model in (AnorePayment, PayHotPayment) else True,
+                    AnorePayment.is_test.is_(False) if model is AnorePayment else True,
                     CisPayPayment.is_sandbox.is_(False) if model is CisPayPayment else True,
                 )
             )
