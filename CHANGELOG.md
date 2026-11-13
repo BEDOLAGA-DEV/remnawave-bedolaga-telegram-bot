@@ -1,5 +1,23 @@
 # Changelog
 
+## [5.3.0](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.2.1...v5.3.0) (2026-11-14)
+
+### New Features
+
+* add HOT Pay RUB checkout and recurring billing ([4eefbe4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/4eefbe40a3e7598c5775b47bb7341ac2aff33eae))
+* add subscription mirror selection across bot and cabinet ([de54d9a](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/de54d9aa7914a7c5ff1d3712ea6413e83f1e601c)), based on [PR #3369](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/pull/3369) by [foorsee](https://github.com/foorsee).
+
+### Bug Fixes
+
+* validate Anore principal amounts with payer fees and forward payer email ([a922bb4](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/a922bb42db76c159fb4897ecc73874a0dcde5440))
+* include HOT Pay in payment health statistics without unsupported fields ([9b6efdc](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9b6efdc35b3b2dbb5130336e92f1006b6380e09c))
+* avoid recurring guard deadlock during traffic migration, preserving the locked check before charging ([c67f218](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/c67f218e))
+
+### Maintenance
+
+* isolate shared HOT Pay payment validation ([1303155](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/13031558ec7df504449dd0e0ac0211f83c783a9a))
+* supersede obsolete test runs and bound parallel jobs without removing PostgreSQL coverage ([9f262fd](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/commit/9f262fda4e95dd60948d60015ea5afccaeb8a956))
+
 ## [5.2.1](https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot/compare/v5.2.0...v5.2.1) (2026-11-12)
 
 
