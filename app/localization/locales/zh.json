@@ -6986,5 +6986,15 @@
   "WELCOME_FALLBACK_NAME": "朋友",
   "STARS_TOPUP_DESCRIPTION": "充值 {amount}",
   "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ 请以普通文本消息发送群发内容。您可以在下一步添加照片、视频或文档。",
-  "CISREC_ENTER_DAYS": "请输入 {min} 至 {max} 之间的整数天数。"
+  "CISREC_ENTER_DAYS": "请输入 {min} 至 {max} 之间的整数天数。",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DESCRIPTION": "机器人和用户中心中同一订阅的备用地址。",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_FORMAT": "名称|https://域名；多个地址用分号或换行分隔。最多100个地址，名称最多64个字符。",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_WARNING": "仅填写您自己的HTTPS域名，且订阅路径必须相同。不得包含路径、查询参数或密码。第三方域名会收到订阅链接。留空禁用选择。",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DEPENDENCIES": "支持guide、link和miniapp_subscription。隐藏链接、Happ CryptoLink及miniapp_custom模式不提供选择。",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_EXAMPLE": "Backup|https://mirror.example",
+  "SETTINGS_SUBSCRIPTION_MIRROR_LINKS_INVALID": "名称|https://域名；多个地址用分号或换行分隔。最多100个地址，名称最多64个字符。 仅填写您自己的HTTPS域名，且订阅路径必须相同。不得包含路径、查询参数或密码。第三方域名会收到订阅链接。留空禁用选择。",
+  "SUBSCRIPTION_MIRROR_MAIN": "主链接",
+  "SUBSCRIPTION_MIRROR_SELECTOR": "链接：{label} ▾",
+  "SUBSCRIPTION_MIRROR_CHOOSE": "选择连接链接：",
+  "SUBSCRIPTION_MIRROR_SELECTED": "此次连接的链接：{label}"
 }

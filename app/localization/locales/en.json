@@ -6986,5 +6986,15 @@
   "WELCOME_FALLBACK_NAME": "friend",
   "STARS_TOPUP_DESCRIPTION": "Balance top-up of {amount}",
   "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ Send the broadcast text as a regular text message. You can add a photo, video or document in the next step.",
-  "CISREC_ENTER_DAYS": "Enter a whole number of days from {min} to {max}."
+  "CISREC_ENTER_DAYS": "Enter a whole number of days from {min} to {max}.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DESCRIPTION": "Alternate addresses for the same subscription in the bot and cabinet.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_FORMAT": "Label|https://domain; separate addresses with semicolons or newlines. Up to 100 addresses, labels up to 64 characters.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_WARNING": "Only your HTTPS domains serving the same subscription paths. No path, query or credentials. A third-party domain would receive the subscription link. Empty disables selection.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DEPENDENCIES": "Available in guide, link and miniapp_subscription. Unavailable for hidden links, Happ CryptoLink and miniapp_custom.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_EXAMPLE": "Backup|https://mirror.example",
+  "SETTINGS_SUBSCRIPTION_MIRROR_LINKS_INVALID": "Label|https://domain; separate addresses with semicolons or newlines. Up to 100 addresses, labels up to 64 characters. Only your HTTPS domains serving the same subscription paths. No path, query or credentials. A third-party domain would receive the subscription link. Empty disables selection.",
+  "SUBSCRIPTION_MIRROR_MAIN": "Primary",
+  "SUBSCRIPTION_MIRROR_SELECTOR": "Link: {label} ▾",
+  "SUBSCRIPTION_MIRROR_CHOOSE": "Choose a connection link:",
+  "SUBSCRIPTION_MIRROR_SELECTED": "Link for this connection: {label}"
 }

@@ -488,6 +488,7 @@ class BotConfigurationService:
         'USER_ACTION_LOG_RETENTION_DAYS': 'MONITORING',
         'CABINET_BUTTON_STYLE': 'INTERFACE',
         'CONNECT_BUTTON_MODE': 'CONNECT_BUTTON',
+        'SUBSCRIPTION_MIRROR_LINKS': 'CONNECT_BUTTON',
         'MINIAPP_CUSTOM_URL': 'CONNECT_BUTTON',
         'ENABLE_DEEP_LINKS': 'ADDITIONAL',
         'APP_CONFIG_CACHE_TTL': 'ADDITIONAL',
@@ -757,6 +758,13 @@ class BotConfigurationService:
     }
 
     SETTING_HINTS: dict[str, dict[str, str]] = {
+        'SUBSCRIPTION_MIRROR_LINKS': {
+            'description': 'Запасные адреса той же подписки в боте и кабинете.',
+            'format': 'Название|https://домен; несколько адресов через ; или новую строку. До 100 адресов, название до 64 символов.',
+            'warning': 'Только ваши HTTPS-домены с теми же путями подписок. Без пути, параметров и пароля. Чужой домен получит ссылку подписки. Пустое значение отключает выбор.',
+            'dependencies': 'Работает в guide, link и miniapp_subscription. При скрытой ссылке, Happ CryptoLink и miniapp_custom выбор недоступен.',
+            'example': 'Backup|https://mirror.example',
+        },
         'CISPAY_RECURRENT_ENABLED': {
             'description': 'Автопродление тарифов через СБП CisPay в боте и кабинете.',
             'format': 'Булево значение (да/нет).',
@@ -2479,6 +2487,19 @@ class BotConfigurationService:
                     )
                 )
 
+        if key == 'SUBSCRIPTION_MIRROR_LINKS':
+            from app.utils.subscription_mirrors import parse_mirror_origins
+
+            try:
+                parse_mirror_origins(parsed_value, strict=True)
+            except ValueError as error:
+                raise ValueError(
+                    cls._metadata_text(
+                        'SETTINGS_SUBSCRIPTION_MIRROR_LINKS_INVALID',
+                        'Use Label|https://domain, separated by semicolons. HTTPS origins only, no path or credentials; label up to 64 characters, at most 100 addresses.',
+                        language,
+                    )
+                ) from error
         return parsed_value
 
     @classmethod
@@ -2505,6 +2526,11 @@ class BotConfigurationService:
         """
         if cls.is_read_only(key) and not force:
             raise ReadOnlySettingError(f'Setting {key} is read-only')
+
+        if key == 'SUBSCRIPTION_MIRROR_LINKS':
+            from app.utils.subscription_mirrors import parse_mirror_origins
+
+            parse_mirror_origins(value, strict=True)
 
         from app.services.cispay_recurrent_guard import guard_cispay_credentials
 

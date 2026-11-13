@@ -21,6 +21,7 @@ from app.database.crud.user_device_alias import (
 )
 from app.database.models import Subscription, TransactionType, User
 from app.keyboards.inline import (
+    add_subscription_mirror_selector,
     get_app_selection_keyboard,
     get_back_keyboard,
     get_change_devices_keyboard,
@@ -1974,13 +1975,17 @@ async def handle_device_guide(callback: types.CallbackQuery, db_user: User, db: 
 
     await callback.message.edit_text(
         guide_text,
-        reply_markup=get_connection_guide_keyboard(
-            subscription_link,
-            featured_app,
-            device_type,
+        reply_markup=add_subscription_mirror_selector(
+            get_connection_guide_keyboard(
+                subscription_link,
+                featured_app,
+                device_type,
+                db_user.language,
+                has_other_apps=bool(other_apps),
+                sub_id=sub_id,
+            ),
+            subscription,
             db_user.language,
-            has_other_apps=bool(other_apps),
-            sub_id=sub_id,
         ),
         parse_mode='HTML',
     )
@@ -2083,12 +2088,16 @@ async def handle_specific_app_guide(
 
     await callback.message.edit_text(
         guide_text,
-        reply_markup=get_specific_app_keyboard(
-            subscription_link,
-            app,
-            device_type,
+        reply_markup=add_subscription_mirror_selector(
+            get_specific_app_keyboard(
+                subscription_link,
+                app,
+                device_type,
+                db_user.language,
+                sub_id=sub_id,
+            ),
+            subscription,
             db_user.language,
-            sub_id=sub_id,
         ),
         parse_mode='HTML',
     )
@@ -2129,6 +2138,10 @@ async def show_device_connection_help(
         )
 
     await callback.message.edit_text(
-        help_text, reply_markup=get_device_management_help_keyboard(db_user.language), parse_mode='HTML'
+        help_text,
+        reply_markup=add_subscription_mirror_selector(
+            get_device_management_help_keyboard(db_user.language), subscription, db_user.language
+        ),
+        parse_mode='HTML',
     )
     await callback.answer()

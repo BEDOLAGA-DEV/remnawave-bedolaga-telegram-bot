@@ -6986,5 +6986,15 @@
   "WELCOME_FALLBACK_NAME": "друже",
   "STARS_TOPUP_DESCRIPTION": "Поповнення балансу на {amount}",
   "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ Надішліть текст розсилки звичайним текстовим повідомленням. Фото, відео або документ можна додати на наступному кроці.",
-  "CISREC_ENTER_DAYS": "Введіть ціле число днів від {min} до {max}."
+  "CISREC_ENTER_DAYS": "Введіть ціле число днів від {min} до {max}.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DESCRIPTION": "Запасні адреси тієї самої підписки в боті та кабінеті.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_FORMAT": "Назва|https://домен; адреси через ; або новий рядок. До 100 адрес, назва до 64 символів.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_WARNING": "Лише ваші HTTPS-домени з тими самими шляхами підписок. Без шляху, параметрів і пароля. Чужий домен отримає посилання підписки. Порожнє значення вимикає вибір.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DEPENDENCIES": "Працює в guide, link і miniapp_subscription. Для прихованих посилань, Happ CryptoLink і miniapp_custom вибір недоступний.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_EXAMPLE": "Backup|https://mirror.example",
+  "SETTINGS_SUBSCRIPTION_MIRROR_LINKS_INVALID": "Назва|https://домен; адреси через ; або новий рядок. До 100 адрес, назва до 64 символів. Лише ваші HTTPS-домени з тими самими шляхами підписок. Без шляху, параметрів і пароля. Чужий домен отримає посилання підписки. Порожнє значення вимикає вибір.",
+  "SUBSCRIPTION_MIRROR_MAIN": "Основне",
+  "SUBSCRIPTION_MIRROR_SELECTOR": "Посилання: {label} ▾",
+  "SUBSCRIPTION_MIRROR_CHOOSE": "Виберіть посилання для підключення:",
+  "SUBSCRIPTION_MIRROR_SELECTED": "Посилання для цього підключення: {label}"
 }

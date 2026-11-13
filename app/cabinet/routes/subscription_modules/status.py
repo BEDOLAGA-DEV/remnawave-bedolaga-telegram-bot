@@ -161,7 +161,11 @@ async def get_connection_link(
     connect_mode = settings.CONNECT_BUTTON_MODE
     hide_subscription_link = settings.should_hide_subscription_link()
 
+    from app.utils.subscription_mirrors import get_subscription_mirrors
+
     return {
+        'subscription_id': subscription.id,
+        'mirrors': get_subscription_mirrors(subscription_url),
         'subscription_url': subscription_url if not hide_subscription_link else None,
         'display_link': display_link if not hide_subscription_link else None,
         'happ_redirect_link': happ_redirect,

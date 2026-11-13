@@ -20,6 +20,7 @@ from app.database.crud.subscription import (
     get_subscription_by_id_for_user,
 )
 from app.database.models import Subscription, SubscriptionStatus, User
+from app.keyboards.inline import add_subscription_mirror_selector
 from app.localization.texts import Texts, get_texts
 from app.utils.legacy_subscription import is_legacy_subscription
 from app.utils.subscription_utils import get_display_subscription_link
@@ -352,7 +353,11 @@ async def show_subscription_detail(
     if subscription_link and not settings.should_hide_subscription_link():
         text += f'\n🔗 <code>{html.escape(subscription_link)}</code>'
 
-    keyboard = _build_subscription_detail_keyboard(sub_id, sub=subscription, language=db_user.language)
+    keyboard = add_subscription_mirror_selector(
+        _build_subscription_detail_keyboard(sub_id, sub=subscription, language=db_user.language),
+        subscription,
+        db_user.language,
+    )
 
     if callback.message:
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='HTML')

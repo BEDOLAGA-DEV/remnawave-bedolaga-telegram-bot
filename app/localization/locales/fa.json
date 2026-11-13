@@ -6986,5 +6986,15 @@
   "WELCOME_FALLBACK_NAME": "دوست",
   "STARS_TOPUP_DESCRIPTION": "شارژ موجودی به مبلغ {amount}",
   "ADMIN_BROADCAST_TEXT_REQUIRED": "❌ متن پیام همگانی را به‌صورت یک پیام متنی معمولی ارسال کنید. در مرحله بعد می‌توانید عکس، ویدیو یا سند اضافه کنید.",
-  "CISREC_ENTER_DAYS": "تعداد روزها را به‌صورت عدد صحیح از {min} تا {max} وارد کنید."
+  "CISREC_ENTER_DAYS": "تعداد روزها را به‌صورت عدد صحیح از {min} تا {max} وارد کنید.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DESCRIPTION": "نشانی‌های جایگزین همان اشتراک در ربات و پنل کاربری.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_FORMAT": "نام|https://domain؛ نشانی‌ها را با ; یا خط جدید جدا کنید. حداکثر ۱۰۰ نشانی و نام تا ۶۴ نویسه.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_WARNING": "فقط دامنه‌های HTTPS متعلق به خودتان با مسیرهای یکسان اشتراک. بدون مسیر، پارامتر یا رمز عبور. دامنه شخص ثالث لینک اشتراک را دریافت می‌کند. مقدار خالی انتخاب را غیرفعال می‌کند.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_DEPENDENCIES": "در حالت‌های guide، link و miniapp_subscription فعال است. برای لینک مخفی، Happ CryptoLink و miniapp_custom در دسترس نیست.",
+  "SETTINGS_HINT_SUBSCRIPTION_MIRROR_LINKS_EXAMPLE": "Backup|https://mirror.example",
+  "SETTINGS_SUBSCRIPTION_MIRROR_LINKS_INVALID": "نام|https://domain؛ نشانی‌ها را با ; یا خط جدید جدا کنید. حداکثر ۱۰۰ نشانی و نام تا ۶۴ نویسه. فقط دامنه‌های HTTPS متعلق به خودتان با مسیرهای یکسان اشتراک. بدون مسیر، پارامتر یا رمز عبور. دامنه شخص ثالث لینک اشتراک را دریافت می‌کند. مقدار خالی انتخاب را غیرفعال می‌کند.",
+  "SUBSCRIPTION_MIRROR_MAIN": "اصلی",
+  "SUBSCRIPTION_MIRROR_SELECTOR": "پیوند: {label} ▾",
+  "SUBSCRIPTION_MIRROR_CHOOSE": "پیوند اتصال را انتخاب کنید:",
+  "SUBSCRIPTION_MIRROR_SELECTED": "پیوند این اتصال: {label}"
 }

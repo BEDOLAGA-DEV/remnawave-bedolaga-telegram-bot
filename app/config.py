@@ -1259,6 +1259,8 @@ class Settings(BaseSettings):
     # Стиль кнопок Cabinet: primary (синий), success (зелёный), danger (красный), '' (по умолчанию для каждой секции)
     CABINET_BUTTON_STYLE: str = ''
     CONNECT_BUTTON_MODE: str = 'miniapp_subscription'
+    # Trusted alternate subscription origins: Label|https://mirror.example;Label2|https://other.example
+    SUBSCRIPTION_MIRROR_LINKS: str = ''
     MINIAPP_CUSTOM_URL: str = ''
     MINIAPP_STATIC_PATH: str = 'miniapp'
     # Короткое имя Telegram Mini App (BotFather → /newapp), напр. 'cabinet'.

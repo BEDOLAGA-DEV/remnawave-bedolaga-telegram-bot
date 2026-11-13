@@ -22,6 +22,7 @@ from app.database.crud.transaction import create_transaction
 from app.database.crud.user import subtract_user_balance
 from app.database.models import PaymentMethod, Subscription, SubscriptionStatus, TransactionType, User
 from app.keyboards.inline import (
+    add_subscription_mirror_selector,
     get_back_keyboard,
     get_countries_keyboard,
     get_devices_keyboard,
@@ -173,7 +174,7 @@ from .happ import (
     handle_happ_download_platform_choice,
     handle_happ_download_request,
 )
-from .links import handle_connect_subscription, handle_open_subscription_link
+from .links import handle_connect_subscription, handle_open_subscription_link, handle_subscription_mirrors
 from .pricing import _build_subscription_period_prompt, _prepare_subscription_summary
 from .promo import (
     _build_promo_group_discount_text,
@@ -1327,7 +1328,7 @@ async def activate_trial(callback: types.CallbackQuery, db_user: User, db: Async
 
             await callback.message.edit_text(
                 trial_success_text,
-                reply_markup=connect_keyboard,
+                reply_markup=add_subscription_mirror_selector(connect_keyboard, subscription, db_user.language),
                 parse_mode='HTML',
             )
         else:
@@ -3064,7 +3065,11 @@ async def confirm_purchase(callback: types.CallbackQuery, state: FSMContext, db_
                     ]
                 )
 
-            await callback.message.edit_text(success_text, reply_markup=connect_keyboard, parse_mode='HTML')
+            await callback.message.edit_text(
+                success_text,
+                reply_markup=add_subscription_mirror_selector(connect_keyboard, subscription, db_user.language),
+                parse_mode='HTML',
+            )
         else:
             purchase_text = texts.SUBSCRIPTION_PURCHASED
             if discount_note:
@@ -3830,7 +3835,7 @@ async def handle_trial_pay_with_balance(callback: types.CallbackQuery, db_user: 
 
             await callback.message.edit_text(
                 trial_success_text,
-                reply_markup=connect_keyboard,
+                reply_markup=add_subscription_mirror_selector(connect_keyboard, subscription, db_user.language),
                 parse_mode='HTML',
             )
         else:
@@ -4730,6 +4735,9 @@ def register_handlers(dp: Dispatcher):
 
     dp.callback_query.register(handle_happ_download_back, F.data == 'happ_download_back')
 
+    dp.callback_query.register(
+        handle_subscription_mirrors, F.data.startswith('sub_mirrors:') | F.data.startswith('sub_mirror_pick:')
+    )
     dp.callback_query.register(handle_connect_subscription, F.data.startswith('subscription_connect'))
 
     dp.callback_query.register(handle_device_guide, F.data.startswith('device_guide_'))
